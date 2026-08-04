@@ -3,7 +3,7 @@ id: implement-workload-selected-quantized-parameter-maps
 title: Implement the workload-selected quantized parameter maps
 status: todo
 priority: p2
-dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile]
+dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile, admit-a-strict-affine-index-realization-law]
 related: [implement-first-quantized-backend-profile, implement-first-runtime-semantic-value-precondition-enforcement]
 scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/artifact, contracts/numerics]
 shared_scopes: [project/tickets]
@@ -28,6 +28,11 @@ The first workload-selected per-axis or per-block quantized format carries an ex
 ## Implementation keys
 
 - Extend the typed `ParameterIndexMap` seam delivered by `prototype-quantized-value-vertical`; do not add a second map spelling or a raw `block_size` field.
+- Generalize or replace the initial exact U4 `IndexRealizationLaw` row delivered
+  by `admit-a-strict-affine-index-realization-law`. The registry admits one law
+  per semantic operation, so the selected per-axis U8 profile cannot append a
+  competing row; the generalized law must remain candidate-blind and continue
+  to refuse every unsupported scheme/map pair explicitly.
 - Represent the selected coordinate projection canonically and bound its rank, axes, block geometry, arithmetic, and resulting parameter shape. The same verified map must drive semantic validation, reference lookup, component-shape derivation, identity, explanation, and ABI expansion.
 - Keep logical code dtype, quantized scheme, parameter map, and physical packing independent. Packed nibbles do not imply block quantization, and block parameters do not imply one storage encoding.
 - Prove each shape/view transform preserves map membership and parameter association. An unaligned slice or reshape that crosses groups must select an explicit repack/requantize plan or fail with a typed reason.
@@ -38,7 +43,7 @@ The first workload-selected per-axis or per-block quantized format carries an ex
 
 ## Closes when
 
-The selected non-per-tensor parameter map is implemented end to end over its first real producer and consumer; component shapes and coordinate selection are derived from one canonical map; legal transforms preserve exact meaning; illegal or unsupported transforms and map families reject by name; reference, compiler, artifact, and ABI identities distinguish every result-affecting map change; targeted package tests and Clippy pass; and one `make full` passes.
+The selected non-per-tensor parameter map is implemented end to end over its first real producer and consumer; component shapes and coordinate selection are derived from one canonical map; legal transforms preserve exact meaning; illegal or unsupported transforms and map families reject by name; the established per-tensor U4 law remains supported through the generalized row and its real-receipt and negative-refusal populations still pass; reference, compiler, artifact, and ABI identities distinguish every result-affecting map change; targeted package tests and Clippy pass; and one `make full` passes.
 
 ## Graph maintenance
 

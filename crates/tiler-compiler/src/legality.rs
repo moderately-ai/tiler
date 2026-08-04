@@ -237,7 +237,8 @@ impl IndexRefinement {
         self.revision
     }
 
-    /// Returns the ordered operand-to-input bindings, including aliases.
+    /// Returns ordered operand-to-input bindings, including aliases and one
+    /// binding per encoded component in semantic contract order.
     #[must_use]
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         self.receipt.operand_bindings()
@@ -313,7 +314,8 @@ impl PendingIndexRefinement {
         &self.capability_authority
     }
 
-    /// Returns the already-checked ordered operand bindings.
+    /// Returns the already-checked ordered operand bindings, with encoded
+    /// components expanded in semantic contract order.
     #[must_use]
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         self.receipt.operand_bindings()
@@ -446,17 +448,32 @@ pub enum RefinementError {
     Handle(VerifiedIndexHandleError),
     /// A boundary tensor exposed no static shape in this bounded profile.
     SymbolicBoundary,
-    /// The region declares a different number of inputs than distinct operands.
+    /// An encoded semantic input declared no component boundary to bind.
+    EmptyEncodedOperandComponents {
+        /// Position in the distinct semantic input population.
+        input: usize,
+    },
+    /// The region declares a different number of inputs than the expanded
+    /// semantic input boundary requires.
     OperandArity {
         /// Region input boundary count.
         region_inputs: usize,
-        /// Distinct occurrence operand count.
-        distinct_operands: usize,
+        /// Expected ordinary inputs plus ordered encoded components, saturated
+        /// at `usize::MAX` if count arithmetic overflowed.
+        expanded_inputs: usize,
     },
-    /// A region input boundary disagrees with its operand type or shape.
+    /// A region input boundary disagrees with its expanded semantic input type
+    /// or shape.
     OperandInterface {
-        /// Ordered distinct-operand position.
+        /// Position in the ordered expanded semantic input boundaries.
         position: usize,
+    },
+    /// Alias and component expansion exceeded the receipt binding population.
+    OperandBindingsTooLarge {
+        /// Binding count, saturated at `usize::MAX` on arithmetic overflow.
+        actual: usize,
+        /// Maximum operand bindings retained by one receipt.
+        limit: usize,
     },
     /// The region produces a different number of outputs than results.
     ResultArity {
@@ -528,19 +545,27 @@ impl fmt::Display for RefinementError {
             Self::SymbolicBoundary => {
                 formatter.write_str("a boundary tensor exposed no static shape")
             }
+            Self::EmptyEncodedOperandComponents { input } => write!(
+                formatter,
+                "encoded semantic input {input} declares no component boundaries"
+            ),
             Self::OperandArity {
                 region_inputs,
-                distinct_operands,
+                expanded_inputs,
             } => write!(
                 formatter,
-                "region declares {region_inputs} inputs for {distinct_operands} distinct operands"
+                "region declares {region_inputs} inputs for {expanded_inputs} expanded semantic input boundaries"
             ),
             Self::OperandInterface { position } => {
                 write!(
                     formatter,
-                    "region input {position} does not match its operand"
+                    "region input {position} does not match its expanded semantic input boundary"
                 )
             }
+            Self::OperandBindingsTooLarge { actual, limit } => write!(
+                formatter,
+                "expanded operand bindings {actual} exceed receipt limit {limit}"
+            ),
             Self::ResultArity {
                 region_outputs,
                 results,
@@ -703,15 +728,21 @@ fn map_ir_verifier_error(
         }
         IndexRefinementVerificationError::Handle(source) => RefinementError::Handle(source),
         IndexRefinementVerificationError::SymbolicBoundary => RefinementError::SymbolicBoundary,
+        IndexRefinementVerificationError::EmptyEncodedOperandComponents { input } => {
+            RefinementError::EmptyEncodedOperandComponents { input }
+        }
         IndexRefinementVerificationError::OperandArity {
             region_inputs,
-            distinct_operands,
+            expanded_inputs,
         } => RefinementError::OperandArity {
             region_inputs,
-            distinct_operands,
+            expanded_inputs,
         },
         IndexRefinementVerificationError::OperandInterface { position } => {
             RefinementError::OperandInterface { position }
+        }
+        IndexRefinementVerificationError::OperandBindingsTooLarge { actual, limit } => {
+            RefinementError::OperandBindingsTooLarge { actual, limit }
         }
         IndexRefinementVerificationError::ResultArity {
             region_outputs,
@@ -994,7 +1025,8 @@ mod tests {
     };
 
     use super::{
-        RefinementError, emit_region, refine_index_region as refine_index_region_with_registry,
+        RefinementError, emit_region, map_ir_verifier_error,
+        refine_index_region as refine_index_region_with_registry,
     };
     use crate::capability::{
         FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
@@ -1756,5 +1788,61 @@ mod tests {
                 ))
             })
             .collect()
+    }
+
+    #[test]
+    fn refinement_operand_errors_preserve_expanded_boundary_semantics() {
+        assert_eq!(
+            RefinementError::OperandArity {
+                region_inputs: 1,
+                expanded_inputs: 3,
+            }
+            .to_string(),
+            "region declares 1 inputs for 3 expanded semantic input boundaries"
+        );
+        assert_eq!(
+            RefinementError::OperandInterface { position: 2 }.to_string(),
+            "region input 2 does not match its expanded semantic input boundary"
+        );
+        assert_eq!(
+            RefinementError::EmptyEncodedOperandComponents { input: 2 }.to_string(),
+            "encoded semantic input 2 declares no component boundaries"
+        );
+        assert_eq!(
+            RefinementError::OperandBindingsTooLarge {
+                actual: 17_408,
+                limit: tiler_ir::index::MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            }
+            .to_string(),
+            "expanded operand bindings 17408 exceed receipt limit 16384"
+        );
+
+        let registry = square_registry();
+        let capability = registry
+            .resolve_index_access(&multiply_f32_op(), &binary_signature())
+            .unwrap();
+        let subject = square_occurrence(b"empty-encoded-components");
+        assert_eq!(
+            map_ir_verifier_error(
+                IndexRefinementVerificationError::EmptyEncodedOperandComponents { input: 0 },
+                &capability,
+                &subject,
+            ),
+            RefinementError::EmptyEncodedOperandComponents { input: 0 }
+        );
+        assert_eq!(
+            map_ir_verifier_error(
+                IndexRefinementVerificationError::OperandBindingsTooLarge {
+                    actual: 17_408,
+                    limit: tiler_ir::index::MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+                },
+                &capability,
+                &subject,
+            ),
+            RefinementError::OperandBindingsTooLarge {
+                actual: 17_408,
+                limit: tiler_ir::index::MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            }
+        );
     }
 }

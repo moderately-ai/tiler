@@ -50,9 +50,10 @@ pub use refinement::{
     IndexRefinementReceiptIdentity, IndexRefinementSignature, IndexRefinementSignatureSide,
     IndexRefinementSubject, IndexRefinementVerificationError, IndexRefinementVerificationOutcome,
     MAX_FINITE_DOMAIN_PROOF_CELLS, MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
-    MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS, MAX_INDEX_REFINEMENT_SIGNATURE_VALUES,
-    MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS, NumericalContractIdentity, OperandBinding,
-    PendingIndexRefinementReceipt, ResolvedIndexRealization, ResultBinding,
+    MAX_INDEX_REFINEMENT_OPERAND_BINDINGS, MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS,
+    MAX_INDEX_REFINEMENT_SIGNATURE_VALUES, MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS,
+    NumericalContractIdentity, OperandBinding, PendingIndexRefinementReceipt,
+    ResolvedIndexRealization, ResultBinding,
 };
 // The symbolic index profile is re-exported flat here rather than published as
 // a `tiler_ir::index::sourced` module, matching the re-export precedent this
@@ -67,7 +68,7 @@ pub use scalar::{
     ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
     ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
-    exp_f32_scalar_op, multiply_f32_scalar_op,
+    exp_f32_scalar_op, multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 pub use sourced::{
     EXTENT_PHASE_CEILING, ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape,

@@ -84,6 +84,16 @@ pub fn canonicalize_nan_f32_scalar_op() -> ScalarOpKey {
     governed_scalar_op("canonicalize-nan-f32")
 }
 
+/// Returns the governed per-point strict-affine U4-to-F32 decode operation.
+///
+/// Its ordered operands are the logical U4 code, positive-normal F32 scale,
+/// and logical U4 zero point. The operation performs widened I32 subtraction,
+/// exact I32-to-F32 conversion, and one separately rounded F32 multiplication.
+#[must_use]
+pub fn strict_affine_u4_dequantize_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("strict-affine-u4-dequantize")
+}
+
 fn governed_scalar_op(name: &str) -> ScalarOpKey {
     ScalarOpKey::new("tiler.scalar", name, 1).expect("the governed scalar key is valid")
 }
@@ -1143,6 +1153,32 @@ impl ScalarOperationInferencer for StandardF32Homogeneous {
     }
 }
 
+/// Infers the dense F32 result of the governed strict-affine U4 scalar.
+struct StandardStrictAffineU4Dequantize;
+
+impl ScalarOperationInferencer for StandardStrictAffineU4Dequantize {
+    fn infer(
+        &self,
+        request: ScalarInferenceRequest<'_>,
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        let expected = [
+            crate::semantic::U4::resolved_type(),
+            crate::semantic::F32::resolved_type(),
+            crate::semantic::U4::resolved_type(),
+        ];
+        if request.operands() != expected {
+            return Err(ScalarInferenceError::new(
+                ProviderDiagnosticCode::new("tiler.scalar.strict-affine-u4-operands")
+                    .expect("the governed diagnostic code is valid"),
+                "strict-affine U4 decode requires ordered U4 codes, F32 scale, and U4 zero point",
+            )
+            .expect("the governed diagnostic message is bounded"));
+        }
+        outputs.try_push(crate::semantic::F32::resolved_type())
+    }
+}
+
 /// Failure while defining or applying scalar authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -1304,13 +1340,14 @@ impl ScalarRegistryBuilder {
     /// Creates the mutable governed standard scalar profile.
     ///
     /// It is composed with [`FrozenSemanticRegistry::standard`] and defines the
-    /// exact per-point scalar operations the governed `f32` semantic families
-    /// lower to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`],
-    /// [`add_f32_scalar_op`], and [`canonicalize_nan_f32_scalar_op`]. The last
-    /// is a conversion rather than arithmetic, and exists because a reduction's
-    /// result boundary must canonicalize even when no combine ran. An extension
-    /// composes with it by registering further definitions on the returned
-    /// builder.
+    /// exact per-point scalar operations the governed semantic families lower
+    /// to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`],
+    /// [`add_f32_scalar_op`], [`divide_f32_scalar_op`], [`exp_f32_scalar_op`],
+    /// [`canonicalize_nan_f32_scalar_op`], and
+    /// [`strict_affine_u4_dequantize_scalar_op`]. NaN canonicalization and the
+    /// strict-affine decode are conversion operations rather than homogeneous
+    /// F32 arithmetic. An extension composes with this profile by registering
+    /// further definitions on the returned builder.
     ///
     /// # Errors
     ///
@@ -1381,7 +1418,7 @@ impl ScalarRegistryBuilder {
             )?,
         )?;
         builder.register(
-            provider,
+            provider.clone(),
             standard_definition(
                 canonicalize_nan_f32_scalar_op(),
                 "governed canonical arithmetic-NaN conversion; \
@@ -1390,6 +1427,19 @@ impl ScalarRegistryBuilder {
                 ScalarArity::exact(1)?,
                 canonicalize_nan_f32_facts()?,
                 Arc::new(StandardF32Homogeneous),
+            )?,
+        )?;
+        builder.register(
+            provider,
+            standard_definition(
+                strict_affine_u4_dequantize_scalar_op(),
+                "strict affine U4-to-F32 decode: widen code and zero point to i32, subtract, \
+                 convert exactly to f32, then multiply once under binary32 round-to-nearest-ties-even; \
+                 tiler.scalar::strict-affine-u4-dequantize@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(3)?,
+                arithmetic_f32_scalar_facts()?,
+                Arc::new(StandardStrictAffineU4Dequantize),
             )?,
         )?;
         Ok(builder)

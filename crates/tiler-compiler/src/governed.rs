@@ -1,7 +1,6 @@
 //! The lowering capabilities the bounded compiler profile ships with.
 //!
-//! Each governed semantic family — `tiler.constant-f32`, `tiler.multiply-f32`,
-//! `tiler.add-f32`, and `tiler.strict-serial-sum-f32` — gets exactly one
+//! Each semantic family in the governed logical-realization profile gets one
 //! [`IndexAccessLoweringProvider`] registered against
 //! [`FrozenScalarRegistry::standard`]. The providers are shape- and
 //! attribute-driven: every extent, every broadcast, and every constant bit
@@ -24,7 +23,7 @@ use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
     ScalarRegistryError, ScalarValueId, SourcedExtent, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
-    exp_f32_scalar_op, multiply_f32_scalar_op,
+    exp_f32_scalar_op, multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::semantic::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
@@ -32,8 +31,10 @@ use tiler_ir::semantic::{
     CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAttributes, ProviderIdentity,
     REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind,
-    ResolvedValueType, TypeKey, add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op,
-    reindex_f32_op, silu_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey, add_f32_op, broadcast_f32_op,
+    constant_f32_op, dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
+    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 
@@ -137,7 +138,7 @@ pub(crate) fn governed_realization_laws(
 ///
 /// This is the affordance [`GovernedIndexAccess`]'s own documentation describes
 /// — composing a registry from a chosen subset so an external provider replaces
-/// one governed family without re-implementing the other three — made reachable
+/// one governed family without re-implementing the others — made reachable
 /// from outside the crate. Until now it existed and was crate-private, which is
 /// why the conformance gate that exercises exactly this could only live inside
 /// `pipeline.rs`.
@@ -169,9 +170,9 @@ pub(crate) fn install_governed_index_access(
 
 /// One shipped index-access capability, before it is registered.
 ///
-/// Keeping the four descriptors addressable lets a caller compose a registry
+/// Keeping the descriptors addressable lets a caller compose a registry
 /// from a chosen subset of them, which is how an external provider substitutes
-/// for one governed family without re-implementing the other three.
+/// for one governed family without re-implementing the others.
 pub(crate) struct GovernedIndexAccess {
     provider: ProviderIdentity,
     operation: OpKey,
@@ -211,14 +212,14 @@ impl GovernedIndexAccess {
     }
 }
 
-/// Returns the eight shipped index-access capabilities in canonical family order.
+/// Returns the nine shipped index-access capabilities in canonical family order.
 ///
 /// # Errors
 ///
 /// Returns [`GovernedRegistryError`] when a governed signature exceeds its
 /// governed structural bound.
 pub(crate) fn governed_index_access_capabilities()
--> Result<[GovernedIndexAccess; 8], GovernedRegistryError> {
+-> Result<[GovernedIndexAccess; 9], GovernedRegistryError> {
     let f32_type = F32::resolved_type();
     let pointwise =
         || LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type.clone()]);
@@ -320,6 +321,16 @@ pub(crate) fn governed_index_access_capabilities()
             // never emits.
             emitted: vec![multiply_f32_scalar_op(), add_f32_scalar_op()],
             implementation: Arc::new(GovernedStrictTensorContractionF32),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("strict-affine-u4-dequantize"),
+            operation: dequantize_strict_affine_op(),
+            signature: LoweringSignature::new(
+                [StrictAffineU4::resolved_type()],
+                [F32::resolved_type()],
+            )?,
+            emitted: vec![strict_affine_u4_dequantize_scalar_op()],
+            implementation: Arc::new(GovernedStrictAffineU4Dequantize),
         },
     ])
 }
@@ -424,6 +435,80 @@ impl IndexAccessLoweringProvider for GovernedPointwiseF32 {
         }
         let applied = context.apply(self.scalar.key(), ScalarAttributes::empty(), &values)?;
         let value = single_result(&applied, self.scalar.rule())?;
+        let output = context.output_tensor(result_type, shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, value)
+    }
+}
+
+/// Emits the canonical logical component access for strict-affine U4 decode.
+///
+/// The three input tensors are not three semantic operands. They are the
+/// ordered component projection of one encoded logical operand, and refinement
+/// binds each tensor back to that operand and its stable component role.
+struct GovernedStrictAffineU4Dequantize;
+
+impl IndexAccessLoweringProvider for GovernedStrictAffineU4Dequantize {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let occurrence = context.occurrence();
+        let ([input], [result]) = (occurrence.inputs(), occurrence.results()) else {
+            return Err(occurrence_error("strict-affine-arity"));
+        };
+        if occurrence.operands() != [0] || !occurrence.attributes().fields().is_empty() {
+            return Err(occurrence_error("strict-affine-subject"));
+        }
+        if input.value_type() != &StrictAffineU4::resolved_type()
+            || result.value_type() != &F32::resolved_type()
+            || input.shape() != result.shape()
+        {
+            return Err(occurrence_error("strict-affine-interface"));
+        }
+        let (_, contract) = input
+            .value_type()
+            .encoded_numeric_parts()
+            .ok_or_else(|| occurrence_error("strict-affine-encoded-contract"))?;
+        let components = contract.components();
+        let roles = [
+            STRICT_AFFINE_CODES_ROLE,
+            STRICT_AFFINE_SCALE_ROLE,
+            STRICT_AFFINE_ZERO_POINT_ROLE,
+        ];
+        if components.len() != roles.len()
+            || components
+                .iter()
+                .zip(roles)
+                .any(|(component, role)| component.role() != role)
+        {
+            return Err(occurrence_error("strict-affine-component-roles"));
+        }
+
+        let shape = result.shape().clone();
+        let result_type = result.value_type().clone();
+        let component_boundaries = components
+            .iter()
+            .map(|component| {
+                (
+                    component.resolved_type().clone(),
+                    component.shape_relation().component_shape(input.shape()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let dimensions = declare_parallel_domain(context, &shape)?;
+        let coordinates = dimension_expressions(context, &dimensions)?;
+        let mut tensors = Vec::with_capacity(component_boundaries.len());
+        for (value_type, component_shape) in component_boundaries {
+            tensors.push(context.input_tensor(value_type, component_shape)?);
+        }
+        let codes = context.read(tensors[0], &dimensions, &coordinates)?;
+        let scale = context.read(tensors[1], &[], &[])?;
+        let zero_point = context.read(tensors[2], &[], &[])?;
+        let value = apply_one(
+            context,
+            strict_affine_u4_dequantize_scalar_op(),
+            ScalarAttributes::empty(),
+            &[codes, scale, zero_point],
+            "strict-affine-u4-dequantize",
+        )?;
         let output = context.output_tensor(result_type, shape)?;
         let write = context.write(output, &dimensions, &coordinates)?;
         context.output(write, value)
@@ -1593,11 +1678,15 @@ mod tests {
         governed_realization_laws, governed_scalars,
     };
     use crate::capability::{
-        LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringSignature,
+        IndexAccessLoweringContext, IndexAccessLoweringProvider, LoweringCapabilityRegistryBuilder,
+        LoweringCapabilityRevision, LoweringEmitError, LoweringSignature,
     };
     use crate::legality::{IndexRefinement, RefinementError, refine_index_region};
     use std::sync::Arc;
-    use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity, add_f32_scalar_op};
+    use tiler_ir::index::{
+        DomainRole, IndexInteger, IndexRefinementSubject, NumericalContractIdentity,
+        ScalarAttributes, add_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    };
     use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
     use tiler_ir::semantic::{
@@ -1605,9 +1694,11 @@ mod tests {
         CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue, ContractionIndex,
         ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
         OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
-        REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ResolvedValueType, SemanticProgramBuilder, TypeKey,
-        add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
-        strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+        REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ResolvedValueType, STRICT_AFFINE_CODES_ROLE,
+        STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgramBuilder,
+        StrictAffineU4, TypeKey, U4, add_f32_op, broadcast_f32_op, constant_f32_op,
+        dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op, strict_serial_sum_f32_op,
+        strict_tensor_contraction_f32_op,
     };
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1663,8 +1754,8 @@ mod tests {
     use tiler_ir::shape::{Axis, Extent, Shape};
     use tiler_reference::{
         FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry,
-        IndexRegionAuthority, IndexRegionEvaluator, IndexRegionInput, ReferenceElement, Tensor,
-        TensorPayloadView,
+        IndexRegionAuthority, IndexRegionEvaluationError, IndexRegionEvaluator, IndexRegionInput,
+        ReferenceElement, ReferenceOperationError, Tensor, TensorPayloadView,
     };
 
     fn f32_type() -> ResolvedValueType {
@@ -1676,6 +1767,191 @@ mod tests {
             crate::request::StrictF32NumericalContract::governed().key,
         )
         .unwrap()
+    }
+
+    fn strict_affine_provider_error(
+        name: &str,
+        provider: Arc<dyn IndexAccessLoweringProvider>,
+    ) -> RefinementError {
+        let scalars = governed_scalars().unwrap();
+        let mut lowerings = LoweringCapabilityRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        )
+        .unwrap();
+        lowerings
+            .register_index_access(
+                ProviderIdentity::new("test", name, 1).unwrap(),
+                dequantize_strict_affine_op(),
+                LoweringSignature::new([StrictAffineU4::resolved_type()], [F32::resolved_type()])
+                    .unwrap(),
+                &[strict_affine_u4_dequantize_scalar_op()],
+                LoweringCapabilityRevision::new(1).unwrap(),
+                provider,
+            )
+            .unwrap();
+        let lowerings = lowerings.freeze();
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let input = program
+            .input_resolved(
+                InputKey::new("encoded").unwrap(),
+                Shape::from_dims([5]),
+                StrictAffineU4::resolved_type(),
+            )
+            .unwrap();
+        let result = program
+            .apply(
+                dequantize_strict_affine_op(),
+                OperationAttributes::empty(),
+                &[input],
+            )
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
+                .unwrap();
+        let signature = LoweringSignature::new(
+            subject.signature().operands().iter().cloned(),
+            subject.signature().results().iter().cloned(),
+        )
+        .unwrap();
+        let capability = lowerings
+            .resolve_index_access(subject.operation(), &signature)
+            .unwrap();
+        refine_index_region(
+            &capability,
+            &subject,
+            &governed_realization_laws(&scalars),
+            &scalars,
+        )
+        .unwrap_err()
+    }
+
+    struct ReversedStrictAffineU4;
+
+    struct SwappedStrictAffineComponents;
+
+    impl IndexAccessLoweringProvider for SwappedStrictAffineComponents {
+        fn lower(
+            &self,
+            context: &mut IndexAccessLoweringContext<'_>,
+        ) -> Result<(), LoweringEmitError> {
+            let occurrence = context.occurrence();
+            let ([input], [result]) = (occurrence.inputs(), occurrence.results()) else {
+                return Err(super::occurrence_error("strict-affine-test-arity"));
+            };
+            let shape = result.shape().clone();
+            let result_type = result.value_type().clone();
+            let input_shape = input.shape().clone();
+            let dimension = context.dimension(DomainRole::Parallel, shape.extents()[0])?;
+            let coordinate = context.dimension_expr(dimension)?;
+            let codes = context.input_tensor(U4::resolved_type(), input_shape)?;
+            // Deliberately reverse the two rank-zero component boundaries while
+            // preserving their uses, so the region remains structurally valid.
+            let zero = context.input_tensor(U4::resolved_type(), Shape::new([]))?;
+            let scale = context.input_tensor(F32::resolved_type(), Shape::new([]))?;
+            let codes = context.read(codes, &[dimension], &[coordinate])?;
+            let scale = context.read(scale, &[], &[])?;
+            let zero = context.read(zero, &[], &[])?;
+            let value = context
+                .apply(
+                    strict_affine_u4_dequantize_scalar_op(),
+                    ScalarAttributes::empty(),
+                    &[codes, scale, zero],
+                )?
+                .get(0)
+                .unwrap();
+            let output = context.output_tensor(result_type, shape)?;
+            let write = context.write(output, &[dimension], &[coordinate])?;
+            context.output(write, value)
+        }
+    }
+
+    struct ScalarCodesStrictAffine;
+
+    impl IndexAccessLoweringProvider for ScalarCodesStrictAffine {
+        fn lower(
+            &self,
+            context: &mut IndexAccessLoweringContext<'_>,
+        ) -> Result<(), LoweringEmitError> {
+            let occurrence = context.occurrence();
+            let ([_], [result]) = (occurrence.inputs(), occurrence.results()) else {
+                return Err(super::occurrence_error("strict-affine-test-arity"));
+            };
+            let shape = result.shape().clone();
+            let result_type = result.value_type().clone();
+            let dimension = context.dimension(DomainRole::Parallel, shape.extents()[0])?;
+            let coordinate = context.dimension_expr(dimension)?;
+            let codes = context.input_tensor(U4::resolved_type(), Shape::new([]))?;
+            let scale = context.input_tensor(F32::resolved_type(), Shape::new([]))?;
+            let zero = context.input_tensor(U4::resolved_type(), Shape::new([]))?;
+            let codes = context.read(codes, &[], &[])?;
+            let scale = context.read(scale, &[], &[])?;
+            let zero = context.read(zero, &[], &[])?;
+            let value = context
+                .apply(
+                    strict_affine_u4_dequantize_scalar_op(),
+                    ScalarAttributes::empty(),
+                    &[codes, scale, zero],
+                )?
+                .get(0)
+                .unwrap();
+            let output = context.output_tensor(result_type, shape)?;
+            let write = context.write(output, &[dimension], &[coordinate])?;
+            context.output(write, value)
+        }
+    }
+
+    impl IndexAccessLoweringProvider for ReversedStrictAffineU4 {
+        fn lower(
+            &self,
+            context: &mut IndexAccessLoweringContext<'_>,
+        ) -> Result<(), LoweringEmitError> {
+            let occurrence = context.occurrence();
+            let ([input], [result]) = (occurrence.inputs(), occurrence.results()) else {
+                return Err(super::occurrence_error("strict-affine-test-arity"));
+            };
+            let (_, contract) = input.value_type().encoded_numeric_parts().unwrap();
+            let components = contract
+                .components()
+                .iter()
+                .map(|component| {
+                    (
+                        component.resolved_type().clone(),
+                        component.shape_relation().component_shape(input.shape()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let shape = result.shape().clone();
+            let result_type = result.value_type().clone();
+            let dimension = context.dimension(DomainRole::Parallel, shape.extents()[0])?;
+            let induction = context.dimension_expr(dimension)?;
+            let reversed = context.linear_combination(
+                IndexInteger::from_i128(i128::from(shape.extents()[0].get()) - 1),
+                &[(IndexInteger::from_i128(-1), induction)],
+            )?;
+            let tensors = components
+                .into_iter()
+                .map(|(value_type, shape)| context.input_tensor(value_type, shape))
+                .collect::<Result<Vec<_>, _>>()?;
+            let codes = context.read(tensors[0], &[dimension], &[reversed])?;
+            let scale = context.read(tensors[1], &[], &[])?;
+            let zero = context.read(tensors[2], &[], &[])?;
+            let value = context
+                .apply(
+                    strict_affine_u4_dequantize_scalar_op(),
+                    ScalarAttributes::empty(),
+                    &[codes, scale, zero],
+                )?
+                .get(0)
+                .unwrap();
+            let output = context.output_tensor(result_type, shape)?;
+            let write = context.write(output, &[dimension], &[reversed])?;
+            context.output(write, value)
+        }
     }
 
     fn constant_attributes(bits: u32) -> OperationAttributes {
@@ -1811,6 +2087,388 @@ mod tests {
                 refinement.operand_bindings()[1].input_tensor()
             );
         }
+    }
+
+    #[test]
+    fn the_governed_strict_affine_u4_lowering_retains_real_component_receipts() {
+        let shape = Shape::from_dims([5]);
+        let refinement = refine(
+            dequantize_strict_affine_op(),
+            vec![OccurrenceOperand::new(
+                OccurrenceValueId(0),
+                StrictAffineU4::resolved_type(),
+                shape.clone(),
+            )],
+            vec![OccurrenceResult::new(F32::resolved_type(), shape)],
+            OperationAttributes::empty(),
+        );
+        let bindings = refinement.operand_bindings();
+        assert_eq!(bindings.len(), 3);
+        assert_eq!(
+            bindings
+                .iter()
+                .map(tiler_ir::index::OperandBinding::component_role)
+                .collect::<Vec<_>>(),
+            [
+                Some(STRICT_AFFINE_CODES_ROLE),
+                Some(STRICT_AFFINE_SCALE_ROLE),
+                Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            ]
+        );
+        assert!(bindings.iter().all(|binding| binding.operand() == 0));
+        assert!(bindings.iter().all(|binding| binding.input() == 0));
+        assert_eq!(refinement.result_bindings().len(), 1);
+        assert_eq!(
+            refinement.scalar_authority().reached_operations(),
+            [strict_affine_u4_dequantize_scalar_op()]
+        );
+        assert_eq!(
+            refinement.receipt().occurrence(),
+            SemanticOccurrence::new(0)
+        );
+    }
+
+    #[test]
+    fn the_governed_strict_affine_u4_region_executes_exact_widened_decode() {
+        let shape = Shape::from_dims([5]);
+        let refinement = refine(
+            dequantize_strict_affine_op(),
+            vec![OccurrenceOperand::new(
+                OccurrenceValueId(0),
+                StrictAffineU4::resolved_type(),
+                shape.clone(),
+            )],
+            vec![OccurrenceResult::new(F32::resolved_type(), shape.clone())],
+            OperationAttributes::empty(),
+        );
+        let element = |bytes: &[u8]| ReferenceElement::new(bytes).unwrap();
+        let codes = Tensor::dense(
+            U4::resolved_type(),
+            shape,
+            [0_u8, 1, 7, 8, 15].map(|value| element(&[value])).to_vec(),
+        )
+        .unwrap();
+        let scale = Tensor::scalar(
+            F32::resolved_type(),
+            element(&0.5_f32.to_bits().to_be_bytes()),
+        )
+        .unwrap();
+        let zero_point = Tensor::scalar(U4::resolved_type(), element(&[7_u8])).unwrap();
+        let bindings = refinement.operand_bindings();
+        let inputs = [
+            IndexRegionInput::new(bindings[0].input_tensor(), &codes),
+            IndexRegionInput::new(bindings[1].input_tensor(), &scale),
+            IndexRegionInput::new(bindings[2].input_tensor(), &zero_point),
+        ];
+        let scalars = governed_scalars().unwrap();
+        let evaluator = IndexRegionEvaluator::new(
+            FrozenReferenceRegistry::standard().unwrap(),
+            FrozenScalarReferenceRegistry::standard().unwrap(),
+        );
+        let evaluation = evaluator
+            .evaluate(
+                refinement.region(),
+                IndexRegionAuthority::new(&scalars),
+                &inputs,
+            )
+            .unwrap();
+        assert_eq!(
+            output_bits(&evaluation.outputs()[0]),
+            [-3.5_f32, -3.0, 0.0, 0.5, 4.0].map(f32::to_bits).to_vec()
+        );
+    }
+
+    #[test]
+    fn strict_affine_u4_scalar_covers_both_centered_boundaries() {
+        for (code, zero_point, expected) in [(0_u8, 15_u8, -15.0_f32), (15, 0, 15.0)] {
+            let shape = Shape::from_dims([1]);
+            let refinement = refine(
+                dequantize_strict_affine_op(),
+                vec![OccurrenceOperand::new(
+                    OccurrenceValueId(0),
+                    StrictAffineU4::resolved_type(),
+                    shape.clone(),
+                )],
+                vec![OccurrenceResult::new(F32::resolved_type(), shape.clone())],
+                OperationAttributes::empty(),
+            );
+            let element = |bytes: &[u8]| ReferenceElement::new(bytes).unwrap();
+            let codes = Tensor::dense(U4::resolved_type(), shape, vec![element(&[code])]).unwrap();
+            let scale = Tensor::scalar(
+                F32::resolved_type(),
+                element(&1.0_f32.to_bits().to_be_bytes()),
+            )
+            .unwrap();
+            let zero_point = Tensor::scalar(U4::resolved_type(), element(&[zero_point])).unwrap();
+            let bindings = refinement.operand_bindings();
+            let inputs = [
+                IndexRegionInput::new(bindings[0].input_tensor(), &codes),
+                IndexRegionInput::new(bindings[1].input_tensor(), &scale),
+                IndexRegionInput::new(bindings[2].input_tensor(), &zero_point),
+            ];
+            let scalars = governed_scalars().unwrap();
+            let evaluation = IndexRegionEvaluator::new(
+                FrozenReferenceRegistry::standard().unwrap(),
+                FrozenScalarReferenceRegistry::standard().unwrap(),
+            )
+            .evaluate(
+                refinement.region(),
+                IndexRegionAuthority::new(&scalars),
+                &inputs,
+            )
+            .unwrap();
+            assert_eq!(output_bits(&evaluation.outputs()[0]), [expected.to_bits()]);
+        }
+    }
+
+    #[test]
+    fn strict_affine_u4_scalar_refuses_every_invalid_scale_class() {
+        let shape = Shape::from_dims([1]);
+        let refinement = refine(
+            dequantize_strict_affine_op(),
+            vec![OccurrenceOperand::new(
+                OccurrenceValueId(0),
+                StrictAffineU4::resolved_type(),
+                shape.clone(),
+            )],
+            vec![OccurrenceResult::new(F32::resolved_type(), shape.clone())],
+            OperationAttributes::empty(),
+        );
+        let element = |bytes: &[u8]| ReferenceElement::new(bytes).unwrap();
+        let codes = Tensor::dense(U4::resolved_type(), shape, vec![element(&[15])]).unwrap();
+        let zero_point = Tensor::scalar(U4::resolved_type(), element(&[0])).unwrap();
+        let bindings = refinement.operand_bindings();
+        let scalars = governed_scalars().unwrap();
+        let evaluator = IndexRegionEvaluator::new(
+            FrozenReferenceRegistry::standard().unwrap(),
+            FrozenScalarReferenceRegistry::standard().unwrap(),
+        );
+        for scale_bits in [
+            0.0_f32.to_bits(),
+            (-0.0_f32).to_bits(),
+            (-1.0_f32).to_bits(),
+            0x0000_0001,
+            0x8000_0001,
+            f32::NAN.to_bits(),
+            f32::INFINITY.to_bits(),
+            f32::NEG_INFINITY.to_bits(),
+        ] {
+            let scale =
+                Tensor::scalar(F32::resolved_type(), element(&scale_bits.to_be_bytes())).unwrap();
+            let inputs = [
+                IndexRegionInput::new(bindings[0].input_tensor(), &codes),
+                IndexRegionInput::new(bindings[1].input_tensor(), &scale),
+                IndexRegionInput::new(bindings[2].input_tensor(), &zero_point),
+            ];
+            assert!(matches!(
+                evaluator.evaluate(
+                    refinement.region(),
+                    IndexRegionAuthority::new(&scalars),
+                    &inputs,
+                ),
+                Err(IndexRegionEvaluationError::ScalarOperation {
+                    source: ReferenceOperationError::InvalidApplication,
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn a_non_strict_numerical_contract_mints_no_strict_affine_receipt() {
+        let scalars = governed_scalars().unwrap();
+        let lowerings = governed_lowering_capabilities(&scalars).unwrap();
+        let realizations = governed_realization_laws(&scalars);
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let input = program
+            .input_resolved(
+                InputKey::new("encoded").unwrap(),
+                Shape::from_dims([2]),
+                StrictAffineU4::resolved_type(),
+            )
+            .unwrap();
+        let result = program
+            .apply(
+                dequantize_strict_affine_op(),
+                OperationAttributes::empty(),
+                &[input],
+            )
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let relaxed = NumericalContractIdentity::try_from_key(
+            crate::request::StrictF32NumericalContract::governed_flush_to_zero().key,
+        )
+        .unwrap();
+        let subject =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), relaxed).unwrap();
+        let signature = LoweringSignature::new(
+            subject.signature().operands().iter().cloned(),
+            subject.signature().results().iter().cloned(),
+        )
+        .unwrap();
+        let capability = lowerings
+            .resolve_index_access(subject.operation(), &signature)
+            .unwrap();
+        let error =
+            refine_index_region(&capability, &subject, &realizations, &scalars).unwrap_err();
+        let RefinementError::IrVerifier(source) = error else {
+            panic!("numerical mismatch must remain typed: {error:?}");
+        };
+        assert!(matches!(
+            source.as_ref(),
+            tiler_ir::index::IndexRefinementVerificationError::NumericalContractNotGoverned
+        ));
+    }
+
+    #[test]
+    fn a_strict_affine_capability_cannot_mint_for_another_operation() {
+        let scalars = governed_scalars().unwrap();
+        let lowerings = governed_lowering_capabilities(&scalars).unwrap();
+        let mut strict_program = SemanticProgramBuilder::try_standard().unwrap();
+        let encoded = strict_program
+            .input_resolved(
+                InputKey::new("encoded").unwrap(),
+                Shape::from_dims([2]),
+                StrictAffineU4::resolved_type(),
+            )
+            .unwrap();
+        let decoded = strict_program
+            .apply(
+                dequantize_strict_affine_op(),
+                OperationAttributes::empty(),
+                &[encoded],
+            )
+            .unwrap()[0];
+        strict_program
+            .output_resolved(OutputKey::new("decoded").unwrap(), decoded)
+            .unwrap();
+        let strict_program = strict_program.build().unwrap();
+        let strict_subject =
+            IndexRefinementSubject::derive(&strict_program, SemanticOccurrence::new(0), contract())
+                .unwrap();
+        let strict_signature = LoweringSignature::new(
+            strict_subject.signature().operands().iter().cloned(),
+            strict_subject.signature().results().iter().cloned(),
+        )
+        .unwrap();
+        let strict_capability = lowerings
+            .resolve_index_access(strict_subject.operation(), &strict_signature)
+            .unwrap();
+
+        let mut multiply_program = SemanticProgramBuilder::try_standard().unwrap();
+        let left = multiply_program
+            .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([2]))
+            .unwrap();
+        let right = multiply_program
+            .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([2]))
+            .unwrap();
+        let product =
+            tiler_ir::semantic::F32Multiply::apply(&mut multiply_program, left, right).unwrap();
+        multiply_program
+            .output(OutputKey::new("product").unwrap(), product)
+            .unwrap();
+        let multiply_program = multiply_program.build().unwrap();
+        let multiply_subject = IndexRefinementSubject::derive(
+            &multiply_program,
+            SemanticOccurrence::new(0),
+            contract(),
+        )
+        .unwrap();
+        assert!(matches!(
+            refine_index_region(
+                &strict_capability,
+                &multiply_subject,
+                &governed_realization_laws(&scalars),
+                &scalars,
+            ),
+            Err(RefinementError::OperationMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn a_semantically_equivalent_noncanonical_strict_affine_region_mints_no_receipt() {
+        let scalars = governed_scalars().unwrap();
+        let mut lowerings = LoweringCapabilityRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        )
+        .unwrap();
+        lowerings
+            .register_index_access(
+                ProviderIdentity::new("test", "reversed-strict-affine", 1).unwrap(),
+                dequantize_strict_affine_op(),
+                LoweringSignature::new([StrictAffineU4::resolved_type()], [F32::resolved_type()])
+                    .unwrap(),
+                &[strict_affine_u4_dequantize_scalar_op()],
+                LoweringCapabilityRevision::new(1).unwrap(),
+                Arc::new(ReversedStrictAffineU4),
+            )
+            .unwrap();
+        let lowerings = lowerings.freeze();
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let input = program
+            .input_resolved(
+                InputKey::new("encoded").unwrap(),
+                Shape::from_dims([5]),
+                StrictAffineU4::resolved_type(),
+            )
+            .unwrap();
+        let result = program
+            .apply(
+                dequantize_strict_affine_op(),
+                OperationAttributes::empty(),
+                &[input],
+            )
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
+                .unwrap();
+        let signature = LoweringSignature::new(
+            subject.signature().operands().iter().cloned(),
+            subject.signature().results().iter().cloned(),
+        )
+        .unwrap();
+        let capability = lowerings
+            .resolve_index_access(subject.operation(), &signature)
+            .unwrap();
+        let laws = governed_realization_laws(&scalars);
+        let error = refine_index_region(&capability, &subject, &laws, &scalars).unwrap_err();
+        let RefinementError::IrVerifier(source) = error else {
+            panic!("canonical mismatch must remain typed: {error:?}");
+        };
+        assert!(matches!(
+            source.as_ref(),
+            tiler_ir::index::IndexRefinementVerificationError::SemanticRealizationMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn reordered_strict_affine_components_mint_no_receipt() {
+        assert!(matches!(
+            strict_affine_provider_error(
+                "swapped-strict-affine-components",
+                Arc::new(SwappedStrictAffineComponents),
+            ),
+            RefinementError::OperandInterface { position: 1 }
+        ));
+    }
+
+    #[test]
+    fn wrong_strict_affine_component_shape_mints_no_receipt() {
+        assert!(matches!(
+            strict_affine_provider_error(
+                "scalar-strict-affine-codes",
+                Arc::new(ScalarCodesStrictAffine),
+            ),
+            RefinementError::OperandInterface { position: 0 }
+        ));
     }
 
     /// Deliberate ADR 0078 perturbation: the selected multiply capability emits

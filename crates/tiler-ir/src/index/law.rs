@@ -8,12 +8,18 @@
 use core::fmt;
 use std::error::Error;
 
+use crate::schedule::{
+    ApproximationEnvelope, ExceptionalValueAssumption, F32NumericalContractKey,
+    MaterializationRounding, NumericalPermission, SubnormalMode,
+};
 use crate::semantic::{
     AttributeFieldId, BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
     CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
-    CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32_CONSTANT_BITS_ATTRIBUTE,
-    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
-    ReindexFormKind, ResolvedValueType, TypeKey,
+    CanonicalValueView, ContractionIndex, ContractionIndexStructure, EncodedComponentRole,
+    F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes, REDUCTION_AXES_ATTRIBUTE,
+    REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType,
+    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+    StrictAffineU4, TypeKey,
 };
 use crate::shape::{Axis, Extent, Shape};
 
@@ -23,7 +29,7 @@ use super::{
     ScalarOpKey, ScalarReducerBodyBuilder, ScalarValueId, SourcedExtent, SymbolicExtentError,
     TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
-    exp_f32_scalar_op, multiply_f32_scalar_op,
+    exp_f32_scalar_op, multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 
 /// A bounded semantic template for one canonical logical index realization.
@@ -71,13 +77,52 @@ pub enum IndexRealizationLaw {
         /// Attribute containing the canonical contraction structure.
         structure_attribute: AttributeFieldId,
     },
+    /// Per-point decode of one governed compound strict-affine U4 value.
+    StrictAffineU4Dequantize {
+        /// Ordered logical codes component role.
+        codes_role: EncodedComponentRole,
+        /// Ordered positive-normal scale component role.
+        scale_role: EncodedComponentRole,
+        /// Ordered logical zero-point component role.
+        zero_point_role: EncodedComponentRole,
+        /// Atomic scalar operation implementing the widened strict decode.
+        scalar: ScalarOpKey,
+    },
 }
 
 impl IndexRealizationLaw {
-    pub(crate) const fn accepts_numerical_contract(
+    pub(crate) fn accepts_numerical_contract(
+        &self,
         contract: &super::NumericalContractIdentity,
     ) -> bool {
-        matches!(contract.arithmetic(), crate::schedule::ArithmeticType::F32)
+        match self {
+            Self::StrictAffineU4Dequantize { .. } => {
+                let strict = F32NumericalContractKey::new(
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    ApproximationEnvelope::Forbidden,
+                    ExceptionalValueAssumption::MakeNoAssumption,
+                    ExceptionalValueAssumption::MakeNoAssumption,
+                    MaterializationRounding::NearestTiesToEven,
+                )
+                .expect("the governed strict F32 contract is coherent");
+                contract.as_str() == strict.as_str()
+            }
+            Self::ConstantFromFloatBits { .. }
+            | Self::PointwiseBinary { .. }
+            | Self::PreciseSiluF32
+            | Self::StrictSerialSumF32 { .. }
+            | Self::Reindex { .. }
+            | Self::Broadcast { .. }
+            | Self::StrictTensorContractionF32 { .. } => {
+                matches!(contract.arithmetic(), crate::schedule::ArithmeticType::F32)
+            }
+        }
     }
 
     /// Standard constant-f32 law.
@@ -137,6 +182,17 @@ impl IndexRealizationLaw {
         }
     }
 
+    /// Standard strict-affine U4-to-F32 decode law.
+    #[must_use]
+    pub fn strict_affine_u4_dequantize() -> Self {
+        Self::StrictAffineU4Dequantize {
+            codes_role: STRICT_AFFINE_CODES_ROLE,
+            scale_role: STRICT_AFFINE_SCALE_ROLE,
+            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+            scalar: strict_affine_u4_dequantize_scalar_op(),
+        }
+    }
+
     /// Builds the exact canonical logical region required by this law.
     ///
     /// The candidate is intentionally absent from this API. A law can describe
@@ -172,6 +228,16 @@ impl IndexRealizationLaw {
                 Self::StrictTensorContractionF32 {
                     structure_attribute,
                 } => realize_contraction(&mut context, *structure_attribute)?,
+                Self::StrictAffineU4Dequantize {
+                    codes_role,
+                    scale_role,
+                    zero_point_role,
+                    scalar,
+                } => realize_strict_affine_u4_dequantize(
+                    &mut context,
+                    [*codes_role, *scale_role, *zero_point_role],
+                    scalar.clone(),
+                )?,
             }
         }
         builder.build().map_err(IndexRealizationLawError::Build)
@@ -206,6 +272,22 @@ impl IndexRealizationLaw {
             } => {
                 output.push(7);
                 output.extend_from_slice(&structure_attribute.get().to_be_bytes());
+            }
+            Self::StrictAffineU4Dequantize {
+                codes_role,
+                scale_role,
+                zero_point_role,
+                scalar,
+            } => {
+                // Tag 8 is append-only. Tags 1..=7 and their payloads are
+                // unchanged. A row is self-delimiting through the canonical
+                // operation and provider encodings, fixed-width revision, and
+                // the tagged law payload, so this form cannot equal an old row.
+                output.push(8);
+                for role in [codes_role, scale_role, zero_point_role] {
+                    output.extend_from_slice(&role.get().to_be_bytes());
+                }
+                encode_scalar(output, scalar);
             }
         }
     }
@@ -451,6 +533,63 @@ fn realize_pointwise(
         &context.apply(scalar, ScalarAttributes::empty(), &values)?,
         "pointwise",
     )?;
+    let output = context.tensor(TensorRole::Output, result.value_type().clone(), shape)?;
+    let write = context.write(output, &dimensions, &coordinates)?;
+    context.output(write, value)
+}
+
+fn realize_strict_affine_u4_dequantize(
+    context: &mut LawContext<'_>,
+    roles: [EncodedComponentRole; 3],
+    scalar: ScalarOpKey,
+) -> Result<(), IndexRealizationLawError> {
+    let ([input], [result]) = (context.subject.inputs(), context.subject.results()) else {
+        return Err(unsupported("strict-affine-arity"));
+    };
+    if context.subject.operands() != [0] {
+        return Err(unsupported("strict-affine-operand-binding"));
+    }
+    if !context.subject.attributes().fields().is_empty() {
+        return Err(unsupported("strict-affine-attributes"));
+    }
+    if input.value_type() != &StrictAffineU4::resolved_type() {
+        return Err(unsupported("strict-affine-encoded-contract"));
+    }
+    if result.value_type() != &crate::semantic::F32::resolved_type() {
+        return Err(unsupported("strict-affine-result-type"));
+    }
+    if input.shape() != result.shape() {
+        return Err(unsupported("strict-affine-result-shape"));
+    }
+    let (_, contract) = input
+        .value_type()
+        .encoded_numeric_parts()
+        .ok_or_else(|| unsupported("strict-affine-encoded-contract"))?;
+    let components = contract.components();
+    if components.len() != roles.len()
+        || components
+            .iter()
+            .zip(roles)
+            .any(|(component, role)| component.role() != role)
+    {
+        return Err(unsupported("strict-affine-component-roles"));
+    }
+
+    let shape = result.shape().clone();
+    let dimensions = declare_parallel_domain(context, &shape)?;
+    let coordinates = dimension_expressions(context, &dimensions)?;
+    let mut tensors = Vec::with_capacity(components.len());
+    for component in components {
+        tensors.push(context.tensor(
+            TensorRole::Input,
+            component.resolved_type().clone(),
+            component.shape_relation().component_shape(input.shape()),
+        )?);
+    }
+    let codes = context.read(tensors[0], &dimensions, &coordinates)?;
+    let scale = context.read(tensors[1], &[], &[])?;
+    let zero_point = context.read(tensors[2], &[], &[])?;
+    let value = apply_one(context, scalar, &[codes, scale, zero_point])?;
     let output = context.tensor(TensorRole::Output, result.value_type().clone(), shape)?;
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
@@ -1326,5 +1465,132 @@ fn reindex_operand_coordinates(
                 })
                 .collect()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::{FrozenScalarRegistry, NumericalContractIdentity};
+    use crate::program::SemanticOccurrence;
+    use crate::semantic::{
+        InputKey, OperationAttributes, OutputKey, SemanticProgramBuilder, StrictAffineU8,
+        dequantize_strict_affine_op,
+    };
+
+    fn strict_contract() -> NumericalContractIdentity {
+        NumericalContractIdentity::from(
+            F32NumericalContractKey::new(
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                MaterializationRounding::NearestTiesToEven,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn subject(value_type: ResolvedValueType) -> IndexRefinementSubject {
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let input = program
+            .input_resolved(
+                InputKey::new("encoded").unwrap(),
+                Shape::from_dims([5]),
+                value_type,
+            )
+            .unwrap();
+        let result = program
+            .apply(
+                dequantize_strict_affine_op(),
+                OperationAttributes::empty(),
+                &[input],
+            )
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        IndexRefinementSubject::derive(
+            &program.build().unwrap(),
+            SemanticOccurrence::new(0),
+            strict_contract(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn strict_affine_law_refuses_wrong_contract_role_and_scalar_independently() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let u8_subject = subject(StrictAffineU8::resolved_type());
+        let error = IndexRealizationLaw::strict_affine_u4_dequantize()
+            .realize(&u8_subject, &scalars)
+            .unwrap_err();
+        assert_eq!(error.rule(), "strict-affine-encoded-contract");
+
+        let subject = subject(StrictAffineU4::resolved_type());
+        let wrong_role = IndexRealizationLaw::StrictAffineU4Dequantize {
+            codes_role: STRICT_AFFINE_SCALE_ROLE,
+            scale_role: STRICT_AFFINE_CODES_ROLE,
+            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+            scalar: strict_affine_u4_dequantize_scalar_op(),
+        };
+        assert_eq!(
+            wrong_role.realize(&subject, &scalars).unwrap_err().rule(),
+            "strict-affine-component-roles"
+        );
+
+        let wrong_scalar = IndexRealizationLaw::StrictAffineU4Dequantize {
+            codes_role: STRICT_AFFINE_CODES_ROLE,
+            scale_role: STRICT_AFFINE_SCALE_ROLE,
+            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+            scalar: add_f32_scalar_op(),
+        };
+        assert_eq!(
+            wrong_scalar.realize(&subject, &scalars).unwrap_err().rule(),
+            "canonical-emission"
+        );
+    }
+
+    #[test]
+    fn strict_affine_law_tag_is_append_only_and_distinct() {
+        let mut strict = Vec::new();
+        IndexRealizationLaw::strict_affine_u4_dequantize().encode(&mut strict);
+        assert_eq!(strict.first(), Some(&8));
+        for old in [
+            IndexRealizationLaw::constant_f32(),
+            IndexRealizationLaw::multiply_f32(),
+            IndexRealizationLaw::PreciseSiluF32,
+            IndexRealizationLaw::strict_serial_sum_f32(),
+            IndexRealizationLaw::reindex_f32(),
+            IndexRealizationLaw::broadcast_f32(),
+            IndexRealizationLaw::strict_tensor_contraction_f32(),
+        ] {
+            let mut encoded = Vec::new();
+            old.encode(&mut encoded);
+            assert_ne!(encoded, strict);
+            assert!((1..=7).contains(encoded.first().unwrap()));
+        }
+    }
+
+    #[test]
+    fn an_existing_law_payload_is_unchanged_by_the_appended_tag() {
+        let mut encoded = Vec::new();
+        IndexRealizationLaw::multiply_f32().encode(&mut encoded);
+        let expected = [
+            vec![2],
+            12_u64.to_be_bytes().to_vec(),
+            b"tiler.scalar".to_vec(),
+            12_u64.to_be_bytes().to_vec(),
+            b"multiply-f32".to_vec(),
+            1_u32.to_be_bytes().to_vec(),
+        ]
+        .concat();
+        assert_eq!(encoded, expected);
     }
 }

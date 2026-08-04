@@ -72,6 +72,10 @@ builder shape before acceptance.
 Every covered occurrence in a verified program and artifact is paired with its
 exact refinement evidence; program and artifact identities distinguish stages
 that differ only in that evidence; proof gaps cannot become verified coverage;
+the preserved strict-affine builder/component test and all three codec tests
+use the governed strict-affine receipt after rebasing this branch onto
+`admit-a-strict-affine-index-realization-law`, without a forged or substituted
+receipt; the ordinary compiler-to-program path retains that same receipt;
 all affected identity domains are advanced with their reason; and `make full`
 passes.
 

@@ -26,19 +26,20 @@ use crate::identity::{push_len, push_slice};
 use crate::program::SemanticOccurrence;
 use crate::schedule::{ArithmeticType, F32NumericalContractKey, NumericalContractKeyError};
 use crate::semantic::{
-    FrozenSemanticRegistry, OpKey, OperationAttributes, OperationEffect, ProviderIdentity,
-    RegistryError, ResolvedValueType, SemanticCapabilityAuthority, SemanticGraphIdentity,
-    SemanticProgram, SemanticRegistrySnapshotIdentity,
+    EncodedComponentRole, FrozenSemanticRegistry, OpKey, OperationAttributes, OperationEffect,
+    ProviderIdentity, RegistryError, ResolvedValueType, SemanticCapabilityAuthority,
+    SemanticGraphIdentity, SemanticProgram, SemanticRegistrySnapshotIdentity,
 };
 use crate::shape::Shape;
 
 use super::{
     CanonicalIndexRegionIdentity, CanonicalScalarDefinitionProjection,
     CanonicalScalarRegistrySnapshotIdentity, FrozenScalarRegistry, IndexDomainPredicate,
-    IndexDomainUnknownReason, IndexExprView, IndexExtentRef, IndexInteger, ScalarAuthorityEvidence,
-    ScalarOpKey, ScalarRegistryError, TensorRole, UnknownIndexDomainPredicate, VerifiedDimensionId,
-    VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedScalarValueId,
-    VerifiedTensorAccessId, VerifiedTensorId,
+    IndexDomainUnknownReason, IndexExprView, IndexExtentRef, IndexInteger, MAX_BOUNDARY_TENSORS,
+    ScalarAuthorityEvidence, ScalarOpKey, ScalarRegistryError, TensorRole,
+    UnknownIndexDomainPredicate, VerifiedDimensionId, VerifiedIndexExprId,
+    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedScalarValueId, VerifiedTensorAccessId,
+    VerifiedTensorId,
 };
 
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
@@ -51,13 +52,22 @@ const MAX_NUMERICAL_CONTRACT_IDENTITY_BYTES: usize = 256;
 const MAX_DOMAIN_EVIDENCE_BYTES: usize = 4_096;
 /// Maximum operands or results admitted on one refinement signature side.
 pub const MAX_INDEX_REFINEMENT_SIGNATURE_VALUES: usize = 4_096;
+/// Maximum operand-use bindings retained by one refinement receipt.
+///
+/// A binding associates one semantic operand use with one verified region input
+/// boundary. The independent name is required because aliasing can produce
+/// more bindings than distinct boundaries; the value deliberately matches the
+/// region boundary population ceiling so an alias-expanded binding inventory
+/// cannot exceed the boundary inventory the region itself may retain.
+pub const MAX_INDEX_REFINEMENT_OPERAND_BINDINGS: usize = super::MAX_BOUNDARY_TENSORS;
 /// Maximum raw scalar-operation declarations admitted by one authority.
 pub const MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS: usize = 4_096;
 /// Maximum residual obligations one canonical realization may retain.
 ///
-/// The current closed law vocabulary emits at most three accesses, each with
+/// The current closed law vocabulary emits at most three rank-wide accesses,
+/// each with
 /// at most [`super::MAX_TENSOR_RANK`] coordinates and two predicates per
-/// coordinate.
+/// coordinate. Rank-zero component reads retain no coordinate obligations.
 pub const MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS: usize = 3 * super::MAX_TENSOR_RANK * 2;
 /// Maximum cells the closed exact-finite residual proof algorithm may evaluate.
 pub const MAX_FINITE_DOMAIN_PROOF_CELLS: u64 = 16 * 1024 * 1024;
@@ -707,12 +717,13 @@ impl ResolvedIndexRealization {
     }
 }
 
-/// One ordered operand bound to its verified region input.
+/// One ordered operand projection bound to its verified region input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OperandBinding {
     operand: usize,
     input: usize,
     input_tensor: VerifiedTensorId,
+    component_role: Option<EncodedComponentRole>,
 }
 
 impl OperandBinding {
@@ -730,6 +741,14 @@ impl OperandBinding {
     #[must_use]
     pub const fn input_tensor(&self) -> VerifiedTensorId {
         self.input_tensor
+    }
+    /// Returns the encoded logical component carried by this input tensor.
+    ///
+    /// `None` names an ordinary whole-value input. An encoded operand produces
+    /// one binding per component in its contract's semantic order.
+    #[must_use]
+    pub const fn component_role(&self) -> Option<EncodedComponentRole> {
+        self.component_role
     }
 }
 
@@ -1058,6 +1077,9 @@ impl IndexRefinementReceipt {
         &self.scalar_authority
     }
     /// Returns ordered operand-to-input bindings.
+    ///
+    /// An encoded logical operand contributes one binding for every component
+    /// in its semantic contract order; an ordinary operand contributes one.
     #[must_use]
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         &self.operand_bindings
@@ -1105,7 +1127,8 @@ impl PendingIndexRefinementReceipt {
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
         &self.scalar_authority
     }
-    /// Returns ordered operand bindings.
+    /// Returns ordered operand bindings, expanding encoded components in their
+    /// semantic contract order.
     #[must_use]
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         &self.operand_bindings
@@ -1240,7 +1263,10 @@ impl ResolvedIndexRealization {
         }
         let operand_bindings = bind_operands(subject, region)?;
         let result_bindings = bind_results(subject, region)?;
-        if !super::IndexRealizationLaw::accepts_numerical_contract(subject.numerical_contract()) {
+        if !self
+            .law
+            .accepts_numerical_contract(subject.numerical_contract())
+        {
             return Err(IndexRefinementVerificationError::NumericalContractNotGoverned);
         }
         let expected = self
@@ -2248,17 +2274,30 @@ pub enum IndexRefinementVerificationError {
     Handle(VerifiedIndexHandleError),
     /// A boundary exposes no static shape in this bounded verifier.
     SymbolicBoundary,
-    /// Region input count disagrees with distinct semantic operands.
+    /// An encoded semantic input declared no component boundary to bind.
+    EmptyEncodedOperandComponents {
+        /// Position in the distinct semantic input population.
+        input: usize,
+    },
+    /// Region input count disagrees with the expanded semantic input boundary.
     OperandArity {
         /// Number of verified input boundaries.
         region_inputs: usize,
-        /// Number of distinct semantic operands.
-        distinct_operands: usize,
+        /// Expected ordinary inputs plus ordered encoded components, saturated
+        /// at `usize::MAX` if count arithmetic overflowed.
+        expanded_inputs: usize,
     },
-    /// One region input disagrees with its semantic operand.
+    /// One region input disagrees with its expanded semantic input boundary.
     OperandInterface {
-        /// Position of the disagreeing input.
+        /// Position in the ordered expanded semantic input boundaries.
         position: usize,
+    },
+    /// Alias and component expansion exceeded the receipt binding population.
+    OperandBindingsTooLarge {
+        /// Binding count, saturated at `usize::MAX` on arithmetic overflow.
+        actual: usize,
+        /// Maximum operand bindings retained by one receipt.
+        limit: usize,
     },
     /// Region output count disagrees with semantic results.
     ResultArity {
@@ -2389,19 +2428,27 @@ impl fmt::Display for IndexRefinementVerificationError {
             Self::ScalarAuthority(source) => write!(formatter, "scalar authority failed: {source}"),
             Self::Handle(source) => write!(formatter, "verified handle failed: {source}"),
             Self::SymbolicBoundary => formatter.write_str("a boundary exposed no static shape"),
+            Self::EmptyEncodedOperandComponents { input } => write!(
+                formatter,
+                "encoded semantic input {input} declares no component boundaries"
+            ),
             Self::OperandArity {
                 region_inputs,
-                distinct_operands,
+                expanded_inputs,
             } => write!(
                 formatter,
-                "region declares {region_inputs} inputs for {distinct_operands} distinct operands"
+                "region declares {region_inputs} inputs for {expanded_inputs} expanded semantic input boundaries"
             ),
             Self::OperandInterface { position } => {
                 write!(
                     formatter,
-                    "region input {position} does not match its operand"
+                    "region input {position} does not match its expanded semantic input boundary"
                 )
             }
+            Self::OperandBindingsTooLarge { actual, limit } => write!(
+                formatter,
+                "expanded operand bindings {actual} exceed receipt limit {limit}"
+            ),
             Self::ResultArity {
                 region_outputs,
                 results,
@@ -2512,33 +2559,120 @@ fn bind_operands(
         .tensors()
         .filter(|tensor| tensor.role() == TensorRole::Input)
         .collect::<Vec<_>>();
-    if inputs.len() != occurrence.inputs.len() {
+    let expanded_inputs = count_expanded_inputs(&occurrence.inputs, inputs.len())?;
+    if inputs.len() != expanded_inputs {
         return Err(IndexRefinementVerificationError::OperandArity {
             region_inputs: inputs.len(),
-            distinct_operands: occurrence.inputs.len(),
+            expanded_inputs,
         });
     }
-    for (position, (operand, input)) in occurrence.inputs.iter().zip(&inputs).enumerate() {
-        let shape = input
-            .shape()
-            .as_static()
-            .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
-        if input.value_type() != &operand.value_type || shape != &operand.shape {
-            return Err(IndexRefinementVerificationError::OperandInterface { position });
+
+    let mut physical_by_input = Vec::with_capacity(occurrence.inputs.len());
+    let mut expanded_position = 0;
+    for operand in &occurrence.inputs {
+        if let Some((_, contract)) = operand.value_type.encoded_numeric_parts() {
+            let mut physical = Vec::with_capacity(contract.components().len());
+            for component in contract.components() {
+                let input = inputs[expanded_position];
+                let shape = input
+                    .shape()
+                    .as_static()
+                    .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
+                let expected_shape = component.shape_relation().component_shape(&operand.shape);
+                if input.value_type() != component.resolved_type() || shape != &expected_shape {
+                    return Err(IndexRefinementVerificationError::OperandInterface {
+                        position: expanded_position,
+                    });
+                }
+                physical.push((input.id(), Some(component.role())));
+                expanded_position += 1;
+            }
+            physical_by_input.push(physical);
+        } else {
+            let input = inputs[expanded_position];
+            let shape = input
+                .shape()
+                .as_static()
+                .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
+            if input.value_type() != &operand.value_type || shape != &operand.shape {
+                return Err(IndexRefinementVerificationError::OperandInterface {
+                    position: expanded_position,
+                });
+            }
+            physical_by_input.push(vec![(input.id(), None)]);
+            expanded_position += 1;
         }
     }
-    occurrence
-        .operands
-        .iter()
-        .enumerate()
-        .map(|(position, input)| {
-            Ok(OperandBinding {
+    debug_assert_eq!(expanded_position, expanded_inputs);
+    let component_counts = physical_by_input.iter().map(Vec::len).collect::<Vec<_>>();
+    let binding_count = count_operand_bindings(&occurrence.operands, &component_counts)?;
+    let mut bindings = Vec::with_capacity(binding_count);
+    for (position, input) in occurrence.operands.iter().copied().enumerate() {
+        for (input_tensor, component_role) in &physical_by_input[input] {
+            bindings.push(OperandBinding {
                 operand: position,
-                input: *input,
-                input_tensor: inputs[*input].id(),
-            })
-        })
-        .collect()
+                input,
+                input_tensor: *input_tensor,
+                component_role: *component_role,
+            });
+        }
+    }
+    debug_assert_eq!(bindings.len(), binding_count);
+    Ok(bindings)
+}
+
+/// Counts component-expanded semantic inputs without deriving component shapes.
+///
+/// The verified-region boundary ceiling is the authoritative retained
+/// population bound. Counting first prevents a wide signature of maximum-size
+/// encoded contracts from multiplying component-shape allocations before the
+/// arity mismatch is known.
+fn count_expanded_inputs(
+    inputs: &[IndexRefinementBoundary],
+    region_inputs: usize,
+) -> Result<usize, IndexRefinementVerificationError> {
+    let mut expanded_inputs = 0_usize;
+    for (input, boundary) in inputs.iter().enumerate() {
+        let contribution = if let Some((_, contract)) = boundary.value_type.encoded_numeric_parts()
+        {
+            if contract.components().is_empty() {
+                return Err(
+                    IndexRefinementVerificationError::EmptyEncodedOperandComponents { input },
+                );
+            }
+            contract.components().len()
+        } else {
+            1
+        };
+        expanded_inputs = expanded_inputs.saturating_add(contribution);
+    }
+    if expanded_inputs > MAX_BOUNDARY_TENSORS {
+        return Err(IndexRefinementVerificationError::OperandArity {
+            region_inputs,
+            expanded_inputs,
+        });
+    }
+    Ok(expanded_inputs)
+}
+
+/// Counts final operand-use bindings before allocating the retained receipt
+/// population.
+fn count_operand_bindings(
+    operands: &[usize],
+    component_counts: &[usize],
+) -> Result<usize, IndexRefinementVerificationError> {
+    let mut bindings = 0_usize;
+    for input in operands {
+        let contribution = component_counts.get(*input).copied().unwrap_or(usize::MAX);
+        bindings = bindings.saturating_add(contribution);
+    }
+    if bindings > MAX_INDEX_REFINEMENT_OPERAND_BINDINGS {
+        return Err(IndexRefinementVerificationError::OperandBindingsTooLarge {
+            actual: bindings,
+            limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+        });
+    }
+    Ok(bindings)
 }
 
 fn bind_results(
@@ -2782,12 +2916,13 @@ mod tests {
     };
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
-        CanonicalValue, F32, F32Multiply, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
-        OperationConformance, OperationDefinition, OperationDefinitionFacts,
-        OperationInferenceError, OperationInferenceOutputs, OperationInferenceRequest,
-        OperationInferencer, OperationSchema, OutputKey, ProviderDiagnosticCode,
-        SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
-        SemanticRegistryRegistrar, TypeKey,
+        AttributeFieldId, CanonicalField, CanonicalValue, EncodedComponentDeclaration,
+        EncodedComponentRole, EncodedComponentShape, EncodedNumericContract, F32, F32Multiply,
+        InputKey, NormativeDefinitionRef, OpKey, OperationArity, OperationConformance,
+        OperationDefinition, OperationDefinitionFacts, OperationInferenceError,
+        OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
+        OutputKey, ProviderDiagnosticCode, QuantSchemeKey, SemanticProgramBuilder,
+        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar, TypeKey,
     };
     use crate::shape::{
         BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
@@ -2816,6 +2951,33 @@ mod tests {
 
     fn f32_type() -> ResolvedValueType {
         ResolvedValueType::nominal(TypeKey::new("tiler", "f32", 1).unwrap())
+    }
+
+    fn encoded_boundary(components: usize) -> IndexRefinementBoundary {
+        let field = CanonicalField::new(AttributeFieldId::new(1), CanonicalValue::boolean(true));
+        let contract = if components == 0 {
+            EncodedNumericContract::new([field]).unwrap()
+        } else {
+            EncodedNumericContract::with_components(
+                [field],
+                (1..=components).map(|role| {
+                    EncodedComponentDeclaration::new(
+                        EncodedComponentRole::new(u32::try_from(role).unwrap()),
+                        f32_type(),
+                        EncodedComponentShape::LogicalValue,
+                    )
+                }),
+            )
+            .unwrap()
+        };
+        IndexRefinementBoundary {
+            value_type: ResolvedValueType::encoded_numeric(
+                QuantSchemeKey::new("test", "resource-bound", 1).unwrap(),
+                contract,
+            )
+            .unwrap(),
+            shape: Shape::from_dims([1]),
+        }
     }
 
     fn test_contract() -> NumericalContractIdentity {
@@ -3905,5 +4067,88 @@ mod tests {
             ),
             IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment)
         ));
+    }
+
+    #[test]
+    fn operand_errors_name_the_expanded_semantic_boundary() {
+        assert_eq!(
+            IndexRefinementVerificationError::OperandArity {
+                region_inputs: 1,
+                expanded_inputs: 3,
+            }
+            .to_string(),
+            "region declares 1 inputs for 3 expanded semantic input boundaries"
+        );
+        assert_eq!(
+            IndexRefinementVerificationError::OperandInterface { position: 2 }.to_string(),
+            "region input 2 does not match its expanded semantic input boundary"
+        );
+        assert_eq!(
+            count_expanded_inputs(&[encoded_boundary(0)], 0),
+            Err(IndexRefinementVerificationError::EmptyEncodedOperandComponents { input: 0 })
+        );
+        assert_eq!(
+            IndexRefinementVerificationError::EmptyEncodedOperandComponents { input: 2 }
+                .to_string(),
+            "encoded semantic input 2 declares no component boundaries"
+        );
+        assert_eq!(
+            IndexRefinementVerificationError::OperandBindingsTooLarge {
+                actual: 17_408,
+                limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            }
+            .to_string(),
+            "expanded operand bindings 17408 exceed receipt limit 16384"
+        );
+    }
+
+    #[test]
+    fn expanded_input_count_is_bounded_before_component_shapes_are_materialized() {
+        // Sixteen maximum-size encoded contracts exactly fill the verified
+        // region boundary population. A seventeenth crosses the public region
+        // limit while this pass is still counting component declarations; no
+        // component shape has been derived or retained yet.
+        let boundary = encoded_boundary(1_024);
+        let maximal = vec![boundary.clone(); 16];
+        assert_eq!(
+            count_expanded_inputs(&maximal, MAX_BOUNDARY_TENSORS),
+            Ok(MAX_BOUNDARY_TENSORS)
+        );
+        let oversized = vec![boundary; 17];
+        assert_eq!(
+            count_expanded_inputs(&oversized, MAX_BOUNDARY_TENSORS),
+            Err(IndexRefinementVerificationError::OperandArity {
+                region_inputs: MAX_BOUNDARY_TENSORS,
+                expanded_inputs: 17 * 1_024,
+            })
+        );
+    }
+
+    #[test]
+    fn operand_binding_population_is_bounded_before_collection() {
+        // One maximum-size encoded semantic input may be aliased sixteen times
+        // and exactly fill the receipt binding population. A seventeenth use
+        // crosses the independent receipt limit even though the distinct
+        // expanded input population remains only 1,024. This count-only pass
+        // runs before the final binding Vec is allocated.
+        let component_counts = [1_024];
+        assert_eq!(
+            count_operand_bindings(&[0; 16], &component_counts),
+            Ok(MAX_INDEX_REFINEMENT_OPERAND_BINDINGS)
+        );
+        assert_eq!(
+            count_operand_bindings(&[0; 17], &component_counts),
+            Err(IndexRefinementVerificationError::OperandBindingsTooLarge {
+                actual: 17 * 1_024,
+                limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            })
+        );
+        assert_eq!(
+            count_operand_bindings(&[0, 0], &[usize::MAX]),
+            Err(IndexRefinementVerificationError::OperandBindingsTooLarge {
+                actual: usize::MAX,
+                limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            })
+        );
     }
 }
