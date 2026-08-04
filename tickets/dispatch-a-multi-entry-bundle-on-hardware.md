@@ -1,7 +1,7 @@
 ---
 id: dispatch-a-multi-entry-bundle-on-hardware
 title: Dispatch a multi-entry bundle on hardware from one expansion
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [package-a-multi-entry-bundle-from-one-expansion, calibrate-and-activate-parallel-reduction-selection, correct-the-declined-strategy-record-for-an-unsplittable-reduction]
@@ -9,9 +9,6 @@ scopes: [research/runtime, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, artifacts, spike]
-claimed_from: todo
-assignee: agent-multi-entry
-lease_expires_at: 1785878830
 ---
 ## User-visible outcome
 
