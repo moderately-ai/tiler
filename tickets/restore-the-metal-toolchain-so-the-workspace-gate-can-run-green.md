@@ -1,7 +1,7 @@
 ---
 id: restore-the-metal-toolchain-so-the-workspace-gate-can-run-green
 title: Restore the Metal toolchain so the workspace gate can run green
-status: blocked
+status: done
 priority: p1
 dependencies: []
 related: [root-cause-the-intermittent-leaky-test-in-the-workspace-gate]
@@ -38,3 +38,7 @@ Selecting or mutating host Xcode/SDK components is Tom's decision under the tool
 `./deps.sh --check` reports the Metal toolchain present, `make check` on the then-current `main` reports the 18 tests passing (or any residual failure re-attributed to a real defect), the exact resulting toolchain component is recorded here, and any Metal-dependent work that was held back on this block is released.
 
 Until then: coordination policy is that docs/ticket integrations proceed on `tkt lint` plus review; code integrations require targeted package gates green plus a full-workspace run whose only failures are these 18, each verified to carry the toolchain attribution above.
+
+## Resolution — 2026-08-04
+
+Tom authorized keeping the Xcode 27.0 beta selected and installing its Metal toolchain in-session. **Measurement:** `xcodebuild -downloadComponent metalToolchain` installed **Metal Toolchain 27A5228f** (asset `e0303a069097c7034cc5befc63a7a7c2c8ee7720`, 838.9 MB); `xcrun -find metallib` now resolves to the DVTDownloads mount of that asset and `./deps.sh --check` reports all dependencies ready. Rerun of the blocked measurement: `make check` on `ce62ad550c73287a43099aefbc9eff11b2bafc31` → 2427/2427 tests passed, doc-tests green, exit 0 (log: `/tmp/tiler-gate-ce62ad55-post-metal.log`). Note the provenance consequence stands: future retained Metal evidence compiles under toolchain 27A5228f, not the 26.x toolchain the existing declaration rows cite; any new retained measurement must record this component. The interim coordination policy above is retired — the full gate is authoritative again.
