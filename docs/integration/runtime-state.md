@@ -43,8 +43,8 @@ The surviving candidate is not a product-priority trade. The other two fail an a
 The public surface is parameterized over adapter-owned storage and retention types; it owns no device API.
 
 ```text
-StateInterfaceKey            // opaque runtime copy of the validated artifact's
-                             // stable input-interface key; no caller constructor
+StateInterfaceKey            // opaque subject: validated semantic-graph identity,
+                             // complete ordered interface, and input ordinal
 LayerOrdinal(u32)            // bounded layer position within that interface
 StateGeneration(u64)         // checked, monotonically advancing publication generation
 StateCursor(u64)             // C, the sole valid-length authority
@@ -56,11 +56,24 @@ LiveStateScope               // opaque, Eq + Hash, no public fields
                        adapter-private device token, execution-context token
   forbidden contents: platform handle, portable ordinal, artifact identity
 
-StateInterfaceKey::from_artifact_input(ArtifactInputRef)
-  -> StateInterfaceKey       // exact validated key, no caller-byte constructor
+StateInterfaceKey::from_decoded_program(&DecodedProgram, input_ordinal)
+  -> Result<StateInterfaceKey, StateInterfaceKeyError>
+                             // resolves the ordinal through DecodedProgram::inputs;
+                             // no caller-byte or detached-input constructor
 
-RuntimeAdapter::live_state_scope(&LiveExecutionContext)
-  -> LiveStateScope          // adapter-only minting authority
+LiveStateScopeFactory        // non-Clone capability; no public constructor
+  mint(device_token_bytes, context_token_bytes)
+    -> Result<CurrentLiveStateScope<'context>, LiveStateScopeBuildError>
+
+CurrentLiveStateScope        // non-Clone capability tied to the current route's
+                             // private LiveExecutionContext; no raw constructor
+
+RuntimeAdapter::bind_live_state_scope(
+  &mut self,
+  &LiveExecutionContext,
+  LiveStateScopeFactory,
+) -> Result<CurrentLiveStateScope<'_>, Self::Refusal>
+                             // the route supplies the factory only to the adapter
 
 KvStateIdentity {
   program_interface: StateInterfaceKey,
@@ -79,29 +92,51 @@ KvStateStatus {
 }
 
 KvState<Storage, Retention>  // private fields, no unchecked constructor
-  new(KvStateSpec, Storage, Retention)
+  new(KvStateSpec, CurrentLiveStateScope, Storage, Retention)
     -> Result<KvState, KvStateBuildError>
   identity()
   interface_key()
   layer()
-  live_scope()
+  scope_identity()            // presentation-safe identity, not current authority
   generation()
   capacity()
   cursor()
   status()
   retire(self)                  // consumer ends the handle lifetime; the
                                 // runtime instance retains pending device uses
-  preflight(&self, expected_interface, layer, live_scope,
+  preflight(&self, expected_interface, layer, CurrentLiveStateScope,
             expected_cursor, T)
     -> Result<PreparedKvStep, KvStateRefusal>
 
 PreparedKvStep               // non-Clone; carries C, T, checked S, expected
                              // generation, storage fingerprint, and scope
-  bind_execution(&mut KvState, KvExecutionIdentity)
-    -> Result<BoundKvStep<'_>, KvStateRefusal>
+  cursor() -> StateCursor
+  step() -> u64
+  total() -> u64
+
+KvArtifactStateBinding       // non-Clone validated decoded-artifact view naming
+                             // cache input, step input, extended output, their
+                             // sequence axes, and the retained S = C + T relation
+  from_decoded_program(&DecodedProgram, StateInterfaceKey, ...)
+    -> Result<KvArtifactStateBinding, KvArtifactBindingError>
+
+prepare_kv_route(PreparedKvStep, KvArtifactStateBinding, &mut DecodedProgram,
+                 &mut RuntimeAdapter, expected_artifact, AbiFactBinder)
+  -> Result<PreparedKvRoute, KvRoutePreflightError>
+                             // binds C/T through AbiFactBinder, proves the decoded
+                             // relation yields S, and performs every existing
+                             // adapter route stage through plan_dispatch
+
+PreparedKvRoute             // non-Clone; carries PreparedKvStep plus the exact
+                             // loader Preflight minted from those bound facts
+  commit(&mut KvState, KvExecutionIdentity)
+    -> Result<BoundKvStep<'state, 'program>, KvStateRefusal>
+                             // revalidates first, then consumes Preflight::commit
 
 BoundKvStep                  // non-Clone; owns the exclusive state borrow after
-                             // RoutingCommit and poisons it if dropped unfinished
+                             // RoutingCommit plus the RoutedDispatch, and poisons
+                             // the state if dropped unfinished
+  routed_dispatch()
   succeed(ExactTerminalSuccess, NewStorage, RetentionLease)
   fail(KvPostCommitFailure<AdapterFailure>)
 
@@ -113,27 +148,32 @@ KvPostCommitFailure<F> {
   cause: F,
 }
 
-KvFailureStage = Allocation | AbiBinding | Encoding | Submission
-               | Completion | Retention | Publication
+KvFailureStage = Allocation | StorageBinding | Encoding | Submission
+               | Completion | Coherence | ValidationReadback
+               | Retention | Publication
 ```
 
-`StateInterfaceKey` is minted only from a validated artifact input's stable interface key. It is not a second caller-authored grammar and cannot be constructed from arbitrary bytes. The downstream artifact/runtime binding identifies which retained output publishes the next generation for that input key; the state object carries the input-facing key so K and V remain distinct without a diagnostic label.
+`StateInterfaceKey` is minted only while holding the whole `DecodedProgram`. Its subject is the decoded envelope's already-validated semantic-graph identity, the complete input/output interface in semantic order, and the selected input's ordinal and stable key. The constructor resolves that ordinal through `DecodedProgram::inputs()` and refuses an absent slot. It is not a second caller-authored grammar, cannot be constructed from arbitrary bytes or a detached `DecodedInput`, and does not include artifact canonical identity, payloads, variants, delivery position, provenance, or any live fact. Two unrelated programs that both call an input `k_cache` therefore do not share state identity; K and V in one program remain distinct by ordinal and key.
 
 `KvStateIdentity` includes the generation because a binding prepared against generation `g` must not bind after another execution publishes generation `g + 1`. It deliberately excludes the cursor and capacity as separate identity fields: the generation is the version of the immutable published snapshot that contains them. Both values remain checked state metadata, never specialization values or cache-key material.
 
-`LiveStateScope` has no public constructor from caller bytes. A runtime adapter mints it only after binding its private live device and execution context; two values compare equal only within the declared runtime-instance scope. A reset, context replacement, provider token change, or runtime-instance replacement mints a different scope.
+`LiveStateScope` has no public constructor from caller bytes. A runtime adapter authenticates it only after binding its private live device and execution context; two values compare equal only within the declared runtime-instance scope. A reset, context replacement, provider token change, or runtime-instance replacement mints a different scope.
+
+The external adapter can authenticate the current scope only through `LiveStateScopeFactory`, a non-Clone capability constructed inside the runtime route after `LiveExecutionContext` exists and passed only to `RuntimeAdapter::bind_live_state_scope`. The adapter supplies bounded stable token bytes for its private device and context; the factory binds them to the observed backend family, representation, runtime-instance nonce, and the private current-context lifetime before constructing `CurrentLiveStateScope`. That capability contains the comparable `LiveStateScope` but does not expose a raw-parts constructor. The tokens are identities, not serialized platform handles.
+
+`KvState::scope_identity()` is diagnostic/comparison output only. `KvState::preflight` does **not** accept it or an arbitrary `LiveStateScope`; it consumes the non-Clone `CurrentLiveStateScope` delivered directly by the current stateful route. A caller who reads a state's old identity therefore cannot present it as current authority. The capability cannot outlive the private `LiveExecutionContext` whose route minted it, and the generic route passes it from `bind_live_state_scope` to state preflight without returning it to the consumer.
 
 `KvExecutionIdentity` is not an artifact subject. It exists so every post-commit failure and poisoned-state refusal names the exact attempt whose token was not produced. Its presentation may include a consumer ordinal, but equality is over its opaque runtime identity rather than a diagnostic label.
 
 ### Meaning and concrete spelling
 
-The boundary's **meaning** is that one adapter-authenticated runtime-instance scope covers one live device and execution context; equality of that scope is required at every state bind, and a reset or context replacement invalidates it. The runtime interprets no component and exposes no platform object. `StateInterfaceKey` similarly means the exact stable input-interface key of one validated artifact, not caller text that happens to match it. These validation obligations survive any later Rust renaming.
+The boundary's **meaning** is that one adapter-authenticated runtime-instance scope covers one live device and execution context; authority tied to the currently bound route, not equality supplied by the consumer, is required at every state bind, and a reset or context replacement invalidates it. The runtime interprets no adapter token and exposes no platform object. `StateInterfaceKey` similarly means one exact input slot in one decoded semantic graph and ordered interface, not caller text or a locally stable input key that happens to match. These validation obligations survive any later Rust renaming.
 
-The **concrete spelling proposed for acceptance** is the type and method inventory above: `LiveStateScope`, `StateInterfaceKey::from_artifact_input`, adapter-only `RuntimeAdapter::live_state_scope`, `KvState::new`, the listed readers, `retire`, `preflight`, non-Clone `PreparedKvStep`/`BoundKvStep`, `ExactTerminalSuccess`, `KvPostCommitFailure`, and `KvFailureStage`. No public raw-parts constructor, mutating cursor setter, generation setter, scope setter, status setter, or unchecked state constructor exists.
+The **concrete spelling proposed for acceptance** is the type and method inventory above: `LiveStateScope`; non-Clone, runtime-minted `LiveStateScopeFactory` and `CurrentLiveStateScope`; `RuntimeAdapter::bind_live_state_scope`; `StateInterfaceKey::from_decoded_program` and `StateInterfaceKeyError`; `KvState::new`; the listed readers; `retire`; current-authority-consuming `preflight`; validated `KvArtifactStateBinding`; `prepare_kv_route`; `PreparedKvRoute::commit` consuming the exact existing loader `Preflight` it carries; `BoundKvStep` carrying its `RoutedDispatch`; `ExactTerminalSuccess`; `KvPostCommitFailure`; and `KvFailureStage`. No public raw-parts constructor, detached-input constructor, mutating cursor setter, generation setter, scope setter, status setter, unchecked state constructor, or public way to join an arbitrary `PreparedKvStep` to an arbitrary `Preflight` exists.
 
 ## Construction and representation invariants
 
-A state is created ready at cursor `0`, generation `0`, and a positive fixed capacity selected from the consumer's declared workload bound. The initial dense profile has F32 storage with physical capacity `[8, capacity, 128]`, row-major and unpacked. The logical program view is `[8, C, 128]`; bytes outside sequence range `[0, C)` are unreachable and meaningless.
+A state is created from a current adapter-authenticated scope, ready at cursor `0`, generation `0`, and a positive fixed capacity selected from the consumer's declared workload bound. The constructor consumes `CurrentLiveStateScope`; a consumer cannot stamp storage with a replayed comparable identity. The initial dense profile has F32 storage with physical capacity `[8, capacity, 128]`, row-major and unpacked. The logical program view is `[8, C, 128]`; bytes outside sequence range `[0, C)` are unreachable and meaningless.
 
 The constructor validates checked allocation arithmetic for `8 × capacity × 128 × sizeof(F32)`, the adapter-declared memory domain and alignment, and that the backing allocation reaches the required physical capacity. Capacity never grows. Replacing a state with a larger allocation is construction of a different state, not growth of this one.
 
@@ -156,12 +196,14 @@ The artifact carries formulas over bound `C`, `T`, and `S`, never their invocati
 1. status is `Ready`;
 2. the state interface key agrees;
 3. layer ordinal agrees;
-4. the adapter-presented `LiveStateScope` equals the state's scope;
+4. the route-authenticated `CurrentLiveStateScope` contains the same identity as the state's scope;
 5. caller-stated `expected_cursor` equals the state's cursor;
 6. checked addition computes `S = C + T` without overflow;
 7. the generation can advance without overflow;
 8. `S <= capacity`; and
-9. the logical state view and artifact-bound extent relation both agree on `C`, `T`, and `S`.
+9. the logical storage view agrees with `[0, C)` and the preparation-time storage fingerprint.
+
+The artifact check is a separate, explicit continuation rather than a claim this signature cannot fulfill. `prepare_kv_route` consumes the resulting `PreparedKvStep` and a `KvArtifactStateBinding` derived from that same decoded program. It binds the token's exact `C` and `T` through the supplied `AbiFactBinder`, rejects a pre-existing contradictory fact, evaluates the retained additive relation and requires its output to equal the token's checked `S`, then passes the frozen `AbiFacts` through the existing `DecodedProgram::prepare` and adapter qualification/preparation/plan stages. The returned `PreparedKvRoute` is the only public join between state preparation and loader `Preflight`; neither constituent can be substituted after the join.
 
 The public refusal inventory is exhaustive and has no catch-all variant:
 
@@ -176,14 +218,50 @@ KvStateRefusal {
   CursorOverflow { cursor, step },
   GenerationExhausted { generation },
   CapacityExceeded { cursor, step, required, capacity },
-  ExtentRelationMismatch { cursor, step, total },
   InvalidStorageView { required_range, observed_range },
+  StaleStorage { expected_fingerprint, observed_fingerprint },
 }
 ```
+
+`StateStorageFingerprint` is an opaque, presentation-safe runtime identity over the adapter resource identity and generation, memory domain, physical allocation range, and logical valid range observed during preparation. It is not content identity and never enters artifact or cache identity. `StaleStorage` catches replacement or mutation that preserves the same logical range; `InvalidStorageView` catches a range disagreement.
+
+The decoded-artifact join has its own exhaustive pre-commit errors: an absent or foreign interface slot, a cache/step/output axis mismatch, no retained additive relation connecting those exact slots, a duplicate or contradictory ABI fact, an evaluated total unequal to the prepared `S`, or the existing typed loader/adapter refusal. None is a post-commit failure and all leave the state ready and unchanged.
+
+```text
+StateInterfaceKeyError {
+  UnknownInputOrdinal { requested, inputs },
+}
+
+KvArtifactBindingError {
+  ForeignStateInterface,
+  UnknownInputOrdinal { requested, inputs },
+  UnknownOutputOrdinal { requested, outputs },
+  InvalidSequenceAxis { slot, axis, rank },
+  MissingAdditiveExtentRelation,
+  AmbiguousAdditiveExtentRelation { matches },
+}
+
+KvRoutePreflightError<R> {
+  State(KvStateRefusal),
+  ArtifactBinding(KvArtifactBindingError),
+  AbiBinding(AbiBindingError),
+  ExtentRelationMismatch { cursor, step, expected_total, observed_total },
+  Route(R),
+}
+```
+
+`R` is the existing typed pre-commit loader/adapter refusal rather than an erased string. These enums are exhaustive at this boundary; the existing adapter route wrapper may remain `#[non_exhaustive]` under its own accepted convention.
 
 Construction has a separate exhaustive error boundary because malformed initial storage is not an attempted execution:
 
 ```text
+LiveStateScopeBuildError {
+  EmptyDeviceToken,
+  DeviceTokenTooLong { length, maximum },
+  EmptyContextToken,
+  ContextTokenTooLong { length, maximum },
+}
+
 KvStateBuildError {
   ZeroCapacity,
   AllocationSizeOverflow { capacity },
@@ -193,7 +271,7 @@ KvStateBuildError {
 }
 ```
 
-The adapter may wrap these in its consumer-specific error, but it may not erase the class or turn one into a route miss. `PoisonedState` names the execution that poisoned the state. `ForeignLiveStateScope` names presentation-safe identities for both scopes and never formats a platform handle.
+The adapter may wrap these in its consumer-specific error, but it may not erase the class or turn one into a route miss. `PoisonedState` names the execution that poisoned the state. `ForeignLiveStateScope` names presentation-safe identities for the stored and currently authenticated scopes and never formats a platform handle.
 
 ## Update, publication, and failure
 
@@ -220,7 +298,7 @@ Every non-success transition after commit instead performs:
 
 The cursor therefore advances by exactly `T` once, on exact terminal success, and by zero on every refusal, device error, nonterminal observation, cancellation, retention error, or publication failure. Publication itself cannot partially expose `(new allocation, old cursor)` or `(old allocation, new cursor)`.
 
-`PreparedKvStep` carries the complete preflighted state identity and storage fingerprint but no mutable borrow. `bind_execution` atomically revalidates the current identity, generation, cursor, scope, status, and storage fingerprint before producing the exclusive committed capability; a publication between preparation and binding therefore reaches `StaleGeneration` rather than using an old view. `BoundKvStep` then holds an exclusive borrow of the state after `RoutingCommit`. Its success and failure methods consume it. Dropping it through an early return or panic poisons the state with its bound `KvExecutionIdentity`; there is no path that abandons a committed step while restoring `Ready`.
+`PreparedKvStep` carries the complete preflighted state identity and storage fingerprint but no mutable borrow, and exposes only its checked `C`, `T`, and `S` values to the governed join. `prepare_kv_route` consumes it while producing the loader preflight from those same facts. `PreparedKvRoute::commit` takes a mutable state, revalidates the current identity, generation, cursor, scope, status, and storage fingerprint, and returns any `KvStateRefusal` while its carried loader authority remains uncommitted. Only after every revalidation succeeds does it call the consuming, infallible `Preflight::commit`; `BoundKvStep` owns the resulting `RoutedDispatch` together with the exclusive state borrow. A publication between preparation and commit therefore reaches `StaleGeneration` before `RoutingCommit`, while allocation and dispatch can be reached only through `BoundKvStep::routed_dispatch`. Its success and failure methods consume it. Dropping it through an early return or panic poisons the state with its bound `KvExecutionIdentity`; there is no path that abandons a committed step while restoring `Ready` or recovers fallback from the carried route.
 
 ## Placement, aliasing, retention, and destruction
 
@@ -255,6 +333,20 @@ State cursor is `17`, step length is `2`, and capacity is `18`. Checked addition
 
 An adapter presents scope B for a state minted under scope A. Even if both devices advertise the same target profile, backend family, and representation, preflight returns `ForeignLiveStateScope`. A different context on the same device also mints a different scope and refuses. No transfer or implicit rebind is attempted.
 
+Reading state A's `scope_identity()` and passing that value back cannot defeat this refusal: neither `KvState::new` nor `KvState::preflight` accepts it. Both require the non-Clone authority minted inside the currently bound adapter route.
+
+### Same local key in another program
+
+Programs P and Q both name input ordinal 2 `k_cache`, with the same type and shape. Their semantic graph identities or complete ordered interfaces differ. `StateInterfaceKey::from_decoded_program(P, 2)` and `StateInterfaceKey::from_decoded_program(Q, 2)` are unequal, so binding P's state while routing Q returns `StateInterfaceMismatch`; the repeated local `InputKey` cannot alias them.
+
+### Contradictory artifact facts
+
+A prepared state step carries `C = 14`, `T = 1`, and checked `S = 15`. Its decoded binding names the exact cache input, step input, extended output, sequence axes, and retained additive relation. If the supplied ABI binder already says that cache axis is `13`, the join returns its typed duplicate/contradictory binding error. If the decoded relation evaluates to any value other than `15`, it returns `ExtentRelationMismatch`. Neither case can produce a loader `Preflight` or reach routing commit.
+
+### Storage replacement between preparation and commit
+
+A step was prepared over allocation generation A and logical range `[0, 14)`. Before commit, storage generation B is installed with the same range. Range-only checking would accept it; fingerprint revalidation returns `StaleStorage` before consuming the loader preflight.
+
 ### Poisoned state
 
 Execution `e5` crossed `RoutingCommit` and then its submission reported a device error. The state remains at its previous cursor and generation but becomes `Poisoned { failed_execution: e5 }`. Every later preflight returns `PoisonedState { failed_execution: e5 }`; the consumer must construct a fresh state from a known prefix.
@@ -262,6 +354,8 @@ Execution `e5` crossed `RoutingCommit` and then its submission reported a device
 ### Cursor advancement after non-success
 
 Starting from `(C = 14, generation = 5)`, a step with `T = 1` reaches a waiting state whose receipt is nonterminal, errors, or belongs to another execution. None is `TerminalSuccess(e6)`. The only legal result is `(C = 14, generation = 5, Poisoned(e6))`; `(15, 6, Ready)` is constructible only from the exact successful receipt. A pre-commit capacity refusal leaves `(14, 5, Ready)` instead, because no committed execution existed to poison it.
+
+An early return immediately after `PreparedKvRoute::commit` still drops a fully constructed `BoundKvStep`, whose drop poisons the state. There is no public sequence that consumes `Preflight::commit` first and attaches the state guard later.
 
 ## Unsupported cases and extension seams
 
@@ -273,13 +367,14 @@ The fixed dense shape `[8, capacity, 128]`, F32 storage, and one-state-per-cache
 
 Tom's acceptance is required for this exact consequential public draft:
 
-- `LiveStateScope`, an opaque adapter-minted runtime-scoped device/context identity with no platform handle;
-- opaque validated-artifact-derived `StateInterfaceKey`, plus `LayerOrdinal`, `StateGeneration`, `StateCursor`, `StateCapacity`, `KvStateIdentity`, and opaque `KvExecutionIdentity` in the state surface;
+- `LiveStateScope`, an opaque adapter-authenticated runtime-scoped device/context identity with no platform handle, and non-Clone `LiveStateScopeFactory`/`CurrentLiveStateScope` as its only construction and current-route authority capabilities;
+- `RuntimeAdapter::bind_live_state_scope`, which receives that factory only after a live context is bound and returns the lifetime-bound current authority directly to the generic route, plus the exact `LiveStateScopeBuildError` inventory;
+- opaque `StateInterfaceKey::from_decoded_program` over semantic-graph identity, the complete ordered interface, and input ordinal, plus exhaustive `StateInterfaceKeyError`, `LayerOrdinal`, `StateGeneration`, `StateCursor`, `StateCapacity`, `KvStateIdentity`, and opaque `KvExecutionIdentity` in the state surface;
 - `KvStateStatus::{Ready, Poisoned { failed_execution }}`;
-- private-field `KvState<Storage, Retention>`; `KvState::new`; readers for identity, interface key, layer, live scope, generation, capacity, cursor, and status; checked preflight; and consuming `retire`;
-- non-Clone `PreparedKvStep` and `BoundKvStep` ownership transitions;
+- private-field `KvState<Storage, Retention>`; `KvState::new` consuming current route authority; readers for identity, interface key, layer, presentation-safe scope identity, generation, capacity, cursor, and status; preflight consuming current route authority rather than caller-supplied identity; and consuming `retire`;
+- non-Clone `PreparedKvStep` exposing checked `C`, `T`, and `S`; validated `KvArtifactStateBinding`; `prepare_kv_route` as the only join that binds those facts and carries the resulting loader `Preflight`; exhaustive artifact-binding and route-preflight errors; and non-Clone `PreparedKvRoute::commit` producing `BoundKvStep` with its `RoutedDispatch` and poison-on-unfinished-drop guard already attached;
 - opaque `ExactTerminalSuccess`, generic `KvPostCommitFailure`, and exhaustive `KvFailureStage`;
-- exact `KvStateBuildError` and `KvStateRefusal` inventories above, without wildcard classes;
+- exact `KvStateBuildError` and `KvStateRefusal` inventories above, including same-range stale-storage detection, without wildcard classes;
 - fixed-capacity, out-of-place publication with simultaneous allocation/cursor/generation replacement;
 - poisoning after every post-commit non-success and cursor advancement only on the exact terminal-success receipt;
 - runtime-instance ownership with adapter-owned storage/device objects and consumer-owned state-handle lifetime; and
