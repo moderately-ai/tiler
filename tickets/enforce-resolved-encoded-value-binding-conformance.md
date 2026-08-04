@@ -1,7 +1,7 @@
 ---
 id: enforce-resolved-encoded-value-binding-conformance
 title: Enforce resolved encoded-value binding conformance
-status: todo
+status: in-progress
 priority: p1
 dependencies: [prototype-quantized-value-vertical, produce-typed-strict-affine-assemble-semantic-precondition]
 related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-assemble-semantic-precondition, own-the-dtype-support-maturity-matrix]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact, implementation/reference, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, validation, compound-values, runtime]
+claimed_from: todo
+assignee: agent-value-conformance
+lease_expires_at: 1785876737
 ---
 
 ## User-visible outcome
