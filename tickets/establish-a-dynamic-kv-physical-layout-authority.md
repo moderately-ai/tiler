@@ -5,7 +5,7 @@ status: review
 priority: p1
 dependencies: []
 related: [design-autoregressive-state-and-kv-cache, define-the-runtime-kv-state-boundary, bind-the-kv-cache-through-the-artifact-and-runtime-interface, evaluate-retained-shape-relations-before-routing-commit, admit-live-extent-operands-to-payload-indexing]
-scopes: [research/runtime, contracts/artifacts, contracts/integrations, research/program-planning, contracts/foundation]
+scopes: [research/runtime, contracts/artifacts, contracts/integrations, research/program-planning, contracts/foundation, research/numerics]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [research, design, runtime, artifact, abi, kv-cache, correctness]
@@ -66,7 +66,7 @@ Keep both blocked dependents linked until the durable authority and its exact ha
 
 ## Outcome — 2026-08-04
 
-[Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) records the complete source trace, corrected elimination, and bounded Metal measurement at exact base `b4e3478d42ce21ed68e23f772b643c6370d36498`. `contracts/navigation` was added as a shared scope for the hand-maintained catalogs; `research/program-planning` and `contracts/foundation` cover the current-authority corrections across L1/L5/L6/L8 and the glossary. The pre-cleanup Markdown population under `docs/` and `tickets/` counted 1,034 files; after deleting the two obsolete carrier tickets, the complete 1,032-file current population was searched in one invocation. Historical spans remain labelled historical rather than silently rewritten.
+[Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) records the complete source trace, corrected elimination, and bounded Metal measurement at exact base `b4e3478d42ce21ed68e23f772b643c6370d36498`. `contracts/navigation` was added as a shared scope for the hand-maintained catalogs; `research/program-planning` and `contracts/foundation` cover the current-authority corrections across L1/L5/L6/L8 and the glossary. `research/numerics` was added because the selected physical reservation makes the quantized profile's current “survivor still unknown” statement false; correcting that statement does not broaden the authorized product outcome. The pre-cleanup Markdown population under `docs/` and `tickets/` counted 1,034 files; after deleting the two obsolete carrier tickets, the complete 1,032-file current population was searched in one invocation. Historical spans remain labelled historical rather than silently rewritten.
 
 One alternative survives: exact-live head-major payloads packed at `C*128` and `S*128` inside two alternating capacity-sized pool buffers per logical K or V member. Allocation length is not payload layout. At `capacity=18, C=14, S=15`, old and replacement `(1,0,0)` addresses are bytes 7,168 and 7,680 and their live spans are 57,344 and 61,440 bytes inside separate 73,728-byte buffers. Capacity never reaches artifact, payload, or pipeline identity.
 
