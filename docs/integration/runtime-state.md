@@ -445,7 +445,7 @@ Execution `e5` crossed `RoutingCommit` and then its submission reported a device
 
 Starting from `(C = 14, generation = 5)`, a step with `T = 1` reaches a waiting state whose receipt is nonterminal, errors, or belongs to another execution. None is `TerminalSuccess(e6)`. The only legal result is `(C = 14, generation = 5, Poisoned(e6))`; `(15, 6, Ready)` is constructible only from the exact successful receipt. A pre-commit capacity refusal leaves `(14, 5, Ready)` instead, because no committed execution existed to poison it.
 
-An early return immediately after `PreparedKvRoute::commit` still drops a fully constructed `BoundKvTransaction`, whose drop poisons every member. There is no public sequence that consumes `Preflight::commit` first and attaches the set guard later. `execute` derives the stage from the operation it is performing and wraps the adapter's cause with the transaction's own execution identity, so an adapter cannot poison the set under a different attempt's label.
+An early return immediately after `PreparedKvRoute::commit` still drops a fully constructed `BoundKvTransaction`, whose drop poisons every member. There is no public sequence that consumes `Preflight::commit` first and attaches the set guard later. The adapter reports one governed `KvFailureStage` with its cause, while the transaction wraps both with its own execution identity; malformed success-report validation uses the stage the transaction itself is checking. An adapter therefore cannot poison the set under a different attempt's label or erase the failure class into one opaque completion error.
 
 ## Unsupported cases and extension seams
 
