@@ -1,7 +1,7 @@
 ---
 id: derive-a-reached-only-executable-coverage-identity
 title: Derive a reached-only executable coverage identity
-status: ready
+status: in-progress
 priority: p1
 dependencies: [place-index-refinement-evidence-under-an-ir-owned-verifier, canonicalize-index-refinement-occurrence-ordinals]
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, co
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [design, implementation, identity]
+claimed_from: ready
+assignee: agent-coverage-resume
+lease_expires_at: 1785873940
 ---
 ## User-visible outcome
 

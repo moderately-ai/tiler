@@ -1,7 +1,7 @@
 ---
 id: supersede-the-runtime-owned-kv-state-design
 title: Supersede the runtime-owned KV-state design with generic invocation contracts
-status: todo
+status: in-progress
 priority: p0
 dependencies: [reconcile-the-roadmap-and-public-facades-with-the-consumer-neutral-mission]
 related: [design-autoregressive-state-and-kv-cache, define-the-runtime-kv-state-boundary, establish-a-dynamic-kv-physical-layout-authority]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, contracts/integrations, contracts/navigation, res
 shared_scopes: [project/tickets]
 paths: []
 tags: [architecture, runtime, consumer-neutral, supersession]
+claimed_from: todo
+assignee: agent-supersede-kv
+lease_expires_at: 1785873940
 ---
 ## User-visible outcome
 
