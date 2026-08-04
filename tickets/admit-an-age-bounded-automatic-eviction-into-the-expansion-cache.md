@@ -1,7 +1,7 @@
 ---
 id: admit-an-age-bounded-automatic-eviction-into-the-expansion-cache
 title: Admit an age-bounded automatic eviction into the expansion cache
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [decide-the-expansion-cache-collection-schedule, wire-the-env-configured-eviction-policy-through-the-deliver-path, measure-the-expansion-cache-hot-path-efficiency]
@@ -9,9 +9,6 @@ scopes: [implementation/cache, research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, eviction, durability, decision-execution]
-claimed_from: todo
-assignee: agent-cache-evict
-lease_expires_at: 1785875503
 ---
 ## User-visible outcome
 
@@ -86,3 +83,7 @@ The exact public shape is a **draft** on the accepted maintenance facade, marked
 - `RemovedEntry` is a public output record that gained a field and carries no `#[non_exhaustive]`, which ADR 0074 convention 5a would ask for on a record documented as growing. It was accepted without the attribute on 2026-07-31, so adding it is a change to an accepted shape rather than a defect this ticket may fix unilaterally; it is raised in the question to Tom instead.
 - `Duration::from_days` is unstable on the pinned toolchain (`duration_constructors`, issue #120301) while `Duration::from_hours` is stable and already used by `limits.rs`. No feature gate was introduced.
 - Clippy's `duration_suboptimal_units` fires on `Duration::from_secs(900)` and `from_secs(86_400)` but not on `from_secs(300)` or `from_secs(600)`; the two flagged sites were rewritten as `from_mins`/`from_hours`.
+
+## Acceptance — 2026-08-04
+
+The API shape (age field on `CollectionBound`, opaque `MaxEntryAge` with zero refused at construction, `RemovedEntry::reason`, cited-not-applied 30-day `DEFAULT`) is accepted as built. Decided by the orchestrator under Tom's same-day delegation — "you do not need me to decide on internal shapes like this... make the choices yourself" — after reviewing the full diff and the worker's elimination of the three alternative shapes; `RemovedEntry` deliberately stays without `#[non_exhaustive]`, matching the form in which the record was originally accepted. The wiring ticket is released.

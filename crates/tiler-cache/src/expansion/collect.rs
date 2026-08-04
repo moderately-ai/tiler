@@ -124,15 +124,16 @@
 //! ceiling it stated — and the report still says which entry, which bound, which
 //! reason, and which order.
 //!
-//! # Draft boundary
+//! # Boundary status
 //!
 //! [`MaxEntryAge`], [`MaxEntryAgeRefusal`], [`RemovalReason`],
-//! [`CollectionBound::max_entry_age`], and [`RemovedEntry::reason`] are a
-//! **reviewed draft** on the otherwise accepted maintenance facade (ADR 0074
-//! convention 7): implemented and tested under
-//! `admit-an-age-bounded-automatic-eviction-into-the-expansion-cache`, awaiting
-//! Tom's ruling on the exact shape. Everything else in this module was accepted
-//! on 2026-07-31 under `accept-the-expansion-cache-maintenance-boundary`.
+//! [`CollectionBound::max_entry_age`], and [`RemovedEntry::reason`] were
+//! accepted on 2026-08-04 as the age extension to the maintenance facade,
+//! decided by the orchestrator under Tom's same-day delegation of internal
+//! API-shape decisions (recorded in
+//! `admit-an-age-bounded-automatic-eviction-into-the-expansion-cache`).
+//! Everything else in this module was accepted on 2026-07-31 under
+//! `accept-the-expansion-cache-maintenance-boundary`.
 
 use core::fmt;
 use std::cmp::Ordering;
