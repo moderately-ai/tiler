@@ -13,6 +13,7 @@
 //! repository's only supported development platform.
 
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 use tiler_build::{BoundMetalCompileDeclaration, MetalPlanBuildError};
 use tiler_cache::expansion::{ComposedSubject, ExpansionCache, Resolution};
@@ -32,6 +33,7 @@ use tiler_metal_aot::input::{ApplePlatform, AppleSdk, DeploymentMinimum, MslVers
 use super::{AotRefusal, OPTIMIZATION, RouteFacts, deliver};
 use crate::cache_root::{DISABLE_VALUE, RootEnvironment};
 use crate::delivery::{NamedProfile, byte_string_literal};
+use crate::eviction::{EvictionEnvironment, EvictionGate, EvictionSchedule};
 use crate::numerics::{StatedContract, resolve};
 
 /// The approved region `in a: f32[4], b: f32[4], c: f32[4]; out (a * b) + c`.
@@ -104,6 +106,60 @@ fn stating(root: &std::path::Path) -> RootEnvironment {
     RootEnvironment::new(Some(root.as_os_str().to_owned()), None)
 }
 
+/// The eviction schedule a consumer who configured nothing gets.
+///
+/// The zero-configuration policy rather than the opt-out, so every test in this
+/// module drives the production path: each publishing expansion below really
+/// does run one collection under [`tiler_cache::expansion::MaxEntryAge::DEFAULT`]
+/// against its own scratch root, where nothing is thirty days old and nothing is
+/// removed.
+///
+/// The gate is a parameter because the amortization is per *process* and a test
+/// binary is one process: a shared module-level gate would let whichever test
+/// ran first decide whether any of the others swept at all. A call site with
+/// nothing to say about amortization passes a temporary, which lives as long as
+/// the statement making the call.
+fn automatic(gate: &EvictionGate) -> EvictionSchedule<'_> {
+    EvictionSchedule::stated(EvictionEnvironment::new(None), gate)
+}
+
+/// The eviction schedule one stated environment value produces.
+fn stating_age<'a>(stated: &str, gate: &'a EvictionGate) -> EvictionSchedule<'a> {
+    EvictionSchedule::stated(
+        EvictionEnvironment::new(Some(std::ffi::OsString::from(stated))),
+        gate,
+    )
+}
+
+/// Dates every entry published under `root` at `when`, and returns their paths.
+///
+/// The modification time is the same evidence the collector's scan reads and the
+/// same one its locked removal re-`stat`s against, so setting it is how an age
+/// test states an age rather than waiting for one — and nothing about the path
+/// under test is bypassed.
+fn backdate(root: &std::path::Path, when: SystemTime) -> Vec<PathBuf> {
+    let published = published_bundles(root);
+    assert!(
+        !published.is_empty(),
+        "there is no published entry to date, so the test would assert nothing",
+    );
+    for entry in &published {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(entry)
+            .expect("a published entry opens")
+            .set_modified(when)
+            .expect("the host records a modification time");
+    }
+    published
+}
+
+/// Two hours before now, which is past every age these tests state and inside
+/// none of them.
+fn two_hours_ago() -> SystemTime {
+    SystemTime::now() - Duration::from_hours(2)
+}
+
 /// A region stating `deliver macos;` compiles, publishes, and then hits.
 ///
 /// The two passes are the cache claim, and they are asserted through the
@@ -121,6 +177,7 @@ fn a_delivering_expansion_publishes_and_then_hits() {
         flushing(),
         macos_selection(),
         &environment,
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect("the first expansion builds");
@@ -129,6 +186,7 @@ fn a_delivering_expansion_publishes_and_then_hits() {
         flushing(),
         macos_selection(),
         &environment,
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect("the second expansion resolves");
@@ -187,6 +245,7 @@ fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
         flushing(),
         macos_selection(),
         &RootEnvironment::new(Some(std::ffi::OsString::from(DISABLE_VALUE)), None),
+        &automatic(&EvictionGate::new()),
         &toolchain,
     )
     .expect("`off` compiles and embeds rather than refusing");
@@ -215,6 +274,7 @@ fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &automatic(&EvictionGate::new()),
         &toolchain,
     )
     .expect("a stated root delivers");
@@ -407,6 +467,7 @@ fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
         strict,
         macos_selection(),
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect_err("this hardware's measured `f32` row cannot preserve input subnormals");
@@ -436,6 +497,7 @@ fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect("this declaration honours the flush-to-zero contract");
@@ -455,6 +517,7 @@ fn a_symbolic_region_cannot_deliver_a_selected_family() {
         flushing(),
         macos_selection(),
         &stating(std::path::Path::new("/unreachable")),
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect_err("a symbolic region has no program to compile");
@@ -539,6 +602,7 @@ fn every_unbuildable_selection_is_refused_before_any_toolchain_work() {
             flushing(),
             selection,
             &unreachable,
+            &automatic(&EvictionGate::new()),
             &Toolchain::system(),
         )
         .expect_err("an unbuildable selection must refuse");
@@ -593,6 +657,7 @@ fn a_mixed_selection_refuses_by_naming_only_its_unmeasured_families() {
         flushing(),
         selection,
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect_err("two of the three families have no measured declaration");
@@ -637,6 +702,7 @@ fn the_emitted_route_facts_name_the_embedded_artifact_rather_than_copying_it() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect("it builds");
@@ -704,6 +770,7 @@ fn a_toolchain_failure_is_retained_under_the_family_it_belongs_to() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &automatic(&EvictionGate::new()),
         &Toolchain::with_launcher(root.join("no-such-xcrun")),
     )
     .expect("a toolchain failure is retained, not an invocation failure");
@@ -899,6 +966,7 @@ fn a_real_metal_front_end_rejection_is_retained_under_its_family() {
             flushing(),
             macos_selection(),
             &stating(&root),
+            &automatic(&EvictionGate::new()),
             &rejecting_toolchain(&root, &metal, rejection),
         )
         .unwrap_or_else(|refusal| {
@@ -943,6 +1011,7 @@ fn a_real_metal_front_end_rejection_is_retained_under_its_family() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect("the unshimmed toolchain compiles the same region");
@@ -980,6 +1049,7 @@ fn a_retained_msl_diagnostic_carries_the_emitted_source_position() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &automatic(&EvictionGate::new()),
         &rejecting_toolchain(&root, &metal, MetalRejection::DefectiveEmission),
     )
     .expect("a defective emission is retained, not an invocation failure");
@@ -1141,6 +1211,7 @@ fn a_semantically_wrong_entry_is_a_typed_refusal_rather_than_a_silent_rebuild() 
         flushing(),
         macos_selection(),
         &stating(&poisoned),
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect_err("an entry describing another compilation must not be delivered");
@@ -1174,6 +1245,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
         flushing(),
         macos_selection(),
         &environment,
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect("the first expansion builds");
@@ -1196,6 +1268,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
         flushing(),
         macos_selection(),
         &environment,
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect("a damaged entry is a miss with a reason, not a build failure");
@@ -1236,6 +1309,7 @@ fn a_fallback_only_selection_is_refused_before_any_backend_work() {
         flushing(),
         selection,
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
     .expect_err("a selection naming no family has nothing to build");
@@ -1486,6 +1560,7 @@ fn a_split_selection_packages_every_entry_in_the_one_embedded_artifact() {
         reassociating(),
         macos_selection(),
         &stating(&directory),
+        &automatic(&EvictionGate::new()),
         &toolchain,
     )
     .expect("the split region delivers");
@@ -1505,4 +1580,261 @@ fn a_split_selection_packages_every_entry_in_the_one_embedded_artifact() {
         "one invocation embeds one artifact carrying both entries",
     );
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A publishing expansion removes an entry that reached the stated age, and
+/// leaves the one that did not.
+///
+/// The end-to-end statement of Tom's 2026-08-04 decision: a consumer's cache
+/// trims itself, without a command, without a prepare step, and without the
+/// consumer doing anything but building. It is asserted on the filesystem rather
+/// than on a returned report, because what the decision promises is that entries
+/// leave — and the report is deliberately dropped on the production path.
+///
+/// Two entries and two fates rather than one: an eviction that removed
+/// everything would satisfy a check that only looked for the aged entry's
+/// absence, and that is the failure mode with teeth, since the fresh entry is
+/// the one a concurrent build is about to hit.
+#[test]
+fn a_publishing_expansion_evicts_an_entry_that_reached_the_stated_age() {
+    let root = scratch("evict-aged");
+    deliver(
+        Some(&approved_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &automatic(&EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("the first region publishes");
+    let aged = backdate(&root, two_hours_ago());
+    let [aged] = aged.as_slice() else {
+        panic!("the first expansion published exactly one entry");
+    };
+
+    // A different region, so this expansion publishes rather than hits — and a
+    // publication is the only thing that may sweep.
+    deliver(
+        Some(&narrower_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &stating_age("1h", &EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("the second region publishes");
+
+    let remaining = published_bundles(&root);
+    assert!(
+        !remaining.contains(aged),
+        "the entry that reached the stated age must be gone: {remaining:?}",
+    );
+    assert_eq!(
+        remaining.len(),
+        1,
+        "the entry published this instant must survive its own collection: {remaining:?}",
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A cache hit removes nothing, whatever the policy says.
+///
+/// **This is the "never on the hit path" claim, in the only form that can fail.**
+/// The cache holds one entry, that entry is older than the stated age, and the
+/// expansion resolves to it — so a trigger that fired on any resolution rather
+/// than on `Resolution::Published` would delete the very entry it just served,
+/// and every later build would recompile. Nothing about the returned plan would
+/// show it, which is why the assertion is on the directory.
+#[test]
+fn a_cache_hit_evicts_nothing() {
+    let root = scratch("hit-evicts-nothing");
+    let program = approved_region();
+    deliver(
+        Some(&program),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &automatic(&EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("the region publishes");
+    let published = backdate(&root, two_hours_ago());
+
+    // The same region, so this expansion hits the entry it just aged.
+    let delivered = deliver(
+        Some(&program),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &stating_age("1h", &EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("the second expansion resolves");
+    assert!(
+        delivered.route_facts.is_some(),
+        "a hit must still deliver the artifact it read",
+    );
+    assert_eq!(
+        published_bundles(&root),
+        published,
+        "a hit must leave the cache exactly as it found it",
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The opt-out publishes, embeds, and removes nothing.
+///
+/// The documented escape hatch, exercised against an entry the default policy
+/// would have kept and the stated policy would have removed — so the assertion
+/// fails if `off` were read as anything but "keep everything".
+#[test]
+fn the_opt_out_publishes_and_removes_nothing() {
+    let root = scratch("evict-opt-out");
+    deliver(
+        Some(&approved_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &automatic(&EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("the first region publishes");
+    let aged = backdate(&root, two_hours_ago());
+
+    deliver(
+        Some(&narrower_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &stating_age(DISABLE_VALUE, &EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("the second region publishes under the opt-out");
+
+    let remaining = published_bundles(&root);
+    assert!(
+        remaining.contains(&aged[0]),
+        "`{DISABLE_VALUE}` must keep an entry the stated ages would remove: {remaining:?}",
+    );
+    assert_eq!(
+        remaining.len(),
+        2,
+        "both entries must remain: {remaining:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// An unusable policy delivers the region and removes nothing.
+///
+/// The refusal path, end to end and in the direction that matters. A value
+/// nobody can parse must not become a guessed bound, must not fail the build,
+/// and must not quietly leave the default applied — so the expansion below
+/// publishes and embeds exactly as it always would, and the two-hour-old entry
+/// a one-hour policy would have removed is still there.
+///
+/// The refusal itself is a message on this process's standard error, which
+/// `crate::eviction`'s own tests assert on against a stream they own.
+#[test]
+fn an_unusable_eviction_policy_delivers_the_region_and_removes_nothing() {
+    let root = scratch("evict-refused");
+    deliver(
+        Some(&approved_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &automatic(&EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("the first region publishes");
+    let aged = backdate(&root, two_hours_ago());
+
+    let delivered = deliver(
+        Some(&narrower_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &stating_age("30 days", &EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("an unusable eviction policy must not fail an expansion");
+    assert!(
+        delivered.route_facts.is_some(),
+        "the artifact must still be compiled and embedded",
+    );
+
+    let remaining = published_bundles(&root);
+    assert!(
+        remaining.contains(&aged[0]),
+        "a refused policy must remove nothing: {remaining:?}",
+    );
+    assert_eq!(
+        remaining.len(),
+        2,
+        "both entries must remain: {remaining:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// One process sweeps once, however many publications it performs.
+///
+/// **The amortization rule, in the shape the rust-analyzer server needs it.**
+/// That server is one process for an editor session and expands continuously, so
+/// a pass per publication would walk every shard of the cache hundreds of times
+/// an afternoon. The three expansions below share one root and one policy, and
+/// differ only in whether they share a gate.
+///
+/// The control is the third expansion, which differs from the second in the gate
+/// alone and does remove the aged entry. Without it, "the second publication
+/// removed nothing" would also be what a broken age predicate, an unreadable
+/// root, or a collection that never runs at all would report.
+#[test]
+fn only_the_first_publication_in_a_process_sweeps() {
+    let root = scratch("evict-amortized");
+    let process = EvictionGate::new();
+    deliver(
+        Some(&approved_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &stating_age("1h", &process),
+        &Toolchain::system(),
+    )
+    .expect("the first region publishes and claims this process's one pass");
+    let aged = backdate(&root, two_hours_ago());
+
+    deliver(
+        Some(&narrower_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &stating_age("1h", &process),
+        &Toolchain::system(),
+    )
+    .expect("the second region publishes");
+    assert!(
+        published_bundles(&root).contains(&aged[0]),
+        "a later publication in one process must run no pass at all",
+    );
+
+    // The control: another process, same root, same policy, same aged entry.
+    deliver(
+        Some(&split_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &stating_age("1h", &EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("the third region publishes");
+    let remaining = published_bundles(&root);
+    assert!(
+        !remaining.contains(&aged[0]),
+        "a fresh process must sweep the entry the amortized one left: {remaining:?}",
+    );
+    assert_eq!(
+        remaining.len(),
+        2,
+        "the two entries published inside the stated age must survive: {remaining:?}",
+    );
+    let _ = std::fs::remove_dir_all(root);
 }
