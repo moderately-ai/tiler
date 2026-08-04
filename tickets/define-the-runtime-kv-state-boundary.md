@@ -11,7 +11,7 @@ paths: []
 tags: [design, runtime, kv-cache, lifetime, identity, language-model]
 claimed_from: todo
 assignee: agent-kv-boundary
-lease_expires_at: 1785804091
+lease_expires_at: 1785851857
 ---
 ## User-visible outcome
 
