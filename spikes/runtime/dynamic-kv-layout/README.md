@@ -57,7 +57,7 @@ Apple M4 Max (`Mac16,6`), macOS 27.0 build `26A5388g`, Xcode 26.6 build
 `17F113`, SDK 26.5, and `metalfe-32023.883`.
 
 At B1-first (`live=8192`, `capacity=8320`), the median of the five per-round
-GPU medians is 750.292 us exact-live head-major, 749.750 us capacity-strided
+GPU medians is 750.667 us exact-live head-major, 749.750 us capacity-strided
 head-major, and 779.708 us sequence-major. At B1-last (`8320/8320`) the same
 statistic is 761.875, 761.500, and 791.250 us. Exact-live and capacity-strided
 head-major differ by less than 0.3%; sequence-major is about 3.9% slower in
