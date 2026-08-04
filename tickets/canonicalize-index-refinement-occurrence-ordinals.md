@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
-scopes: [implementation/ir, implementation/compiler, contracts/decisions, research/program-planning, implementation/artifact, contracts/artifacts]
+scopes: [implementation/ir, implementation/compiler, contracts/decisions, research/program-planning, implementation/artifact, contracts/artifacts, implementation/build, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, identity, implementation]
@@ -73,3 +73,18 @@ The one-coordinate-system public signature is accepted by Tom; selector/canonica
 **Measurement — deliberate failures.** Temporarily replacing the cached canonical ordinal with the storage index made `equivalent_authoring_orders_retain_directional_canonical_occurrences` fail with `SemanticOccurrence(0)` versus `SemanticOccurrence(1)`. Temporarily replacing receipt-sourced compiler coverage with `SemanticOccurrence::new(member.0)` made `stage_coverage_uses_verified_canonical_receipt_occurrences` fail with `[SemanticOccurrence(0)]` versus `[SemanticOccurrence(2)]`. Temporarily restoring the production v1 subject and v6 program separators made exactly both new cross-version tests fail; restoring the artifact stage-key v1 separator likewise fails its v2 separator test. Temporarily restoring per-alternative verifier resolution made the proof-work assertion fail with 20 observed refinements versus 10 expected. The real foreign `OperationId` test reaches the typed `ForeignGraph(Operation)` refusal, the other selector reaches the other canonical operation, distinct constants retain distinct occurrences and receipt identities, and the pre-existing completion cross-wire test still refuses.
 
 **Fact — live-work disjointness.** At commit `d19f92032d432eae6e11a5dada5118da02dea17d`, the only other live claim was `establish-a-dynamic-kv-physical-layout-authority`. Comparing this ticket's 19-file population and that branch's 16-file population from exact base `b4e3478d42ce21ed68e23f772b643c6370d36498` with sorted `git diff --name-only` sets produced zero common paths; the shared `project/tickets` declaration therefore has no file-level collision.
+
+**Fact — merged-tree pin correction.** The first full gate on merge commit
+`ec3ecad6f6cef2af18bba595eaddb041b7845b41` proved the branch-local pin audit
+incomplete: among 2,427 workspace tests, the sole failure was
+`tiler-build::metal_plan::tests::the_standard_metal_path_publishes_its_recorded_identities`.
+Its fail-capable assertions recomputed the standard Metal artifact identity as
+`124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` and,
+after that first assertion was advanced, the cache subject as
+`94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
+The source pin, the target-profile authority ledger's current-value statement,
+and the BF16 ticket's historical-transition qualification move together.
+`implementation/build` and `research/target-profiles` were added autonomously
+because those already-authorized downstream identity records are the observed
+blast radius; this is scope declaration and graph maintenance, not a new
+product outcome.

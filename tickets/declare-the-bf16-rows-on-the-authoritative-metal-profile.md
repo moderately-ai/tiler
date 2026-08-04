@@ -147,6 +147,15 @@ and the cache-subject test digest moved
 Those were the complete observed targeted-test blast radius after the descriptor
 pin moved; all three pins were recomputed on this branch.
 
+**Later merged-tree movement.** Those values remain the historical BF16
+transition. The canonical-occurrence identity step subsequently moved the
+current standard Metal artifact pin to
+`124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` and
+the current cache-subject pin to
+`94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
+Both were recomputed by the pin assertion on that step's merged tree rather
+than copied from either branch.
+
 **Measurement boundary.** The ledger now cites the retained 2026-08-02
 covering/exhaustive `apple9-f32-bf16-unified-msl4-macos26` records: Apple M4
 Max, macOS 27.0 build 26A5388g, Xcode 26.6 build 17F113, macOS SDK 26.5 build

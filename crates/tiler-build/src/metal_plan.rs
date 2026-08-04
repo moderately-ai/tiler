@@ -842,9 +842,9 @@ mod tests {
     /// rebaselines cannot compose: a pinned identity is recomputed on the tree
     /// the step lands into, never taken from either side. Observed on this branch:
     /// `ARTIFACT_IDENTITY`
-    /// `949841c610fef13473e4a4d14ee57a62b39ba09c5ed27a9c7ff16679853827d1`,
+    /// `124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd`,
     /// `CACHE_SUBJECT`
-    /// `3bc5f57f3b3e2e07849a3830ec56a89e4332245685fa23c9db4da8a4f71c34d0`.
+    /// `94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
     /// Regenerate on the merged tree with:
     ///
     /// ```text
@@ -860,9 +860,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "949841c610fef13473e4a4d14ee57a62b39ba09c5ed27a9c7ff16679853827d1";
+            "124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd";
         const CACHE_SUBJECT: &str =
-            "3bc5f57f3b3e2e07849a3830ec56a89e4332245685fa23c9db4da8a4f71c34d0";
+            "94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
