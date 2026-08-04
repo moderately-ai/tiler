@@ -61,6 +61,18 @@ runtime adapter or embedded artifact
 The proposed inline Metal/Candle path is one integration of this general
 pipeline, not part of the compiler's defining abstraction.
 
+### Where the post-compiler half is general today
+
+**Fact — audited 2026-08-04 by reading the four stages below the compiler.** The interesting result is that the multi-kernel and multi-output questions have different answers, and that neither answer is uniform across the four stages, so a reader must not carry one stage's maturity to its neighbour. [The optimizer contract](compiler/optimizer.md#what-each-stage-is-general-over-today) states the same per stage for the eleven compiler stages.
+
+**Multi-kernel and multi-entry programs are general end to end.** Metal emission takes a slice of verified kernels, orders and deduplicates them by canonical kernel identity, and emits one entry point per kernel with no cardinality check at all — an empty slice is accepted and exercised. Artifact assembly declares one entry per program stage, keyed by that stage's own kernel identity, under a variant-entry bound of 4,096 and a negotiated multi-stage-program feature the reader supports. The device-free loader routes per entry in the variant's own execution order, and the two adapters that exist encode one command encoder per entry with an explicit fence between them. Nothing here is a bounded-profile approximation of a single-kernel program.
+
+**Ordered named outputs are general in the middle two stages and not at the ends.** The artifact layer binds storage to a *list* of named output keys per binding, derived per program value rather than per schedule role, and folds it into identity; the loader publishes outputs in semantic interface order and inspects no target class, so neither imposes a count. The two ends do. At emission, `TensorRole` distinguishes inputs by ordinal and carries none on `Output`, so *one kernel* cannot write two distinct named outputs — several stages each writing one can, because the program layer binds a stage's buffers to values positionally. At dispatch, the inline frontend's region facts carry one result key and one result byte run, and the Candle adapter matches a binding target of exactly one output key against its own fixed `"result"` key. So the runtime-side widening a multi-output program needs is at the consumer seam, not in the artifact encoding or the loader.
+
+**One restriction the loader does enforce is about pairing, not counting, and it is worth not misreading as the multi-output wall.** Deriving a shared allocation from a typed data dependency requires the producing entry to have exactly one internal write binding and the consuming entry exactly one internal read binding; either failing is a typed refusal naming which. Its own site records that the uniqueness half is unreachable from any current fixture and is retained so that widening the kernel profile becomes a refusal rather than a silent mis-bind — which is a claim about the code rather than a measured one.
+
+**No stage of live execution lives in `crates/`.** `grep -rln 'wait_until_completed' --include='*.rs' .` returns only `spikes/runtime/` and `prototypes/` files; the loader is device-free by decision, and the submit, terminal-status, and readback path exists twice as proof executables. Both check the command buffer's terminal status after waiting and before any readback, and both classify an unnamed status as non-terminal rather than as success. The component table below records live execution as a role with no admitted crate, and that is what the grep confirms.
+
 ## Semantic invocations and consumer-owned composition
 
 One compiler request describes one pure, finite semantic program with explicit

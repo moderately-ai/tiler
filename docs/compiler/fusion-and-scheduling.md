@@ -44,6 +44,10 @@ Producer duplication stays disabled in the first profile while the
 exhaustive tiny-DAG oracle retains it as a completeness witness. This stage is
 a candidate enumerator, not a cover selector or a public fusion API.
 
+All three of those tickets are `done`, and the general DAG partition search over them landed 2026-08-04 under [`implement-general-dag-partitioning`](../../tickets/implement-general-dag-partitioning.md) — fan-out, ordered multi-result outputs, per-edge materialization, and budgeted memoized enumeration checked against exhaustive small-graph oracles.
+
+**Fact — producer duplication is a stated legality contract now, and it is still off on the compile path for a reason that is not about legality.** It is no longer only an oracle-held completeness witness: the cover authority carries two admissions as distinct legality contracts — an exact partition, and a pure-recomputation admission whose per-member condition is purity, no named result, and a contract granting no realization freedom, each with its own typed refusal — and one enumeration and every verification of its covers run under the same stated policy so that a verification cannot silently apply the weaker rule. The compile path states the exact-partition admission, and the derivation for that is downstream: a duplicating cover assigns one occurrence to several region subjects, each of which needs a physical implementation, and [the physical layer proposes for only the partitions the request boundary pre-computed](optimizer.md#what-each-stage-is-general-over-today). Every duplicating cover of a governed program would therefore be enumerated, found unimplementable, and rejected. [`activate-shared-work-duplication-on-the-compile-path`](../../tickets/activate-shared-work-duplication-on-the-compile-path.md) is the `deferred` owner, and its activation trigger is a physical provider and a program assembly that can realize one — not a change to this contract.
+
 Index-region lowering is not one of the later stages in that list. It runs *between* candidate enumeration and cover enumeration, per recognized occurrence rather than per candidate region: the compile path resolves each occurrence's index/access lowering capability and refines the region that capability's provider emits before the first cover is enumerated, because a cover grouping occurrences the installed authority cannot lower would be a claim about plans nothing could realize. Cover enumeration is therefore an independent legality authority that nonetheless runs downstream of a successful resolution. [The optimizer contract](optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns that stage.
 
 Every prototype candidate recomputes its stable identity from its exact member
@@ -145,6 +149,8 @@ include one materialized `p`, a multi-output region `{p,left,right}`, or—only
 with explicit duplication capability—two occurrences in `{p,left}` and
 `{p,right}`. The first implementation keeps duplication disabled while the
 exhaustive tiny-DAG oracle retains it as a completeness witness.
+
+All three are now enumerated by the landed partition search under the admission that permits them, and the compile path states the exact-partition admission for the derivation above. One correction that generalizes came out of that oracle: an anchored search that admits a candidate only when it covers the branch's minimum uncovered operation can never choose a region all of whose operations are already covered, and `{p}` beside `{p,left}` is exactly such a region — so the anchored base is enumerated together with every augmentation by one, which is complete because running the anchor rule over any legal cover selects a base and leaves exactly that remainder.
 
 ## Legality
 
