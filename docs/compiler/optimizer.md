@@ -543,12 +543,15 @@ Region enumeration is already general rather than a trivial builder for a narrow
 semantic graph: `EnumerateRegionCandidates` proposes every connected convex
 region of an arbitrary verified DAG up to the declared budgets, with separate
 content and occurrence identities and typed budget-stops, and is checked against
-an exhaustive subset oracle. Goal-directed property search over those candidates
-is the staged future work:
+an exhaustive subset oracle. The staging this paragraph once pointed forward to has landed:
 [cover enumeration](../../tickets/prototype-region-cover-enumeration.md),
 [physical-implementation frontiers](../../tickets/prototype-physical-implementation-frontier.md),
 and [complete physical-plan selection](../../tickets/prototype-complete-physical-plan-selection.md)
-are separate later stages, not a second optimizer architecture.
+are all done, and the general DAG cover search over them (fan-out, ordered
+multi-result outputs, checked shared-work duplication, per-edge materialization,
+budgeted memoized enumeration against an exhaustive oracle) landed 2026-08-04
+under `implement-general-dag-partitioning` — one optimizer architecture
+throughout, exactly as this section required.
 
 ## Symbolic parameters and routing
 
