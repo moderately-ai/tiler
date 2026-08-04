@@ -16,7 +16,7 @@ ticket: "define-first-metal-lm-workload"
 
 # First Metal language-model workload profile
 
-**Status:** durable workload profile for rung L1 of the language-model inference ladder. The model selection is an accepted ticket outcome; the profile below is the bounded record that L2 through L8 derive from. Nothing here authorizes implementation, and no rung of the ladder is built.
+**Status:** durable workload profile for rung L1 of the language-model conformance track. The model selection is an accepted ticket outcome; the profile below is the bounded record that L2 through L8 derive from. Nothing here authorizes implementation, and no rung of the ladder is built.
 
 ## Traceability
 

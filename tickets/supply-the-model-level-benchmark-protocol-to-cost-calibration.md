@@ -8,7 +8,7 @@ related: [calibrate-device-cost-models, implement-analytical-component-cost-mode
 scopes: [research/cost-model]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, cost-model, measurement, performance, calibration, language-model]
+tags: [research, cost-model, measurement, performance, calibration, language-model, class-performance-study]
 ---
 ## User-visible outcome
 

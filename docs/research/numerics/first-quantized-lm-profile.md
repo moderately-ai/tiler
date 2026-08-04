@@ -16,7 +16,7 @@ ticket: "scope-first-quantized-lm-profile"
 
 # First quantized language-model profile
 
-**Status:** durable selection and elimination record for rung L7 of the language-model inference ladder. It is a research outcome, not a capability: nothing here registers a scheme, admits a parameter map, installs a lowering capability, or moves any cell of the [dtype support ledger](../../dtype-support.md). What it delivers is one selected profile, the elimination that produced it with the ground stated per candidate, two measured stages, one exhaustive-finite derivation about target honourability, and the dependency-ordered delivery graph.
+**Status:** durable selection and elimination record for rung L7 of the language-model conformance track. It is a research outcome, not a capability: nothing here registers a scheme, admits a parameter map, installs a lowering capability, or moves any cell of the [dtype support ledger](../../dtype-support.md). What it delivers is one selected profile, the elimination that produced it with the ground stated per candidate, two measured stages, one exhaustive-finite derivation about target honourability, and the dependency-ordered delivery graph.
 
 ## Why this record lives in `research/numerics`
 

@@ -8,7 +8,7 @@ related: [define-the-model-level-conformance-corpus, qualify-the-model-level-cla
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, measurement, performance, harness, language-model, metal]
+tags: [research, measurement, performance, harness, language-model, metal, class-performance-study]
 ---
 ## User-visible outcome
 

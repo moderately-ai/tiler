@@ -8,7 +8,7 @@ related: [design-model-ingestion-and-complete-execution, route-an-embedded-artif
 scopes: [implementation/runtime, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, runtime, model, routing, artifacts, language-model]
+tags: [implementation, runtime, model, routing, artifacts, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

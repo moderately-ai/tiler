@@ -8,7 +8,7 @@ related: [design-attention-program-vertical, plan-the-recomputing-attention-deco
 scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, physical-planning, fusion, feasibility, attention, language-model]
+tags: [implementation, physical-planning, fusion, feasibility, attention, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 

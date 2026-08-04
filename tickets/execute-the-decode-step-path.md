@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, integrate-the-autoregressive
 scopes: [implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, conformance, decode, routing, consumer-neutral, language-model]
+tags: [implementation, conformance, decode, routing, consumer-neutral, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

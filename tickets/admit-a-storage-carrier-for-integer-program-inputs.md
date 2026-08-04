@@ -8,7 +8,7 @@ related: [design-model-ingestion-and-complete-execution, enumerate-the-mature-te
 scopes: [implementation/ir, implementation/artifact, implementation/frontend, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, dtype, abi, frontend, gather, language-model]
+tags: [implementation, dtype, abi, frontend, gather, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 

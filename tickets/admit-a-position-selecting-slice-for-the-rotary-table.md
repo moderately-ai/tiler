@@ -1,14 +1,14 @@
 ---
 id: admit-a-position-selecting-slice-for-the-rotary-table
-title: Admit a position-selecting slice for the rotary table
+title: Derive the decode step's rotary position through the sub-tensor selection family
 status: todo
 priority: p2
-dependencies: [integrate-the-autoregressive-decode-loop, reclassify-language-model-work-as-a-conformance-track]
+dependencies: [integrate-the-autoregressive-decode-loop, reclassify-language-model-work-as-a-conformance-track, admit-the-sub-tensor-selection-family]
 related: [design-autoregressive-state-and-kv-cache, admit-the-reindex-and-broadcast-operation-families, compose-rotary-position-embedding-from-reindex-and-broadcast]
 scopes: [implementation/ir, implementation/reference, contracts/foundation]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
-tags: [implementation, semantics, operation-families, rope, kv-cache, language-model]
+tags: [implementation, semantics, operation-families, rope, kv-cache, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 
@@ -26,8 +26,10 @@ A slice removes the **inconsistency** mode — the cache saying `C = 14` while t
 
 ## Required design
 
-A slice is injective and not surjective, so it is outside `tiler::reindex-f32@1` — whose `reindex.split.not-surjective` refusal already names it as such — and outside `Broadcast`. Whether the required form is a general `Slice` family, a bounded offset-and-extent selection along one axis, or something the index vocabulary already reaches with a symbol-carrying coordinate, is the question; **note that no `IndexNode` variant currently carries an extent symbol outside a `FloorDiv` or `Modulo` divisor**, so a symbolic offset is itself a gap and must be costed as part of the answer.
+**Split on 2026-08-04 under [`reclassify-language-model-work-as-a-conformance-track`](reclassify-language-model-work-as-a-conformance-track.md).** This section previously carried the family's design as well as its trigger, which made a generic operation family reachable only behind a complete consumer decode loop. The family is now [`admit-the-sub-tensor-selection-family`](admit-the-sub-tensor-selection-family.md), which depends on nothing and owns the choice between a general `Slice`, a bounded offset-and-extent selection, and a strided form, together with the verified `IndexNode` fact that a literal offset is expressible today and a symbolic one is not. The original reasoning is preserved there verbatim in substance; nothing about it was withdrawn.
+
+What stays here is the consumer application: **binding the whole `[max_positions, 128]` table and selecting rows `C … C + T` by an index expression over the same bound extent that fixes the cache**, so the decode program cannot state position two ways. `C` is a bound symbol, so this application is the one that needs the family's symbolic-offset form rather than its literal-offset form, and it is the reason that boundary must be stated rather than assumed.
 
 ## Closes when
 
-Either a family is admitted with its refusals and its evaluator, or the approach is rejected with a ground and the support-matrix row keeps both triggers with this one's evidence attached.
+The family has landed, the conformance decode program derives its rotary rows through it over the same bound extent that fixes the cache, an inconsistent position is refused rather than executed, and the support-matrix row keeps both triggers with this one's evidence attached. If the family is delivered without a symbolic offset, this ticket records that it is blocked on that form rather than closing on the literal one.

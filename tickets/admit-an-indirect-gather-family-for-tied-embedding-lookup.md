@@ -1,6 +1,6 @@
 ---
 id: admit-an-indirect-gather-family-for-tied-embedding-lookup
-title: Admit an indirect gather family for tied embedding lookup
+title: Admit an indirect gather access family
 status: todo
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface, reclassify-language-model-work-as-a-conformance-track]
@@ -8,11 +8,13 @@ related: [own-operation-family-support-matrix, design-model-ingestion-and-comple
 scopes: [contracts/foundation, implementation/ir, implementation/reference, implementation/compiler, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, semantics, indexing, gather, language-model, breadth]
+tags: [implementation, semantics, indexing, gather, language-model, breadth, class-generic-capability]
 ---
 ## User-visible outcome
 
-A language-model program can read its own input: token IDs select rows of the embedding matrix, which is the one operation between the model's inputs and its logits that no composition of admitted families can express.
+A program can use one tensor's values as coordinates into another — an indirect, tensor-data-derived access class that the admitted index vocabulary rejects by construction and that no composition of admitted families can express.
+
+**Retitled 2026-08-04 under [`reclassify-language-model-work-as-a-conformance-track`](reclassify-language-model-work-as-a-conformance-track.md).** The outcome above read "A language-model program can read its own input: token IDs select rows of the embedding matrix". The access class is generic; a tied embedding lookup is the occurrence that found it and is the workload evidence below, never the thing that names or owns it. **The ticket id is deliberately unchanged**: five records outside this ticket's editable scopes link to it by filename — `docs/research/shapes/transformer-operation-and-shape-surface.md:166`, `docs/research/numerics/first-quantized-lm-profile.md:182`, `docs/research/program-planning/first-attention-program-vertical.md:164`, `docs/research/program-planning/model-level-qualification.md:356`, and `docs/research/program-planning/complete-model-ingestion-and-execution.md:105`/`:305` — so renaming the file would trade a workload-flavoured identifier for broken links a reader hits and no gate reports.
 
 ## Evidence prerequisite
 

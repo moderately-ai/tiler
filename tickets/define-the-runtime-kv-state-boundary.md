@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, prototype-candle-metal-adapt
 scopes: [contracts/integrations, contracts/foundation, research/runtime, research/program-planning, research/numerics]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
-tags: [design, runtime, kv-cache, lifetime, identity, language-model, supersession]
+tags: [design, runtime, kv-cache, lifetime, identity, language-model, supersession, class-obsolete]
 closed_reason: superseded
 closed_note: The runtime owns no KV state; superseded by supersede-the-runtime-owned-kv-state-design. Draft branch preserved as review evidence.
 ---

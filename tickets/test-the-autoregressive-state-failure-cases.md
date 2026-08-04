@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, prove-the-c1-stateful-attent
 scopes: [implementation/runtime, implementation/candle, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, testing, fail-closed, consumer-neutral, language-model]
+tags: [implementation, testing, fail-closed, consumer-neutral, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

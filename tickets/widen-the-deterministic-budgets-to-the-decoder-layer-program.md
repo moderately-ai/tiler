@@ -8,7 +8,7 @@ related: [design-model-ingestion-and-complete-execution, enumerate-the-split-red
 scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, compiler, budgets, identity, language-model]
+tags: [implementation, compiler, budgets, identity, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 

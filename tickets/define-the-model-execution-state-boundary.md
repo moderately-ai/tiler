@@ -8,7 +8,7 @@ related: [design-model-ingestion-and-complete-execution, design-autoregressive-s
 scopes: [contracts/integrations, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [design, runtime, state, kv-cache, lifetime, public-boundary, language-model, supersession]
+tags: [design, runtime, state, kv-cache, lifetime, public-boundary, language-model, supersession, class-obsolete]
 closed_reason: superseded
 closed_note: Model-level instantiation of the withdrawn runtime KV state; the consumer owns the cursor and retained tensors.
 ---

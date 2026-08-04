@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, admit-a-position-selecting-s
 scopes: [implementation/candle, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, conformance, decode, consumer-neutral, language-model]
+tags: [implementation, conformance, decode, consumer-neutral, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

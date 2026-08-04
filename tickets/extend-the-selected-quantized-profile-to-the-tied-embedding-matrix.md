@@ -8,7 +8,7 @@ related: [scope-first-quantized-lm-profile, design-autoregressive-state-and-kv-c
 scopes: [implementation/compiler, implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, quantization, language-model, deferred]
+tags: [implementation, quantization, language-model, deferred, class-conformance-fixture]
 ---
 ## Activation boundary
 
