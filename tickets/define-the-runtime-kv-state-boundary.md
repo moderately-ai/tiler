@@ -1,17 +1,14 @@
 ---
 id: define-the-runtime-kv-state-boundary
 title: Define the runtime KV-state boundary
-status: in-progress
+status: deferred
 priority: p1
-dependencies: [admit-the-sequence-extension-concatenate-family, establish-a-dynamic-kv-physical-layout-authority]
+dependencies: [admit-the-sequence-extension-concatenate-family, establish-a-dynamic-kv-physical-layout-authority, supersede-the-runtime-owned-kv-state-design, reclassify-language-model-work-as-a-conformance-track]
 related: [design-autoregressive-state-and-kv-cache, prototype-candle-metal-adapter, transfer-synchronization-and-resource-lifetime-contract, bind-the-kv-cache-through-the-artifact-and-runtime-interface, name-a-host-process-availability-phase]
 scopes: [contracts/integrations, contracts/foundation, research/runtime, research/program-planning, research/numerics]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [design, runtime, kv-cache, lifetime, identity, language-model]
-claimed_from: todo
-assignee: agent-kv-boundary
-lease_expires_at: 1785878733
 ---
 ## User-visible outcome
 

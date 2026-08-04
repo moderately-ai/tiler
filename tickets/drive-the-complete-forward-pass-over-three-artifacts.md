@@ -3,7 +3,7 @@ id: drive-the-complete-forward-pass-over-three-artifacts
 title: Drive the complete forward pass over three artifacts
 status: todo
 priority: p1
-dependencies: [widen-the-deterministic-budgets-to-the-decoder-layer-program, ingest-the-checkpoint-as-f32-program-inputs, define-the-model-execution-state-boundary, deliver-an-artifact-family-from-a-symbolic-region, integrate-the-autoregressive-decode-loop]
+dependencies: [widen-the-deterministic-budgets-to-the-decoder-layer-program, ingest-the-checkpoint-as-f32-program-inputs, define-the-model-execution-state-boundary, deliver-an-artifact-family-from-a-symbolic-region, integrate-the-autoregressive-decode-loop, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, route-an-embedded-artifact-through-a-consumer-storage-seam, prove-the-c1-complete-model-execution, name-the-execution-ordinal-in-model-level-failures]
 scopes: [implementation/runtime, implementation/frontend]
 shared_scopes: [project/tickets]

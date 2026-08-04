@@ -3,7 +3,7 @@ id: qualify-the-model-level-claims-per-apple-device-and-toolchain-row
 title: Qualify the model-level claims per Apple device and toolchain row
 status: todo
 priority: p3
-dependencies: [build-the-model-level-measurement-harness]
+dependencies: [build-the-model-level-measurement-harness, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-level-qualification-and-optimization, measure-apple-numerics-on-physical-ios-device, define-the-model-level-regression-policy]
 scopes: [research/apple-targets]
 shared_scopes: [project/tickets]

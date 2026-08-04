@@ -3,7 +3,7 @@ id: assemble-the-decoder-layer-program
 title: Assemble the complete decoder-layer program
 status: todo
 priority: p1
-dependencies: [assemble-the-causal-self-attention-block-program, admit-the-silu-activation-family, admit-the-sequence-extension-concatenate-family]
+dependencies: [assemble-the-causal-self-attention-block-program, admit-the-silu-activation-family, admit-the-sequence-extension-concatenate-family, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, design-attention-program-vertical, design-autoregressive-state-and-kv-cache, widen-the-deterministic-budgets-to-the-decoder-layer-program]
 scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]

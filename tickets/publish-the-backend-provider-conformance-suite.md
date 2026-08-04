@@ -2,9 +2,9 @@
 id: publish-the-backend-provider-conformance-suite
 title: Publish the backend-provider conformance suite
 status: todo
-priority: p2
+priority: p1
 dependencies: [exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio]
-related: [compile-extension-spike-fixtures-in-the-gate]
+related: [compile-extension-spike-fixtures-in-the-gate, audit-backend-authoring-against-all-thirteen-responsibilities]
 scopes: [implementation/compiler, implementation/build, implementation/artifact, implementation/runtime, contracts/numerics, contracts/foundation, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []

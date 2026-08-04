@@ -3,7 +3,7 @@ id: supply-the-model-level-benchmark-protocol-to-cost-calibration
 title: Supply the benchmark protocol cost calibration is waiting on
 status: todo
 priority: p3
-dependencies: [build-the-model-level-measurement-harness]
+dependencies: [build-the-model-level-measurement-harness, reclassify-language-model-work-as-a-conformance-track]
 related: [calibrate-device-cost-models, implement-analytical-component-cost-model, design-model-level-qualification-and-optimization]
 scopes: [research/cost-model]
 shared_scopes: [project/tickets]

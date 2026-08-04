@@ -3,7 +3,7 @@ id: execute-the-stateful-prefill-path
 title: Execute the stateful prefill path
 status: todo
 priority: p1
-dependencies: [bind-the-kv-cache-through-the-artifact-and-runtime-interface, integrate-the-attention-block-into-the-runtime]
+dependencies: [bind-the-kv-cache-through-the-artifact-and-runtime-interface, integrate-the-attention-block-into-the-runtime, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
 related: [design-autoregressive-state-and-kv-cache, execute-the-decode-step-path]
 scopes: [implementation/runtime, implementation/candle]
 shared_scopes: [project/tickets]

@@ -3,7 +3,7 @@ id: search-a-tie-demonstrating-prompt-for-the-model-level-corpus
 title: Search a tie-demonstrating prompt for the model-level corpus
 status: deferred
 priority: p3
-dependencies: []
+dependencies: [reclassify-language-model-work-as-a-conformance-track]
 related: [define-the-model-level-conformance-corpus, build-the-model-level-measurement-harness, prove-the-c1-complete-model-execution, define-first-metal-lm-workload]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]

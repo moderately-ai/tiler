@@ -3,7 +3,7 @@ id: build-the-model-level-measurement-harness
 title: Build the model-level measurement harness
 status: todo
 priority: p2
-dependencies: [land-the-model-level-qualification-record, drive-the-complete-forward-pass-over-three-artifacts]
+dependencies: [land-the-model-level-qualification-record, drive-the-complete-forward-pass-over-three-artifacts, reclassify-language-model-work-as-a-conformance-track]
 related: [define-the-model-level-conformance-corpus, qualify-the-model-level-claims-per-apple-device-and-toolchain-row, supply-the-model-level-benchmark-protocol-to-cost-calibration, define-the-model-level-regression-policy, measure-b1-d-peak-residency-on-a-named-host, prove-the-c1-complete-model-execution]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]

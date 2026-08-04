@@ -3,7 +3,7 @@ id: realize-the-tiled-contraction-schedule-and-its-metal-emission
 title: Realize the tiled contraction schedule and its Metal emission
 status: deferred
 priority: p1
-dependencies: [admit-a-cooperative-tile-over-shared-operands, admit-a-two-dimensional-cooperative-staging-relation]
+dependencies: [admit-a-cooperative-tile-over-shared-operands, admit-a-two-dimensional-cooperative-staging-relation, reclassify-language-model-work-as-a-conformance-track]
 related: [realize-the-strict-contraction-on-metal, realize-the-contraction-through-the-appendable-direct-path, integrate-the-contraction-vertical-into-the-runtime]
 scopes: [implementation/ir, implementation/compiler, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]

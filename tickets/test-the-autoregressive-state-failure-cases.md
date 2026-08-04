@@ -3,7 +3,7 @@ id: test-the-autoregressive-state-failure-cases
 title: Test the autoregressive state failure cases
 status: todo
 priority: p1
-dependencies: [integrate-the-autoregressive-decode-loop]
+dependencies: [integrate-the-autoregressive-decode-loop, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
 related: [design-autoregressive-state-and-kv-cache, prove-the-c1-stateful-attention-vertical]
 scopes: [implementation/runtime, implementation/candle, implementation/artifact]
 shared_scopes: [project/tickets]

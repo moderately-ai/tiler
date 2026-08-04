@@ -3,7 +3,7 @@ id: scope-causal-structure-aware-attention-schedules
 title: Scope whether a schedule may exploit the causal mask's structure
 status: todo
 priority: p2
-dependencies: [retain-the-c1-attention-block-conformance-evidence]
+dependencies: [retain-the-c1-attention-block-conformance-evidence, reclassify-language-model-work-as-a-conformance-track]
 related: [design-attention-program-vertical, plan-the-recomputing-attention-decomposition, realize-the-attention-contractions-on-metal, admit-the-softmax-family, implement-parallel-reduction-strategies, reduction-semantics-contract]
 scopes: [research/scheduling, contracts/numerics]
 shared_scopes: [project/tickets]

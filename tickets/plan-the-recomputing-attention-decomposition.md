@@ -3,7 +3,7 @@ id: plan-the-recomputing-attention-decomposition
 title: Plan the recomputing attention decomposition that never materializes the scores
 status: todo
 priority: p2
-dependencies: [integrate-the-attention-block-into-the-runtime]
+dependencies: [integrate-the-attention-block-into-the-runtime, reclassify-language-model-work-as-a-conformance-track]
 related: [design-attention-program-vertical, plan-the-materialized-attention-decomposition, enumerate-the-split-reduction-on-the-planning-frontier, implement-analytical-component-cost-model, decide-whether-to-admit-a-distributivity-permission]
 scopes: [implementation/compiler, implementation/ir, implementation/metal, contracts/optimizer]
 shared_scopes: [project/tickets]

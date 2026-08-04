@@ -3,7 +3,7 @@ id: evaluate-retained-shape-relations-before-routing-commit
 title: Evaluate retained shape relations against invocation bindings before routing commit
 status: todo
 priority: p1
-dependencies: [admit-an-additive-extent-relation, bind-the-kv-cache-through-the-artifact-and-runtime-interface]
+dependencies: [admit-an-additive-extent-relation, bind-the-kv-cache-through-the-artifact-and-runtime-interface, reclassify-language-model-work-as-a-conformance-track]
 related: [design-autoregressive-state-and-kv-cache, execute-the-decode-step-path, test-the-autoregressive-state-failure-cases]
 scopes: [implementation/ir, implementation/artifact, implementation/runtime, implementation/build, contracts/artifacts, contracts/integrations]
 shared_scopes: [project/tickets]

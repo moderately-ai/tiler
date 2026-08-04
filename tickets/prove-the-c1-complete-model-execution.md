@@ -3,7 +3,7 @@ id: prove-the-c1-complete-model-execution
 title: Prove the C1 complete-model execution
 status: todo
 priority: p1
-dependencies: [drive-the-complete-forward-pass-over-three-artifacts, retain-the-c1-model-attribution-fixture, prove-the-c1-stateful-attention-vertical]
+dependencies: [drive-the-complete-forward-pass-over-three-artifacts, retain-the-c1-model-attribution-fixture, prove-the-c1-stateful-attention-vertical, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, define-first-metal-lm-workload, design-model-level-qualification-and-optimization]
 scopes: [implementation/runtime, research/program-planning]
 shared_scopes: [project/tickets]

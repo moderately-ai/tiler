@@ -3,7 +3,7 @@ id: scope-a-windowed-kv-append-into-retained-capacity
 title: Scope a windowed KV append into retained capacity
 status: deferred
 priority: p2
-dependencies: [prove-the-c1-stateful-attention-vertical, establish-a-dynamic-kv-physical-layout-authority]
+dependencies: [prove-the-c1-stateful-attention-vertical, establish-a-dynamic-kv-physical-layout-authority, reclassify-language-model-work-as-a-conformance-track]
 related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending-tensor-family, design-model-level-qualification-and-optimization, measure-b1-d-peak-residency-on-a-named-host]
 scopes: [research/runtime, implementation/ir]
 shared_scopes: [project/tickets]

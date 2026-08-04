@@ -3,7 +3,7 @@ id: admit-a-position-selecting-slice-for-the-rotary-table
 title: Admit a position-selecting slice for the rotary table
 status: todo
 priority: p2
-dependencies: [integrate-the-autoregressive-decode-loop]
+dependencies: [integrate-the-autoregressive-decode-loop, reclassify-language-model-work-as-a-conformance-track]
 related: [design-autoregressive-state-and-kv-cache, admit-the-reindex-and-broadcast-operation-families, compose-rotary-position-embedding-from-reindex-and-broadcast]
 scopes: [implementation/ir, implementation/reference, contracts/foundation]
 shared_scopes: [project/tickets, contracts/navigation]

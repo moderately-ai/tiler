@@ -3,7 +3,7 @@ id: define-the-model-execution-state-boundary
 title: Define the model execution state boundary
 status: todo
 priority: p1
-dependencies: [assemble-the-decoder-layer-program, define-the-runtime-kv-state-boundary]
+dependencies: [assemble-the-decoder-layer-program, define-the-runtime-kv-state-boundary, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
 related: [design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, drive-the-complete-forward-pass-over-three-artifacts, scope-a-windowed-kv-append-into-retained-capacity]
 scopes: [contracts/integrations, contracts/foundation]
 shared_scopes: [project/tickets]

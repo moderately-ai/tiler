@@ -3,7 +3,7 @@ id: implement-first-quantized-backend-profile
 title: Implement the first selected quantized backend profile
 status: todo
 priority: p2
-dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile, admit-a-normal-scale-precondition-for-target-honourable-strict-affine-decode, implement-workload-selected-quantized-parameter-maps, widen-the-physical-vocabulary-for-per-axis-quantized-component-access, measure-code-domain-integer-arithmetic-on-the-qualified-apple-row, fuse-quantized-weight-decode-into-the-strict-contraction, implement-first-runtime-semantic-value-precondition-enforcement]
+dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile, admit-a-normal-scale-precondition-for-target-honourable-strict-affine-decode, implement-workload-selected-quantized-parameter-maps, widen-the-physical-vocabulary-for-per-axis-quantized-component-access, measure-code-domain-integer-arithmetic-on-the-qualified-apple-row, fuse-quantized-weight-decode-into-the-strict-contraction, implement-first-runtime-semantic-value-precondition-enforcement, reclassify-language-model-work-as-a-conformance-track]
 related: [implement-workload-selected-quantized-parameter-maps, own-the-dtype-support-maturity-matrix, admit-a-caller-declared-target-profile, calibrate-device-cost-models, group-internal-compound-materializations-by-logical-value, extend-the-selected-quantized-profile-to-the-tied-embedding-matrix, admit-strict-affine-quantize-physical-candidate]
 scopes: [implementation/compiler, implementation/artifact, implementation/reference, implementation/runtime, implementation/metal]
 shared_scopes: [project/tickets]

@@ -3,7 +3,7 @@ id: route-the-contraction-conformance-through-the-staged-oracle
 title: Route the compiler's contraction conformance through the staged oracle
 status: todo
 priority: p2
-dependencies: []
+dependencies: [reclassify-language-model-work-as-a-conformance-track]
 related: [bound-the-reference-contraction-comparison-for-the-profile-cells, realize-the-contraction-through-the-appendable-direct-path]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]

@@ -3,7 +3,7 @@ id: route-the-index-region-conformance-through-the-staged-oracle
 title: Route the index-region conformance through the staged oracle
 status: todo
 priority: p2
-dependencies: []
+dependencies: [reclassify-language-model-work-as-a-conformance-track]
 related: [decide-the-index-region-oracle-route-past-its-step-budget, route-the-contraction-conformance-through-the-staged-oracle]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]

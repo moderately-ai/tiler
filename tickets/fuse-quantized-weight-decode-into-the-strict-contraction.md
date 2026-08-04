@@ -3,7 +3,7 @@ id: fuse-quantized-weight-decode-into-the-strict-contraction
 title: Fuse the quantized weight decode into the strict contraction
 status: todo
 priority: p2
-dependencies: [widen-the-physical-vocabulary-for-per-axis-quantized-component-access, implement-workload-selected-quantized-parameter-maps, realize-the-tiled-contraction-schedule-and-its-metal-emission]
+dependencies: [widen-the-physical-vocabulary-for-per-axis-quantized-component-access, implement-workload-selected-quantized-parameter-maps, realize-the-tiled-contraction-schedule-and-its-metal-emission, reclassify-language-model-work-as-a-conformance-track]
 related: [implement-first-quantized-backend-profile, admit-reassociated-contraction-schedule-alternatives, calibrate-device-cost-models, scope-first-quantized-lm-profile]
 scopes: [implementation/compiler, implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
