@@ -1,7 +1,7 @@
 ---
 id: admit-a-strict-affine-index-realization-law
 title: Admit a strict-affine index-realization law
-status: todo
+status: in-progress
 priority: p1
 dependencies: [place-index-refinement-evidence-under-an-ir-owned-verifier]
 related: [bind-stage-coverage-to-index-refinement-identity, prototype-quantized-value-vertical]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, correctness]
+claimed_from: todo
+assignee: agent-strict-affine-law
+lease_expires_at: 1785851573
 ---
 
 ## User-visible outcome
