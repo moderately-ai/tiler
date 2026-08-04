@@ -1,7 +1,7 @@
 ---
 id: define-the-minimum-correct-physical-realization-profile
 title: Define the minimum correct physical realization profile
-status: todo
+status: in-progress
 priority: p1
 dependencies: [enumerate-the-mature-tensor-operation-and-signature-taxonomy]
 related: [implement-general-dag-partitioning, admit-ordered-multi-output-programs-at-the-compiler-request-boundary, prototype-complete-physical-plan-selection]
@@ -9,6 +9,9 @@ scopes: [research/program-planning, research/scheduling, contracts/optimizer, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, physical-planning, correctness, baseline]
+claimed_from: todo
+assignee: agent-realization-profile
+lease_expires_at: 1785881439
 ---
 ## User-visible outcome
 
