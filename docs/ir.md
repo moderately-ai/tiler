@@ -1124,6 +1124,23 @@ Discharged and residual predicates share one canonical assessment sequence in re
 
 Only IR's exact `ExhaustiveFinite` result can currently mint a residual-domain proof. `SoundProof` remains a distinct evidence class for predicates discharged by the region verifier itself, but no residual sound-certificate language or constructor is exposed; `Empirical` remains reserved for measurements, is non-discharging, and grants no execution permission. Refinement returns a typed pending state for an otherwise-conforming region with residuals. That state owns the exact region that resolves its local handles, the full semantic occurrence, frozen scalar and capability authorities, and the already-checked operand/result bindings; it mints no refinement identity and cannot be consumed as an executable `IndexRefinement`. IR's closed completion algorithm does not mutate or rebuild that verified region: sealed proof receipts overlay it and join reusable compiler refinement content, binding the exact region identity, local obligation key, fixed proof authority and revision, and proof basis into refinement identity. The frozen law registry and each sealed residual proof expose canonical bytes only through the opaque typed `IndexRealizationLawRegistryIdentity` and `IndexRefinementDomainProofIdentity`; callers cannot construct either identity. This preserves region-owner handle validity and keeps later evidence distinct from the region verifier's original assessment.
 
+**Proposal — tested public draft pending acceptance:** a completed
+`IndexRefinementReceipt` additionally owns an opaque
+`IndexRefinementExecutableCoverageIdentity`, minted under
+`tiler.ir.index-refinement-executable-coverage.v1`. The executable subject
+retains the exact semantic graph and canonical occurrence, numerical contract,
+verified region, selected realization-law row and provider, reached semantic,
+scalar, and type definition/admission projections, exact operand/result
+bindings, and residual proof identities. It deliberately excludes complete
+semantic, scalar, and law-registry snapshots, so an unused authority row cannot
+invalidate selected executable provenance. The existing strict receipt v1
+identity remains unchanged and continues to answer whether completion occurred
+under the exact frozen verifier/request authority. Only a completed receipt
+exposes the reached projection; pending and refused proof states have no
+executable-coverage identity. Program and artifact stages do not consume this
+draft yet—the dependent coverage-binding work owns that separate public and
+identity step.
+
 The first access profile remains out-of-place: input boundaries may be read but
 not written, output boundaries may be written but not read, and every declared
 output boundary requires exactly one complete ordinary write root.

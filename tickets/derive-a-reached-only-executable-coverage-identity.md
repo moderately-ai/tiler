@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [place-index-refinement-evidence-under-an-ir-owned-verifier, canonicalize-index-refinement-occurrence-ordinals]
 related: [bind-stage-coverage-to-index-refinement-identity]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/decisions, contracts/artifacts, research/program-planning]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/decisions, contracts/artifacts, research/program-planning, contracts/foundation]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [design, implementation, identity]
@@ -55,3 +55,61 @@ Candidate 3 is the current sole safe recommendation: it keeps receipt verificati
 ## Closes when
 
 The reached-only proof-derived public draft is accepted; all perturbations pass; both independent encoders and identity ledgers agree; the blocked stage-coverage ticket can consume it without weakening ADR 0072; targeted affected-crate checks and the full gate pass.
+
+## Scope and concurrency record — 2026-08-04
+
+The existing `implementation/ir` and `project/tickets` declarations cover the
+implementation and graph record changed here. `contracts/foundation` was added
+autonomously because `ticketsplease.toml` maps the source-derived IR identity
+statement in `docs/ir.md` there; this declares already-authorized work and does
+not expand the product outcome. The pre-existing `contracts/artifacts` scope is
+retained for the ticket's artifact identity audit, although this branch does
+not change an artifact contract or encoder.
+Before editing, the exact four-file planned population—
+`crates/tiler-ir/src/index/{mod,refinement}.rs`, `docs/ir.md`, and this ticket—
+was intersected with the concurrent KV research branch's 30-file population
+from `b4e3478d42ce21ed68e23f772b643c6370d36498` through
+`fff3894cc0731ca7df3cb51cc9f18714cba44aa7`; the intersection count was zero.
+The coordinator separately reported that the KV research landed as a 34-file
+population. This branch does not rebase or edit any KV path; integration must
+repeat the intersection against the published merged base.
+
+## Tested draft and identity audit — 2026-08-04
+
+**Proposal — exact public inventory, not self-accepted:** `tiler_ir::index`
+adds the opaque `IndexRefinementExecutableCoverageIdentity` with only
+`as_bytes(&self) -> &[u8]`, and `IndexRefinementReceipt` adds
+`executable_coverage_identity(&self) ->
+&IndexRefinementExecutableCoverageIdentity`. The type has no public raw-byte or
+field constructor; a compile-fail doctest exercises its private storage. The
+only production minting site is `mint_receipt`, reached after immediate
+verification or successful closed residual-proof completion. Pending and
+refused states therefore cannot spell executable coverage.
+
+**Fact — retained subject:** the new encoder length-frames the exact graph,
+canonical occurrence, numerical contract, canonical verified region, reached
+semantic definitions and admission, exact law row, resolved law provider and
+revision, reached scalar definitions and admission, reached semantic type
+definitions and admission, ordered operand/result binding records, and every
+residual proof identity. It does not encode the subject semantic snapshot,
+scalar snapshot, or frozen law-registry snapshot. Those remain in the existing
+strict receipt/request authority.
+
+**Fact — domain audit:** this introduces exactly one independently tagged
+domain, `tiler.ir.index-refinement-executable-coverage.v1`. It does not change
+the grammar or meaning of receipt v1, subject v2, authority v1, resolution v1,
+proof v1, kernel-program v7, artifact-stage v2, artifact-program v14, or the
+envelope. No existing literal pin consumes the new domain. The dependent
+`bind-stage-coverage-to-index-refinement-identity` ticket still owns program and
+artifact consumption, their two independent encoders, and any resulting
+merged-tree version/pin recomputation.
+
+**Fact — deliberate evidence:** unused semantic-provider revisions and unused
+scalar definition/provider revisions change strict receipt identity while
+leaving executable coverage equal. Reached semantic/law-provider and reached
+scalar-provider revisions move executable coverage. Separate perturbations of
+graph, canonical occurrence, numerical contract, region, law row, provider,
+operand binding, result binding, and residual proof identity each move it.
+Equivalent authoring orders retain equal reached identities for the same named
+occurrence and distinct identities for the other occurrence. The exact command
+populations and final preserved hash are recorded at handoff after all checks.
