@@ -107,7 +107,20 @@ onto this receipt. The reference scope addition describes work already required
 by this ticket's accepted outcome; it does not accept the consequential public
 boundary.
 
-## Tested public draft — pending Tom's acceptance
+## Public-boundary acceptance — 2026-08-04
+
+Tom accepted the exact consequential public boundary at reviewed commit
+`5626957d05593c8ab1e6d4a1f993ba1e120a9a8c` in the live T3 Code session on
+2026-08-04, after receiving the complete inventory below, the two green
+fixed-point reviews, the unsupported-case boundary, and the identity blast
+radius. That exact commit includes the final `OperandBindingsTooLarge`
+fail-closed boundedness correction and its two green fixed-point reviews.
+
+Acceptance authorizes integration of this tested boundary. It does not accept
+U8 or per-axis parameter maps, physical packing, Metal executability, nested
+encoded components, or the downstream stage-coverage/artifact identity step.
+
+## Accepted public boundary
 
 **Fact:** the existing region boundary could bind exactly one dense tensor to
 each distinct semantic input. A strict-affine operand is one encoded logical
