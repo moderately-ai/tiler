@@ -3,7 +3,7 @@ id: integrate-the-attention-block-into-the-runtime
 title: Run one complete attention block end to end and compare it with the reference
 status: todo
 priority: p1
-dependencies: [plan-the-materialized-attention-decomposition, integrate-the-contraction-vertical-into-the-runtime]
+dependencies: [plan-the-materialized-attention-decomposition, integrate-the-contraction-vertical-into-the-runtime, reclassify-language-model-work-as-a-conformance-track]
 related: [design-attention-program-vertical, retain-the-c1-attention-block-conformance-evidence, design-autoregressive-state-and-kv-cache, retain-the-qwen-conformance-reference-logit-fixture, prototype-metal-runtime-proof]
 scopes: [implementation/runtime, implementation/metal-aot, implementation/artifact, implementation/compiler, contracts/navigation]
 shared_scopes: [project/tickets]

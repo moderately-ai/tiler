@@ -1,7 +1,7 @@
 ---
 id: decide-the-expansion-cache-collection-schedule
 title: Decide what schedules an expansion cache collection
-status: todo
+status: in-progress
 priority: p3
 dependencies: [accept-the-tiler-cache-public-boundary]
 related: [design-bounded-expansion-cache-garbage-collection, exercise-the-expansion-cache-under-cargo-and-rust-analyzer]
@@ -9,6 +9,9 @@ scopes: [research/cache, implementation/cache]
 shared_scopes: []
 paths: []
 tags: [cache, durability, concurrency]
+claimed_from: todo
+assignee: agent-cache-schedule
+lease_expires_at: 1785874216
 ---
 `design-bounded-expansion-cache-garbage-collection` decided that a collection is **never automatic and never on the expansion path**: it is an explicit call returning a report, because a bound has to have a trigger a person can name. It eliminated collecting inside `get_or_publish` on a miss (a walk of every shard on the path the cache exists to make fast, run hardest when the cache is coldest), a background thread the cache spawns (threads inside a compiler process nobody asked to be concurrent, no lifetime in a process that may exit immediately, and a report returned to nobody), and collecting on a fraction of publications (an unexplainable trigger).
 

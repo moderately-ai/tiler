@@ -3,7 +3,7 @@ id: integrate-the-autoregressive-decode-loop
 title: Integrate the autoregressive decode loop behind one cursor authority
 status: todo
 priority: p1
-dependencies: [execute-the-decode-step-path]
+dependencies: [execute-the-decode-step-path, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
 related: [design-autoregressive-state-and-kv-cache, admit-a-position-selecting-slice-for-the-rotary-table, test-the-autoregressive-state-failure-cases]
 scopes: [implementation/candle, contracts/integrations]
 shared_scopes: [project/tickets]

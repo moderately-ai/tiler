@@ -3,7 +3,7 @@ id: project-only-the-final-position-logits
 title: Project only the final position's logits
 status: todo
 priority: p2
-dependencies: [assemble-the-embedding-and-vocabulary-projection-programs, admit-a-position-selecting-slice-for-the-rotary-table]
+dependencies: [assemble-the-embedding-and-vocabulary-projection-programs, admit-a-position-selecting-slice-for-the-rotary-table, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, own-operation-family-support-matrix, design-model-level-qualification-and-optimization]
 scopes: [implementation/ir, implementation/reference, contracts/foundation]
 shared_scopes: [project/tickets]

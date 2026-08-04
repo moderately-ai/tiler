@@ -3,7 +3,7 @@ id: extend-the-selected-quantized-profile-to-the-tied-embedding-matrix
 title: Extend the selected quantized profile to the tied embedding matrix
 status: deferred
 priority: p3
-dependencies: [implement-first-quantized-backend-profile, admit-an-indirect-gather-family-for-tied-embedding-lookup]
+dependencies: [implement-first-quantized-backend-profile, admit-an-indirect-gather-family-for-tied-embedding-lookup, reclassify-language-model-work-as-a-conformance-track]
 related: [scope-first-quantized-lm-profile, design-autoregressive-state-and-kv-cache]
 scopes: [implementation/compiler, implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]

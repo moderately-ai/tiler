@@ -12,7 +12,7 @@ The shortest useful model of Tiler is:
 
 ```text
 frontend program
-  -> semantic operation/value graph
+  -> semantic operation/value graph with explicit inputs and ordered outputs
   -> symbolic iteration and access
   -> legal fusion/program alternatives
   -> target-aware schedules and costing
@@ -35,6 +35,7 @@ planning; target capabilities never redefine tensor semantics.
 | Which alternatives are legal and chosen? | [Optimizer](compiler/optimizer.md), [fusion and scheduling](compiler/fusion-and-scheduling.md) | optimizer and schedule research in the [catalog](research/README.md) |
 | What is target feasibility? | [IR](ir.md) owns normalized requirements; backend contracts own device realization | target-profile and placement research |
 | What owns kernel programs and buffers? | [IR](ir.md) owns the compiler model; [Artifact ABI](artifact-abi.md) owns serialization | program-planning research |
+| Who owns recurrence, retained tensors, or workload state across invocations? | The consumer; each Tiler semantic invocation remains pure explicit MIMO dataflow | [Vision](vision.md#semantic-invocation-and-consumer-ownership) and runtime/integration research |
 | What is embedded and identified? | [Artifact ABI](artifact-abi.md) | artifact, cache, embedding, and Apple research |
 | When may fallback occur? | [Artifact ABI](artifact-abi.md) owns neutral routing; [Candle integration](integration/candle.md) owns the adapter | runtime execution and validation research |
 | What is accepted? | [Thematic ADR index](decisions/README.md) | each ADR's evidence links |

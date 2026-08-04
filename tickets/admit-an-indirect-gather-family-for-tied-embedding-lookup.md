@@ -3,7 +3,7 @@ id: admit-an-indirect-gather-family-for-tied-embedding-lookup
 title: Admit an indirect gather family for tied embedding lookup
 status: todo
 priority: p1
-dependencies: [derive-transformer-operation-and-shape-surface]
+dependencies: [derive-transformer-operation-and-shape-surface, reclassify-language-model-work-as-a-conformance-track]
 related: [own-operation-family-support-matrix, design-model-ingestion-and-complete-execution, implement-index-domain-predicates]
 scopes: [contracts/foundation, implementation/ir, implementation/reference, implementation/compiler, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]

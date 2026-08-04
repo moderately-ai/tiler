@@ -10,8 +10,8 @@ shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [design, implementation, identity]
 claimed_from: ready
-assignee: agent-reached-coverage
-lease_expires_at: 1785878017
+assignee: agent-coverage-resume
+lease_expires_at: 1785873940
 ---
 ## User-visible outcome
 

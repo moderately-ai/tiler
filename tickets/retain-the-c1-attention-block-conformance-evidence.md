@@ -3,7 +3,7 @@ id: retain-the-c1-attention-block-conformance-evidence
 title: Retain the C1 attention-block conformance evidence
 status: todo
 priority: p2
-dependencies: [integrate-the-attention-block-into-the-runtime]
+dependencies: [integrate-the-attention-block-into-the-runtime, reclassify-language-model-work-as-a-conformance-track]
 related: [design-attention-program-vertical, retain-contraction-conformance-evidence, retain-the-qwen-conformance-reference-logit-fixture, admit-the-softmax-family, scope-causal-structure-aware-attention-schedules]
 scopes: [implementation/reference, implementation/compiler, contracts/numerics, research/program-planning]
 shared_scopes: [project/tickets]

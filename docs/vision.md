@@ -56,6 +56,22 @@ provides:
 - a versioned kernel ABI and runtime guards;
 - reference evaluation and verification tools.
 
+### Semantic invocation and consumer ownership
+
+One semantic program is pure finite MIMO dataflow: it has explicit tensor
+inputs, ordered named outputs, shared values, and multi-result operations. It
+has no hidden persistent state and no semantic loop across invocations. A
+consumer expresses recurrence by retaining an output and supplying it as an
+explicit input to a later invocation.
+
+Tiler owns verification, optimization, physical planning, structured lowering,
+artifact construction, generic binding, routing, and execution. Consumers own
+model and checkpoint vocabulary, training and inference loops, cursor policy,
+KV retention, sampling, serving, and application/session state. Workloads such
+as transformer inference are valuable integration and conformance programs;
+they may motivate generic operations or optimizations, but they do not create
+workload-named semantic or runtime abstractions in the core.
+
 It borrows selected database-optimizer techniques for tensor iteration spaces:
 semantic expressions are normalized, contract-conforming alternatives are
 explored, boundary requirements are enforced, and complete implementations are
@@ -109,6 +125,8 @@ internal/public compiler API, not an auxiliary consumer kernel registry.
 - A core autodiff transformation contract in the first milestone; frontends and
   runtimes own graph eligibility and gradient production initially.
 - Graph-level data-dependent control flow, recursion, and semantic loops.
+- Model-, transformer-, KV-cache-, sampler-, serving-, or session-specific
+  state machines in the compiler or generic runtime.
 - Cross-device placement, transfers, sharding, distributed collectives, or
   multi-queue scheduling.
 - Bitwise equivalence under transformations that deliberately permit floating-

@@ -3,7 +3,7 @@ id: widen-the-deterministic-budgets-to-the-decoder-layer-program
 title: Widen the deterministic budgets to the decoder-layer program
 status: todo
 priority: p1
-dependencies: [assemble-the-decoder-layer-program]
+dependencies: [assemble-the-decoder-layer-program, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, enumerate-the-split-reduction-on-the-planning-frontier, prototype-public-compiler-api]
 scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]

@@ -8,16 +8,25 @@ topics: ["orientation"]
 
 # Tiler
 
-Tiler is an experimental, consumer-independent Rust compiler toolkit for
-optimizing declarative tensor programs and producing efficient parallel compute
-kernels. It applies ideas from database optimizers and compiler systems—typed
-logical plans, equivalence rules, physical properties, bounded search, cost
-models, and explainability—to tensor computation.
+Tiler is an experimental, consumer-neutral ahead-of-time tensor-program
+compiler and execution toolkit. It accepts typed logical programs with explicit
+inputs and ordered named outputs, performs target-independent logical
+optimization and target-aware physical planning, lowers selected plans to
+structured kernels and artifacts, and generically binds and executes them. It
+applies ideas from database optimizers and compiler systems—typed logical
+plans, equivalence rules, physical properties, bounded search, cost models, and
+explainability—to tensor computation.
 
 The repository is currently design- and research-first. It contains accepted
 architecture decisions, proposed and accepted contract material, primary-source
-research, and executable feasibility spikes. It does not yet contain a
-production compiler implementation.
+research, and an executable bounded compiler-to-Metal prototype. It does not
+yet contain a production or workload-general compiler implementation.
+
+Tiler compiles tensor programs; it does not own a model, transformer, training
+or inference loop, KV cache, sampler, server, or application session. A
+consumer may use those workloads as conformance tests and may retain an output
+tensor as a later invocation's input, but that composition remains outside the
+compiler's semantic and runtime state.
 
 ## Choose a route
 

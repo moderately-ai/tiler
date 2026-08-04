@@ -3,7 +3,7 @@ id: execute-the-decode-step-path
 title: Execute one decode step against a published KV state
 status: todo
 priority: p1
-dependencies: [execute-the-stateful-prefill-path, evaluate-retained-shape-relations-before-routing-commit]
+dependencies: [execute-the-stateful-prefill-path, evaluate-retained-shape-relations-before-routing-commit, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
 related: [design-autoregressive-state-and-kv-cache, integrate-the-autoregressive-decode-loop]
 scopes: [implementation/runtime, implementation/candle]
 shared_scopes: [project/tickets]

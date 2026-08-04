@@ -3,7 +3,7 @@ id: prove-the-c1-stateful-attention-vertical
 title: Prove the C1 stateful attention vertical end to end
 status: todo
 priority: p1
-dependencies: [test-the-autoregressive-state-failure-cases]
+dependencies: [test-the-autoregressive-state-failure-cases, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
 related: [design-autoregressive-state-and-kv-cache, retain-the-c1-attention-block-conformance-evidence, retain-the-qwen-conformance-reference-logit-fixture]
 scopes: [implementation/candle, implementation/runtime, research/runtime]
 shared_scopes: [project/tickets]

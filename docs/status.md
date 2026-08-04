@@ -38,9 +38,22 @@ The delivered path recognizes two one-input/one-output bounded F32 shapes: a fou
   **Fact — the cache-root chooser exists, and Tom accepted its consumer-visible spelling on 2026-07-31.** [ADR 0089](decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md) records the policy and [the frontend contract](integration/frontends.md) states it: `TILER_EXPANSION_CACHE_DIR` when set — verbatim, unless it is the exact value `off` — otherwise `$HOME/Library/Caches/ai.moderately.tiler/expansion`, with a typed refusal for every empty, relative, non-private, or underivable root. [The root policy note](research/cache/root-policy.md) carries the derivation and the eliminations, and `crates/tiler-macros/src/cache_root.rs` implements the resolver with unit tests over every case. **Corrected 2026-08-02 — the wiring landed, and this bullet's own reproduction command is what refutes its earlier claim.** It offered `grep -n 'tiler-cache' crates/tiler-macros/Cargo.toml` as evidence of no edge; that command now reports `crates/tiler-macros/Cargo.toml:46: tiler-cache.workspace = true`. `open_cache` (`crates/tiler-macros/src/aot.rs:649`) resolves the root and opens an `ExpansionCache` on it, and the expansion path calls it at `:501` — `grep -n 'open_cache(environment)' crates/tiler-macros/src/aot.rs` is the check that passes. What is deliberately *not* done is narrower: `ExpansionCache::preflight` is still not called on a resolved root, so the filesystem properties the publication protocol assumes are unprobed by any expansion.
 
   **Correction — 2026-07-31.** This bullet previously ended "and no accepted cache-maintenance boundary has landed". That has been false since 2026-07-31: `crates/tiler-cache/src/expansion.rs` records that Tom accepted the maintenance boundary under [`accept-the-expansion-cache-maintenance-boundary`](../tickets/accept-the-expansion-cache-maintenance-boundary.md), which is `done`, and `account`, `collect`, and `purge` sit on `ExpansionCache` with their report vocabulary re-exported. What remains open is the *schedule* rather than the boundary — nothing calls any of them automatically, by design — and [`decide-the-expansion-cache-collection-schedule`](../tickets/decide-the-expansion-cache-collection-schedule.md) owns it.
-- **Fact — consumer integration:** no Candle adapter, einops-derived workload, or other production consumer path exists.
+- **Fact — consumer integration:** a retained non-published Candle/Metal adapter
+  prototype exists, but no production Candle adapter, einops-derived workload,
+  or other production consumer path exists.
 - **Fact — runtime product:** the device-execution code is retained in `prototypes/serial-sum-run`; there is no reusable live-device runtime, general pipeline cache, product fallback integration, broad buffer/shape handling, or production compatibility matrix.
-- **Fact — breadth:** the compiler request recognizer, semantic operation set, dtype support, schedules, Metal lowering, and execution corpus are narrow. General backend support, wider dtypes and operations, dynamic workloads, parallel reductions, contractions, and optimized model inference remain separately tracked work.
+- **Fact — breadth:** the compiler request recognizer, semantic operation set,
+  dtype support, schedules, Metal lowering, and execution corpus are narrow.
+  General DAG partitioning, ordered multi-output compilation, wider dtype and
+  operation signatures, dynamic workloads, a minimum general physical route,
+  reusable backend authoring, parallel reductions, and optimized contractions
+  remain separately tracked work. Language-model programs are a consumer
+  conformance track over those capabilities, not a separate core runtime
+  product.
+- **Fact — public packaging:** `tiler-ir` and `tiler-compiler` carry the current
+  general graph and compiler APIs. The accepted `tiler`/`tiler-macros` pair is
+  the inline Rust frontend facade, not evidence that one coherent general
+  compiler facade has been accepted; that boundary remains separately tracked.
 - **Fact — stability:** reviewed public draft boundaries may still change during the alpha phase. Implemented canonical identities and lockstep schemas prevent accidental subject confusion; they do not promise long-term backward compatibility.
 
 The workspace-member claims above are reproducible from the repository root. Two are presence claims and two are absence claims, and the proc-macro check is written as an equality against the whole `crates` tree rather than a bare match, so it says no in both directions — a second proc-macro crate fails it just as a missing one does:

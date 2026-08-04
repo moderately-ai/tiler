@@ -3,7 +3,7 @@ id: define-the-model-level-regression-policy
 title: Define the model-level regression policy
 status: todo
 priority: p3
-dependencies: [define-the-model-level-conformance-corpus, build-the-model-level-measurement-harness]
+dependencies: [define-the-model-level-conformance-corpus, build-the-model-level-measurement-harness, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-level-qualification-and-optimization, qualify-the-model-level-claims-per-apple-device-and-toolchain-row]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]

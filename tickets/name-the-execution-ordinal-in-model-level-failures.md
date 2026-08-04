@@ -3,7 +3,7 @@ id: name-the-execution-ordinal-in-model-level-failures
 title: Name the execution ordinal in model-level failures
 status: todo
 priority: p2
-dependencies: [drive-the-complete-forward-pass-over-three-artifacts]
+dependencies: [drive-the-complete-forward-pass-over-three-artifacts, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, scope-tiler-numerical-claims-across-the-candle-kernel-boundary, retain-the-c1-model-attribution-fixture]
 scopes: [implementation/runtime, contracts/integrations]
 shared_scopes: [project/tickets]
