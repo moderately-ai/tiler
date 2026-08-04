@@ -12,6 +12,7 @@ mod bf16;
 mod broadcast;
 mod catalog;
 mod concatenate;
+mod conformance;
 mod contraction;
 mod error;
 mod handles;
@@ -60,6 +61,17 @@ pub use concatenate::{
     CONCATENATE_FACT_TYPE_PROMOTION, CONCATENATE_FACT_VALUE_BEHAVIOUR, ConcatenateError,
     MAX_CONCATENATE_OPERANDS, MIN_CONCATENATE_OPERANDS, concatenate_axis,
     concatenate_f32_axis_attribute, concatenate_f32_op, concatenate_result_shape,
+};
+pub use conformance::{
+    CoherenceEpoch, ComponentConformanceObligation, ComponentValueDomain, ComposedOperand,
+    ConformanceValidatorIdentity, DENSE_VALUE_COMPONENT_ROLE, EncodedLogicalView, LogicalScalar,
+    LogicalViewFault, MAX_CONFORMANCE_SCAN_ELEMENTS, PreconditionDischargeError,
+    PresentedComponent, ProofCompositionError, ResolvedValueConformanceContract, RouteDependency,
+    SemanticPreconditionsDischarged, UnsupportedValueRepresentation, ValueConformanceCause,
+    ValueConformanceEvidence, ValueConformanceRejection, ValueConformanceSubject, ValueOrigin,
+    ValueOriginError, ValueStability, ValueVersion, check_bound_value,
+    compose_produced_conformance, conform_bound_value, scan_bound_value,
+    standard_binding_validator,
 };
 pub use contraction::{
     CONTRACTION_F32_FACT_ACCUMULATOR_TYPE, CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,

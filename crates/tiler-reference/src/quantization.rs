@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use tiler_ir::semantic::{
-    EncodedComponentDeclaration, F32, OperationAttributes, ResolvedValueType,
-    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
-    StrictAffineU4, StrictAffineU8, U4, U8, assemble_strict_affine_op, dequantize_strict_affine_op,
+    F32, OperationAttributes, ResolvedValueType, STRICT_AFFINE_CODES_ROLE,
+    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, StrictAffineU8, U4,
+    U8, assemble_strict_affine_op, check_bound_value, dequantize_strict_affine_op,
     quantize_strict_affine_op,
 };
 
@@ -19,6 +19,7 @@ use super::registry::{
 use super::tensor::{
     FloatBitOrder, ReferenceComponent, ReferenceElement, Tensor, TensorPayloadView,
 };
+use super::value_conformance::TensorLogicalView;
 
 pub(super) fn register_standard_quantization(
     registrar: &mut ReferenceRegistryRegistrar<'_>,
@@ -229,6 +230,15 @@ fn compound_value(
     .map_err(|_| ReferenceOperationError::InvalidApplication)
 }
 
+/// Checks one compound value against the obligations its type states.
+///
+/// The ordered roles, the component types, the derived component shapes, the
+/// parameter maps, the inclusive code domain, and the positive-normal scale
+/// domain are all read from the value's own
+/// [`tiler_ir::semantic::ResolvedValueConformanceContract`] rather than
+/// restated here. That is the point: this evaluator and every binding boundary
+/// discharge one obligation set, so a scheme that narrows its contract narrows
+/// both at once and cannot leave them disagreeing about what a valid value is.
 fn validate_strict_affine<'a>(
     tensor: &'a Tensor,
     profile: &StrictAffineProfile,
@@ -236,37 +246,19 @@ fn validate_strict_affine<'a>(
     if tensor.resolved_type() != &profile.encoded_type {
         return Err(ReferenceValueError::InvalidRepresentation);
     }
+    check_bound_value(
+        tensor.resolved_type(),
+        tensor.shape(),
+        &TensorLogicalView::new(tensor),
+    )?;
     let TensorPayloadView::Compound(components) = tensor.payload() else {
+        // Unreachable through the check above, which refuses a dense payload as
+        // a component-count disagreement; kept as a typed refusal rather than an
+        // `expect`, because the payload shape is the caller's and not this
+        // function's own invariant.
         return Err(ReferenceValueError::InvalidRepresentation);
     };
-    let (_, contract) = tensor
-        .resolved_type()
-        .encoded_numeric_parts()
-        .ok_or(ReferenceValueError::InvalidRepresentation)?;
-    validate_component_structure(tensor, components, contract.components())?;
-    validate_unsigned_codes(components[0].tensor(), profile.maximum)?;
-    read_scale_value(components[1].tensor())?;
-    read_zero_point_value(components[2].tensor(), profile)?;
     Ok(components)
-}
-
-fn validate_component_structure(
-    outer: &Tensor,
-    actual: &[ReferenceComponent],
-    expected: &[EncodedComponentDeclaration],
-) -> Result<(), ReferenceValueError> {
-    if actual.len() != expected.len() {
-        return Err(ReferenceValueError::InvalidRepresentation);
-    }
-    for (actual, expected) in actual.iter().zip(expected) {
-        if actual.role() != expected.role()
-            || actual.tensor().resolved_type() != expected.resolved_type()
-            || actual.tensor().shape() != &expected.shape_relation().component_shape(outer.shape())
-        {
-            return Err(ReferenceValueError::InvalidRepresentation);
-        }
-    }
-    Ok(())
 }
 
 fn validate_unsigned_codes(tensor: &Tensor, maximum: u8) -> Result<(), ReferenceValueError> {
@@ -278,7 +270,11 @@ fn validate_unsigned_codes(tensor: &Tensor, maximum: u8) -> Result<(), Reference
     if tensor.resolved_type() != &expected {
         return Err(ReferenceValueError::InvalidRepresentation);
     }
-    let _ = dense_code_bytes(tensor, maximum)?;
+    check_bound_value(
+        tensor.resolved_type(),
+        tensor.shape(),
+        &TensorLogicalView::new(tensor),
+    )?;
     Ok(())
 }
 
@@ -420,12 +416,33 @@ mod tests {
     use crate::{EvaluationError, FrozenReferenceRegistry, InputBinding, ReferenceEvaluator};
     use tiler_ir::semantic::{
         CanonicalField, CanonicalValue, EncodedNumericContract, InputKey, OperationAttributes,
-        OutputKey, QuantSchemeKey, SemanticProgramBuilder,
+        OutputKey, QuantSchemeKey, SemanticProgramBuilder, ValueConformanceCause,
     };
     use tiler_ir::shape::Shape;
 
     fn element(bytes: impl AsRef<[u8]>) -> ReferenceElement {
         ReferenceElement::new(bytes).unwrap()
+    }
+
+    /// Asserts the exact typed refusal, its component ordinal, and its logical index.
+    ///
+    /// Written against the complete diagnostic coordinate rather than the error
+    /// class alone: the class says a value was refused, and the coordinate says
+    /// *which component and which logical element* — which is the part a caller
+    /// needs and the part a validator can silently get wrong while still
+    /// refusing.
+    fn assert_conformance_cause<T: std::fmt::Debug>(
+        result: Result<T, ReferenceValueError>,
+        expected: &ValueConformanceCause,
+        component: Option<u32>,
+        logical_index: Option<u64>,
+    ) {
+        let Err(ReferenceValueError::Conformance(rejection)) = result else {
+            panic!("expected a typed conformance refusal, got {result:?}")
+        };
+        assert_eq!(rejection.cause(), expected);
+        assert_eq!(rejection.component_ordinal(), component);
+        assert_eq!(rejection.logical_index(), logical_index);
     }
 
     fn f32_scalar(value: f32) -> Tensor {
@@ -482,9 +499,14 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(
+        assert_conformance_cause(
             validate_strict_affine(&wrong_role, &profile),
-            Err(ReferenceValueError::InvalidRepresentation)
+            &ValueConformanceCause::ComponentRole {
+                expected: STRICT_AFFINE_CODES_ROLE,
+                actual: tiler_ir::semantic::EncodedComponentRole::new(99),
+            },
+            Some(0),
+            None,
         );
     }
 
@@ -500,9 +522,14 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(
+        assert_conformance_cause(
             validate_strict_affine(&missing, &profile),
-            Err(ReferenceValueError::InvalidRepresentation)
+            &ValueConformanceCause::ComponentCount {
+                expected: 3,
+                actual: 2,
+            },
+            None,
+            None,
         );
     }
 
@@ -519,18 +546,29 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(
+        assert_conformance_cause(
             validate_strict_affine(&wrong_logical_shape, &profile),
-            Err(ReferenceValueError::InvalidRepresentation)
+            &ValueConformanceCause::ComponentShape {
+                expected: Arc::new(Shape::from_dims([3])),
+                actual: Arc::new(Shape::from_dims([2])),
+            },
+            Some(0),
+            None,
         );
     }
 
     #[test]
     fn unsigned_code_validator_rejects_out_of_domain_element() {
         let invalid_code = code_tensor(&[16]);
-        assert_eq!(
+        assert_conformance_cause(
             validate_unsigned_codes(&invalid_code, 15),
-            Err(ReferenceValueError::InvalidRepresentation)
+            &ValueConformanceCause::CodeOutOfDomain {
+                code: 16,
+                minimum: 0,
+                maximum: 15,
+            },
+            Some(0),
+            Some(0),
         );
     }
 
@@ -560,11 +598,13 @@ mod tests {
         ] {
             let value =
                 compound_value(&profile, &codes, &f32_scalar(invalid_scale), &zero).unwrap();
-            assert_eq!(
+            assert_conformance_cause(
                 validate_strict_affine(&value, &profile),
-                Err(ReferenceValueError::InvalidRepresentation),
-                "{:#010x} must be outside the admitted scale domain",
-                invalid_scale.to_bits(),
+                &ValueConformanceCause::ScaleOutOfDomain {
+                    bits: invalid_scale.to_bits(),
+                },
+                Some(1),
+                Some(0),
             );
         }
         let smallest_normal =

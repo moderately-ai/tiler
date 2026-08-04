@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use tiler_ir::semantic::{
     AttributeFieldId, InputKey, OpKey, ProviderIdentity, RegistryError, ResolvedValueType,
+    ValueConformanceRejection,
 };
 use tiler_ir::shape::Shape;
 
@@ -409,6 +410,14 @@ impl Error for ReferenceRegistryError {
 pub enum ReferenceValueError {
     /// The payload does not implement the registered resolved type.
     InvalidRepresentation,
+    /// The value does not conform to the obligations its resolved type states.
+    ///
+    /// Carried whole rather than flattened into
+    /// [`Self::InvalidRepresentation`]: the rejection names the exact component
+    /// ordinal, the canonical row-major logical index, and the stable
+    /// invalid-input class, and a validator that reported only "invalid" would
+    /// discard the three things a caller needs to fix it.
+    Conformance(Box<ValueConformanceRejection>),
 }
 
 impl fmt::Display for ReferenceValueError {
@@ -417,11 +426,25 @@ impl fmt::Display for ReferenceValueError {
             Self::InvalidRepresentation => {
                 formatter.write_str("invalid reference value representation")
             }
+            Self::Conformance(rejection) => rejection.fmt(formatter),
         }
     }
 }
 
-impl Error for ReferenceValueError {}
+impl Error for ReferenceValueError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidRepresentation => None,
+            Self::Conformance(rejection) => Some(rejection.as_ref()),
+        }
+    }
+}
+
+impl From<ValueConformanceRejection> for ReferenceValueError {
+    fn from(value: ValueConformanceRejection) -> Self {
+        Self::Conformance(Box::new(value))
+    }
+}
 
 /// Failure inside one exact reference implementation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -593,6 +616,30 @@ pub enum EvaluationError {
         /// Supplied payload element count.
         actual: usize,
     },
+    /// A bound value does not conform to the obligations its type states.
+    ///
+    /// Distinct from [`Self::Value`], which attributes a registered
+    /// representation validator's refusal to its provider. This one is the
+    /// provenance-bound binding check: it names the interface key for a direct
+    /// binding and carries the deterministic diagnostic coordinate.
+    ValueConformance {
+        /// Interface key of the refused binding, absent for a produced value.
+        key: Option<InputKey>,
+        /// The deterministic typed refusal.
+        rejection: Box<ValueConformanceRejection>,
+    },
+    /// One produced value's conformance proof could not be composed.
+    ///
+    /// An invariant failure rather than invalid input: the producer's own
+    /// verified semantics did not compose into a proof of its result, which
+    /// means this build's composition rule and its operation definitions
+    /// disagree.
+    ValueConformanceComposition {
+        /// Governed operation family whose result could not be proved.
+        operation: OpKey,
+        /// The composition failure, rendered by its own type.
+        detail: String,
+    },
     /// Shape arithmetic exceeded host limits.
     ShapeTooLarge,
     /// Exact floating-point construction supplied no bits.
@@ -719,6 +766,14 @@ impl fmt::Display for EvaluationError {
             Self::InputCount { expected, actual } => {
                 write!(formatter, "expected {expected} inputs, received {actual}")
             }
+            Self::ValueConformance { key, rejection } => match key {
+                Some(key) => write!(formatter, "input {}: {rejection}", key.as_str()),
+                None => rejection.fmt(formatter),
+            },
+            Self::ValueConformanceComposition { operation, detail } => write!(
+                formatter,
+                "operation {operation} produced no conformance proof for its result: {detail}",
+            ),
             Self::InputKey {
                 input_index,
                 expected,
@@ -864,6 +919,7 @@ impl Error for EvaluationError {
             | Self::SemanticValueAuthority { source, .. } => Some(source.as_ref()),
             Self::Value { source, .. } => Some(source),
             Self::Operation { source, .. } => Some(source),
+            Self::ValueConformance { rejection, .. } => Some(rejection.as_ref()),
             _ => None,
         }
     }
@@ -981,6 +1037,8 @@ pub(crate) fn dense_result_error(source: &EvaluationError) -> ReferenceOperation
         | EvaluationError::Operation { .. }
         | EvaluationError::ResultShape { .. }
         | EvaluationError::ResultType { .. }
+        | EvaluationError::ValueConformance { .. }
+        | EvaluationError::ValueConformanceComposition { .. }
         | EvaluationError::MalformedProgram => ReferenceOperationError::InvalidApplication,
     }
 }
