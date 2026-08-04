@@ -1,7 +1,7 @@
 ---
 id: derive-a-reached-only-executable-coverage-identity
 title: Derive a reached-only executable coverage identity
-status: in-progress
+status: review
 priority: p1
 dependencies: [place-index-refinement-evidence-under-an-ir-owned-verifier, canonicalize-index-refinement-occurrence-ordinals]
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -67,12 +67,16 @@ retained for the ticket's artifact identity audit, although this branch does
 not change an artifact contract or encoder.
 Before editing, the exact four-file planned population—
 `crates/tiler-ir/src/index/{mod,refinement}.rs`, `docs/ir.md`, and this ticket—
-was intersected with the concurrent KV research branch's 30-file population
-from `b4e3478d42ce21ed68e23f772b643c6370d36498` through
+was first intersected with the concurrent KV research branch's 30-file
+population from `b4e3478d42ce21ed68e23f772b643c6370d36498` through
 `fff3894cc0731ca7df3cb51cc9f18714cba44aa7`; the intersection count was zero.
-The coordinator separately reported that the KV research landed as a 34-file
-population. This branch does not rebase or edit any KV path; integration must
-repeat the intersection against the published merged base.
+After the KV authority landed, the same population was intersected with the
+exact 34-file change from this ticket's original base
+`d3b659a05699113a2315a39867dc5ae5115c3967` through full-gated KV closure
+`56b7ab22526ff0d7e6714abc8060b6773dfad5bb`; that intersection was also zero.
+The branch then merged exact pushed claim base
+`288e7aab920e3a8bc6d9b242621d5a1cbeabfa2c` without conflict before final
+checks.
 
 ## Tested draft and identity audit — 2026-08-04
 
@@ -113,3 +117,19 @@ operand binding, result binding, and residual proof identity each move it.
 Equivalent authoring orders retain equal reached identities for the same named
 occurrence and distinct identities for the other occurrence. The exact command
 populations and final preserved hash are recorded at handoff after all checks.
+
+**Fact — failure-path evidence:** deleting the numerical-contract frame from
+the production encoder made
+`executable_coverage_retains_each_replay_and_substitution_boundary` fail at its
+contract-only inequality. Restoring the frame made the same focused population
+pass 1/1. This demonstrates the new subject-retention test can say no rather
+than merely following fixture construction.
+
+**Measurement — merged branch checks:** under the repository's pinned Rust
+toolchain, `cargo nextest run -p tiler-ir -p tiler-compiler -p tiler-artifact
+--no-fail-fast` passed 1,556/1,556 with three configured skips. Package
+doc-tests passed 21/21 with one ignored (including the new opaque-constructor
+compile-fail case), and Clippy over all targets in the three crates passed with
+warnings denied. Formatting, `git diff --check`, `tkt lint`, `tkt reconcile`,
+and scope guard are rerun after the final evidence commit so they inspect the
+exact preserved tip.
