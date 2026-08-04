@@ -1,7 +1,7 @@
 ---
 id: establish-a-dynamic-kv-physical-layout-authority
 title: Establish a dynamic KV physical-layout authority
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [design-autoregressive-state-and-kv-cache, define-the-runtime-kv-state-boundary, bind-the-kv-cache-through-the-artifact-and-runtime-interface, evaluate-retained-shape-relations-before-routing-commit, admit-live-extent-operands-to-payload-indexing]
@@ -9,9 +9,6 @@ scopes: [research/runtime, contracts/artifacts, contracts/integrations, research
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [research, design, runtime, artifact, abi, kv-cache, correctness]
-claimed_from: ready
-assignee: agent-kv-layout
-lease_expires_at: 1785863038
 ---
 ## User-visible outcome
 
@@ -75,6 +72,16 @@ The retained Apple M4 Max/Apple9 spike rotates four rows over five rounds and pr
 Fixed-point review corrected an earlier conflation of those three quantities. Model-wide live payload transfer is identical for exact-live and capacity-strided copies: 2,293,760 bytes at C1 prefill, 8,028,160 at C1 final, and 3,816,587,264 at B1 final. Capacity-strided routing instead requires accessible bounding spans of 3,899,392, 8,228,864, and 3,816,787,968 bytes at those cells. The shared two-bank reservations are separately 8,257,536 bytes for C1 and 3,816,816,640 for B1. The retained checker derives all values from heads, width, element size, member population, extents, and capacity, and its injected pool-as-payload confusion fails.
 
 The anterior live-extent gap remains real and [`admit-live-extent-operands-to-payload-indexing`](admit-live-extent-operands-to-payload-indexing.md) owns it. It is the only generic payload-address prerequisite for [`bind-the-kv-cache-through-the-artifact-and-runtime-interface`](bind-the-kv-cache-through-the-artifact-and-runtime-interface.md). The two physical-root carriers filed by the first elimination were deleted as obsolete before dispatch: their candidate did not survive, and leaving them active would manufacture an artifact/schema boundary the selected representation does not need. No Tom decision remains on layout. Tom still owns the live-extent carrier's tested consequential public/schema spelling when that implementation reaches review.
+
+**Independent fixed-point review.** Exact clean tip
+`164df4560174cfe1f8b06cc023c6fa596b05d95e` passed architecture,
+correctness, measurement, graph, and scope review with no remaining findings.
+The reviewer independently reproduced the retained GPU run's four address
+negatives, byte-compared the positive and injected-negative arithmetic
+fixtures, verified all four source digests, recomputed the three arithmetic
+rows independently, and observed `tkt lint`, `git diff --check`, and a
+34-file scope guard with zero under-declarations. The result is safe to adopt
+as research authority and accepts no public API or artifact schema.
 
 ## Closes when
 
