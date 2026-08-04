@@ -2072,18 +2072,23 @@ fn an_unused_semantic_provider_revision_does_not_change_identity() {
         second.semantic_identity().admission_provenance(),
     );
     let provider = lowering_provider(1);
+    let first_program = fused_program(&first, SCALE_BITS);
+    let second_program = fused_program(&second, SCALE_BITS);
+    // The kernel-program leg is asserted separately from the artifact leg: the
+    // artifact folds the program identity, so equal artifacts would otherwise
+    // leave a program-level divergence indistinguishable from an artifact-level
+    // one that happened to cancel.
+    assert_eq!(
+        first_program.canonical_identity(),
+        second_program.canonical_identity(),
+    );
     let first_artifact = build_artifact(
         &first,
-        &fused_program(&first, SCALE_BITS),
+        &first_program,
         provider.clone(),
         std::slice::from_ref(&provider),
     );
-    let second_artifact = build_artifact(
-        &second,
-        &fused_program(&second, SCALE_BITS),
-        provider.clone(),
-        &[provider],
-    );
+    let second_artifact = build_artifact(&second, &second_program, provider.clone(), &[provider]);
     assert_eq!(
         first_artifact.canonical_identity(),
         second_artifact.canonical_identity(),

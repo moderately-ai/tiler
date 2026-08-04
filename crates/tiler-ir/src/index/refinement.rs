@@ -43,6 +43,8 @@ use super::{
 };
 
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
+const EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
+    b"tiler.ir.index-refinement-executable-coverage.v1\0";
 const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v2\0";
 #[cfg(test)]
 const LEGACY_SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v1\0";
@@ -803,6 +805,51 @@ impl IndexRefinementReceiptIdentity {
     }
 }
 
+/// Reached-only executable provenance minted with one completed refinement receipt.
+///
+/// ```compile_fail
+/// use tiler_ir::index::IndexRefinementExecutableCoverageIdentity;
+///
+/// // Executable coverage is proof-derived; opaque bytes are not a constructor.
+/// let _ = IndexRefinementExecutableCoverageIdentity(Box::new([]));
+/// ```
+///
+/// ```compile_fail
+/// use tiler_ir::index::IndexRefinementExecutableCoverageIdentity;
+///
+/// // Nor is there a byte-level conversion: a caller holding one receipt's
+/// // coverage bytes cannot re-mint them onto another receipt's occurrence.
+/// fn cross(bytes: &[u8]) -> IndexRefinementExecutableCoverageIdentity {
+///     IndexRefinementExecutableCoverageIdentity::from(bytes)
+/// }
+/// ```
+///
+/// This identity deliberately excludes the complete semantic, scalar, and
+/// realization-law registry snapshots retained by [`IndexRefinementReceiptIdentity`].
+/// It retains the selected graph occurrence, numerical contract, realization
+/// law and provider, verified region, reached semantic/scalar/type definition
+/// and admission projections, exact operand/result bindings, and every residual
+/// proof identity. Callers may read these bytes but cannot construct this type
+/// from bytes or independently supplied fields.
+///
+/// The operation key, ordered signature, host-canonical attributes, and operand
+/// and result boundary shapes are not re-encoded: `tiler.semantic-graph.v2`
+/// already writes each of them for every operation in canonical traversal
+/// order, and [`IndexRefinementSubject::derive`] fixes the retained occurrence
+/// to that same canonical ordinal. Encoding them a second time would restate
+/// what the graph and occurrence pair already determines rather than close a
+/// substitution the pair leaves open.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct IndexRefinementExecutableCoverageIdentity(Box<[u8]>);
+
+impl IndexRefinementExecutableCoverageIdentity {
+    /// Returns the canonical reached-only executable-coverage bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 /// Complete identity of one trusted residual-domain proof authority.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IndexDomainProofAuthority {
@@ -1060,6 +1107,7 @@ pub struct IndexRefinementReceipt {
     result_bindings: Vec<ResultBinding>,
     index_domain_proofs: Vec<IndexRefinementDomainProof>,
     identity: IndexRefinementReceiptIdentity,
+    executable_coverage_identity: IndexRefinementExecutableCoverageIdentity,
 }
 
 impl IndexRefinementReceipt {
@@ -1106,9 +1154,30 @@ impl IndexRefinementReceipt {
     pub const fn identity(&self) -> &IndexRefinementReceiptIdentity {
         &self.identity
     }
+    /// Returns reached-only provenance suitable for executable coverage.
+    ///
+    /// Unlike [`Self::identity`], this subject excludes unused registry rows.
+    /// Its only minting path is successful receipt completion.
+    #[must_use]
+    pub const fn executable_coverage_identity(&self) -> &IndexRefinementExecutableCoverageIdentity {
+        &self.executable_coverage_identity
+    }
 }
 
 /// Checked association awaiting proof of retained index-domain obligations.
+///
+/// A pending association has no executable-coverage spelling. Only
+/// [`ResolvedIndexRealization::complete`] discharges the retained obligations,
+/// and only its success value carries an
+/// [`IndexRefinementExecutableCoverageIdentity`]:
+///
+/// ```compile_fail
+/// fn coverage(
+///     pending: &tiler_ir::index::PendingIndexRefinementReceipt,
+/// ) -> &tiler_ir::index::IndexRefinementExecutableCoverageIdentity {
+///     pending.executable_coverage_identity()
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct PendingIndexRefinementReceipt {
     resolution: ResolvedIndexRealization,
@@ -2733,6 +2802,15 @@ fn mint_receipt(
         &scalar_authority,
         &index_domain_proofs,
     );
+    let executable_coverage_identity = encode_executable_coverage_identity(
+        subject,
+        resolution,
+        region,
+        &scalar_authority,
+        &operand_bindings,
+        &result_bindings,
+        &index_domain_proofs,
+    );
     IndexRefinementReceipt {
         graph: subject.graph.clone(),
         occurrence: subject.occurrence,
@@ -2742,7 +2820,66 @@ fn mint_receipt(
         result_bindings,
         index_domain_proofs,
         identity: IndexRefinementReceiptIdentity(identity.into_boxed_slice()),
+        executable_coverage_identity: IndexRefinementExecutableCoverageIdentity(
+            executable_coverage_identity.into_boxed_slice(),
+        ),
     }
+}
+
+fn encode_executable_coverage_identity(
+    subject: &IndexRefinementSubject,
+    resolution: &ResolvedIndexRealization,
+    region: &CanonicalIndexRegionIdentity,
+    scalar_authority: &ScalarAuthorityEvidence,
+    operand_bindings: &[OperandBinding],
+    result_bindings: &[ResultBinding],
+    proofs: &[IndexRefinementDomainProof],
+) -> Vec<u8> {
+    let mut bytes = EXECUTABLE_COVERAGE_IDENTITY_TAG.to_vec();
+    push_slice(&mut bytes, subject.graph.as_bytes());
+    bytes.extend_from_slice(&subject.occurrence.get().to_be_bytes());
+    push_slice(&mut bytes, subject.numerical_contract.as_bytes());
+    push_slice(&mut bytes, region.as_bytes());
+    push_slice(
+        &mut bytes,
+        subject.semantic_authority.reached_definitions().as_bytes(),
+    );
+    push_slice(
+        &mut bytes,
+        subject.semantic_authority.admission_provenance().as_bytes(),
+    );
+    encode_optional_law_row(&mut bytes, subject.realization_law_row.as_deref());
+    encode_provider(&mut bytes, resolution.provider());
+    bytes.extend_from_slice(&resolution.revision().to_be_bytes());
+    push_slice(&mut bytes, scalar_authority.definitions().as_bytes());
+    push_slice(&mut bytes, scalar_authority.admission().as_bytes());
+    push_slice(&mut bytes, scalar_authority.type_definitions().as_bytes());
+    push_slice(&mut bytes, scalar_authority.type_admission().as_bytes());
+    push_len(&mut bytes, operand_bindings.len());
+    for binding in operand_bindings {
+        push_len(&mut bytes, binding.operand);
+        push_len(&mut bytes, binding.input);
+        bytes.extend_from_slice(&binding.input_tensor.index.to_be_bytes());
+        match binding.component_role {
+            None => bytes.push(0),
+            Some(role) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&role.get().to_be_bytes());
+            }
+        }
+    }
+    push_len(&mut bytes, result_bindings.len());
+    for binding in result_bindings {
+        push_len(&mut bytes, binding.result);
+        bytes.extend_from_slice(&binding.output_tensor.index.to_be_bytes());
+        bytes.extend_from_slice(&binding.write_access.index.to_be_bytes());
+        bytes.extend_from_slice(&binding.written_value.index.to_be_bytes());
+    }
+    push_len(&mut bytes, proofs.len());
+    for proof in proofs {
+        push_slice(&mut bytes, proof.identity().as_bytes());
+    }
+    bytes
 }
 
 fn encode_receipt_identity(
@@ -2917,17 +3054,21 @@ mod tests {
 
     use super::*;
     use crate::index::{
-        DomainRole, EXTENT_PHASE_CEILING, IndexRegionBuilder, ScalarRegistryBuilder, SourcedExtent,
+        DomainRole, EXTENT_PHASE_CEILING, IndexRegionBuilder, ScalarArity, ScalarAttributeField,
+        ScalarAttributeSchema, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
+        ScalarInferenceRequest, ScalarOperationContract, ScalarOperationDefinition,
+        ScalarOperationInferencer, ScalarRegistryBuilder, SourcedExtent,
     };
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
-        AttributeFieldId, CanonicalField, CanonicalValue, EncodedComponentDeclaration,
-        EncodedComponentRole, EncodedComponentShape, EncodedNumericContract, F32, F32Constant,
-        F32Multiply, InputKey, NormativeDefinitionRef, OpKey, OperationArity, OperationConformance,
-        OperationDefinition, OperationDefinitionFacts, OperationInferenceError,
-        OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
-        OutputKey, ProviderDiagnosticCode, QuantSchemeKey, SemanticProgramBuilder,
-        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar, TypeKey,
+        AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind,
+        EncodedComponentDeclaration, EncodedComponentRole, EncodedComponentShape,
+        EncodedNumericContract, F32, F32Constant, F32Multiply, InputKey, NormativeDefinitionRef,
+        OpKey, OperationArity, OperationConformance, OperationDefinition, OperationDefinitionFacts,
+        OperationInferenceError, OperationInferenceOutputs, OperationInferenceRequest,
+        OperationInferencer, OperationSchema, OutputKey, ProviderDiagnosticCode, QuantSchemeKey,
+        SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
+        SemanticRegistryRegistrar, TypeKey,
     };
     use crate::shape::{
         BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
@@ -3099,6 +3240,507 @@ mod tests {
     }
 
     struct RefinementLawProvider(Option<super::super::IndexRealizationLaw>);
+
+    struct UnusedSemanticProvider(u32);
+
+    struct ReachedSemanticProvider(u32);
+
+    impl SemanticRegistryProvider for UnusedSemanticProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "unused-refinement-semantics", self.0).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_operation(OperationDefinition::new(
+                OpKey::new("test", "unused-refinement-operation", 1).unwrap(),
+                OperationSchema::new(OperationArity::exact(2), OperationArity::exact(1), [])
+                    .unwrap(),
+                NormativeDefinitionRef::new("unused refinement operation")?,
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(BinaryIdentity),
+            ))
+        }
+    }
+
+    fn reached_semantic_operation() -> OpKey {
+        OpKey::new("test", "reached-refinement-operation", 1).unwrap()
+    }
+
+    impl SemanticRegistryProvider for ReachedSemanticProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "reached-refinement-semantics", self.0).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            let operation = reached_semantic_operation();
+            registrar.register_operation(OperationDefinition::new(
+                operation.clone(),
+                OperationSchema::new(OperationArity::exact(2), OperationArity::exact(1), [])
+                    .unwrap(),
+                NormativeDefinitionRef::new("test reached refinement operation")?,
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(BinaryIdentity),
+            ))?;
+            registrar.register_index_realization_law(
+                operation,
+                1,
+                super::super::IndexRealizationLaw::multiply_f32(),
+            )
+        }
+    }
+
+    struct TestScalarConstant;
+
+    impl ScalarOperationInferencer for TestScalarConstant {
+        fn infer(
+            &self,
+            _request: ScalarInferenceRequest<'_>,
+            outputs: &mut ScalarInferenceOutputs,
+        ) -> Result<(), ScalarInferenceError> {
+            outputs.try_push(f32_type())
+        }
+    }
+
+    fn test_scalar_definition(key: ScalarOpKey, normative: &str) -> ScalarOperationDefinition {
+        ScalarOperationDefinition::new(
+            key,
+            NormativeDefinitionRef::new(normative).unwrap(),
+            ScalarOperationContract::new(
+                ScalarAttributeSchema::new([ScalarAttributeField::required(
+                    crate::semantic::F32_CONSTANT_BITS_ATTRIBUTE,
+                    CanonicalValueKind::FloatBits,
+                )])
+                .unwrap(),
+                ScalarArity::exact(0).unwrap(),
+                ScalarArity::exact(1).unwrap(),
+                ScalarEffect::Pure,
+                CanonicalValue::boolean(true),
+                CanonicalValue::boolean(true),
+            ),
+            Arc::new(TestScalarConstant),
+        )
+    }
+
+    fn test_binary_scalar_definition(
+        key: ScalarOpKey,
+        normative: &str,
+    ) -> ScalarOperationDefinition {
+        ScalarOperationDefinition::new(
+            key,
+            NormativeDefinitionRef::new(normative).unwrap(),
+            ScalarOperationContract::new(
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(2).unwrap(),
+                ScalarArity::exact(1).unwrap(),
+                ScalarEffect::Pure,
+                CanonicalValue::boolean(true),
+                CanonicalValue::boolean(true),
+            ),
+            Arc::new(TestScalarConstant),
+        )
+    }
+
+    fn reached_semantic_fixture(
+        revision: u32,
+    ) -> (
+        IndexRefinementSubject,
+        ResolvedIndexRealization,
+        IndexRefinementReceipt,
+    ) {
+        let mut semantic = SemanticRegistryBuilder::standard().unwrap();
+        semantic
+            .register_provider(&ReachedSemanticProvider(revision))
+            .unwrap();
+        let semantic = semantic.freeze().unwrap();
+        let mut scalars = ScalarRegistryBuilder::new(semantic.clone());
+        scalars
+            .register(
+                ProviderIdentity::new("test", "selected-binary-scalar", 1).unwrap(),
+                test_binary_scalar_definition(
+                    super::super::multiply_f32_scalar_op(),
+                    "test selected multiply scalar",
+                ),
+            )
+            .unwrap();
+        let scalars = scalars.freeze();
+        let mut program = SemanticProgramBuilder::try_new(semantic.clone()).unwrap();
+        let input = program
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([1]))
+            .unwrap();
+        let result = program
+            .apply(
+                reached_semantic_operation(),
+                OperationAttributes::empty(),
+                &[input.erase(), input.erase()],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+        program
+            .output_resolved(OutputKey::new("output").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic.clone(), scalars.clone())
+                .unwrap();
+        let resolution = laws.resolve(&subject).unwrap();
+        let authority = IndexRealizationAuthority::admit(
+            &semantic,
+            &scalars,
+            subject.operation().clone(),
+            subject.signature().clone(),
+            &[super::super::multiply_f32_scalar_op()],
+        )
+        .unwrap();
+        let region = super::super::IndexRealizationLaw::multiply_f32()
+            .realize(&subject, &scalars)
+            .unwrap();
+        let IndexRefinementVerificationOutcome::Verified(receipt) =
+            resolution.verify(&authority, &region).unwrap()
+        else {
+            panic!("the reached fixture retains no residual proof")
+        };
+        (subject, resolution, *receipt)
+    }
+
+    fn constant_receipt_with_unused_authority(
+        unused_semantic_revision: Option<u32>,
+        constant_scalar_revision: u32,
+        unused_scalar_revision: Option<u32>,
+    ) -> IndexRefinementReceipt {
+        let mut semantic = SemanticRegistryBuilder::standard().unwrap();
+        if let Some(revision) = unused_semantic_revision {
+            semantic
+                .register_provider(&UnusedSemanticProvider(revision))
+                .unwrap();
+        }
+        let semantic = semantic.freeze().unwrap();
+        let mut scalars = ScalarRegistryBuilder::new(semantic.clone());
+        scalars
+            .register(
+                ProviderIdentity::new("test", "selected-scalar", constant_scalar_revision).unwrap(),
+                test_scalar_definition(
+                    super::super::constant_f32_scalar_op(),
+                    "test selected constant scalar",
+                ),
+            )
+            .unwrap();
+        if let Some(revision) = unused_scalar_revision {
+            scalars
+                .register(
+                    ProviderIdentity::new("test", "unused-scalar", revision).unwrap(),
+                    test_scalar_definition(
+                        ScalarOpKey::new("test", "unused-scalar", 1).unwrap(),
+                        "test unused scalar",
+                    ),
+                )
+                .unwrap();
+        }
+        let scalars = scalars.freeze();
+        let mut program = SemanticProgramBuilder::try_new(semantic.clone()).unwrap();
+        let value = F32Constant::apply(&mut program, 1.0_f32.to_bits()).unwrap();
+        program
+            .output(OutputKey::new("value").unwrap(), value)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic.clone(), scalars.clone())
+                .unwrap();
+        let resolution = laws.resolve(&subject).unwrap();
+        let authority = IndexRealizationAuthority::admit(
+            &semantic,
+            &scalars,
+            subject.operation().clone(),
+            subject.signature().clone(),
+            &[super::super::constant_f32_scalar_op()],
+        )
+        .unwrap();
+        let region = super::super::IndexRealizationLaw::constant_f32()
+            .realize(&subject, &scalars)
+            .unwrap();
+        let IndexRefinementVerificationOutcome::Verified(receipt) =
+            resolution.verify(&authority, &region).unwrap()
+        else {
+            panic!("a constant realization retains no residual proof")
+        };
+        *receipt
+    }
+
+    #[test]
+    fn executable_coverage_excludes_unused_authority_but_retains_reached_scalar_provenance() {
+        let baseline = constant_receipt_with_unused_authority(None, 1, None);
+        let unused_semantic = constant_receipt_with_unused_authority(Some(1), 1, None);
+        let unused_semantic_revision = constant_receipt_with_unused_authority(Some(2), 1, None);
+        let unused_scalar = constant_receipt_with_unused_authority(None, 1, Some(1));
+        let unused_scalar_revision = constant_receipt_with_unused_authority(None, 1, Some(2));
+        let reached_scalar_revision = constant_receipt_with_unused_authority(None, 2, None);
+
+        for receipt in [
+            &unused_semantic,
+            &unused_semantic_revision,
+            &unused_scalar,
+            &unused_scalar_revision,
+        ] {
+            assert_eq!(
+                baseline.executable_coverage_identity(),
+                receipt.executable_coverage_identity()
+            );
+            assert_ne!(baseline.identity(), receipt.identity());
+        }
+        assert_ne!(
+            baseline.executable_coverage_identity(),
+            reached_scalar_revision.executable_coverage_identity()
+        );
+        let (_, _, reached_semantic) = reached_semantic_fixture(1);
+        let (_, _, reached_semantic_revision) = reached_semantic_fixture(2);
+        assert_eq!(reached_semantic.graph(), reached_semantic_revision.graph());
+        assert_eq!(
+            reached_semantic.region(),
+            reached_semantic_revision.region()
+        );
+        assert_ne!(
+            reached_semantic.executable_coverage_identity(),
+            reached_semantic_revision.executable_coverage_identity()
+        );
+    }
+
+    fn alternate_test_contract() -> NumericalContractIdentity {
+        F32NumericalContractKey::new(
+            crate::schedule::SubnormalMode::Preserve,
+            crate::schedule::SubnormalMode::Preserve,
+            crate::schedule::NumericalPermission::Permitted,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::ApproximationEnvelope::Forbidden,
+            crate::schedule::ExceptionalValueAssumption::MakeNoAssumption,
+            crate::schedule::ExceptionalValueAssumption::MakeNoAssumption,
+            crate::schedule::MaterializationRounding::NearestTiesToEven,
+        )
+        .unwrap()
+        .into()
+    }
+
+    #[test]
+    fn executable_coverage_retains_each_replay_and_substitution_boundary() {
+        let (subject, resolution, receipt) = reached_semantic_fixture(1);
+        let encode = |subject: &IndexRefinementSubject,
+                      resolution: &ResolvedIndexRealization,
+                      region: &CanonicalIndexRegionIdentity,
+                      operands: &[OperandBinding],
+                      results: &[ResultBinding],
+                      proofs: &[IndexRefinementDomainProof]| {
+            encode_executable_coverage_identity(
+                subject,
+                resolution,
+                region,
+                receipt.scalar_authority(),
+                operands,
+                results,
+                proofs,
+            )
+        };
+        let baseline = encode(
+            &subject,
+            &resolution,
+            receipt.region(),
+            receipt.operand_bindings(),
+            receipt.result_bindings(),
+            receipt.index_domain_proofs(),
+        );
+        assert_eq!(baseline, receipt.executable_coverage_identity().as_bytes());
+
+        // A provider revision is excluded from graph meaning, so the graph
+        // perturbation needs a program with a genuinely different selected
+        // operation rather than another revision of the same one.
+        let foreign = constant_receipt_with_unused_authority(None, 1, None);
+        assert_ne!(subject.graph(), foreign.graph());
+        let mut changed = subject.clone();
+        changed.graph = foreign.graph().clone();
+        assert_ne!(
+            baseline,
+            encode(
+                &changed,
+                &resolution,
+                receipt.region(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[]
+            )
+        );
+
+        let mut changed = subject.clone();
+        changed.occurrence = SemanticOccurrence::new(subject.occurrence().get() + 1);
+        assert_ne!(
+            baseline,
+            encode(
+                &changed,
+                &resolution,
+                receipt.region(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[]
+            )
+        );
+
+        let mut changed = subject.clone();
+        changed.numerical_contract = alternate_test_contract();
+        assert_ne!(
+            baseline,
+            encode(
+                &changed,
+                &resolution,
+                receipt.region(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[]
+            )
+        );
+
+        let changed_region = residual_region(1, 5, 0);
+        assert_ne!(
+            baseline,
+            encode(
+                &subject,
+                &resolution,
+                changed_region.canonical_identity(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[]
+            )
+        );
+
+        let mut changed = subject.clone();
+        let law_row = changed
+            .realization_law_row
+            .as_mut()
+            .expect("the reached operation carries a law row");
+        let mut changed_law_row = law_row.to_vec();
+        changed_law_row.push(0xff);
+        *law_row = changed_law_row.into_boxed_slice();
+        assert_ne!(
+            baseline,
+            encode(
+                &changed,
+                &resolution,
+                receipt.region(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[]
+            )
+        );
+
+        let mut changed_resolution = resolution.clone();
+        changed_resolution.provider =
+            ProviderIdentity::new("test", "different-reached-law-provider", 1).unwrap();
+        assert_ne!(
+            baseline,
+            encode(
+                &subject,
+                &changed_resolution,
+                receipt.region(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[]
+            )
+        );
+
+        let mut changed_resolution = resolution.clone();
+        changed_resolution.revision += 1;
+        assert_ne!(
+            baseline,
+            encode(
+                &subject,
+                &changed_resolution,
+                receipt.region(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[]
+            )
+        );
+
+        let mut operands = receipt.operand_bindings().to_vec();
+        operands[0].operand += 1;
+        assert_ne!(
+            baseline,
+            encode(
+                &subject,
+                &resolution,
+                receipt.region(),
+                &operands,
+                receipt.result_bindings(),
+                &[]
+            )
+        );
+
+        let mut results = receipt.result_bindings().to_vec();
+        results[0].result += 1;
+        assert_ne!(
+            baseline,
+            encode(
+                &subject,
+                &resolution,
+                receipt.region(),
+                receipt.operand_bindings(),
+                &results,
+                &[]
+            )
+        );
+
+        let proof_region = residual_region(1, 5, 0);
+        let obligation = proof_region
+            .unknown_index_domain_predicates()
+            .next()
+            .expect("the proof fixture retains one obligation");
+        let authority = Arc::new(IndexDomainProofAuthority::exact_finite());
+        let proof = IndexDomainProofEvidence::ExhaustiveFinite {
+            points: 2,
+            derivation: EXHAUSTIVE_DERIVATION.into(),
+        };
+        let proof = IndexRefinementDomainProof {
+            obligation,
+            authority: authority.clone(),
+            identity: IndexRefinementDomainProofIdentity(
+                encode_proof_identity(&proof_region, obligation, &authority, &proof)
+                    .into_boxed_slice(),
+            ),
+            proof,
+        };
+        assert_ne!(
+            baseline,
+            encode(
+                &subject,
+                &resolution,
+                receipt.region(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[proof]
+            )
+        );
+    }
 
     fn test_law_operation() -> OpKey {
         OpKey::new("test", "refinement-law-row", 1).unwrap()
@@ -3686,10 +4328,22 @@ mod tests {
         let reversed_one = receipt(&reversed, 1);
         assert_eq!(forward_one.occurrence(), reversed_one.occurrence());
         assert_eq!(forward_one.identity(), reversed_one.identity());
+        assert_eq!(
+            forward_one.executable_coverage_identity(),
+            reversed_one.executable_coverage_identity()
+        );
         assert_eq!(forward_two.occurrence(), reversed_two.occurrence());
         assert_eq!(forward_two.identity(), reversed_two.identity());
+        assert_eq!(
+            forward_two.executable_coverage_identity(),
+            reversed_two.executable_coverage_identity()
+        );
         assert_ne!(forward_one.occurrence(), forward_two.occurrence());
         assert_ne!(forward_one.identity(), forward_two.identity());
+        assert_ne!(
+            forward_one.executable_coverage_identity(),
+            forward_two.executable_coverage_identity()
+        );
 
         let other = IndexRefinementSubject::derive(
             &forward,
@@ -3851,19 +4505,160 @@ mod tests {
         };
         let first = pending(laws.resolve(&first_subject).unwrap());
         let second = pending(laws.resolve(&second_subject).unwrap());
-        let first_receipt = mint_receipt(
-            first.subject(),
-            &first.resolution,
-            first.region.canonical_identity(),
-            first.scalar_authority.clone(),
-            first.operand_bindings.clone(),
-            first.result_bindings.clone(),
-            Vec::new(),
-        );
+        let mint = |pending: &PendingIndexRefinementReceipt| {
+            mint_receipt(
+                pending.subject(),
+                &pending.resolution,
+                pending.region.canonical_identity(),
+                pending.scalar_authority.clone(),
+                pending.operand_bindings.clone(),
+                pending.result_bindings.clone(),
+                Vec::new(),
+            )
+        };
+        let first_receipt = mint(&first);
+        let second_receipt = mint(&second);
         assert_eq!(
             second.verify_completion(&first_receipt),
             Err(IndexRefinementVerificationError::CompletionReceiptMismatch)
         );
+
+        // The two occurrences agree on every other subject the executable
+        // projection reads, so a coverage identity that failed to separate them
+        // would be crossable between real, equally-shaped occurrences.
+        assert_eq!(first_receipt.graph(), second_receipt.graph());
+        assert_eq!(first_receipt.region(), second_receipt.region());
+        assert_eq!(
+            first_receipt.scalar_authority(),
+            second_receipt.scalar_authority()
+        );
+        assert_eq!(
+            first_receipt.operand_bindings(),
+            second_receipt.operand_bindings()
+        );
+        assert_eq!(
+            first_receipt.result_bindings(),
+            second_receipt.result_bindings()
+        );
+        assert_ne!(first_receipt.occurrence(), second_receipt.occurrence());
+        assert_ne!(
+            first_receipt.executable_coverage_identity(),
+            second_receipt.executable_coverage_identity()
+        );
+    }
+
+    /// A residual association reaches executable coverage only through proof.
+    ///
+    /// The compile-fail doctest on [`PendingIndexRefinementReceipt`] carries the
+    /// structural half — a pending value exposes no coverage accessor. This
+    /// carries the behavioural half: an undischarged residual leaves `complete`
+    /// with no receipt to project, so no coverage identity exists to name.
+    ///
+    /// Only the `Unknown` refusal is reachable from a verified region here.
+    /// `IndexRegionBuilder` runs its own exhaustive fallback under
+    /// [`MAX_EXHAUSTIVE_PROOF_CELLS`], and an access it can walk it either
+    /// discharges or refuses as `CoordinateOutOfBounds` at build time, so a
+    /// small disprovable region never becomes a `VerifiedIndexRegion` at all.
+    /// A `Disproved` completion needs a region inside the cell window between
+    /// that bound and [`MAX_FINITE_DOMAIN_PROOF_CELLS`] whose per-point integer
+    /// work still fits [`MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES`]; both refusal
+    /// arms leave `complete` through the same `Err` return, so the coverage
+    /// claim does not depend on exhibiting the second one.
+    #[test]
+    fn pending_and_refused_proofs_have_no_executable_coverage_spelling() {
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let input = program
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([LENGTH]))
+            .unwrap();
+        let value = F32Multiply::apply(&mut program, input, input).unwrap();
+        program
+            .output(OutputKey::new("output").unwrap(), value)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        let semantic = FrozenSemanticRegistry::standard().unwrap();
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars.clone()).unwrap();
+        let resolution = laws.resolve(&subject).unwrap();
+        let pending = |region: VerifiedIndexRegion| PendingIndexRefinementReceipt {
+            resolution: resolution.clone(),
+            scalar_authority: scalars.revalidate_region(&region).unwrap(),
+            operand_bindings: Vec::new(),
+            result_bindings: Vec::new(),
+            region,
+        };
+        let budget = IndexDomainProofBudget::try_new(
+            MAX_FINITE_DOMAIN_PROOF_CELLS,
+            MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+        )
+        .unwrap();
+
+        let unprovable = pending(residual_region(1, 5, 0));
+        assert_eq!(unprovable.obligations().len(), 1);
+        let refusal = ResolvedIndexRealization::complete(&unprovable, budget)
+            .expect_err("a residual beyond the hard integer budget cannot be discharged");
+        assert_eq!(refusal.kind(), IndexDomainProofRefusalKind::Unknown);
+        assert_eq!(refusal.assessments().len(), 1);
+        // The same association mints coverage only once its obligations are
+        // discharged, so the refusal above is the difference between a spelling
+        // and none — not a difference in the association itself.
+        let discharged = mint_receipt(
+            unprovable.subject(),
+            &unprovable.resolution,
+            unprovable.region.canonical_identity(),
+            unprovable.scalar_authority.clone(),
+            unprovable.operand_bindings.clone(),
+            unprovable.result_bindings.clone(),
+            proofs_for(&unprovable.region),
+        );
+        assert_eq!(discharged.index_domain_proofs().len(), 1);
+        let unproved = mint_receipt(
+            unprovable.subject(),
+            &unprovable.resolution,
+            unprovable.region.canonical_identity(),
+            unprovable.scalar_authority.clone(),
+            unprovable.operand_bindings.clone(),
+            unprovable.result_bindings.clone(),
+            Vec::new(),
+        );
+        assert_ne!(
+            discharged.executable_coverage_identity(),
+            unproved.executable_coverage_identity()
+        );
+    }
+
+    /// Seals one exact-finite proof per retained obligation of `region`.
+    ///
+    /// The completion algorithm's own budget is not the subject here; this
+    /// supplies the proof records a discharged association would carry so the
+    /// minted coverage can be compared against the same association's
+    /// undischarged encoding.
+    fn proofs_for(region: &VerifiedIndexRegion) -> Vec<IndexRefinementDomainProof> {
+        let authority = Arc::new(IndexDomainProofAuthority::exact_finite());
+        region
+            .unknown_index_domain_predicates()
+            .map(|obligation| {
+                let proof = IndexDomainProofEvidence::ExhaustiveFinite {
+                    points: 2,
+                    derivation: EXHAUSTIVE_DERIVATION.into(),
+                };
+                IndexRefinementDomainProof {
+                    obligation,
+                    authority: authority.clone(),
+                    identity: IndexRefinementDomainProofIdentity(
+                        encode_proof_identity(region, obligation, &authority, &proof)
+                            .into_boxed_slice(),
+                    ),
+                    proof,
+                }
+            })
+            .collect()
     }
 
     #[test]
