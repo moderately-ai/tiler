@@ -1,7 +1,7 @@
 ---
 id: admit-an-age-bounded-automatic-eviction-into-the-expansion-cache
 title: Admit an age-bounded automatic eviction into the expansion cache
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-the-expansion-cache-collection-schedule, wire-the-env-configured-eviction-policy-through-the-deliver-path, measure-the-expansion-cache-hot-path-efficiency]
@@ -9,6 +9,9 @@ scopes: [implementation/cache, research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, eviction, durability, decision-execution]
+claimed_from: todo
+assignee: agent-cache-evict
+lease_expires_at: 1785875503
 ---
 ## User-visible outcome
 
