@@ -233,15 +233,15 @@ echo "$S" | xargs grep -hoE '\b(u?int|u?long|u?short|u?char)[0-9]? +[a-z_][a-z0-
 | Selected profile, projections only | 1,064,714,240 | 0.447 |
 | Selected profile plus the tied embedding | 598,726,528 | 0.251 |
 
-**Inference — quantizing the weights makes the KV cache the dominant term, and L5 should know that before it designs one.** Composing with L1's KV-cache table at the longest benchmark row, B1-d at 8,320 context:
+**Historical inference over the rejected singular dense-allocation candidate.** Composing the selected weight bytes with L1's logical KV payload at the longest benchmark row, B1-d at 8,320 context, produced this candidate arithmetic:
 
-| Configuration | Weights | KV cache (F32) | Total | vs F32 total |
+| Configuration | Weights | Logical KV payload (F32) | Weights + logical payload | vs F32 arithmetic |
 | --- | --- | --- | --- | --- |
 | F32 | 2,384,199,680 | 1,908,408,320 | 3.998 GiB | 1.000 |
 | Selected, projections only | 1,064,714,240 | 1,908,408,320 | 2.769 GiB | 0.693 |
 | Selected plus embedding | 598,726,528 | 1,908,408,320 | 2.335 GiB | 0.584 |
 
-At the F32 baseline the weights are 56% of resident state; with the embedding quantized they are 24% and the KV cache is 76%. **Inference.** Quantizing weights alone therefore has a floor on what it can do for the long rows, and the next memory question for this workload is the cache rather than the weights — which is [`design-autoregressive-state-and-kv-cache`](../../../tickets/design-autoregressive-state-and-kv-cache.md)'s, not this record's.
+In that rejected-candidate arithmetic the F32 weights are 56% of the combined bytes; with the embedding quantized they are 24% and the logical KV payload is 76%. This remains evidence that weight-only compression can expose KV representation as a large term, but it is not a current residency floor, dominance claim, or physical cache design. [`establish-a-dynamic-kv-physical-layout-authority`](../../../tickets/establish-a-dynamic-kv-physical-layout-authority.md) must derive the survivor's resource population and bytes before any complete peak or binding-term comparison is restored.
 
 **Inference — an analytical performance projection, and it is not a measurement.** L3's `t_vocab_full` cell is bandwidth-bound at 146 GB/s for its best candidate; under the selected profile its operand is 0.2512 of the F32 bytes, so *if* the cell remains bandwidth-bound at the same achieved rate a fused quantized decode would land near 1,067 µs against the measured 4,247 µs. Every part of that sentence is a hypothesis: the fused kernel does more arithmetic per byte, the achieved bandwidth of a `u8` read stream is unmeasured on this host, and nothing has dispatched an integer instruction on an Apple GPU in this repository. **This record makes no device-optimal claim and none may be made from it.** [`calibrate-device-cost-models`](../../../tickets/calibrate-device-cost-models.md) and the device measurement filed below are structural prerequisites of any such claim, and the cost model must keep the packed-fused, explicit-dequantize, and F32 candidates as separately costed alternatives rather than assuming the first wins.
 

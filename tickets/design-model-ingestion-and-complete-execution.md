@@ -87,9 +87,9 @@ The durable record is [Complete model ingestion and execution](../docs/research/
 
 ### D-13 closed: two axes, not one
 
-L5 handed over a choice between 3,816,587,264 B of peak KV residency for one program per step and 1,976,557,568 B for one program per layer. **The arithmetic is right and the framing conflates two independent decisions.** The per-layer figure holds one old allocation live at a time, which requires releasing each before the next layer runs — and L5's own retention rule makes an old allocation releasable only after the *completion condition*, which is per submission. So the second row is reachable only with 28 submissions and 28 host completion observations per token, and releasing early is precisely giving up the restorability that makes U-A's failure non-destructive.
+L5 handed over a program-boundary and transaction-boundary question with 3,816,587,264 B versus 1,976,557,568 B arithmetic for the now-rejected singular dense-allocation candidate. **Historical inference — within that candidate, the framing conflates two independent decisions.** Its lower-residency row releases one old allocation after each layer and therefore requires 28 submissions and 28 host completion observations per token. Those figures remain reproducible candidate evidence, not current physical-residency authority.
 
-The design takes **the per-layer program with the token transaction**: 3.5544 GiB, one host round trip, a post-commit failure leaving the state bit-identical. It declines 1.714 GiB that is worth 3.8 MB at the conformance row. **L5's cursor-granularity rule is refined rather than contradicted:** what it protects is observability, so per-layer programs with one model cursor and a generation per layer state, published atomically after one observed terminal success, satisfy it; 28 independently advanced cursors stay forbidden.
+The design takes **the per-layer program with the token transaction** for artifact reuse and atomic publication of all 28 K/V pairs (56 logical members) after one observed terminal success. Exact resource count and residency are blocked on [`establish-a-dynamic-kv-physical-layout-authority`](establish-a-dynamic-kv-physical-layout-authority.md); the rejected candidate's 3.5544 GiB, 1.714 GiB, and 3.8 MB figures do not select the survivor. **L5's cursor-granularity rule is refined rather than contradicted:** what it protects is observability, so one model cursor and a generation per logical member satisfy it; independently advanced per-layer cursors stay forbidden.
 
 ### The layer-ownership additions
 
@@ -101,7 +101,7 @@ The checkpoint's 310 tensors fall into eight shape classes whose members are mut
 
 ### Peak residency, the figure L1 deferred
 
-2.2299 GiB at C1 prefill and at most 2.2287 GiB at C1 decode 8 — the weight budget plus 0.4%, so the conformance row says nothing about residency. At most 5.7777 GiB at B1-d's final decode step, which is 1,911,183,360 B (1.7799 GiB) above L1's B1-d row because that row counts one copy of the cache and an extending execution holds two. And at B1-d prefill the binding terms are neither the weights nor the cache: 26.1462 GiB unfused, 10.1472 GiB under D-B, and 5.5111 GiB under D-B with final-position logits. Every peak is the exact sum of its row's stated terms rather than an estimate beside them.
+**Historical rejected-candidate arithmetic.** The 2.2299 GiB C1 prefill, at-most 2.2287 GiB C1 decode, at-most 5.7777 GiB B1-d decode, and 26.1462/10.1472/5.5111 GiB B1-d prefill totals combine survivor-independent weight, transient, and logits terms with KV terms from the rejected singular dense-allocation candidate. Those sums remain reproducible evidence about that candidate; they are not current exact peaks, and their claims about which term binds do not transfer to another physical representation. [`establish-a-dynamic-kv-physical-layout-authority`](establish-a-dynamic-kv-physical-layout-authority.md) must supply the survivor's resource population and KV residency formula, after which every complete row total and comparison is recomputed while preserving the non-KV terms.
 
 ### Five refusals stand between this design and a compiled model
 
@@ -117,7 +117,7 @@ Twelve, dependency-ordered, reusing the existing capability, state, symbolic-ext
 4. `widen-the-deterministic-budgets-to-the-decoder-layer-program` — deps 2. Carries D-18 to Tom.
 5. `define-the-model-weight-binding-manifest` — deps 2, 3.
 6. `ingest-the-checkpoint-as-f32-program-inputs` — deps 5, `route-an-embedded-artifact-through-a-consumer-storage-seam`.
-7. `define-the-model-execution-state-boundary` — deps 2, `define-the-runtime-kv-state-boundary`. Carries D-16 to Tom.
+7. `define-the-model-execution-state-boundary` — deps 2, `define-the-runtime-kv-state-boundary`; transitively blocked on `establish-a-dynamic-kv-physical-layout-authority`. Carries D-16 only after the survivor supplies its physical residency and layout consequences.
 8. `drive-the-complete-forward-pass-over-three-artifacts` — deps 4, 6, 7, `deliver-an-artifact-family-from-a-symbolic-region`, `integrate-the-autoregressive-decode-loop`.
 9. `retain-the-c1-model-attribution-fixture` — deps `retain-the-qwen-conformance-reference-logit-fixture`; runs in parallel.
 10. `name-the-execution-ordinal-in-model-level-failures` — deps 8.

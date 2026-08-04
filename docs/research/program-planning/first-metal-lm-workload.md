@@ -148,9 +148,9 @@ The three quantities below are separate and are stated separately, because colla
 
 **Fact — weight budget.** 596,049,920 parameters at 4 bytes is **2,384,199,680 bytes** (2.2205 GiB) of F32 weights. The same parameters at the checkpoint's own BF16 width occupy 1,192,099,840 bytes, so widening to F32 exactly doubles the weight residency; the 1,192,135,096-byte file size is that BF16 payload plus the 35,256-byte header.
 
-**Fact — KV-cache budget, per token and per context.** One cached token holds a key and a value for every layer and every key/value head: 2 × 28 layers × 8 heads × 128 = 57,344 F32 elements, or **229,376 bytes (224 KiB) per token**. This is a function of `num_key_value_heads`, not `num_attention_heads`; using 16 heads would overstate it by exactly 2×.
+**Fact — logical KV payload, per token and per context.** One cached token denotes a key and a value for every layer and every key/value head: 2 × 28 layers × 8 heads × 128 = 57,344 F32 elements, or **229,376 bytes (224 KiB) of logical tensor payload per token**. This is a function of `num_key_value_heads`, not `num_attention_heads`; using 16 heads would overstate it by exactly 2×. The table is payload arithmetic for the rejected singular dense-allocation candidate, not authority for physical layout, allocation count, padding, or residency; those require the survivor from [`establish-a-dynamic-kv-physical-layout-authority`](../../../tickets/establish-a-dynamic-kv-physical-layout-authority.md).
 
-| Context (tokens) | KV-cache F32 | Weights + KV |
+| Context (tokens) | Logical KV F32 payload | Weights + logical KV payload |
 | --- | --- | --- |
 | 18 | 4,128,768 B (0.0038 GiB) | 2.2243 GiB |
 | 256 | 58,720,256 B (0.0547 GiB) | 2.2751 GiB |
@@ -159,7 +159,7 @@ The three quantities below are separate and are stated separately, because colla
 | 8,320 | 1,908,408,320 B (1.7773 GiB) | 3.9978 GiB |
 | 32,768 | 7,516,192,768 B (7.0000 GiB) | 9.2205 GiB |
 
-**Inference — the declared maximum context is not a workload row.** At the checkpoint's declared 32,768 positions the F32 KV cache alone is 7.00 GiB and total resident state is 9.22 GiB before any activation or workspace. That is not infeasible on a large unified-memory Apple part, but it is a residency claim no measurement in this repository supports, and it would make every early performance number a statement about memory pressure rather than about the compiler. The benchmark row below therefore stops well inside it and says so, rather than quoting 32,768 as a supported length.
+**Inference — the declared maximum context is not a workload row.** At the checkpoint's declared 32,768 positions the logical F32 KV payload alone is 7.00 GiB and weights plus that payload are 9.22 GiB before any activation or workspace. Those are not physical-residency claims: the selected layout may add or reorganize resources, and no measurement in this repository bounds the result. Even the payload arithmetic would make early performance numbers sensitive to memory pressure rather than only to the compiler. The benchmark row below therefore stops well inside the declared maximum and says so, rather than quoting 32,768 as a supported length.
 
 **Unknown — peak workspace.** Peak transient memory is a property of the selected physical plan, not of the model, so this profile cannot state it and does not. One bound is worth recording because it constrains planning rather than merely costing it: a prefill that materializes the full attention score matrix needs 16 heads × P × P × 4 bytes, which is 1,048,576 B at P = 128, 268,435,456 B at P = 2,048, and **4,294,967,296 bytes (4.00 GiB) at P = 8,192**. **Inference.** At the long end of the benchmark row a materialized-score plan costs more transient memory than the entire model, so the choice between materializing scores and streaming them is a hard-feasibility question at some prompt length rather than a cost comparison at every prompt length — exactly the separation the architectural contract requires. Which lengths those are, and what the real peak is for a chosen plan, belongs to L5 and L6.
 
@@ -205,14 +205,14 @@ One universal sequence cap would either be too small to be representative or too
 
 **Proposal — the matrix.** Four prompt lengths against one fixed decode budget, so prompt length is the only varied axis and per-token decode latency keeps a constant denominator across rows.
 
-| Row | Prompt tokens | Decode steps | Context reached | KV-cache F32 at end | Weights + KV |
+| Row | Prompt tokens | Decode steps | Context reached | Logical KV F32 payload at end | Weights + logical KV payload |
 | --- | --- | --- | --- | --- | --- |
 | B1-a | 128 | 128 | 256 | 58,720,256 B | 2.2751 GiB |
 | B1-b | 512 | 128 | 640 | 146,800,640 B | 2.3572 GiB |
 | B1-c | 2,048 | 128 | 2,176 | 499,122,176 B | 2.6853 GiB |
 | B1-d | 8,192 | 128 | 8,320 | 1,908,408,320 B | 3.9978 GiB |
 
-**Inference — why the matrix stops at 8,320 of 32,768 declared positions.** Three separate quantities cross a threshold before the declared maximum: total resident state reaches 9.22 GiB at 32,768, a materialized-score prefill reaches 4.00 GiB at P = 8,192, and neither figure is bounded by any measurement this repository holds. B1-d already sits at the point where a plan choice becomes a feasibility question, which makes it the most informative long row available without turning the first benchmark into a memory-pressure experiment. Extending the matrix upward is legitimate work; it needs a residency measurement on a named host first, and it belongs to L8.
+**Inference — why the matrix stops at 8,320 of 32,768 declared positions.** Two distinct warning quantities are already large before the declared maximum: weights plus logical KV payload reach 9.22 GiB at 32,768, while a materialized-score prefill reaches 4.00 GiB at P = 8,192. Neither is a measured complete peak, and the first is not physical-layout authority. B1-d is therefore the longest row justified without turning the first benchmark into an unbounded memory-pressure experiment. Extending the matrix upward is legitimate work; it needs the layout survivor and a residency measurement on a named host first, and it belongs to L8.
 
 **Proposal — the observables, and what they are not.** Prefill latency and per-token decode latency, each as min-of-N on a quiet host; peak resident bytes; dispatch count and materialization count. Not tokens per second aggregated across a batch, because batch is 1 and a throughput figure would need batching that this profile deliberately excludes. Every one of these is a `Measurement` bound to an exact host, toolchain, and procedure when it is taken, and none of them is a number this document supplies — the harness, the host discipline, and the regression policy are L8's, and this row exists so that L8 measures a workload someone already bounded.
 
