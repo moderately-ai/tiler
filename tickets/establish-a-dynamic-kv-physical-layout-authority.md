@@ -1,7 +1,7 @@
 ---
 id: establish-a-dynamic-kv-physical-layout-authority
 title: Establish a dynamic KV physical-layout authority
-status: ready
+status: in-progress
 priority: p1
 dependencies: []
 related: [design-autoregressive-state-and-kv-cache, define-the-runtime-kv-state-boundary, bind-the-kv-cache-through-the-artifact-and-runtime-interface, evaluate-retained-shape-relations-before-routing-commit]
@@ -9,6 +9,9 @@ scopes: [research/runtime, contracts/artifacts, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, design, runtime, artifact, abi, kv-cache, correctness]
+claimed_from: ready
+assignee: agent-kv-layout
+lease_expires_at: 1785863038
 ---
 ## User-visible outcome
 
