@@ -1,7 +1,7 @@
 ---
 id: wire-the-env-configured-eviction-policy-through-the-deliver-path
 title: Wire the env-configured eviction policy through the deliver path
-status: todo
+status: in-progress
 priority: p2
 dependencies: [admit-an-age-bounded-automatic-eviction-into-the-expansion-cache]
 related: [decide-the-expansion-cache-collection-schedule]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, eviction, frontend, macro-aot]
+claimed_from: todo
+assignee: agent-evict-wiring
+lease_expires_at: 1785877012
 ---
 ## User-visible outcome
 

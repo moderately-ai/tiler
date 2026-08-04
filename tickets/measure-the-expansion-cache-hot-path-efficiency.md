@@ -1,7 +1,7 @@
 ---
 id: measure-the-expansion-cache-hot-path-efficiency
 title: Measure the expansion cache hot-path efficiency
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-the-expansion-cache-collection-schedule, exercise-the-expansion-cache-under-cargo-and-rust-analyzer, admit-an-age-bounded-automatic-eviction-into-the-expansion-cache]
@@ -9,6 +9,9 @@ scopes: [research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, performance, measurement]
+claimed_from: todo
+assignee: agent-cache-measure
+lease_expires_at: 1785877012
 ---
 ## User-visible outcome
 
