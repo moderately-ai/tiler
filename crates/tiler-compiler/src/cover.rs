@@ -738,8 +738,18 @@ impl CoverEnumeration {
     /// not explored. A caller must not read a partial result as a complete
     /// enumeration, which is why this is a stated fact rather than something
     /// inferred from a cover count.
+    ///
+    /// A [`CoverBudgetResource::Refusals`] stop deliberately does **not** make
+    /// this `false`. That budget bounds the *explanation* — how many distinct
+    /// refusals are retained — and a search that explored the whole space while
+    /// declining to name every candidate it refused is still exhaustive.
+    /// Reporting it as partial would tell a caller that covers might be missing
+    /// when none is, and the two stops are separate resources precisely so a
+    /// reader can tell which one ran out.
     pub(crate) fn is_exhaustive(&self) -> bool {
-        self.budget_stops.is_empty()
+        self.budget_stops
+            .iter()
+            .all(|stop| stop.resource == CoverBudgetResource::Refusals)
     }
 
     /// Returns why the profile could enumerate no cover, when it could not.
@@ -1750,6 +1760,18 @@ impl Partitioner<'_> {
 ///   contract: there, a region whose results reach nothing reflects a dead
 ///   operation in the program, which normalization owns and this authority must
 ///   not start refusing programs over.
+///
+/// **The first is defence in depth and is currently unreachable from the search,
+/// stated so rather than presented as a live check.** A second producer of a
+/// named output would have to be a second region containing that output's
+/// producing member, and [`duplication_refusal`] refuses that member with
+/// [`DuplicationRefusal::NamedResultProducer`] before a cover containing both
+/// can be assembled. It is kept because it is the condition, not the
+/// consequence: the day the duplication condition admits a named-result producer
+/// — a profile that writes one output from several regions under an ownership
+/// discipline — this is what stops the two writers being accepted silently, and
+/// it is driven directly by
+/// `the_named_output_and_observability_checks_can_say_no`.
 fn classify_global_legality(
     named_outputs: &[NamedOutput],
     resolved: &[&RegionCandidate],
@@ -2112,23 +2134,14 @@ fn derive_cover_cost(
             if seen.insert(*member) {
                 continue;
             }
-            for output in region.retained_outputs() {
-                if output.producer == *member {
-                    recomputed_elements = recomputed_elements
-                        .saturating_add(graph.value_element_count(output.value)?);
-                }
-            }
-            // A repeated member whose results the region does not retain still
-            // computes them; its cost is the cost of its own results, read from
-            // the graph rather than from the region's exported list.
-            if !region
-                .retained_outputs()
-                .iter()
-                .any(|output| output.producer == *member)
-            {
-                recomputed_elements =
-                    recomputed_elements.saturating_add(member_result_elements(graph, *member)?);
-            }
+            // The member's *own* results, read from the graph rather than from
+            // the region's exported list. The two differ exactly in the case
+            // duplication creates: a recomputed member whose value is consumed
+            // inside the region that recomputed it appears in no retained-output
+            // list, and costing it from that list would report the recomputation
+            // as free — which is the case this dimension exists to price.
+            recomputed_elements =
+                recomputed_elements.saturating_add(member_result_elements(graph, *member)?);
         }
     }
     Ok(CoverCost {
@@ -3234,6 +3247,94 @@ mod tests {
             non_dominated.len() + dominated.len(),
             enumeration.covers().len()
         );
+    }
+
+    /// A truncated explanation is not a truncated search.
+    ///
+    /// The refusal budget bounds how many distinct refusals are named, not how
+    /// much of the space was explored, so it must not make the enumeration
+    /// report itself partial. Driven over all three resources so the predicate
+    /// is shown to distinguish them rather than to ignore budget stops.
+    #[test]
+    fn a_truncated_explanation_does_not_report_a_truncated_search() {
+        let stopped = |resource| CoverEnumeration {
+            policy: exact_partition(),
+            covers: Vec::new(),
+            refusals: Vec::new(),
+            budget_stops: vec![super::CoverBudgetStop {
+                resource,
+                limit: 1,
+                actual: 2,
+            }],
+            infeasibilities: Vec::new(),
+            operation_count: 0,
+        };
+        assert!(
+            stopped(CoverBudgetResource::Refusals).is_exhaustive(),
+            "a bounded refusal list must not be reported as a bounded search"
+        );
+        assert!(!stopped(CoverBudgetResource::Covers).is_exhaustive());
+        assert!(!stopped(CoverBudgetResource::Expansions).is_exhaustive());
+    }
+
+    /// The two whole-cover checks can say no.
+    ///
+    /// Both are ordered behind a check that fires first on every input the
+    /// search can build — the named-output check behind the duplication refusal
+    /// for a named-result producer, and the verification-side observability
+    /// check behind the enumerator never assembling a dead cover — so neither is
+    /// reachable through `enumerate_covers`. A check nothing has shown can fail
+    /// is a check a reader may not rely on, so both are driven directly against
+    /// an input that must fail them.
+    #[test]
+    fn the_named_output_and_observability_checks_can_say_no() {
+        use super::{NamedOutput, check_named_outputs, check_regions_observed};
+
+        let program = shared_producer_program();
+        let formation = formation_of(&program);
+        let producer = formation
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .retained_outputs()
+                    .iter()
+                    .any(|output| output.named_result)
+            })
+            .expect("a candidate produces a named output");
+        let named = producer
+            .retained_outputs()
+            .iter()
+            .find(|output| output.named_result)
+            .expect("the candidate's named output");
+        let output = NamedOutput {
+            position: 0,
+            value: named.value.0,
+        };
+
+        // One producer passes; the same region counted twice is two writers of
+        // one program result.
+        check_named_outputs(&[output], &[producer]).unwrap();
+        let error = check_named_outputs(&[output], &[producer, producer]).unwrap_err();
+        assert_eq!(error.class(), "coverage");
+        assert_eq!(error.reason(), "ambiguous-named-output");
+
+        // A region producing a named output is observed with no edge at all; a
+        // region producing none, with no edge naming it, is not.
+        check_regions_observed(&[producer], &[]).unwrap();
+        let internal = formation
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .retained_outputs()
+                    .iter()
+                    .all(|output| !output.named_result)
+            })
+            .expect("the fixture has a region producing no named output");
+        let error = check_regions_observed(&[internal], &[]).unwrap_err();
+        assert_eq!(error.class(), "coverage");
+        assert_eq!(error.reason(), "dead-region");
     }
 
     /// A cover whose regions between them compute something nothing observes is
