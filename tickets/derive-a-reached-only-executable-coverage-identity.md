@@ -1,7 +1,7 @@
 ---
 id: derive-a-reached-only-executable-coverage-identity
 title: Derive a reached-only executable coverage identity
-status: review
+status: done
 priority: p1
 dependencies: [place-index-refinement-evidence-under-an-ir-owned-verifier, canonicalize-index-refinement-occurrence-ordinals]
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, co
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [design, implementation, identity]
-claimed_from: ready
-assignee: agent-coverage-resume
-lease_expires_at: 1785873940
 ---
 ## User-visible outcome
 
@@ -103,3 +100,7 @@ The kernel-program leg is asserted on `VerifiedKernelProgram::canonical_identity
 Every perturbation was reverted and the green run below was taken on the restored tree.
 
 **Measurement — resumed branch checks** (pinned toolchain, `ac97efe0` merged tree): `cargo fmt -p tiler-ir -p tiler-artifact -- --check` clean; `cargo check --workspace --all-targets` clean; `cargo nextest run -p tiler-ir -p tiler-compiler -p tiler-artifact --no-fail-fast` passed 1,557/1,557 with three configured skips; `cargo test -p tiler-ir -p tiler-compiler -p tiler-artifact --doc` passed 23/23 with one ignored, including all three new compile-fail cases; `cargo clippy -p <pkg> --all-targets -- -D warnings` exited 0 for each of the three crates. The workspace gate remains red for an unrelated reason recorded in `restore-the-metal-toolchain-so-the-workspace-gate-can-run-green` (missing metallib, `tiler-macros` and `tiler-prototype-compile`); none of those packages is touched here.
+
+## Acceptance — 2026-08-04
+
+Tom accepted the `IndexRefinementExecutableCoverageIdentity` public boundary as drafted (no re-encoding of the graph-determined operation subjects) in a direct session message on 2026-08-04; the acceptance was relayed and executed by the orchestrator, which merged the branch and moved the `docs/ir.md` disclosure from proposal to accepted wording in the same integration. The dependent stage-coverage binding work is released.
