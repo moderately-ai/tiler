@@ -1,7 +1,7 @@
 ---
 id: audit-the-general-compiler-pipeline-against-the-semantic-program-model
 title: Audit the general compiler pipeline against the semantic program model
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [implement-general-dag-partitioning, admit-ordered-multi-output-programs-at-the-compiler-request-boundary, accept-the-public-compiler-facade-boundary]
@@ -9,6 +9,9 @@ scopes: [research/program-planning, research/region-search, research/scheduling,
 shared_scopes: [project/tickets]
 paths: []
 tags: [architecture, compiler-pipeline, audit, mimo]
+claimed_from: todo
+assignee: agent-pipeline-audit
+lease_expires_at: 1785880207
 ---
 ## User-visible outcome
 
