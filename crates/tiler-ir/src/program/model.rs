@@ -682,16 +682,24 @@ pub(super) struct DerivedProgramFacts {
 /// dependencies and named outputs that structure them, the entry ABI, the
 /// applicability guard, and the routing-commit lifecycle.
 ///
-/// The ABI expression arena is folded *transitively*: every use site is encoded
-/// by its canonical content key, a content key names the node's whole subtree,
-/// and whole-program verification rejects an arena node no use site reaches. So
-/// no retained expression escapes identity and no node is encoded twice.
+/// The ABI expression arena is folded *transitively*: the reachable arena is
+/// written once in canonical order and each use site names its node by
+/// canonical position, and whole-program verification rejects an arena node no
+/// use site reaches. So no retained expression escapes identity and no node is
+/// encoded twice.
 ///
 /// It excludes every transient ordinal: builder insertion order, the program's
 /// own stage/value/view/allocation/arena positions, and the planning `RegionId`
 /// already excluded by the kernel and schedule identities. Cross-references are
 /// encoded by canonical content key, never by position, so two structurally
 /// equal programs assembled in different orders share bytes.
+///
+/// The one order it does fold is the **published output interface**, and that
+/// is not a transient ordinal: whole-program verification proves the published
+/// records are the semantic subject's ordered outputs, with each key's
+/// component records contiguous and in the encoded contract's declared
+/// component order. A lowering that permuted an artifact's ordered output
+/// interface would produce a different program, and identity says so.
 ///
 /// It still deliberately excludes what a later artifact-facing projection owns:
 /// packaged admission, selected-provider provenance, the wire encoding of the
@@ -813,7 +821,15 @@ impl VerifiedKernelProgram {
         })
     }
 
-    /// Returns the ordered named program outputs.
+    /// Returns the named program outputs in the semantic interface's order.
+    ///
+    /// "Ordered" is a proven claim rather than the order the producer happened
+    /// to publish in: whole-program verification pins this sequence to the
+    /// ordered outputs of the semantic program the builder was opened against,
+    /// each key's component records contiguous and in the encoded contract's
+    /// declared component order. A consumer projecting an ordered output
+    /// interface may therefore read it here instead of re-deriving it by key,
+    /// and [`Self::canonical_identity`] folds this order rather than sorting it.
     #[must_use]
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = ProgramOutputRef<'_>> {
         (0..self.data.outputs.len()).map(move |index| ProgramOutputRef {
@@ -1334,7 +1350,7 @@ const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v1\0";
 const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
-/// Program identity domain, bumped to `v5`.
+/// Program identity domain, currently `v8`.
 ///
 /// `v2` folded the semantic graph, bound implementations, coverage, program
 /// structure, the entry ABI, the applicability guard and the routing-commit
@@ -1376,7 +1392,19 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// order to canonical semantic occurrence order. The four-byte field is
 /// unchanged, so the tag must step: under `v6` the same bytes could name a
 /// different operation after equivalent authoring-order changes.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v7\0";
+///
+/// `v8` folds the named outputs in the program's declared publication order,
+/// which whole-program verification now proves to be the semantic subject's
+/// ordered output interface; `v7` and earlier sorted the same records by
+/// content and so encoded an interface the program does not have. Each record's
+/// own bytes and framing are unchanged and a one-output program's payload
+/// therefore does not move, but a program publishing several outputs in any
+/// order other than ascending record content encodes a different sequence now.
+/// The tag steps because that is a reinterpretation of retained bytes rather
+/// than an append: a `v7` reader handed a `v8` section would recover the same
+/// records in an order that layer never meant, so a cache or artifact holding a
+/// `v7` identity must miss rather than match.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v8\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -1668,7 +1696,7 @@ fn push_abi_reference(bytes: &mut Vec<u8>, arena: &AbiArenaTraversal, node: u32)
 /// that entity's key did. What the encoding stops restating, it does not stop
 /// determining.
 ///
-/// See [`PROGRAM_DOMAIN`] for why this is a `v3` step and what `v2` did instead.
+/// See [`PROGRAM_DOMAIN`] for what each step of the domain changed and why.
 ///
 /// # Errors
 ///
@@ -1780,20 +1808,19 @@ pub(super) fn encode_identity(
         push_slice(&mut bytes, &split);
     }
 
-    let mut outputs: Vec<Vec<u8>> = data
-        .outputs
-        .iter()
-        .map(|output| {
-            let mut encoded = Vec::new();
-            push_slice(&mut encoded, output.key.as_str().as_bytes());
-            values.push(&mut encoded, output.value);
-            encoded
-        })
-        .collect();
-    outputs.sort_unstable();
-    push_len(&mut bytes, outputs.len());
-    for output in outputs {
-        push_slice(&mut bytes, &output);
+    // Interface order, not insertion order, and deliberately *not* sorted like
+    // the two sections above: verification proves the published records are the
+    // semantic subject's ordered output interface, so this sequence is content.
+    // That is what separates an output record from an edge or a split — those
+    // name entities rather than being named by one, while an output record is
+    // named positionally by the caller's interface — and it is the same reason
+    // the routing-commit lifecycle below is folded in lifecycle order.
+    push_len(&mut bytes, data.outputs.len());
+    for output in &data.outputs {
+        let mut encoded = Vec::new();
+        push_slice(&mut encoded, output.key.as_str().as_bytes());
+        values.push(&mut encoded, output.value);
+        push_slice(&mut bytes, &encoded);
     }
 
     // Lifecycle order, not insertion order: verification proves the declared

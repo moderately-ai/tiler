@@ -580,17 +580,52 @@ fn reaches(successors: &[Vec<usize>], source: usize, target: usize) -> bool {
     false
 }
 
-/// Proves every semantic output is named and every output value is published.
+/// Proves the published outputs are the semantic interface, in its order.
+///
+/// Coverage alone would leave the declared order of the published records
+/// observable through
+/// [`VerifiedKernelProgram::outputs`](super::VerifiedKernelProgram::outputs) and
+/// decided by nothing. A builder is opened against an unforgeable semantic
+/// subject, and the ordered output interface belongs to that subject: a program
+/// realizes it rather than restating it, so a publication that permutes it is a
+/// disagreement with the program's own subject and is refused here. Pinning the
+/// order is what lets identity fold the published list in declaration order
+/// instead of sorting it, and what makes a consumer's ordered output interface a
+/// fact it reads rather than one it re-derives by key.
 fn verify_outputs(
     data: &KernelProgramData,
     subject: &SemanticSubject,
 ) -> Result<(), KernelProgramDiagnostic> {
-    if subject
-        .outputs
-        .iter()
-        .any(|(key, _, _)| !data.outputs.iter().any(|output| &output.key == key))
-    {
-        return Err(KernelProgramDiagnostic::MissingNamedOutput);
+    let mut published = 0_usize;
+    for (key, _, value_type) in &subject.outputs {
+        let start = published;
+        while data
+            .outputs
+            .get(published)
+            .is_some_and(|output| &output.key == key)
+        {
+            published = published.saturating_add(1);
+        }
+        if published == start {
+            // The key is either published somewhere other than the interface
+            // position it holds, or not published at all.
+            if data.outputs.iter().any(|output| &output.key == key) {
+                return Err(KernelProgramDiagnostic::MisorderedNamedOutput { position: start });
+            }
+            return Err(KernelProgramDiagnostic::MissingNamedOutput);
+        }
+        verify_component_order(
+            value_type,
+            start,
+            data.outputs[start..published]
+                .iter()
+                .map(|output| data.values[position(output.value)].component_role),
+        )?;
+    }
+    if published < data.outputs.len() {
+        return Err(KernelProgramDiagnostic::MisorderedNamedOutput {
+            position: published,
+        });
     }
     for (index, value) in data.values.iter().enumerate() {
         if value.role != ValueRole::Output {
@@ -602,6 +637,42 @@ fn verify_outputs(
             .any(|output| output.value == ordinal(index))
         {
             return Err(KernelProgramDiagnostic::UnboundOutputValue);
+        }
+    }
+    Ok(())
+}
+
+/// Proves one key's published records follow its semantic component order.
+///
+/// A record inside one key's run is named by its component *role* and not by a
+/// position the caller counts, so the order that binds it is the encoded
+/// contract's own declared component order rather than a producer choice. This
+/// is a subsequence walk rather than an equality: a run that omits a component
+/// is left to [`verify_components`], which reports the incomplete set against
+/// the whole interface instead of the first record that skipped one.
+///
+/// `roles` are the run's published component roles in declared order and
+/// `start` is the declared position of its first record, which is what the
+/// diagnostic reports. The run is taken as roles rather than as program data
+/// because no kernel in this profile writes a compound *output* yet, so this is
+/// the boundary at which the rule can be exercised against a contract directly.
+fn verify_component_order(
+    value_type: &crate::semantic::ResolvedValueType,
+    start: usize,
+    roles: impl IntoIterator<Item = Option<crate::semantic::EncodedComponentRole>>,
+) -> Result<(), KernelProgramDiagnostic> {
+    let Some((_, contract)) = value_type.encoded_numeric_parts() else {
+        // A plain interface type has one component and no role, and insertion
+        // rejects a second publication of one key and role, so the run is one
+        // record and carries no order to violate.
+        return Ok(());
+    };
+    let mut components = contract.components().iter();
+    for (offset, role) in roles.into_iter().enumerate() {
+        if !components.any(|component| Some(component.role()) == role) {
+            return Err(KernelProgramDiagnostic::MisorderedNamedOutput {
+                position: start.saturating_add(offset),
+            });
         }
     }
     Ok(())
@@ -664,9 +735,75 @@ fn expected_roles(
 mod component_tests {
     use super::*;
     use crate::semantic::{
-        AttributeFieldId, CanonicalField, CanonicalValue, EncodedNumericContract, QuantSchemeKey,
-        ResolvedValueType,
+        AttributeFieldId, CanonicalField, CanonicalValue, EncodedComponentDeclaration,
+        EncodedComponentRole, EncodedComponentShape, EncodedNumericContract, QuantSchemeKey,
+        ResolvedValueType, TypeKey,
     };
+
+    /// An encoded type whose declared component order is not its role order.
+    ///
+    /// Deliberately descending, because the two orders coincide for the
+    /// governed strict-affine contract (codes, scale, zero point are roles 1,
+    /// 2, 3) and a fixture where they agree cannot tell the rule this layer
+    /// applies — the contract's own declared order — from an incidental sort by
+    /// role identifier.
+    fn descending_component_type() -> ResolvedValueType {
+        let component = ResolvedValueType::nominal(TypeKey::new("tiler", "f32", 1).unwrap());
+        ResolvedValueType::encoded_numeric(
+            QuantSchemeKey::new("test", "descending-components", 1).unwrap(),
+            EncodedNumericContract::with_components(
+                [CanonicalField::new(
+                    AttributeFieldId::new(1),
+                    CanonicalValue::boolean(true),
+                )],
+                [
+                    EncodedComponentDeclaration::new(
+                        EncodedComponentRole::new(3),
+                        component.clone(),
+                        EncodedComponentShape::LogicalValue,
+                    ),
+                    EncodedComponentDeclaration::new(
+                        EncodedComponentRole::new(1),
+                        component,
+                        EncodedComponentShape::LogicalValue,
+                    ),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// One key's records follow the contract's declared component order.
+    ///
+    /// The omission case is here because it is the one the rule must *not*
+    /// claim: a run that skips a component is a valid subsequence, and naming
+    /// it here would take the report away from `verify_components`, which sees
+    /// the whole interface and says the set is incomplete.
+    #[test]
+    fn published_components_follow_the_contracts_declared_order() {
+        let value_type = descending_component_type();
+        let role = |id| Some(EncodedComponentRole::new(id));
+        assert_eq!(
+            verify_component_order(&value_type, 7, [role(3), role(1)]),
+            Ok(())
+        );
+        assert_eq!(verify_component_order(&value_type, 7, [role(3)]), Ok(()));
+        assert_eq!(verify_component_order(&value_type, 7, [role(1)]), Ok(()));
+        assert_eq!(
+            verify_component_order(&value_type, 7, [role(1), role(3)]),
+            Err(KernelProgramDiagnostic::MisorderedNamedOutput { position: 8 }),
+        );
+        // A plain interface type has no component order to violate.
+        assert_eq!(
+            verify_component_order(
+                &ResolvedValueType::nominal(TypeKey::new("tiler", "f32", 1).unwrap()),
+                0,
+                [None]
+            ),
+            Ok(())
+        );
+    }
 
     #[test]
     fn an_encoded_type_without_components_reaches_typed_rejection() {

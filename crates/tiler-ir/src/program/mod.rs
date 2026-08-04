@@ -32,7 +32,7 @@
 //! - **Complete coverage.** The semantic occurrences each stage claims, proven
 //!   to be a disjoint partition of every operation of the bound graph.
 //! - **Materializations and buffers.** Values, byte views, allocations, typed
-//!   dependencies, and named outputs.
+//!   dependencies, and the ordered named outputs described below.
 //! - **The entry ABI.** Each stage's launch geometry and each access's
 //!   addressable byte range, as [`abi`](crate::program::abi) expressions rather than resolved
 //!   numbers.
@@ -41,13 +41,49 @@
 //! - **The routing-commit contract.** The ordered lifecycle from preflight to
 //!   publication and, for each step, whether fallback is still permitted.
 //!
-//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`, which moved the domain from `tiler.kernel-program.v1` to historical v2 because a v1 identity was blind to two programs that differed only in their guard, ABI, or fallback contract. Later encoding and ABI-completeness changes moved the same subject through v3 and v4 to v5, folding the declared split-reduction contracts moved it to v6, and canonical semantic stage coverage moved it to the current `tiler.kernel-program.v7`; [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity) documents each step.
+//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`, which moved the domain from `tiler.kernel-program.v1` to historical v2 because a v1 identity was blind to two programs that differed only in their guard, ABI, or fallback contract. Later encoding and ABI-completeness changes moved the same subject through v3 and v4 to v5, folding the declared split-reduction contracts moved it to v6, canonical semantic stage coverage moved it to v7, and folding the published outputs in interface order rather than sorted by content moved it to the current `tiler.kernel-program.v8`; [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity) documents each step.
 //!
 //! Every transient ordinal is excluded: builder insertion order, the program's
 //! own stage/value/view/allocation/arena positions, and the planning `RegionId`
 //! already excluded below. Cross-references are encoded by canonical content
 //! key, so two structurally equal programs assembled in different orders share
 //! identity bytes.
+//!
+//! # The published output order is the semantic subject's
+//!
+//! A program's published outputs are its **ordered output interface**, and that
+//! order belongs to the semantic program the builder was opened against — not
+//! to the producer that published them. Whole-program verification proves it:
+//! the published records carry the semantic subject's output keys in the
+//! subject's declared order, each key's records contiguous, and within one key
+//! the component records follow the encoded contract's own declared component
+//! order. Any other publication is refused as
+//! [`KernelProgramDiagnostic::MisorderedNamedOutput`](crate::program::KernelProgramDiagnostic::MisorderedNamedOutput).
+//!
+//! Two consequences follow, and they are why the rule is stated here rather
+//! than left to each consumer. First,
+//! [`VerifiedKernelProgram::outputs`](crate::program::VerifiedKernelProgram::outputs)
+//! is genuinely ordered, so a consumer projecting an ordered interface — an
+//! artifact's published contract, a frontend returning several results — reads
+//! that order instead of re-deriving it by key against the semantic program.
+//! Second, identity folds the output list *in that order* rather than sorting
+//! it, which is what the sibling dependency-edge and split-reduction sections
+//! do. The asymmetry is deliberate and is the whole distinction: an edge or a
+//! split **names** entities and is named by none, so where a producer declared
+//! it carries no meaning identity should preserve; an output record **is**
+//! named, positionally, by the caller's interface. Sorting it discarded exactly
+//! the fact the semantic layer treats as identity — `semantic::identity`
+//! encodes the output list in declaration order and seeds canonical value
+//! numbering from it — and an artifact layer blind to a permutation the
+//! semantic layer distinguishes cannot name what it produced.
+//!
+//! Note what this does *not* claim. The order carries no bits the identity did
+//! not already determine, because the folded
+//! [`SemanticGraphIdentity`](crate::semantic::SemanticGraphIdentity) fixes the
+//! interface order and verification pins publication to it. It is folded for
+//! the reason the routing-commit lifecycle is folded in lifecycle order:
+//! identity states what the program is, and completeness of a fact must not
+//! rest on a verifier rule staying exactly as strict as it is today.
 //!
 //! # What the verifier proves
 //!
@@ -66,8 +102,8 @@
 //! view, allocation, or ABI expression, a declared applicability guard, a
 //! routing-commit contract carried to publication, the baseline aliasing
 //! contract, the conservative storage-reuse contract (non-overlapping
-//! lifetimes, an explicit handoff, and no live alias across it), and complete
-//! named-output coverage.
+//! lifetimes, an explicit handoff, and no live alias across it), and named
+//! outputs that are complete and published in the semantic interface's order.
 //!
 //! It does **not** prove that a stage's kernel computes the semantic operations
 //! it covers. Coverage here is a structural completeness and disjointness

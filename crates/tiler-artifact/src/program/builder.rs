@@ -1351,10 +1351,13 @@ fn read_semantic_interface(semantic: &SemanticProgram) -> SemanticInterface {
 
 /// Projects the artifact's published interface from one variant's program.
 ///
-/// The order is the semantic interface's, which the kernel program does not
-/// retain. The storage element type comes from the materialized value the
-/// program binds, so the published contract is a fact of the plan rather than a
-/// producer claim.
+/// The order is the semantic interface's, read from the semantic program the
+/// variant realizes. The kernel program now carries the same order — whole-program
+/// verification pins its published records to that interface under
+/// `tiler.kernel-program.v8` — so this reads the authority directly rather than
+/// re-deriving an order the layer below had discarded. The storage element type
+/// comes from the materialized value the program binds, so the published
+/// contract is a fact of the plan rather than a producer claim.
 #[allow(
     clippy::type_complexity,
     reason = "the pair is the artifact's two interface projections and is destructured at its only call site"
