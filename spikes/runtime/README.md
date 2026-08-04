@@ -26,15 +26,19 @@ three representations.
 ## Inline region dispatch on Metal hardware
 
 [`inline-dispatch/`](inline-dispatch/README.md) is the one experiment in this
-directory that binds a real device. An out-of-tree consumer crate writes one
-`tiler::tensor! { … deliver macos; … }` invocation, implements
+directory that binds a real device. An out-of-tree consumer crate writes
+`tiler::tensor! { … deliver macos; … }` invocations, implements
 `tiler::value::DispatchAdapter` and `tiler::runtime::adapter::RuntimeAdapter`
 against the facade alone, and receives what a Metal kernel wrote — compared
-bit for bit against the consumer's own `f32` arithmetic. Its README carries the
-exact invocation, the host and toolchain, the transcript, the post-commit
-perturbation watched failing, and the ADR 0079 admission for its single
-`unsafe` site. It is a separate Cargo workspace and no `make` target reaches
-it; run it by hand from its own directory.
+bit for bit against the consumer's own `f32` arithmetic. It holds two consumers
+sharing one adapter: a pointwise region reaching `1/1 entry(ies) encoded`, and
+a reduction whose *selected* plan needs two entries, which counts them from the
+consumer's side and watches a back-to-front reordering return a wrong answer
+before it trusts the ordered run. Its README carries the exact invocations, the
+host and toolchain per run, both transcripts, every perturbation watched
+failing, and the ADR 0079 admission for its single `unsafe` site. It is a
+separate Cargo workspace and no `make` target reaches it; run it by hand from
+its own directory.
 
 ## Dependency-free control and accounting models
 
