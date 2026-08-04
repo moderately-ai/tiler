@@ -201,3 +201,7 @@ The tracked
 local APFS and a formatted exFAT RAM disk on one macOS host. No Linux filesystem
 has been measured. See
 [the supported-filesystem contract](../../docs/research/cache/supported-filesystems.md).
+
+## What the protocol costs
+
+Everything above asks whether the protocol is *correct* under crashes, races, build tools, and filesystems. What it costs is a separate question with its own harness and its own experiment record: [`hot-path-efficiency/`](hot-path-efficiency/README.md) measures hit latency decomposed, publication latency, scan and eviction cost, and the population scaling of each, through the public `ExpansionCache` with every hit validated by the real `decode_artifact`. It is a sibling of this record rather than part of it — a different question, a different boundary, and a result nobody should read as evidence about correctness. See [the hot-path efficiency note](../../docs/research/cache/hot-path-efficiency.md).
