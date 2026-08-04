@@ -44,7 +44,7 @@ The public surface is parameterized over adapter-owned storage and retention typ
 
 ```text
 StateInterfaceKey            // opaque subject: validated semantic-graph identity,
-                             // complete ordered interface, and input ordinal
+                             // ordered logical interface, and input ordinal
 LayerOrdinal(u32)            // bounded layer position within that interface
 StateGeneration(u64)         // checked, monotonically advancing publication generation
 StateCursor(u64)             // C, the sole valid-length authority
@@ -153,7 +153,7 @@ KvFailureStage = Allocation | StorageBinding | Encoding | Submission
                | Retention | Publication
 ```
 
-`StateInterfaceKey` is minted only while holding the whole `DecodedProgram`. Its subject is the decoded envelope's already-validated semantic-graph identity, the complete input/output interface in semantic order, and the selected input's ordinal and stable key. The constructor resolves that ordinal through `DecodedProgram::inputs()` and refuses an absent slot. It is not a second caller-authored grammar, cannot be constructed from arbitrary bytes or a detached `DecodedInput`, and does not include artifact canonical identity, payloads, variants, delivery position, provenance, or any live fact. Two unrelated programs that both call an input `k_cache` therefore do not share state identity; K and V in one program remain distinct by ordinal and key.
+`StateInterfaceKey` is minted only while holding the whole `DecodedProgram`. Its subject is the decoded envelope's already-validated semantic-graph identity, the complete input/output logical interface in semantic order (stable keys, logical shapes, and resolved logical types), and the selected input's ordinal and stable key. The constructor resolves that ordinal through `DecodedProgram::inputs()` and refuses an absent slot. It is not a second caller-authored grammar, cannot be constructed from arbitrary bytes or a detached `DecodedInput`, and does not include physical components, artifact canonical identity, payloads, variants, delivery position, provenance, or any live fact. Two unrelated programs that both call an input `k_cache` therefore do not share state identity; K and V in one program remain distinct by ordinal and key.
 
 `KvStateIdentity` includes the generation because a binding prepared against generation `g` must not bind after another execution publishes generation `g + 1`. It deliberately excludes the cursor and capacity as separate identity fields: the generation is the version of the immutable published snapshot that contains them. Both values remain checked state metadata, never specialization values or cache-key material.
 
@@ -369,7 +369,7 @@ Tom's acceptance is required for this exact consequential public draft:
 
 - `LiveStateScope`, an opaque adapter-authenticated runtime-scoped device/context identity with no platform handle, and non-Clone `LiveStateScopeFactory`/`CurrentLiveStateScope` as its only construction and current-route authority capabilities;
 - `RuntimeAdapter::bind_live_state_scope`, which receives that factory only after a live context is bound and returns the lifetime-bound current authority directly to the generic route, plus the exact `LiveStateScopeBuildError` inventory;
-- opaque `StateInterfaceKey::from_decoded_program` over semantic-graph identity, the complete ordered interface, and input ordinal, plus exhaustive `StateInterfaceKeyError`, `LayerOrdinal`, `StateGeneration`, `StateCursor`, `StateCapacity`, `KvStateIdentity`, and opaque `KvExecutionIdentity` in the state surface;
+- opaque `StateInterfaceKey::from_decoded_program` over semantic-graph identity, the complete ordered logical interface, and input ordinal, plus exhaustive `StateInterfaceKeyError`, `LayerOrdinal`, `StateGeneration`, `StateCursor`, `StateCapacity`, `KvStateIdentity`, and opaque `KvExecutionIdentity` in the state surface;
 - `KvStateStatus::{Ready, Poisoned { failed_execution }}`;
 - private-field `KvState<Storage, Retention>`; `KvState::new` consuming current route authority; readers for identity, interface key, layer, presentation-safe scope identity, generation, capacity, cursor, and status; preflight consuming current route authority rather than caller-supplied identity; and consuming `retire`;
 - non-Clone `PreparedKvStep` exposing checked `C`, `T`, and `S`; validated `KvArtifactStateBinding`; `prepare_kv_route` as the only join that binds those facts and carries the resulting loader `Preflight`; exhaustive artifact-binding and route-preflight errors; and non-Clone `PreparedKvRoute::commit` producing `BoundKvStep` with its `RoutedDispatch` and poison-on-unfinished-drop guard already attached;
