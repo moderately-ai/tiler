@@ -1,7 +1,7 @@
 ---
 id: canonicalize-index-refinement-occurrence-ordinals
 title: Canonicalize index-refinement occurrence ordinals
-status: awaiting-decision
+status: review
 priority: p1
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -61,7 +61,7 @@ The one-coordinate-system public signature is accepted by Tom; selector/canonica
 
 ## Tested public draft and identity analysis
 
-**Proposal — consequential boundary, not yet accepted.** The implemented draft is exactly `IndexRefinementSubject::derive(&SemanticProgram, OperationId, NumericalContractIdentity)`. `OperationId` is used only to select through `SemanticProgram::operation`; a selector from another completed graph fails with the existing typed `HandleError::ForeignGraph { entity: Operation }`. The returned subject retains only the selected operation's `SemanticOccurrence`, defined as its canonical traversal ordinal. No public storage ordinal or caller-assembled `(graph, occurrence)` path was added.
+**Accepted public boundary.** Tom accepted exactly `IndexRefinementSubject::derive(&SemanticProgram, OperationId, NumericalContractIdentity)` on 2026-08-04 in this T3 Code session under his statement, “okay you have my stnading approval on all of these changes for now,” as relayed by the coordinator after final independent review of exact hash `694dbb5ce7d7bf37f95eff3ad3e9e06c5767c0a3`. The coordinator bounded that standing approval to the concrete reviewed surfaces: it does not accept an unknown future carrier API, artifact schema, or other unreviewed public boundary. `OperationId` is used only to select through `SemanticProgram::operation`; a selector from another completed graph fails with the existing typed `HandleError::ForeignGraph { entity: Operation }`. The returned subject retains only the selected operation's `SemanticOccurrence`, defined as its canonical traversal ordinal. No public storage ordinal or caller-assembled `(graph, occurrence)` path was added.
 
 **Fact — bounded work.** `ProgramData` now stores one `canonical_operation_ordinals: Vec<u32>` beside `canonical_value_ids`. Both vectors are produced from one call to `canonical_traversal` during each completed/preview `ProgramData` construction. A subject derivation does one checked `OperationId` lookup and one indexed lookup in that immutable vector. The 1,024-independent-operation test asserts the cache has exactly 1,024 entries, derives all 1,024 subjects, and observes 1,024 distinct canonical occurrences; there is no traversal in the derive path, so full derivation work is O(n), not O(n²).
 
