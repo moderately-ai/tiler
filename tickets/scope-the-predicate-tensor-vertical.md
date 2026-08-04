@@ -1,0 +1,41 @@
+---
+id: scope-the-predicate-tensor-vertical
+title: Scope the predicate tensor vertical
+status: deferred
+priority: p2
+dependencies: []
+related: [derive-dtype-family-research-tracks-from-the-mature-taxonomy, own-the-dtype-support-maturity-matrix, enumerate-the-mature-tensor-operation-and-signature-taxonomy, own-operation-family-support-matrix]
+scopes: [research/numerics, research/semantic-graph]
+shared_scopes: [project/tickets]
+paths: []
+tags: [research, dtypes, deferred, predicate]
+---
+## User-visible outcome
+
+A reader asking what a `bool` tensor would cost gets one statement covering the semantic operation, the value type, the physical carrier width, the ABI, runtime validation, and target dispatchability together, instead of six partial answers that each assume the others.
+
+## Why this is deferred rather than open
+
+**Fact.** [The dtype support ledger](../docs/dtype-support.md) records `tiler::bool@1` registered as two-valued with deliberately no logical width, `tiler::i1@1` carrying no authority, and no registered operation admitting a `bool` operand at any arity. `KernelType::Bool` and `AbiType::Boolean` are control predicates and are not tensor values.
+
+**Fact — the trigger has not fired, and the elimination is recorded rather than assumed.** [The first attention program vertical](../docs/research/program-planning/first-attention-program-vertical.md) binds a host-built **additive** causal mask as an `f32` input of extent `[T, S]`. The live workload therefore reaches masking without a predicate tensor, so the ledger's `### Logical bool` trigger — a named `Select`, comparison, logical reduction, or frontend workload — is genuinely unmet rather than merely unclaimed.
+
+**Fact — the operation axis states the same gate and forbids closing either side alone.** [The mature operation and signature taxonomy](../docs/research/semantic-graph/mature-operation-and-signature-taxonomy.md)'s `RQ-OP-03` gates F-13 comparison, F-14 logical operations, F-16 classification predicates, F-17 elementwise selection, F-28's logical-reduction case, and F-36's mask case, and states that this question and the ledger's `bool` trigger "must close together or neither has". That record calls the group "the single highest-leverage unblocking decision in the inventory".
+
+## Activation trigger
+
+A named workload requires a `Select`, a comparison, a logical reduction, or a boolean mask **as a tensor value**. An additive or multiplicative float mask does not fire it. A control predicate inside a kernel does not fire it.
+
+## What the work would be, when it starts
+
+State the vertical as one thing, in the order the dtype ledger's thirteen rungs impose: the exact semantic operation and its registered key; the value type and its two-valued cardinality; the physical carrier width, which is the decision the whole family turns on and which `AbiType::Boolean` does not answer; the ABI and what the carrier contributes to program identity; runtime semantic validation; and per-`(target family, dtype)` dispatchability. Close `RQ-OP-03` in the same pass or record why it cannot be.
+
+## Closes when
+
+The trigger has fired and the six obligations above are stated together with `RQ-OP-03`'s answer, **or** the trigger is superseded by a decision that removes predicate tensors from the intended product surface.
+
+## Graph maintenance
+
+- Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-1 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
+- `research/semantic-graph` is declared because the predicate value-kind half of the statement belongs on the operation axis, where `RQ-OP-03` lives; `research/numerics` alone could not carry it.
+- Do not move any [dtype support ledger](../docs/dtype-support.md) cell from this ticket. The ledger owns delivered state and a scoping statement delivers nothing.
