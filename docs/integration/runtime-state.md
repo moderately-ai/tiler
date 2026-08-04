@@ -156,6 +156,10 @@ BoundKvTransaction          // non-Clone; owns exclusive set borrow, adapter/con
 RuntimeAdapter {
   type StateStorage;
   type StateRetention;
+  observe_state_storage(
+    &mut self, &LiveExecutionContext, &Self::StateStorage,
+    StateObservationFactory,
+  ) -> Result<StateStorageObservation, Self::Refusal>
   execute_state_transaction(
     &mut self, &LiveExecutionContext, &RoutedDispatch,
     StateTransactionReporter<Self::StateStorage, Self::StateRetention,
@@ -164,14 +168,40 @@ RuntimeAdapter {
                               Self::Completion, Self::Failure>
 }
 
+StateObservationFactory     // non-Clone, no public constructor; session-bound
+  resource_key(adapter_resource_token_bytes, resource_generation)
+    -> Result<StateResourceKey, StateObservationError>
+  receipt_key(adapter_receipt_token_bytes)
+    -> Result<SubmissionReceiptKey, StateObservationError>
+                             // factories attach current scope or execution identity
+
+StateStorageObservation {   // private fields, runtime-readable
+  resource: StateResourceKey,
+  memory_domain: MemoryDomainKey,
+  byte_range: CheckedByteRange,
+}
+
+StateMemberEvidence {
+  expected_member: KvStateIdentity,
+  storage: StateStorage,
+  storage_observation: StateStorageObservation,
+  coherence_receipt: SubmissionReceiptKey,
+  validation_receipt: SubmissionReceiptKey,
+  retention: StateRetention,
+  retained_through: SubmissionReceiptKey,
+}
+
+SubmissionObservation {
+  receipt: SubmissionReceiptKey,
+  terminal: ExactTerminalStatus,
+}
+
 StateTransactionReporter    // non-Clone, no public constructor; bound transaction
   failure(KvFailureStage, F) -> StateTransactionReport
-  success(C, SubmissionReceipt, ExactTerminalObservation,
-          CoherenceRecordSet, ValidationRecordSet,
-          ExactSizeIterator<StateMemberReplacement<Storage, Retention>>)
+  success(C, SubmissionObservation,
+          ExactSizeIterator<StateMemberEvidence<Storage, Retention>>)
     -> StateTransactionReport
 
-StateMemberReplacement { expected_member: KvStateIdentity, storage, retention }
 StateTransactionReport      // opaque; reporter attaches execution identity and
                             // expected complete ordered member population
 
@@ -320,6 +350,14 @@ KvStateReportError {
   InvalidReplacementStorage { member },
   InvalidRetention { member },
 }
+
+StateObservationError {
+  EmptyResourceToken,
+  ResourceTokenTooLong { length, maximum },
+  EmptyReceiptToken,
+  ReceiptTokenTooLong { length, maximum },
+  InvalidByteRange { offset, length },
+}
 ```
 
 `R` is the existing typed pre-commit loader/adapter refusal rather than an erased string. These enums are exhaustive at this boundary; the existing adapter route wrapper may remain `#[non_exhaustive]` under its own accepted convention.
@@ -360,9 +398,9 @@ The first update is always out of place. The old allocation is bound read-only o
 
 After `RoutingCommit`, every allocation, binding, encoding, submission, completion, coherence, validation-readback, retention, and publication failure is terminal for the attempt and poisons the complete state set. There is no fallback and no reuse of any still-intact old member: the consumer did not receive the failed step's token, so continuing from the old cursor would execute a different sequence from the one the consumer believes it owns.
 
-The existing adapter's combined `allocate_dispatch`/`dispatch` result is insufficient for state publication, so acceptance includes `execute_state_transaction` and its associated storage/retention types. The bound transaction creates `StateTransactionReporter` from its own execution identity and expected manifest population and gives that capability to the adapter with the exact context and routed dispatch. The adapter cannot construct `StateTransactionReport` directly. It returns either `reporter.failure(stage, cause)` or `reporter.success(...)` with the submission receipt, exact terminal observation, coherence and validation record sets, completion, and ordered member replacements. The reporter binds the report to this execution and bounded expected population; it does not trust `A::Completion` to contain state evidence by convention.
+The existing adapter's combined `allocate_dispatch`/`dispatch` result is insufficient for state publication, so acceptance includes `observe_state_storage`, `execute_state_transaction`, and associated storage/retention types. `StateObservationFactory` attaches the session's current scope to bounded adapter resource tokens and the bound execution identity to bounded receipt tokens; the adapter reports domain and checked range but cannot mint a key for another scope or execution. Initial construction and every replacement use the same governed `StateStorageObservation`, from which the runtime derives and later compares the storage fingerprint. The bound transaction creates `StateTransactionReporter` from its own execution identity and authoritative manifest population and gives that capability to the adapter with the exact context and routed dispatch. The adapter cannot construct `StateTransactionReport` directly. It returns either `reporter.failure(stage, cause)` or `reporter.success(...)` with one terminal receipt and an exact ordered `StateMemberEvidence` population. The reporter binds the report to this execution; it does not trust `A::Completion` to contain evidence by convention.
 
-`BoundKvTransaction::execute` validates the returned report before publication. An adapter-reported failure becomes `KvPostCommitFailureCause::Adapter`; an absent/extra/duplicate/unordered replacement, mismatched member identity, foreign storage, wrong receipt, incomplete coherence/readback set, or retention defect becomes `InvalidReport(KvStateReportError)` at the exact stage the transaction was validating. Both attach the transaction's identity and poison all members. This is an extension of the adapter boundary, not a claim the current trait already supplies these records.
+`BoundKvTransaction::execute` validates the returned report before publication. The generic runtime—not the adapter—compares each member identity, resource key/generation, attached live scope, memory domain, checked byte range, coherence receipt, validation receipt, and retained-through receipt against the prepared member and single terminal submission receipt. An adapter-reported failure becomes `KvPostCommitFailureCause::Adapter`; an absent/extra/duplicate/unordered member, mismatched observation, foreign/reused storage, wrong receipt, incomplete coherence/readback coverage, or retention defect becomes `InvalidReport(KvStateReportError)` at the exact stage the transaction was validating. Both attach the transaction's identity and poison all members. The adapter is authoritative only for its observations; the runtime owns every comparison and verdict.
 
 Publication requires a complete ordered replacement set and `TerminalSuccess` tied to the bound transaction's own `KvExecutionIdentity` and submission receipt. Before mutating anything, `execute` verifies that replacements are neither missing, extra, duplicate, nor out of order; each replacement names its member identity, has distinct old/new allocation, exact capacity/domain/range, retention lease, coherence, and validation record; and the receipt covers the whole route. Only then does one infallible critical section replace every member and the shared cursor/status:
 
@@ -463,7 +501,7 @@ Tom's acceptance is required for this exact consequential public draft:
 - `KvStateStatus::{Ready, Poisoned { failed_execution }}` and opaque `KvExecutionIdentity` minted only by commit from the complete snapshots, step, routed dispatch, and diagnostic ordinal;
 - singular read-only `KvState<Storage, Retention>` members, plus `KvStateSet` as their only construction/mutation owner, bounded at 4,096 and rejecting empty, duplicate, missing, extra, unordered, mixed-scope, and mixed-cursor sets;
 - non-Clone `KvRouteSession` holding one adapter borrow, one exact `LiveExecutionContext`, and its current scope from binding through commit; non-Clone `PreparedKvStateSet`; artifact-owned complete `DecodedStateInterface`; validated exact-bijection `KvArtifactStateBindingSet` with no caller population; and `PreparedKvRoute::commit` producing `BoundKvTransaction` with its set guard, context, adapter, identity, and `RoutedDispatch` already attached;
-- adapter associated `StateStorage`/`StateRetention`, `execute_state_transaction`, non-Clone transaction-bound `StateTransactionReporter`, identity-bound complete replacement/evidence reporting, opaque transaction-minted `StateTransactionReport`, `ExactTerminalSuccess`, and `KvPostCommitFailure`, and exhaustive `KvFailureStage` including coherence and validation readback;
+- adapter associated `StateStorage`/`StateRetention`, governed `StateObservationFactory`/storage/member/submission observation records, `observe_state_storage`, `execute_state_transaction`, non-Clone transaction-bound `StateTransactionReporter`, runtime-compared complete replacement/evidence reporting, opaque transaction-minted `StateTransactionReport`, `ExactTerminalSuccess`, and `KvPostCommitFailure`, and exhaustive `KvFailureStage` including coherence and validation readback;
 - exact `KvStateBuildError`, `KvStateSetBuildError`, `KvStateRefusal`, `KvStateSetRefusal`, artifact-binding, route-preflight, and invalid-report inventories above, including same-range stale-storage detection, without wildcard classes;
 - fixed-capacity, out-of-place publication that validates all identity-bound replacements before one infallible publish-all-or-none allocation/cursor/generation replacement;
 - poisoning of every member after every post-commit non-success or unfinished drop, and cursor advancement only on the exact transaction-minted terminal-success receipt;

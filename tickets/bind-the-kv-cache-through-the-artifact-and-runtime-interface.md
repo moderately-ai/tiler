@@ -5,7 +5,7 @@ status: todo
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family, define-the-runtime-kv-state-boundary]
 related: [design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact, evaluate-retained-shape-relations-before-routing-commit]
-scopes: [implementation/artifact, implementation/runtime, implementation/build]
+scopes: [implementation/artifact, implementation/runtime, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, runtime, abi, kv-cache, language-model]
@@ -15,6 +15,8 @@ tags: [implementation, artifact, runtime, abi, kv-cache, language-model]
 The cache crosses the program boundary as ordered named inputs and outputs whose extents are bound per execution — so eight decode steps run from **one** artifact identity and one prepared pipeline, not eight of each.
 
 ## Required behaviour
+
+`contracts/artifacts` is declared because the new manifest changes the neutral envelope schema and canonical identity, and `docs/artifact-abi.md` is the mapped identity/version ledger that must move in the same whole step. This is required bookkeeping for the already-authorized outcome, not a new product outcome.
 
 - `k_cache` and `v_cache` are named program inputs of shape `[8, C, 128]`; `k_rope` and `v_heads` stay the retained outputs L4 named, at `[8, S, 128]`. Nothing about capacity, the cursor, or the allocation crosses the boundary.
 - Encode an authoritative complete ordered state-interface manifest derived from the verified semantic retained-state declarations — never a caller-supplied list. Each row names the cache input and layer, its sequence axis, the step input/axis, retained output/axis, and exact `S = C + T` relation. Decode validates the whole population and exposes it as `DecodedProgram::state_interface`; the runtime derives `KvArtifactStateBindingSet` from that view with no caller population argument, so omitting K or V cannot redefine a smaller set as complete.
