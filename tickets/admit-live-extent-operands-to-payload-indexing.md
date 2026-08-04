@@ -4,7 +4,7 @@ title: Admit live extent operands to payload indexing
 status: todo
 priority: p1
 dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary]
-related: [deliver-an-artifact-family-from-a-symbolic-region, bind-the-kv-cache-through-the-artifact-and-runtime-interface]
+related: [deliver-an-artifact-family-from-a-symbolic-region, bind-repeated-invocations-over-caller-retained-tensors]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/runtime, implementation/build, contracts/artifacts, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
@@ -18,7 +18,7 @@ One compiled payload consumes a live symbolic input extent in its address and lo
 
 **Fact at `b4e3478d42ce21ed68e23f772b643c6370d36498`.** `AbiRoot::InputExtent` already lets artifact expressions evaluate accessible ranges, guards, preconditions, and launch geometry from runtime-bound extents. `place_bindings` publishes only the evaluated offset/count and launch values. `BufferParameter` plus admitted launch builtins are the complete structured-kernel/Metal parameter population; no live input extent reaches the kernel body. The symbolic compiler-request ticket promises only that a program reaches planning or declines by the right reason, and the artifact-family delivery ticket discusses host-side range/launch evaluation. Neither owns a payload-consumable live scalar. This ticket is the missing prerequisite, not extra layout work.
 
-An input extent is resolved from the program interface's existing `AbiRoot::InputExtent`; it is never derived from a KV storage descriptor. The dynamic-KV layout research selected exact-live dense packing in capacity-sized pooled buffers, so `C` and `S` themselves are the only address operands that path needs; no physical layout-root carrier follows this ticket.
+An input extent is resolved from the program interface's existing `AbiRoot::InputExtent`; it is never derived from a workload-named storage descriptor, and after the 2026-08-04 KV supersession no such descriptor exists to derive one from. The dynamic-KV layout research selected exact-live dense packing in capacity-sized pooled buffers, so `C` and `S` themselves are the only address operands that path needs; no physical layout-root carrier follows this ticket.
 
 ## Required work
 
@@ -47,4 +47,4 @@ The exact structured-kernel operand, artifact row/view, routed parameter, and ad
 
 ## Closes when
 
-The tested public/schema draft is accepted, the identity step lands whole, every negative is fail-capable, and both the symbolic artifact-family and KV artifact/runtime tickets consume it without introducing a second scalar authority.
+The tested public/schema draft is accepted, the identity step lands whole, every negative is fail-capable, and both the symbolic artifact-family and caller-retained-tensor binding tickets consume it without introducing a second scalar authority.

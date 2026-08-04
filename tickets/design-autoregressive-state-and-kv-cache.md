@@ -4,7 +4,7 @@ title: Design autoregressive state and KV-cache ownership
 status: done
 priority: p1
 dependencies: [design-attention-program-vertical]
-related: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract, prototype-candle-metal-adapter, admit-the-sequence-extension-concatenate-family, admit-an-additive-extent-relation, define-the-runtime-kv-state-boundary, bind-the-kv-cache-through-the-artifact-and-runtime-interface, execute-the-stateful-prefill-path, execute-the-decode-step-path, integrate-the-autoregressive-decode-loop, test-the-autoregressive-state-failure-cases, prove-the-c1-stateful-attention-vertical, scope-a-windowed-kv-append-into-retained-capacity, admit-a-position-selecting-slice-for-the-rotary-table, scope-the-sequence-extending-tensor-family]
+related: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract, prototype-candle-metal-adapter, admit-the-sequence-extension-concatenate-family, admit-an-additive-extent-relation, define-the-runtime-kv-state-boundary, execute-the-stateful-prefill-path, execute-the-decode-step-path, integrate-the-autoregressive-decode-loop, test-the-autoregressive-state-failure-cases, prove-the-c1-stateful-attention-vertical, admit-a-position-selecting-slice-for-the-rotary-table, scope-the-sequence-extending-tensor-family, bind-repeated-invocations-over-caller-retained-tensors, scope-an-in-place-append-into-a-caller-retained-allocation]
 scopes: [research/runtime, contracts/integrations, contracts/foundation]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
@@ -61,6 +61,35 @@ Do not start this before its trigger fires. Each rung's scope is derived from th
 - **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
 - **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).
 
+## Ownership superseded — 2026-08-04
+
+**This ticket stays `done`: it delivered its record, and the record exists.** What
+is superseded is one conclusion inside it, by
+[`supersede-the-runtime-owned-kv-state-design`](supersede-the-runtime-owned-kv-state-design.md).
+The runtime owns no KV state. Read the outcome below with these four corrections,
+each of which is applied in place in the record itself:
+
+- **"Runtime instance" in the layer-ownership summary is now "consumer"** for
+  logical capacity, the storage population, generation, and the cursor. Retention
+  through exact final device use and the live device/context comparison stay with
+  the runtime adapter, generalized from a KV state to any bound value.
+- **Lifetime, the poisoned status, and the `C + T > capacity` refusal are
+  withdrawn.** Tiler retains nothing across invocations, so there is no object to
+  poison and no capacity for it to compare against. A failed invocation reports a
+  typed failure and withholds its outputs; refusing to continue from pre-failure
+  tensors is the consumer's obligation.
+- **Filed ticket 3 (`define-the-runtime-kv-state-boundary`) is closed as
+  superseded**, its unmerged draft branch preserved as review evidence; ticket 4
+  is rewritten and renamed
+  [`bind-repeated-invocations-over-caller-retained-tensors`](bind-repeated-invocations-over-caller-retained-tensors.md);
+  ticket 10 is rewritten and renamed
+  [`scope-an-in-place-append-into-a-caller-retained-allocation`](scope-an-in-place-append-into-a-caller-retained-allocation.md);
+  tickets 5–9 are recast as consumer conformance work over ordinary tensors.
+- **Everything else stands**: the semantic seam, the extent relation, the P1/P2
+  elimination, the three cache-identity invariants and their reproducible checks,
+  the worked C1 example, all four failure cases, and every byte figure with its
+  stated qualification.
+
 ## Outcome (2026-07-31)
 
 The durable record is [Autoregressive state and KV-cache ownership](../docs/research/runtime/autoregressive-state-and-kv-cache.md), filed under `docs/research/runtime/` and indexed in the research catalog. **The home was chosen by comparison:** the analysis is about ownership across executions, routing commits, retention, and cache identity — the subjects [the runtime execution contract](../docs/research/runtime/runtime-execution-contract.md) and [semantic validation enforcement](../docs/research/runtime/semantic-validation-enforcement.md) already own in that directory — rather than about shapes or program planning, where the two records it consumes live. It takes no measurement and says so.
@@ -99,14 +128,14 @@ Eleven, dependency-ordered, none for the flash shape, batching, speculative deco
 
 1. `admit-the-sequence-extension-concatenate-family` — deps `scope-the-sequence-extending-tensor-family`; scopes `implementation/ir`, `implementation/reference`, `contracts/foundation`.
 2. `admit-an-additive-extent-relation` — deps 1; scopes `implementation/ir`, `contracts/foundation`.
-3. `define-the-runtime-kv-state-boundary` — deps 1 and `establish-a-dynamic-kv-physical-layout-authority`; scopes `contracts/integrations`, `contracts/foundation`, `research/runtime`, `research/program-planning`, `research/numerics`. D-15's semantics now compose with the selected exact-live/capacity-pool descriptor; the complete public boundary remains a tested draft for Tom.
-4. `bind-the-kv-cache-through-the-artifact-and-runtime-interface` — deps 1, 3; scopes `implementation/artifact`, `implementation/runtime`, `implementation/build`.
+3. ~~`define-the-runtime-kv-state-boundary`~~ — **closed as superseded 2026-08-04**; the runtime owns no KV state and the boundary has no subject.
+4. `bind-repeated-invocations-over-caller-retained-tensors` (renamed 2026-08-04 from `bind-the-kv-cache-through-the-artifact-and-runtime-interface`) — deps 1; scopes `implementation/artifact`, `implementation/runtime`, `implementation/build`. Its KV-specific artifact state-interface manifest and identity version step are withdrawn.
 5. `execute-the-stateful-prefill-path` — deps 4, `integrate-the-attention-block-into-the-runtime`.
 6. `execute-the-decode-step-path` — deps 5.
 7. `integrate-the-autoregressive-decode-loop` — deps 6.
 8. `test-the-autoregressive-state-failure-cases` — deps 7.
 9. `prove-the-c1-stateful-attention-vertical` — deps 8. **This is the rung's user-visible outcome.**
-10. `scope-a-windowed-kv-append-into-retained-capacity` — `deferred`, deps 9 and `establish-a-dynamic-kv-physical-layout-authority`, with survivor-specific activation requiring the selected layout, a binding B1 measurement, a complete recovery contract, and its five obligations.
+10. `scope-an-in-place-append-into-a-caller-retained-allocation` (renamed 2026-08-04) — `deferred`, deps 9 and `establish-a-dynamic-kv-physical-layout-authority`, with activation requiring the selected layout, a binding B1 measurement, a complete recovery contract, and its five obligations.
 11. `admit-a-position-selecting-slice-for-the-rotary-table` — deps 7, carrying the incorrect-position case's structural half.
 
 Every public boundary among them is a draft: the concatenation key's spelling, the state object's surface, and the device-scoping question are Tom's.

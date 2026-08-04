@@ -4,7 +4,7 @@ title: Admit the sequence-extension concatenate family
 status: done
 priority: p1
 dependencies: [scope-the-sequence-extending-tensor-family]
-related: [design-autoregressive-state-and-kv-cache, admit-an-additive-extent-relation, bind-the-kv-cache-through-the-artifact-and-runtime-interface, admit-the-reindex-and-broadcast-operation-families]
+related: [design-autoregressive-state-and-kv-cache, admit-an-additive-extent-relation, admit-the-reindex-and-broadcast-operation-families, bind-repeated-invocations-over-caller-retained-tensors]
 scopes: [implementation/ir, implementation/reference, contracts/foundation, implementation/compiler]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []

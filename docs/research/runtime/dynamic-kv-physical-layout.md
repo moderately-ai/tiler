@@ -6,7 +6,7 @@ title: "Dynamic KV physical-layout authority"
 topics: ["runtime", "kv-cache", "layout", "abi", "artifacts", "metal", "identity", "routing"]
 catalog_group: "runtime-integration-placement"
 research_status: "complete"
-disposition: "pending"
+disposition: "partially-adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis", "bounded-measurement", "executable-model"]
 informs: ["tiler.contract.architecture", "tiler.contract.artifact-abi", "tiler.contract.candle-integration"]
@@ -20,6 +20,22 @@ ticket: "establish-a-dynamic-kv-physical-layout-authority"
 implementation direction. This record accepts no public or schema boundary.
 The surviving representation needs the already-filed live semantic-extent
 transport, but no new physical-layout root or artifact schema.
+
+**Dated supersession of the owner, 2026-08-04, under
+[`supersede-the-runtime-owned-kv-state-design`](../../../tickets/supersede-the-runtime-owned-kv-state-design.md).**
+Every measurement, negative oracle, byte quantity, and elimination in this
+record is **retained** with its stated boundary. What is withdrawn is the
+single sentence that gives the buffers to a Tiler runtime state object: there is
+no Tiler KV state, so the two capacity-sized banks, their active-bank ordinal,
+generation, and poison status belong to the **consumer** that reuses them
+between invocations. The record's actual result is consumer-neutral and does
+not depend on that owner — it is that an allocation's length and a payload's
+address order are independent facts, that a routed accessible span is derived
+from the bound live extents rather than from the allocation, and that on the
+measured device stable pool reuse costs nothing over per-extent compact
+allocation while sequence-major order costs 3.8–3.9%. Read every occurrence of
+"the runtime state owns" below as "the consumer owns", and see the *Consequences*
+section, which is corrected in place.
 
 ## Inspected boundary and the actual missing operand
 
@@ -66,14 +82,25 @@ byte 9,216 and must fail the coordinate oracle. Old and replacement are
 disjoint buffers, so their different packings cannot alias; both remain alive
 through final device use, and the new bank plus cursor publish atomically.
 Routed accessible spans are exactly 57,344 and 61,440 bytes even though each
-pool buffer is 73,728 bytes. `S <= capacity`, the additive `S=C+T` relation,
-buffer length, device/context, generation, and poison status are preflight
-checks; none is inferred from an address.
+pool buffer is 73,728 bytes. None of the checks below is inferred from an
+address. **Corrected 2026-08-04:** this sentence listed `S <= capacity`, the
+additive `S=C+T` relation, buffer length, device/context, generation, and poison
+status as one undifferentiated set of preflight checks. They split across the
+supersession. Tiler checks the additive relation before the routing commit
+([`evaluate-retained-shape-relations-before-routing-commit`](../../../tickets/evaluate-retained-shape-relations-before-routing-commit.md)),
+that each bound value's accessible span lies inside the resource it names, and
+that the bound value's live device and context match the adapter's. `S <=
+capacity`, buffer length, generation, and poison status are the consumer's own
+checks over the consumer's own pool, and Tiler is never given a capacity to
+compare against.
 
 **Identity and maintainability.** The semantic extents already belong to the
 program interface. The live-extent carrier makes them consumable without adding
 a second physical fact, storage descriptor grammar, artifact row, or schema
-step. Allocation policy stays runtime-owned. Arbitrary strides, negative or
+step. Allocation policy stays outside the compiler — *corrected 2026-08-04:*
+this read "runtime-owned", and the pool belongs to the consumer that reuses it
+across invocations. The property the sentence was buying is unchanged: nothing
+about the allocation reaches a program, an artifact, or an identity. Arbitrary strides, negative or
 overlapping views, permutations, ragged batches, and caller scalars remain
 unsupported rather than being accidentally admitted for one KV case.
 
@@ -159,9 +186,18 @@ allocator, or full 28-layer resident population and are never multiplied by 28.
 
 The semantic graph remains `[8,C,128] -> [8,S,128]`, `S=C+T`. Structured
 kernel and artifact work need the governed semantic live-extent operand only.
-The runtime state owns two capacity-sized buffers per logical K/V member, their
-active bank, valid extent, generation, device/context, and poison state. It
-routes an exact live prefix and publishes the replacement bank atomically.
+**Corrected 2026-08-04 — the owner, not the arithmetic.** This paragraph read
+"The runtime state owns two capacity-sized buffers per logical K/V member,
+their active bank, valid extent, generation, device/context, and poison state."
+The **consumer** owns them: it allocates the two banks, alternates them, holds
+the valid extent and its own generation, and binds the active one as an
+ordinary program input at its exact live extent. Tiler's obligation is the
+generic half and is unchanged by the correction — an invocation routes each
+bound value as an exact live span derived from that value's bound extents, and
+never from its allocation length, so an allocation longer than the payload is
+neither addressable nor an accessible-range requirement. Nothing in the
+measurements, the oracles, or the elimination of the three rejected
+representations depended on which side held the pool.
 
 Three byte quantities must remain separate. There are 56 logical K/V members
 across 28 layers. Both head-major copy kernels issue exactly `8*live*128` F32

@@ -4,7 +4,7 @@ title: Establish a dynamic KV physical-layout authority
 status: done
 priority: p1
 dependencies: []
-related: [design-autoregressive-state-and-kv-cache, define-the-runtime-kv-state-boundary, bind-the-kv-cache-through-the-artifact-and-runtime-interface, evaluate-retained-shape-relations-before-routing-commit, admit-live-extent-operands-to-payload-indexing]
+related: [design-autoregressive-state-and-kv-cache, define-the-runtime-kv-state-boundary, evaluate-retained-shape-relations-before-routing-commit, admit-live-extent-operands-to-payload-indexing, bind-repeated-invocations-over-caller-retained-tensors]
 scopes: [research/runtime, contracts/artifacts, contracts/integrations, research/program-planning, contracts/foundation, research/numerics]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
@@ -22,7 +22,7 @@ One KV artifact and prepared pipeline address every decode step's retained stora
 
 **Inference.** A future descriptor or runtime observation could diagnose that bound storage has a capacity-derived stride, but diagnosis alone cannot make payload indexing consume that stride. No such governed descriptor is landed or treated as authority by this ticket.
 
-**Inference.** Implementing the current capacity-strided spelling can read or write the wrong head while returning a plausible tensor. This is a correctness blocker for both `define-the-runtime-kv-state-boundary` and `bind-the-kv-cache-through-the-artifact-and-runtime-interface`, not an adapter detail.
+**Inference.** Implementing the current capacity-strided spelling can read or write the wrong head while returning a plausible tensor. This is a correctness blocker for both `define-the-runtime-kv-state-boundary` and `bind-repeated-invocations-over-caller-retained-tensors`, not an adapter detail.
 
 `research/runtime` owns the retained-state design record or reproducible spike. `contracts/artifacts` and `contracts/integrations` are required because any survivor must state its artifact/ABI and public runtime consequences together. These mapped scopes declare already-required research output; they do not authorize a production public boundary or schema step.
 
@@ -61,6 +61,19 @@ Every evaluated alternative must additionally provide its own exact address/layo
 
 Keep both blocked dependents linked until the durable authority and its exact handoff are recorded. Split any independently implementable schema/identity step, runtime binding, backend realization, or experiment into narrow tickets with dependency order and scopes. A conditional capability belongs at `deferred` with a real activation trigger; work required to solve this blocker remains active.
 
+## Ownership correction — 2026-08-04, after the outcome below
+
+**This ticket stays `done`; every measurement and elimination it delivered
+stands.** [`supersede-the-runtime-owned-kv-state-design`](supersede-the-runtime-owned-kv-state-design.md)
+corrects only who holds the two capacity-sized pool banks: the **consumer**, not
+a Tiler runtime state. No measurement, oracle, or byte quantity depended on that
+owner — the spike compares allocation lengths and address orders, and both are
+properties of the buffers whoever allocates them. The consequence for Tiler is
+the generic half, unchanged: an invocation routes each bound value as an exact
+live span derived from that value's bound extents and never from its allocation
+length. The `bind-…` dependent below was rewritten and renamed on the same date
+and no longer adds a KV-specific artifact schema.
+
 ## Outcome — 2026-08-04
 
 [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) records the complete source trace, corrected elimination, and bounded Metal measurement at exact base `b4e3478d42ce21ed68e23f772b643c6370d36498`. `contracts/navigation` was added as a shared scope for the hand-maintained catalogs; `research/program-planning` and `contracts/foundation` cover the current-authority corrections across L1/L5/L6/L8 and the glossary. `research/numerics` was added because the selected physical reservation makes the quantized profile's current “survivor still unknown” statement false; correcting that statement does not broaden the authorized product outcome. The pre-cleanup Markdown population under `docs/` and `tickets/` counted 1,034 files; after deleting the two obsolete carrier tickets, the complete 1,032-file current population was searched in one invocation. Historical spans remain labelled historical rather than silently rewritten.
@@ -71,7 +84,7 @@ The retained Apple M4 Max/Apple9 spike rotates four rows over five rounds and pr
 
 Fixed-point review corrected an earlier conflation of those three quantities. Model-wide live payload transfer is identical for exact-live and capacity-strided copies: 2,293,760 bytes at C1 prefill, 8,028,160 at C1 final, and 3,816,587,264 at B1 final. Capacity-strided routing instead requires accessible bounding spans of 3,899,392, 8,228,864, and 3,816,787,968 bytes at those cells. The shared two-bank reservations are separately 8,257,536 bytes for C1 and 3,816,816,640 for B1. The retained checker derives all values from heads, width, element size, member population, extents, and capacity, and its injected pool-as-payload confusion fails.
 
-The anterior live-extent gap remains real and [`admit-live-extent-operands-to-payload-indexing`](admit-live-extent-operands-to-payload-indexing.md) owns it. It is the only generic payload-address prerequisite for [`bind-the-kv-cache-through-the-artifact-and-runtime-interface`](bind-the-kv-cache-through-the-artifact-and-runtime-interface.md). The two physical-root carriers filed by the first elimination were deleted as obsolete before dispatch: their candidate did not survive, and leaving them active would manufacture an artifact/schema boundary the selected representation does not need. No Tom decision remains on layout. Tom still owns the live-extent carrier's tested consequential public/schema spelling when that implementation reaches review.
+The anterior live-extent gap remains real and [`admit-live-extent-operands-to-payload-indexing`](admit-live-extent-operands-to-payload-indexing.md) owns it. It is the only generic payload-address prerequisite for [`bind-repeated-invocations-over-caller-retained-tensors`](bind-repeated-invocations-over-caller-retained-tensors.md). The two physical-root carriers filed by the first elimination were deleted as obsolete before dispatch: their candidate did not survive, and leaving them active would manufacture an artifact/schema boundary the selected representation does not need. No Tom decision remains on layout. Tom still owns the live-extent carrier's tested consequential public/schema spelling when that implementation reaches review.
 
 **Independent fixed-point review.** Exact clean tip
 `164df4560174cfe1f8b06cc023c6fa596b05d95e` passed architecture,

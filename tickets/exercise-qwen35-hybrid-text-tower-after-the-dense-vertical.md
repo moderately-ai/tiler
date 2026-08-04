@@ -26,14 +26,14 @@ The local `../lmbrrr` repository at `75ec511c` exercised the 0.8B Qwen3.5 text t
 
 - Pin the exact language-only checkpoint or extracted text tower, immutable revision, config and tensor digests, tokenizer artifacts, and reference implementation revision.
 - Separate reusable dense operations from hybrid-only semantics: Gated DeltaNet recurrence, depthwise causal convolution, output-gated attention, partial RoPE, MTP, recurrent and convolution state, KV state, chunk verification, and rollback.
-- Define semantic state transitions, physical cache/state placement, artifact identity, runtime lifetime and rollback rules, and numerical contracts before lowering.
+- Define semantic state transitions, physical placement of the retained values, artifact identity, and numerical contracts before lowering. **Bounded 2026-08-04 by [`supersede-the-runtime-owned-kv-state-design`](supersede-the-runtime-owned-kv-state-design.md):** this bullet read "physical cache/state placement, artifact identity, runtime lifetime and rollback rules". The Tiler runtime owns no cross-invocation state — not a KV cache, and not a recurrent or convolution state either — so lifetime and rollback are the consumer's, and this analysis states them as consumer obligations. A hybrid tower is *more* reason for that boundary, not less: two state families with chunk verification and rollback are exactly the serving-session machinery a consumer-agnostic compiler must not acquire. Every retained value crosses as an ordinary program input and output.
 - Reuse the `lmbrrr` and Candle-fork fixtures and measurements as evidence inputs while re-deriving every Tiler contract; implementation in another stack is not proof that Tiler represents the same semantics.
 - Keep vision, quantization, speculative decoding and MTP independently gated. The first language-only proof must not acquire those surfaces by checkpoint accident.
 - Compare prefill and every decode-step logits under a tolerance derived before observation, require the declared greedy tie policy, and retain state-equivalence fixtures across chunking and rollback.
 
 ## Graph maintenance
 
-Connect every newly required semantic operation, physical state carrier, runtime contract and Metal lowering to its existing owner where one exists. File coherent verticals for missing capabilities rather than one ticket per crate. Revisit priority if hybrid Qwen becomes the selected production workload or if a dense-only design would otherwise freeze a cache or state boundary that cannot represent this tower.
+Connect every newly required semantic operation, physical carrier for a retained value, runtime contract and Metal lowering to its existing owner where one exists; a "physical state carrier" that would live inside the runtime across invocations is refused rather than owned, per the bound above. File coherent verticals for missing capabilities rather than one ticket per crate. Revisit priority if hybrid Qwen becomes the selected production workload or if a dense-only design would otherwise freeze a cache or state boundary that cannot represent this tower.
 
 ## Closes when
 
