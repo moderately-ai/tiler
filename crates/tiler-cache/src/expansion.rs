@@ -65,10 +65,23 @@
 //! `accept-the-expansion-cache-maintenance-boundary`: [`ExpansionCache::account`],
 //! [`ExpansionCache::collect`], and [`ExpansionCache::purge`] sit beside the
 //! key-oriented operations, with the report vocabulary re-exported here. Nothing
-//! calls any of them automatically — a bound exists exactly when a caller states
-//! one, [`CollectionBound::UNBOUNDED`] is the only bound this crate supplies and
-//! removes nothing, and every removal is named individually in the report that
-//! performed it.
+//! *in this crate* calls any of them — no thread is spawned, no clock is
+//! consulted to decide it is time, and no operation runs during a lookup. A
+//! ceiling applies exactly when a caller states one,
+//! [`CollectionBound::UNBOUNDED`] is the only bound this crate applies and
+//! removes nothing, and every removal is named individually, with the ceiling
+//! that selected it, in the report that performed it.
+//!
+//! Tom decided on 2026-08-04 that the eviction a *frontend* runs is automatic,
+//! configured through environment variables and off the hit path
+//! (`decide-the-expansion-cache-collection-schedule`). What that costs this
+//! crate is one typed value and no behaviour: [`CollectionBound::max_entry_age`]
+//! carries a validated [`MaxEntryAge`], [`MaxEntryAge::DEFAULT`] is a constant a
+//! frontend *cites* for the zero-configuration case rather than anything this
+//! crate applies, and **no environment is read here** — names, parsing, and
+//! defaults stay with the frontend under the ADR 0089 root policy. That age
+//! vocabulary is a reviewed *draft* under ADR 0074 convention 7 and is not yet
+//! accepted; the rest of the maintenance surface is.
 //!
 //! Its bound defaults to removing nothing, it never blocks on a key lock, and it
 //! names every entry it removes. What it preserves of the five properties above,
@@ -110,7 +123,7 @@ mod tests;
 pub use bundle::{BundleRejection, BundleSection};
 pub use collect::{
     CacheAccounting, CollectionBound, CollectionOrder, CollectionOutcome, CollectionReport,
-    EntryFact, PurgeReport, RemovedEntry,
+    EntryFact, MaxEntryAge, MaxEntryAgeRefusal, PurgeReport, RemovalReason, RemovedEntry,
 };
 pub use key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
 pub use layout::PathRejection;

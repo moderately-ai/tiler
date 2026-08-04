@@ -216,6 +216,7 @@ fn harness_collector_child() {
     let bound = CollectionBound {
         max_total_bytes: None,
         max_entries: Some(max_entries),
+        max_entry_age: None,
     };
     for _ in 0..rounds {
         let line = match cache.collect(&bound) {

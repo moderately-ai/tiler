@@ -7,15 +7,23 @@
 //! collect". It reads as: the boundary is explicit, stated, and observable. Two
 //! decisions carry that here.
 //!
-//! **There is no default bound.** [`CollectionBound::UNBOUNDED`] removes
-//! nothing, and it is the only bound this crate supplies. A byte or entry
-//! ceiling exists exactly when a caller states one, so an entry can never vanish
-//! because of a number nobody chose — the research note is explicit that "exact
-//! defaults require workload measurement", and a default guessed ahead of that
-//! measurement would delete a user's compiled artifacts on the strength of a
-//! guess, invisibly. [`super::Limits`] therefore still carries no maximum entry
-//! count: the bound is an argument to one explicit operation, not a property of
-//! a cache that is otherwise only ever read from.
+//! **No bound applies unless a caller states it.** [`CollectionBound::UNBOUNDED`]
+//! removes nothing and is the crate's `Default`. A byte ceiling, an entry
+//! ceiling, and a maximum entry age each exist exactly when a caller states one,
+//! so an entry can never vanish because of a number nobody chose — the research
+//! note is explicit that "exact defaults require workload measurement", and a
+//! *size* default guessed ahead of that measurement would delete a user's
+//! compiled artifacts on the strength of a guess, invisibly. [`super::Limits`]
+//! therefore still carries no maximum entry count: the bound is an argument to
+//! one explicit operation, not a property of a cache that is otherwise only ever
+//! read from.
+//!
+//! [`MaxEntryAge::DEFAULT`] is the one number this crate names, and it is named
+//! rather than applied: it is a constant a frontend running an automatic
+//! eviction *cites*, it is not `CollectionBound`'s `Default`, [`MaxEntryAge`]
+//! implements no `Default`, and no operation here reaches for it. Its ground —
+//! a product choice under Tom's 2026-08-04 decision, not a measurement — is
+//! stated on the constant.
 //!
 //! **Every removal is named and every scanned entry is accounted for.**
 //! [`CollectionReport::removed`] lists each removed entry individually with the
@@ -75,9 +83,9 @@
 //!
 //! # Who runs a collection, and when
 //!
-//! **Never automatically, and never on the expansion path.** A collection is an
-//! explicit call that hands its report back, and the alternatives were
-//! eliminated rather than weighed:
+//! **Never on the expansion path, and never scheduled from inside this crate.**
+//! A collection is an explicit call that hands its report back. Three shapes
+//! were eliminated rather than weighed, and all three eliminations stand:
 //!
 //! - *Collecting inside `get_or_publish` on a miss* puts a walk of every shard
 //!   on the path the cache exists to make fast, and runs it hardest exactly when
@@ -91,21 +99,47 @@
 //!   "Why did my entry go away" would answer "a random draw during an unrelated
 //!   build", and a bound has to have a trigger a person can name.
 //!
-//! What remains is an explicit operation, which is also what makes the trigger
-//! statable: an entry leaves because somebody ran a collection under a bound
-//! they chose, and the report says which entry, which bound, and which order.
-//! Scheduling it stays with the caller. The delivering proc-macro path opens
-//! this cache from `tiler_macros::aot::deliver`, and the elimination recorded
-//! in `decide-the-expansion-cache-collection-schedule` leaves an explicit
-//! invocation under a caller-stated bound as the only admissible schedule;
-//! whether Tiler itself ships a maintenance command that issues one is an
-//! undecided product question, so no schedule lives in this crate.
+//! **Tom decided on 2026-08-04 that the eviction itself is automatic**, with its
+//! policy configured through environment variables and no maintenance command
+//! shipped (`decide-the-expansion-cache-collection-schedule`). That supersedes
+//! the "never automatically" conclusion of the design record — recorded, with
+//! the original rationale preserved, in
+//! [`docs/research/cache/bounded-collection.md`](https://github.com/moderately-ai/tiler/blob/main/docs/research/cache/bounded-collection.md).
+//! It changes nothing above and nothing in this module's shape:
+//!
+//! - The automatic caller is the **frontend**, which invokes this operation off
+//!   the hit path. Nothing here spawns a thread, consults a clock to decide
+//!   whether it is time, or runs during a lookup.
+//! - The policy arrives as an explicit typed value — [`CollectionBound`],
+//!   carrying [`MaxEntryAge`] when an age is stated. **This crate reads no
+//!   environment**, and variable names, parsing, and defaults stay with the
+//!   frontend under the ADR 0089 root policy.
+//! - Attribution survives automation, which is what the automatic case needs
+//!   most: nobody is present to remember what they typed, so
+//!   [`CollectionReport::bound`] carries the exact policy and every
+//!   [`RemovedEntry`] carries the [`RemovalReason`] that selected it.
+//!
+//! An entry therefore still leaves for a statable reason — a bound somebody
+//! configured, an entry older than the age it stated or among the oldest over a
+//! ceiling it stated — and the report still says which entry, which bound, which
+//! reason, and which order.
+//!
+//! # Draft boundary
+//!
+//! [`MaxEntryAge`], [`MaxEntryAgeRefusal`], [`RemovalReason`],
+//! [`CollectionBound::max_entry_age`], and [`RemovedEntry::reason`] are a
+//! **reviewed draft** on the otherwise accepted maintenance facade (ADR 0074
+//! convention 7): implemented and tested under
+//! `admit-an-age-bounded-automatic-eviction-into-the-expansion-cache`, awaiting
+//! Tom's ruling on the exact shape. Everything else in this module was accepted
+//! on 2026-07-31 under `accept-the-expansion-cache-maintenance-boundary`.
 
+use core::fmt;
 use std::cmp::Ordering;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::key::CacheKey;
 use super::layout::{self, Layout};
@@ -113,36 +147,206 @@ use super::lock::KeyLock;
 use super::report::{CacheOperation, CacheUnavailable};
 use super::store::ExpansionCache;
 
+/// The greatest age a collection lets an entry reach before removing it.
+///
+/// A verified value rather than a plain [`Duration`] (ADR 0074 convention 6):
+/// its only invariant — that the stated age is not zero — is established by
+/// [`Self::new`] and cannot be circumvented, so no [`CollectionBound`] can carry
+/// an age that is not a bound.
+///
+/// # Why zero is the one value refused, and the only one
+///
+/// A maximum age of zero makes the predicate true for every entry the host can
+/// date, including one published this instant. That is not a short retention
+/// window; it is "remove everything" said obliquely, and it carries a failure the
+/// honest spelling does not — it removes an entry a concurrent build published
+/// microseconds ago and is about to hit. A caller that means "remove everything"
+/// has two operations that say so: `CollectionBound { max_entries: Some(0), .. }`
+/// and [`ExpansionCache::purge`].
+///
+/// Nothing else is refused, and refusing more would mean choosing a number. A
+/// one-second maximum is a legitimate policy for a test or a scratch root, and a
+/// minimum floor above it would be exactly the guess this module declines to make
+/// for the size ceilings. A *negative* age needs no check at all: [`Duration`] is
+/// unsigned, so it is unrepresentable rather than unchecked, and a frontend
+/// parsing `-1` from its environment refuses before it reaches a [`Duration`].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MaxEntryAge(Duration);
+
+impl MaxEntryAge {
+    /// Thirty days: the age a frontend cites when a consumer configured nothing.
+    ///
+    /// **A product choice under Tom's 2026-08-04 decision, not a measurement**,
+    /// and it must not be cited as one. Nothing in this crate applies it: it is
+    /// not [`CollectionBound`]'s `Default`, [`MaxEntryAge`] implements no
+    /// `Default`, and no operation here reaches for it. A caller that wants it
+    /// names it.
+    ///
+    /// Its ground, stated so it can be argued with rather than inherited:
+    ///
+    /// - The asymmetry the whole collector is built on points at the *longer*
+    ///   end of any plausible range. A wrong eviction costs one recompilation;
+    ///   an over-long retention costs disk that the measured rate bounds.
+    /// - The measured rate is modest. The self-contained embedding note records
+    ///   envelopes of 32,136–47,803 bytes, and the schedule decision records on
+    ///   the order of ten to twenty megabytes per editing afternoon — so a
+    ///   30-day window holds the steady state to roughly 200–400 MB over about
+    ///   twenty working days, small beside the build caches already on the same
+    ///   machine.
+    /// - Growth is driven less by editing than by re-keying: every Apple
+    ///   toolchain update orphans every entry published before it, all at once.
+    ///   A 30-day window reclaims each orphaned generation within a month of the
+    ///   update that orphaned it.
+    /// - A shorter window hands a developer returning from an ordinary absence a
+    ///   completely cold cache on their first build back, which is a visible
+    ///   cost the shorter end buys nothing for.
+    ///
+    /// **What would replace it with a derived number:** a measurement of how
+    /// long an entry stays useful — working-set lifetime, not the per-entry size
+    /// that exists today. `measure-the-expansion-cache-hot-path-efficiency` is
+    /// where that evidence would come from.
+    ///
+    /// Spelled in hours because `Duration::from_days` is still unstable on the
+    /// pinned toolchain, and a constant does not justify a feature gate.
+    pub const DEFAULT: Self = Self(Duration::from_hours(30 * 24));
+
+    /// States a maximum entry age, refusing one that is not a bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MaxEntryAgeRefusal::Zero`] when `max_age` is zero. The refusal
+    /// is the whole response: a collection under a policy this refuses does not
+    /// happen, because the policy cannot be constructed, so there is no path on
+    /// which a bad age is repaired to a guessed one.
+    pub const fn new(max_age: Duration) -> Result<Self, MaxEntryAgeRefusal> {
+        if max_age.is_zero() {
+            return Err(MaxEntryAgeRefusal::Zero);
+        }
+        Ok(Self(max_age))
+    }
+
+    /// The stated maximum age.
+    #[must_use]
+    pub const fn as_duration(self) -> Duration {
+        self.0
+    }
+
+    /// True when an entry the scan dated at `published` has reached this age by
+    /// `now`.
+    ///
+    /// # An age the host cannot compute is treated as young
+    ///
+    /// Two inputs leave the age unknown: a modification time the host could not
+    /// report at all, and one dated *after* `now` — which happens when a clock
+    /// moved backwards between the publication and the collection, when a file
+    /// was stamped into the future, or when two machines share a root over a
+    /// network filesystem with skewed clocks. Neither is age-selected.
+    ///
+    /// The direction is not a convenience. It is the same one
+    /// [`ExpansionCache::sweep_temporaries`] takes for an abandoned temporary
+    /// and the same one this module's selector takes for an undatable entry, and
+    /// for the same asymmetry: keeping something collectable costs bounded disk,
+    /// and removing something live costs work that has to be done again. It is
+    /// also what makes a clock that moved backwards a non-event instead of a
+    /// mass eviction — a future-dated entry is protected, and every other entry
+    /// is judged on its own age exactly as before.
+    ///
+    /// The comparison is between two [`Duration`]s and never between two
+    /// instants, so a maximum age larger than the time since the epoch is an age
+    /// nothing has reached rather than an underflow.
+    fn has_expired(self, published: Option<SystemTime>, now: SystemTime) -> bool {
+        published
+            .and_then(|published| now.duration_since(published).ok())
+            .is_some_and(|age| age >= self.0)
+    }
+}
+
+/// Why a stated maximum entry age is not a bound.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: a refusal vocabulary a
+/// caller forwards or renders rather than maps totally.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum MaxEntryAgeRefusal {
+    /// The stated age is zero.
+    ///
+    /// Carries no data because there is none to carry: the rejected value is the
+    /// one the variant names, and a caller reacting to it needs the distinction
+    /// rather than the quantity.
+    Zero,
+}
+
+impl fmt::Display for MaxEntryAgeRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Zero => formatter.write_str(
+                "a maximum entry age of zero is not a bound: it selects every entry the host can \
+                 date, including one published this instant, so a cache-wide removal has to be \
+                 stated as an entry ceiling of zero or as a purge",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MaxEntryAgeRefusal {}
+
 /// What one collection is allowed to leave behind.
 ///
-/// Both ceilings are optional and both are absent by default. A collection under
-/// [`Self::UNBOUNDED`] is a pure measurement: it selects nothing, removes
+/// Every ceiling is optional and every one is absent by default. A collection
+/// under [`Self::UNBOUNDED`] is a pure measurement: it selects nothing, removes
 /// nothing, and reports the accounting it observed.
 ///
+/// # The three ceilings compose, and cannot contradict each other
+///
+/// [`Self::max_total_bytes`] and [`Self::max_entries`] are *aggregate* ceilings
+/// on what the cache retains; [`Self::max_entry_age`] is a *per-entry* predicate
+/// over one entry's own evidence. A selection is the union: every entry the age
+/// expires, plus the oldest of the remainder that the aggregate ceilings still
+/// require removing. Each stated ceiling therefore only ever adds removals, so
+/// two of them cannot disagree about an entry — there is no contradictory
+/// composition to detect, and none is checked for.
+///
 /// A caller-constructed leaf value record, so its fields are visible
-/// (ADR 0074 convention 6).
+/// (ADR 0074 convention 6). Its one field with an invariant holds a verified
+/// [`MaxEntryAge`] rather than a raw [`Duration`], which is what keeps the record
+/// literal-constructible while making an unbounded age unrepresentable.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct CollectionBound {
     /// Maximum total bytes of final entries the cache may retain.
     pub max_total_bytes: Option<u64>,
     /// Maximum number of final entries the cache may retain.
     pub max_entries: Option<u64>,
+    /// Greatest age a retained entry may have reached, by its own published
+    /// modification time.
+    ///
+    /// Absent by default, and absent in [`Self::UNBOUNDED`]. Stating it is what
+    /// an automatic eviction does; [`MaxEntryAge::DEFAULT`] is the constant a
+    /// frontend cites when its consumer configured nothing, and it is never
+    /// filled in here.
+    pub max_entry_age: Option<MaxEntryAge>,
 }
 
 impl CollectionBound {
     /// The bound that removes nothing.
     ///
-    /// The default, and the only bound this crate supplies. Collecting under it
-    /// is how a caller measures a cache without changing it.
+    /// The default, and the only *applied* bound this crate supplies —
+    /// [`MaxEntryAge::DEFAULT`] is a constant a caller cites, not a value
+    /// anything reaches for. Collecting under `UNBOUNDED` is how a caller
+    /// measures a cache without changing it.
     pub const UNBOUNDED: Self = Self {
         max_total_bytes: None,
         max_entries: None,
+        max_entry_age: None,
     };
 
-    /// True when a cache holding `bytes` across `entries` is within this bound.
+    /// True when a cache holding `bytes` across `entries` is within this bound's
+    /// *aggregate* ceilings.
     ///
-    /// An absent ceiling constrains nothing, so an unbounded bound is satisfied
-    /// by every cache and selects nothing.
+    /// An absent ceiling constrains nothing. This deliberately says nothing
+    /// about [`Self::max_entry_age`], which is a property of an individual entry
+    /// rather than of a total: a cache inside both aggregate ceilings can still
+    /// hold an expired entry, so the selector consults the age separately and
+    /// the outcome is decided from both.
     const fn admits(self, bytes: u64, entries: u64) -> bool {
         let within_bytes = match self.max_total_bytes {
             Some(limit) => bytes <= limit,
@@ -157,7 +361,7 @@ impl CollectionBound {
 
     /// True when this bound can never select anything.
     const fn is_unbounded(self) -> bool {
-        self.max_total_bytes.is_none() && self.max_entries.is_none()
+        self.max_total_bytes.is_none() && self.max_entries.is_none() && self.max_entry_age.is_none()
     }
 }
 
@@ -292,6 +496,45 @@ impl CacheAccounting {
     }
 }
 
+/// Which of a bound's ceilings selected an entry.
+///
+/// Exists because attribution has to survive automation. When a person runs a
+/// collection they know what they typed, so the bound on the report is enough;
+/// when a frontend runs one under a configured policy, nobody is present to
+/// remember, and "the cache was over a ceiling" and "this entry was older than
+/// the configured age" lead to different corrections. Naming it per removal is
+/// what keeps the report able to answer which.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: a reason vocabulary a
+/// consumer renders or partially classifies, never maps totally onto a value
+/// the variant alone determines.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum RemovalReason {
+    /// The entry's own age had reached [`CollectionBound::max_entry_age`].
+    OlderThanMaxEntryAge,
+    /// The cache exceeded an aggregate ceiling and this was among its oldest
+    /// entries.
+    OverSizeCeiling,
+}
+
+impl RemovalReason {
+    /// Returns this reason's stable lowercase identifier, for diagnostics.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OlderThanMaxEntryAge => "older-than-max-entry-age",
+            Self::OverSizeCeiling => "over-size-ceiling",
+        }
+    }
+}
+
+impl fmt::Display for RemovalReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// One entry a collection removed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemovedEntry {
@@ -299,6 +542,8 @@ pub struct RemovedEntry {
     pub key: CacheKey,
     /// Bytes reclaimed, as measured by the scan that selected it.
     pub bytes: u64,
+    /// Which ceiling of the stated bound selected this entry.
+    pub reason: RemovalReason,
 }
 
 /// Whether a collection satisfied the bound it was given.
@@ -318,6 +563,13 @@ pub enum CollectionOutcome {
     /// busy cache can legitimately end a collection above its bound. Reporting
     /// exactly what is left is what makes a caller able to re-run rather than
     /// wonder.
+    ///
+    /// An age ceiling reaches this the same way and is counted the same way: an
+    /// entry selected as older than [`CollectionBound::max_entry_age`] but not
+    /// actually removed leaves the bound unreached, even when the byte and entry
+    /// figures below sit inside their own ceilings. The two figures describe the
+    /// aggregate, so a caller reading them alone would see a satisfied cache and
+    /// re-run for no visible reason; the outcome is what tells it to.
     BoundNotReached {
         /// Bytes of final entries still held.
         bytes: u64,
@@ -360,12 +612,15 @@ impl CollectionReport {
         self.order
     }
 
-    /// Every entry that was removed, individually, with the bytes it occupied.
+    /// Every entry that was removed, individually, with the bytes it occupied
+    /// and the ceiling that selected it.
     ///
     /// A list rather than a count. A removal is the destructive act, so a report
     /// that aggregated them away would be unable to answer the one question an
     /// operator asks after an unexpected rebuild — which entry left, and under
-    /// which bound.
+    /// which bound. [`RemovedEntry::reason`] narrows "which bound" to which
+    /// *ceiling* of it, which is what an automatic eviction needs: no person was
+    /// present to remember what the policy said.
     #[must_use]
     pub fn removed(&self) -> &[RemovedEntry] {
         &self.removed
@@ -570,6 +825,21 @@ impl ExpansionCache {
     /// Under [`CollectionBound::UNBOUNDED`] this selects nothing and is a pure
     /// measurement.
     ///
+    /// # What the three ceilings each select
+    ///
+    /// [`CollectionBound::max_entry_age`] selects **per entry**, from that
+    /// entry's own published modification time measured against this call's
+    /// single clock reading; [`CollectionBound::max_total_bytes`] and
+    /// [`CollectionBound::max_entries`] select **in aggregate**, taking the
+    /// oldest of whatever the age left behind until the totals fit. The two
+    /// compose as a union and each removal names which selected it, so a cache
+    /// inside both aggregate ceilings still has its expired entries removed, and
+    /// an entry removed to fit a ceiling is never reported as an expiry.
+    ///
+    /// The clock is read once, before the scan is interpreted, so every entry in
+    /// one collection is judged against one instant. Reading it per entry would
+    /// make an entry's fate depend on where the walk reached it.
+    ///
     /// # It never blocks, and therefore needs no work budget
     ///
     /// Each selected entry is removed under its own key lock taken with a
@@ -629,10 +899,32 @@ impl ExpansionCache {
     /// A failure on one key is recorded in [`CollectionReport::failed`] and the
     /// collection continues.
     pub fn collect(&self, bound: &CollectionBound) -> Result<CollectionReport, CacheUnavailable> {
+        self.collect_at(bound, SystemTime::now())
+    }
+
+    /// [`Self::collect`], with the instant every age is measured against supplied
+    /// rather than read from the host clock.
+    ///
+    /// The seam exists so an age test can be a statement about the predicate
+    /// instead of about how fast a test ran: an entry exactly at the boundary,
+    /// and an entry dated after the collecting process's own reading, are both
+    /// unreachable through a wall-clock `now` without a margin, and a margin is
+    /// what turns a deterministic test into a dice roll. The public entry point
+    /// above pins `now` to [`SystemTime::now`], so no caller can collect against
+    /// an instant of its own choosing.
+    pub(crate) fn collect_at(
+        &self,
+        bound: &CollectionBound,
+        now: SystemTime,
+    ) -> Result<CollectionReport, CacheUnavailable> {
         let accounting = self.account()?;
         let order = CollectionOrder::OldestPublicationFirst;
 
-        let selected = select(&accounting, *bound);
+        let selected = select(&accounting, *bound, now);
+        let expired_selected = selected
+            .iter()
+            .filter(|entry| entry.reason == RemovalReason::OlderThanMaxEntryAge)
+            .count();
         let mut report = CollectionReport {
             bound: *bound,
             order,
@@ -646,11 +938,12 @@ impl ExpansionCache {
             accounting,
         };
 
-        for fact in &selected {
-            match self.remove_if_unchanged(fact) {
+        for entry in &selected {
+            match self.remove_if_unchanged(&entry.fact) {
                 Ok(Disposition::Removed) => report.removed.push(RemovedEntry {
-                    key: fact.key,
-                    bytes: fact.bytes,
+                    key: entry.fact.key,
+                    bytes: entry.fact.bytes,
+                    reason: entry.reason,
                 }),
                 Ok(Disposition::Contended) => report.contended += 1,
                 Ok(Disposition::Superseded) => report.superseded += 1,
@@ -670,9 +963,23 @@ impl ExpansionCache {
             .accounting
             .entry_count()
             .saturating_sub(report.removed.len() as u64);
+        // An expired entry that was not removed still violates the age ceiling,
+        // and the aggregate figures cannot say so — they are totals, and a cache
+        // inside both of them can still hold an entry older than the stated age.
+        // Crediting only actual removals matches how the byte figure above
+        // treats `already_absent`: the disposition that resolved the violation
+        // belongs to whoever performed it, and a caller re-runs rather than
+        // trusts a projection.
+        let expired_removed = report
+            .removed
+            .iter()
+            .filter(|entry| entry.reason == RemovalReason::OlderThanMaxEntryAge)
+            .count();
         report.outcome = if selected.is_empty() {
             CollectionOutcome::WithinBound
-        } else if bound.admits(retained_bytes, retained_entries) {
+        } else if bound.admits(retained_bytes, retained_entries)
+            && expired_removed == expired_selected
+        {
             CollectionOutcome::BoundReached
         } else {
             CollectionOutcome::BoundNotReached {
@@ -912,12 +1219,35 @@ pub(crate) enum Disposition {
     AlreadyAbsent,
 }
 
+/// One entry a bound selected, and which ceiling selected it.
+#[derive(Clone, Debug)]
+struct Selected {
+    /// The entry as the scan measured it, which is what the locked removal
+    /// re-`stat`s against.
+    fact: EntryFact,
+    /// The ceiling that put it here.
+    reason: RemovalReason,
+}
+
 /// Chooses the entries a bound requires removing, oldest publication first.
 ///
 /// Selection is arithmetic over the scan and touches no file, which is what lets
-/// the removal loop below be the only place a decision becomes destructive.
-fn select(accounting: &CacheAccounting, bound: CollectionBound) -> Vec<EntryFact> {
-    if bound.is_unbounded() || bound.admits(accounting.total_bytes(), accounting.entry_count()) {
+/// the removal loop above be the only place a decision becomes destructive. It
+/// runs in two passes because the ceilings are two different kinds of statement:
+/// the age is a predicate over one entry's own evidence, and the byte and entry
+/// ceilings are properties of a total. Taking the age first is what makes the
+/// aggregate pass operate on the totals the age will actually leave behind,
+/// rather than removing an entry to fit a ceiling that expiry was about to
+/// satisfy anyway.
+fn select(accounting: &CacheAccounting, bound: CollectionBound, now: SystemTime) -> Vec<Selected> {
+    // Nothing to decide when no ceiling exists at all, and — when only the
+    // aggregate ceilings were stated — when the cache already fits inside them.
+    // A stated age has to be walked regardless of the totals, because a cache
+    // within every aggregate ceiling can still hold an expired entry.
+    if bound.is_unbounded()
+        || (bound.max_entry_age.is_none()
+            && bound.admits(accounting.total_bytes(), accounting.entry_count()))
+    {
         return Vec::new();
     }
     let mut ordered = accounting.entries.clone();
@@ -942,13 +1272,32 @@ fn select(accounting: &CacheAccounting, bound: CollectionBound) -> Vec<EntryFact
     let mut bytes = accounting.total_bytes();
     let mut entries = accounting.entry_count();
     let mut selected = Vec::new();
+    let mut survived_the_age = Vec::new();
     for fact in ordered {
+        let expired = bound
+            .max_entry_age
+            .is_some_and(|max_age| max_age.has_expired(fact.published, now));
+        if expired {
+            bytes = bytes.saturating_sub(fact.bytes);
+            entries = entries.saturating_sub(1);
+            selected.push(Selected {
+                fact,
+                reason: RemovalReason::OlderThanMaxEntryAge,
+            });
+        } else {
+            survived_the_age.push(fact);
+        }
+    }
+    for fact in survived_the_age {
         if bound.admits(bytes, entries) {
             break;
         }
         bytes = bytes.saturating_sub(fact.bytes);
         entries = entries.saturating_sub(1);
-        selected.push(fact);
+        selected.push(Selected {
+            fact,
+            reason: RemovalReason::OverSizeCeiling,
+        });
     }
     selected
 }
