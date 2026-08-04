@@ -79,6 +79,7 @@ Most harnesses are standard library plus `pytest`. Five are not, and each says s
 
 - [Placement and memory-domain model](placement/README.md) — reproducible; executable-model; supports: [Device placement and memory-domain contract](../docs/research/placement/device-placement-and-memory-domains.md)
 - [Runtime execution and validation spikes](runtime/README.md) — reproducible; executable-model, bounded-measurement; supports: [Consumer-neutral runtime execution contract](../docs/research/runtime/runtime-execution-contract.md), [Semantic validation enforcement](../docs/research/runtime/semantic-validation-enforcement.md), [Candle Metal post-wait error checking](../docs/research/runtime/candle-metal-post-wait-error-checking.md)
+- [Dynamic KV physical-layout comparison](runtime/dynamic-kv-layout/README.md) — reproducible; bounded-measurement, executable-model; supports: [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md)
 - [Transfer synchronization and lifetime model](transfers/README.md) — reproducible; executable-model; supports: [Transfer synchronization and resource-lifetime contract](../docs/research/transfers/transfer-synchronization-and-resource-lifetime.md)
 
 ### Documentation governance

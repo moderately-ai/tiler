@@ -1,0 +1,2 @@
+arithmetic oracle rejected:
+- c1-prefill: expected (2293760, 3899392, 8257536), observed (8257536, 3899392, 8257536)

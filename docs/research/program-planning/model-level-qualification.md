@@ -281,19 +281,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 ## Post-transfer correction — 2026-08-04: KV physical-layout authority
 
-**Correction.** The transferred span's KV peak totals and D-16's fixed 1.714
-GiB trigger are arithmetic for the rejected singular dense-allocation
-candidate, not current physical-residency authority. The durable logical facts
-are a fixed logical capacity, 28 ordered K/V pairs (56 logical members), one
-model cursor, per-member generations, and atomic token publication. Physical
-shape, segmentation, resource cardinality, alias law, retention population,
-and peak residency remain blocked on
-[`establish-a-dynamic-kv-physical-layout-authority`](../../../tickets/establish-a-dynamic-kv-physical-layout-authority.md).
-Before a residency measurement becomes a qualification oracle, that ticket's
-survivor must supply a reproducible resource population and row-sum formula.
-D-16 then uses the measured survivor-specific token-versus-layer delta and
-still requires a recovery contract; the historical totals neither fire the
-trigger nor select a layout.
+**Correction.** The transferred span's KV peak totals and D-16's fixed 1.714 GiB trigger are arithmetic for a rejected singular-allocation candidate, not current physical-residency authority. The durable logical facts are a fixed logical capacity, 28 ordered K/V pairs (56 logical members), one model cursor, per-member generations, and atomic token publication. [Dynamic KV physical-layout authority](../runtime/dynamic-kv-physical-layout.md) now selects two alternating capacity-sized head-major F32 buffers per logical member and exact-live dense payloads whose head strides are `C*128` and `S*128`; there is no physical-root schema. Its B1-d token-pool reservation is `2 × capacity × 229,376 = 3,816,816,640` bytes, while exact-live final bytes touched are 3,816,587,264. These remain arithmetic rather than resident-process evidence. Before residency becomes a qualification oracle, a complete-model measurement must compare observed allocation/residency with the pool population and report live bytes touched separately. D-16 still requires a recovery contract; neither arithmetic figure fires it alone.
 
 ## The conformance corpus, fixed — 2026-08-02
 
@@ -305,7 +293,7 @@ trigger nor select a layout.
 
 **Fact — the shared frame, so that a row's entry is a delta rather than a restatement.** The pinned checkpoint `Qwen/Qwen3-0.6B-Base` at revision `da87bfb608c14b7cf20ba1ce41287e8de496c0cd`, widened host-side to F32 once at model load; batch 1; greedy; the effective subnormal-flushing, contraction-free, safe-math F32 realization on the qualified target row `apple9-f32-unified-msl4-macos26`. The program partition is L6's: P1 the embedding gather, P2 the decoder layer executed 28 times, P3 the final normalization and vocabulary projection — one forward pass is 30 executions over 3 artifact identities, under the per-layer program boundary with the token transaction.
 
-**W-310** names the complete widened weight set under L6's W-C partition: P1 binds `model.embed_tokens.weight`; P2's execution at layer *ℓ* binds that layer's eleven; P3 binds `model.norm.weight` and the tied `model.embed_tokens.weight`. It is 310 tensors and 2,384,199,680 bytes, and a row that does not say otherwise binds it unaltered. `capacity` is each KV state's fixed logical capacity selected at creation; physical shape, segmentation, and resource layout are supplied by the eventual layout survivor.
+**W-310** names the complete widened weight set under L6's W-C partition: P1 binds `model.embed_tokens.weight`; P2's execution at layer *ℓ* binds that layer's eleven; P3 binds `model.norm.weight` and the tied `model.embed_tokens.weight`. It is 310 tensors and 2,384,199,680 bytes, and a row that does not say otherwise binds it unaltered. `capacity` is each KV state's fixed logical capacity selected at creation; the selected proposal owns two capacity-sized pool buffers per K or V member while packing each active payload exact-live head-major. Its stride comes from `C` or `S`, never capacity.
 
 **Every row is stated as a delta from an accepted baseline**, which is C1 for all but two. That is not presentation: a refusal or a disagreement is evidence about the one thing the row changed only if exactly one thing changed, and it is the discipline [`test-the-autoregressive-state-failure-cases`](../../../tickets/test-the-autoregressive-state-failure-cases.md) already applies to the state suite.
 
@@ -367,7 +355,7 @@ trigger nor select a layout.
 | --- | --- | --- | --- |
 | A-token-out | the gather family's named enforcement boundary | **No** | `grep -rhoE '"tiler::[a-z0-9-]+@[0-9]+"' crates/ \| sort -u` lists 24 registered keys and none is a gather; [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](../../../tickets/admit-an-indirect-gather-family-for-tied-embedding-lookup.md) is `todo`. Positive control: the same command returns `tiler::reindex-f32@1`, so the absence is a property of the registry rather than of the grep |
 | A-token-low, A-token-high, A-token-out | an anterior one: a storage carrier for a `[T]` integer operand | **No** | `StorageScalar` at `crates/tiler-ir/src/program/model.rs:264` has exactly two variants, `U8` and `F32`, and a vocabulary of 151,936 needs eighteen bits |
-| A-capacity | the runtime instance's `C + T ≤ capacity` check | **No** | no KV state type exists in `crates/`; the survivor-independent draft is [`define-the-runtime-kv-state-boundary`](../../../tickets/define-the-runtime-kv-state-boundary.md), currently `blocked` on physical-layout authority |
+| A-capacity | the runtime instance's `C + T ≤ capacity` check | **No** | no KV state type exists in `crates/`; [`define-the-runtime-kv-state-boundary`](../../../tickets/define-the-runtime-kv-state-boundary.md) owns the tested public draft, and the later [layout authority](../runtime/dynamic-kv-physical-layout.md) supplies its exact-live/capacity-pool descriptor |
 | A-position-range | the shape environment's bounded-extent refusal | **mechanism yes, occurrence no** | `ExtentRelation` at `crates/tiler-ir/src/shape/env/constraint.rs:150` carries an `Interval` variant and `ExtentInterval::states_no_upper_bound` is at `:703`; the program that would declare the bound does not exist, because [`deliver-an-artifact-family-from-a-symbolic-region`](../../../tickets/deliver-an-artifact-family-from-a-symbolic-region.md) is `todo` |
 | A-tiled-guard | `RoutingPolicy::StablePriority` over two packaged variants | **policy yes, variants no** | the policy is matched exhaustively at `crates/tiler-runtime/src/load.rs:614`; no tiled contraction schedule exists — [`realize-the-contraction-through-the-appendable-direct-path`](../../../tickets/realize-the-contraction-through-the-appendable-direct-path.md) is `done` and [`realize-the-tiled-contraction-schedule-and-its-metal-emission`](../../../tickets/realize-the-tiled-contraction-schedule-and-its-metal-emission.md) is `deferred`, so the guard has nothing to discriminate between |
 | A-mask-value | none in Tiler — the mask is a host computation; detection is attribution rung 1 against `mask.tsv` | **detection yes, execution no** | the retained fixture holds the C1 prefill mask in full at 400 bytes, and `host.tsv` records its digest and its 55 attended entries |
