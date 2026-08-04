@@ -185,11 +185,20 @@ schemes, and nested encoded components remain unsupported. The public
 `OperandArity` errors in both IR verification and compiler refinement now report
 `expanded_inputs` (ordinary semantic inputs plus ordered encoded components),
 and `OperandInterface::position` names that same expanded boundary order rather
-than a distinct semantic-operand ordinal.
+than a distinct semantic-operand ordinal. Both layers also gain
+`EmptyEncodedOperandComponents { input }`, because a zero-component encoded
+contract has no expanded position that `OperandInterface` could truthfully
+name. Expansion first checked-counts component declarations, saturating only on
+host arithmetic overflow, and refuses any population above the existing public
+`MAX_BOUNDARY_TENSORS` region limit or unequal to the actual verified input
+population before reserving component vectors or deriving component shapes. No
+new resource constant is needed: the verified region cannot retain a larger
+input population. The new error variants and accounting order add no identity
+bytes and move no identity domain or deterministic pin.
 
 ## Draft verification
 
-The affected four-package nextest population passed 1,784 of 1,784 tests with 5
+The affected four-package nextest population passed 1,785 of 1,785 tests with 5
 configured skips. Package doctests passed 20 with 1 ignored; Clippy passed for
 all targets with warnings denied; formatting, `git diff --check`, `tkt lint`,
 and true-base guard passed. The four preserved artifact/component tests remain
@@ -205,6 +214,13 @@ exact centered-code boundaries `-15` and `+15` and refused positive and negative
 zero, a negative normal, both signed subnormal classes, NaN, and both infinities
 as typed invalid applications. Removing the scale-domain check made that focused
 test fail (exit 100); restoring it made the same one-test population pass.
+Sixteen 1,024-component encoded inputs exactly reached the 16,384-boundary
+region maximum in the count-only pass; a seventeenth refused with typed arity
+before any component shape was materialized. A safe zero-component encoded
+contract refused with the new input-indexed error and the compiler mapping
+preserved it exactly. Removing the boundary-ceiling check made the over-limit
+test return `Ok(17408)` and fail (exit 100); restoring it made the same focused
+population pass.
 Before the frozen explain qualifier was
 updated, its existing exact assertion failed and reported the recomputed
 `fb0b64dd69649785` value; that deliberate observation proves the identity check

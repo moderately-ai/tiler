@@ -448,12 +448,18 @@ pub enum RefinementError {
     Handle(VerifiedIndexHandleError),
     /// A boundary tensor exposed no static shape in this bounded profile.
     SymbolicBoundary,
+    /// An encoded semantic input declared no component boundary to bind.
+    EmptyEncodedOperandComponents {
+        /// Position in the distinct semantic input population.
+        input: usize,
+    },
     /// The region declares a different number of inputs than the expanded
     /// semantic input boundary requires.
     OperandArity {
         /// Region input boundary count.
         region_inputs: usize,
-        /// Expected ordinary inputs plus ordered encoded components.
+        /// Expected ordinary inputs plus ordered encoded components, saturated
+        /// at `usize::MAX` if count arithmetic overflowed.
         expanded_inputs: usize,
     },
     /// A region input boundary disagrees with its expanded semantic input type
@@ -532,6 +538,10 @@ impl fmt::Display for RefinementError {
             Self::SymbolicBoundary => {
                 formatter.write_str("a boundary tensor exposed no static shape")
             }
+            Self::EmptyEncodedOperandComponents { input } => write!(
+                formatter,
+                "encoded semantic input {input} declares no component boundaries"
+            ),
             Self::OperandArity {
                 region_inputs,
                 expanded_inputs,
@@ -707,6 +717,9 @@ fn map_ir_verifier_error(
         }
         IndexRefinementVerificationError::Handle(source) => RefinementError::Handle(source),
         IndexRefinementVerificationError::SymbolicBoundary => RefinementError::SymbolicBoundary,
+        IndexRefinementVerificationError::EmptyEncodedOperandComponents { input } => {
+            RefinementError::EmptyEncodedOperandComponents { input }
+        }
         IndexRefinementVerificationError::OperandArity {
             region_inputs,
             expanded_inputs,
@@ -998,7 +1011,8 @@ mod tests {
     };
 
     use super::{
-        RefinementError, emit_region, refine_index_region as refine_index_region_with_registry,
+        RefinementError, emit_region, map_ir_verifier_error,
+        refine_index_region as refine_index_region_with_registry,
     };
     use crate::capability::{
         FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
@@ -1775,6 +1789,24 @@ mod tests {
         assert_eq!(
             RefinementError::OperandInterface { position: 2 }.to_string(),
             "region input 2 does not match its expanded semantic input boundary"
+        );
+        assert_eq!(
+            RefinementError::EmptyEncodedOperandComponents { input: 2 }.to_string(),
+            "encoded semantic input 2 declares no component boundaries"
+        );
+
+        let registry = square_registry();
+        let capability = registry
+            .resolve_index_access(&multiply_f32_op(), &binary_signature())
+            .unwrap();
+        let subject = square_occurrence(b"empty-encoded-components");
+        assert_eq!(
+            map_ir_verifier_error(
+                IndexRefinementVerificationError::EmptyEncodedOperandComponents { input: 0 },
+                &capability,
+                &subject,
+            ),
+            RefinementError::EmptyEncodedOperandComponents { input: 0 }
         );
     }
 }

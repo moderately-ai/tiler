@@ -35,10 +35,11 @@ use crate::shape::Shape;
 use super::{
     CanonicalIndexRegionIdentity, CanonicalScalarDefinitionProjection,
     CanonicalScalarRegistrySnapshotIdentity, FrozenScalarRegistry, IndexDomainPredicate,
-    IndexDomainUnknownReason, IndexExprView, IndexExtentRef, IndexInteger, ScalarAuthorityEvidence,
-    ScalarOpKey, ScalarRegistryError, TensorRole, UnknownIndexDomainPredicate, VerifiedDimensionId,
-    VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedScalarValueId,
-    VerifiedTensorAccessId, VerifiedTensorId,
+    IndexDomainUnknownReason, IndexExprView, IndexExtentRef, IndexInteger, MAX_BOUNDARY_TENSORS,
+    ScalarAuthorityEvidence, ScalarOpKey, ScalarRegistryError, TensorRole,
+    UnknownIndexDomainPredicate, VerifiedDimensionId, VerifiedIndexExprId,
+    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedScalarValueId, VerifiedTensorAccessId,
+    VerifiedTensorId,
 };
 
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
@@ -2265,11 +2266,17 @@ pub enum IndexRefinementVerificationError {
     Handle(VerifiedIndexHandleError),
     /// A boundary exposes no static shape in this bounded verifier.
     SymbolicBoundary,
+    /// An encoded semantic input declared no component boundary to bind.
+    EmptyEncodedOperandComponents {
+        /// Position in the distinct semantic input population.
+        input: usize,
+    },
     /// Region input count disagrees with the expanded semantic input boundary.
     OperandArity {
         /// Number of verified input boundaries.
         region_inputs: usize,
-        /// Expected ordinary inputs plus ordered encoded components.
+        /// Expected ordinary inputs plus ordered encoded components, saturated
+        /// at `usize::MAX` if count arithmetic overflowed.
         expanded_inputs: usize,
     },
     /// One region input disagrees with its expanded semantic input boundary.
@@ -2406,6 +2413,10 @@ impl fmt::Display for IndexRefinementVerificationError {
             Self::ScalarAuthority(source) => write!(formatter, "scalar authority failed: {source}"),
             Self::Handle(source) => write!(formatter, "verified handle failed: {source}"),
             Self::SymbolicBoundary => formatter.write_str("a boundary exposed no static shape"),
+            Self::EmptyEncodedOperandComponents { input } => write!(
+                formatter,
+                "encoded semantic input {input} declares no component boundaries"
+            ),
             Self::OperandArity {
                 region_inputs,
                 expanded_inputs,
@@ -2529,50 +2540,51 @@ fn bind_operands(
         .tensors()
         .filter(|tensor| tensor.role() == TensorRole::Input)
         .collect::<Vec<_>>();
-    let mut expanded = Vec::new();
-    for (input_position, operand) in occurrence.inputs.iter().enumerate() {
-        if let Some((_, contract)) = operand.value_type.encoded_numeric_parts() {
-            if contract.components().is_empty() {
-                return Err(IndexRefinementVerificationError::OperandInterface {
-                    position: input_position,
-                });
-            }
-            for component in contract.components() {
-                expanded.push((
-                    input_position,
-                    component.resolved_type(),
-                    component.shape_relation().component_shape(&operand.shape),
-                    Some(component.role()),
-                ));
-            }
-        } else {
-            expanded.push((
-                input_position,
-                &operand.value_type,
-                operand.shape.clone(),
-                None,
-            ));
-        }
-    }
-    if inputs.len() != expanded.len() {
+    let expanded_inputs = count_expanded_inputs(&occurrence.inputs, inputs.len())?;
+    if inputs.len() != expanded_inputs {
         return Err(IndexRefinementVerificationError::OperandArity {
             region_inputs: inputs.len(),
-            expanded_inputs: expanded.len(),
+            expanded_inputs,
         });
     }
-    let mut physical_by_input = vec![Vec::new(); occurrence.inputs.len()];
-    for (position, ((input_position, value_type, expected_shape, role), input)) in
-        expanded.into_iter().zip(&inputs).enumerate()
-    {
-        let shape = input
-            .shape()
-            .as_static()
-            .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
-        if input.value_type() != value_type || shape != &expected_shape {
-            return Err(IndexRefinementVerificationError::OperandInterface { position });
+
+    let mut physical_by_input = Vec::with_capacity(occurrence.inputs.len());
+    let mut expanded_position = 0;
+    for operand in &occurrence.inputs {
+        if let Some((_, contract)) = operand.value_type.encoded_numeric_parts() {
+            let mut physical = Vec::with_capacity(contract.components().len());
+            for component in contract.components() {
+                let input = inputs[expanded_position];
+                let shape = input
+                    .shape()
+                    .as_static()
+                    .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
+                let expected_shape = component.shape_relation().component_shape(&operand.shape);
+                if input.value_type() != component.resolved_type() || shape != &expected_shape {
+                    return Err(IndexRefinementVerificationError::OperandInterface {
+                        position: expanded_position,
+                    });
+                }
+                physical.push((input.id(), Some(component.role())));
+                expanded_position += 1;
+            }
+            physical_by_input.push(physical);
+        } else {
+            let input = inputs[expanded_position];
+            let shape = input
+                .shape()
+                .as_static()
+                .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
+            if input.value_type() != &operand.value_type || shape != &operand.shape {
+                return Err(IndexRefinementVerificationError::OperandInterface {
+                    position: expanded_position,
+                });
+            }
+            physical_by_input.push(vec![(input.id(), None)]);
+            expanded_position += 1;
         }
-        physical_by_input[input_position].push((input.id(), role));
     }
+    debug_assert_eq!(expanded_position, expanded_inputs);
     Ok(occurrence
         .operands
         .iter()
@@ -2588,6 +2600,40 @@ fn bind_operands(
                 })
         })
         .collect::<Vec<_>>())
+}
+
+/// Counts component-expanded semantic inputs without deriving component shapes.
+///
+/// The verified-region boundary ceiling is the authoritative retained
+/// population bound. Counting first prevents a wide signature of maximum-size
+/// encoded contracts from multiplying component-shape allocations before the
+/// arity mismatch is known.
+fn count_expanded_inputs(
+    inputs: &[IndexRefinementBoundary],
+    region_inputs: usize,
+) -> Result<usize, IndexRefinementVerificationError> {
+    let mut expanded_inputs = 0_usize;
+    for (input, boundary) in inputs.iter().enumerate() {
+        let contribution = if let Some((_, contract)) = boundary.value_type.encoded_numeric_parts()
+        {
+            if contract.components().is_empty() {
+                return Err(
+                    IndexRefinementVerificationError::EmptyEncodedOperandComponents { input },
+                );
+            }
+            contract.components().len()
+        } else {
+            1
+        };
+        expanded_inputs = expanded_inputs.saturating_add(contribution);
+    }
+    if expanded_inputs > MAX_BOUNDARY_TENSORS {
+        return Err(IndexRefinementVerificationError::OperandArity {
+            region_inputs,
+            expanded_inputs,
+        });
+    }
+    Ok(expanded_inputs)
 }
 
 fn bind_results(
@@ -2831,12 +2877,13 @@ mod tests {
     };
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
-        CanonicalValue, F32, F32Multiply, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
-        OperationConformance, OperationDefinition, OperationDefinitionFacts,
-        OperationInferenceError, OperationInferenceOutputs, OperationInferenceRequest,
-        OperationInferencer, OperationSchema, OutputKey, ProviderDiagnosticCode,
-        SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
-        SemanticRegistryRegistrar, TypeKey,
+        AttributeFieldId, CanonicalField, CanonicalValue, EncodedComponentDeclaration,
+        EncodedComponentRole, EncodedComponentShape, EncodedNumericContract, F32, F32Multiply,
+        InputKey, NormativeDefinitionRef, OpKey, OperationArity, OperationConformance,
+        OperationDefinition, OperationDefinitionFacts, OperationInferenceError,
+        OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
+        OutputKey, ProviderDiagnosticCode, QuantSchemeKey, SemanticProgramBuilder,
+        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar, TypeKey,
     };
     use crate::shape::{
         BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
@@ -2865,6 +2912,33 @@ mod tests {
 
     fn f32_type() -> ResolvedValueType {
         ResolvedValueType::nominal(TypeKey::new("tiler", "f32", 1).unwrap())
+    }
+
+    fn encoded_boundary(components: usize) -> IndexRefinementBoundary {
+        let field = CanonicalField::new(AttributeFieldId::new(1), CanonicalValue::boolean(true));
+        let contract = if components == 0 {
+            EncodedNumericContract::new([field]).unwrap()
+        } else {
+            EncodedNumericContract::with_components(
+                [field],
+                (1..=components).map(|role| {
+                    EncodedComponentDeclaration::new(
+                        EncodedComponentRole::new(u32::try_from(role).unwrap()),
+                        f32_type(),
+                        EncodedComponentShape::LogicalValue,
+                    )
+                }),
+            )
+            .unwrap()
+        };
+        IndexRefinementBoundary {
+            value_type: ResolvedValueType::encoded_numeric(
+                QuantSchemeKey::new("test", "resource-bound", 1).unwrap(),
+                contract,
+            )
+            .unwrap(),
+            shape: Shape::from_dims([1]),
+        }
     }
 
     fn test_contract() -> NumericalContractIdentity {
@@ -3969,6 +4043,37 @@ mod tests {
         assert_eq!(
             IndexRefinementVerificationError::OperandInterface { position: 2 }.to_string(),
             "region input 2 does not match its expanded semantic input boundary"
+        );
+        assert_eq!(
+            count_expanded_inputs(&[encoded_boundary(0)], 0),
+            Err(IndexRefinementVerificationError::EmptyEncodedOperandComponents { input: 0 })
+        );
+        assert_eq!(
+            IndexRefinementVerificationError::EmptyEncodedOperandComponents { input: 2 }
+                .to_string(),
+            "encoded semantic input 2 declares no component boundaries"
+        );
+    }
+
+    #[test]
+    fn expanded_input_count_is_bounded_before_component_shapes_are_materialized() {
+        // Sixteen maximum-size encoded contracts exactly fill the verified
+        // region boundary population. A seventeenth crosses the public region
+        // limit while this pass is still counting component declarations; no
+        // component shape has been derived or retained yet.
+        let boundary = encoded_boundary(1_024);
+        let maximal = vec![boundary.clone(); 16];
+        assert_eq!(
+            count_expanded_inputs(&maximal, MAX_BOUNDARY_TENSORS),
+            Ok(MAX_BOUNDARY_TENSORS)
+        );
+        let oversized = vec![boundary; 17];
+        assert_eq!(
+            count_expanded_inputs(&oversized, MAX_BOUNDARY_TENSORS),
+            Err(IndexRefinementVerificationError::OperandArity {
+                region_inputs: MAX_BOUNDARY_TENSORS,
+                expanded_inputs: 17 * 1_024,
+            })
         );
     }
 }
