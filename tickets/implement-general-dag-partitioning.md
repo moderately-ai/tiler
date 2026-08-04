@@ -1,7 +1,7 @@
 ---
 id: implement-general-dag-partitioning
 title: Implement general DAG partition search
-status: todo
+status: in-progress
 priority: p1
 dependencies: [implement-analytical-component-cost-model]
 related: [implement-boundary-property-enforcers]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, partitioning, mature-product]
+claimed_from: todo
+assignee: agent-dag-partition
+lease_expires_at: 1785876199
 ---
 ## User-visible outcome
 
