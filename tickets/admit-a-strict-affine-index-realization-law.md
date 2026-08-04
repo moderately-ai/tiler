@@ -3,8 +3,8 @@ id: admit-a-strict-affine-index-realization-law
 title: Admit a strict-affine index-realization law
 status: todo
 priority: p1
-dependencies: []
-related: [bind-the-scheduled-region-to-the-verified-index-region-identity]
+dependencies: [place-index-refinement-evidence-under-an-ir-owned-verifier]
+related: [bind-stage-coverage-to-index-refinement-identity, prototype-quantized-value-vertical]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
