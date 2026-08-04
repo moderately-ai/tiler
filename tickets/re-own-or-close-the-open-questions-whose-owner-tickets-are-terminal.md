@@ -1,7 +1,7 @@
 ---
 id: re-own-or-close-the-open-questions-whose-owner-tickets-are-terminal
 title: Re-own or close the open questions whose owner tickets are terminal
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-oq-sweep
+lease_expires_at: 1785878542
 ---
 ## User-visible outcome
 
