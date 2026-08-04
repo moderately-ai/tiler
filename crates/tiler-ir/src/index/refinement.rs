@@ -55,10 +55,11 @@ pub const MAX_INDEX_REFINEMENT_SIGNATURE_VALUES: usize = 4_096;
 pub const MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS: usize = 4_096;
 /// Maximum residual obligations one canonical realization may retain.
 ///
-/// The current closed law vocabulary emits at most four accesses, each with
+/// The current closed law vocabulary emits at most three rank-wide accesses,
+/// each with
 /// at most [`super::MAX_TENSOR_RANK`] coordinates and two predicates per
-/// coordinate.
-pub const MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS: usize = 4 * super::MAX_TENSOR_RANK * 2;
+/// coordinate. Rank-zero component reads retain no coordinate obligations.
+pub const MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS: usize = 3 * super::MAX_TENSOR_RANK * 2;
 /// Maximum cells the closed exact-finite residual proof algorithm may evaluate.
 pub const MAX_FINITE_DOMAIN_PROOF_CELLS: u64 = 16 * 1024 * 1024;
 /// Maximum cumulative arbitrary-precision integer bytes the closed residual

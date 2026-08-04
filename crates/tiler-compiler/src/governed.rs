@@ -1,7 +1,6 @@
 //! The lowering capabilities the bounded compiler profile ships with.
 //!
-//! Each governed semantic family — `tiler.constant-f32`, `tiler.multiply-f32`,
-//! `tiler.add-f32`, and `tiler.strict-serial-sum-f32` — gets exactly one
+//! Each semantic family in the governed logical-realization profile gets one
 //! [`IndexAccessLoweringProvider`] registered against
 //! [`FrozenScalarRegistry::standard`]. The providers are shape- and
 //! attribute-driven: every extent, every broadcast, and every constant bit
@@ -1755,8 +1754,8 @@ mod tests {
     use tiler_ir::shape::{Axis, Extent, Shape};
     use tiler_reference::{
         FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry,
-        IndexRegionAuthority, IndexRegionEvaluator, IndexRegionInput, ReferenceElement, Tensor,
-        TensorPayloadView,
+        IndexRegionAuthority, IndexRegionEvaluationError, IndexRegionEvaluator, IndexRegionInput,
+        ReferenceElement, ReferenceOperationError, Tensor, TensorPayloadView,
     };
 
     fn f32_type() -> ResolvedValueType {
@@ -2177,6 +2176,102 @@ mod tests {
             output_bits(&evaluation.outputs()[0]),
             [-3.5_f32, -3.0, 0.0, 0.5, 4.0].map(f32::to_bits).to_vec()
         );
+    }
+
+    #[test]
+    fn strict_affine_u4_scalar_covers_both_centered_boundaries() {
+        for (code, zero_point, expected) in [(0_u8, 15_u8, -15.0_f32), (15, 0, 15.0)] {
+            let shape = Shape::from_dims([1]);
+            let refinement = refine(
+                dequantize_strict_affine_op(),
+                vec![OccurrenceOperand::new(
+                    OccurrenceValueId(0),
+                    StrictAffineU4::resolved_type(),
+                    shape.clone(),
+                )],
+                vec![OccurrenceResult::new(F32::resolved_type(), shape.clone())],
+                OperationAttributes::empty(),
+            );
+            let element = |bytes: &[u8]| ReferenceElement::new(bytes).unwrap();
+            let codes = Tensor::dense(U4::resolved_type(), shape, vec![element(&[code])]).unwrap();
+            let scale = Tensor::scalar(
+                F32::resolved_type(),
+                element(&1.0_f32.to_bits().to_be_bytes()),
+            )
+            .unwrap();
+            let zero_point = Tensor::scalar(U4::resolved_type(), element(&[zero_point])).unwrap();
+            let bindings = refinement.operand_bindings();
+            let inputs = [
+                IndexRegionInput::new(bindings[0].input_tensor(), &codes),
+                IndexRegionInput::new(bindings[1].input_tensor(), &scale),
+                IndexRegionInput::new(bindings[2].input_tensor(), &zero_point),
+            ];
+            let scalars = governed_scalars().unwrap();
+            let evaluation = IndexRegionEvaluator::new(
+                FrozenReferenceRegistry::standard().unwrap(),
+                FrozenScalarReferenceRegistry::standard().unwrap(),
+            )
+            .evaluate(
+                refinement.region(),
+                IndexRegionAuthority::new(&scalars),
+                &inputs,
+            )
+            .unwrap();
+            assert_eq!(output_bits(&evaluation.outputs()[0]), [expected.to_bits()]);
+        }
+    }
+
+    #[test]
+    fn strict_affine_u4_scalar_refuses_every_invalid_scale_class() {
+        let shape = Shape::from_dims([1]);
+        let refinement = refine(
+            dequantize_strict_affine_op(),
+            vec![OccurrenceOperand::new(
+                OccurrenceValueId(0),
+                StrictAffineU4::resolved_type(),
+                shape.clone(),
+            )],
+            vec![OccurrenceResult::new(F32::resolved_type(), shape.clone())],
+            OperationAttributes::empty(),
+        );
+        let element = |bytes: &[u8]| ReferenceElement::new(bytes).unwrap();
+        let codes = Tensor::dense(U4::resolved_type(), shape, vec![element(&[15])]).unwrap();
+        let zero_point = Tensor::scalar(U4::resolved_type(), element(&[0])).unwrap();
+        let bindings = refinement.operand_bindings();
+        let scalars = governed_scalars().unwrap();
+        let evaluator = IndexRegionEvaluator::new(
+            FrozenReferenceRegistry::standard().unwrap(),
+            FrozenScalarReferenceRegistry::standard().unwrap(),
+        );
+        for scale_bits in [
+            0.0_f32.to_bits(),
+            (-0.0_f32).to_bits(),
+            (-1.0_f32).to_bits(),
+            0x0000_0001,
+            0x8000_0001,
+            f32::NAN.to_bits(),
+            f32::INFINITY.to_bits(),
+            f32::NEG_INFINITY.to_bits(),
+        ] {
+            let scale =
+                Tensor::scalar(F32::resolved_type(), element(&scale_bits.to_be_bytes())).unwrap();
+            let inputs = [
+                IndexRegionInput::new(bindings[0].input_tensor(), &codes),
+                IndexRegionInput::new(bindings[1].input_tensor(), &scale),
+                IndexRegionInput::new(bindings[2].input_tensor(), &zero_point),
+            ];
+            assert!(matches!(
+                evaluator.evaluate(
+                    refinement.region(),
+                    IndexRegionAuthority::new(&scalars),
+                    &inputs,
+                ),
+                Err(IndexRegionEvaluationError::ScalarOperation {
+                    source: ReferenceOperationError::InvalidApplication,
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

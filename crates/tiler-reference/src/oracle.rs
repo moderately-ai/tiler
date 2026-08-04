@@ -812,9 +812,16 @@ impl ScalarReferenceOperation for StandardScalarStrictAffineU4Dequantize {
         let code = i32::from(decode_scalar_u4(codes)?);
         let zero_point = i32::from(decode_scalar_u4(zero_point)?);
         let scale = decode_scalar_f32(scale)?;
-        let centered = i16::try_from(code - zero_point)
-            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
-        let value = f32::from(centered) * scale;
+        if !scale.is_normal() || scale <= 0.0 {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let centered = code - zero_point;
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "the difference of two U4 codes is in -15..=15 and is represented exactly by f32"
+        )]
+        let centered = centered as f32;
+        let value = centered * scale;
         outputs.push(scalar_f32_value(canonicalize_arithmetic_f32(value))?)
     }
 }

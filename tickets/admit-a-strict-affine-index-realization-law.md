@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [place-index-refinement-evidence-under-an-ir-owned-verifier]
 related: [bind-stage-coverage-to-index-refinement-identity, prototype-quantized-value-vertical]
-scopes: [implementation/ir, implementation/compiler, implementation/reference, implementation/artifact]
+scopes: [implementation/ir, implementation/compiler, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, correctness]
@@ -73,9 +73,9 @@ only equal shapes would silently prove a different operation.
    contract independently. Each mismatch must produce a typed refusal and mint
    no receipt; retained domain obligations must remain pending rather than being
    converted into coverage.
-4. Restore the four preserved artifact/component tests using real governed
-   receipts, and show the ordinary compiler path retains the receipt rather than
-   reconstructing its identity.
+4. Show the ordinary compiler path retains the real governed receipt rather than
+   reconstructing its identity. The dependent stage-coverage ticket owns rebasing
+   the four preserved artifact/component tests onto that receipt.
 5. Enumerate identity consequences before editing a separator. Adding a new
    closed-law encoding tag may be append-only only if per-tag injectivity and
    registry framing make old and new subjects incomparable; otherwise advance
@@ -101,10 +101,11 @@ green gate as acceptance of that boundary.
 the new strict-affine scalar meaning: adding a governed scalar definition
 without its executable reference capability would make the standard refinement
 profile structurally claim arithmetic that its correctness oracle cannot run.
-`implementation/artifact` declares the four preserved fixture consumers named
-above, which must be rerun against real receipts once the dependent coverage
-branch is rebased. These declarations describe work already required by this
-ticket's accepted outcome; they do not accept the consequential public boundary.
+The dependent stage-coverage ticket, not this prerequisite, declares
+`implementation/artifact` and owns rebasing the four preserved fixture consumers
+onto this receipt. The reference scope addition describes work already required
+by this ticket's accepted outcome; it does not accept the consequential public
+boundary.
 
 ## Tested public draft — pending Tom's acceptance
 
@@ -136,39 +137,61 @@ exact ordered component declarations, and the strict F32 numerical contract.
 The compiler registers one provider for that signature and emits the identical
 candidate-blind canonical region. No physical packing enters this logical law.
 
-**Identity analysis:** law encoding tag 8 is append-only: tags 1 through 7 and
-their payloads remain byte-identical, and each semantic sidecar row is
-length-framed with its operation, provider, and revision, so an old and new row
-cannot compare equal. The new scalar, law, and lowering rows correctly move the
-complete frozen authority snapshots and the deterministic request qualifier to
-`fb0b64dd69649785`; no domain separator changes. Existing canonical index
-regions, receipt subjects, and receipts retain their exact bytes. No kernel,
-program, artifact, schedule, or cache identity changes here. The closed-law
-residual ceiling rises from 6,144 to 8,192 because the new canonical region has
-three reads plus one write; the formula remains `accesses * rank * 2`.
+**Identity analysis:** law encoding tag 8 is append-injective: tags 1 through 7
+and their payloads remain byte-identical. Rows are self-delimiting through the
+actual canonical operation and provider encodings, the fixed-width revision,
+and the tagged law payload; there is no outer row-length frame. The new scalar,
+law, and lowering rows move the complete scalar, semantic-law, and lowering
+snapshots and therefore every authority, resolution, receipt, canonical request
+subject, derived artifact identity, and cache entry that transitively binds one
+of those complete snapshots. The deterministic request qualifier moves to
+`fb0b64dd69649785`. Old per-law payloads, old canonical regions, and per-operation
+semantic definitions remain byte-identical, but their derived receipts do not
+when they bind a moved complete authority. No separator or domain version step
+is required because the newly tagged payload cannot collide with an old row;
+all deterministic pins in this diff were recomputed from the complete tree.
+The residual ceiling remains 6,144: strict-affine has two rank-wide accesses
+(codes read and result write), while scale and zero-point reads are rank zero,
+so it does not exceed the existing three-rank-wide-access closed-law maximum.
 
 **Unsupported cases:** strict-affine U8, other schemes or component maps, nested
 components, non-strict F32 contracts, alternate component order or roles, and
 semantically equivalent noncanonical index regions all refuse. Quantization and
 encoded-value production remain outside this lowering. Metal executability is
-unchanged; this receipt proves logical realization only.
+unchanged; this receipt proves logical realization only. The registry currently
+admits one realization-law row per semantic operation, so the selected future
+per-axis U8 profile must replace this exact U4 row with a generalized law rather
+than append a competing row. `implement-workload-selected-quantized-parameter-maps`
+owns that triggered broadening and depends on this initial exact authority.
+
+**Exact consequential public inventory:** `IndexRealizationLaw` gains the
+`StrictAffineU4Dequantize` variant and its standard constructor;
+`strict_affine_u4_dequantize_scalar_op()` and its standard scalar-definition row
+name the atomic scalar meaning; `OperandBinding::component_role()` exposes the
+generic encoded-component expansion performed during receipt binding; and the
+standard semantic-law, scalar-reference, and compiler-lowering populations each
+gain the corresponding exact row. U8, non-per-tensor parameter maps, other
+schemes, and nested encoded components remain unsupported.
 
 ## Draft verification
 
-The affected four-crate nextest population passed 1,779 of 1,779 tests with 5
-configured skips. The exact four preserved artifact/component tests passed on
-this base; they still exercise the pre-coverage fixture shape here, because the
-related coverage branch is intentionally waiting to rebase onto this authority.
-After that rebase they must be rerun against the real receipt before either
-ticket closes. Package doctests passed (20 passed, 1 ignored), Clippy passed for
-all targets with warnings denied, formatting and `git diff --check` passed, and
-`tkt lint` reported no problems.
+The affected four-package nextest population passed 1,782 of 1,782 tests with 5
+configured skips. Package doctests passed 20 with 1 ignored; Clippy passed for
+all targets with warnings denied; formatting, `git diff --check`, `tkt lint`,
+and true-base guard passed. The four preserved artifact/component tests remain
+the dependent stage-coverage ticket's closure evidence: after its rebase they
+must run against this real receipt before that ticket closes.
 
 The negative population independently refused a U8 encoded contract, a changed
 component role, a changed scalar operation, a non-strict numerical contract, a
 capability applied to the wrong semantic operation, a reversed but semantically
 equivalent noncanonical traversal, swapped component boundaries, and a scalar
-codes boundary with the wrong shape. Before the frozen explain qualifier was
+codes boundary with the wrong shape. The scalar oracle additionally covered the
+exact centered-code boundaries `-15` and `+15` and refused positive and negative
+zero, a negative normal, both signed subnormal classes, NaN, and both infinities
+as typed invalid applications. Removing the scale-domain check made that focused
+test fail (exit 100); restoring it made the same one-test population pass.
+Before the frozen explain qualifier was
 updated, its existing exact assertion failed and reported the recomputed
 `fb0b64dd69649785` value; that deliberate observation proves the identity check
 detects the new authority rows.
@@ -177,7 +200,7 @@ detects the new authority rows.
 
 A real strict-affine receipt is minted only for the exact governed semantic
 operation and exact canonical logical region; all named perturbations refuse;
-the compiler retains that receipt; the four dependent artifact/component tests
-run without a forge or semantic substitution; identity analysis is recorded and
-any required step is complete; the public boundary is accepted; and `make full`
-passes.
+the compiler retains that receipt; identity analysis is recorded and any
+required step is complete; the public boundary is accepted; and `make full`
+passes. Rebasing stage coverage and its artifact fixtures is downstream work and
+is not a prerequisite for this law authority to close.

@@ -280,9 +280,9 @@ impl IndexRealizationLaw {
                 scalar,
             } => {
                 // Tag 8 is append-only. Tags 1..=7 and their payloads are
-                // unchanged, and the semantic registry length-frames each law
-                // row with its operation/provider/revision, so no old subject
-                // can compare equal to this newly reachable form.
+                // unchanged. A row is self-delimiting through the canonical
+                // operation and provider encodings, fixed-width revision, and
+                // the tagged law payload, so this form cannot equal an old row.
                 output.push(8);
                 for role in [codes_role, scale_role, zero_point_role] {
                     output.extend_from_slice(&role.get().to_be_bytes());
@@ -1576,5 +1576,21 @@ mod tests {
             assert_ne!(encoded, strict);
             assert!((1..=7).contains(encoded.first().unwrap()));
         }
+    }
+
+    #[test]
+    fn an_existing_law_payload_is_unchanged_by_the_appended_tag() {
+        let mut encoded = Vec::new();
+        IndexRealizationLaw::multiply_f32().encode(&mut encoded);
+        let expected = [
+            vec![2],
+            12_u64.to_be_bytes().to_vec(),
+            b"tiler.scalar".to_vec(),
+            12_u64.to_be_bytes().to_vec(),
+            b"multiply-f32".to_vec(),
+            1_u32.to_be_bytes().to_vec(),
+        ]
+        .concat();
+        assert_eq!(encoded, expected);
     }
 }
