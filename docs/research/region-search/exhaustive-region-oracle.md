@@ -7,7 +7,7 @@ topics: ["fusion", "search", "optimizer"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 evidence_classes: ["exhaustive-finite", "executable-model"]
 informs: ["tiler.contract.optimizer", "tiler.contract.fusion-and-scheduling"]
 ticket: "region-search-oracle"
@@ -129,6 +129,10 @@ Run:
 python3 spikes/region-search/exhaustive_oracle.py
 ```
 
+**Correction — 2026-08-04, by the general-pipeline audit; this record's status moved from `spike-only` to `partial`.** The spike above is no longer the only executable witness, and it is no longer the strongest one. Independent exhaustive oracles now live beside the production search in `crates/tiler-compiler`: `region.rs` carries one over every nonempty operation subset that the enumerator must agree with set-for-set without budget pressure, and `cover.rs` carries two — an exact-partition oracle and a duplicating-cover oracle — over programs of four and five operations with up to seventeen candidate regions, together with a test that the comparison itself rejects a perturbed admitted set. That last one is what makes the agreement worth citing: a comparison nothing has shown can say no is not evidence. The record's decided behaviour is therefore production code and not only a model, which is what the status change records; it is `partial` rather than `implemented` because two of this record's own items are not discharged — duplication is a stated legality contract that the compile path does not enumerate under, and the cost comparison in step 6 of the protocol below is not run.
+
+**One correction the oracles produced, recorded because it generalizes past this record.** An anchored partition search that admits a candidate only when it covers the branch's minimum uncovered operation can never choose a region every one of whose operations is already covered — and such a region is not idle, because it is one of the two ways to spell a partial duplication. The exhaustive oracle named the missing covers, and the repair is to enumerate the anchored base plus every augmentation by such a region, which is complete because running the anchor rule over any legal cover selects a base and leaves exactly that remainder. This is the class of defect the oracle exists to find, found by it.
+
 ## First heuristic bounds
 
 The initial production search should be bounded and deterministic:
@@ -143,6 +147,8 @@ The initial production search should be bounded and deterministic:
 - maximum 10,000 candidate-expansion attempts per compilation request;
 - duplication disabled initially except in oracle tests;
 - deterministic tie-breaking by canonical candidate/implementation identity.
+
+**Correction — 2026-08-04: the frontier bound above never became real, and the contract that carried it forward has since withdrawn it.** Every other bound in this list is a `DeterministicBudgets` field, but "maximum 8 nondominated physical implementations per logical region" is not: the implementation frontier retains its non-dominated set as a pure Pareto filter with no count bound, and no corresponding field exists. [The optimizer contract](../../compiler/optimizer.md#bounded-hierarchical-search) states that as a fact and records that whether the frontier owes a retention budget at all is [an open decision](../../../tickets/decide-whether-the-implementation-frontier-owes-a-retention-budget.md). The line is kept here because this record is the source the contract's list was derived from, and deleting it would hide that the proposal was made; read it as a proposal this record made and the implementation declined, not as a budget a reader should look for.
 
 These numbers are provisional safety budgets, not performance conclusions.
 Hitting one produces an explain event and conservatively stops that growth
