@@ -1,0 +1,19 @@
+[package]
+name = "cache-hot-path-efficiency"
+description = "Measures the expansion cache hot path through its real public API"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cache-hot-path-efficiency"
+path = "src/main.rs"
+
+[dependencies]
+tiler-artifact.workspace = true
+tiler-cache.workspace = true
+tiler-compiler.workspace = true
+tiler-ir.workspace = true
+
+[lints]
+workspace = true

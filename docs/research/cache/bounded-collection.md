@@ -142,7 +142,7 @@ Status: the sixth follow-up gate of the [crash and race protocol note](crash-and
 
 **Inference.** A reader occupies exactly one of three positions when a removal lands, and the enumeration is total:
 
-1. **It has already returned.** `lookup` copies the validated envelope into the `CachedEntry` it returns, so a caller holding one owns its bytes and the file is irrelevant to it.
+1. **It has already returned.** The `CachedEntry` `lookup` returns owns the buffer the read allocated and names the envelope as a span inside it, so a caller holding one owns its bytes and the file is irrelevant to it. (**Sharpened 2026-08-04**, because the earlier wording — "`lookup` copies the validated envelope into the `CachedEntry` it returns" — reads as a copy taken *out of* the read's buffer, and `EntryBytes::Stored` deliberately does not take one. The position's conclusion is unchanged and was never wrong. [The hot-path efficiency note](hot-path-efficiency.md) measures what a caller that does want its own `Vec` pays for one: 208–541 ns at these envelope sizes, under one percent of a hit.)
 2. **It has opened the entry and is still reading.** The descriptor was opened before the unlink, and Darwin's `unlink(2)` defers reclaiming the file while a process still has it open. The read completes and yields exactly the published bytes.
 3. **It has not opened yet.** `File::open` reports the entry absent, which is `MissReason::Absent` — the one miss the reporting module calls "not evidence of a problem" — and the caller rebuilds.
 
