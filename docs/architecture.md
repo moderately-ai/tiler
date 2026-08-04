@@ -61,6 +61,27 @@ runtime adapter or embedded artifact
 The proposed inline Metal/Candle path is one integration of this general
 pipeline, not part of the compiler's defining abstraction.
 
+## Semantic invocations and consumer-owned composition
+
+One compiler request describes one pure, finite semantic program with explicit
+inputs and ordered named outputs. Sharing and multi-result operations live
+inside that program; recurrence across program invocations does not. A caller
+that retains an output tensor and binds it as a later input is composing two
+ordinary invocations.
+
+The generic runtime owns artifact validation, explicit binding, reversible
+preflight, one-way routing commit, execution, and returned outputs. It does not
+own models, transformers, KV caches, decode cursors, samplers, training or
+inference loops, serving, or application/session state. A runtime adapter may
+retain device-scoped pipelines and asynchronous resources because those are
+physical execution obligations, not semantic workload state.
+
+Workload programs remain useful as conformance evidence and optimization
+motivation. A workload-specific observation becomes a core feature only after
+it is restated as a consumer-neutral semantic operation, physical property,
+feasibility rule, cost-model input, or execution contract that applies beyond
+that workload.
+
 ## Core-contract evidence
 
 The core boundary is backed by completed research tracks rather than frontend
@@ -295,7 +316,7 @@ The `tiler-metal-aot` row previously read "Expansion-time Apple tool invocation,
 | `tiler-runtime` | Device-free artifact decoding, declared-target-profile compatibility classification, program binding by canonical identity, carried-object resolution, and the one-way routing commit | Optimizer, semantic IR construction, backend internals, every platform device API, and any dependency that would make a load undecidable without hardware |
 | Frontend core | Translate source syntax into semantic IR and map diagnostics back to users | Backend-specific scheduling |
 | `tiler-macros` | Token parsing, span mapping, inline region expansion, the expansion's stated canonical artifact-family delivery policy, and invocation of the frontend/compiler/AOT pipeline to emit artifact plus runtime/fallback tokens | A second semantic operation vocabulary or canonical selection encoder, consumer source scanning, a required consumer `build.rs`, runtime source JIT, and Candle runtime internals beyond its public adapter |
-| `tiler` | The consumer's single import path: the `tensor!` re-export, the stable absolute paths generated tokens name, and the runtime-value adapter boundary | Every workspace crate but `tiler-macros` and `tiler-ir`, and the offline Apple driver in particular, whose host-only cost a consumer must not pay inside its own build graph |
+| `tiler` | The inline Rust frontend's import path: the `tensor!` re-export, stable absolute paths generated tokens name, runtime-value adaptation, and re-exported neutral artifact/loader vocabulary needed by generated routes | Compiler and build orchestration, the offline Apple driver in particular, backend-specific scheduling, and consumer-specific runtime objects |
 | `tiler-candle` | Layout validation, output allocation, pipeline cache, ABI binding, dispatch, fallback | Optimizer internals |
 
 Neither Metal row subsumes the other, and their overlap is owned twice deliberately. `tiler-metal` records what emitted source declares it was written against; `tiler-metal-aot` records what a compilation is invoked with. They overlap in exactly the language standard, the artifact family, and the deployment minimum. The emitter separately owns subnormal arithmetic and binding capacity as target facts and owns the selected launch-index declaration as an emission realization; the latter is a choice among source forms the language permits, not a fixed target delivery fact. The driver separately owns the Apple SDK, which selects `xcrun --sdk` and builds the target triple, and which has no emitter counterpart at all. Collapsing the overlap into a shared type or a dependency edge would spend the driver's empty dependency closure on three enumerations; `crates/tiler-metal/src/target.rs` and `crates/tiler-metal-aot/src/input.rs` own that reasoning and the alternatives it rejects. What keeps the two vocabularies from drifting is not a shared type but a total map: `crates/tiler-metal/src/target_correspondence.rs` pairs every variant of each vocabulary with its counterpart through matches exhaustive over both, so a language standard or artifact family added to either crate fails `tiler-metal`'s build until the other gains it.
@@ -350,7 +371,7 @@ That ownership is implemented first for a bounded F32 Metal subnormal seam. `til
 
 ## Accepted prototype packaging profile
 
-ADR 0065 refines ADR 0056 after the evaluator implementation exposed a real consumer boundary. The workspace carries eleven reusable libraries and two non-published proof executables, whose intra-workspace edges — normal, plus development where marked — are:
+ADR 0065 refines ADR 0056 after the evaluator implementation exposed a real consumer boundary. The workspace carries eleven reusable libraries and three non-published proof/integration executables, whose intra-workspace edges — normal, plus development where marked — are:
 
 ```text
 tiler-ir        -> []
@@ -359,14 +380,15 @@ tiler-artifact  -> [tiler-ir]
 tiler-compiler  -> [tiler-ir]                  + development [tiler-reference]
 tiler-metal     -> [tiler-ir, tiler-artifact]  + development [tiler-metal-aot]
 tiler-metal-aot -> []
-tiler-runtime   -> [tiler-artifact]
+tiler-runtime   -> [tiler-artifact]                  + development [tiler-ir, tiler-reference]
 tiler-cache     -> [tiler-artifact]
 tiler-build     -> [tiler-artifact, tiler-cache, tiler-compiler, tiler-ir, tiler-metal, tiler-metal-aot]
-tiler-macros    -> [tiler-ir, tiler-metal-aot]
-tiler           -> [tiler-ir, tiler-macros]
+tiler-macros    -> [tiler-build, tiler-cache, tiler-compiler, tiler-ir, tiler-metal-aot]
+tiler           -> [tiler-artifact, tiler-ir, tiler-macros, tiler-runtime]
 
 tiler-prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-build, tiler-cache, tiler-compiler, tiler-metal, tiler-metal-aot]
 tiler-prototype-run     -> [tiler-ir, tiler-reference, tiler-artifact, tiler-build, tiler-compiler, tiler-metal, tiler-metal-aot, tiler-runtime] + metal
+tiler-prototype-candle  -> [tiler-artifact, tiler-build, tiler-ir, tiler-metal, tiler-metal-aot, tiler-runtime] + candle-core
 ```
 
 These edges are a description maintained by reading rather than a checked contract, with one exception. Nothing pins the member set or any package's dependency list, so a manifest that gains an edge crossing a boundary an ADR decided is caught in review of that manifest diff. The exception is the frontier around the frontend: `crates/tiler/tests/dependency_direction.rs` reads `Cargo.lock` — what Cargo actually resolved, merging normal, build, and development edges into one list per package — and fails if any non-frontend package holds a direct edge to `tiler` or `tiler-macros`, or if `tiler` holds one to `tiler-metal-aot`. That is one edge class of this block rather than the block, and it is the first part of the table a test can say no to since `scripts/check_workspace.py` was deleted by `e197176`; read it as recovering one property, not as restoring the mechanical contract that script held.
@@ -387,7 +409,7 @@ The `tiler-metal` → `tiler-metal-aot` edge is a development dependency only, a
 
 **Fact — one accepted record adds an edge to this profile, not yet implemented.** `tiler-build` names `tiler-metal` and `tiler-metal-aot` unconditionally with no feature gate, so a second backend today needs either a second unconditional edge into the same crate or a sibling orchestrator. [ADR 0090](decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md), accepted 2026-07-31, decides to promote the crate's existing backend-neutral `assemble_artifact` closure parameter instead, which removes the choice rather than making it. The block above remains the live profile until that promotion lands, and the promoted function's exact public shape requires Tom's acceptance in its own right under ADR 0075.
 
-`tiler` and `tiler-macros` are the consumer frontend pair admitted by [ADR 0088](decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md). They are two crates because Rust permits a `proc-macro` crate to export nothing but macros: `tiler-macros` implements the expansion, and `tiler` is the one crate a consumer names, re-exporting `tensor!` and owning the absolute paths generated tokens spell. What they carry today is that re-export, the generated-path anchor, and the expansion's stated canonical artifact-family delivery policy; `tensor!` has no grammar, and any non-empty input is a spanned `compile_error!` rather than a guess.
+`tiler` and `tiler-macros` are the inline Rust frontend pair admitted by [ADR 0088](decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md). They are two crates because Rust permits a `proc-macro` crate to export nothing but macros: `tiler-macros` implements the expansion, and `tiler` is the one crate an inline-frontend consumer names, re-exporting `tensor!` and owning the absolute paths generated tokens spell. This does not make `tiler` the accepted facade for consumers that construct and compile arbitrary semantic programs; the general graph and compiler surfaces currently remain in `tiler-ir` and `tiler-compiler`, and their eventual coherent facade is a separate public-boundary decision.
 
 The `tiler-macros` → `tiler-metal-aot` edge is where the pair's reasoning concentrates, because the placement is the decision rather than the edge. ADR 0049 requires every inline invocation to carry a canonical `ArtifactFamilySelection`, whose sole encoder is `tiler_metal_aot::family`; copying it would create a second authority over one identity subject, and moving it beneath the driver would spend the empty closure ADR 0077 item 2 decides, so the frontend must depend on the driver. It is the macro crate that pays for it, because a `proc-macro` crate and its dependencies are built for the host and never enter a consumer's target build graph. The same edge on `tiler` would compile a process-spawning Apple toolchain driver into every consumer on every platform and publish Apple backend policy on a consumer-neutral boundary — the cost ADR 0077 item 4 already refused for `tiler-metal`. The driver's empty closure is untouched: this edge points at it, not out of it.
 

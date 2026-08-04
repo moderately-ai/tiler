@@ -8,8 +8,11 @@ topics: ["orientation", "architecture"]
 
 # Tiler documentation
 
-Tiler is an experimental ahead-of-time compiler toolkit for tensor iteration
-spaces. The documentation separates normative contracts, durable decisions,
+Tiler is an experimental, consumer-neutral ahead-of-time compiler and execution
+toolkit for typed tensor programs. Its semantic input is pure MIMO dataflow:
+explicit inputs, ordered named outputs, sharing, and multi-result operations.
+Consumers compose invocations and own models, loops, and application/session
+state. The documentation separates normative contracts, durable decisions,
 research evidence, executable experiments, and proposed work.
 
 ## Ten-minute orientation
@@ -35,6 +38,9 @@ Use the [glossary](glossary.md) whenever a typed compiler term is unfamiliar. It
 - **Understand artifacts and execution:** [artifact ABI](artifact-abi.md),
   [Metal](backends/metal.md), [frontends](integration/frontends.md), and
   [Candle](integration/candle.md).
+- **Understand the invocation ownership boundary:** [vision](vision.md),
+  [architecture](architecture.md#semantic-invocations-and-consumer-owned-composition),
+  and the [runtime supersession audit](../tickets/supersede-the-runtime-owned-kv-state-design.md).
 - **Inspect accepted choices:** use the [thematic ADR index](decisions/README.md).
 - **Audit evidence or reproduce a claim:** use the
   [research catalog](research/README.md) and

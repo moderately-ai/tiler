@@ -11,8 +11,13 @@ roadmap_status: "proposed"
 
 **Status:** proposed
 
-The roadmap favors narrow end-to-end slices over implementing a broad IR with
-no verified runtime contract.
+The roadmap builds and verifies atomic semantic, numerical, reference,
+compiler, physical, artifact, backend, and runtime contracts before treating a
+high-level workload as a product feature. Narrow end-to-end slices validate
+that those pieces compose, but a workload does not own or rename a core
+abstraction. A deliberately naive general physical route comes before advanced
+fusion, tiling, or calibrated selection for the same reason: correctness and
+coverage are the baseline that optimization improves.
 
 The [operation-family support matrix](#operation-family-support-matrix) below and the separate [dtype support maturity ledger](dtype-support.md) record how narrow the delivered surface currently is on both axes, so recognition, implementation, and execution cannot collapse into one claim.
 
@@ -326,11 +331,22 @@ Two questions in this framing are genuine product and architecture choices where
 
 The proposed Rust/Metal integration does not require runtime source JIT.
 
-## Optimized Metal language-model inference
+## Language-model inference conformance track
 
-The durable capability map from the current bounded Metal proof to a compiled, optimized language-model inference pipeline. **This section authorizes nothing.** Like the support matrix below it, it is a visibility artefact: a rung listed here is a claim about what evidence exists today, and every step is separately scheduled work gated on the evidence beneath it.
+This ladder is a consumer integration and conformance track over the generic
+compiler. It is not Tiler's product definition, does not authorize
+workload-specific core/runtime abstractions, and cannot substitute for the
+operation/signature, dtype, general-program, physical-baseline, or backend
+authoring tracks. A useful finding is promoted only after it is stated as a
+consumer-neutral operation, contract, physical property, feasibility rule,
+cost input, or test. Like the support matrix below, the ladder is a visibility
+artefact: each rung reports bounded evidence and separately scheduled work.
 
-**The goal is inference, not training**, and that is a scope position rather than an omission. Training needs a gradient program, an optimizer state, and a mutation model that none of the contracts here admit; nothing below reserves a seam for it. Reconsider only if Tom explicitly broadens the product goal.
+This track exercises inference rather than training. That bounds the fixture;
+it does not narrow Tiler's product to inference or make training state a core
+responsibility. Training-oriented tensor programs may become another
+conformance track once their required generic operations and contracts are
+defined.
 
 ### The ladder
 
