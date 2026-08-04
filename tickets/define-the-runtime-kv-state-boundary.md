@@ -1,38 +1,92 @@
 ---
 id: define-the-runtime-kv-state-boundary
 title: Define the runtime KV-state boundary
-status: deferred
+status: closed
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family, establish-a-dynamic-kv-physical-layout-authority, supersede-the-runtime-owned-kv-state-design, reclassify-language-model-work-as-a-conformance-track]
-related: [design-autoregressive-state-and-kv-cache, prototype-candle-metal-adapter, transfer-synchronization-and-resource-lifetime-contract, bind-the-kv-cache-through-the-artifact-and-runtime-interface, name-a-host-process-availability-phase]
+related: [design-autoregressive-state-and-kv-cache, prototype-candle-metal-adapter, transfer-synchronization-and-resource-lifetime-contract, name-a-host-process-availability-phase, bind-repeated-invocations-over-caller-retained-tensors]
 scopes: [contracts/integrations, contracts/foundation, research/runtime, research/program-planning, research/numerics]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
-tags: [design, runtime, kv-cache, lifetime, identity, language-model]
+tags: [design, runtime, kv-cache, lifetime, identity, language-model, supersession]
+closed_reason: superseded
+closed_note: The runtime owns no KV state; superseded by supersede-the-runtime-owned-kv-state-design. Draft branch preserved as review evidence.
 ---
-## User-visible outcome
+## Superseded — 2026-08-04
 
-A KV state is a named object with a stated identity, capacity, valid range, and failure status — so "is this cache usable for this step, on this device" is a question with a typed answer instead of a convention.
+**This ticket is closed as superseded by
+[`supersede-the-runtime-owned-kv-state-design`](supersede-the-runtime-owned-kv-state-design.md).
+It is not closed as done, and it satisfies no dependent.** Nothing here should be
+started; the sections below are preserved so that a reader can see what was
+concluded, why, and what replaced it.
 
-Draft the boundary [rung L5's state contract](../docs/research/runtime/autoregressive-state-and-kv-cache.md) specifies, as a public surface. **It is a public boundary and therefore Tom's**; a tested implementation is a concrete draft and not implicit approval.
+### What it asked for
 
-The physical-layout research now supplies the descriptor this boundary must draft: two alternating capacity-sized buffers per rank-three F32 K or V member, with the active payload packed exact-live head-major at `C*128` and the replacement at `S*128`. Capacity remains runtime pool policy; it is not a payload stride, artifact identity, or specialization value. Reconcile that survivor into the tested boundary before presenting it for acceptance; do not add the rejected capacity-stride root or allocate a fresh compact buffer per extent.
+A public Tiler boundary naming a KV state as an object with an identity
+(program interface key, layer ordinal, live device and context, generation), a
+logical capacity, a cursor `C` that is the single authority for how many
+sequence positions the state holds, a growth rule advancing `C` by `T` on
+observed terminal success, out-of-place publication replacing storage and cursor
+together, a typed `C + T > capacity` refusal, a typed live-device/context
+refusal through a governed opaque `LiveStateScope`, and a terminal poisoned
+status refusing every later bind. Its physical descriptor was the survivor
+selected by
+[`establish-a-dynamic-kv-physical-layout-authority`](establish-a-dynamic-kv-physical-layout-authority.md):
+two alternating capacity-sized F32 buffer banks per rank-three K or V member,
+exact-live head-major packing, no capacity stride.
 
-## Required content
+### Why it is superseded
 
-- **Identity:** program interface key, layer ordinal, the live device and context the adapter bound, and a generation. Not an artifact subject — no packaged identity, cache key, or canonical descriptor may name a state.
-- **Logical capacity, valid extent, cursor:** one positive logical capacity bound and a cursor `C` that is the single authority for how many sequence positions the state holds. The initial physical descriptor owns two capacity-sized F32 buffer banks, eight heads, width 128, an active-bank ordinal, and exact-live dense packing. Batch, raggedness, paging, growing capacity, overlap, and alternative ranks remain unsupported. Buffer length is allocation policy, not permission to index the payload at a capacity-derived stride.
-- **Growth and update:** `C` advances by exactly `T` on the observed terminal success of the execution that produced the extended value, and never otherwise; logical `capacity` does not grow; the update is out of place and publication replaces the governed storage population and cursor together.
-- **Placement, aliasing, retention, lifetime:** one symbolic affinity's memory domain under ADR 0047's initial profile; one active and one replacement bank per logical K or V member; old and replacement populations disjoint under complete role-labelled alias verification; both retained through exact final device use under ADR 0051; the state owned by the runtime instance and destroyed by the consumer.
-- **Typed refusals:** `C + T > capacity` before any program work; a bind whose live device and context differ from the adapter's; a bind of a poisoned state, naming the execution that poisoned it.
-- **The poisoned status.** A post-commit failure retires the state rather than leaving a plausible one behind. Under the out-of-place update the bytes are intact, so the reason to refuse is not corruption — it is that the failed step's token was never produced, and a later step binding the pre-failure state would decode a sequence the consumer does not believe it has.
+The derivation was internally sound; the *owner* was wrong. Tiler is a
+consumer-agnostic tensor compiler and execution toolkit. Its runtime executes
+one artifact invocation from explicit bindings, returns explicit outputs, and
+retains nothing across invocations. A KV state is a transformer-serving session
+object: it names a layer ordinal, a sequence cursor, and a decode generation,
+and it exists only between one consumer's invocations. Publishing it as a Tiler
+type would put workload vocabulary into the runtime's public surface, give the
+runtime a lifetime it otherwise does not have, and make every non-transformer
+consumer pay for a concept it cannot use. A consumer expresses prefill-then-decode
+by holding ordinary tensors between invocations and binding them as ordinary
+program inputs — which the artifact and runtime interface already supports, with
+extents bound per invocation and one artifact identity across the family.
 
-## Device-scope disposition
+### Where its content went
 
-Research eliminated both a platform handle in the consumer-neutral runtime and wholly adapter-private ad hoc scoping. The sole surviving design is a governed opaque `LiveStateScope` minted by the adapter from its private live device/context and compared by the generic state boundary. This preserves the dependency direction and makes the refusal uniform. Its eventual public spelling remains Tom's to accept as part of the coherent tested boundary.
+- **Retained and already generic** — bindings are explicit, extents are bound
+  per invocation, retained shape relations are checked before the routing commit
+  ([`evaluate-retained-shape-relations-before-routing-commit`](evaluate-retained-shape-relations-before-routing-commit.md)),
+  a program input and a program output may not share one allocation, every
+  resource an invocation addressed is retained through its exact final device
+  use under ADR 0051, and a bound value's live device and context must match the
+  adapter's.
+- **Generalized rather than dropped** — the device-scoping refusal. Its subject
+  becomes *a bound value* rather than a state object, so the `LiveStateScope`
+  spelling is withdrawn while the obligation stands for every invocation.
+- **Moved to the consumer** — capacity, the cursor, the generation, the buffer
+  banks and their active-bank ordinal, and the terminal failure status. The
+  physical measurements that selected the two-bank exact-live representation are
+  retained in full at
+  [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md);
+  only the owner of the pool changed, and no measurement depended on it.
+- **Withdrawn outright** — the `C + T > capacity` Tiler refusal. Tiler is handed
+  one tensor per invocation at one bound extent and has no capacity to compare
+  against. The semantic bound `S ≤ max_position_embeddings` is a different
+  refusal and is unaffected.
 
-The `research/runtime`, `research/program-planning`, `research/numerics`, and shared navigation scopes cover the survivor-independent state research and the correction of dense-layout assumptions copied into L1/L6/L8 and the quantized-profile comparison. They declare work already required by this boundary and do not accept a public API or physical representation.
+### The preserved draft
 
-## Closes when
+The unmerged branch `tkt/define-the-runtime-kv-state-boundary` is retained as
+review evidence and must not be merged or deleted. It is the concrete draft that
+made the ownership question decidable — three independent API reviews at
+`fc242fd1`, `59b0e4d8`, and `dca26e5a` — and a later reader evaluating any
+proposal to reintroduce runtime-held state should read it rather than
+reconstruct it.
 
-The selected two-bank exact-live representation and its no-new-schema consequence are reconciled into the tested draft; every property and refusal is coherent with that representation; the coherent final public surface is then put to Tom; and nothing is accepted as public without his answer.
+### What would reopen the question
+
+Nothing about transformers. A reopening needs evidence that the *generic*
+runtime must retain typed state across invocations for a reason no consumer can
+discharge — for example, a device-resident resource whose correctness depends on
+a lifetime longer than one invocation and that the adapter cannot scope. That
+would be a consumer-neutral runtime-state question, and it supersedes this
+ticket's framing rather than restoring it.

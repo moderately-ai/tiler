@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, admit-a-position-selecting-s
 scopes: [implementation/candle, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, integration, decode, kv-cache, language-model]
+tags: [implementation, conformance, decode, consumer-neutral, language-model]
 ---
 ## User-visible outcome
 
@@ -18,7 +18,7 @@ A consumer runs C1 end to end — one prefill and eight decode steps — and eve
 
 - One cursor authority derives, per execution: the cache extent `C`, the rotary table rows `C … C + T`, and the causal mask. A consumer that states position twice can state it inconsistently, and [the L5 record](../docs/research/runtime/autoregressive-state-and-kv-cache.md) establishes that **no layer of Tiler can detect the inconsistency** — a wrong `cos`/`sin` row has the same shape, dtype, accessible range, and launch geometry as the right one, so the envelope decodes, the guard holds, the byte comparison passes, and the result is a plausible logit vector with a wrong argmax.
 - Termination is EOS token 151643 or the row's fixed eight-step budget, and never an implicit stop.
-- A poisoned state stops the loop with a typed error naming the step. It is never retried in place and never silently skipped.
+- A failed invocation stops the loop with a typed error naming the step; the driver does not continue from its pre-failure tensors, never retries the step in place, and never silently skips it. *Corrected 2026-08-04 under [`supersede-the-runtime-owned-kv-state-design`](supersede-the-runtime-owned-kv-state-design.md):* this bullet read "A poisoned state stops the loop". Tiler holds no state to poison — the typed failure and the withheld outputs are Tiler's, and refusing to continue is the driver's, which is exactly the obligation this ticket's single cursor authority already carries.
 
 ## Non-goals
 

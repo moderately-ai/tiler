@@ -86,7 +86,6 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Provider revision | Stable provider-declared fingerprint for output-affecting implementation behavior, distinct from an operation's semantic version. |
 | Program portfolio | Priority-ordered alternatives containing complete kernel programs for one semantic graph. Each program states its own applicability guard; the portfolio adds the order in which guarded alternatives are tried. |
 | Program result | Ordered named reference to a semantic value returned by the graph; it is not an `Output` operation. |
-| Poisoned state | Terminal runtime-state status after a post-routing-commit failure. It names the exact failed execution and refuses every later bind even when the previous allocation's bytes remain intact, because the failed execution produced no token and reuse would silently continue a different consumer sequence. |
 | Prepared-kernel capability | Fact available only after selecting and preparing one entry point/specialization for a live device. |
 | Region candidate | Proposed semantic subgraph plus explicit boundary values, retained outputs, materialized edges, duplication policy, and contract. |
 | Region partition | Compatible covering set of selected region candidates. |

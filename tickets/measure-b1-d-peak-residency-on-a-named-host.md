@@ -4,7 +4,7 @@ title: Measure B1-d peak residency on a named host
 status: todo
 priority: p3
 dependencies: [build-the-model-level-measurement-harness, establish-a-dynamic-kv-physical-layout-authority, reclassify-language-model-work-as-a-conformance-track]
-related: [define-first-metal-lm-workload, design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, project-only-the-final-position-logits, scope-a-windowed-kv-append-into-retained-capacity]
+related: [define-first-metal-lm-workload, design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, project-only-the-final-position-logits, scope-an-in-place-append-into-a-caller-retained-allocation]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []

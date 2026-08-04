@@ -1,35 +1,69 @@
 ---
 id: define-the-model-execution-state-boundary
 title: Define the model execution state boundary
-status: todo
+status: closed
 priority: p1
 dependencies: [assemble-the-decoder-layer-program, define-the-runtime-kv-state-boundary, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
-related: [design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, drive-the-complete-forward-pass-over-three-artifacts, scope-a-windowed-kv-append-into-retained-capacity]
+related: [design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, drive-the-complete-forward-pass-over-three-artifacts, scope-an-in-place-append-into-a-caller-retained-allocation]
 scopes: [contracts/integrations, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [design, runtime, state, kv-cache, lifetime, public-boundary, language-model]
+tags: [design, runtime, state, kv-cache, lifetime, public-boundary, language-model, supersession]
+closed_reason: superseded
+closed_note: Model-level instantiation of the withdrawn runtime KV state; the consumer owns the cursor and retained tensors.
 ---
-## User-visible outcome
+## Superseded — 2026-08-04
 
-A model in flight is one named object with one cursor, so "how many positions does this model hold, and is it usable for the next token" has a typed answer that cannot disagree with itself across 28 layers.
+**This ticket is closed as superseded by
+[`supersede-the-runtime-owned-kv-state-design`](supersede-the-runtime-owned-kv-state-design.md).
+It satisfies no dependent.** It was the model-level instantiation of the
+runtime-owned KV state, and it cannot outlive it: every one of its sections
+began "instantiate the generic `KvStateSet`", and that type is withdrawn.
 
-**It is a public boundary and therefore Tom's**; a tested implementation is a concrete draft and not implicit approval.
+### What it asked for
 
-## Required content
+One named Tiler object holding 28 ordered K/V pairs (56 logical members), one
+model cursor, a generation per member, a token-granular transaction publishing
+all 56 replacements after one observed terminal success, a model-level poisoned
+status, and typed refusals for a missing, extra, duplicated, or mispaired layer
+member. It carried L6's **D-16** — whether the transaction boundary ever moves
+from the token to the layer — as the question for Tom.
 
-Drafted from [the L6 record](../docs/research/program-planning/complete-model-ingestion-and-execution.md), which extends [rung L5's state contract](../docs/research/runtime/autoregressive-state-and-kv-cache.md) rather than replacing it.
+### Why it is superseded
 
-- **Composition, not a second transaction authority.** Instantiate the generic `KvStateSet` drafted by [`define-the-runtime-kv-state-boundary`](define-the-runtime-kv-state-boundary.md) as 28 ordered K/V pairs — exactly 56 logical cached-tensor `KvState` members, one K and one V member for each layer. This boundary owns that exact model membership and token policy; it reuses the set's sole cursor/status, per-member generations, complete-route commit, poison-all, and publish-all-or-none mechanics rather than defining another mutable-state or publication authority. Each logical member uses the selected two capacity-sized pool banks with an exact-live dense payload; this boundary does not restate their address recipe.
-- **The granularity rule, refined.** L5 states that "per-layer programs need per-layer cursors; one program per step needs one." What that rule protects is *observability* — that no consumer can observe a state advanced for some layers or K but not V — not program size. The 30-entry token route therefore prepares and commits the complete 56-member set once and publishes all replacements together after one observed terminal success. The forbidden combination is independently committed layer or K/V subsets with separately observable cursors.
-- **The transaction boundary is the token.** The complete old active-bank population for all 56 logical members (28 K/V pairs) is retained until that one observation, while replacements occupy the alternate banks. This is what makes a post-commit failure leave the published model state bit-identical to what it was. The selected physical population is 112 capacity-sized buffers across both banks; process residency still requires measurement. **This is L6's D-16.**
-- **Poisoning is model-level by instantiation.** A post-commit failure at any of the 30 route entries drops/fails the one bound set transaction, poisoning all 56 members under the transaction-minted execution identity and token ordinal. It never invents a model-only poison mechanism or leaves one layer/K/V member usable.
-- **Typed refusals.** In addition to the generic set refusals, require exactly 28 ordered K/V pairs and reject a missing, extra, duplicated, or mispaired layer member before program work. Capacity, live-scope, poisoned-set, stale generation/fingerprint, and mixed-cursor refusals reuse the runtime boundary rather than being restated with a second definition.
+Tiler retains nothing between invocations, so there is no Tiler object to hold a
+cursor over 28 layers, no set to poison, and no membership for Tiler to check.
+The *property* the boundary protected is real and is unchanged: no reader may
+observe a model advanced for some layers and not others. It is now discharged
+where the tensors actually live — a consumer that advances all 56 of its own
+retained tensors and its own cursor together, on one reported terminal success,
+makes the partially-advanced state unrepresentable on its side rather than
+refused on Tiler's. That is a stronger position than a refusal, because it
+removes the state rather than checking it.
 
-## The question this carries to Tom
+### Where its content went
 
-**D-16.** Whether the transaction boundary ever moves from the token to the layer. It closes only with both halves together: a measured decode-latency or process-residency result at a B1 row showing that the selected two-bank token transaction is the binding constraint, **and** a recovery contract that says what a consumer does with 28 K/V pairs (56 members) at mixed cursors. The layout representation is now established; the missing evidence is a complete-model resident-process measurement, and residency evidence alone could motivate the change but would not make it safe.
+- **The granularity rule and the token transaction** are recorded as consumer
+  obligations in
+  [the L6 ownership table](../docs/research/program-planning/complete-model-ingestion-and-execution.md),
+  corrected in place on 2026-08-04.
+- **The 30-execution ordering, the single completion observation, and the
+  no-fallback-after-commit rule** were never state properties and are owned by
+  [`drive-the-complete-forward-pass-over-three-artifacts`](drive-the-complete-forward-pass-over-three-artifacts.md),
+  which is unaffected and now depends on this ticket no longer.
+- **The typed model-level failure report** — execution ordinal, phase, token in
+  flight, and the operations a numerical claim covers — is
+  [`name-the-execution-ordinal-in-model-level-failures`](name-the-execution-ordinal-in-model-level-failures.md)'s
+  and is generic: an invocation reports which invocation failed, without holding
+  state.
+- **D-16** stays open as a research question in the L6 record. Its subject
+  becomes the consumer's own allocation policy — whether a consumer ever
+  publishes per layer instead of per token — and it needs the same two halves it
+  always did: a measured binding cost at a B1 row *and* a recovery contract.
+  No Tiler boundary gates it, so no ticket carries it as deliverable work; it is
+  recorded as L6's D-16 with its trigger intact.
 
-## Closes when
+### What would reopen the question
 
-The runtime-state boundary has landed; the model boundary is drafted with every property and refusal above; D-16 is put to Tom only if complete-model measurement makes it live; and nothing is accepted as public without his answer.
+A consumer-neutral reason for the runtime to retain typed state across
+invocations. Nothing model-shaped qualifies.
