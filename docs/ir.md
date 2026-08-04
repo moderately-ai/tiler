@@ -878,8 +878,11 @@ which canonicalizes the two addends. The accepted `const` constructors for
 canonicalize their consumed wrappers before declaration checking, storage,
 sorting, deduplication, and identity encoding.
 
-`C + T <= capacity` is stated without a second arithmetic form:
-`S == C + T` together with `capacity - S >= 0`. A direct three-addend equality
+A two-relation composition such as `C + T <= bound` is stated without a second
+arithmetic form: `S == C + T` together with `bound - S >= 0`, where `bound` is
+any caller-supplied extent symbol — the shape environment receives no capacity
+of its own; since the 2026-08-04 KV-state supersession, Tiler is never handed
+one. A direct three-addend equality
 is not implemented. Chaining two binary equalities through a fresh intermediate
 would violate the rule that every symbol is a root with exactly one binding, so
 a future three-term append needs its own bounded relation or the accepted

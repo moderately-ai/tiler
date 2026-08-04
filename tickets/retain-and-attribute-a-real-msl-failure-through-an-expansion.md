@@ -1,7 +1,7 @@
 ---
 id: retain-and-attribute-a-real-msl-failure-through-an-expansion
 title: Retain a real MSL front-end failure through an expansion and attribute it to region source
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [prototype-inline-aot-integration-proof, generate-cfg-gated-artifact-family-delivery]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, diagnostics, macro-aot]
-claimed_from: todo
-assignee: agent-msl-retain
-lease_expires_at: 1785874660
 ---
 ## User-visible outcome
 
