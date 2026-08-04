@@ -1342,11 +1342,12 @@ impl ScalarRegistryBuilder {
     /// It is composed with [`FrozenSemanticRegistry::standard`] and defines the
     /// exact per-point scalar operations the governed semantic families lower
     /// to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`],
-    /// [`add_f32_scalar_op`], [`canonicalize_nan_f32_scalar_op`], and
-    /// [`strict_affine_u4_dequantize_scalar_op`]. The canonicalization and
-    /// strict-affine operations are conversions rather than arithmetic. An
-    /// extension composes with this profile by registering further definitions
-    /// on the returned builder.
+    /// [`add_f32_scalar_op`], [`divide_f32_scalar_op`], [`exp_f32_scalar_op`],
+    /// [`canonicalize_nan_f32_scalar_op`], and
+    /// [`strict_affine_u4_dequantize_scalar_op`]. NaN canonicalization and the
+    /// strict-affine decode are conversion operations rather than homogeneous
+    /// F32 arithmetic. An extension composes with this profile by registering
+    /// further definitions on the returned builder.
     ///
     /// # Errors
     ///

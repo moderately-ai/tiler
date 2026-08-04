@@ -140,16 +140,26 @@ candidate-blind canonical region. No physical packing enters this logical law.
 **Identity analysis:** law encoding tag 8 is append-injective: tags 1 through 7
 and their payloads remain byte-identical. Rows are self-delimiting through the
 actual canonical operation and provider encodings, the fixed-width revision,
-and the tagged law payload; there is no outer row-length frame. The new scalar,
-law, and lowering rows move the complete scalar, semantic-law, and lowering
-snapshots and therefore every authority, resolution, receipt, canonical request
-subject, derived artifact identity, and cache entry that transitively binds one
-of those complete snapshots. The deterministic request qualifier moves to
-`fb0b64dd69649785`. Old per-law payloads, old canonical regions, and per-operation
-semantic definitions remain byte-identical, but their derived receipts do not
-when they bind a moved complete authority. No separator or domain version step
-is required because the newly tagged payload cannot collide with an old row;
-all deterministic pins in this diff were recomputed from the complete tree.
+and the tagged law payload; there is no outer row-length frame.
+
+The existing scalar operation keys and definition payloads, semantic registry
+snapshot, existing per-operation law rows, canonical regions, old-operation
+refinement subjects, and old-operation resolution identities remain stable. The
+complete `CanonicalScalarRegistrySnapshotIdentity`,
+`CanonicalScalarReferenceRegistryIdentity`,
+`IndexRealizationLawRegistryIdentity`, and `CanonicalLoweringRegistryIdentity`
+move because each gains a row or binds a complete snapshot that did. Every
+`IndexRealizationAuthority` moves because it binds the complete scalar snapshot,
+and old-operation `ScalarAuthorityEvidence` and receipt identities move for the
+same reason even though their reached-definition projections stay stable. The
+strict-affine subject moves from an absent law row to the new row and gains its
+first resolvable resolution and receipt. Canonical request subjects move because
+they bind the complete realization/lowering authorities; every derived artifact
+identity or cache entry that binds one of those moved requests, authorities, or
+receipts must miss rather than replay. The deterministic request qualifier moves
+to `fb0b64dd69649785`. No separator or domain version step is required because
+the newly tagged payload cannot collide with an old row; all deterministic pins
+in this diff were recomputed from the complete tree.
 The residual ceiling remains 6,144: strict-affine has two rank-wide accesses
 (codes read and result write), while scale and zero-point reads are rank zero,
 so it does not exceed the existing three-rank-wide-access closed-law maximum.
@@ -171,11 +181,15 @@ name the atomic scalar meaning; `OperandBinding::component_role()` exposes the
 generic encoded-component expansion performed during receipt binding; and the
 standard semantic-law, scalar-reference, and compiler-lowering populations each
 gain the corresponding exact row. U8, non-per-tensor parameter maps, other
-schemes, and nested encoded components remain unsupported.
+schemes, and nested encoded components remain unsupported. The public
+`OperandArity` errors in both IR verification and compiler refinement now report
+`expanded_inputs` (ordinary semantic inputs plus ordered encoded components),
+and `OperandInterface::position` names that same expanded boundary order rather
+than a distinct semantic-operand ordinal.
 
 ## Draft verification
 
-The affected four-package nextest population passed 1,782 of 1,782 tests with 5
+The affected four-package nextest population passed 1,784 of 1,784 tests with 5
 configured skips. Package doctests passed 20 with 1 ignored; Clippy passed for
 all targets with warnings denied; formatting, `git diff --check`, `tkt lint`,
 and true-base guard passed. The four preserved artifact/component tests remain

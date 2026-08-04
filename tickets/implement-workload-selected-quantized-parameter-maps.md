@@ -43,7 +43,7 @@ The first workload-selected per-axis or per-block quantized format carries an ex
 
 ## Closes when
 
-The selected non-per-tensor parameter map is implemented end to end over its first real producer and consumer; component shapes and coordinate selection are derived from one canonical map; legal transforms preserve exact meaning; illegal or unsupported transforms and map families reject by name; reference, compiler, artifact, and ABI identities distinguish every result-affecting map change; targeted package tests and Clippy pass; and one `make full` passes.
+The selected non-per-tensor parameter map is implemented end to end over its first real producer and consumer; component shapes and coordinate selection are derived from one canonical map; legal transforms preserve exact meaning; illegal or unsupported transforms and map families reject by name; the established per-tensor U4 law remains supported through the generalized row and its real-receipt and negative-refusal populations still pass; reference, compiler, artifact, and ABI identities distinguish every result-affecting map change; targeted package tests and Clippy pass; and one `make full` passes.
 
 ## Graph maintenance
 

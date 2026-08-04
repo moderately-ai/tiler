@@ -448,16 +448,18 @@ pub enum RefinementError {
     Handle(VerifiedIndexHandleError),
     /// A boundary tensor exposed no static shape in this bounded profile.
     SymbolicBoundary,
-    /// The region declares a different number of inputs than distinct operands.
+    /// The region declares a different number of inputs than the expanded
+    /// semantic input boundary requires.
     OperandArity {
         /// Region input boundary count.
         region_inputs: usize,
-        /// Distinct occurrence operand count.
-        distinct_operands: usize,
+        /// Expected ordinary inputs plus ordered encoded components.
+        expanded_inputs: usize,
     },
-    /// A region input boundary disagrees with its operand type or shape.
+    /// A region input boundary disagrees with its expanded semantic input type
+    /// or shape.
     OperandInterface {
-        /// Ordered distinct-operand position.
+        /// Position in the ordered expanded semantic input boundaries.
         position: usize,
     },
     /// The region produces a different number of outputs than results.
@@ -532,15 +534,15 @@ impl fmt::Display for RefinementError {
             }
             Self::OperandArity {
                 region_inputs,
-                distinct_operands,
+                expanded_inputs,
             } => write!(
                 formatter,
-                "region declares {region_inputs} inputs for {distinct_operands} expanded semantic input boundaries"
+                "region declares {region_inputs} inputs for {expanded_inputs} expanded semantic input boundaries"
             ),
             Self::OperandInterface { position } => {
                 write!(
                     formatter,
-                    "region input {position} does not match its operand"
+                    "region input {position} does not match its expanded semantic input boundary"
                 )
             }
             Self::ResultArity {
@@ -707,10 +709,10 @@ fn map_ir_verifier_error(
         IndexRefinementVerificationError::SymbolicBoundary => RefinementError::SymbolicBoundary,
         IndexRefinementVerificationError::OperandArity {
             region_inputs,
-            distinct_operands,
+            expanded_inputs,
         } => RefinementError::OperandArity {
             region_inputs,
-            distinct_operands,
+            expanded_inputs,
         },
         IndexRefinementVerificationError::OperandInterface { position } => {
             RefinementError::OperandInterface { position }
@@ -1758,5 +1760,21 @@ mod tests {
                 ))
             })
             .collect()
+    }
+
+    #[test]
+    fn refinement_operand_errors_preserve_expanded_boundary_semantics() {
+        assert_eq!(
+            RefinementError::OperandArity {
+                region_inputs: 1,
+                expanded_inputs: 3,
+            }
+            .to_string(),
+            "region declares 1 inputs for 3 expanded semantic input boundaries"
+        );
+        assert_eq!(
+            RefinementError::OperandInterface { position: 2 }.to_string(),
+            "region input 2 does not match its expanded semantic input boundary"
+        );
     }
 }

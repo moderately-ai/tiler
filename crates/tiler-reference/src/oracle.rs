@@ -424,11 +424,13 @@ impl ScalarReferenceRegistryBuilder {
     /// Creates the governed standard scalar reference profile.
     ///
     /// The builder is bound to [`FrozenScalarRegistry::standard`] and defines an
-    /// executable oracle for the scalar operations the governed index-access
-    /// lowerings emit: `tiler.scalar::constant-f32@1`, `multiply-f32@1`,
-    /// `add-f32@1`, `canonicalize-nan-f32@1`, and
-    /// `strict-affine-u4-dequantize@1`. An extension composes with it by
-    /// registering further capabilities on the returned builder.
+    /// executable oracle rows for `tiler.scalar::constant-f32@1`,
+    /// `multiply-f32@1`, `add-f32@1`, `canonicalize-nan-f32@1`, and
+    /// `strict-affine-u4-dequantize@1`. The bound standard scalar authority also
+    /// defines `divide-f32@1` and `exp-f32@1`; this bounded reference profile
+    /// does not install those two capabilities, so a region reaching either
+    /// refuses with [`IndexRegionEvaluationError::MissingScalarCapability`]. An
+    /// extension composes with this builder by registering further capabilities.
     ///
     /// # Errors
     ///

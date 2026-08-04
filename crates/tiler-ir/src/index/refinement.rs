@@ -2270,11 +2270,11 @@ pub enum IndexRefinementVerificationError {
         /// Number of verified input boundaries.
         region_inputs: usize,
         /// Expected ordinary inputs plus ordered encoded components.
-        distinct_operands: usize,
+        expanded_inputs: usize,
     },
-    /// One region input disagrees with its semantic operand.
+    /// One region input disagrees with its expanded semantic input boundary.
     OperandInterface {
-        /// Position of the disagreeing input.
+        /// Position in the ordered expanded semantic input boundaries.
         position: usize,
     },
     /// Region output count disagrees with semantic results.
@@ -2408,15 +2408,15 @@ impl fmt::Display for IndexRefinementVerificationError {
             Self::SymbolicBoundary => formatter.write_str("a boundary exposed no static shape"),
             Self::OperandArity {
                 region_inputs,
-                distinct_operands,
+                expanded_inputs,
             } => write!(
                 formatter,
-                "region declares {region_inputs} inputs for {distinct_operands} expanded semantic input boundaries"
+                "region declares {region_inputs} inputs for {expanded_inputs} expanded semantic input boundaries"
             ),
             Self::OperandInterface { position } => {
                 write!(
                     formatter,
-                    "region input {position} does not match its operand"
+                    "region input {position} does not match its expanded semantic input boundary"
                 )
             }
             Self::ResultArity {
@@ -2557,7 +2557,7 @@ fn bind_operands(
     if inputs.len() != expanded.len() {
         return Err(IndexRefinementVerificationError::OperandArity {
             region_inputs: inputs.len(),
-            distinct_operands: expanded.len(),
+            expanded_inputs: expanded.len(),
         });
     }
     let mut physical_by_input = vec![Vec::new(); occurrence.inputs.len()];
@@ -3954,5 +3954,21 @@ mod tests {
             ),
             IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment)
         ));
+    }
+
+    #[test]
+    fn operand_errors_name_the_expanded_semantic_boundary() {
+        assert_eq!(
+            IndexRefinementVerificationError::OperandArity {
+                region_inputs: 1,
+                expanded_inputs: 3,
+            }
+            .to_string(),
+            "region declares 1 inputs for 3 expanded semantic input boundaries"
+        );
+        assert_eq!(
+            IndexRefinementVerificationError::OperandInterface { position: 2 }.to_string(),
+            "region input 2 does not match its expanded semantic input boundary"
+        );
     }
 }
