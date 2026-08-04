@@ -1,7 +1,7 @@
 ---
 id: derive-dtype-family-research-tracks-from-the-mature-taxonomy
 title: Derive dtype-family research tracks from the mature taxonomy
-status: todo
+status: in-progress
 priority: p1
 dependencies: [enumerate-the-mature-tensor-dtype-taxonomy, own-the-dtype-support-maturity-matrix]
 related: [own-operation-family-support-matrix, declare-the-bf16-rows-on-the-authoritative-metal-profile]
@@ -9,6 +9,9 @@ scopes: [research/numerics, contracts/navigation, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, dtypes, roadmap, ticket-graph]
+claimed_from: todo
+assignee: agent-dtype-tracks
+lease_expires_at: 1785880009
 ---
 ## User-visible outcome
 
