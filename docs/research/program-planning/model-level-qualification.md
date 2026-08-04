@@ -281,19 +281,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 ## Post-transfer correction — 2026-08-04: KV physical-layout authority
 
-**Correction.** The transferred span's KV peak totals and D-16's fixed 1.714
-GiB trigger are arithmetic for the rejected singular dense-allocation
-candidate, not current physical-residency authority. The durable logical facts
-are a fixed logical capacity, 28 ordered K/V pairs (56 logical members), one
-model cursor, per-member generations, and atomic token publication. Physical
-shape, segmentation, resource cardinality, alias law, retention population,
-and peak residency remain blocked on
-[`establish-a-dynamic-kv-physical-layout-authority`](../../../tickets/establish-a-dynamic-kv-physical-layout-authority.md).
-Before a residency measurement becomes a qualification oracle, that ticket's
-survivor must supply a reproducible resource population and row-sum formula.
-D-16 then uses the measured survivor-specific token-versus-layer delta and
-still requires a recovery contract; the historical totals neither fire the
-trigger nor select a layout.
+**Correction.** The transferred span's KV peak totals and D-16's fixed 1.714 GiB trigger are arithmetic for the rejected singular dense-allocation candidate, not current physical-residency authority. The durable logical facts are a fixed logical capacity, 28 ordered K/V pairs (56 logical members), one model cursor, per-member generations, and atomic token publication. [Dynamic KV physical-layout authority](../runtime/dynamic-kv-physical-layout.md) now selects one capacity-sized head-major F32 resource per logical K or V member, a disjoint 56-resource replacement population, and a governed capacity-derived head-stride root. Its survivor-specific B1-d storage arithmetic is 3,816,816,640 bytes for a token transaction and 1,976,565,760 bytes for a hypothetical layer transaction, a 1,840,250,880-byte delta. These remain arithmetic rather than resident-process evidence. Before a residency measurement becomes a qualification oracle, the carrier must land the exact representation and the measurement must compare its observed population against this row-sum formula. D-16 then uses the measured survivor-specific delta and still requires a recovery contract; neither the historical nor replacement arithmetic fires the trigger alone.
 
 ## The conformance corpus, fixed — 2026-08-02
 
@@ -305,7 +293,7 @@ trigger nor select a layout.
 
 **Fact — the shared frame, so that a row's entry is a delta rather than a restatement.** The pinned checkpoint `Qwen/Qwen3-0.6B-Base` at revision `da87bfb608c14b7cf20ba1ce41287e8de496c0cd`, widened host-side to F32 once at model load; batch 1; greedy; the effective subnormal-flushing, contraction-free, safe-math F32 realization on the qualified target row `apple9-f32-unified-msl4-macos26`. The program partition is L6's: P1 the embedding gather, P2 the decoder layer executed 28 times, P3 the final normalization and vocabulary projection — one forward pass is 30 executions over 3 artifact identities, under the per-layer program boundary with the token transaction.
 
-**W-310** names the complete widened weight set under L6's W-C partition: P1 binds `model.embed_tokens.weight`; P2's execution at layer *ℓ* binds that layer's eleven; P3 binds `model.norm.weight` and the tied `model.embed_tokens.weight`. It is 310 tensors and 2,384,199,680 bytes, and a row that does not say otherwise binds it unaltered. `capacity` is each KV state's fixed logical capacity selected at creation; physical shape, segmentation, and resource layout are supplied by the eventual layout survivor.
+**W-310** names the complete widened weight set under L6's W-C partition: P1 binds `model.embed_tokens.weight`; P2's execution at layer *ℓ* binds that layer's eleven; P3 binds `model.norm.weight` and the tied `model.embed_tokens.weight`. It is 310 tensors and 2,384,199,680 bytes, and a row that does not say otherwise binds it unaltered. `capacity` is each KV state's fixed logical capacity selected at creation; the selected proposal stores each K or V member in one capacity-sized head-major F32 resource and derives its governed head stride from that capacity.
 
 **Every row is stated as a delta from an accepted baseline**, which is C1 for all but two. That is not presentation: a refusal or a disagreement is evidence about the one thing the row changed only if exactly one thing changed, and it is the discipline [`test-the-autoregressive-state-failure-cases`](../../../tickets/test-the-autoregressive-state-failure-cases.md) already applies to the state suite.
 

@@ -4,9 +4,9 @@ title: Establish a dynamic KV physical-layout authority
 status: in-progress
 priority: p1
 dependencies: []
-related: [design-autoregressive-state-and-kv-cache, define-the-runtime-kv-state-boundary, bind-the-kv-cache-through-the-artifact-and-runtime-interface, evaluate-retained-shape-relations-before-routing-commit]
-scopes: [research/runtime, contracts/artifacts, contracts/integrations]
-shared_scopes: [project/tickets]
+related: [design-autoregressive-state-and-kv-cache, define-the-runtime-kv-state-boundary, bind-the-kv-cache-through-the-artifact-and-runtime-interface, evaluate-retained-shape-relations-before-routing-commit, admit-live-extent-operands-to-payload-indexing]
+scopes: [research/runtime, contracts/artifacts, contracts/integrations, research/program-planning, contracts/foundation]
+shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [research, design, runtime, artifact, abi, kv-cache, correctness]
 claimed_from: ready
@@ -63,6 +63,16 @@ Every evaluated alternative must additionally provide its own exact address/layo
 ## Graph maintenance
 
 Keep both blocked dependents linked until the durable authority and its exact handoff are recorded. Split any independently implementable schema/identity step, runtime binding, backend realization, or experiment into narrow tickets with dependency order and scopes. A conditional capability belongs at `deferred` with a real activation trigger; work required to solve this blocker remains active.
+
+## Outcome — 2026-08-04
+
+[Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) records the complete source trace and elimination at exact base `b4e3478d42ce21ed68e23f772b643c6370d36498`. `contracts/navigation` was added as a shared scope because adding that governed research record requires the hand-maintained research catalog entry. `research/program-planning` and `contracts/foundation` were added because selecting the resource population makes L1/L6/L8's “eventual survivor” statements and the glossary row stale; those edits replace only the now-known physical formula and preserve every historical rejected-candidate span. These are mapped corrections required by the authorized research outcome, not product expansion.
+
+One alternative survives: a governed bounded affine layout root, initially the rank-three F32 head-major KV address `base + head × head_stride + sequence × 128 + component`, with `head_stride = capacity × 128` derived from the runtime-owned storage observation. The artifact and payload carry the typed root declaration and use but not its live value; preflight freezes the value into a separate read-only dispatch-parameter block before routing commit. Capacity, `C`, and `S` remain absent from artifact and pipeline specialization identity.
+
+The elimination is not taste. Exact-live dense materialization still needs a live `C`/`S` stride operand. Sequence-major storage is correct but makes the fixed-head score walk advance 4,096 bytes per sequence instead of 512. Per-head resources expand 56 logical K/V members to 448 resources and each K/V tensor use from one transport to eight. Per-extent or per-capacity specialization violates the one-pipeline requirement and contaminates cache identity. The survivor preserves head-locality, one K and V resource per layer, and one payload/pipeline while keeping physical facts out of semantic meaning.
+
+The result is a derived proposal, not acceptance of its consequential public/schema spelling. Source tracing also found the anterior fact that artifact-side input-extent evaluation does not make `C` or `S` consumable by payload body indexing. [`admit-live-extent-operands-to-payload-indexing`](admit-live-extent-operands-to-payload-indexing.md) owns that narrow prerequisite and now blocks symbolic artifact-family delivery. [`draft-governed-affine-layout-roots-through-kernel-and-artifact`](draft-governed-affine-layout-roots-through-kernel-and-artifact.md) depends on it and owns the separately typed physical-root draft. [`route-governed-layout-roots-from-runtime-state`](route-governed-layout-roots-from-runtime-state.md) depends on the layout carrier and state boundary, and owns preflight derivation and committed backend binding. The cache artifact/runtime ticket depends transitively on all three, so it cannot implement either static-extent or implicit-dense payload indexing first. No experiment was needed to select the layout family: inspected source proves the missing consumable parameters, and the address/resource comparisons are exact arithmetic; all carriers still owe executable fail-capable fixtures before Tom accepts their public surfaces.
 
 ## Closes when
 

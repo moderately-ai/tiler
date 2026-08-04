@@ -3,7 +3,7 @@ id: bind-the-kv-cache-through-the-artifact-and-runtime-interface
 title: Bind the KV cache through the artifact and runtime interface
 status: todo
 priority: p1
-dependencies: [admit-the-sequence-extension-concatenate-family, define-the-runtime-kv-state-boundary, establish-a-dynamic-kv-physical-layout-authority]
+dependencies: [admit-the-sequence-extension-concatenate-family, define-the-runtime-kv-state-boundary, establish-a-dynamic-kv-physical-layout-authority, route-governed-layout-roots-from-runtime-state]
 related: [design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact, evaluate-retained-shape-relations-before-routing-commit]
 scopes: [implementation/artifact, implementation/runtime, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
@@ -18,12 +18,7 @@ The cache crosses the program boundary as ordered named inputs and outputs whose
 
 `contracts/artifacts` is declared because the new manifest changes the neutral envelope schema and canonical identity, and `docs/artifact-abi.md` is the mapped identity/version ledger that must move in the same whole step. This is required bookkeeping for the already-authorized outcome, not a new product outcome.
 
-Implementation is blocked on
-`establish-a-dynamic-kv-physical-layout-authority`. A storage observation that
-describes `[8, capacity, 128]` is not payload addressing authority: the current
-ABI exposes no dynamic head stride, and capacity must not become per-step
-artifact or pipeline specialization. Reconcile this ticket with the research
-survivor before executing its schema/identity step.
+Implementation is blocked on the landed generic carriers selected by `establish-a-dynamic-kv-physical-layout-authority`. The survivor is a governed bounded affine layout root, not an observed descriptor alone: the payload must consume the adapter-derived capacity head stride through the accepted read-only parameter mechanism. `route-governed-layout-roots-from-runtime-state` is therefore a hard dependency. Reuse its decoded root population and frozen committed bytes; do not define a KV-specific second spelling or execute this ticket's schema/identity step first.
 
 - `k_cache` and `v_cache` are named program inputs of shape `[8, C, 128]`; `k_rope` and `v_heads` stay the retained outputs L4 named, at `[8, S, 128]`. Nothing about capacity, the cursor, or the allocation crosses the boundary.
 - Encode an authoritative complete ordered state-interface manifest derived from the verified semantic retained-state declarations — never a caller-supplied list. Each row names the cache input and layer, its sequence axis, the step input/axis, retained output/axis, and exact `S = C + T` relation. Decode validates the whole population and exposes it as `DecodedProgram::state_interface`; the runtime derives one owning `KvArtifactStateBindingSet` from that view with no caller population argument and consumes such a binding set both when constructing a `KvStateSet` and when preparing a route, so omitting K or V cannot redefine a smaller set as complete.

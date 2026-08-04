@@ -16,18 +16,14 @@ A KV state is a named object with a stated identity, capacity, valid range, and 
 
 Draft the boundary [rung L5's state contract](../docs/research/runtime/autoregressive-state-and-kv-cache.md) specifies, as a public surface. **It is a public boundary and therefore Tom's**; a tested implementation is a concrete draft and not implicit approval.
 
-This boundary is actively blocked on
-`establish-a-dynamic-kv-physical-layout-authority`: the current ABI cannot make
-a payload consume the capacity-derived head stride while preserving one
-artifact and pipeline across live cursor values. Do not present the packet for
-acceptance or implement its provisional dense representation first.
+This boundary is actively blocked on `establish-a-dynamic-kv-physical-layout-authority`. Its derived survivor is a governed bounded affine layout root: the state descriptor owns one rank-three F32 head-major K or V resource and the adapter derives `head_stride = capacity × 128` from its storage observation. The descriptor does not let a caller restate the stride, and the live value is neither artifact identity nor specialization. Reconcile that exact survivor into the tested boundary before presenting it for acceptance; do not implement the rejected implicit-dense representation first.
 
 ## Required content
 
 - **Identity:** program interface key, layer ordinal, the live device and context the adapter bound, and a generation. Not an artifact subject — no packaged identity, cache key, or canonical descriptor may name a state.
-- **Logical capacity, valid extent, cursor:** one positive logical capacity bound and a cursor `C` that is the single authority for how many sequence positions the state holds. Physical shape, strides, segmentation, component count, and materialization are deferred to `establish-a-dynamic-kv-physical-layout-authority`; `[8, capacity, 128]` is a rejected/provisional candidate, not a requirement.
+- **Logical capacity, valid extent, cursor:** one positive logical capacity bound and a cursor `C` that is the single authority for how many sequence positions the state holds. The initial physical descriptor is the layout survivor: one F32 resource, eight heads, width 128, positive head-major addressing, and a capacity-derived head stride observed by the adapter rather than supplied by the caller. Batch, raggedness, paging, growing capacity, overlap, and alternative ranks remain unsupported. `[8, capacity, 128]` is storage shape, not permission to index it as dense `[8,C,128]`.
 - **Growth and update:** `C` advances by exactly `T` on the observed terminal success of the execution that produced the extended value, and never otherwise; logical `capacity` does not grow; the update is out of place and publication replaces the governed storage population and cursor together.
-- **Placement, aliasing, retention, lifetime:** one symbolic affinity's memory domain under ADR 0047's initial profile; old and replacement resource populations disjoint under complete role-labelled alias verification; both retained through exact final device use under ADR 0051; the state owned by the runtime instance and destroyed by the consumer. The layout survivor owns how many resources one logical member uses.
+- **Placement, aliasing, retention, lifetime:** one symbolic affinity's memory domain under ADR 0047's initial profile; one resource per logical K or V member; old and replacement populations disjoint under complete role-labelled alias verification; both retained through exact final device use under ADR 0051; the state owned by the runtime instance and destroyed by the consumer.
 - **Typed refusals:** `C + T > capacity` before any program work; a bind whose live device and context differ from the adapter's; a bind of a poisoned state, naming the execution that poisoned it.
 - **The poisoned status.** A post-commit failure retires the state rather than leaving a plausible one behind. Under the out-of-place update the bytes are intact, so the reason to refuse is not corruption — it is that the failed step's token was never produced, and a later step binding the pre-failure state would decode a sequence the consumer does not believe it has.
 
