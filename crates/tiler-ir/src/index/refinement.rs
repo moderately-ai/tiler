@@ -814,6 +814,16 @@ impl IndexRefinementReceiptIdentity {
 /// let _ = IndexRefinementExecutableCoverageIdentity(Box::new([]));
 /// ```
 ///
+/// ```compile_fail
+/// use tiler_ir::index::IndexRefinementExecutableCoverageIdentity;
+///
+/// // Nor is there a byte-level conversion: a caller holding one receipt's
+/// // coverage bytes cannot re-mint them onto another receipt's occurrence.
+/// fn cross(bytes: &[u8]) -> IndexRefinementExecutableCoverageIdentity {
+///     IndexRefinementExecutableCoverageIdentity::from(bytes)
+/// }
+/// ```
+///
 /// This identity deliberately excludes the complete semantic, scalar, and
 /// realization-law registry snapshots retained by [`IndexRefinementReceiptIdentity`].
 /// It retains the selected graph occurrence, numerical contract, realization
@@ -821,6 +831,14 @@ impl IndexRefinementReceiptIdentity {
 /// and admission projections, exact operand/result bindings, and every residual
 /// proof identity. Callers may read these bytes but cannot construct this type
 /// from bytes or independently supplied fields.
+///
+/// The operation key, ordered signature, host-canonical attributes, and operand
+/// and result boundary shapes are not re-encoded: `tiler.semantic-graph.v2`
+/// already writes each of them for every operation in canonical traversal
+/// order, and [`IndexRefinementSubject::derive`] fixes the retained occurrence
+/// to that same canonical ordinal. Encoding them a second time would restate
+/// what the graph and occurrence pair already determines rather than close a
+/// substitution the pair leaves open.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IndexRefinementExecutableCoverageIdentity(Box<[u8]>);
 
@@ -1147,6 +1165,19 @@ impl IndexRefinementReceipt {
 }
 
 /// Checked association awaiting proof of retained index-domain obligations.
+///
+/// A pending association has no executable-coverage spelling. Only
+/// [`ResolvedIndexRealization::complete`] discharges the retained obligations,
+/// and only its success value carries an
+/// [`IndexRefinementExecutableCoverageIdentity`]:
+///
+/// ```compile_fail
+/// fn coverage(
+///     pending: &tiler_ir::index::PendingIndexRefinementReceipt,
+/// ) -> &tiler_ir::index::IndexRefinementExecutableCoverageIdentity {
+///     pending.executable_coverage_identity()
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct PendingIndexRefinementReceipt {
     resolution: ResolvedIndexRealization,
@@ -3542,16 +3573,13 @@ mod tests {
         );
         assert_eq!(baseline, receipt.executable_coverage_identity().as_bytes());
 
-        let (_, _, foreign_graph_receipt) = reached_semantic_fixture(2);
+        // A provider revision is excluded from graph meaning, so the graph
+        // perturbation needs a program with a genuinely different selected
+        // operation rather than another revision of the same one.
+        let foreign = constant_receipt_with_unused_authority(None, 1, None);
+        assert_ne!(subject.graph(), foreign.graph());
         let mut changed = subject.clone();
-        changed.graph = foreign_graph_receipt.graph().clone();
-        // Provider revisions are excluded from graph meaning, so use a graph
-        // with a genuinely distinct selected operation for this perturbation.
-        if changed.graph == subject.graph {
-            changed.graph = constant_receipt_with_unused_authority(None, 1, None)
-                .graph()
-                .clone();
-        }
+        changed.graph = foreign.graph().clone();
         assert_ne!(
             baseline,
             encode(
@@ -4477,19 +4505,160 @@ mod tests {
         };
         let first = pending(laws.resolve(&first_subject).unwrap());
         let second = pending(laws.resolve(&second_subject).unwrap());
-        let first_receipt = mint_receipt(
-            first.subject(),
-            &first.resolution,
-            first.region.canonical_identity(),
-            first.scalar_authority.clone(),
-            first.operand_bindings.clone(),
-            first.result_bindings.clone(),
-            Vec::new(),
-        );
+        let mint = |pending: &PendingIndexRefinementReceipt| {
+            mint_receipt(
+                pending.subject(),
+                &pending.resolution,
+                pending.region.canonical_identity(),
+                pending.scalar_authority.clone(),
+                pending.operand_bindings.clone(),
+                pending.result_bindings.clone(),
+                Vec::new(),
+            )
+        };
+        let first_receipt = mint(&first);
+        let second_receipt = mint(&second);
         assert_eq!(
             second.verify_completion(&first_receipt),
             Err(IndexRefinementVerificationError::CompletionReceiptMismatch)
         );
+
+        // The two occurrences agree on every other subject the executable
+        // projection reads, so a coverage identity that failed to separate them
+        // would be crossable between real, equally-shaped occurrences.
+        assert_eq!(first_receipt.graph(), second_receipt.graph());
+        assert_eq!(first_receipt.region(), second_receipt.region());
+        assert_eq!(
+            first_receipt.scalar_authority(),
+            second_receipt.scalar_authority()
+        );
+        assert_eq!(
+            first_receipt.operand_bindings(),
+            second_receipt.operand_bindings()
+        );
+        assert_eq!(
+            first_receipt.result_bindings(),
+            second_receipt.result_bindings()
+        );
+        assert_ne!(first_receipt.occurrence(), second_receipt.occurrence());
+        assert_ne!(
+            first_receipt.executable_coverage_identity(),
+            second_receipt.executable_coverage_identity()
+        );
+    }
+
+    /// A residual association reaches executable coverage only through proof.
+    ///
+    /// The compile-fail doctest on [`PendingIndexRefinementReceipt`] carries the
+    /// structural half — a pending value exposes no coverage accessor. This
+    /// carries the behavioural half: an undischarged residual leaves `complete`
+    /// with no receipt to project, so no coverage identity exists to name.
+    ///
+    /// Only the `Unknown` refusal is reachable from a verified region here.
+    /// `IndexRegionBuilder` runs its own exhaustive fallback under
+    /// [`MAX_EXHAUSTIVE_PROOF_CELLS`], and an access it can walk it either
+    /// discharges or refuses as `CoordinateOutOfBounds` at build time, so a
+    /// small disprovable region never becomes a `VerifiedIndexRegion` at all.
+    /// A `Disproved` completion needs a region inside the cell window between
+    /// that bound and [`MAX_FINITE_DOMAIN_PROOF_CELLS`] whose per-point integer
+    /// work still fits [`MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES`]; both refusal
+    /// arms leave `complete` through the same `Err` return, so the coverage
+    /// claim does not depend on exhibiting the second one.
+    #[test]
+    fn pending_and_refused_proofs_have_no_executable_coverage_spelling() {
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let input = program
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([LENGTH]))
+            .unwrap();
+        let value = F32Multiply::apply(&mut program, input, input).unwrap();
+        program
+            .output(OutputKey::new("output").unwrap(), value)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        let semantic = FrozenSemanticRegistry::standard().unwrap();
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars.clone()).unwrap();
+        let resolution = laws.resolve(&subject).unwrap();
+        let pending = |region: VerifiedIndexRegion| PendingIndexRefinementReceipt {
+            resolution: resolution.clone(),
+            scalar_authority: scalars.revalidate_region(&region).unwrap(),
+            operand_bindings: Vec::new(),
+            result_bindings: Vec::new(),
+            region,
+        };
+        let budget = IndexDomainProofBudget::try_new(
+            MAX_FINITE_DOMAIN_PROOF_CELLS,
+            MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+        )
+        .unwrap();
+
+        let unprovable = pending(residual_region(1, 5, 0));
+        assert_eq!(unprovable.obligations().len(), 1);
+        let refusal = ResolvedIndexRealization::complete(&unprovable, budget)
+            .expect_err("a residual beyond the hard integer budget cannot be discharged");
+        assert_eq!(refusal.kind(), IndexDomainProofRefusalKind::Unknown);
+        assert_eq!(refusal.assessments().len(), 1);
+        // The same association mints coverage only once its obligations are
+        // discharged, so the refusal above is the difference between a spelling
+        // and none — not a difference in the association itself.
+        let discharged = mint_receipt(
+            unprovable.subject(),
+            &unprovable.resolution,
+            unprovable.region.canonical_identity(),
+            unprovable.scalar_authority.clone(),
+            unprovable.operand_bindings.clone(),
+            unprovable.result_bindings.clone(),
+            proofs_for(&unprovable.region),
+        );
+        assert_eq!(discharged.index_domain_proofs().len(), 1);
+        let unproved = mint_receipt(
+            unprovable.subject(),
+            &unprovable.resolution,
+            unprovable.region.canonical_identity(),
+            unprovable.scalar_authority.clone(),
+            unprovable.operand_bindings.clone(),
+            unprovable.result_bindings.clone(),
+            Vec::new(),
+        );
+        assert_ne!(
+            discharged.executable_coverage_identity(),
+            unproved.executable_coverage_identity()
+        );
+    }
+
+    /// Seals one exact-finite proof per retained obligation of `region`.
+    ///
+    /// The completion algorithm's own budget is not the subject here; this
+    /// supplies the proof records a discharged association would carry so the
+    /// minted coverage can be compared against the same association's
+    /// undischarged encoding.
+    fn proofs_for(region: &VerifiedIndexRegion) -> Vec<IndexRefinementDomainProof> {
+        let authority = Arc::new(IndexDomainProofAuthority::exact_finite());
+        region
+            .unknown_index_domain_predicates()
+            .map(|obligation| {
+                let proof = IndexDomainProofEvidence::ExhaustiveFinite {
+                    points: 2,
+                    derivation: EXHAUSTIVE_DERIVATION.into(),
+                };
+                IndexRefinementDomainProof {
+                    obligation,
+                    authority: authority.clone(),
+                    identity: IndexRefinementDomainProofIdentity(
+                        encode_proof_identity(region, obligation, &authority, &proof)
+                            .into_boxed_slice(),
+                    ),
+                    proof,
+                }
+            })
+            .collect()
     }
 
     #[test]

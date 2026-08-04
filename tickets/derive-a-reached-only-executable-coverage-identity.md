@@ -78,6 +78,8 @@ The branch then merged exact pushed claim base
 `288e7aab920e3a8bc6d9b242621d5a1cbeabfa2c` without conflict before final
 checks.
 
+**Resumption — 2026-08-04.** The branch merged `ce62ad550c73287a43099aefbc9eff11b2bafc31` cleanly; `git diff --name-only 39025a6d ac97efe0` outside `tickets/` and `docs/` is `README.md` alone, all of it arriving from `main`. Resumption adds `crates/tiler-artifact/src/program/tests.rs` to the population, which `ticketsplease.toml` maps to the already-declared `implementation/artifact`. Concurrency at resumption: the only live claims were `decide-the-expansion-cache-collection-schedule` (`research/cache`, `implementation/cache` — disjoint) and `supersede-the-runtime-owned-kv-state-design`, which shares `contracts/foundation` and `research/program-planning`. `git diff --name-only ce62ad55...tkt/supersede-the-runtime-owned-kv-state-design` was empty, so that branch had committed nothing to intersect; file-level disjointness on `docs/ir.md` therefore rests on the coordinator's instruction to that worker rather than on a diff, and is recorded as such rather than as a verified intersection. No live ticket held `implementation/artifact`.
+
 ## Tested draft and identity audit — 2026-08-04
 
 **Proposal — exact public inventory, not self-accepted:** `tiler_ir::index`
@@ -99,37 +101,86 @@ residual proof identity. It does not encode the subject semantic snapshot,
 scalar snapshot, or frozen law-registry snapshot. Those remain in the existing
 strict receipt/request authority.
 
+**Fact — omitted subjects are determined, not dropped.** The encoder does not
+restate the operation key, ordered signature, host-canonical attributes, or
+boundary shapes. `compute_graph_identity` writes each of them for every
+operation in canonical traversal order under `tiler.semantic-graph.v2`
+(`crates/tiler-ir/src/semantic/identity.rs`, via `encode_operation`), and
+`IndexRefinementSubject::derive` fixes the retained occurrence to that same
+canonical ordinal, so the retained `(graph, occurrence)` pair already determines
+them. Encoding them again would restate a determined value rather than close an
+open substitution; the reasoning is recorded on the type's doc comment so a
+later reader does not mistake the omission for an oversight.
+
 **Fact — domain audit:** this introduces exactly one independently tagged
 domain, `tiler.ir.index-refinement-executable-coverage.v1`. It does not change
 the grammar or meaning of receipt v1, subject v2, authority v1, resolution v1,
 proof v1, kernel-program v7, artifact-stage v2, artifact-program v14, or the
-envelope. No existing literal pin consumes the new domain. The dependent
+envelope. No existing literal pin consumes the new domain. **No pinned identity
+moved on this branch**: no version constant, golden, or literal pin is added,
+removed, or edited by the diff, which touches only `refinement.rs`, the
+`index/mod.rs` re-export list, the artifact program test, `docs/ir.md`, and this
+ticket. The dependent
 `bind-stage-coverage-to-index-refinement-identity` ticket still owns program and
 artifact consumption, their two independent encoders, and any resulting
 merged-tree version/pin recomputation.
 
-**Fact — deliberate evidence:** unused semantic-provider revisions and unused
-scalar definition/provider revisions change strict receipt identity while
-leaving executable coverage equal. Reached semantic/law-provider and reached
-scalar-provider revisions move executable coverage. Separate perturbations of
-graph, canonical occurrence, numerical contract, region, law row, provider,
-operand binding, result binding, and residual proof identity each move it.
-Equivalent authoring orders retain equal reached identities for the same named
-occurrence and distinct identities for the other occurrence. The exact command
-populations and final preserved hash are recorded at handoff after all checks.
+**Fact — deliberate evidence, one named test per perturbation bullet.**
 
-**Fact — failure-path evidence:** deleting the numerical-contract frame from
-the production encoder made
-`executable_coverage_retains_each_replay_and_substitution_boundary` fail at its
-contract-only inequality. Restoring the frame made the same focused population
-pass 1/1. This demonstrates the new subject-retention test can say no rather
-than merely following fixture construction.
+| Perturbation | Test | Location |
+| --- | --- | --- |
+| Unused semantic provider revision leaves coverage equal | `executable_coverage_excludes_unused_authority_but_retains_reached_scalar_provenance` | `crates/tiler-ir/src/index/refinement.rs` |
+| …and leaves kernel-program and artifact identity equal | `an_unused_semantic_provider_revision_does_not_change_identity` | `crates/tiler-artifact/src/program/tests.rs` |
+| Unused scalar definition/provider leaves coverage equal | `executable_coverage_excludes_unused_authority_but_retains_reached_scalar_provenance` | `crates/tiler-ir/src/index/refinement.rs` |
+| Reached semantic or scalar provider revision moves coverage | `executable_coverage_excludes_unused_authority_but_retains_reached_scalar_provenance` | `crates/tiler-ir/src/index/refinement.rs` |
+| Region, contract, occurrence, law row, law provider, law revision, operand binding, result binding, residual proof — one at a time | `executable_coverage_retains_each_replay_and_substitution_boundary` | `crates/tiler-ir/src/index/refinement.rs` |
+| Crossing two completed receipts with equal shapes/interfaces | `completion_receipts_cannot_be_cross_wired_between_real_occurrences` | `crates/tiler-ir/src/index/refinement.rs` |
+| No public construction can form a crossed coverage | two `compile_fail` doctests on `IndexRefinementExecutableCoverageIdentity` | `crates/tiler-ir/src/index/refinement.rs` |
+| Equivalent authoring orders mint equal occurrence-bound identities | `equivalent_authoring_orders_retain_directional_canonical_occurrences` | `crates/tiler-ir/src/index/refinement.rs` |
+| Proof pending/refusal has no executable coverage spelling | `pending_and_refused_proofs_have_no_executable_coverage_spelling` plus the `compile_fail` doctest on `PendingIndexRefinementReceipt` | `crates/tiler-ir/src/index/refinement.rs` |
 
-**Measurement — merged branch checks:** under the repository's pinned Rust
-toolchain, `cargo nextest run -p tiler-ir -p tiler-compiler -p tiler-artifact
---no-fail-fast` passed 1,556/1,556 with three configured skips. Package
-doc-tests passed 21/21 with one ignored (including the new opaque-constructor
-compile-fail case), and Clippy over all targets in the three crates passed with
-warnings denied. Formatting, `git diff --check`, `tkt lint`, `tkt reconcile`,
-and scope guard are rerun after the final evidence commit so they inspect the
-exact preserved tip.
+The kernel-program leg is asserted on `VerifiedKernelProgram::canonical_identity`
+separately from the artifact leg, because the artifact folds the program
+identity and an equal artifact alone cannot distinguish an unchanged program
+from two changes that cancelled.
+
+**Fact — the completer's `Disproved` arm is not reachable from a small verified
+region, and that is a property of the layering rather than a gap in the test.**
+`IndexRegionBuilder` runs its own exhaustive fallback under
+`MAX_EXHAUSTIVE_PROOF_CELLS` (1,048,576) and refuses an out-of-bounds access as
+`CoordinateOutOfBounds` at build time, so a disprovable small region never
+becomes a `VerifiedIndexRegion`; it also discharges the residual it can walk, so
+a *provable* small region carries no residual either. Reaching a `Disproved`
+completion needs a region inside the cell window between that bound and
+`MAX_FINITE_DOMAIN_PROOF_CELLS` (16,777,216) whose per-point integer work still
+fits the shared 64 MiB byte bound, and the existing out-of-bounds fixture
+`residual_region(1, 5, 1)` exceeds that byte bound (see
+`exact_finite_evaluation_returns_the_first_counterexample`). Both refusal arms
+leave `complete` through the same `Err`, so the coverage claim is carried by the
+reachable `Unknown` refusal; the test records the reasoning at its definition.
+
+**Fact — failure-path evidence, every new check run against a case that must
+fail.** Deleting the numerical-contract frame from the production encoder failed
+`executable_coverage_retains_each_replay_and_substitution_boundary` at its
+contract-only inequality (earlier session). Resumption added six more:
+
+- deleting the residual-proof frame failed `pending_and_refused_proofs_have_no_executable_coverage_spelling` and `executable_coverage_retains_each_replay_and_substitution_boundary`;
+- deleting the occurrence frame failed `completion_receipts_cannot_be_cross_wired_between_real_occurrences` and `executable_coverage_retains_each_replay_and_substitution_boundary`;
+- adding `semantic_snapshot` and `scalar_snapshot` back into the coverage encoder failed `executable_coverage_excludes_unused_authority_but_retains_reached_scalar_provenance` — the ADR 0072 exclusion is what that test measures;
+- building the two artifact fixtures from genuinely different kernel programs failed the new kernel-program leg of `an_unused_semantic_provider_revision_does_not_change_identity`, so that assertion is a live comparison rather than a value against itself;
+- making the coverage field public, adding `impl From<&[u8]>`, and adding an `executable_coverage_identity` accessor to `PendingIndexRefinementReceipt` each made its corresponding `compile_fail` doctest compile and therefore fail — all three reported "Test compiled successfully, but it's marked `compile_fail`".
+
+Every perturbation was reverted and the green run below was taken on the
+restored tree.
+
+**Measurement — resumed branch checks** (pinned toolchain, `ac97efe0` merged
+tree): `cargo fmt -p tiler-ir -p tiler-artifact -- --check` clean;
+`cargo check --workspace --all-targets` clean; `cargo nextest run -p tiler-ir -p
+tiler-compiler -p tiler-artifact --no-fail-fast` passed 1,557/1,557 with three
+configured skips; `cargo test -p tiler-ir -p tiler-compiler -p tiler-artifact
+--doc` passed 23/23 with one ignored, including all three new compile-fail
+cases; `cargo clippy -p <pkg> --all-targets -- -D warnings` exited 0 for each of
+the three crates. The workspace gate remains red for an unrelated reason
+recorded in `restore-the-metal-toolchain-so-the-workspace-gate-can-run-green`
+(missing metallib, `tiler-macros` and `tiler-prototype-compile`); none of those
+packages is touched here.
