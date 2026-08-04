@@ -1,0 +1,4 @@
+cell	C	S	capacity	payload_transfer_bytes	exact_live_accessible_span_bytes	capacity_strided_accessible_span_bytes	two_bank_pool_reservation_bytes
+c1-prefill	0	10	18	2293760	2293760	3899392	8257536
+c1-final	17	18	18	8028160	8028160	8228864	8257536
+b1-final	8319	8320	8320	3816587264	3816587264	3816787968	3816816640

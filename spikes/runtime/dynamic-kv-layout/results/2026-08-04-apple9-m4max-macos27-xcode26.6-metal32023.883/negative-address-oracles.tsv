@@ -1,0 +1,4 @@
+exact-head-compact	dynamic-kv-layout: oracle mismatch for exact-head-compact: count=8960 first=1280
+exact-head-pooled	dynamic-kv-layout: oracle mismatch for exact-head-pooled: count=8960 first=1280
+capacity-head	dynamic-kv-layout: oracle mismatch for capacity-head: count=8960 first=1280
+sequence-major	dynamic-kv-layout: oracle mismatch for sequence-major: count=10112 first=128

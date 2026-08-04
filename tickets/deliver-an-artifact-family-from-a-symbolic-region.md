@@ -3,7 +3,7 @@ id: deliver-an-artifact-family-from-a-symbolic-region
 title: Deliver an artifact family from a region with symbolic extents
 status: todo
 priority: p1
-dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary]
+dependencies: [admit-live-extent-operands-to-payload-indexing]
 related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-aot-integration-proof]
 scopes: [implementation/frontend, contracts/integrations]
 shared_scopes: [project/tickets]
@@ -19,6 +19,8 @@ A region declaring `sym n` states `deliver macos;` and reaches the same expansio
 **Fact.** The refusal exists and names this chain by id. `crates/tiler-macros/src/aot.rs:223` renders "this region declares a symbolic extent, and a `deliver` statement selecting an artifact family compiles the region ahead of time — which needs every extent to be known at expansion time", and `crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.stderr` is the byte-compared golden. `prototype-inline-aot-integration-proof`'s boundary packet lists it as observable change 4.
 
 **Fact.** Everything downstream already works for a literal region: the measured proof compiles through `xcrun`, publishes a 49,432-byte bundle, hits the cache warm with zero compiler runs, embeds one `MTLB` payload into the produced binary, and routes it with the cache root deleted.
+
+**Fact — dependency correction from the KV layout trace.** Artifact-side `AbiRoot::InputExtent` evaluation can size ranges and launches, but the structured-kernel/Metal signature carries no live scalar into payload address or loop arithmetic. `admit-live-extent-operands-to-payload-indexing` is therefore a hard dependency: this ticket cannot truthfully deliver one compiled symbolic payload while only the host side consumes the symbol.
 
 ## Implementation keys
 
