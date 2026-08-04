@@ -111,20 +111,14 @@ PreparedKvStateSet           // non-Clone; carries every ordered member snapshot
   step() -> u64
   total() -> u64
 
-KvArtifactStateSpec {
-  state_interface: StateInterfaceKey,
-  layer: LayerOrdinal,
-  cache_input: usize,
-  cache_axis: Axis,
-  step_input: usize,
-  step_axis: Axis,
-  extended_output: usize,
-  extended_axis: Axis,
-}
+DecodedProgram::state_interface()
+  -> DecodedStateInterface   // validated artifact-owned complete ordered manifest;
+                             // rows name cache input/layer/axis, step input/axis,
+                             // retained output/axis, and S = C + T relation
 
-KvArtifactStateBindingSet    // non-Clone decoded-artifact view; exact ordered
-                             // bijection over all state inputs/retained outputs
-  from_decoded_program(&DecodedProgram, &[KvArtifactStateSpec])
+KvArtifactStateBindingSet    // non-Clone exact ordered bijection derived from the
+                             // authoritative decoded manifest, never a caller list
+  from_decoded_program(&DecodedProgram)
     -> Result<KvArtifactStateBindingSet, KvArtifactBindingError>
 
 KvRouteSession<'adapter, A> // non-Clone; owns one &mut A, one LiveExecutionContext,
@@ -159,6 +153,28 @@ BoundKvTransaction          // non-Clone; owns exclusive set borrow, adapter/con
                             // identity-bound replacements to the transaction,
                             // which validates all then publishes atomically
 
+RuntimeAdapter {
+  type StateStorage;
+  type StateRetention;
+  execute_state_transaction(
+    &mut self, &LiveExecutionContext, &RoutedDispatch,
+    StateTransactionReporter<Self::StateStorage, Self::StateRetention,
+                             Self::Completion, Self::Failure>,
+  ) -> StateTransactionReport<Self::StateStorage, Self::StateRetention,
+                              Self::Completion, Self::Failure>
+}
+
+StateTransactionReporter    // non-Clone, no public constructor; bound transaction
+  failure(KvFailureStage, F) -> StateTransactionReport
+  success(C, SubmissionReceipt, ExactTerminalObservation,
+          CoherenceRecordSet, ValidationRecordSet,
+          ExactSizeIterator<StateMemberReplacement<Storage, Retention>>)
+    -> StateTransactionReport
+
+StateMemberReplacement { expected_member: KvStateIdentity, storage, retention }
+StateTransactionReport      // opaque; reporter attaches execution identity and
+                            // expected complete ordered member population
+
 ExactTerminalSuccess<C>      // opaque completion; minted by the bound transaction
                              // only after exact receipt/coherence/validation/publication
 
@@ -167,12 +183,16 @@ KvPostCommitFailure<F>       // opaque, no public constructor; transaction attac
   stage()
   cause()
 
+KvPostCommitFailureCause<F> = Adapter(F) | InvalidReport(KvStateReportError)
+
 KvFailureStage = Allocation | StorageBinding | Encoding | Submission
                | Completion | Coherence | ValidationReadback
                | Retention | Publication
 ```
 
 `StateInterfaceKey` is minted only while holding the whole `DecodedProgram`. Its subject is the decoded envelope's already-validated semantic-graph identity, the complete input/output logical interface in semantic order (stable keys, logical shapes, and resolved logical types), and the selected input's ordinal and stable key. The constructor resolves that ordinal through `DecodedProgram::inputs()` and refuses an absent slot. It is not a second caller-authored grammar, cannot be constructed from arbitrary bytes or a detached `DecodedInput`, and does not include physical components, artifact canonical identity, payloads, variants, delivery position, provenance, or any live fact. Two unrelated programs that both call an input `k_cache` therefore do not share state identity; K and V in one program remain distinct by ordinal and key.
+
+The artifact's governed state-interface manifest is the sole population authority. Its encoder derives rows from the verified semantic retained-state declarations and additive extent relations, encodes every row in semantic input order, and the decoder refuses duplicate, missing-target, ill-typed, unrelated, or non-injective rows before exposing `DecodedProgram`. The manifest is artifact content and therefore covered by artifact identity, but a *live state instance* is not: rows contain only semantic/interface slots, axes, layer ordinals, and relation references. `KvArtifactStateBindingSet::from_decoded_program` consumes that complete decoded view without accepting caller specs, so omitting V cannot redefine a K-only set as complete. The dependent artifact/runtime binding ticket owns adding and validating this manifest and its schema/identity step; this proposed state boundary fixes the required consumer surface and does not claim it exists today.
 
 `KvStateIdentity` includes the generation because a binding prepared against generation `g` must not bind after another execution publishes generation `g + 1`. It deliberately excludes the cursor and capacity as separate identity fields: the generation is the version of the immutable published snapshot that contains them. Both values remain checked state metadata, never specialization values or cache-key material.
 
@@ -190,7 +210,7 @@ One `KvState` remains the singular named allocation and identity required by thi
 
 The boundary's **meaning** is that one adapter-authenticated runtime-instance scope covers one live device and execution context; authority tied to the currently bound route, not equality supplied by the consumer, is required at every state bind, and a reset or context replacement invalidates it. The runtime interprets no adapter token and exposes no platform object. `StateInterfaceKey` similarly means one exact input slot in one decoded semantic graph and ordered interface, not caller text or a locally stable input key that happens to match. These validation obligations survive any later Rust renaming.
 
-The **concrete spelling proposed for acceptance** is the type and method inventory above: `LiveStateScope`; non-Clone, runtime-minted `LiveStateScopeFactory` and `CurrentLiveStateScope`; `RuntimeAdapter::bind_live_state_scope`; `StateInterfaceKey::from_decoded_program` and `StateInterfaceKeyError`; singular read-only `KvState`; constructing/mutating `KvStateSet`; non-Clone context-bound `KvRouteSession`; validated `KvArtifactStateBindingSet`; `PreparedKvRoute::commit` consuming the exact existing loader `Preflight` it carries; `BoundKvTransaction` carrying its identity, adapter/context, set guard, and `RoutedDispatch`; `ExactTerminalSuccess`; and `KvFailureStage`. No public raw-parts constructor, detached-input constructor, independent state constructor, mutating cursor/generation/scope/status setter, execution-identity constructor, success/failure identity argument, or public way to join arbitrary state preparation to an arbitrary `Preflight` exists.
+The **concrete spelling proposed for acceptance** is the type and method inventory above: `LiveStateScope`; non-Clone, runtime-minted `LiveStateScopeFactory` and `CurrentLiveStateScope`; `RuntimeAdapter::bind_live_state_scope`; `StateInterfaceKey::from_decoded_program` and `StateInterfaceKeyError`; singular read-only `KvState`; constructing/mutating `KvStateSet`; non-Clone context-bound `KvRouteSession`; artifact-owned `DecodedStateInterface` and validated `KvArtifactStateBindingSet`; `PreparedKvRoute::commit` consuming the exact existing loader `Preflight` it carries; `BoundKvTransaction` carrying its identity, adapter/context, set guard, and `RoutedDispatch`; adapter `StateStorage`/`StateRetention` and `execute_state_transaction` reporter protocol; opaque `StateTransactionReport`, `ExactTerminalSuccess`, and `KvPostCommitFailure`; and `KvFailureStage`. No public raw-parts constructor, caller-authored state-manifest population, detached-input constructor, independent state constructor, mutating cursor/generation/scope/status setter, execution-identity constructor, success/failure identity argument, or public way to join arbitrary state preparation to an arbitrary `Preflight` exists.
 
 ## Construction and representation invariants
 
@@ -224,7 +244,7 @@ The artifact carries formulas over bound `C`, `T`, and `S`, never their invocati
 8. `S <= capacity`; and
 9. the logical storage view agrees with `[0, C)` and the preparation-time storage fingerprint.
 
-The same consuming session then joins those snapshots to `KvArtifactStateBindingSet` derived from that decoded program. It requires an exact ordered bijection between set members and the route's state inputs/retained outputs, binds every member's exact `C` and request `T` through the supplied `AbiFactBinder`, rejects a contradictory fact, evaluates every retained additive relation and requires each output to equal checked `S`, then passes the frozen `AbiFacts` through the existing adapter qualification/preparation/plan stages. The returned `PreparedKvRoute` is the only public join between state preparation, one live context, and loader `Preflight`; none can be substituted after the join.
+The same consuming session then joins those snapshots to `KvArtifactStateBindingSet` derived from that decoded program's authoritative manifest. It requires an exact ordered bijection between set members and all manifest rows, binds every member's exact `C` and request `T` through the supplied `AbiFactBinder`, rejects a contradictory fact, evaluates every retained additive relation and requires each output to equal checked `S`, then passes the frozen `AbiFacts` through the existing adapter qualification/preparation/plan stages. The returned `PreparedKvRoute` is the only public join between state preparation, one live context, and loader `Preflight`; none can be substituted after the join.
 
 The public refusal inventory is exhaustive and has no catch-all variant:
 
@@ -266,6 +286,7 @@ StateInterfaceKeyError {
 }
 
 KvArtifactBindingError {
+  NoStateInterface,
   ForeignStateInterface,
   MissingMember { expected },
   ExtraMember { observed },
@@ -284,6 +305,20 @@ KvRoutePreflightError<R> {
   AbiBinding(AbiBindingError),
   ExtentRelationMismatch { cursor, step, expected_total, observed_total },
   Route(R),
+}
+
+KvStateReportError {
+  MissingReplacement { expected },
+  ExtraReplacement { observed },
+  DuplicateReplacement { member },
+  ReplacementOutOfOrder { previous, observed },
+  MemberIdentityMismatch { expected, observed },
+  SubmissionReceiptMismatch,
+  NonterminalObservation,
+  IncompleteCoherence { member },
+  IncompleteValidationReadback { member },
+  InvalidReplacementStorage { member },
+  InvalidRetention { member },
 }
 ```
 
@@ -324,6 +359,10 @@ The adapter may wrap these in its consumer-specific error, but it may not erase 
 The first update is always out of place. The old allocation is bound read-only over `[8, C, 128]`; the new allocation is distinct and has the same fixed physical `[8, capacity, 128]` capacity while the program writes only its declared `[8, S, 128]` logical output. Input and output sharing one allocation is refused before commit by the existing `ForbiddenAlias` rule.
 
 After `RoutingCommit`, every allocation, binding, encoding, submission, completion, coherence, validation-readback, retention, and publication failure is terminal for the attempt and poisons the complete state set. There is no fallback and no reuse of any still-intact old member: the consumer did not receive the failed step's token, so continuing from the old cursor would execute a different sequence from the one the consumer believes it owns.
+
+The existing adapter's combined `allocate_dispatch`/`dispatch` result is insufficient for state publication, so acceptance includes `execute_state_transaction` and its associated storage/retention types. The bound transaction creates `StateTransactionReporter` from its own execution identity and expected manifest population and gives that capability to the adapter with the exact context and routed dispatch. The adapter cannot construct `StateTransactionReport` directly. It returns either `reporter.failure(stage, cause)` or `reporter.success(...)` with the submission receipt, exact terminal observation, coherence and validation record sets, completion, and ordered member replacements. The reporter binds the report to this execution and bounded expected population; it does not trust `A::Completion` to contain state evidence by convention.
+
+`BoundKvTransaction::execute` validates the returned report before publication. An adapter-reported failure becomes `KvPostCommitFailureCause::Adapter`; an absent/extra/duplicate/unordered replacement, mismatched member identity, foreign storage, wrong receipt, incomplete coherence/readback set, or retention defect becomes `InvalidReport(KvStateReportError)` at the exact stage the transaction was validating. Both attach the transaction's identity and poison all members. This is an extension of the adapter boundary, not a claim the current trait already supplies these records.
 
 Publication requires a complete ordered replacement set and `TerminalSuccess` tied to the bound transaction's own `KvExecutionIdentity` and submission receipt. Before mutating anything, `execute` verifies that replacements are neither missing, extra, duplicate, nor out of order; each replacement names its member identity, has distinct old/new allocation, exact capacity/domain/range, retention lease, coherence, and validation record; and the receipt covers the whole route. Only then does one infallible critical section replace every member and the shared cursor/status:
 
@@ -423,9 +462,9 @@ Tom's acceptance is required for this exact consequential public draft:
 - opaque `StateInterfaceKey::from_decoded_program` over semantic-graph identity, the complete ordered logical interface, and input ordinal, plus exhaustive `StateInterfaceKeyError`, `LayerOrdinal`, `StateGeneration`, `StateCursor`, `StateCapacity`, `KvStateIdentity`, and opaque `KvExecutionIdentity` in the state surface;
 - `KvStateStatus::{Ready, Poisoned { failed_execution }}` and opaque `KvExecutionIdentity` minted only by commit from the complete snapshots, step, routed dispatch, and diagnostic ordinal;
 - singular read-only `KvState<Storage, Retention>` members, plus `KvStateSet` as their only construction/mutation owner, bounded at 4,096 and rejecting empty, duplicate, missing, extra, unordered, mixed-scope, and mixed-cursor sets;
-- non-Clone `KvRouteSession` holding one adapter borrow, one exact `LiveExecutionContext`, and its current scope from binding through commit; non-Clone `PreparedKvStateSet`; validated exact-bijection `KvArtifactStateBindingSet`; and `PreparedKvRoute::commit` producing `BoundKvTransaction` with its set guard, context, adapter, identity, and `RoutedDispatch` already attached;
-- opaque transaction-minted `ExactTerminalSuccess`, opaque transaction-minted `KvPostCommitFailure` with identity/stage/cause readers only, and exhaustive `KvFailureStage` including coherence and validation readback;
-- exact `KvStateBuildError`, `KvStateSetBuildError`, `KvStateRefusal`, `KvStateSetRefusal`, artifact-binding, and route-preflight inventories above, including same-range stale-storage detection, without wildcard classes;
+- non-Clone `KvRouteSession` holding one adapter borrow, one exact `LiveExecutionContext`, and its current scope from binding through commit; non-Clone `PreparedKvStateSet`; artifact-owned complete `DecodedStateInterface`; validated exact-bijection `KvArtifactStateBindingSet` with no caller population; and `PreparedKvRoute::commit` producing `BoundKvTransaction` with its set guard, context, adapter, identity, and `RoutedDispatch` already attached;
+- adapter associated `StateStorage`/`StateRetention`, `execute_state_transaction`, non-Clone transaction-bound `StateTransactionReporter`, identity-bound complete replacement/evidence reporting, opaque transaction-minted `StateTransactionReport`, `ExactTerminalSuccess`, and `KvPostCommitFailure`, and exhaustive `KvFailureStage` including coherence and validation readback;
+- exact `KvStateBuildError`, `KvStateSetBuildError`, `KvStateRefusal`, `KvStateSetRefusal`, artifact-binding, route-preflight, and invalid-report inventories above, including same-range stale-storage detection, without wildcard classes;
 - fixed-capacity, out-of-place publication that validates all identity-bound replacements before one infallible publish-all-or-none allocation/cursor/generation replacement;
 - poisoning of every member after every post-commit non-success or unfinished drop, and cursor advancement only on the exact transaction-minted terminal-success receipt;
 - runtime-instance ownership with adapter-owned storage/device objects and consumer-owned state-handle lifetime; and
