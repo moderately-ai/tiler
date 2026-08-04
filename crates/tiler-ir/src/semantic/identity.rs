@@ -169,12 +169,19 @@ fn canonical_traversal(program: &ProgramData) -> CanonicalTraversal {
     }
 }
 
-pub(super) fn canonical_value_ids_for_verified(program: &ProgramData) -> Vec<u64> {
-    canonical_traversal(program)
+pub(super) fn canonical_coordinates_for_verified(program: &ProgramData) -> (Vec<u64>, Vec<u32>) {
+    let traversal = canonical_traversal(program);
+    let canonical_value_ids = traversal
         .canonical_ids
         .into_iter()
         .map(|identity| identity.expect("verified program reaches every retained value"))
-        .collect()
+        .collect();
+    let mut canonical_operation_ordinals = vec![0; program.operations.len()];
+    for (canonical_ordinal, operation) in traversal.operation_order.into_iter().enumerate() {
+        canonical_operation_ordinals[operation.as_usize()] =
+            u32::try_from(canonical_ordinal).expect("verified semantic operation count fits u32");
+    }
+    (canonical_value_ids, canonical_operation_ordinals)
 }
 
 fn visit_value(

@@ -566,6 +566,26 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     let second = compile(CompilationRequest::governed(&second)).unwrap();
 
     assert_eq!(first, second);
+    for kind in [
+        ProgramAlternativeKind::Materialized,
+        ProgramAlternativeKind::Fused,
+    ] {
+        let forward = alternative(&first, kind);
+        let reversed = alternative(&second, kind);
+        let coverage = |alternative: &ProgramAlternative| {
+            alternative
+                .program
+                .core()
+                .stages()
+                .map(|stage| stage.coverage().to_vec())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            coverage(forward),
+            coverage(reversed),
+            "{kind:?} stage coverage changed with authoring order"
+        );
+    }
     let target = &first.targets[0];
     let rendered = target.explain.render();
     assert!(rendered.starts_with("tiler-explain-v7 request="));

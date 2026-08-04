@@ -78,6 +78,30 @@ fn fixture_with_scale(
 }
 
 #[test]
+fn stage_coverage_uses_verified_canonical_receipt_occurrences() {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+    let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
+    let mapped = F32Add::apply(&mut builder, product, bias).unwrap();
+    let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), sum)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = request.for_target(request.target_profiles()[0]).unwrap();
+    let lowering = crate::lowering::resolve_lowering(&semantic, &request).unwrap();
+    let member = crate::region::SemanticMemberId(0);
+    let expected = lowering.occurrence(member).unwrap().canonical_occurrence();
+    assert_ne!(expected, SemanticOccurrence::new(member.0));
+    assert_eq!(covered(&[member], &lowering).unwrap(), vec![expected]);
+}
+
+#[test]
 fn artifact_construction_rejects_a_cross_program_semantic_request_mix() {
     let (_, request, scheduled) = fixture_with_scale(2.0_f32.to_bits());
     let (different_semantic, _, _) = fixture_with_scale(3.0_f32.to_bits());

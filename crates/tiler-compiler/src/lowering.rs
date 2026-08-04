@@ -72,6 +72,13 @@ impl OccurrenceLowering {
         &self.evidence
     }
 
+    /// Returns the canonical semantic occurrence proved by this lowering.
+    pub(crate) const fn canonical_occurrence(&self) -> SemanticOccurrence {
+        match &self.evidence {
+            OccurrenceEvidence::Refined(refinement) => refinement.receipt().occurrence(),
+        }
+    }
+
     /// Returns the stable explain subject key of this occurrence.
     pub(crate) fn subject_key(&self) -> String {
         format!("occurrence:{}/{}", self.member.0, self.operation)
@@ -88,6 +95,13 @@ impl ResolvedLowering {
     /// Returns the per-occurrence lowerings in ascending member order.
     pub(crate) fn occurrences(&self) -> &[OccurrenceLowering] {
         &self.occurrences
+    }
+
+    /// Resolves one dense storage member in O(1).
+    pub(crate) fn occurrence(&self, member: SemanticMemberId) -> Option<&OccurrenceLowering> {
+        self.occurrences
+            .get(usize::try_from(member.0).expect("u32 fits every supported host usize"))
+            .filter(|occurrence| occurrence.member == member)
     }
 
     /// Returns the distinct resolved providers in canonical ascending order.
@@ -425,14 +439,19 @@ fn project_occurrence(
     member: SemanticMemberId,
     contract: &NumericalContractIdentity,
 ) -> Result<IndexRefinementSubject, LoweringError> {
-    IndexRefinementSubject::derive(
-        semantic,
-        SemanticOccurrence::new(member.0),
-        contract.clone(),
-    )
-    .map_err(|_| LoweringError::Occurrence {
-        rule: "refinement-subject",
-        member,
+    let operation = semantic
+        .operations()
+        .nth(usize::try_from(member.0).expect("u32 fits every supported host usize"))
+        .ok_or(LoweringError::Occurrence {
+            rule: "refinement-subject-selector",
+            member,
+        })?
+        .id();
+    IndexRefinementSubject::derive(semantic, operation, contract.clone()).map_err(|_| {
+        LoweringError::Occurrence {
+            rule: "refinement-subject",
+            member,
+        }
     })
 }
 

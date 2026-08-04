@@ -27,7 +27,7 @@ use crate::program::SemanticOccurrence;
 use crate::schedule::{ArithmeticType, F32NumericalContractKey, NumericalContractKeyError};
 use crate::semantic::{
     EncodedComponentRole, FrozenSemanticRegistry, OpKey, OperationAttributes, OperationEffect,
-    ProviderIdentity, RegistryError, ResolvedValueType, SemanticCapabilityAuthority,
+    OperationId, ProviderIdentity, RegistryError, ResolvedValueType, SemanticCapabilityAuthority,
     SemanticGraphIdentity, SemanticProgram, SemanticRegistrySnapshotIdentity,
 };
 use crate::shape::Shape;
@@ -358,21 +358,29 @@ pub struct IndexRefinementSubject {
 }
 
 impl IndexRefinementSubject {
-    /// Derives one exact subject from a verified semantic graph and graph-local ordinal.
+    /// Derives one exact subject from a verified semantic graph and operation handle.
+    ///
+    /// The handle is a transient selector owned by `program`; the retained
+    /// [`SemanticOccurrence`] is the selected operation's canonical traversal
+    /// ordinal and is the only operation coordinate included in durable identity.
     ///
     /// # Errors
     ///
-    /// Returns a typed semantic-program error when the ordinal or one of its
+    /// Returns a typed semantic-program error when the handle or one of its
     /// referenced values cannot be resolved, or its signature exceeds bounds.
     pub fn derive(
         program: &SemanticProgram,
-        occurrence: SemanticOccurrence,
+        operation: OperationId,
         numerical_contract: NumericalContractIdentity,
     ) -> Result<Self, IndexRefinementVerificationError> {
         let operation_ref = program
-            .operations()
-            .nth(occurrence.get() as usize)
-            .ok_or(IndexRefinementVerificationError::OccurrenceOutOfRange { occurrence })?;
+            .operation(operation)
+            .map_err(IndexRefinementVerificationError::SemanticHandle)?;
+        let occurrence = SemanticOccurrence::new(
+            program
+                .canonical_operation_ordinal(operation)
+                .map_err(IndexRefinementVerificationError::SemanticHandle)?,
+        );
         let operation = operation_ref.key().clone();
         let attributes = operation_ref.attributes().clone();
         let definition = program
@@ -2917,8 +2925,8 @@ mod tests {
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
         AttributeFieldId, CanonicalField, CanonicalValue, EncodedComponentDeclaration,
-        EncodedComponentRole, EncodedComponentShape, EncodedNumericContract, F32, F32Multiply,
-        InputKey, NormativeDefinitionRef, OpKey, OperationArity, OperationConformance,
+        EncodedComponentRole, EncodedComponentShape, EncodedNumericContract, F32, F32Constant,
+        F32Multiply, InputKey, NormativeDefinitionRef, OpKey, OperationArity, OperationConformance,
         OperationDefinition, OperationDefinitionFacts, OperationInferenceError,
         OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
         OutputKey, ProviderDiagnosticCode, QuantSchemeKey, SemanticProgramBuilder,
@@ -3175,9 +3183,12 @@ mod tests {
             .output_resolved(OutputKey::new("output").unwrap(), value)
             .unwrap();
         let program = program.build().unwrap();
-        let subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), test_contract())
-                .unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
         let laws_a =
             FrozenIndexRealizationLawRegistry::from_semantic(semantic_a, scalars_a).unwrap();
         for (semantic, scalars) in [
@@ -3612,6 +3623,129 @@ mod tests {
     }
 
     #[test]
+    fn equivalent_authoring_orders_retain_directional_canonical_occurrences() {
+        let build = |reverse: bool| {
+            let mut program = SemanticProgramBuilder::try_standard().unwrap();
+            let (one, two) = if reverse {
+                let two = F32Constant::apply(&mut program, 2.0_f32.to_bits()).unwrap();
+                let one = F32Constant::apply(&mut program, 1.0_f32.to_bits()).unwrap();
+                (one, two)
+            } else {
+                let one = F32Constant::apply(&mut program, 1.0_f32.to_bits()).unwrap();
+                let two = F32Constant::apply(&mut program, 2.0_f32.to_bits()).unwrap();
+                (one, two)
+            };
+            program.output(OutputKey::new("one").unwrap(), one).unwrap();
+            program.output(OutputKey::new("two").unwrap(), two).unwrap();
+            program.build().unwrap()
+        };
+        let receipt = |program: &SemanticProgram, storage: usize| {
+            let semantic = FrozenSemanticRegistry::standard().unwrap();
+            let scalars = FrozenScalarRegistry::standard().unwrap();
+            let laws =
+                FrozenIndexRealizationLawRegistry::from_semantic(semantic.clone(), scalars.clone())
+                    .unwrap();
+            let operation = program.operations().nth(storage).unwrap().id();
+            let subject =
+                IndexRefinementSubject::derive(program, operation, test_contract()).unwrap();
+            let authority = IndexRealizationAuthority::admit(
+                &semantic,
+                &scalars,
+                subject.operation().clone(),
+                subject.signature().clone(),
+                &[super::super::constant_f32_scalar_op()],
+            )
+            .unwrap();
+            let resolution = laws.resolve(&subject).unwrap();
+            let region = super::super::IndexRealizationLaw::constant_f32()
+                .realize(&subject, &scalars)
+                .unwrap();
+            let IndexRefinementVerificationOutcome::Verified(receipt) =
+                resolution.verify(&authority, &region).unwrap()
+            else {
+                panic!("a rank-zero constant retains no residual obligation")
+            };
+            receipt
+        };
+
+        let forward = build(false);
+        let reversed = build(true);
+        assert_eq!(
+            forward.semantic_identity().graph(),
+            reversed.semantic_identity().graph()
+        );
+        assert_ne!(
+            forward.operations().next().unwrap().id(),
+            reversed.operations().nth(1).unwrap().id(),
+            "the same named operation is selected by graph-owned handles, not a shared ordinal"
+        );
+
+        // `one` is storage operation 0 in the forward graph and 1 in the
+        // reversed graph; `two` moves in the opposite direction. Compare each
+        // direction explicitly so a crossed mapping cannot be sorted away.
+        let forward_one = receipt(&forward, 0);
+        let forward_two = receipt(&forward, 1);
+        let reversed_two = receipt(&reversed, 0);
+        let reversed_one = receipt(&reversed, 1);
+        assert_eq!(forward_one.occurrence(), reversed_one.occurrence());
+        assert_eq!(forward_one.identity(), reversed_one.identity());
+        assert_eq!(forward_two.occurrence(), reversed_two.occurrence());
+        assert_eq!(forward_two.identity(), reversed_two.identity());
+        assert_ne!(forward_one.occurrence(), forward_two.occurrence());
+        assert_ne!(forward_one.identity(), forward_two.identity());
+
+        let other = IndexRefinementSubject::derive(
+            &forward,
+            forward.operations().nth(1).unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        assert_eq!(other.occurrence(), forward_two.occurrence());
+        assert_ne!(other.occurrence(), forward_one.occurrence());
+
+        let foreign = reversed.operations().next().unwrap().id();
+        assert!(matches!(
+            IndexRefinementSubject::derive(&forward, foreign, test_contract()),
+            Err(IndexRefinementVerificationError::SemanticHandle(
+                crate::semantic::HandleError::ForeignGraph {
+                    entity: crate::semantic::EntityKind::Operation
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn wide_program_derives_all_occurrences_from_one_linear_cache() {
+        const OPERATIONS: usize = 1_024;
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        for ordinal in 0..OPERATIONS {
+            let value = F32Constant::apply(&mut builder, u32::try_from(ordinal).unwrap()).unwrap();
+            builder
+                .output(
+                    OutputKey::new(format!("value-{ordinal:04}")).unwrap(),
+                    value,
+                )
+                .unwrap();
+        }
+        let program = builder.build().unwrap();
+        assert_eq!(program.canonical_operation_ordinal_count(), OPERATIONS);
+        let subjects = program
+            .operations()
+            .map(|operation| {
+                IndexRefinementSubject::derive(&program, operation.id(), test_contract()).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(subjects.len(), OPERATIONS);
+        let mut occurrences = subjects
+            .iter()
+            .map(IndexRefinementSubject::occurrence)
+            .collect::<Vec<_>>();
+        occurrences.sort_unstable();
+        occurrences.dedup();
+        assert_eq!(occurrences.len(), OPERATIONS);
+    }
+
+    #[test]
     fn completion_receipts_cannot_be_cross_wired_between_real_occurrences() {
         let mut program = SemanticProgramBuilder::try_standard().unwrap();
         let input = program
@@ -3626,12 +3760,18 @@ mod tests {
             .output(OutputKey::new("second").unwrap(), second_value)
             .unwrap();
         let program = program.build().unwrap();
-        let first_subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), test_contract())
-                .unwrap();
-        let second_subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(1), test_contract())
-                .unwrap();
+        let first_subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        let second_subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().nth(1).unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
         let semantic = FrozenSemanticRegistry::standard().unwrap();
         let scalars = FrozenScalarRegistry::standard().unwrap();
         let laws =

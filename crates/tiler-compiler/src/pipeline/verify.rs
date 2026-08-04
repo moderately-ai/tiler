@@ -166,7 +166,17 @@ pub(super) fn verify_alternative(
             cause,
         ));
     }
-    let program = build_plan_program(semantic, request, alternative.kind, scheduled)
+    let lowering = resolve_lowering(semantic, request).map_err(|_| {
+        failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-refinement-resolution",
+            }
+            .into(),
+            ExplainStage::CapabilityResolution,
+            cause,
+        )
+    })?;
+    let program = build_plan_program(semantic, request, alternative.kind, scheduled, &lowering)
         .map_err(|error| failure_at_source(error, ExplainStage::ProgramVerification, cause))?;
     if alternative.program != program {
         return Err(failure_at_source(
@@ -181,24 +191,14 @@ pub(super) fn verify_alternative(
     // The plan's own recorded provenance is checked against the request's
     // installed registry rather than against itself, so a receipt naming a
     // provider the registry never resolved fails closed here.
-    let providers = crate::lowering::resolve_capabilities(semantic, request).map_err(|_| {
-        failure_at_source(
-            ProgramError::Structure {
-                rule: "portfolio-provider-resolution",
-            }
-            .into(),
-            ExplainStage::CapabilityResolution,
-            cause,
-        )
-    })?;
-    verify_artifact_plan(
+    verify_artifact_plan_with_lowering(
         &alternative.artifact_plan,
         semantic,
         request,
         scheduled,
         &kernels,
         &program,
-        providers,
+        &lowering,
     )
     .map_err(|error| failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause))?;
     verify_equivalence(semantic, request, formation, alternative)

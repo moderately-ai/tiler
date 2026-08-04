@@ -88,7 +88,6 @@
 use std::fmt::Write as _;
 
 use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
-use tiler_ir::program::SemanticOccurrence;
 use tiler_ir::semantic::{
     ContractionIndex, ContractionIndexStructure, F32, F32TensorContraction, InputKey, OutputKey,
     SemanticProgram, SemanticProgramBuilder,
@@ -344,7 +343,7 @@ fn emitted_region_evaluation(
     let program = projection_program(m, n, k);
     let occurrence = IndexRefinementSubject::derive(
         &program,
-        SemanticOccurrence::new(0),
+        program.operations().next().unwrap().id(),
         NumericalContractIdentity::try_from_key(
             crate::request::StrictF32NumericalContract::governed().key,
         )
