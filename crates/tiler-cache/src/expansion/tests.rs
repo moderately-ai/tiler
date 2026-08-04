@@ -34,7 +34,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tiler_artifact::program::{ArtifactCodecFailure, DIGEST_BYTES, DigestAlgorithm};
 
 use super::bundle::{self, BundleRejection, BundleSection};
-use super::collect::{CollectionBound, CollectionOutcome, Disposition};
+use super::collect::{
+    CollectionBound, CollectionOutcome, Disposition, MaxEntryAge, MaxEntryAgeRefusal, RemovalReason,
+};
 use super::fault;
 use super::key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
 use super::layout::{PathRejection, key_of_entry_path};
@@ -148,12 +150,42 @@ fn publish_aged(
     key
 }
 
-/// A bound on the number of entries, with no byte ceiling.
+/// A bound on the number of entries, with no byte ceiling and no age ceiling.
 const fn at_most(entries: u64) -> CollectionBound {
     CollectionBound {
         max_total_bytes: None,
         max_entries: Some(entries),
+        max_entry_age: None,
     }
+}
+
+/// A bound on entry age alone, with neither aggregate ceiling.
+///
+/// Panics on a zero age, which is exactly the value [`MaxEntryAge::new`] refuses:
+/// the refusal has its own test, and a fixture that silently accepted one would
+/// let an age test pass for the wrong reason.
+fn older_than(max_age: Duration) -> CollectionBound {
+    CollectionBound {
+        max_total_bytes: None,
+        max_entries: None,
+        max_entry_age: Some(MaxEntryAge::new(max_age).expect("a non-zero maximum age is a bound")),
+    }
+}
+
+/// Sets one published entry's modification time to an exact instant.
+///
+/// Distinct from [`publish_aged`], which dates an entry relative to the host
+/// clock at the moment it runs. An age *boundary* is unreachable that way — the
+/// collection's own clock reading is necessarily later — so the tests that state
+/// something about the predicate itself anchor both the entry's time and the
+/// collection's `now` to one value they hold.
+fn set_published(cache: &ExpansionCache, key: &CacheKey, when: SystemTime) {
+    fs::OpenOptions::new()
+        .write(true)
+        .open(cache.entry_path(key))
+        .expect("a published entry opens")
+        .set_modified(when)
+        .expect("the host records a modification time");
 }
 
 /// Publishes one subject through the private protocol and returns the key.
@@ -1675,6 +1707,7 @@ fn a_byte_bound_removes_until_the_total_fits() {
         .collect(&CollectionBound {
             max_total_bytes: Some(each),
             max_entries: None,
+            max_entry_age: None,
         })
         .expect("a collection runs");
     assert_eq!(report.outcome(), CollectionOutcome::BoundReached);
@@ -1982,6 +2015,356 @@ fn concurrent_collectors_do_not_double_count() {
         0,
     );
     assert!(reclaimed > 0);
+}
+
+// -------------------------------------------------------------------------
+// The age ceiling
+//
+// Tom decided on 2026-08-04 that a frontend evicts old entries automatically
+// under an environment-configured policy, which superseded the design record's
+// "never automatically" schedule conclusion and nothing else. These are the
+// perturbations that decision's implementation ticket names, plus the
+// composition and refusal properties the supersession claims.
+// -------------------------------------------------------------------------
+
+/// An age ceiling removes entries older than the stated maximum and no others.
+///
+/// The plain case, through the public path, on real filesystem modification
+/// times. It also pins the attribution: an age removal names the age, which is
+/// the only thing telling an operator why an entry left when no person was
+/// present to remember the policy.
+#[test]
+fn an_age_ceiling_removes_only_entries_older_than_the_stated_maximum() {
+    let scratch = Scratch::new("age-ceiling");
+    let cache = cache(&scratch);
+    let ancient = publish_aged(&cache, b"subject-ancient", b"envelope-ancient", 900);
+    let old = publish_aged(&cache, b"subject-old", b"envelope-old", 600);
+    let young = publish_aged(&cache, b"subject-young", b"envelope-young", 60);
+
+    let report = cache
+        .collect(&older_than(Duration::from_secs(300)))
+        .expect("a collection runs");
+    assert_eq!(report.outcome(), CollectionOutcome::BoundReached);
+    assert!(report.accounts_for_every_entry());
+    assert_eq!(
+        report
+            .removed()
+            .iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>(),
+        vec![ancient, old],
+        "both entries past the age leave, oldest first",
+    );
+    for removed in report.removed() {
+        assert_eq!(removed.reason, RemovalReason::OlderThanMaxEntryAge);
+        assert_eq!(removed.reason.as_str(), "older-than-max-entry-age");
+    }
+    assert!(
+        cache.read_entry(&young, &any_payload).is_ok(),
+        "an entry inside the age is untouched",
+    );
+    assert_eq!(
+        report.bound().max_entry_age.map(MaxEntryAge::as_duration),
+        Some(Duration::from_secs(300)),
+        "the report carries the exact policy the removal is attributable to",
+    );
+}
+
+/// An entry that has reached the maximum age exactly is removed.
+///
+/// The boundary is stated as reached, not passed, so the comparison is
+/// deterministic at equality rather than only somewhere near it. Both halves are
+/// asserted from one anchor instant: the entry is dated exactly `max_age` before
+/// it and the collection is run at it, which is the only way to observe the
+/// boundary itself — a wall-clock `now` is necessarily later than the moment a
+/// test set the modification time, so it can never reach equality and a margin
+/// would replace the statement with a race.
+#[test]
+fn an_entry_exactly_at_the_age_boundary_is_removed_and_one_inside_it_is_not() {
+    let scratch = Scratch::new("age-boundary");
+    let cache = cache(&scratch);
+    let max_age = Duration::from_secs(600);
+    let anchor = SystemTime::now();
+
+    let at_boundary = publish(&cache, b"subject-boundary", b"envelope-boundary");
+    let inside = publish(&cache, b"subject-inside", b"envelope-inside");
+    set_published(&cache, &at_boundary, anchor - max_age);
+    set_published(&cache, &inside, anchor - max_age + Duration::from_secs(60));
+
+    let report = cache
+        .collect_at(&older_than(max_age), anchor)
+        .expect("a collection runs");
+    assert!(report.accounts_for_every_entry());
+    assert_eq!(
+        report
+            .removed()
+            .iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>(),
+        vec![at_boundary],
+        "an entry exactly at the maximum age has reached it",
+    );
+    assert!(
+        cache.read_entry(&inside, &any_payload).is_ok(),
+        "an entry a minute inside the maximum age stays",
+    );
+}
+
+/// An entry dated in the future is left alone, and it evicts nothing else.
+///
+/// A clock that moved backwards between a publication and a collection, a file
+/// stamped into the future, or two machines with skewed clocks sharing a root
+/// all produce a modification time after the collecting process's own reading.
+/// The age is then unknown, and an unknown age is treated as young — the same
+/// direction `sweep_temporaries` takes, and for the same asymmetry: keeping
+/// something collectable costs bounded disk, and removing something live costs
+/// work that has to be done again.
+///
+/// The second half is what makes this a perturbation rather than a formality.
+/// A selector that computed a cutoff instant, or that treated an unrepresentable
+/// age as infinite, would evict the whole cache the moment one clock disagreed.
+#[test]
+fn an_entry_dated_in_the_future_is_neither_removed_nor_a_reason_to_remove_others() {
+    let scratch = Scratch::new("age-future");
+    let cache = cache(&scratch);
+    let anchor = SystemTime::now();
+    let max_age = Duration::from_secs(300);
+
+    let future = publish(&cache, b"subject-future", b"envelope-future");
+    let young = publish(&cache, b"subject-young", b"envelope-young");
+    let expired = publish(&cache, b"subject-expired", b"envelope-expired");
+    set_published(&cache, &future, anchor + Duration::from_hours(24));
+    set_published(&cache, &young, anchor - Duration::from_secs(30));
+    set_published(&cache, &expired, anchor - Duration::from_mins(15));
+
+    let report = cache
+        .collect_at(&older_than(max_age), anchor)
+        .expect("a collection runs");
+    assert!(report.accounts_for_every_entry());
+    assert_eq!(
+        report
+            .removed()
+            .iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>(),
+        vec![expired],
+        "only the entry with a computable age past the maximum leaves",
+    );
+    assert!(
+        cache.read_entry(&future, &any_payload).is_ok(),
+        "an entry the host dates after now has an unknown age, not an infinite one",
+    );
+    assert!(
+        cache.read_entry(&young, &any_payload).is_ok(),
+        "a backwards clock does not make the rest of the cache collectable",
+    );
+}
+
+/// An age eviction racing a re-publisher of the same key removes nothing it did
+/// not measure.
+///
+/// The publisher occupies one of two positions the collector can observe, and
+/// both are asserted here rather than waited for, because a race decided by
+/// scheduling is a test that passes for reasons it cannot name.
+///
+/// **Holding the key lock.** The re-publisher has the lock when the collector
+/// reaches the key. `try_acquire` returns `None`, the entry is counted
+/// `contended`, and the age ceiling is reported unreached — even though the
+/// aggregate ceilings are absent and therefore trivially satisfied, which is
+/// exactly the case a caller reading only `bytes` and `entries` would misread as
+/// success.
+///
+/// **Republished between the scan and the lock.** The collector already selected
+/// the entry on its age when a fresh publication replaced it. The locked
+/// re-`stat` disagrees with the scan, so the fresh entry survives as
+/// `Superseded` — an age ceiling cannot unlink a publication it never measured,
+/// because the age it decided on is the same modification time the removal
+/// re-checks.
+#[test]
+fn an_age_eviction_racing_a_republisher_removes_nothing_it_did_not_measure() {
+    let scratch = Scratch::new("age-republish-race");
+    let cache = cache(&scratch);
+    let bound = older_than(Duration::from_secs(300));
+    let key = publish_aged(&cache, b"subject", b"envelope", 900);
+    let stale = cache
+        .account()
+        .expect("the cache accounts")
+        .entries()
+        .first()
+        .expect("one entry was published")
+        .clone();
+
+    let held = KeyLock::try_acquire(&cache.lock_path(&key))
+        .expect("the lock file opens")
+        .expect("an unheld lock is free");
+    let contended = cache.collect(&bound).expect("a collection runs");
+    assert_eq!(contended.contended(), 1);
+    assert!(contended.removed().is_empty());
+    assert!(contended.accounts_for_every_entry());
+    assert!(
+        matches!(
+            contended.outcome(),
+            CollectionOutcome::BoundNotReached { entries: 1, .. },
+        ),
+        "an expired entry left in place leaves the age ceiling unreached: {:?}",
+        contended.outcome(),
+    );
+    held.release().expect("the lock releases");
+
+    // The publisher lands its replacement, which the collector never measured.
+    fs::remove_file(cache.entry_path(&key)).expect("the entry is removable");
+    publish(
+        &cache,
+        b"subject",
+        b"a-considerably-longer-replacement-envelope",
+    );
+    assert_eq!(
+        cache
+            .remove_if_unchanged(&stale)
+            .expect("the removal reaches a decision"),
+        Disposition::Superseded,
+    );
+    assert_eq!(
+        cache
+            .read_entry(&key, &any_payload)
+            .expect("the replacement survives")
+            .envelope(),
+        b"a-considerably-longer-replacement-envelope",
+    );
+
+    // And the replacement is not expired, so a fresh collection under the same
+    // policy leaves it alone rather than removing it on the previous entry's age.
+    let after = cache.collect(&bound).expect("a collection runs");
+    assert_eq!(after.outcome(), CollectionOutcome::WithinBound);
+    assert!(after.removed().is_empty());
+}
+
+/// A maximum age of zero is refused at construction rather than evicting
+/// everything.
+///
+/// It is not a short retention window. `age >= 0` holds for every entry the host
+/// can date, including one published this instant, so it is "remove everything"
+/// said obliquely — with the extra failure that it removes an entry a concurrent
+/// build published microseconds ago and is about to hit. A caller that means it
+/// has two operations that say so.
+///
+/// A *negative* age needs no test because it needs no check: `Duration` is
+/// unsigned, so it is unrepresentable rather than unchecked, and there is no
+/// path through this crate on which one could arrive.
+#[test]
+fn a_zero_maximum_entry_age_is_refused_and_no_bound_can_carry_one() {
+    assert_eq!(
+        MaxEntryAge::new(Duration::ZERO),
+        Err(MaxEntryAgeRefusal::Zero),
+    );
+    assert!(
+        MaxEntryAge::new(Duration::ZERO)
+            .expect_err("zero is refused")
+            .to_string()
+            .contains("not a bound"),
+        "the refusal says why, rather than only that",
+    );
+    assert_eq!(
+        MaxEntryAge::new(Duration::from_nanos(1))
+            .expect("a one-nanosecond maximum is a bound, however aggressive")
+            .as_duration(),
+        Duration::from_nanos(1),
+        "only the value that is not a bound is refused; no floor is guessed above it",
+    );
+}
+
+/// Nothing supplies an age ceiling on its own.
+///
+/// The design record's refusal of a default bound survives Tom's decision for
+/// the *size* ceilings unchanged, and the age default it authorizes is a
+/// constant a frontend cites rather than one this crate applies. Both halves are
+/// asserted, because a `Default` quietly gaining the constant is exactly the
+/// change that would delete a user's artifacts under a number nobody chose.
+#[test]
+fn the_default_bound_states_no_age_and_the_default_age_is_only_a_constant() {
+    let scratch = Scratch::new("age-not-default");
+    let cache = cache(&scratch);
+    let key = publish_aged(&cache, b"subject", b"envelope", 400 * 24 * 3600);
+
+    assert_eq!(CollectionBound::default(), CollectionBound::UNBOUNDED);
+    assert_eq!(CollectionBound::UNBOUNDED.max_entry_age, None);
+    let report = cache
+        .collect(&CollectionBound::UNBOUNDED)
+        .expect("a collection runs");
+    assert_eq!(report.outcome(), CollectionOutcome::WithinBound);
+    assert!(
+        cache.read_entry(&key, &any_payload).is_ok(),
+        "an entry over a year old survives a bound that states no age",
+    );
+    assert_eq!(
+        MaxEntryAge::DEFAULT.as_duration(),
+        Duration::from_hours(30 * 24),
+        "the cited default is thirty days",
+    );
+}
+
+/// An age ceiling composes with an entry ceiling rather than replacing it.
+///
+/// Each ceiling only ever adds removals, so the selection is their union and the
+/// report says which one took each entry. Asserted together because a selector
+/// honouring one and ignoring the other would pass either single-ceiling test
+/// alone, and because an age pass that ran *after* the aggregate pass would
+/// remove one entry too many — the aggregate would spend bytes the expiry was
+/// about to reclaim.
+#[test]
+fn an_age_ceiling_composes_with_an_entry_ceiling() {
+    let scratch = Scratch::new("age-composes");
+    let cache = cache(&scratch);
+    let anchor = SystemTime::now();
+    let keys: Vec<CacheKey> = (0_u64..4)
+        .map(|index| {
+            let key = publish(
+                &cache,
+                format!("subject-{index}").as_bytes(),
+                format!("envelope-{index}").as_bytes(),
+            );
+            set_published(
+                &cache,
+                &key,
+                anchor - Duration::from_secs(400 - index * 100),
+            );
+            key
+        })
+        .collect();
+
+    // Ages are 400, 300, 200, 100 seconds. The age takes the first two; the
+    // entry ceiling of one then takes the older of the two survivors.
+    let report = cache
+        .collect_at(
+            &CollectionBound {
+                max_total_bytes: None,
+                max_entries: Some(1),
+                max_entry_age: Some(
+                    MaxEntryAge::new(Duration::from_secs(300)).expect("a non-zero age"),
+                ),
+            },
+            anchor,
+        )
+        .expect("a collection runs");
+    assert_eq!(report.outcome(), CollectionOutcome::BoundReached);
+    assert!(report.accounts_for_every_entry());
+    assert_eq!(
+        report
+            .removed()
+            .iter()
+            .map(|entry| (entry.key, entry.reason))
+            .collect::<Vec<_>>(),
+        vec![
+            (keys[0], RemovalReason::OlderThanMaxEntryAge),
+            (keys[1], RemovalReason::OlderThanMaxEntryAge),
+            (keys[2], RemovalReason::OverSizeCeiling),
+        ],
+        "each removal names the ceiling that selected it",
+    );
+    assert!(
+        cache.read_entry(&keys[3], &any_payload).is_ok(),
+        "the newest entry is the one the entry ceiling retains",
+    );
 }
 
 // -------------------------------------------------------------------------
