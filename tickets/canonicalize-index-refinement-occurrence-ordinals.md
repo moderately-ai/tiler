@@ -1,7 +1,7 @@
 ---
 id: canonicalize-index-refinement-occurrence-ordinals
 title: Canonicalize index-refinement occurrence ordinals
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/decisions, resear
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, identity, implementation]
-claimed_from: ready
-assignee: agent-canonical-v2
-lease_expires_at: 1785863038
 ---
 ## User-visible outcome
 
