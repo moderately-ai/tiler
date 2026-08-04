@@ -1,7 +1,7 @@
 ---
 id: complete-the-kv-ownership-supersession-sweep
 title: Complete the KV-ownership supersession sweep across the research corpus
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [supersede-the-runtime-owned-kv-state-design, reclassify-language-model-work-as-a-conformance-track, design-autoregressive-state-and-kv-cache, establish-a-dynamic-kv-physical-layout-authority, spike-first-metal-contraction-vertical, bind-repeated-invocations-over-caller-retained-tensors]
@@ -9,9 +9,6 @@ scopes: [research/runtime, research/shapes, research/scheduling, research/progra
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, supersession, consumer-neutral, kv-cache, corpus-consistency]
-claimed_from: todo
-assignee: agent-kv-sweep
-lease_expires_at: 1785877711
 ---
 ## User-visible outcome
 
