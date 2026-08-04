@@ -1371,7 +1371,12 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// The tag steps rather than the section being appended silently, because every
 /// program ever encoded maps to different bytes now and a cache or artifact
 /// holding a `v5` identity must miss rather than match.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v6\0";
+///
+/// `v7` changes every stage-coverage ordinal from semantic-program storage
+/// order to canonical semantic occurrence order. The four-byte field is
+/// unchanged, so the tag must step: under `v6` the same bytes could name a
+/// different operation after equivalent authoring-order changes.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v7\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());

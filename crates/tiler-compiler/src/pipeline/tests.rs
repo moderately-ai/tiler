@@ -562,8 +562,21 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
         first.semantic_identity().graph(),
         second.semantic_identity().graph()
     );
+    let occurrence_count = first.operations().count();
+    crate::lowering::reset_refinement_proof_work();
     let first = compile(CompilationRequest::governed(&first)).unwrap();
+    assert_eq!(
+        crate::lowering::refinement_proof_work(),
+        occurrence_count * 2,
+        "each occurrence is refined once by planning and once by the independent portfolio verifier"
+    );
+    crate::lowering::reset_refinement_proof_work();
     let second = compile(CompilationRequest::governed(&second)).unwrap();
+    assert_eq!(
+        crate::lowering::refinement_proof_work(),
+        occurrence_count * 2,
+        "two retained alternatives must not multiply verifier proof work"
+    );
 
     assert_eq!(first, second);
     for kind in [
@@ -2368,8 +2381,11 @@ fn verification_refuses_an_alternative_with_an_opaque_plan() {
     );
     forged.stable_id = forged.identity.label();
 
-    let error = super::verify::verify_alternative(&semantic, &request, &formation, &forged, None)
-        .unwrap_err();
+    let lowering = resolve_lowering(&semantic, &request).unwrap();
+    let error = super::verify::verify_alternative(
+        &semantic, &request, &formation, &forged, &lowering, None,
+    )
+    .unwrap_err();
     assert_eq!(error.context.stage, ExplainStage::ProgramVerification);
     assert_eq!(
         error.context.reason.as_str(),

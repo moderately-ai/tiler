@@ -43,7 +43,9 @@ use super::{
 };
 
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
-const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v1\0";
+const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v2\0";
+#[cfg(test)]
+const LEGACY_SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v1\0";
 const AUTHORITY_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-authority.v1\0";
 const RESOLUTION_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-resolution.v1\0";
 const PROOF_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-domain-proof.v1\0";
@@ -376,11 +378,8 @@ impl IndexRefinementSubject {
         let operation_ref = program
             .operation(operation)
             .map_err(IndexRefinementVerificationError::SemanticHandle)?;
-        let occurrence = SemanticOccurrence::new(
-            program
-                .canonical_operation_ordinal(operation)
-                .map_err(IndexRefinementVerificationError::SemanticHandle)?,
-        );
+        let occurrence =
+            SemanticOccurrence::new(program.canonical_operation_ordinal(operation_ref));
         let operation = operation_ref.key().clone();
         let attributes = operation_ref.attributes().clone();
         let definition = program
@@ -2218,11 +2217,6 @@ pub enum IndexRefinementVerificationError {
     /// A completed receipt did not belong to the pending association supplied
     /// to the consumer.
     CompletionReceiptMismatch,
-    /// The typed graph-local occurrence is outside the verified program.
-    OccurrenceOutOfRange {
-        /// Graph-local occurrence that did not resolve.
-        occurrence: SemanticOccurrence,
-    },
     /// A verified semantic handle failed to resolve.
     SemanticHandle(crate::semantic::HandleError),
     /// The semantic operation definition disappeared from its frozen authority.
@@ -2369,11 +2363,6 @@ impl fmt::Display for IndexRefinementVerificationError {
             ),
             Self::CompletionReceiptMismatch => formatter
                 .write_str("completed receipt does not match its pending refinement association"),
-            Self::OccurrenceOutOfRange { occurrence } => write!(
-                formatter,
-                "semantic occurrence {} is outside the verified graph",
-                occurrence.get()
-            ),
             Self::SemanticHandle(source) => write!(formatter, "semantic handle failed: {source}"),
             Self::OperationDefinitionMissing => {
                 formatter.write_str("semantic operation definition is absent")
@@ -2779,9 +2768,17 @@ fn encode_receipt_identity(
 }
 
 fn encode_subject_identity(subject: &IndexRefinementSubject) -> Vec<u8> {
-    let mut bytes = SUBJECT_IDENTITY_TAG.to_vec();
+    encode_subject_identity_with(subject, SUBJECT_IDENTITY_TAG, subject.occurrence)
+}
+
+fn encode_subject_identity_with(
+    subject: &IndexRefinementSubject,
+    domain: &[u8],
+    occurrence: SemanticOccurrence,
+) -> Vec<u8> {
+    let mut bytes = domain.to_vec();
     push_slice(&mut bytes, subject.graph.as_bytes());
-    bytes.extend_from_slice(&subject.occurrence.get().to_be_bytes());
+    bytes.extend_from_slice(&occurrence.get().to_be_bytes());
     encode_op_key(&mut bytes, &subject.operation);
     encode_signature(&mut bytes, &subject.signature);
     push_len(&mut bytes, subject.inputs.len());
@@ -3712,6 +3709,73 @@ mod tests {
                 }
             ))
         ));
+    }
+
+    #[test]
+    fn v2_subject_domain_separates_the_v1_storage_ordinal_collision() {
+        let build = |reverse: bool| {
+            let mut program = SemanticProgramBuilder::try_standard().unwrap();
+            let first = F32Constant::apply(&mut program, 1.0_f32.to_bits()).unwrap();
+            let second = F32Constant::apply(&mut program, 1.0_f32.to_bits()).unwrap();
+            let (alpha, beta) = if reverse {
+                (second, first)
+            } else {
+                (first, second)
+            };
+            program
+                .output(OutputKey::new("alpha").unwrap(), alpha)
+                .unwrap();
+            program
+                .output(OutputKey::new("beta").unwrap(), beta)
+                .unwrap();
+            program.build().unwrap()
+        };
+        let forward = build(false);
+        let reversed = build(true);
+        let forward_subject = IndexRefinementSubject::derive(
+            &forward,
+            forward.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        let reversed_subject = IndexRefinementSubject::derive(
+            &reversed,
+            reversed.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        assert_eq!(
+            forward.semantic_identity().graph(),
+            reversed.semantic_identity().graph()
+        );
+        assert_ne!(
+            forward_subject.occurrence(),
+            reversed_subject.occurrence(),
+            "fixed output names distinguish two otherwise identical occurrences canonically"
+        );
+
+        let storage_zero = SemanticOccurrence::new(0);
+        let old_forward = encode_subject_identity_with(
+            &forward_subject,
+            LEGACY_SUBJECT_IDENTITY_TAG,
+            storage_zero,
+        );
+        let old_reversed = encode_subject_identity_with(
+            &reversed_subject,
+            LEGACY_SUBJECT_IDENTITY_TAG,
+            storage_zero,
+        );
+        assert_eq!(
+            old_forward, old_reversed,
+            "v1 gave storage occurrence zero one byte spelling for two canonical occurrences"
+        );
+        assert_ne!(forward_subject.identity, reversed_subject.identity);
+        assert!(forward_subject.identity.starts_with(SUBJECT_IDENTITY_TAG));
+        assert!(
+            !forward_subject
+                .identity
+                .starts_with(LEGACY_SUBJECT_IDENTITY_TAG)
+        );
     }
 
     #[test]

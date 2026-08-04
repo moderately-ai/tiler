@@ -167,9 +167,9 @@ impl SemanticProgram {
             })
     }
 
-    pub(crate) fn canonical_operation_ordinal(&self, id: OperationId) -> Result<u32, HandleError> {
-        self.operation(id)?;
-        Ok(self.data.canonical_operation_ordinals[id.index.as_usize()])
+    pub(crate) fn canonical_operation_ordinal(&self, operation: OperationRef<'_>) -> u32 {
+        debug_assert_eq!(operation.owner, self.data.owner);
+        self.data.canonical_operation_ordinals[operation.index.as_usize()]
     }
 
     #[cfg(test)]

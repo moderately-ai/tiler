@@ -21,6 +21,8 @@
 //! artifact plan names the resolved provider as the occurrence's lowering
 //! authority, and that claim must be true.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -39,6 +41,21 @@ use crate::legality::{
 };
 use crate::region::SemanticMemberId;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
+
+#[cfg(test)]
+thread_local! {
+    static REFINEMENT_PROOF_WORK: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_refinement_proof_work() {
+    REFINEMENT_PROOF_WORK.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn refinement_proof_work() -> usize {
+    REFINEMENT_PROOF_WORK.get()
+}
 
 /// The evidence one recognized occurrence's lowering rests on.
 #[derive(Clone, Debug)]
@@ -405,6 +422,8 @@ fn refine(
     member: SemanticMemberId,
     provider: LoweringProviderIdentity,
 ) -> Result<OccurrenceEvidence, LoweringError> {
+    #[cfg(test)]
+    REFINEMENT_PROOF_WORK.update(|count| count + 1);
     match refine_index_region(resolved, occurrence, realizations, scalars).map_err(|source| {
         LoweringError::Refine {
             member,
