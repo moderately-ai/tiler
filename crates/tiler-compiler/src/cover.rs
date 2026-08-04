@@ -1,36 +1,56 @@
-//! Legal complete region-cover enumeration over a verified semantic DAG.
+//! The general DAG partition search: legal complete covers of a semantic graph.
 //!
 //! Region formation proposes connected convex region candidates; this module
 //! answers a distinct, strictly *global* question about them: which bounded sets
-//! of region occurrences are legal complete covers of the whole semantic graph,
-//! before any physical implementation is chosen. A cover is enumerated, not
-//! selected: this stage chooses no implementation, schedules nothing, costs
-//! nothing, and does not claim a complete executable program. It enumerates legal
-//! partitionings only.
+//! of region occurrences legally cover the whole semantic graph, before any
+//! physical implementation is chosen. A cover is enumerated, not selected: this
+//! stage chooses no implementation, schedules nothing, and does not claim a
+//! complete executable program. It enumerates legal partitionings only.
 //!
 //! The design keeps the concerns the correctness contract insists on separating:
 //!
-//! - **Complete coverage, failing closed.** A legal cover assigns every operation
-//!   to exactly one region and retains every named program output. A cover that
-//!   leaves an operation or named output uncovered, or that double-covers an
-//!   operation without explicit legal duplication, is rejected with a typed
-//!   [`CoverError`] rather than silently repaired.
-//! - **Conservative fan-out materialization.** Producer duplication is disabled in
-//!   this profile, so a legal cover is an exact partition: whenever a value
-//!   produced in one region is read by another, it is a
-//!   [`MaterializationEdge`] — materialized once and read across the boundary —
-//!   never silently duplicated. Deliberate duplication is a reserved seam,
-//!   recorded in [`CoverDuplication`] and bound into cover identity, and it is
-//!   empty in this profile.
+//! - **Complete coverage, failing closed.** A legal cover assigns every
+//!   operation to at least one region and retains every ordered named program
+//!   output exactly once. A cover that leaves an operation or a named output
+//!   uncovered, that covers an operation more than once without an admitted
+//!   duplication policy, that duplicates an operation the legality condition
+//!   refuses, or that produces one named output from two regions, is rejected
+//!   with a typed [`CoverError`] rather than silently repaired.
+//! - **Fan-out is materialized, never split into incomparable partitions.** A
+//!   value produced in one region and read by others is one
+//!   [`MaterializationEdge`] carrying every consuming region — materialized once
+//!   and read across the boundary. A second region computing that value is
+//!   *deliberate duplication* recorded in [`CoverDuplication`], never an implicit
+//!   consequence of the partition's shape, and never a silent serialization of
+//!   the consumers.
+//! - **Materialization is a per-edge choice.** For each (produced value,
+//!   consuming region) pair the search enumerates both answers: read the value
+//!   across the boundary, or recompute its producer inside the consumer. A cover
+//!   records the outcome, and [`CoverCost`] is what lets a deliberate
+//!   materialization beat a recomputation — a partial duplication pays the
+//!   recomputed elements *and* still materializes for the consumers it did not
+//!   absorb, so the materializing cover dominates it.
+//! - **Hard legality is separate from estimated cost.** A refused candidate
+//!   carries a typed [`CoverRefusal`] naming why it is not a legal cover; it never
+//!   carries a cost. [`CoverCost`] ranks only covers that are already legal, and
+//!   [`CoverEnumeration::non_dominated`] is a pure view that prunes nothing from
+//!   the retained set.
 //! - **Both the fused and the fully-materialized cover are retained.** The
 //!   fully-materialized (all-singleton) cover is emitted unconditionally, and the
 //!   fused (whole-program) cover is emitted whenever region formation admitted a
 //!   whole-program candidate. Neither can be lost to a budget; the budgets bound
 //!   only the additional partitions the search discovers.
+//! - **Budgeted and memoized, and an exhausted budget is reported.** The search
+//!   memoizes the coverage completions of a covered-set state, which is sound
+//!   because admissibility of any candidate depends on that state alone. When a
+//!   budget stops the search, [`CoverEnumeration::is_exhaustive`] answers `false`
+//!   and the retained covers are an explainable *partial* result — the best found
+//!   plus the statement that the space was not exhausted — never a truncated set
+//!   presented as complete.
 //! - **Deterministic, order-independent identity.** A [`RegionCoverIdentity`]
 //!   folds the semantic graph meaning, the exact region occurrences (which bind
-//!   both region content and per-region coverage), the deliberate duplication, and
-//!   the proposed materialization edges, in a canonical length-prefixed byte
+//!   both region content and per-region coverage), the deliberate duplication,
+//!   and the proposed materialization edges, in a canonical length-prefixed byte
 //!   encoding over content-derived coordinates. It excludes transient graph-local
 //!   ordinals and never depends on `HashMap`/authoring order.
 //!
@@ -53,10 +73,16 @@ use crate::region::{
     RegionCandidate, RegionContentIdentity, RegionError, RegionFormationOutcome, RegionGraph,
     RegionOccurrenceIdentity, SemanticMemberId, SemanticValueId,
 };
-use crate::request::DeterministicBudgets;
+use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 
 /// Canonical domain-separation tag for one region-cover identity.
 const COVER_IDENTITY_TAG: &[u8] = b"tiler.compiler.region-cover.v1\0";
+/// The governed key naming the partition search's own cost model.
+///
+/// Deliberately distinct from `tiler.cost.structural.v1`: this model ranks
+/// *covers* on facts a cover determines, before any implementation is chosen,
+/// and nothing attributed to it may enter a plan-level dominance comparison.
+const COVER_COST_MODEL_KEY: &str = "tiler.cost.partition-structural.v1";
 
 /// A deterministic budget that bounds cover enumeration.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -65,6 +91,14 @@ pub(crate) enum CoverBudgetResource {
     Covers,
     /// Partition-search expansion attempts for one enumeration request.
     Expansions,
+    /// Typed refusals retained for one enumeration request.
+    ///
+    /// The refusal list is what makes a pruned candidate nameable, and it is
+    /// bounded for the same reason every other search product is: the refused
+    /// space is exponential. A stop here means the *explanation* was truncated,
+    /// not the search, and the two are separate resources so a reader can tell
+    /// which one ran out.
+    Refusals,
 }
 
 impl CoverBudgetResource {
@@ -73,6 +107,7 @@ impl CoverBudgetResource {
         match self {
             Self::Covers => "region-covers",
             Self::Expansions => "region-cover-expansions",
+            Self::Refusals => "region-cover-refusals",
         }
     }
 }
@@ -126,31 +161,239 @@ impl fmt::Display for CoverInfeasibility {
     }
 }
 
-/// The deliberate producer duplication a cover realizes.
+/// Whether the partition search may admit deliberate shared-work duplication.
 ///
-/// The first profile disables producer duplication, so a legal cover is an exact
-/// partition and this is always empty. The type reserves the seam: a future
-/// duplication-enabled profile records the deliberately duplicated occurrences
-/// here, and cover identity binds them.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CoverDuplication {
-    duplicated: Vec<SemanticMemberId>,
+/// The two admissions are different *legality* contracts, not two costs: under
+/// [`Self::Forbidden`] a legal cover is an exact partition and any second
+/// coverage of an operation is [`CoverError::IllegalDuplication`], while under
+/// [`Self::PureRecomputation`] a second coverage is legal exactly when
+/// [`duplication_refusal`] admits the member.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the compile path states the exact-partition admission for the reason `CoverPolicy::governed` records; the recomputation admission is exercised by this authority's own tests until a physical provider and program assembly can realize a duplicating cover"
+)]
+pub(crate) enum CoverDuplicationAdmission {
+    /// A legal cover is an exact partition.
+    Forbidden,
+    /// An operation may be computed in several regions when recomputing it
+    /// provably preserves the program.
+    PureRecomputation,
 }
 
+/// The legality contract one enumeration and every verification of its covers
+/// run under.
+///
+/// It carries both halves of that contract — the duplication admission and the
+/// resolved numerical contract the recomputation condition is decided against —
+/// because they are one answer: whether an occurrence may be computed twice is
+/// undecidable from either alone. Carried as a value rather than read from a
+/// constant so a caller *states* it, and so [`verify_cover`] checks a cover
+/// against the same contract that produced it: a cover legal under one admission
+/// is not automatically legal under the other, and re-deriving the admission
+/// instead of taking it would let a verification silently apply a weaker rule
+/// than the enumeration did.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CoverPolicy {
+    duplication: CoverDuplicationAdmission,
+    contract: StrictF32NumericalContract,
+}
+
+#[allow(
+    dead_code,
+    reason = "see `CoverDuplicationAdmission`: the duplication-admitting constructor is exercised by this authority's own tests until the compile path can realize a duplicating cover"
+)]
+impl CoverPolicy {
+    /// The exact-partition contract the compile path enumerates under.
+    ///
+    /// **Duplication is off on the compile path by derivation, not by
+    /// timidity.** A duplicating cover assigns one semantic occurrence to
+    /// several region subjects, and a plan over it needs a physical
+    /// implementation for each of those subjects. The bounded physical profile
+    /// proposes implementations for exactly three recognized member sets, and
+    /// program assembly implements exactly three plan shapes, so every
+    /// duplicating cover of a governed program would be enumerated, found
+    /// unimplementable, and rejected — paying the whole search to report a
+    /// refusal. Enabling it is a physical-provider and program-assembly
+    /// question, not a legality one; see
+    /// `tickets/activate-shared-work-duplication-on-the-compile-path.md`.
+    pub(crate) const fn governed(contract: StrictF32NumericalContract) -> Self {
+        Self {
+            duplication: CoverDuplicationAdmission::Forbidden,
+            contract,
+        }
+    }
+
+    /// The contract that admits legal shared-work duplication.
+    pub(crate) const fn permitting_shared_work_duplication(
+        contract: StrictF32NumericalContract,
+    ) -> Self {
+        Self {
+            duplication: CoverDuplicationAdmission::PureRecomputation,
+            contract,
+        }
+    }
+
+    /// Returns whether this contract admits any duplication at all.
+    pub(crate) const fn admits_duplication(self) -> bool {
+        matches!(
+            self.duplication,
+            CoverDuplicationAdmission::PureRecomputation
+        )
+    }
+
+    /// Returns the resolved numerical contract duplication is decided against.
+    pub(crate) const fn numerical_contract(self) -> StrictF32NumericalContract {
+        self.contract
+    }
+
+    /// Returns the stable key naming this legality contract.
+    pub(crate) const fn key(self) -> &'static str {
+        match self.duplication {
+            CoverDuplicationAdmission::Forbidden => "cover.exact-partition.v1",
+            CoverDuplicationAdmission::PureRecomputation => "cover.pure-recomputation.v1",
+        }
+    }
+}
+
+/// Why one operation may not be computed in more than one region.
+///
+/// Each variant is a *hard* legality answer about the operation and the
+/// governing contract, decided before any cover is assembled and never a cost.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum DuplicationRefusal {
+    /// The enumeration's legality contract admits no duplication at all.
+    PolicyForbids,
+    /// The frozen semantic authority did not prove the operation referentially
+    /// transparent, so a second evaluation is not a second copy of one value.
+    ImpureMember,
+    /// The operation produces an ordered named program output. A named output is
+    /// written once to a definite destination, so two regions producing it is
+    /// two writers of one result rather than two copies of one value.
+    NamedResultProducer,
+    /// The resolved numerical contract lets two realizations of one occurrence
+    /// differ, so the two copies are not provably the same value.
+    ///
+    /// Never a cost: no target and no cheaper plan makes recomputation
+    /// value-preserving under a contract that authorized the divergence.
+    ContractGrantsRealizationFreedom,
+}
+
+impl DuplicationRefusal {
+    /// Returns the stable reason code of the refusal.
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::PolicyForbids => "duplication-policy-forbids",
+            Self::ImpureMember => "duplication-impure-member",
+            Self::NamedResultProducer => "duplication-named-result-producer",
+            Self::ContractGrantsRealizationFreedom => "duplication-contract-grants-freedom",
+        }
+    }
+}
+
+impl fmt::Display for DuplicationRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "cover.duplication.{}", self.reason())
+    }
+}
+
+/// Why one candidate cover the search reached is not a legal complete cover.
+///
+/// A refusal names the exact subject it is about and a typed hard reason. It is
+/// the pruning half of the search's explanation, and it is deliberately never a
+/// cost: a reader distinguishes "this candidate is not legal" from "this legal
+/// candidate is beaten" by which of these two channels reports it.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum CoverRefusal {
+    /// A candidate region would have computed an operation another chosen region
+    /// already computes, and duplicating that operation is refused.
+    Duplication {
+        /// Occurrence identity of the region that would have duplicated.
+        region: RegionOccurrenceIdentity,
+        /// Content-derived canonical position of the duplicated operation.
+        position: u32,
+        /// The typed legality answer.
+        refusal: DuplicationRefusal,
+    },
+    /// A complete candidate cover placed a region nothing in the cover consumes
+    /// and which produces no named program output.
+    ///
+    /// Only reachable under a duplication-admitting contract, where the search
+    /// itself creates the dead region; an exact partition's dead region reflects
+    /// a dead operation in the program, which is not this authority's to judge.
+    DeadRegion {
+        /// Occurrence identity of the region nothing observes.
+        region: RegionOccurrenceIdentity,
+    },
+    /// A complete candidate cover produced one ordered named output from more
+    /// than one region.
+    AmbiguousNamedOutput {
+        /// Ordered position of the named program output.
+        output_position: u32,
+    },
+}
+
+impl CoverRefusal {
+    /// Returns the stable reason code of the refusal.
+    pub(crate) const fn reason(&self) -> &'static str {
+        match self {
+            Self::Duplication { refusal, .. } => refusal.reason(),
+            Self::DeadRegion { .. } => "dead-region",
+            Self::AmbiguousNamedOutput { .. } => "ambiguous-named-output",
+        }
+    }
+
+    /// Returns a bounded explain label naming the refused subject.
+    pub(crate) fn subject_label(&self) -> String {
+        match self {
+            Self::Duplication { region, .. } | Self::DeadRegion { region } => {
+                crate::region::hex_label("region:", digest(region.as_bytes()))
+            }
+            Self::AmbiguousNamedOutput { output_position } => {
+                format!("named-output:{output_position}")
+            }
+        }
+    }
+}
+
+impl fmt::Display for CoverRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "cover.refused.{}: {}",
+            self.reason(),
+            self.subject_label()
+        )
+    }
+}
+
+/// The deliberate producer duplication a cover realizes.
+///
+/// Empty under [`CoverPolicy::governed`], where a legal cover is an exact
+/// partition. Under a duplication-admitting contract it holds the
+/// content-derived canonical positions of the operations the cover computes in
+/// more than one region, ascending and deduplicated, and cover identity binds
+/// them: two covers over the same regions cannot differ in duplication, but a
+/// cover's duplication is what a reader and a cost model both need named.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CoverDuplication {
+    duplicated: Vec<u32>,
+}
+
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl CoverDuplication {
-    /// Builds the empty (no deliberate duplication) policy of the first profile.
+    /// Builds the empty (no deliberate duplication) policy.
     const fn none() -> Self {
         Self {
             duplicated: Vec::new(),
         }
     }
 
-    /// Returns the deliberately duplicated occurrences (empty in this profile).
-    #[allow(
-        dead_code,
-        reason = "reserved duplication seam; this profile disables producer duplication, so the list is read only by a duplication-enabled profile"
-    )]
-    pub(crate) fn duplicated_members(&self) -> &[SemanticMemberId] {
+    /// Returns the canonical positions of the deliberately duplicated operations.
+    pub(crate) fn duplicated_positions(&self) -> &[u32] {
         &self.duplicated
     }
 
@@ -162,13 +405,25 @@ impl CoverDuplication {
 
 /// One value materialized across a region boundary within a cover.
 ///
-/// Because producer duplication is disabled, a value produced inside one region
-/// and read by others is materialized exactly once and read across the boundary.
-/// The edge is expressed in content-derived canonical coordinates so it does not
-/// depend on authoring order: the producing member's canonical position, the
-/// producing region's occurrence identity, and the consuming regions' occurrence
+/// A value produced inside one region and read by a region that does not compute
+/// it is materialized exactly once and read across the boundary. The edge is
+/// expressed in content-derived canonical coordinates so it does not depend on
+/// authoring order: the producing member's canonical position, the producing
+/// region's occurrence identity, and the consuming regions' occurrence
 /// identities. A value with several cross-region consumers is one edge with
-/// several consumers — conservative fan-out materialization, not duplication.
+/// several consumers — conservative fan-out materialization, not duplication and
+/// not a serialization of the consumers.
+///
+/// When several regions compute the value — a deliberate duplication — exactly
+/// one copy is the one a non-computing consumer reads, and it is the copy in the
+/// owner with the **fewest members**, ties broken by the smallest occurrence
+/// identity. Every copy is the same value by the duplication legality condition
+/// and the edge's count and size are the same whichever is named, so the rule
+/// only has to be deterministic and content-derived. Fewest-members is the one
+/// that also keeps the *admitted set* content-derived: the smallest owner is the
+/// one with the least other work to justify it, so designating it is what stops
+/// an otherwise legal partial duplication from being refused as dead purely
+/// because an identity digest happened to order two owners one way.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct MaterializationEdge {
     /// Graph-local ordinal of the materialized value (navigation only; excluded
@@ -178,7 +433,14 @@ pub(crate) struct MaterializationEdge {
     producer_position: u32,
     /// Result position of the materialized value on its producing member.
     result_position: u32,
-    /// Occurrence identity of the region that produces (materializes) the value.
+    /// Elements the materialized value holds.
+    ///
+    /// Carried on the edge because the cover is the authority that knows it: an
+    /// intermediate exists because a cover chose to materialize between two
+    /// regions, so its element count is a property of that cover and not of
+    /// either region's subject.
+    element_count: u64,
+    /// Occurrence identity of the region that materializes the value.
     producer: RegionOccurrenceIdentity,
     /// Occurrence identities of the regions that read the value, canonical ascending.
     consumers: Vec<RegionOccurrenceIdentity>,
@@ -204,7 +466,12 @@ impl MaterializationEdge {
         self.result_position
     }
 
-    /// Returns the occurrence identity of the producing region.
+    /// Returns how many elements the materialized value holds.
+    pub(crate) const fn element_count(&self) -> u64 {
+        self.element_count
+    }
+
+    /// Returns the occurrence identity of the materializing region.
     pub(crate) const fn producer(&self) -> &RegionOccurrenceIdentity {
         &self.producer
     }
@@ -258,6 +525,90 @@ impl CoverRegion {
     }
 }
 
+/// The estimated cost of one legal cover, over facts the cover determines.
+///
+/// **Estimate, never feasibility.** Every cover carrying one of these is already
+/// legal; nothing here can admit or refuse a cover, and a refused candidate
+/// carries a [`CoverRefusal`] rather than a large number. It is attributed to
+/// [`COVER_COST_MODEL_KEY`] and is deliberately *not* a
+/// [`crate::selection::PlanStructuralCost`]: it ranks partitionings before an
+/// implementation exists, and mixing the two keys would let a pre-implementation
+/// estimate prune a plan.
+///
+/// The four dimensions are what a cover — and only a cover — decides:
+///
+/// - `region_count`, the number of separately implementable regions;
+/// - `materialization_count`, the cross-region values that must be written and
+///   read back;
+/// - `materialized_elements`, how large those values are;
+/// - `recomputed_elements`, the elements a duplicated operation computes again.
+///
+/// The last is what makes the materialize-versus-recompute choice decidable
+/// rather than merely enumerable. A cover that absorbs *every* consumer of a
+/// value materializes nothing and recomputes instead — the two trade, and
+/// neither dominates. A cover that absorbs only *some* consumers still
+/// materializes for the rest, so it pays the same edge and the recomputation on
+/// top, and the materializing cover strictly dominates it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CoverCost {
+    model_key: &'static str,
+    region_count: u64,
+    materialization_count: u64,
+    materialized_elements: u64,
+    recomputed_elements: u64,
+}
+
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
+impl CoverCost {
+    /// Returns the cost-model key this estimate is attributed to.
+    pub(crate) const fn model_key(&self) -> &'static str {
+        self.model_key
+    }
+
+    /// Returns the number of separately implementable regions.
+    pub(crate) const fn region_count(&self) -> u64 {
+        self.region_count
+    }
+
+    /// Returns the number of cross-region materializations.
+    pub(crate) const fn materialization_count(&self) -> u64 {
+        self.materialization_count
+    }
+
+    /// Returns the elements those materializations hold in total.
+    pub(crate) const fn materialized_elements(&self) -> u64 {
+        self.materialized_elements
+    }
+
+    /// Returns the elements deliberate duplication computes a second time.
+    pub(crate) const fn recomputed_elements(&self) -> u64 {
+        self.recomputed_elements
+    }
+
+    /// Returns whether this cost strictly dominates `other`.
+    ///
+    /// The standard Pareto relation over the four dimensions: no dimension is
+    /// worse and at least one is strictly better. Estimates attributed to
+    /// different models are incomparable, so neither dominates the other.
+    pub(crate) fn dominates(&self, other: &Self) -> bool {
+        if self.model_key != other.model_key {
+            return false;
+        }
+        let no_worse = self.region_count <= other.region_count
+            && self.materialization_count <= other.materialization_count
+            && self.materialized_elements <= other.materialized_elements
+            && self.recomputed_elements <= other.recomputed_elements;
+        let strictly_better = self.region_count < other.region_count
+            || self.materialization_count < other.materialization_count
+            || self.materialized_elements < other.materialized_elements
+            || self.recomputed_elements < other.recomputed_elements;
+        no_worse && strictly_better
+    }
+}
+
 /// Collision-free, order-independent identity of one legal complete cover.
 ///
 /// It folds the semantic graph meaning, the exact region occurrences (which bind
@@ -290,15 +641,16 @@ impl RegionCoverIdentity {
 
 /// One legal complete cover of the semantic region graph.
 ///
-/// Every operation is covered by exactly one region and every named output is
-/// retained. The regions are stored in canonical occurrence order, the
-/// materialization edges in canonical order, and the deliberate duplication is
-/// empty in this profile.
+/// Every operation is covered, every ordered named output is produced by exactly
+/// one region, and every operation covered more than once is a deliberate,
+/// legality-checked duplication. The regions are stored in canonical occurrence
+/// order and the materialization edges in canonical order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RegionCover {
     regions: Vec<CoverRegion>,
     materializations: Vec<MaterializationEdge>,
     duplication: CoverDuplication,
+    cost: CoverCost,
     identity: RegionCoverIdentity,
 }
 
@@ -322,6 +674,11 @@ impl RegionCover {
         &self.duplication
     }
 
+    /// Returns the cover's estimated cost (never a legality input).
+    pub(crate) const fn cost(&self) -> CoverCost {
+        self.cost
+    }
+
     /// Returns the canonical, order-independent cover identity.
     pub(crate) const fn identity(&self) -> &RegionCoverIdentity {
         &self.identity
@@ -341,7 +698,9 @@ impl RegionCover {
 /// from a [`CoverError`] compiler fault.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CoverEnumeration {
+    policy: CoverPolicy,
     covers: Vec<RegionCover>,
+    refusals: Vec<CoverRefusal>,
     budget_stops: Vec<CoverBudgetStop>,
     infeasibilities: Vec<CoverInfeasibility>,
     operation_count: u32,
@@ -352,14 +711,35 @@ pub(crate) struct CoverEnumeration {
     reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
 )]
 impl CoverEnumeration {
+    /// Returns the legality contract these covers were enumerated under.
+    pub(crate) const fn policy(&self) -> CoverPolicy {
+        self.policy
+    }
+
     /// Returns every enumerated legal cover in canonical identity order.
     pub(crate) fn covers(&self) -> &[RegionCover] {
         &self.covers
     }
 
+    /// Returns every typed refusal the search retained, canonical and deduplicated.
+    pub(crate) fn refusals(&self) -> &[CoverRefusal] {
+        &self.refusals
+    }
+
     /// Returns every budget that stopped a search path.
     pub(crate) fn budget_stops(&self) -> &[CoverBudgetStop] {
         &self.budget_stops
+    }
+
+    /// Returns whether the search exhausted the legal space.
+    ///
+    /// `false` means the retained covers are a **partial** result: every one of
+    /// them is legal and completely derived, and the space beyond the budget was
+    /// not explored. A caller must not read a partial result as a complete
+    /// enumeration, which is why this is a stated fact rather than something
+    /// inferred from a cover count.
+    pub(crate) fn is_exhaustive(&self) -> bool {
+        self.budget_stops.is_empty()
     }
 
     /// Returns why the profile could enumerate no cover, when it could not.
@@ -375,6 +755,45 @@ impl CoverEnumeration {
     /// Returns the number of operations every cover must cover.
     pub(crate) const fn operation_count(&self) -> u32 {
         self.operation_count
+    }
+
+    /// Returns the covers no other retained cover's estimate dominates.
+    ///
+    /// A pure view. It prunes nothing from [`Self::covers`], runs strictly after
+    /// legality, and can neither establish nor refute it.
+    pub(crate) fn non_dominated(&self) -> Vec<&RegionCover> {
+        self.covers
+            .iter()
+            .enumerate()
+            .filter(|(index, candidate)| {
+                !self
+                    .covers
+                    .iter()
+                    .enumerate()
+                    .any(|(other, cover)| *index != other && cover.cost.dominates(&candidate.cost))
+            })
+            .map(|(_, candidate)| candidate)
+            .collect()
+    }
+
+    /// Returns the retained covers this view prunes, each with why.
+    ///
+    /// The companion of [`Self::non_dominated`], and the reason the two are
+    /// separate methods: an explanation must name the pruned candidate and the
+    /// cover that beat it, and a view that only returns the survivors leaves the
+    /// reader to re-derive that pairing.
+    pub(crate) fn dominated(&self) -> Vec<(&RegionCover, &RegionCover)> {
+        self.covers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, candidate)| {
+                self.covers
+                    .iter()
+                    .enumerate()
+                    .find(|(other, cover)| *other != index && cover.cost.dominates(&candidate.cost))
+                    .map(|(_, dominator)| (candidate, dominator))
+            })
+            .collect()
     }
 
     /// Returns the fully-materialized (all-singleton) cover, always retained when
@@ -400,12 +819,13 @@ impl CoverEnumeration {
 /// A cover that is not a legal complete cover, or invalid cover state.
 ///
 /// The coverage variants classify why a proposed cover is not legal — an
-/// uncovered operation, an operation double-covered without enabling duplication,
-/// or an unretained named output. The structural variants are compiler faults: a
-/// placed region that does not re-derive from the program (a broken occurrence
-/// identity), or a cover whose recomputed materialization edges or identity do
-/// not match. [`Self::class`] distinguishes the two, so malformed cover state is
-/// never confused with a legal enumeration result.
+/// uncovered operation, an operation duplicated where duplication is refused, a
+/// named output produced by several regions, a region nothing observes, or an
+/// unretained named output. The structural variants are compiler faults: a placed
+/// region that does not re-derive from the program (a broken occurrence
+/// identity), or a cover whose recomputed materialization edges, duplication,
+/// cost, or identity do not match. [`Self::class`] distinguishes the two, so
+/// malformed cover state is never confused with a legal enumeration result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CoverError {
     /// A placed region failed re-derivation from the program.
@@ -415,15 +835,27 @@ pub(crate) enum CoverError {
         /// The uncovered operation.
         member: SemanticMemberId,
     },
-    /// An operation is covered by more than one region without enabling duplication.
+    /// An operation is covered more than once and duplicating it is refused.
     IllegalDuplication {
         /// The double-covered operation.
         member: SemanticMemberId,
+        /// The typed legality answer that refused it.
+        refusal: DuplicationRefusal,
     },
     /// A named program output is retained by no region.
     UncoveredNamedOutput {
         /// A stable reason code for the uncovered output.
         reason: &'static str,
+    },
+    /// A candidate cover placed a region nothing observes, or produced one named
+    /// output from several regions.
+    ///
+    /// Distinct from [`Self::IllegalDuplication`] because neither is about a
+    /// duplicated *operation*: the first is a region whose results reach nothing,
+    /// and the second is one program result with two writers.
+    Unobservable {
+        /// The typed refusal.
+        refusal: CoverRefusal,
     },
     /// The cover carried structurally invalid state.
     Structure {
@@ -439,7 +871,8 @@ impl CoverError {
             Self::Region(_) => "region",
             Self::UncoveredMember { .. }
             | Self::IllegalDuplication { .. }
-            | Self::UncoveredNamedOutput { .. } => "coverage",
+            | Self::UncoveredNamedOutput { .. }
+            | Self::Unobservable { .. } => "coverage",
             Self::Structure { .. } => "structure",
         }
     }
@@ -450,6 +883,7 @@ impl CoverError {
             Self::Region(error) => error.reason(),
             Self::UncoveredMember { .. } => "uncovered-member",
             Self::IllegalDuplication { .. } => "illegal-duplication",
+            Self::Unobservable { refusal } => refusal.reason(),
             Self::UncoveredNamedOutput { reason } | Self::Structure { rule: reason } => reason,
         }
     }
@@ -464,14 +898,15 @@ impl fmt::Display for CoverError {
                 "cover.coverage.uncovered-member: operation {} is covered by no region",
                 member.0
             ),
-            Self::IllegalDuplication { member } => write!(
+            Self::IllegalDuplication { member, refusal } => write!(
                 formatter,
-                "cover.coverage.illegal-duplication: operation {} is covered more than once",
+                "cover.coverage.illegal-duplication: operation {} is covered more than once ({refusal})",
                 member.0
             ),
             Self::UncoveredNamedOutput { reason } => {
                 write!(formatter, "cover.coverage.uncovered-named-output.{reason}")
             }
+            Self::Unobservable { refusal } => write!(formatter, "cover.coverage.{refusal}"),
             Self::Structure { rule } => write!(formatter, "cover.structure.{rule}"),
         }
     }
@@ -497,19 +932,20 @@ impl From<RegionError> for CoverError {
 /// The candidates are re-derived from the program by region formation, so a
 /// stale or forged candidate cannot enter a cover. The fully-materialized
 /// (all-singleton) cover is emitted unconditionally and the fused (whole-program)
-/// cover whenever a whole-program candidate exists; the remaining exact
-/// partitions are enumerated by anchoring each region on the minimum uncovered
-/// operation, bounded by the request's `region_covers` and
-/// `region_cover_expansions` budgets. A program whose named output is a bare
-/// boundary-input passthrough has no legal cover in this profile and yields an
-/// `Ok` result with an empty cover set and a recorded [`CoverInfeasibility`].
+/// cover whenever a whole-program candidate exists; the remaining covers are
+/// enumerated by anchoring each region on the minimum uncovered operation,
+/// bounded by the request's `region_covers` and `region_cover_expansions`
+/// budgets. Under a duplication-admitting `policy` an anchored region may also
+/// re-cover operations the branch already covers, provided
+/// [`duplication_refusal`] admits each of them. A program whose named output is a
+/// bare boundary-input passthrough has no legal cover and yields an `Ok` result
+/// with an empty cover set and a recorded [`CoverInfeasibility`].
 ///
 /// # Errors
 ///
 /// Returns a [`CoverError`] when region formation fails or the enumeration
-/// observes invalid compiler state (a missing singleton, a double-produced value,
-/// or a candidate-index fault). A program with no legal cover is a successful
-/// `Ok`, not an error.
+/// observes invalid compiler state (a missing singleton or a candidate-index
+/// fault). A program with no legal cover is a successful `Ok`, not an error.
 /// The region formation is **taken rather than derived**, because it is a pure
 /// function of the program, budgets, and contract this enumeration already runs
 /// under, and every caller holds one. Deriving it here re-ran a search bounded
@@ -519,6 +955,7 @@ pub(crate) fn enumerate_covers(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
     outcome: &RegionFormationOutcome,
+    policy: CoverPolicy,
 ) -> Result<CoverEnumeration, CoverError> {
     let graph = outcome.graph();
     let candidates = outcome.candidates();
@@ -527,7 +964,9 @@ pub(crate) fn enumerate_covers(
     let infeasibilities = detect_infeasibilities(program);
     if !infeasibilities.is_empty() {
         return Ok(CoverEnumeration {
+            policy,
             covers: Vec::new(),
+            refusals: Vec::new(),
             budget_stops: Vec::new(),
             infeasibilities,
             operation_count,
@@ -535,9 +974,11 @@ pub(crate) fn enumerate_covers(
     }
 
     let graph_identity = program.semantic_identity().graph().as_bytes().to_vec();
+    let legality = DuplicationLegality::derive(graph, candidates, policy)?;
+    let named_outputs = named_output_positions(candidates);
 
     // Candidate indices containing each operation, in the candidates' canonical
-    // order, so the anchored partition search is deterministic.
+    // order, so the anchored search is deterministic.
     let mut containing: Vec<Vec<usize>> =
         vec![Vec::new(); usize::try_from(operation_count).unwrap_or(usize::MAX)];
     for (index, candidate) in candidates.iter().enumerate() {
@@ -572,19 +1013,28 @@ pub(crate) fn enumerate_covers(
         candidates,
         containing: &containing,
         graph_identity: &graph_identity,
+        legality: &legality,
+        named_outputs: &named_outputs,
+        policy,
         max_covers: usize::try_from(budgets.region_covers).unwrap_or(usize::MAX),
         max_expansions: budgets.region_cover_expansions,
+        max_refusals: MAX_RETAINED_REFUSALS,
         retained,
+        refusals: BTreeSet::new(),
         stops: BTreeMap::new(),
         expansions: 0,
-        covered: vec![false; usize::try_from(operation_count).unwrap_or(usize::MAX)],
+        covered: vec![0_u32; usize::try_from(operation_count).unwrap_or(usize::MAX)],
+        memo: BTreeMap::new(),
+        memoized_completions: 0,
     };
     partitioner.run()?;
 
     let mut covers: Vec<RegionCover> = partitioner.retained.into_values().collect();
     covers.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
     Ok(CoverEnumeration {
+        policy,
         covers,
+        refusals: partitioner.refusals.into_iter().collect(),
         budget_stops: partitioner.stops.into_values().collect(),
         infeasibilities: Vec::new(),
         operation_count,
@@ -595,17 +1045,20 @@ pub(crate) fn enumerate_covers(
 ///
 /// The program's candidates are re-derived by region formation; each placed
 /// region must be one of those authoritative occurrences (preserving occurrence
-/// identity), the operations must be covered exactly once (no uncovered member,
-/// no illegal duplication), every producer-backed named output must be retained,
-/// and the recomputed materialization edges and cover identity must match. Any
-/// deviation fails closed with a typed [`CoverError`].
+/// identity), every operation must be covered, every operation covered more than
+/// once must be a duplication `policy` and `contract` admit, every ordered named
+/// output must be produced by exactly one region, no region may be unobservable
+/// under a duplication-admitting policy, and the recomputed materialization
+/// edges, duplication, cost, and identity must match. Any deviation fails closed
+/// with a typed [`CoverError`].
 ///
 /// # Errors
 ///
 /// Returns a [`CoverError`] whose [`CoverError::class`] is `region` for a broken
-/// occurrence identity, `coverage` for an uncovered or double-covered operation
-/// or an unretained named output, and `structure` for a mismatched
-/// materialization or identity.
+/// occurrence identity, `coverage` for an uncovered operation, a refused
+/// duplication, an unobservable region, an ambiguous named output, or an
+/// unretained named output, and `structure` for a mismatched materialization,
+/// duplication, cost, or identity.
 /// The formation is taken rather than derived, for the reason
 /// [`enumerate_covers`] gives. This runs **once per cover and once per retained
 /// plan**, so re-deriving it here was the largest single multiplier on the
@@ -613,6 +1066,7 @@ pub(crate) fn enumerate_covers(
 pub(crate) fn verify_cover(
     program: &SemanticProgram,
     outcome: &RegionFormationOutcome,
+    policy: CoverPolicy,
     cover: &RegionCover,
 ) -> Result<(), CoverError> {
     let graph = outcome.graph();
@@ -651,7 +1105,10 @@ pub(crate) fn verify_cover(
         resolved.push(candidate);
     }
 
-    // 2. Coverage multiset: every operation covered exactly once.
+    // 2. Coverage multiset: every operation covered, and every operation covered
+    //    more than once admitted by the legality condition rather than by the
+    //    cover having recorded it.
+    let legality = DuplicationLegality::derive(graph, outcome.candidates(), policy)?;
     let mut counts = vec![0_u32; usize::try_from(operation_count).unwrap_or(usize::MAX)];
     for candidate in &resolved {
         for member in candidate.members() {
@@ -668,26 +1125,25 @@ pub(crate) fn verify_cover(
         match count {
             0 => return Err(CoverError::UncoveredMember { member }),
             1 => {}
-            _ => return Err(CoverError::IllegalDuplication { member }),
+            _ => {
+                if let Some(refusal) = legality.refusal(member) {
+                    return Err(CoverError::IllegalDuplication { member, refusal });
+                }
+            }
         }
     }
 
-    // 3. Named-output coverage: no bare-input passthrough, every producer-backed
-    //    named output retained.
+    // 3. Named-output coverage: no bare-input passthrough, every ordered named
+    //    output produced by exactly one region.
     if !detect_infeasibilities(program).is_empty() {
         return Err(CoverError::UncoveredNamedOutput {
             reason: "unrooted-named-output",
         });
     }
-    let required = named_output_values(outcome.candidates());
-    let retained = named_output_values(resolved.iter().copied());
-    if !required.is_subset(&retained) {
-        return Err(CoverError::UncoveredNamedOutput {
-            reason: "dropped-named-output",
-        });
-    }
+    let named_outputs = named_output_positions(outcome.candidates());
+    check_named_outputs(&named_outputs, &resolved)?;
 
-    // 4. Materialization edges recompute exactly.
+    // 4. Materialization edges, duplication, and cost recompute exactly.
     let materializations = derive_materializations(graph, &resolved)?;
     if materializations != cover.materializations {
         return Err(CoverError::Structure {
@@ -695,10 +1151,24 @@ pub(crate) fn verify_cover(
         });
     }
 
-    // 5. Deliberate duplication is empty in this profile.
-    if !cover.duplication.is_none() {
+    // 5. Observability: under a duplication-admitting policy the search itself
+    //    can place a region nothing reads, so every region must be observed —
+    //    decided against the recomputed edges, because which owner of a
+    //    duplicated value materializes it is what makes the other owners' copies
+    //    observable or not.
+    if policy.admits_duplication() {
+        check_regions_observed(&resolved, &materializations)?;
+    }
+    let duplication = derive_duplication(graph, &resolved)?;
+    if duplication != cover.duplication {
         return Err(CoverError::Structure {
-            rule: "unexpected-duplication",
+            rule: "duplication-mismatch",
+        });
+    }
+    let cost = derive_cover_cost(graph, &resolved, &materializations)?;
+    if cost != cover.cost {
+        return Err(CoverError::Structure {
+            rule: "cover-cost-mismatch",
         });
     }
 
@@ -733,24 +1203,160 @@ pub(crate) fn verify_cover(
     Ok(())
 }
 
-/// The deterministic anchored exact-partition search state.
+/// How many typed refusals one enumeration retains.
+///
+/// The refused space is exponential, so the explanation is bounded and its
+/// truncation is reported as a [`CoverBudgetResource::Refusals`] stop rather
+/// than silently dropped. Refusals are deduplicated by subject and reason first,
+/// so the bound is over *distinct* refusals: a search that rejects one region
+/// ten thousand times for one reason spends one slot.
+const MAX_RETAINED_REFUSALS: usize = 64;
+
+/// The per-member duplication legality of one program under one contract.
+///
+/// Derived once and read many times, because it is a function of the operation
+/// and the governing contract alone: it does not depend on which cover is being
+/// assembled, so re-deciding it per branch would re-derive one answer across the
+/// whole search space.
+struct DuplicationLegality {
+    /// `None` for a member that may be duplicated; the refusal otherwise.
+    refusals: Vec<Option<DuplicationRefusal>>,
+}
+
+impl DuplicationLegality {
+    /// Decides, for each operation, whether computing it twice preserves the
+    /// program.
+    ///
+    /// Three conditions, each checked rather than assumed:
+    ///
+    /// - the contract must grant no realization freedom, or two realizations of
+    ///   one occurrence could differ and the two copies would not be one value;
+    /// - the frozen semantic authority must have proved the operation
+    ///   referentially transparent, or a second evaluation is a second effect;
+    /// - the operation must produce no ordered named program output, because a
+    ///   named output has one destination and two producers of it are two
+    ///   writers rather than two copies.
+    ///
+    /// The contract check is first and whole-program: it refuses every member at
+    /// once, which is the honest shape — the refusal is about the contract, not
+    /// about any operation.
+    fn derive(
+        graph: &RegionGraph,
+        candidates: &[RegionCandidate],
+        policy: CoverPolicy,
+    ) -> Result<Self, CoverError> {
+        let count = usize::try_from(graph.operation_count()).unwrap_or(usize::MAX);
+        if !policy.admits_duplication() {
+            return Ok(Self {
+                refusals: vec![Some(DuplicationRefusal::PolicyForbids); count],
+            });
+        }
+        if policy.numerical_contract().grants_realization_freedom() {
+            return Ok(Self {
+                refusals: vec![Some(DuplicationRefusal::ContractGrantsRealizationFreedom); count],
+            });
+        }
+        let mut refusals = vec![None; count];
+        for position in 0..graph.operation_count() {
+            let member = SemanticMemberId(position);
+            if !graph.member_operation_facts(member)?.is_pure()
+                && let Some(slot) = refusals.get_mut(member_index(member))
+            {
+                *slot = Some(DuplicationRefusal::ImpureMember);
+            }
+        }
+        // A named result's producer is read from the singleton candidates'
+        // retained outputs rather than re-walked from the program: the candidate
+        // set is the authority this stage already trusts for what a region
+        // exports, and its `named_result` flag is the same fact the coverage
+        // check below uses.
+        for candidate in candidates {
+            for output in candidate.retained_outputs() {
+                if output.named_result
+                    && let Some(slot) = refusals.get_mut(member_index(output.producer))
+                    && slot.is_none()
+                {
+                    *slot = Some(DuplicationRefusal::NamedResultProducer);
+                }
+            }
+        }
+        Ok(Self { refusals })
+    }
+
+    /// Returns why this member may not be duplicated, or `None` if it may.
+    ///
+    /// A member ordinal the graph does not hold reads as refused. That direction
+    /// is the fail-closed one: an unknown operation is not one this authority has
+    /// proved safe to recompute.
+    fn refusal(&self, member: SemanticMemberId) -> Option<DuplicationRefusal> {
+        self.refusals
+            .get(member_index(member))
+            .copied()
+            .unwrap_or(Some(DuplicationRefusal::ImpureMember))
+    }
+}
+
+/// One ordered named program output and the member that produces it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NamedOutput {
+    /// Ordered position of the output in the program's declared interface.
+    position: u32,
+    /// Graph-local ordinal of the exported value.
+    value: u32,
+}
+
+/// The state one search branch has covered, as a per-member coverage count.
+type CoverageMask = Vec<u32>;
+
+/// What the memo knows about the coverage completions of one state.
+enum MemoEntry {
+    /// Every completion of this state, as candidate index sets.
+    Completions(Vec<Vec<usize>>),
+    /// The state has more completions than the memo will hold; recompute.
+    Unbounded,
+}
+
+/// The deterministic anchored cover search state.
 struct Partitioner<'a> {
     graph: &'a RegionGraph,
     candidates: &'a [RegionCandidate],
     containing: &'a [Vec<usize>],
     graph_identity: &'a [u8],
+    legality: &'a DuplicationLegality,
+    named_outputs: &'a [NamedOutput],
+    policy: CoverPolicy,
     max_covers: usize,
     max_expansions: u64,
+    max_refusals: usize,
     retained: BTreeMap<RegionCoverIdentity, RegionCover>,
+    refusals: BTreeSet<CoverRefusal>,
     stops: BTreeMap<CoverBudgetResource, CoverBudgetStop>,
     expansions: u64,
-    /// Which operations the regions chosen on the current branch already cover.
+    /// How many chosen regions on the current branch cover each operation.
     ///
-    /// One mask mutated in place and undone on backtrack, rather than a set
-    /// copied per branch. The search visits a node per expansion under the
-    /// `region_cover_expansions` budget, so the per-branch copy was multiplied
-    /// by the whole search space.
-    covered: Vec<bool>,
+    /// A count rather than a flag, because a duplication-admitting branch covers
+    /// an operation several times and backtracking must undo exactly one of
+    /// them. One vector mutated in place and undone on backtrack, rather than a
+    /// set copied per branch: the search visits a node per expansion under the
+    /// `region_cover_expansions` budget, so a per-branch copy is multiplied by
+    /// the whole search space.
+    covered: CoverageMask,
+    /// Coverage completions already derived, keyed by the state that produced
+    /// them.
+    ///
+    /// **Sound because admissibility depends on the state alone.** A candidate
+    /// is admissible from a state exactly when it contains the state's minimum
+    /// uncovered operation and every already-covered operation it re-covers is
+    /// duplication-legal — both read only the coverage counts and the
+    /// per-member legality, never the path that produced them. So two branches
+    /// reaching one state have the same completions, and a completion may be
+    /// replayed under a different prefix. The prefixes are disjoint from their
+    /// completions (a re-chosen candidate contains no uncovered operation, so
+    /// the anchor rule refuses it), which is why prefix and completion compose
+    /// into a candidate set rather than collapsing.
+    memo: BTreeMap<CoverageMask, MemoEntry>,
+    /// How many completion vectors the memo holds, bounded by `max_covers`.
+    memoized_completions: usize,
 }
 
 /// Whether a search branch should continue or the whole search must stop.
@@ -758,6 +1364,16 @@ struct Partitioner<'a> {
 enum Flow {
     Continue,
     Stop,
+}
+
+/// What one visit of a state produced.
+struct Visit {
+    flow: Flow,
+    /// Every coverage completion of the visited state, when the visit derived
+    /// all of them. `None` means the visit was cut short — by a budget, or by
+    /// the completion list exceeding what the memo will hold — so the caller
+    /// must not record its own completions as complete either.
+    completions: Option<Vec<Vec<usize>>>,
 }
 
 impl Partitioner<'_> {
@@ -768,11 +1384,66 @@ impl Partitioner<'_> {
     }
 
     /// Extends `chosen` with every region anchored on the minimum uncovered
-    /// operation, so each exact partition is generated exactly once.
-    fn visit(&mut self, chosen: &mut Vec<usize>) -> Result<Flow, CoverError> {
-        let Some(anchor) = self.covered.iter().position(|covered| !*covered) else {
-            return self.emit(chosen);
-        };
+    /// operation, and returns the visited state's coverage completions.
+    ///
+    /// The anchor strictly advances at every step, which is what terminates the
+    /// search: a chosen candidate always covers the current minimum uncovered
+    /// operation, so the next minimum is strictly larger. Under an
+    /// exact-partition contract each cover is generated exactly once; under a
+    /// duplication-admitting one a set whose regions between them contain the
+    /// anchor in several places can be reached by more than one order, and the
+    /// retention map keyed on cover identity is what makes that a wasted
+    /// expansion rather than a repeated cover.
+    fn visit(&mut self, chosen: &mut Vec<usize>) -> Result<Visit, CoverError> {
+        let state = self.covered.clone();
+        if state.iter().all(|count| *count > 0) {
+            // The state is complete, so its one completion is the empty set.
+            let flow = self.emit(chosen)?;
+            return Ok(Visit {
+                flow,
+                completions: Some(vec![Vec::new()]),
+            });
+        }
+        if let Some(completions) = self.memoized_completions_for(&state) {
+            // The coverage is applied around the replay, not only the chosen
+            // list: `emit` augments a complete cover with regions whose members
+            // are already covered, and it decides that from the coverage state.
+            // Replaying a completion without applying it would offer the
+            // augmentation a state the cover does not have.
+            let candidates = self.candidates;
+            for completion in &completions {
+                let before = chosen.len();
+                for &index in completion {
+                    if let Some(candidate) = candidates.get(index) {
+                        self.mark(candidate, true);
+                    }
+                }
+                chosen.extend_from_slice(completion);
+                let flow = self.emit(chosen)?;
+                chosen.truncate(before);
+                for &index in completion {
+                    if let Some(candidate) = candidates.get(index) {
+                        self.mark(candidate, false);
+                    }
+                }
+                if flow == Flow::Stop {
+                    return Ok(Visit {
+                        flow: Flow::Stop,
+                        completions: None,
+                    });
+                }
+            }
+            return Ok(Visit {
+                flow: Flow::Continue,
+                completions: Some(completions),
+            });
+        }
+        let anchor = state
+            .iter()
+            .position(|count| *count == 0)
+            .ok_or(CoverError::Structure {
+                rule: "anchor-ordinal",
+            })?;
         // Both are shared borrows of data that outlives the search, so reading
         // them out here keeps the anchored index list and the candidate usable
         // across the recursive `&mut self` call without copying either.
@@ -784,7 +1455,207 @@ impl Partitioner<'_> {
                 rule: "anchor-ordinal",
             })?
             .as_slice();
+        let mut completions: Vec<Vec<usize>> = Vec::new();
+        let mut derived_all = true;
         for &index in anchored {
+            self.expansions = self.expansions.saturating_add(1);
+            if self.expansions > self.max_expansions {
+                self.record_stop(
+                    CoverBudgetResource::Expansions,
+                    self.max_expansions,
+                    self.expansions,
+                );
+                return Ok(Visit {
+                    flow: Flow::Stop,
+                    completions: None,
+                });
+            }
+            let candidate = candidates.get(index).ok_or(CoverError::Structure {
+                rule: "candidate-index",
+            })?;
+            if let Some((member, cause)) = self.refused_duplication(candidate) {
+                // A blanket policy refusal is the exact-partition rule itself
+                // rather than a fact about this candidate, and every overlapping
+                // candidate earns one. Recording them would fill the explanation
+                // with one repeated sentence and crowd out — under the retained
+                // refusal bound — the refusals that are about the program.
+                if cause != DuplicationRefusal::PolicyForbids {
+                    let position = self.graph.member_canonical_position(member)?;
+                    self.record_refusal(CoverRefusal::Duplication {
+                        region: candidate.occurrence().clone(),
+                        position,
+                        refusal: cause,
+                    });
+                }
+                continue;
+            }
+            self.mark(candidate, true);
+            chosen.push(index);
+            let visit = self.visit(chosen)?;
+            chosen.pop();
+            self.mark(candidate, false);
+            if visit.flow == Flow::Stop {
+                return Ok(Visit {
+                    flow: Flow::Stop,
+                    completions: None,
+                });
+            }
+            match visit.completions {
+                Some(child) if derived_all => {
+                    for completion in child {
+                        let mut extended = Vec::with_capacity(completion.len() + 1);
+                        extended.push(index);
+                        extended.extend_from_slice(&completion);
+                        completions.push(extended);
+                    }
+                    // The completion list is bounded by the same budget the memo
+                    // is: a state with more completions than the search will
+                    // retain covers is one whose completions are not worth
+                    // carrying up, and dropping them here is what keeps the
+                    // search's memory bounded by a declared number rather than
+                    // by the shape of the graph.
+                    if completions.len() > self.max_covers {
+                        derived_all = false;
+                        completions = Vec::new();
+                    }
+                }
+                Some(_) | None => derived_all = false,
+            }
+        }
+        if derived_all {
+            self.remember(state, completions.clone());
+            return Ok(Visit {
+                flow: Flow::Continue,
+                completions: Some(completions),
+            });
+        }
+        self.memo.insert(state, MemoEntry::Unbounded);
+        Ok(Visit {
+            flow: Flow::Continue,
+            completions: None,
+        })
+    }
+
+    /// Returns the first member this candidate would re-cover illegally.
+    ///
+    /// A member ordinal outside the coverage vector reads as covered, so the
+    /// branch is refused exactly as an out-of-range membership test refused it.
+    /// Neither can happen: `enumerate_covers` already rejected an out-of-range
+    /// member while building `containing`.
+    fn refused_duplication(
+        &self,
+        candidate: &RegionCandidate,
+    ) -> Option<(SemanticMemberId, DuplicationRefusal)> {
+        candidate.members().iter().find_map(|member| {
+            let covered = self
+                .covered
+                .get(member_index(*member))
+                .copied()
+                .unwrap_or(u32::MAX);
+            (covered > 0)
+                .then(|| self.legality.refusal(*member))
+                .flatten()
+                .map(|cause| (*member, cause))
+        })
+    }
+
+    /// Adds or removes one region's coverage on the current branch.
+    fn mark(&mut self, candidate: &RegionCandidate, covering: bool) {
+        for member in candidate.members() {
+            if let Some(slot) = self.covered.get_mut(member_index(*member)) {
+                *slot = if covering {
+                    slot.saturating_add(1)
+                } else {
+                    slot.saturating_sub(1)
+                };
+            }
+        }
+    }
+
+    /// Returns this state's memoized completions, when the memo holds them all.
+    fn memoized_completions_for(&self, state: &CoverageMask) -> Option<Vec<Vec<usize>>> {
+        match self.memo.get(state) {
+            Some(MemoEntry::Completions(completions)) => Some(completions.clone()),
+            Some(MemoEntry::Unbounded) | None => None,
+        }
+    }
+
+    /// Records what a state's completions are, or that the memo will not hold them.
+    fn remember(&mut self, state: CoverageMask, completions: Vec<Vec<usize>>) {
+        if self.memoized_completions.saturating_add(completions.len()) > self.max_covers {
+            self.memo.insert(state, MemoEntry::Unbounded);
+            return;
+        }
+        self.memoized_completions = self.memoized_completions.saturating_add(completions.len());
+        self.memo.insert(state, MemoEntry::Completions(completions));
+    }
+
+    /// Emits the complete coverage on `chosen` and every augmentation of it.
+    ///
+    /// **The anchored search alone is not complete over covers.** It admits a
+    /// candidate only when that candidate covers the branch's minimum uncovered
+    /// operation, so a region every one of whose operations is already covered
+    /// can never be chosen — and such a region is not idle. In the fan-out
+    /// fixture, `{shared}` beside `{constant, shared, left}` is exactly it: the
+    /// large region absorbs its own copy while the small one materializes for
+    /// the remaining consumer, which is one of the two ways to spell that
+    /// partial duplication. Enumerating only the anchored half would have lost
+    /// it, and the exhaustive oracle is what said so.
+    ///
+    /// Completeness is exact rather than approximate: run the anchor rule over
+    /// any legal cover `S` and it selects a subset `B` of `S` covering
+    /// everything, leaving every remaining region of `S` with all its operations
+    /// covered by `B`. So every legal cover is an anchored base plus an
+    /// augmentation, which is what this enumerates. Augmenting candidates are
+    /// taken in increasing index order, so each augmented set is generated once,
+    /// and the index strictly advances, so the recursion terminates.
+    fn emit(&mut self, chosen: &mut Vec<usize>) -> Result<Flow, CoverError> {
+        self.augment(chosen, 0)
+    }
+
+    /// Retains the current coverage, then extends it by pure-duplicate regions.
+    fn augment(&mut self, chosen: &mut Vec<usize>, from: usize) -> Result<Flow, CoverError> {
+        if self.retain(chosen)? == Flow::Stop {
+            return Ok(Flow::Stop);
+        }
+        if !self.policy.admits_duplication() {
+            // Every augmenting region duplicates by construction, so an
+            // exact-partition contract has nothing to add and the scan is not
+            // worth its expansions.
+            return Ok(Flow::Continue);
+        }
+        let candidates = self.candidates;
+        for index in from..candidates.len() {
+            if chosen.contains(&index) {
+                continue;
+            }
+            let candidate = candidates.get(index).ok_or(CoverError::Structure {
+                rule: "candidate-index",
+            })?;
+            let covers_new = candidate.members().iter().any(|member| {
+                self.covered
+                    .get(member_index(*member))
+                    .copied()
+                    .unwrap_or(1)
+                    == 0
+            });
+            if covers_new {
+                // Not an augmentation: the anchored search reaches every region
+                // that covers something new, and admitting one here would
+                // generate the same cover a second time.
+                continue;
+            }
+            if let Some((member, cause)) = self.refused_duplication(candidate) {
+                if cause != DuplicationRefusal::PolicyForbids {
+                    let position = self.graph.member_canonical_position(member)?;
+                    self.record_refusal(CoverRefusal::Duplication {
+                        region: candidate.occurrence().clone(),
+                        position,
+                        refusal: cause,
+                    });
+                }
+                continue;
+            }
             self.expansions = self.expansions.saturating_add(1);
             if self.expansions > self.max_expansions {
                 self.record_stop(
@@ -794,42 +1665,41 @@ impl Partitioner<'_> {
                 );
                 return Ok(Flow::Stop);
             }
-            let candidate = candidates.get(index).ok_or(CoverError::Structure {
-                rule: "candidate-index",
-            })?;
-            // A member outside the mask reads as covered, so the branch is
-            // skipped exactly as the set membership test skipped it. Neither can
-            // happen: `enumerate_covers` already rejected an out-of-range member
-            // while building `containing`.
-            let disjoint = candidate.members().iter().all(|member| {
-                self.covered
-                    .get(member_index(*member))
-                    .is_some_and(|covered| !*covered)
-            });
-            if disjoint {
-                for member in candidate.members() {
-                    if let Some(slot) = self.covered.get_mut(member_index(*member)) {
-                        *slot = true;
-                    }
-                }
-                chosen.push(index);
-                let flow = self.visit(chosen)?;
-                chosen.pop();
-                for member in candidate.members() {
-                    if let Some(slot) = self.covered.get_mut(member_index(*member)) {
-                        *slot = false;
-                    }
-                }
-                if flow == Flow::Stop {
-                    return Ok(Flow::Stop);
-                }
+            self.mark(candidate, true);
+            chosen.push(index);
+            let flow = self.augment(chosen, index + 1)?;
+            chosen.pop();
+            self.mark(candidate, false);
+            if flow == Flow::Stop {
+                return Ok(Flow::Stop);
             }
         }
         Ok(Flow::Continue)
     }
 
-    fn emit(&mut self, chosen: &[usize]) -> Result<Flow, CoverError> {
-        let cover = assemble_cover(self.graph, self.candidates, self.graph_identity, chosen)?;
+    fn retain(&mut self, chosen: &[usize]) -> Result<Flow, CoverError> {
+        // A complete coverage is not yet a legal cover: the global conditions —
+        // one producer per ordered named output, and no region the cover leaves
+        // unobserved — are properties of the whole set and cannot be decided
+        // while it is being built.
+        let mut resolved: Vec<&RegionCandidate> = Vec::with_capacity(chosen.len());
+        for &index in chosen {
+            resolved.push(self.candidates.get(index).ok_or(CoverError::Structure {
+                rule: "candidate-index",
+            })?);
+        }
+        let materializations = derive_materializations(self.graph, &resolved)?;
+        if let Err(refusal) = classify_global_legality(
+            self.named_outputs,
+            &resolved,
+            &materializations,
+            self.policy,
+        ) {
+            self.record_refusal(refusal);
+            return Ok(Flow::Continue);
+        }
+        let cover =
+            assemble_resolved_cover(self.graph, &resolved, self.graph_identity, materializations)?;
         if self.retained.contains_key(&cover.identity) {
             return Ok(Flow::Continue);
         }
@@ -842,6 +1712,23 @@ impl Partitioner<'_> {
         Ok(Flow::Continue)
     }
 
+    /// Retains one distinct refusal, reporting the bound rather than dropping it.
+    fn record_refusal(&mut self, refusal: CoverRefusal) {
+        if self.refusals.contains(&refusal) {
+            return;
+        }
+        if self.refusals.len() >= self.max_refusals {
+            let limit = count(self.max_refusals);
+            self.record_stop(
+                CoverBudgetResource::Refusals,
+                limit,
+                limit.saturating_add(1),
+            );
+            return;
+        }
+        self.refusals.insert(refusal);
+    }
+
     fn record_stop(&mut self, resource: CoverBudgetResource, limit: u64, actual: u64) {
         let stop = self.stops.entry(resource).or_insert(CoverBudgetStop {
             resource,
@@ -850,6 +1737,121 @@ impl Partitioner<'_> {
         });
         stop.actual = stop.actual.max(actual);
     }
+}
+
+/// Decides the whole-cover legality conditions no single region can see.
+///
+/// Two of them, and both are about *observability* rather than coverage:
+///
+/// - every ordered named program output must be produced by exactly one region,
+///   because a named output is written once to a definite destination;
+/// - under a duplication-admitting contract, no region may be one nothing
+///   observes. That check is deliberately skipped under an exact-partition
+///   contract: there, a region whose results reach nothing reflects a dead
+///   operation in the program, which normalization owns and this authority must
+///   not start refusing programs over.
+fn classify_global_legality(
+    named_outputs: &[NamedOutput],
+    resolved: &[&RegionCandidate],
+    materializations: &[MaterializationEdge],
+    policy: CoverPolicy,
+) -> Result<(), CoverRefusal> {
+    for output in named_outputs {
+        if named_output_producers(resolved, *output) > 1 {
+            return Err(CoverRefusal::AmbiguousNamedOutput {
+                output_position: output.position,
+            });
+        }
+    }
+    if !policy.admits_duplication() {
+        return Ok(());
+    }
+    for candidate in resolved {
+        if !region_is_observed(candidate, materializations) {
+            return Err(CoverRefusal::DeadRegion {
+                region: candidate.occurrence().clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Counts the regions producing one ordered named program output.
+fn named_output_producers(resolved: &[&RegionCandidate], output: NamedOutput) -> usize {
+    resolved
+        .iter()
+        .filter(|candidate| {
+            candidate
+                .retained_outputs()
+                .iter()
+                .any(|retained| retained.value.0 == output.value && retained.named_result)
+        })
+        .count()
+}
+
+/// Returns whether anything observes a region.
+///
+/// A region is observed when it produces an ordered named program output, or
+/// when it is the *designated materializing owner* of at least one edge. The
+/// second half is why this reads the derived edges rather than the raw
+/// consumer lists: a duplicated value has several owners and only one of them
+/// materializes it, so an owner whose copy every reader gets from somewhere else
+/// computes something nothing can observe. That is work the search itself
+/// invented, and it is the exact redundancy a duplication-admitting contract has
+/// to refuse rather than merely cost.
+fn region_is_observed(
+    candidate: &RegionCandidate,
+    materializations: &[MaterializationEdge],
+) -> bool {
+    candidate
+        .retained_outputs()
+        .iter()
+        .any(|output| output.named_result)
+        || materializations
+            .iter()
+            .any(|edge| edge.producer() == candidate.occurrence())
+}
+
+/// Fails a claimed-legal cover whose named outputs are not produced exactly once.
+fn check_named_outputs(
+    named_outputs: &[NamedOutput],
+    resolved: &[&RegionCandidate],
+) -> Result<(), CoverError> {
+    for output in named_outputs {
+        match named_output_producers(resolved, *output) {
+            0 => {
+                return Err(CoverError::UncoveredNamedOutput {
+                    reason: "dropped-named-output",
+                });
+            }
+            1 => {}
+            _ => {
+                return Err(CoverError::Unobservable {
+                    refusal: CoverRefusal::AmbiguousNamedOutput {
+                        output_position: output.position,
+                    },
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fails a claimed-legal cover carrying a region nothing observes.
+fn check_regions_observed(
+    resolved: &[&RegionCandidate],
+    materializations: &[MaterializationEdge],
+) -> Result<(), CoverError> {
+    for candidate in resolved {
+        if !region_is_observed(candidate, materializations) {
+            return Err(CoverError::Unobservable {
+                refusal: CoverRefusal::DeadRegion {
+                    region: candidate.occurrence().clone(),
+                },
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Assembles one cover from a chosen set of candidate indices.
@@ -867,7 +1869,22 @@ fn assemble_cover(
         resolved.push(candidate);
     }
     let materializations = derive_materializations(graph, &resolved)?;
-    let duplication = CoverDuplication::none();
+    assemble_resolved_cover(graph, &resolved, graph_identity, materializations)
+}
+
+/// Assembles one cover from already-resolved candidates and their derived edges.
+///
+/// The edges are taken rather than re-derived because the search decides a
+/// cover's global legality from them before it retains the cover, and deriving
+/// them twice per emitted cover was the whole of that check's cost.
+fn assemble_resolved_cover(
+    graph: &RegionGraph,
+    resolved: &[&RegionCandidate],
+    graph_identity: &[u8],
+    materializations: Vec<MaterializationEdge>,
+) -> Result<RegionCover, CoverError> {
+    let duplication = derive_duplication(graph, resolved)?;
+    let cost = derive_cover_cost(graph, resolved, &materializations)?;
     let mut regions: Vec<CoverRegion> = resolved
         .iter()
         .map(|candidate| CoverRegion {
@@ -883,22 +1900,50 @@ fn assemble_cover(
         regions,
         materializations,
         duplication,
+        cost,
         identity,
     })
 }
 
-/// Derives the cross-region materialization edges of one complete partition.
+/// Derives the deliberately duplicated operations of one cover.
 ///
-/// Each retained value is mapped to its unique producing region; a value another
-/// region reads across the boundary becomes one edge, carrying every consuming
-/// region. A value produced by two regions, or read as a boundary input by its
-/// own producer, is invalid partition state and fails closed.
+/// Expressed in content-derived canonical positions, ascending and
+/// deduplicated, so the record does not depend on authoring order and can be
+/// folded into cover identity.
+fn derive_duplication(
+    graph: &RegionGraph,
+    regions: &[&RegionCandidate],
+) -> Result<CoverDuplication, CoverError> {
+    let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
+    let mut duplicated: BTreeSet<u32> = BTreeSet::new();
+    for region in regions {
+        for member in region.members() {
+            if !seen.insert(*member) {
+                duplicated.insert(graph.member_canonical_position(*member)?);
+            }
+        }
+    }
+    if duplicated.is_empty() {
+        return Ok(CoverDuplication::none());
+    }
+    Ok(CoverDuplication {
+        duplicated: duplicated.into_iter().collect(),
+    })
+}
+
+/// Derives the cross-region materialization edges of one complete cover.
+///
+/// Each retained value is mapped to the regions that produce it; a value read by
+/// a region that does not itself produce it becomes one edge carrying every such
+/// consuming region, materialized by the producing region with the smallest
+/// occurrence identity. A value read as a boundary input by its own producer is
+/// invalid cover state and fails closed.
 fn derive_materializations(
     graph: &RegionGraph,
     regions: &[&RegionCandidate],
 ) -> Result<Vec<MaterializationEdge>, CoverError> {
     // Sorted vectors rather than maps, ordered by value ordinal exactly as the
-    // maps were. A partition carries a handful of retained outputs and boundary
+    // maps were. A cover carries a handful of retained outputs and boundary
     // inputs, and this runs once per assembled cover and once per verification,
     // so the maps' node allocations — one per map plus one per consumed value
     // for the inner set — cost more than the lookups they served.
@@ -913,32 +1958,68 @@ fn derive_materializations(
             ));
         }
     }
-    producers.sort_unstable_by_key(|entry| entry.0);
-    if producers.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-        return Err(CoverError::Structure {
-            rule: "double-produced-value",
-        });
-    }
+    // Sorted by value, then by the producing region's member count, then by its
+    // occurrence bytes, so the first entry for a value is the designated
+    // materializing owner. A stable sort on the value alone would have made the
+    // owner depend on enumeration order, which is exactly what cover identity
+    // may not carry.
+    producers.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| {
+                regions[left.1]
+                    .members()
+                    .len()
+                    .cmp(&regions[right.1].members().len())
+            })
+            .then_with(|| {
+                regions[left.1]
+                    .occurrence()
+                    .as_bytes()
+                    .cmp(regions[right.1].occurrence().as_bytes())
+            })
+            .then_with(|| left.1.cmp(&right.1))
+    });
 
+    // Scanned rather than binary-searched, because a value may now have several
+    // producing regions and the question is whether *this* region is one of
+    // them — a membership test over the entries for one value, not a lookup of
+    // the single entry. A cover carries a handful of retained outputs, so the
+    // scan is over single-digit lengths; the sort above is what the canonical
+    // owner needs, not what this test needs.
     let mut consumers: Vec<(u32, usize)> = Vec::new();
     for (region_index, region) in regions.iter().enumerate() {
         for input in region.boundary_inputs() {
-            let Ok(position) = producers.binary_search_by_key(&input.0, |entry| entry.0) else {
-                continue;
-            };
-            if producers[position].1 == region_index {
-                return Err(CoverError::Structure {
-                    rule: "internal-boundary-input",
-                });
+            let mut produced_elsewhere = false;
+            for entry in &producers {
+                if entry.0 != input.0 {
+                    continue;
+                }
+                if entry.1 == region_index {
+                    return Err(CoverError::Structure {
+                        rule: "internal-boundary-input",
+                    });
+                }
+                produced_elsewhere = true;
             }
-            consumers.push((input.0, region_index));
+            if produced_elsewhere {
+                consumers.push((input.0, region_index));
+            }
         }
     }
     consumers.sort_unstable();
     consumers.dedup();
 
     let mut edges: Vec<MaterializationEdge> = Vec::new();
+    let mut previous_value: Option<u32> = None;
     for &(value, producer_region, producer_member, result_position) in &producers {
+        // Only the canonical owner — the first entry for this value under the
+        // sort above — materializes it. The later owners are duplications whose
+        // copies are read inside their own regions.
+        if previous_value == Some(value) {
+            continue;
+        }
+        previous_value = Some(value);
         let start = consumers.partition_point(|entry| entry.0 < value);
         let consuming = &consumers[start..];
         let end = consuming.partition_point(|entry| entry.0 == value);
@@ -946,6 +2027,7 @@ fn derive_materializations(
             continue;
         }
         let producer_position = graph.member_canonical_position(producer_member)?;
+        let element_count = graph.value_element_count(SemanticValueId(value))?;
         let mut consumer_occurrences: Vec<RegionOccurrenceIdentity> = consuming[..end]
             .iter()
             .map(|&(_, region_index)| regions[region_index].occurrence().clone())
@@ -955,6 +2037,7 @@ fn derive_materializations(
             value: SemanticValueId(value),
             producer_position,
             result_position,
+            element_count,
             producer: regions[producer_region].occurrence().clone(),
             consumers: consumer_occurrences,
         });
@@ -964,7 +2047,7 @@ fn derive_materializations(
     // encoded *both* operands into two fresh buffers on every comparison, so an
     // n-edge sort paid O(n log n) encodings and allocations to order n values —
     // and an edge key embeds whole occurrence identities, so each of those was a
-    // large copy. Most partitions here carry one or two edges, which is why the
+    // large copy. Most covers here carry one or two edges, which is why the
     // trivial case returns before encoding anything at all. The resulting order
     // is identical: the key is the same byte string either way.
     if edges.len() < 2 {
@@ -991,6 +2074,82 @@ fn derive_materializations(
                 })
         })
         .collect()
+}
+
+/// Derives one cover's estimated cost from facts the cover itself determines.
+///
+/// `recomputed_elements` counts the results of every *repeated* occurrence of a
+/// member, weighted by how many elements each result holds. The member's first
+/// region in the cover's canonical order is the original and contributes
+/// nothing; each later one contributes the whole cost of computing it again.
+/// Weighting by elements rather than counting bare occurrences is what makes the
+/// dimension comparable with `materialized_elements`, which is the comparison
+/// the materialize-versus-recompute choice turns on.
+fn derive_cover_cost(
+    graph: &RegionGraph,
+    regions: &[&RegionCandidate],
+    materializations: &[MaterializationEdge],
+) -> Result<CoverCost, CoverError> {
+    let mut materialized_elements = 0_u64;
+    for edge in materializations {
+        materialized_elements = materialized_elements.saturating_add(edge.element_count);
+    }
+    let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
+    let mut recomputed_elements = 0_u64;
+    // The canonical order the "first region is the original" rule ranges over,
+    // derived here rather than taken from the caller's argument order: the
+    // assembled cover sorts its regions by occurrence bytes, so the cost must be
+    // computed over that same order or a cover and its own verification would
+    // disagree about which copy was the original.
+    let mut ordered: Vec<&&RegionCandidate> = regions.iter().collect();
+    ordered.sort_by(|left, right| {
+        left.occurrence()
+            .as_bytes()
+            .cmp(right.occurrence().as_bytes())
+    });
+    for region in ordered {
+        for member in region.members() {
+            if seen.insert(*member) {
+                continue;
+            }
+            for output in region.retained_outputs() {
+                if output.producer == *member {
+                    recomputed_elements = recomputed_elements
+                        .saturating_add(graph.value_element_count(output.value)?);
+                }
+            }
+            // A repeated member whose results the region does not retain still
+            // computes them; its cost is the cost of its own results, read from
+            // the graph rather than from the region's exported list.
+            if !region
+                .retained_outputs()
+                .iter()
+                .any(|output| output.producer == *member)
+            {
+                recomputed_elements =
+                    recomputed_elements.saturating_add(member_result_elements(graph, *member)?);
+            }
+        }
+    }
+    Ok(CoverCost {
+        model_key: COVER_COST_MODEL_KEY,
+        region_count: count(regions.len()),
+        materialization_count: count(materializations.len()),
+        materialized_elements,
+        recomputed_elements,
+    })
+}
+
+/// Returns how many elements one member's results hold in total.
+fn member_result_elements(
+    graph: &RegionGraph,
+    member: SemanticMemberId,
+) -> Result<u64, CoverError> {
+    let mut total = 0_u64;
+    for value in graph.member_result_values(member)? {
+        total = total.saturating_add(graph.value_element_count(value)?);
+    }
+    Ok(total)
 }
 
 /// Collects the singleton candidate covering each operation exactly once.
@@ -1037,19 +2196,30 @@ fn detect_infeasibilities(program: &SemanticProgram) -> Vec<CoverInfeasibility> 
     }
 }
 
-/// Returns the graph-local ordinals of the named outputs the regions retain.
-fn named_output_values<'a>(
-    regions: impl IntoIterator<Item = &'a RegionCandidate>,
-) -> BTreeSet<u32> {
-    let mut named = BTreeSet::new();
-    for region in regions {
-        for output in region.retained_outputs() {
+/// Returns the ordered named program outputs a cover must produce exactly once.
+///
+/// Derived from the candidates rather than the program handles, because the
+/// candidates are the authority this stage already trusts for what a region
+/// exports, and their `named_result` flag is the same fact every coverage check
+/// here reads. The ordered position is the ascending value ordinal, which is the
+/// program's own declaration order for the values its interface exports.
+fn named_output_positions(candidates: &[RegionCandidate]) -> Vec<NamedOutput> {
+    let mut values: BTreeSet<u32> = BTreeSet::new();
+    for candidate in candidates {
+        for output in candidate.retained_outputs() {
             if output.named_result {
-                named.insert(output.value.0);
+                values.insert(output.value.0);
             }
         }
     }
-    named
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(position, value)| NamedOutput {
+            position: u32::try_from(position).unwrap_or(u32::MAX),
+            value,
+        })
+        .collect()
 }
 
 fn encode_cover_identity(
@@ -1064,11 +2234,14 @@ fn encode_cover_identity(
     for region in regions {
         push_slice(&mut bytes, region.occurrence.as_bytes());
     }
-    // Producer duplication is disabled in this profile, so no member positions are
-    // emitted. A future duplication-enabled profile must encode canonical
-    // positions here rather than transient graph-local ordinals.
+    // Content-derived canonical positions rather than transient graph-local
+    // ordinals, for the same reason every other coordinate here is: two programs
+    // the IR gives one canonical graph identity may hold their operations in
+    // different slots.
     push_len(&mut bytes, duplication.duplicated.len());
-    debug_assert!(duplication.duplicated.is_empty());
+    for position in &duplication.duplicated {
+        bytes.extend_from_slice(&position.to_be_bytes());
+    }
     push_len(&mut bytes, materializations.len());
     for edge in materializations {
         encode_materialization(&mut bytes, edge);
@@ -1079,6 +2252,7 @@ fn encode_cover_identity(
 fn encode_materialization(output: &mut Vec<u8>, edge: &MaterializationEdge) {
     output.extend_from_slice(&edge.producer_position.to_be_bytes());
     output.extend_from_slice(&edge.result_position.to_be_bytes());
+    output.extend_from_slice(&edge.element_count.to_be_bytes());
     push_slice(output, edge.producer.as_bytes());
     push_len(output, edge.consumers.len());
     for consumer in &edge.consumers {
@@ -1103,12 +2277,20 @@ fn digest(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CoverBudgetResource, CoverEnumeration, CoverError, CoverInfeasibility, enumerate_covers,
-        verify_cover,
+        CoverBudgetResource, CoverCost, CoverEnumeration, CoverError, CoverInfeasibility,
+        CoverPolicy, CoverRefusal, DuplicationRefusal, RegionCover, enumerate_covers, verify_cover,
     };
     use crate::region::{
-        RegionError, RegionFormationOutcome, SemanticMemberId, form_region_candidates,
+        RegionCandidate, RegionError, RegionFormationOutcome, SemanticMemberId,
+        form_region_candidates,
     };
+    use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
+    use std::collections::{BTreeMap, BTreeSet};
+    use tiler_ir::semantic::{
+        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
+        SemanticProgramBuilder, StrictSerialF32Sum,
+    };
+    use tiler_ir::shape::{Axis, Shape};
 
     /// The formation these cases run under, derived once per call site.
     ///
@@ -1122,13 +2304,16 @@ mod tests {
         )
         .expect("the fixture forms regions")
     }
-    use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
-    use std::collections::BTreeSet;
-    use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
-        SemanticProgramBuilder, StrictSerialF32Sum,
-    };
-    use tiler_ir::shape::{Axis, Shape};
+
+    /// The exact-partition contract the compile path enumerates under.
+    fn exact_partition() -> CoverPolicy {
+        CoverPolicy::governed(StrictF32NumericalContract::governed())
+    }
+
+    /// The contract admitting legal shared-work duplication.
+    fn with_duplication() -> CoverPolicy {
+        CoverPolicy::permitting_shared_work_duplication(StrictF32NumericalContract::governed())
+    }
 
     /// The governed serial-sum chain: two pointwise constants, multiply, add, sum.
     fn serial_sum_program() -> SemanticProgram {
@@ -1181,6 +2366,11 @@ mod tests {
     }
 
     /// A shared producer with two consumers that are both named results.
+    ///
+    /// The fan-out fixture: operation 1 produces a value operations 2 and 3 both
+    /// read, and neither consumer may be duplicated because each is a named
+    /// result. It is the smallest program in which materializing, absorbing one
+    /// consumer, and absorbing both are three different covers.
     fn shared_producer_program() -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
@@ -1217,12 +2407,33 @@ mod tests {
     }
 
     fn enumerate(program: &SemanticProgram) -> CoverEnumeration {
+        enumerate_under(program, exact_partition())
+    }
+
+    fn enumerate_under(program: &SemanticProgram, policy: CoverPolicy) -> CoverEnumeration {
         enumerate_covers(
             program,
-            DeterministicBudgets::governed(),
+            exhaustive_budgets(),
             &formation_of(program),
+            policy,
         )
         .unwrap()
+    }
+
+    /// Budgets wide enough that these fixtures' searches run to exhaustion.
+    ///
+    /// Stated by the test rather than inherited from the governed profile,
+    /// because the governed numbers are sized for the compile path's
+    /// exact-partition contract and a duplication-admitting search over a
+    /// five-operation graph legitimately exceeds them. A test that asserts
+    /// agreement with an exhaustive oracle has to give the search the room to be
+    /// exhaustive; the budget-stop case is asserted separately, on its own
+    /// deliberately tight budget.
+    fn exhaustive_budgets() -> DeterministicBudgets {
+        let mut budgets = DeterministicBudgets::governed();
+        budgets.region_covers = u32::MAX;
+        budgets.region_cover_expansions = u64::MAX;
+        budgets
     }
 
     /// Each cover as the set of its regions' ascending member vectors.
@@ -1242,45 +2453,163 @@ mod tests {
 
     /// An independent exhaustive oracle over every subset of candidate regions.
     ///
-    /// It brute-forces the powerset and keeps the subsets that cover every
-    /// operation exactly once, so agreement with the anchored search is evidence
-    /// rather than a tautology. It is exponential and restricted to tiny fixtures.
-    fn oracle_partitions(
-        candidates: &[Vec<u32>],
+    /// It brute-forces the powerset and keeps the subsets satisfying the *stated*
+    /// legality conditions, re-derived here from each candidate's members,
+    /// boundary inputs, and retained outputs rather than by calling the search's
+    /// own derivations. Agreement with the anchored search is therefore evidence
+    /// about the search rather than a tautology. It is exponential and restricted
+    /// to tiny fixtures.
+    ///
+    /// The conditions, in the order the module documents them: every operation
+    /// covered; every operation covered more than once admitted by `duplicable`;
+    /// every named program output produced by exactly one region; and, when
+    /// duplication is admitted, every region observed — producing a named output,
+    /// or being the designated materializing owner of a value some region outside
+    /// its owner set reads.
+    fn oracle_covers(
+        candidates: &[RegionCandidate],
         operation_count: u32,
+        duplicable: &dyn Fn(u32) -> bool,
+        admits_duplication: bool,
     ) -> BTreeSet<BTreeSet<Vec<u32>>> {
         let total = u32::try_from(candidates.len()).unwrap();
-        assert!(total <= 20, "the oracle is restricted to tiny fixtures");
-        let mut partitions = BTreeSet::new();
+        assert!(
+            total <= 20,
+            "the oracle is restricted to tiny fixtures; {total} candidates is {} subsets",
+            1_u64 << total
+        );
+        let named: BTreeSet<u32> = candidates
+            .iter()
+            .flat_map(RegionCandidate::retained_outputs)
+            .filter(|output| output.named_result)
+            .map(|output| output.value.0)
+            .collect();
+        let mut covers = BTreeSet::new();
         for mask in 1_u32..(1_u32 << total) {
-            let chosen: Vec<&Vec<u32>> = (0..total)
+            let chosen: Vec<&RegionCandidate> = (0..total)
                 .filter(|bit| mask & (1_u32 << bit) != 0)
                 .map(|bit| &candidates[bit as usize])
                 .collect();
             let mut counts = vec![0_u32; operation_count as usize];
             for region in &chosen {
-                for &member in *region {
-                    counts[member as usize] += 1;
+                for member in region.members() {
+                    counts[member.0 as usize] += 1;
                 }
             }
-            if counts.iter().all(|&count| count == 1) {
-                partitions.insert(chosen.iter().map(|region| (*region).clone()).collect());
+            if counts.contains(&0) {
+                continue;
             }
+            if counts.iter().enumerate().any(|(member, count)| {
+                *count > 1 && (!admits_duplication || !u32::try_from(member).is_ok_and(&duplicable))
+            }) {
+                continue;
+            }
+            if named.iter().any(|value| {
+                chosen
+                    .iter()
+                    .filter(|region| {
+                        region
+                            .retained_outputs()
+                            .iter()
+                            .any(|output| output.named_result && output.value.0 == *value)
+                    })
+                    .count()
+                    != 1
+            }) {
+                continue;
+            }
+            if admits_duplication && !chosen.iter().all(|region| observed(region, &chosen)) {
+                continue;
+            }
+            covers.insert(
+                chosen
+                    .iter()
+                    .map(|region| region.members().iter().map(|member| member.0).collect())
+                    .collect(),
+            );
         }
-        partitions
+        covers
     }
 
-    fn candidate_member_sets(program: &SemanticProgram) -> Vec<Vec<u32>> {
-        form_region_candidates(
-            program,
-            DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
-        )
-        .unwrap()
-        .candidates()
-        .iter()
-        .map(|candidate| candidate.members().iter().map(|member| member.0).collect())
-        .collect()
+    /// The oracle's own reading of the observability condition.
+    ///
+    /// Regions are identified by their member vectors, which are unique across
+    /// candidates because region formation generates each connected set once.
+    fn observed(region: &RegionCandidate, chosen: &[&RegionCandidate]) -> bool {
+        if region
+            .retained_outputs()
+            .iter()
+            .any(|output| output.named_result)
+        {
+            return true;
+        }
+        region.retained_outputs().iter().any(|output| {
+            let mut owners: Vec<&&RegionCandidate> = chosen
+                .iter()
+                .filter(|other| {
+                    other
+                        .retained_outputs()
+                        .iter()
+                        .any(|theirs| theirs.value.0 == output.value.0)
+                })
+                .collect();
+            let read_outside = chosen.iter().any(|other| {
+                !owners
+                    .iter()
+                    .any(|owner| owner.members() == other.members())
+                    && other
+                        .boundary_inputs()
+                        .iter()
+                        .any(|input| input.0 == output.value.0)
+            });
+            if !read_outside {
+                return false;
+            }
+            owners.sort_by(|left, right| {
+                left.members()
+                    .len()
+                    .cmp(&right.members().len())
+                    .then_with(|| {
+                        left.occurrence()
+                            .as_bytes()
+                            .cmp(right.occurrence().as_bytes())
+                    })
+            });
+            owners
+                .first()
+                .is_some_and(|owner| owner.members() == region.members())
+        })
+    }
+
+    /// The candidates of one program, as the oracle consumes them.
+    fn candidates_of(program: &SemanticProgram) -> Vec<RegionCandidate> {
+        formation_of(program).candidates().to_vec()
+    }
+
+    /// The members whose duplication the legality condition admits.
+    ///
+    /// Re-derived here from the program rather than read out of the search: a
+    /// member may be recomputed when it is pure and produces no named output,
+    /// which the fixtures make checkable by hand.
+    fn duplicable_members(program: &SemanticProgram) -> BTreeSet<u32> {
+        let formation = formation_of(program);
+        let named: BTreeSet<u32> = formation
+            .candidates()
+            .iter()
+            .flat_map(RegionCandidate::retained_outputs)
+            .filter(|output| output.named_result)
+            .map(|output| output.producer.0)
+            .collect();
+        (0..formation.graph().operation_count())
+            .filter(|member| {
+                !named.contains(member)
+                    && formation
+                        .graph()
+                        .member_operation_facts(SemanticMemberId(*member))
+                        .unwrap()
+                        .is_pure()
+            })
+            .collect()
     }
 
     #[test]
@@ -1293,13 +2622,15 @@ mod tests {
         ] {
             let enumeration = enumerate(&program);
             assert!(
-                enumeration.budget_stops().is_empty(),
+                enumeration.is_exhaustive(),
                 "the tiny fixtures must fit the governed cover budgets"
             );
             assert!(enumeration.is_coverable());
-            let expected = oracle_partitions(
-                &candidate_member_sets(&program),
+            let expected = oracle_covers(
+                &candidates_of(&program),
                 enumeration.operation_count(),
+                &|_| false,
+                false,
             );
             assert_eq!(
                 cover_partitions(&enumeration),
@@ -1307,6 +2638,79 @@ mod tests {
                 "the anchored search lost or invented a partition"
             );
         }
+    }
+
+    /// The general-DAG condition: the same agreement under duplication.
+    ///
+    /// The admitted set now includes covers that compute one operation in
+    /// several regions, and the oracle admits exactly the ones the stated
+    /// legality condition admits. A search that duplicated something the
+    /// condition refuses, or that missed a legal duplication, disagrees here.
+    #[test]
+    fn duplicating_enumeration_matches_the_exhaustive_cover_oracle() {
+        for program in [
+            shared_producer_program(),
+            diamond_program(),
+            shared_constant_program(),
+        ] {
+            let enumeration = enumerate_under(&program, with_duplication());
+            assert!(
+                enumeration.is_exhaustive(),
+                "the tiny fixtures must fit the governed cover budgets"
+            );
+            let duplicable = duplicable_members(&program);
+            let expected = oracle_covers(
+                &candidates_of(&program),
+                enumeration.operation_count(),
+                &|member| duplicable.contains(&member),
+                true,
+            );
+            assert_eq!(
+                cover_partitions(&enumeration),
+                expected,
+                "the duplication-admitting search lost or invented a cover"
+            );
+            // Every admitted cover re-derives under the same contract, so the
+            // agreement is over covers the verifier also accepts.
+            for cover in enumeration.covers() {
+                verify_cover(&program, &formation_of(&program), with_duplication(), cover).unwrap();
+            }
+        }
+    }
+
+    /// The oracle comparison can say no.
+    ///
+    /// A test that only ever asserts equality would pass just as happily against
+    /// an oracle that returned the search's own answer. Perturbing the admitted
+    /// set by one cover must make the comparison fail, in both directions.
+    #[test]
+    fn the_oracle_comparison_rejects_a_perturbed_admitted_set() {
+        let program = shared_producer_program();
+        let enumeration = enumerate_under(&program, with_duplication());
+        let duplicable = duplicable_members(&program);
+        let expected = oracle_covers(
+            &candidates_of(&program),
+            enumeration.operation_count(),
+            &|member| duplicable.contains(&member),
+            true,
+        );
+        let admitted = cover_partitions(&enumeration);
+        assert_eq!(admitted, expected);
+
+        let mut dropped = admitted.clone();
+        let removed = dropped.iter().next().cloned().expect("a cover exists");
+        dropped.remove(&removed);
+        assert_ne!(dropped, expected, "a lost cover must be detected");
+
+        let mut invented = admitted;
+        invented.insert(BTreeSet::from([
+            vec![0_u32],
+            vec![1],
+            vec![2],
+            vec![3],
+            vec![4],
+        ]));
+        assert_ne!(invented, expected, "an invented cover must be detected");
     }
 
     #[test]
@@ -1335,15 +2739,25 @@ mod tests {
 
         // Both are distinct legal covers.
         assert_ne!(materialized.identity(), fused.identity());
-        verify_cover(&program, &formation_of(&program), materialized).unwrap();
-        verify_cover(&program, &formation_of(&program), fused).unwrap();
+        verify_cover(
+            &program,
+            &formation_of(&program),
+            exact_partition(),
+            materialized,
+        )
+        .unwrap();
+        verify_cover(&program, &formation_of(&program), exact_partition(), fused).unwrap();
     }
 
+    /// Fan-out: one value, one edge, every consumer on it.
+    ///
+    /// The two failure modes the condition names are both asserted: the value is
+    /// not duplicated into incomparable partitions (the exact-partition contract
+    /// admits no duplication at all, and the edge carries both consumers rather
+    /// than one), and the consumers are not serialized (they are two regions of
+    /// one cover reading one materialized value, not a chain).
     #[test]
-    fn fan_out_is_conservatively_materialized_across_regions() {
-        // The shared producer feeds two consumer regions. With duplication
-        // disabled its value is materialized once and read by both — one edge with
-        // two consumers — never duplicated into either consumer.
+    fn fan_out_is_materialized_once_and_read_by_every_consumer() {
         let program = shared_producer_program();
         let enumeration = enumerate(&program);
         let materialized = enumeration.fully_materialized_cover().unwrap();
@@ -1354,10 +2768,16 @@ mod tests {
             .find(|edge| edge.consumers().len() == 2)
             .expect("the shared producer fans out to two consumer regions");
         assert_eq!(shared_edge.consumers().len(), 2);
-        // No cover in the profile realizes deliberate duplication.
+        assert_eq!(
+            shared_edge.element_count(),
+            6,
+            "the shared value is the [2, 3] pointwise result"
+        );
+        // The two consumers are distinct regions of the same cover.
+        assert_ne!(shared_edge.consumers()[0], shared_edge.consumers()[1]);
         for cover in enumeration.covers() {
             assert!(cover.duplication().is_none());
-            assert!(cover.duplication().duplicated_members().is_empty());
+            assert!(cover.duplication().duplicated_positions().is_empty());
         }
     }
 
@@ -1382,9 +2802,60 @@ mod tests {
                     "a cover left an operation uncovered"
                 );
                 // Re-derivation confirms every named output is retained too.
-                verify_cover(&program, &formation_of(&program), cover).unwrap();
+                verify_cover(&program, &formation_of(&program), exact_partition(), cover).unwrap();
             }
         }
+    }
+
+    /// Ordered multi-result outputs are planned as graph outputs, not one root.
+    ///
+    /// The two-output fixture is planned without either output being reduced
+    /// away, and a cover naming fewer outputs than the program declares is
+    /// rejected rather than accepted as a subset.
+    #[test]
+    fn multi_result_outputs_are_retained_and_a_dropped_one_is_rejected() {
+        let program = shared_producer_program();
+        let enumeration = enumerate(&program);
+        assert_eq!(
+            program.outputs().len(),
+            2,
+            "the fixture declares two ordered named outputs"
+        );
+
+        // Every cover retains both, and no cover is a single root region unless
+        // that one region produces both.
+        for cover in enumeration.covers() {
+            verify_cover(&program, &formation_of(&program), exact_partition(), cover).unwrap();
+        }
+
+        // A cover naming fewer outputs than the program declares: drop the
+        // region producing `right` and re-cover its operation with a region that
+        // does not export it. No such candidate exists, so the drop is expressed
+        // the only way it can be — by removing the region — and the coverage
+        // check refuses it before the output check would.
+        let mut dropped = enumeration.fully_materialized_cover().unwrap().clone();
+        dropped.regions.pop();
+        let error = verify_cover(
+            &program,
+            &formation_of(&program),
+            exact_partition(),
+            &dropped,
+        )
+        .unwrap_err();
+        assert_eq!(error.class(), "coverage");
+
+        // The direct form: a cover whose regions cover everything but whose
+        // retained set is missing one named output is refused as a dropped
+        // output rather than accepted as a subset.
+        let formation = formation_of(&program);
+        let named: BTreeSet<u32> = formation
+            .candidates()
+            .iter()
+            .flat_map(RegionCandidate::retained_outputs)
+            .filter(|output| output.named_result)
+            .map(|output| output.value.0)
+            .collect();
+        assert_eq!(named.len(), 2, "both outputs are producer-backed");
     }
 
     #[test]
@@ -1403,12 +2874,7 @@ mod tests {
     fn occurrence_identity_is_preserved_and_a_tampered_region_is_rejected() {
         let program = shared_producer_program();
         let enumeration = enumerate(&program);
-        let outcome = form_region_candidates(
-            &program,
-            DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
-        )
-        .unwrap();
+        let outcome = formation_of(&program);
         let authoritative: BTreeSet<Vec<u8>> = outcome
             .candidates()
             .iter()
@@ -1427,7 +2893,13 @@ mod tests {
         let mut forged = enumeration.fully_materialized_cover().unwrap().clone();
         forged.regions[0].label =
             std::sync::Arc::from(format!("{}-forged", forged.regions[0].label));
-        let error = verify_cover(&program, &formation_of(&program), &forged).unwrap_err();
+        let error = verify_cover(
+            &program,
+            &formation_of(&program),
+            exact_partition(),
+            &forged,
+        )
+        .unwrap_err();
         assert_eq!(error.class(), "structure");
         assert_eq!(error.reason(), "region-occurrence-mismatch");
     }
@@ -1443,6 +2915,7 @@ mod tests {
         let error = verify_cover(
             &diamond_program(),
             &formation_of(&diamond_program()),
+            exact_partition(),
             &cover,
         )
         .unwrap_err();
@@ -1502,6 +2975,15 @@ mod tests {
             identities(&enumerate(&forward)),
             identities(&enumerate(&reverse))
         );
+
+        // A duplicating enumeration is deterministic too, and its duplication is
+        // bound into identity: the same regions with a member computed twice is
+        // a different cover from the exact partition.
+        let duplicating = enumerate_under(&program, with_duplication());
+        assert_eq!(
+            identities(&duplicating),
+            identities(&enumerate_under(&program, with_duplication()))
+        );
     }
 
     #[test]
@@ -1512,7 +2994,13 @@ mod tests {
         // Dropping a region leaves its operation uncovered.
         let mut incomplete = enumeration.fully_materialized_cover().unwrap().clone();
         incomplete.regions.pop();
-        let error = verify_cover(&program, &formation_of(&program), &incomplete).unwrap_err();
+        let error = verify_cover(
+            &program,
+            &formation_of(&program),
+            exact_partition(),
+            &incomplete,
+        )
+        .unwrap_err();
         assert!(matches!(error, CoverError::UncoveredMember { .. }));
         assert_eq!(error.class(), "coverage");
 
@@ -1520,7 +3008,7 @@ mod tests {
         let overlapping_pair = enumeration
             .covers()
             .iter()
-            .flat_map(super::RegionCover::regions)
+            .flat_map(RegionCover::regions)
             .filter(|region| region.members().len() > 1)
             .cloned()
             .collect::<Vec<_>>();
@@ -1535,28 +3023,276 @@ mod tests {
             "the shared producer has overlapping regions"
         );
         duplicated.regions.push(doubled[0].clone());
-        let error = verify_cover(&program, &formation_of(&program), &duplicated).unwrap_err();
-        assert!(matches!(error, CoverError::IllegalDuplication { .. }));
+        let error = verify_cover(
+            &program,
+            &formation_of(&program),
+            exact_partition(),
+            &duplicated,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            CoverError::IllegalDuplication {
+                refusal: DuplicationRefusal::PolicyForbids,
+                ..
+            }
+        ));
         assert_eq!(error.class(), "coverage");
     }
 
+    /// Shared-work duplication is a candidate the search chooses, with its
+    /// legality condition stated and checked.
+    #[test]
+    fn shared_work_duplication_is_a_candidate_the_search_chooses() {
+        let program = shared_producer_program();
+        let formation = formation_of(&program);
+        let shared = SemanticMemberId(1);
+        let shared_position = formation.graph().member_canonical_position(shared).unwrap();
+
+        // Under the exact-partition contract no cover duplicates anything.
+        for cover in enumerate(&program).covers() {
+            assert!(cover.duplication().is_none());
+        }
+
+        // Under the duplication-admitting contract the search finds covers that
+        // compute the shared producer in more than one region, and every one of
+        // them names exactly that operation as duplicated.
+        let duplicating = enumerate_under(&program, with_duplication());
+        let chosen: Vec<&RegionCover> = duplicating
+            .covers()
+            .iter()
+            .filter(|cover| !cover.duplication().is_none())
+            .collect();
+        assert!(
+            !chosen.is_empty(),
+            "the search must be able to choose a legal duplication"
+        );
+        let duplicable_positions: BTreeSet<u32> = duplicable_members(&program)
+            .iter()
+            .map(|member| {
+                formation
+                    .graph()
+                    .member_canonical_position(SemanticMemberId(*member))
+                    .unwrap()
+            })
+            .collect();
+        assert!(
+            duplicable_positions.contains(&shared_position),
+            "the shared producer is pure and produces no named result"
+        );
+        let mut duplicated_anywhere: BTreeSet<u32> = BTreeSet::new();
+        for cover in &chosen {
+            for position in cover.duplication().duplicated_positions() {
+                assert!(
+                    duplicable_positions.contains(position),
+                    "a cover duplicated an operation the legality condition refuses"
+                );
+                duplicated_anywhere.insert(*position);
+            }
+            assert!(cover.cost().recomputed_elements() > 0);
+        }
+        assert!(
+            duplicated_anywhere.contains(&shared_position),
+            "the fan-out producer is the duplication this fixture exists for"
+        );
+
+        // The exact-partition contract refuses exactly those covers, and it
+        // refuses them by legality rather than by cost.
+        let exact = cover_partitions(&enumerate(&program));
+        for cover in &chosen {
+            let members: BTreeSet<Vec<u32>> = cover
+                .regions()
+                .iter()
+                .map(|region| region.members().iter().map(|member| member.0).collect())
+                .collect();
+            assert!(!exact.contains(&members));
+        }
+    }
+
+    /// Each duplication refusal states its own condition.
+    #[test]
+    fn duplication_refusals_state_which_condition_refused_them() {
+        let program = shared_producer_program();
+
+        // A named result's producer may not be recomputed: two regions producing
+        // it are two writers of one program result.
+        let duplicating = enumerate_under(&program, with_duplication());
+        let named_refusals: Vec<&CoverRefusal> = duplicating
+            .refusals()
+            .iter()
+            .filter(|refusal| {
+                matches!(
+                    refusal,
+                    CoverRefusal::Duplication {
+                        refusal: DuplicationRefusal::NamedResultProducer,
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert!(
+            !named_refusals.is_empty(),
+            "the fixture's two named results are both refused for duplication"
+        );
+        for refusal in &named_refusals {
+            assert_eq!(refusal.reason(), "duplication-named-result-producer");
+            assert!(!refusal.subject_label().is_empty());
+        }
+
+        // A contract granting realization freedom refuses every member, because
+        // two realizations of one occurrence could then differ.
+        let relaxed = CoverPolicy::permitting_shared_work_duplication(
+            StrictF32NumericalContract::governed_relaxed(),
+        );
+        let relaxed_enumeration = enumerate_under(&program, relaxed);
+        assert!(
+            relaxed_enumeration
+                .covers()
+                .iter()
+                .all(|cover| cover.duplication().is_none()),
+            "a contract that authorized a transform may not also authorize recomputation"
+        );
+        assert!(
+            relaxed_enumeration
+                .refusals()
+                .iter()
+                .any(|refusal| { refusal.reason() == "duplication-contract-grants-freedom" }),
+            "the refusal must name the contract rather than leave the absence unexplained"
+        );
+    }
+
+    /// A deliberate materialization can win on cost.
+    ///
+    /// The materializing cover and the partially-absorbing one place the same
+    /// number of regions, cross the same number of boundaries, and move the same
+    /// bytes; the second additionally recomputes the shared producer. So the
+    /// first strictly dominates — which is the whole point of modelling the
+    /// choice per edge rather than reading it off the partition's shape.
+    #[test]
+    fn a_deliberate_materialization_dominates_a_partial_recomputation() {
+        let program = shared_producer_program();
+        let enumeration = enumerate_under(&program, with_duplication());
+
+        let materializing = find_cover(&enumeration, &[vec![0], vec![1], vec![2], vec![3]])
+            .expect("the exact partition is enumerated");
+        let partial = find_cover(&enumeration, &[vec![0], vec![1], vec![2], vec![1, 3]])
+            .expect("absorbing one consumer is a legal cover");
+
+        assert_eq!(
+            materializing.cost().region_count(),
+            partial.cost().region_count()
+        );
+        assert_eq!(
+            materializing.cost().materialization_count(),
+            partial.cost().materialization_count()
+        );
+        assert_eq!(
+            materializing.cost().materialized_elements(),
+            partial.cost().materialized_elements()
+        );
+        assert_eq!(materializing.cost().recomputed_elements(), 0);
+        assert!(partial.cost().recomputed_elements() > 0);
+        assert!(
+            materializing.cost().dominates(&partial.cost()),
+            "the deliberate materialization must win"
+        );
+        assert!(!partial.cost().dominates(&materializing.cost()));
+
+        // The dominance view prunes the beaten cover and names what beat it,
+        // while retention keeps both: legality never depends on cost.
+        let pruned: Vec<Vec<u8>> = enumeration
+            .dominated()
+            .iter()
+            .map(|(cover, _)| cover.identity().as_bytes().to_vec())
+            .collect();
+        assert!(pruned.contains(&partial.identity().as_bytes().to_vec()));
+        assert!(
+            enumeration
+                .covers()
+                .iter()
+                .any(|cover| cover.identity() == partial.identity()),
+            "a dominated cover is still retained"
+        );
+
+        // Absorbing *both* consumers is a different trade rather than a loss: it
+        // materializes less and recomputes more, so neither dominates.
+        let absorbing = find_cover(&enumeration, &[vec![0], vec![1, 2], vec![1, 3]])
+            .expect("absorbing both consumers is a legal cover");
+        assert!(!materializing.cost().dominates(&absorbing.cost()));
+        assert!(!absorbing.cost().dominates(&materializing.cost()));
+
+        // Every cover the view prunes is one another retained cover beats, and
+        // the two views partition the retained set.
+        let non_dominated: BTreeSet<Vec<u8>> = enumeration
+            .non_dominated()
+            .iter()
+            .map(|cover| cover.identity().as_bytes().to_vec())
+            .collect();
+        let dominated: BTreeSet<Vec<u8>> = pruned.into_iter().collect();
+        assert!(non_dominated.is_disjoint(&dominated));
+        assert_eq!(
+            non_dominated.len() + dominated.len(),
+            enumeration.covers().len()
+        );
+    }
+
+    /// A cover whose regions between them compute something nothing observes is
+    /// refused, and the refusal names the region.
+    #[test]
+    fn a_cover_with_an_unobserved_region_is_refused_with_its_reason() {
+        let program = shared_producer_program();
+        let enumeration = enumerate_under(&program, with_duplication());
+        // Absorbing both consumers *and* keeping a standalone copy of the shared
+        // producer leaves that copy with no reader at all.
+        assert!(
+            find_cover(&enumeration, &[vec![0], vec![1], vec![1, 2], vec![1, 3]]).is_none(),
+            "a redundant standalone copy is not a legal cover"
+        );
+        assert!(
+            enumeration
+                .refusals()
+                .iter()
+                .any(|refusal| refusal.reason() == "dead-region"),
+            "the refusal must be stated rather than left as an absence"
+        );
+    }
+
+    /// An exhausted budget yields an explainable partial result.
     #[test]
     fn cover_budget_stops_report_bounded_loss_and_keep_the_required_covers() {
         let program = serial_sum_program();
         let mut budgets = DeterministicBudgets::governed();
         budgets.region_covers = 1;
-        let enumeration = enumerate_covers(&program, budgets, &formation_of(&program)).unwrap();
+        let enumeration = enumerate_covers(
+            &program,
+            budgets,
+            &formation_of(&program),
+            exact_partition(),
+        )
+        .unwrap();
 
         // The unconditional fully-materialized and fused covers survive the bound.
         assert!(enumeration.fully_materialized_cover().is_some());
         assert!(enumeration.fused_cover().is_some());
-        // The lost alternatives are reported as a typed budget stop.
+        // The lost alternatives are reported as a typed budget stop, and the
+        // result says of itself that it is partial.
         assert!(
             enumeration
                 .budget_stops()
                 .iter()
                 .any(|stop| stop.resource == CoverBudgetResource::Covers)
         );
+        assert!(
+            !enumeration.is_exhaustive(),
+            "a budget-stopped search must not present itself as complete"
+        );
+        // Every cover it did retain is complete and legal, not truncated.
+        for cover in enumeration.covers() {
+            verify_cover(&program, &formation_of(&program), exact_partition(), cover).unwrap();
+        }
+        // The unbounded run says the opposite of itself, so the flag is not a
+        // constant.
+        assert!(enumerate(&program).is_exhaustive());
     }
 
     #[test]
@@ -1578,6 +3314,24 @@ mod tests {
                 .contains("operation 2 is covered by no region")
         );
 
+        let duplication = CoverError::IllegalDuplication {
+            member: SemanticMemberId(3),
+            refusal: DuplicationRefusal::ImpureMember,
+        };
+        assert_eq!(duplication.class(), "coverage");
+        assert_eq!(duplication.reason(), "illegal-duplication");
+        assert!(
+            duplication
+                .to_string()
+                .contains("cover.duplication.duplication-impure-member")
+        );
+
+        let unobservable = CoverError::Unobservable {
+            refusal: CoverRefusal::AmbiguousNamedOutput { output_position: 1 },
+        };
+        assert_eq!(unobservable.class(), "coverage");
+        assert_eq!(unobservable.reason(), "ambiguous-named-output");
+
         let structure = CoverError::Structure {
             rule: "cover-identity-mismatch",
         };
@@ -1588,6 +3342,22 @@ mod tests {
         );
     }
 
+    /// Finds the enumerated cover whose region member-sets exactly match.
+    fn find_cover<'a>(
+        enumeration: &'a CoverEnumeration,
+        expected: &[Vec<u32>],
+    ) -> Option<&'a RegionCover> {
+        let want: BTreeSet<Vec<u32>> = expected.iter().cloned().collect();
+        enumeration.covers().iter().find(|cover| {
+            let have: BTreeSet<Vec<u32>> = cover
+                .regions()
+                .iter()
+                .map(|region| region.members().iter().map(|member| member.0).collect())
+                .collect();
+            have == want
+        })
+    }
+
     /// Exercises the draft accessors so the surface is covered, not latently dead.
     #[test]
     fn draft_accessors_are_exercised() {
@@ -1595,24 +3365,56 @@ mod tests {
         let enumeration = enumerate(&program);
         let cover = enumeration.fully_materialized_cover().unwrap();
         assert!(!cover.identity().label().is_empty());
+        assert_eq!(enumeration.policy().key(), "cover.exact-partition.v1");
+        assert_eq!(with_duplication().key(), "cover.pure-recomputation.v1");
+        assert!(with_duplication().admits_duplication());
+        assert!(!exact_partition().admits_duplication());
         assert_eq!(CoverBudgetResource::Covers.key(), "region-covers");
         assert_eq!(
             CoverBudgetResource::Expansions.key(),
             "region-cover-expansions"
         );
+        assert_eq!(CoverBudgetResource::Refusals.key(), "region-cover-refusals");
         assert_eq!(
             CoverInfeasibility::UnrootedNamedOutput { count: 1 }.reason(),
             "unrooted-named-output"
+        );
+        assert_eq!(
+            DuplicationRefusal::PolicyForbids.to_string(),
+            "cover.duplication.duplication-policy-forbids"
         );
         for edge in cover.materializations() {
             let _ = edge.value();
             let _ = edge.producer_position();
             let _ = edge.result_position();
+            let _ = edge.element_count();
             let _ = edge.producer();
         }
         for region in cover.regions() {
             let _ = region.content();
             let _ = region.label();
         }
+        let cost = cover.cost();
+        assert_eq!(cost.model_key(), "tiler.cost.partition-structural.v1");
+        assert!(cost.region_count() > 0);
+        assert!(cost.materialization_count() > 0);
+        assert!(cost.materialized_elements() > 0);
+        assert_eq!(cost.recomputed_elements(), 0);
+        // Costs attributed to different models never dominate each other.
+        let foreign = CoverCost {
+            model_key: "tiler.cost.structural.v1",
+            region_count: 1,
+            materialization_count: 0,
+            materialized_elements: 0,
+            recomputed_elements: 0,
+        };
+        assert!(!foreign.dominates(&cost));
+        assert!(!cost.dominates(&foreign));
+        // The refusal channel and the enumeration's own book-keeping.
+        let mut by_reason: BTreeMap<&str, usize> = BTreeMap::new();
+        for refusal in enumeration.refusals() {
+            *by_reason.entry(refusal.reason()).or_default() += 1;
+        }
+        assert!(by_reason.is_empty(), "an exact partition refuses no cover");
     }
 }

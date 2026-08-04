@@ -467,6 +467,65 @@ impl StrictF32NumericalContract {
             self.infinity_assumptions,
         )
     }
+
+    /// Whether this contract lets two realizations of one occurrence differ.
+    ///
+    /// The partition search asks exactly this before it may compute one semantic
+    /// occurrence in two regions: recomputation preserves the program only if
+    /// every admitted realization of that occurrence computes the same function
+    /// bit for bit. A contract that *permits* a transform does not say which
+    /// realization takes it, so two regions may take it differently, and the two
+    /// copies of one semantic value would then disagree — which is a change of
+    /// meaning, not a cost.
+    ///
+    /// **The distinction is freedom, not strictness.** A fixed resolution binds
+    /// every realization equally: both subnormal modes, the canonical NaN
+    /// payload, and the materialization rounding are *decided* by the contract,
+    /// so two realizations under one contract cannot differ on them however
+    /// permissive the decision is. They are deliberately absent below. The
+    /// dimensions listed are the ones whose resolution admits *alternatives* a
+    /// realization chooses between.
+    ///
+    /// Written as an exhaustive destructuring so a dimension added to the
+    /// vocabulary is a build error here rather than a freedom this predicate
+    /// silently declares absent.
+    pub(crate) const fn grants_realization_freedom(&self) -> bool {
+        let Self {
+            key: _,
+            arithmetic: _,
+            canonical_arithmetic_nan_bits: _,
+            input_subnormals: _,
+            result_subnormals: _,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
+            nan_assumptions,
+            infinity_assumptions,
+            materialization_rounding: _,
+        } = *self;
+        !matches!(contraction, NumericalPermission::Forbidden)
+            || !matches!(reassociation, NumericalPermission::Forbidden)
+            || !matches!(permutation, NumericalPermission::Forbidden)
+            || !matches!(signed_zero, NumericalPermission::Forbidden)
+            || !matches!(reciprocal_transform, NumericalPermission::Forbidden)
+            || !matches!(approximate_intrinsics, ApproximationEnvelope::Forbidden)
+            // An assumption is a freedom: a realization told NaN operands are
+            // absent may emit an operation that differs from the general one on
+            // an input the assumption excluded, and a realization that declines
+            // the assumption may not. Two copies of one value would then be two
+            // different computations.
+            || !matches!(
+                nan_assumptions,
+                ExceptionalValueAssumption::MakeNoAssumption
+            )
+            || !matches!(
+                infinity_assumptions,
+                ExceptionalValueAssumption::MakeNoAssumption
+            )
+    }
 }
 
 /// Why one composed dimension vector is not a contract this build will hold.

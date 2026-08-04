@@ -342,6 +342,39 @@ impl AnalyticalPlanCost {
     }
 }
 
+/// The element-weighted work a sequence of dispatched stages performs twice.
+///
+/// A member's *first* stage in the given order is the original and contributes
+/// nothing; every later stage claiming it contributes that stage's own iteration
+/// points. **The weighting is a definitional choice, not a derivation, so it is
+/// stated here to be refuted.** Counting bare occurrences unweighted is equally
+/// exact and gives a different number, but it would not be comparable with
+/// `Indexing`, which is element-weighted.
+///
+/// Separated from the match arm so the arithmetic can be driven directly. The
+/// arm's own inputs cannot repeat a member today — see the note at
+/// [`CostComponent::RedundantWork`] — and a component whose non-zero outcome is
+/// unreachable through its caller is a component nothing has shown can report
+/// one.
+///
+/// Returns `None` on an iteration shape whose element count is not
+/// representable, for the same reason `Indexing` does: a saturated total is a
+/// number a calibration pass would compare against and silently disagree with.
+fn repeated_work<'a>(
+    stages: impl IntoIterator<Item = &'a crate::physical::VerifiedScheduledRegion>,
+) -> Option<u64> {
+    let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
+    stages.into_iter().try_fold(0_u64, |total, verified| {
+        let points = element_count(&verified.region().index.iteration_shape).ok()?;
+        let repeated = verified
+            .semantic_members()
+            .iter()
+            .filter(|member| !seen.insert(**member))
+            .count();
+        total.checked_add(points.checked_mul(u64::try_from(repeated).ok()?)?)
+    })
+}
+
 /// Computes the analytical component costs of one complete plan.
 ///
 /// Deterministic and total: it reads only values the plan already carries, in
@@ -459,43 +492,38 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // Reports `Unknown` on an overflowing element count, for the same
                 // reason `Indexing` does.
                 //
-                // **`Exact(0)` is forced by the cover authority, not observed on
-                // the suite's inputs.** `verify_cover` counts coverage per
-                // operation over the re-derived candidates and rejects >1 as
-                // `CoverError::IllegalDuplication`, unconditionally, for every
-                // cover behind every retained plan — and the enumerator cannot
-                // build an overlapping cover in the first place. So the
-                // `seen`-set arithmetic below runs on every compile and its
-                // non-zero outcome is unreachable until the cover *contract*
-                // changes: the reserved `CoverDuplication` seam, i.e. relaxing
-                // `IllegalDuplication` under an explicit duplication policy.
-                // The trigger is a contract change, not a new input program —
-                // whoever relaxes it should check this value moves.
-                CostComponent::RedundantWork => {
-                    let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
-                    plan.selections()
-                        .iter()
-                        .try_fold(0_u64, |total, selection| {
-                            selection
-                                .implementation()
-                                .scheduled_stages()?
-                                .iter()
-                                .try_fold(total, |total, verified| {
-                                    let points =
-                                        element_count(&verified.region().index.iteration_shape)
-                                            .ok()?;
-                                    let repeated = verified
-                                        .semantic_members()
-                                        .iter()
-                                        .filter(|member| !seen.insert(**member))
-                                        .count();
-                                    total.checked_add(
-                                        points.checked_mul(u64::try_from(repeated).ok()?)?,
-                                    )
-                                })
-                        })
-                        .map_or(CostValue::Unknown, CostValue::Exact)
-                }
+                // **`Exact(0)` on every plan this build can assemble, and the
+                // reason is no longer the one recorded here.** The note this
+                // replaces said the trigger was the cover contract: relaxing
+                // `verify_cover`'s exactly-once check under an explicit
+                // duplication policy. That relaxation has landed —
+                // `CoverPolicy::permitting_shared_work_duplication` admits a
+                // cover that computes one occurrence in several regions, and
+                // `cover.rs`'s tests exercise the search choosing one — and this
+                // value still does not move, so the premise was necessary but
+                // not sufficient.
+                //
+                // What it actually takes, checked rather than assumed: this fold
+                // reads the *selected implementations'* claimed members, so a
+                // duplicating cover has to reach a `SelectedPlan`. That needs a
+                // physical implementation per duplicated region subject, and the
+                // bounded profile's provider proposes for exactly three
+                // recognized member sets while program assembly implements
+                // exactly three plan shapes. The compile path therefore
+                // enumerates under the exact-partition contract, which
+                // `CoverPolicy::governed` records, and no plan carries a repeat.
+                //
+                // The arithmetic itself is checked directly instead:
+                // [`repeated_work`] is unit-tested against two stages claiming
+                // one member set, which is exactly the state a duplicating plan
+                // would present, and it moves off zero there.
+                CostComponent::RedundantWork => plan
+                    .selections()
+                    .iter()
+                    .map(|selection| selection.implementation().scheduled_stages())
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|stages| repeated_work(stages.into_iter().flatten()))
+                    .map_or(CostValue::Unknown, CostValue::Exact),
                 // Bytes moved, bounded rather than exact because the plan does
                 // not model cache reuse. The low bound counts only owning
                 // writes, since no amount of reuse eliminates a store; the high
@@ -660,6 +688,67 @@ mod tests {
         assert_ne!(CostValue::Unknown, CostValue::Exact(0));
         assert_eq!(CostValue::Unknown.class(), "unknown");
         assert_eq!(CostValue::Exact(0).class(), "exact");
+    }
+
+    /// The redundant-work arithmetic reports a repeat, and reports zero without
+    /// one.
+    ///
+    /// This is the assertion `implement-general-dag-partitioning` asked for when
+    /// the cover contract's exactly-once check was relaxed: the relaxation makes
+    /// a duplicating *cover* reachable, and this states what such a cover would
+    /// cost once a plan could rest on one. Two stages claiming one member set is
+    /// exactly the state a duplicating plan presents to the fold, and the value
+    /// moves off zero for it — so the arm reports `Exact(0)` today because no
+    /// plan repeats a member, not because the component cannot count one.
+    #[test]
+    fn repeated_work_moves_when_two_stages_claim_one_member_set() {
+        use tiler_ir::semantic::{
+            F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
+            StrictSerialF32Sum,
+        };
+        use tiler_ir::shape::{Axis, Shape};
+
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let mapped = F32Add::apply(&mut builder, product, bias).unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request =
+            crate::request::verify_request(crate::request::CompilationRequest::governed(&program))
+                .unwrap()
+                .for_target(0)
+                .unwrap();
+        let regions = crate::physical::build_scheduled_regions(&request).unwrap();
+
+        // The two regions of the materialized cover claim disjoint occurrences,
+        // which is what every plan this build assembles looks like.
+        assert_eq!(
+            repeated_work([&regions[0], &regions[1]]),
+            Some(0),
+            "an exact partition's stages repeat no occurrence"
+        );
+
+        // The same region claimed twice is the duplicating plan's shape.
+        let repeated = repeated_work([&regions[0], &regions[0]])
+            .expect("the fixture's iteration shapes are representable");
+        assert!(
+            repeated > 0,
+            "a member claimed by two stages must cost its own iteration points again"
+        );
+        assert_eq!(
+            repeated,
+            element_count(&regions[0].region().index.iteration_shape).unwrap()
+                * u64::try_from(regions[0].semantic_members().len()).unwrap(),
+            "the repeat is element-weighted, one stage's points per repeated member"
+        );
     }
 
     /// The well-formedness check can say no.
