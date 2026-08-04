@@ -237,7 +237,8 @@ impl IndexRefinement {
         self.revision
     }
 
-    /// Returns the ordered operand-to-input bindings, including aliases.
+    /// Returns ordered operand-to-input bindings, including aliases and one
+    /// binding per encoded component in semantic contract order.
     #[must_use]
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         self.receipt.operand_bindings()
@@ -313,7 +314,8 @@ impl PendingIndexRefinement {
         &self.capability_authority
     }
 
-    /// Returns the already-checked ordered operand bindings.
+    /// Returns the already-checked ordered operand bindings, with encoded
+    /// components expanded in semantic contract order.
     #[must_use]
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         self.receipt.operand_bindings()
@@ -533,7 +535,7 @@ impl fmt::Display for RefinementError {
                 distinct_operands,
             } => write!(
                 formatter,
-                "region declares {region_inputs} inputs for {distinct_operands} distinct operands"
+                "region declares {region_inputs} inputs for {distinct_operands} expanded semantic input boundaries"
             ),
             Self::OperandInterface { position } => {
                 write!(

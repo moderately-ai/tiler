@@ -4027,7 +4027,14 @@ mod tests {
                 // another. Recomputed from this complete branch tree. Moved
                 // again when the authority became an operation-bound immutable
                 // law snapshot that lowering installers cannot replace.
-                "tiler-explain-v7 request=3a2bda87fc26f899\n",
+                // Moved again when strict-affine U4 dequantization gained its
+                // governed scalar definition, semantic realization-law row,
+                // and lowering capability. The request subject binds all three
+                // frozen authorities, so even this unrelated multiply request
+                // must miss an authority snapshot that predates the new row.
+                // Recomputed from this complete branch tree by first observing
+                // the exact failing value, never copied from another branch.
+                "tiler-explain-v7 request=fb0b64dd69649785\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

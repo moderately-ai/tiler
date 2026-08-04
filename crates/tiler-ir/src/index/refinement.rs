@@ -26,9 +26,9 @@ use crate::identity::{push_len, push_slice};
 use crate::program::SemanticOccurrence;
 use crate::schedule::{ArithmeticType, F32NumericalContractKey, NumericalContractKeyError};
 use crate::semantic::{
-    FrozenSemanticRegistry, OpKey, OperationAttributes, OperationEffect, ProviderIdentity,
-    RegistryError, ResolvedValueType, SemanticCapabilityAuthority, SemanticGraphIdentity,
-    SemanticProgram, SemanticRegistrySnapshotIdentity,
+    EncodedComponentRole, FrozenSemanticRegistry, OpKey, OperationAttributes, OperationEffect,
+    ProviderIdentity, RegistryError, ResolvedValueType, SemanticCapabilityAuthority,
+    SemanticGraphIdentity, SemanticProgram, SemanticRegistrySnapshotIdentity,
 };
 use crate::shape::Shape;
 
@@ -55,10 +55,10 @@ pub const MAX_INDEX_REFINEMENT_SIGNATURE_VALUES: usize = 4_096;
 pub const MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS: usize = 4_096;
 /// Maximum residual obligations one canonical realization may retain.
 ///
-/// The current closed law vocabulary emits at most three accesses, each with
+/// The current closed law vocabulary emits at most four accesses, each with
 /// at most [`super::MAX_TENSOR_RANK`] coordinates and two predicates per
 /// coordinate.
-pub const MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS: usize = 3 * super::MAX_TENSOR_RANK * 2;
+pub const MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS: usize = 4 * super::MAX_TENSOR_RANK * 2;
 /// Maximum cells the closed exact-finite residual proof algorithm may evaluate.
 pub const MAX_FINITE_DOMAIN_PROOF_CELLS: u64 = 16 * 1024 * 1024;
 /// Maximum cumulative arbitrary-precision integer bytes the closed residual
@@ -707,12 +707,13 @@ impl ResolvedIndexRealization {
     }
 }
 
-/// One ordered operand bound to its verified region input.
+/// One ordered operand projection bound to its verified region input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OperandBinding {
     operand: usize,
     input: usize,
     input_tensor: VerifiedTensorId,
+    component_role: Option<EncodedComponentRole>,
 }
 
 impl OperandBinding {
@@ -730,6 +731,14 @@ impl OperandBinding {
     #[must_use]
     pub const fn input_tensor(&self) -> VerifiedTensorId {
         self.input_tensor
+    }
+    /// Returns the encoded logical component carried by this input tensor.
+    ///
+    /// `None` names an ordinary whole-value input. An encoded operand produces
+    /// one binding per component in its contract's semantic order.
+    #[must_use]
+    pub const fn component_role(&self) -> Option<EncodedComponentRole> {
+        self.component_role
     }
 }
 
@@ -1058,6 +1067,9 @@ impl IndexRefinementReceipt {
         &self.scalar_authority
     }
     /// Returns ordered operand-to-input bindings.
+    ///
+    /// An encoded logical operand contributes one binding for every component
+    /// in its semantic contract order; an ordinary operand contributes one.
     #[must_use]
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         &self.operand_bindings
@@ -1105,7 +1117,8 @@ impl PendingIndexRefinementReceipt {
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
         &self.scalar_authority
     }
-    /// Returns ordered operand bindings.
+    /// Returns ordered operand bindings, expanding encoded components in their
+    /// semantic contract order.
     #[must_use]
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         &self.operand_bindings
@@ -1240,7 +1253,10 @@ impl ResolvedIndexRealization {
         }
         let operand_bindings = bind_operands(subject, region)?;
         let result_bindings = bind_results(subject, region)?;
-        if !super::IndexRealizationLaw::accepts_numerical_contract(subject.numerical_contract()) {
+        if !self
+            .law
+            .accepts_numerical_contract(subject.numerical_contract())
+        {
             return Err(IndexRefinementVerificationError::NumericalContractNotGoverned);
         }
         let expected = self
@@ -2248,11 +2264,11 @@ pub enum IndexRefinementVerificationError {
     Handle(VerifiedIndexHandleError),
     /// A boundary exposes no static shape in this bounded verifier.
     SymbolicBoundary,
-    /// Region input count disagrees with distinct semantic operands.
+    /// Region input count disagrees with the expanded semantic input boundary.
     OperandArity {
         /// Number of verified input boundaries.
         region_inputs: usize,
-        /// Number of distinct semantic operands.
+        /// Expected ordinary inputs plus ordered encoded components.
         distinct_operands: usize,
     },
     /// One region input disagrees with its semantic operand.
@@ -2394,7 +2410,7 @@ impl fmt::Display for IndexRefinementVerificationError {
                 distinct_operands,
             } => write!(
                 formatter,
-                "region declares {region_inputs} inputs for {distinct_operands} distinct operands"
+                "region declares {region_inputs} inputs for {distinct_operands} expanded semantic input boundaries"
             ),
             Self::OperandInterface { position } => {
                 write!(
@@ -2512,33 +2528,65 @@ fn bind_operands(
         .tensors()
         .filter(|tensor| tensor.role() == TensorRole::Input)
         .collect::<Vec<_>>();
-    if inputs.len() != occurrence.inputs.len() {
+    let mut expanded = Vec::new();
+    for (input_position, operand) in occurrence.inputs.iter().enumerate() {
+        if let Some((_, contract)) = operand.value_type.encoded_numeric_parts() {
+            if contract.components().is_empty() {
+                return Err(IndexRefinementVerificationError::OperandInterface {
+                    position: input_position,
+                });
+            }
+            for component in contract.components() {
+                expanded.push((
+                    input_position,
+                    component.resolved_type(),
+                    component.shape_relation().component_shape(&operand.shape),
+                    Some(component.role()),
+                ));
+            }
+        } else {
+            expanded.push((
+                input_position,
+                &operand.value_type,
+                operand.shape.clone(),
+                None,
+            ));
+        }
+    }
+    if inputs.len() != expanded.len() {
         return Err(IndexRefinementVerificationError::OperandArity {
             region_inputs: inputs.len(),
-            distinct_operands: occurrence.inputs.len(),
+            distinct_operands: expanded.len(),
         });
     }
-    for (position, (operand, input)) in occurrence.inputs.iter().zip(&inputs).enumerate() {
+    let mut physical_by_input = vec![Vec::new(); occurrence.inputs.len()];
+    for (position, ((input_position, value_type, expected_shape, role), input)) in
+        expanded.into_iter().zip(&inputs).enumerate()
+    {
         let shape = input
             .shape()
             .as_static()
             .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
-        if input.value_type() != &operand.value_type || shape != &operand.shape {
+        if input.value_type() != value_type || shape != &expected_shape {
             return Err(IndexRefinementVerificationError::OperandInterface { position });
         }
+        physical_by_input[input_position].push((input.id(), role));
     }
-    occurrence
+    Ok(occurrence
         .operands
         .iter()
         .enumerate()
-        .map(|(position, input)| {
-            Ok(OperandBinding {
-                operand: position,
-                input: *input,
-                input_tensor: inputs[*input].id(),
-            })
+        .flat_map(|(position, input)| {
+            physical_by_input[*input]
+                .iter()
+                .map(move |(input_tensor, component_role)| OperandBinding {
+                    operand: position,
+                    input: *input,
+                    input_tensor: *input_tensor,
+                    component_role: *component_role,
+                })
         })
-        .collect()
+        .collect::<Vec<_>>())
 }
 
 fn bind_results(

@@ -2405,6 +2405,10 @@ impl SemanticRegistryProvider for StandardSemantics {
                 super::contraction::strict_tensor_contraction_f32_op(),
                 IndexRealizationLaw::strict_tensor_contraction_f32(),
             ),
+            (
+                super::quantization::dequantize_strict_affine_op(),
+                IndexRealizationLaw::strict_affine_u4_dequantize(),
+            ),
         ] {
             registrar.register_index_realization_law(operation, 1, law)?;
         }

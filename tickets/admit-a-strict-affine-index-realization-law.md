@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [place-index-refinement-evidence-under-an-ir-owned-verifier]
 related: [bind-stage-coverage-to-index-refinement-identity, prototype-quantized-value-vertical]
-scopes: [implementation/ir, implementation/compiler]
+scopes: [implementation/ir, implementation/compiler, implementation/reference, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, correctness]
@@ -94,6 +94,84 @@ maintainability, preserve a tested draft, and present the exact enum/data shape,
 construction authority, canonical-region semantics, compiler registration, and
 unsupported cases to Tom before acceptance. Do not treat an implementation or
 green gate as acceptance of that boundary.
+
+## Scope declarations during implementation
+
+`implementation/reference` declares the independent scalar oracle required by
+the new strict-affine scalar meaning: adding a governed scalar definition
+without its executable reference capability would make the standard refinement
+profile structurally claim arithmetic that its correctness oracle cannot run.
+`implementation/artifact` declares the four preserved fixture consumers named
+above, which must be rerun against real receipts once the dependent coverage
+branch is rebased. These declarations describe work already required by this
+ticket's accepted outcome; they do not accept the consequential public boundary.
+
+## Tested public draft — pending Tom's acceptance
+
+**Fact:** the existing region boundary could bind exactly one dense tensor to
+each distinct semantic input. A strict-affine operand is one encoded logical
+value whose contract already declares three ordered typed components, so the
+old boundary could express neither the component reads nor an honest receipt.
+
+**Elimination:** treating the encoded value as a dense scalar proves a different
+operation and is rejected by correctness. Adding a second caller-authored role
+list to the index region duplicates the semantic contract, permits the two lists
+to drift, grows every ordinary tensor boundary, and would force an index-region
+identity step for no new information. Decomposing the scalar meaning into a new
+general U4/I32 conversion vocabulary would expose several public operations and
+intermediate types before another consumer exists; it is less maintainable than
+one exact atomic scalar definition and gives physical planning no benefit,
+because the schedule/KIR layer already owns the decomposed execution spelling.
+
+**Proposal:** an encoded semantic input expands, only during receipt binding,
+into the component tensors already declared by its contract, in exact contract
+order. `OperandBinding` retains `component_role: Option<EncodedComponentRole>`;
+ordinary values remain one `None` binding, while strict-affine U4 yields ordered
+codes/scale/zero-point bindings. `IndexRealizationLaw` adds
+`StrictAffineU4Dequantize { codes_role, scale_role, zero_point_role, scalar }`
+and the standard constructor fixes those fields to the governed role constants
+and `tiler.scalar::strict-affine-u4-dequantize@1`. The law accepts only the exact
+U4 contract, empty attributes, one operand, same-shaped dense F32 result, the
+exact ordered component declarations, and the strict F32 numerical contract.
+The compiler registers one provider for that signature and emits the identical
+candidate-blind canonical region. No physical packing enters this logical law.
+
+**Identity analysis:** law encoding tag 8 is append-only: tags 1 through 7 and
+their payloads remain byte-identical, and each semantic sidecar row is
+length-framed with its operation, provider, and revision, so an old and new row
+cannot compare equal. The new scalar, law, and lowering rows correctly move the
+complete frozen authority snapshots and the deterministic request qualifier to
+`fb0b64dd69649785`; no domain separator changes. Existing canonical index
+regions, receipt subjects, and receipts retain their exact bytes. No kernel,
+program, artifact, schedule, or cache identity changes here. The closed-law
+residual ceiling rises from 6,144 to 8,192 because the new canonical region has
+three reads plus one write; the formula remains `accesses * rank * 2`.
+
+**Unsupported cases:** strict-affine U8, other schemes or component maps, nested
+components, non-strict F32 contracts, alternate component order or roles, and
+semantically equivalent noncanonical index regions all refuse. Quantization and
+encoded-value production remain outside this lowering. Metal executability is
+unchanged; this receipt proves logical realization only.
+
+## Draft verification
+
+The affected four-crate nextest population passed 1,779 of 1,779 tests with 5
+configured skips. The exact four preserved artifact/component tests passed on
+this base; they still exercise the pre-coverage fixture shape here, because the
+related coverage branch is intentionally waiting to rebase onto this authority.
+After that rebase they must be rerun against the real receipt before either
+ticket closes. Package doctests passed (20 passed, 1 ignored), Clippy passed for
+all targets with warnings denied, formatting and `git diff --check` passed, and
+`tkt lint` reported no problems.
+
+The negative population independently refused a U8 encoded contract, a changed
+component role, a changed scalar operation, a non-strict numerical contract, a
+capability applied to the wrong semantic operation, a reversed but semantically
+equivalent noncanonical traversal, swapped component boundaries, and a scalar
+codes boundary with the wrong shape. Before the frozen explain qualifier was
+updated, its existing exact assertion failed and reported the recomputed
+`fb0b64dd69649785` value; that deliberate observation proves the identity check
+detects the new authority rows.
 
 ## Closes when
 

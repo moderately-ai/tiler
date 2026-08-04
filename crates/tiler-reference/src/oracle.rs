@@ -24,10 +24,11 @@ use tiler_ir::index::{
     VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
     VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
+    strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::semantic::{
     CanonicalField, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
-    FrozenSemanticRegistry, ProviderIdentity, ResolvedValueType, TypeKey,
+    FrozenSemanticRegistry, ProviderIdentity, ResolvedValueType, TypeKey, U4,
 };
 use tiler_ir::shape::{Extent, Shape};
 
@@ -423,11 +424,11 @@ impl ScalarReferenceRegistryBuilder {
     /// Creates the governed standard scalar reference profile.
     ///
     /// The builder is bound to [`FrozenScalarRegistry::standard`] and defines an
-    /// executable oracle for exactly the four scalar operations the governed
-    /// `f32` index-access lowerings emit: `tiler.scalar::constant-f32@1`,
-    /// `multiply-f32@1`, `add-f32@1`, and `canonicalize-nan-f32@1`. An extension
-    /// composes with it by registering further capabilities on the returned
-    /// builder.
+    /// executable oracle for the scalar operations the governed index-access
+    /// lowerings emit: `tiler.scalar::constant-f32@1`, `multiply-f32@1`,
+    /// `add-f32@1`, `canonicalize-nan-f32@1`, and
+    /// `strict-affine-u4-dequantize@1`. An extension composes with it by
+    /// registering further capabilities on the returned builder.
     ///
     /// # Errors
     ///
@@ -466,11 +467,25 @@ impl ScalarReferenceRegistryBuilder {
             Arc::new(StandardScalarBinaryF32::Add),
         )?;
         builder.register(
-            provider,
+            provider.clone(),
             canonicalize_nan_f32_scalar_op(),
             ReferenceSignature::new([f32_type.clone()], [f32_type])?,
             revision,
             Arc::new(StandardScalarCanonicalizeNanF32),
+        )?;
+        builder.register(
+            provider,
+            strict_affine_u4_dequantize_scalar_op(),
+            ReferenceSignature::new(
+                [
+                    U4::resolved_type(),
+                    F32::resolved_type(),
+                    U4::resolved_type(),
+                ],
+                [F32::resolved_type()],
+            )?,
+            revision,
+            Arc::new(StandardScalarStrictAffineU4Dequantize),
         )?;
         Ok(builder)
     }
@@ -646,6 +661,22 @@ fn scalar_f32_value(value: f32) -> Result<Tensor, ReferenceOperationError> {
         .map_err(|_| ReferenceOperationError::InvalidApplication)
 }
 
+fn decode_scalar_u4(value: &Tensor) -> Result<u8, ReferenceOperationError> {
+    if value.resolved_type() != &U4::resolved_type() || value.shape().rank() != 0 {
+        return Err(ReferenceOperationError::InvalidApplication);
+    }
+    let TensorPayloadView::Dense([element]) = value.payload() else {
+        return Err(ReferenceOperationError::InvalidApplication);
+    };
+    let [code] = element.as_bytes() else {
+        return Err(ReferenceOperationError::InvalidApplication);
+    };
+    if *code > 15 {
+        return Err(ReferenceOperationError::InvalidApplication);
+    }
+    Ok(*code)
+}
+
 /// Evaluates `tiler.scalar::constant-f32@1` as its exact declared payload.
 ///
 /// A constant reproduces its attribute bits unchanged, including a NaN payload
@@ -756,6 +787,34 @@ impl ScalarReferenceOperation for StandardScalarCanonicalizeNanF32 {
             return Err(ReferenceOperationError::InvalidApplication);
         }
         let value = decode_scalar_f32(operand)?;
+        outputs.push(scalar_f32_value(canonicalize_arithmetic_f32(value))?)
+    }
+}
+
+/// Executes the atomic scalar meaning used by the strict-affine logical law.
+struct StandardScalarStrictAffineU4Dequantize;
+
+impl ScalarReferenceOperation for StandardScalarStrictAffineU4Dequantize {
+    fn evaluate(
+        &self,
+        request: ScalarReferenceRequest<'_>,
+        outputs: &mut ScalarReferenceOutputs,
+    ) -> Result<(), ReferenceOperationError> {
+        let [codes, scale, zero_point] = request.operands() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        let CanonicalValueView::Record(fields) = request.attributes().value().view() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        if !fields.is_empty() {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let code = i32::from(decode_scalar_u4(codes)?);
+        let zero_point = i32::from(decode_scalar_u4(zero_point)?);
+        let scale = decode_scalar_f32(scale)?;
+        let centered = i16::try_from(code - zero_point)
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let value = f32::from(centered) * scale;
         outputs.push(scalar_f32_value(canonicalize_arithmetic_f32(value))?)
     }
 }
