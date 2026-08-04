@@ -50,24 +50,24 @@
 //! the planner cannot cover, failing mid-pipeline instead of refusing at the
 //! boundary, which is strictly worse than refusing.
 //!
-//! # The one ordering fact that is already true, and the one that is not
+//! # Output order is identity at both layers, and this file pins the semantic half
 //!
 //! Output *order* is identity at the semantic layer and this file proves it:
 //! `tiler-ir`'s graph encoding writes the output list in declaration order and
 //! seeds its canonical value numbering from it, so two programs differing only in
 //! the order of two `output()` calls have distinct graph identities.
 //!
-//! It is **not** identity at the artifact layer. `encode_identity` sorts the
-//! encoded output records by content before folding them
-//! (`crates/tiler-ir/src/program/model.rs:1788`), so two `KernelProgram`s
-//! differing only in `push_output` order — same keys, same values, hence the same
-//! sorted list — carry the same canonical identity while `outputs()` still yields
-//! them in different orders. `verify_outputs` checks output coverage as a *set*
-//! and never pins the published order to the semantic interface order, so nothing
-//! else recovers it. That is latent rather than live only because
-//! `program.core.outputs().len() != 1` currently refuses every program that could
-//! exhibit it, and it is filed as
-//! `carry-artifact-program-output-order-into-kernel-program-identity`.
+//! The artifact layer no longer discards it.
+//! `carry-artifact-program-output-order-into-kernel-program-identity` closed that
+//! gap: `verify_outputs` pins the published records to the semantic subject's
+//! ordered interface — keys in the subject's order, each key's component records
+//! contiguous and in the encoded contract's declared component order, anything
+//! else refused as `misordered-named-output` — and `encode_identity` folds the
+//! list in that order under `tiler.kernel-program.v8` rather than sorting the
+//! records by content. So the ordered interface a widening must plan for is a
+//! fact a consumer reads from `VerifiedKernelProgram::outputs`, not one it
+//! re-derives by key, and a permuted publication is not a second program to
+//! distinguish but a program that does not verify.
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
@@ -252,9 +252,10 @@ fn two_output_keys_publishing_one_value_refuse_under_output_arity() {
 /// canonical value numbering by visiting outputs in that order, so the ordering
 /// reaches identity twice over.
 ///
-/// This is the half of the ticket's ordering obligation that is already
-/// discharged, and pinning it is what makes the *other* half — the artifact
-/// layer's sorted output encoding — a located gap rather than a suspicion.
+/// This is the half of the ordering obligation this file pins; the artifact
+/// layer's half is discharged in `tiler-ir`, whose
+/// `published_output_interface_order_reaches_program_identity` and
+/// `publishing_the_outputs_out_of_interface_order_is_rejected` own it.
 #[test]
 fn two_programs_differing_only_in_output_order_have_distinct_identities() {
     fn ordered(product_first: bool) -> SemanticProgram {

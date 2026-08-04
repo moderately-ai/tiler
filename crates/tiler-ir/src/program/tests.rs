@@ -274,6 +274,16 @@ fn serial_sum_program(scale_bits: u32) -> SemanticProgram {
 
 /// An eight-operation graph with two independent chains and two named outputs.
 fn two_chain_program() -> SemanticProgram {
+    two_chain_program_keyed(["sum_a", "sum_b"])
+}
+
+/// The two-chain graph publishing its two reductions under the given keys.
+///
+/// The keys are a parameter because the interface order and the order the
+/// superseded sorted encoding produced coincide for `sum_a`/`sum_b` and differ
+/// for a reverse-lexicographic pair, and an ordering rule can only be told from
+/// a content sort by a program where the two disagree.
+fn two_chain_program_keyed(keys: [&str; 2]) -> SemanticProgram {
     let mut draft = SemanticProgramBuilder::try_standard().expect("standard registry");
     let first = draft
         .input::<F32>(InputKey::new("a").expect("key"), input_shape())
@@ -292,10 +302,10 @@ fn two_chain_program() -> SemanticProgram {
     let second_sum =
         StrictSerialF32Sum::apply(&mut draft, second_mapped, [Axis::new(1)]).expect("second sum");
     draft
-        .output(OutputKey::new("sum_a").expect("key"), first_sum)
+        .output(OutputKey::new(keys[0]).expect("key"), first_sum)
         .expect("first output");
     draft
-        .output(OutputKey::new("sum_b").expect("key"), second_sum)
+        .output(OutputKey::new(keys[1]).expect("key"), second_sum)
         .expect("second output");
     let program = draft.build().expect("verified semantic program");
     assert_eq!(program.operation_count(), 8);
@@ -865,23 +875,128 @@ fn canonical_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
         .expect("verified kernel program")
 }
 
+/// The separator is what distinguishes the last two steps, and only it.
+///
+/// Both steps reinterpret retained bytes rather than adding any: `v7` reads the
+/// same raw four-byte coverage ordinal as a canonical semantic occurrence, and
+/// `v8` reads the same output records in interface order rather than sorted by
+/// content. This fixture publishes exactly one output — asserted, because that
+/// is the argument — so sorting its record list is the identity permutation and
+/// its payload is byte-identical under all three tags. A one-output program's
+/// identity therefore moves at the domain step and at nothing else, and a `v6`
+/// or `v7` reader handed these bytes would recover the same records under a
+/// meaning this layer no longer holds, which is exactly why each tag stepped.
 #[test]
-fn v7_program_domain_separates_canonical_coverage_from_v6_storage_coverage() {
+fn the_program_domain_separator_is_what_distinguishes_the_reinterpreting_steps() {
     const V6: &[u8] = b"tiler.kernel-program.v6\0";
     const V7: &[u8] = b"tiler.kernel-program.v7\0";
+    const V8: &[u8] = b"tiler.kernel-program.v8\0";
     let semantic = serial_sum_program(SCALE_BITS);
     let program = canonical_program(&semantic);
+    // One record: the v8 encoding and the v7 sort agree on this payload.
+    assert_eq!(program.outputs().len(), 1);
     let current = program.canonical_identity().as_bytes();
-    assert!(current.starts_with(V7));
+    assert!(current.starts_with(V8));
 
-    // Coverage remains a raw four-byte ordinal. Before the version step the
-    // identical payload therefore had one spelling whether that ordinal was
-    // interpreted as storage order or canonical semantic order.
-    let mut v6_storage_meaning = V6.to_vec();
-    v6_storage_meaning.extend_from_slice(&current[V7.len()..]);
-    let v6_canonical_meaning = v6_storage_meaning.clone();
-    assert_eq!(v6_storage_meaning, v6_canonical_meaning);
-    assert_ne!(current, v6_storage_meaning.as_slice());
+    for historical in [V6, V7] {
+        let mut spelling = historical.to_vec();
+        spelling.extend_from_slice(&current[V8.len()..]);
+        assert_eq!(spelling.len(), current.len());
+        assert_ne!(current, spelling.as_slice());
+    }
+}
+
+/// Byte offsets at which `needle` occurs in `haystack`.
+fn byte_offsets_of(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
+    haystack
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, window)| *window == needle)
+        .map(|(offset, _)| offset)
+        .collect()
+}
+
+/// Identity folds the published outputs in the interface's order.
+///
+/// The fixture's interface order is the reverse of the order the `v7` sort
+/// produced — `z_sum` is declared first and sorts second — so the two rules
+/// disagree on this program and agree on every one-output program. Each key
+/// appears exactly twice in the identity: once inside the folded semantic graph
+/// identity, which has encoded outputs in declaration order all along, and once
+/// in the program's own output section. Both occurrences must now agree on the
+/// order; under the sorted rule the second pair was transposed.
+#[test]
+fn published_output_interface_order_reaches_program_identity() {
+    let semantic = two_chain_program_keyed(["z_sum", "a_sum"]);
+    let program = publish_two_chain_keyed(two_chain(&semantic, true), ["z_sum", "a_sum"], false)
+        .build()
+        .expect("interface-ordered publication verifies");
+    assert_eq!(program.outputs().len(), 2);
+    assert_eq!(
+        program
+            .outputs()
+            .map(|output| output.key().as_str().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["z_sum".to_owned(), "a_sum".to_owned()],
+    );
+
+    let identity = program.canonical_identity().as_bytes();
+    let declared_first = byte_offsets_of(identity, b"z_sum");
+    let declared_second = byte_offsets_of(identity, b"a_sum");
+    assert_eq!(
+        declared_first.len(),
+        2,
+        "semantic fold, then output section"
+    );
+    assert_eq!(declared_second.len(), 2);
+    for (first, second) in declared_first.iter().zip(&declared_second) {
+        assert!(
+            first < second,
+            "the output section holds the sorted order, not the interface order",
+        );
+    }
+
+    // The check can say no about the order rather than about rebuilding:
+    // re-declaring the same interface reproduces the bytes exactly.
+    let rebuilt = publish_two_chain_keyed(two_chain(&semantic, true), ["z_sum", "a_sum"], false)
+        .build()
+        .expect("verified kernel program");
+    assert_eq!(identity, rebuilt.canonical_identity().as_bytes());
+}
+
+/// Publishing the interface in any other order fails closed.
+///
+/// This is the neighbour that makes the identity claim above meaningful: the
+/// permuted program is not a second identity to distinguish, it is not a
+/// program. Rejecting it is what makes
+/// [`VerifiedKernelProgram::outputs`]'s ordering claim true rather than a
+/// convention every consumer would have to trust its producer to have kept.
+#[test]
+fn publishing_the_outputs_out_of_interface_order_is_rejected() {
+    let semantic = two_chain_program_keyed(["z_sum", "a_sum"]);
+    assert_eq!(
+        diagnostic(publish_two_chain_keyed(
+            two_chain(&semantic, true),
+            ["z_sum", "a_sum"],
+            true,
+        )),
+        KernelProgramDiagnostic::MisorderedNamedOutput { position: 0 },
+    );
+    // The lexicographic fixture reaches the same refusal, so the rule is the
+    // interface order and not an incidental agreement with the sorted one.
+    let sorted_interface = two_chain_program();
+    assert_eq!(
+        diagnostic(publish_two_chain_keyed(
+            two_chain(&sorted_interface, true),
+            ["sum_a", "sum_b"],
+            true,
+        )),
+        KernelProgramDiagnostic::MisorderedNamedOutput { position: 0 },
+    );
+    assert_eq!(
+        KernelProgramDiagnostic::MisorderedNamedOutput { position: 0 }.rule(),
+        "misordered-named-output",
+    );
 }
 
 #[test]
@@ -1709,15 +1824,33 @@ fn wire_chain_storage(builder: &mut KernelProgramBuilder) -> ChainStorage {
     }
 }
 
-fn publish_two_chain(mut chains: TwoChain) -> KernelProgramBuilder {
-    chains
-        .builder
-        .push_output(OutputKey::new("sum_a").expect("key"), chains.first_output)
-        .expect("first named output");
-    chains
-        .builder
-        .push_output(OutputKey::new("sum_b").expect("key"), chains.second_output)
-        .expect("second named output");
+fn publish_two_chain(chains: TwoChain) -> KernelProgramBuilder {
+    publish_two_chain_keyed(chains, ["sum_a", "sum_b"], false)
+}
+
+/// Publishes the two chain outputs, optionally against the interface order.
+///
+/// Insertion admits either order — it checks key membership and rejects a
+/// repeated key and role, nothing more — so `reversed` produces a builder that
+/// only whole-program verification can refuse.
+fn publish_two_chain_keyed(
+    mut chains: TwoChain,
+    keys: [&str; 2],
+    reversed: bool,
+) -> KernelProgramBuilder {
+    let mut published = [
+        (keys[0], chains.first_output),
+        (keys[1], chains.second_output),
+    ];
+    if reversed {
+        published.reverse();
+    }
+    for (key, value) in published {
+        chains
+            .builder
+            .push_output(OutputKey::new(key).expect("key"), value)
+            .expect("named output");
+    }
     declare_program_contract(&mut chains.builder);
     chains.builder
 }

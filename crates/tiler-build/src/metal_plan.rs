@@ -837,14 +837,23 @@ mod tests {
     /// tile either, so its identity moves for the eighteen separator bytes alone
     /// — the same fold, and the same cost a domain separator has.
     ///
+    /// **Both moved again at `tiler.kernel-program.v8`, which folds a program's
+    /// published outputs in the semantic interface's order rather than sorted by
+    /// record content.** This program publishes one output, so its own output
+    /// section is byte-identical either way and the eighteen separator bytes are
+    /// the whole of the move — the same shape as the schedule step above, one
+    /// fold further up. The artifact frames the kernel-program identity whole,
+    /// separator included, so neither the artifact domain nor the manifest
+    /// schema needed a step of its own.
+    ///
     /// The values are recorded rather than written in because a sibling branch
     /// may move the same two pins from its own base, and two branch-local
     /// rebaselines cannot compose: a pinned identity is recomputed on the tree
     /// the step lands into, never taken from either side. Observed on this branch:
     /// `ARTIFACT_IDENTITY`
-    /// `124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd`,
+    /// `2b15415053d8f688de094d7f4490b90fa001463717affc686ee1fe3692786a81`,
     /// `CACHE_SUBJECT`
-    /// `94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
+    /// `b0803f2a48f41aa03baed4a136f7e44ddb3dbafac39bc560673c2bb7f8801ae9`.
     /// Regenerate on the merged tree with:
     ///
     /// ```text
@@ -860,9 +869,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd";
+            "2b15415053d8f688de094d7f4490b90fa001463717affc686ee1fe3692786a81";
         const CACHE_SUBJECT: &str =
-            "94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370";
+            "b0803f2a48f41aa03baed4a136f7e44ddb3dbafac39bc560673c2bb7f8801ae9";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

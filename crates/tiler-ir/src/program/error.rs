@@ -477,6 +477,20 @@ pub enum KernelProgramDiagnostic {
     UnusedAllocation,
     /// A semantic program output has no named program output.
     MissingNamedOutput,
+    /// The published outputs do not follow the semantic interface's order.
+    ///
+    /// The published list *is* the program's ordered output interface, and that
+    /// order belongs to the unforgeable semantic subject rather than to the
+    /// producer: keys appear in the subject's declared order, each key's records
+    /// are contiguous, and within one key the records follow the encoded
+    /// contract's declared component order. A permuted or interleaved
+    /// publication would otherwise be observable through
+    /// [`VerifiedKernelProgram::outputs`](crate::program::VerifiedKernelProgram::outputs)
+    /// while agreeing with the identity of the program it permuted.
+    MisorderedNamedOutput {
+        /// Declared position of the first record that leaves the interface order.
+        position: usize,
+    },
     /// An output-role value is not published as a named program output.
     UnboundOutputValue,
     /// A logical interface value did not materialize exactly its semantic components.
@@ -560,6 +574,7 @@ impl KernelProgramDiagnostic {
             Self::UnusedView => "unused-view",
             Self::UnusedAllocation => "unused-allocation",
             Self::MissingNamedOutput => "missing-named-output",
+            Self::MisorderedNamedOutput { .. } => "misordered-named-output",
             Self::UnboundOutputValue => "unbound-output-value",
             Self::IncompleteComponentSet => "incomplete-component-set",
             Self::EmptyEncodedComponentSet => "empty-encoded-component-set",
