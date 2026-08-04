@@ -468,6 +468,13 @@ pub enum RefinementError {
         /// Position in the ordered expanded semantic input boundaries.
         position: usize,
     },
+    /// Alias and component expansion exceeded the receipt binding population.
+    OperandBindingsTooLarge {
+        /// Binding count, saturated at `usize::MAX` on arithmetic overflow.
+        actual: usize,
+        /// Maximum operand bindings retained by one receipt.
+        limit: usize,
+    },
     /// The region produces a different number of outputs than results.
     ResultArity {
         /// Region output-root count.
@@ -555,6 +562,10 @@ impl fmt::Display for RefinementError {
                     "region input {position} does not match its expanded semantic input boundary"
                 )
             }
+            Self::OperandBindingsTooLarge { actual, limit } => write!(
+                formatter,
+                "expanded operand bindings {actual} exceed receipt limit {limit}"
+            ),
             Self::ResultArity {
                 region_outputs,
                 results,
@@ -729,6 +740,9 @@ fn map_ir_verifier_error(
         },
         IndexRefinementVerificationError::OperandInterface { position } => {
             RefinementError::OperandInterface { position }
+        }
+        IndexRefinementVerificationError::OperandBindingsTooLarge { actual, limit } => {
+            RefinementError::OperandBindingsTooLarge { actual, limit }
         }
         IndexRefinementVerificationError::ResultArity {
             region_outputs,
@@ -1794,6 +1808,14 @@ mod tests {
             RefinementError::EmptyEncodedOperandComponents { input: 2 }.to_string(),
             "encoded semantic input 2 declares no component boundaries"
         );
+        assert_eq!(
+            RefinementError::OperandBindingsTooLarge {
+                actual: 17_408,
+                limit: tiler_ir::index::MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            }
+            .to_string(),
+            "expanded operand bindings 17408 exceed receipt limit 16384"
+        );
 
         let registry = square_registry();
         let capability = registry
@@ -1807,6 +1829,20 @@ mod tests {
                 &subject,
             ),
             RefinementError::EmptyEncodedOperandComponents { input: 0 }
+        );
+        assert_eq!(
+            map_ir_verifier_error(
+                IndexRefinementVerificationError::OperandBindingsTooLarge {
+                    actual: 17_408,
+                    limit: tiler_ir::index::MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+                },
+                &capability,
+                &subject,
+            ),
+            RefinementError::OperandBindingsTooLarge {
+                actual: 17_408,
+                limit: tiler_ir::index::MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            }
         );
     }
 }

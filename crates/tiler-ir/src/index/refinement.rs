@@ -52,6 +52,14 @@ const MAX_NUMERICAL_CONTRACT_IDENTITY_BYTES: usize = 256;
 const MAX_DOMAIN_EVIDENCE_BYTES: usize = 4_096;
 /// Maximum operands or results admitted on one refinement signature side.
 pub const MAX_INDEX_REFINEMENT_SIGNATURE_VALUES: usize = 4_096;
+/// Maximum operand-use bindings retained by one refinement receipt.
+///
+/// A binding associates one semantic operand use with one verified region input
+/// boundary. The independent name is required because aliasing can produce
+/// more bindings than distinct boundaries; the value deliberately matches the
+/// region boundary population ceiling so an alias-expanded binding inventory
+/// cannot exceed the boundary inventory the region itself may retain.
+pub const MAX_INDEX_REFINEMENT_OPERAND_BINDINGS: usize = super::MAX_BOUNDARY_TENSORS;
 /// Maximum raw scalar-operation declarations admitted by one authority.
 pub const MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS: usize = 4_096;
 /// Maximum residual obligations one canonical realization may retain.
@@ -2284,6 +2292,13 @@ pub enum IndexRefinementVerificationError {
         /// Position in the ordered expanded semantic input boundaries.
         position: usize,
     },
+    /// Alias and component expansion exceeded the receipt binding population.
+    OperandBindingsTooLarge {
+        /// Binding count, saturated at `usize::MAX` on arithmetic overflow.
+        actual: usize,
+        /// Maximum operand bindings retained by one receipt.
+        limit: usize,
+    },
     /// Region output count disagrees with semantic results.
     ResultArity {
         /// Number of verified output roots.
@@ -2430,6 +2445,10 @@ impl fmt::Display for IndexRefinementVerificationError {
                     "region input {position} does not match its expanded semantic input boundary"
                 )
             }
+            Self::OperandBindingsTooLarge { actual, limit } => write!(
+                formatter,
+                "expanded operand bindings {actual} exceed receipt limit {limit}"
+            ),
             Self::ResultArity {
                 region_outputs,
                 results,
@@ -2585,21 +2604,21 @@ fn bind_operands(
         }
     }
     debug_assert_eq!(expanded_position, expanded_inputs);
-    Ok(occurrence
-        .operands
-        .iter()
-        .enumerate()
-        .flat_map(|(position, input)| {
-            physical_by_input[*input]
-                .iter()
-                .map(move |(input_tensor, component_role)| OperandBinding {
-                    operand: position,
-                    input: *input,
-                    input_tensor: *input_tensor,
-                    component_role: *component_role,
-                })
-        })
-        .collect::<Vec<_>>())
+    let component_counts = physical_by_input.iter().map(Vec::len).collect::<Vec<_>>();
+    let binding_count = count_operand_bindings(&occurrence.operands, &component_counts)?;
+    let mut bindings = Vec::with_capacity(binding_count);
+    for (position, input) in occurrence.operands.iter().copied().enumerate() {
+        for (input_tensor, component_role) in &physical_by_input[input] {
+            bindings.push(OperandBinding {
+                operand: position,
+                input,
+                input_tensor: *input_tensor,
+                component_role: *component_role,
+            });
+        }
+    }
+    debug_assert_eq!(bindings.len(), binding_count);
+    Ok(bindings)
 }
 
 /// Counts component-expanded semantic inputs without deriving component shapes.
@@ -2634,6 +2653,26 @@ fn count_expanded_inputs(
         });
     }
     Ok(expanded_inputs)
+}
+
+/// Counts final operand-use bindings before allocating the retained receipt
+/// population.
+fn count_operand_bindings(
+    operands: &[usize],
+    component_counts: &[usize],
+) -> Result<usize, IndexRefinementVerificationError> {
+    let mut bindings = 0_usize;
+    for input in operands {
+        let contribution = component_counts.get(*input).copied().unwrap_or(usize::MAX);
+        bindings = bindings.saturating_add(contribution);
+    }
+    if bindings > MAX_INDEX_REFINEMENT_OPERAND_BINDINGS {
+        return Err(IndexRefinementVerificationError::OperandBindingsTooLarge {
+            actual: bindings,
+            limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+        });
+    }
+    Ok(bindings)
 }
 
 fn bind_results(
@@ -4053,6 +4092,14 @@ mod tests {
                 .to_string(),
             "encoded semantic input 2 declares no component boundaries"
         );
+        assert_eq!(
+            IndexRefinementVerificationError::OperandBindingsTooLarge {
+                actual: 17_408,
+                limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            }
+            .to_string(),
+            "expanded operand bindings 17408 exceed receipt limit 16384"
+        );
     }
 
     #[test]
@@ -4073,6 +4120,34 @@ mod tests {
             Err(IndexRefinementVerificationError::OperandArity {
                 region_inputs: MAX_BOUNDARY_TENSORS,
                 expanded_inputs: 17 * 1_024,
+            })
+        );
+    }
+
+    #[test]
+    fn operand_binding_population_is_bounded_before_collection() {
+        // One maximum-size encoded semantic input may be aliased sixteen times
+        // and exactly fill the receipt binding population. A seventeenth use
+        // crosses the independent receipt limit even though the distinct
+        // expanded input population remains only 1,024. This count-only pass
+        // runs before the final binding Vec is allocated.
+        let component_counts = [1_024];
+        assert_eq!(
+            count_operand_bindings(&[0; 16], &component_counts),
+            Ok(MAX_INDEX_REFINEMENT_OPERAND_BINDINGS)
+        );
+        assert_eq!(
+            count_operand_bindings(&[0; 17], &component_counts),
+            Err(IndexRefinementVerificationError::OperandBindingsTooLarge {
+                actual: 17 * 1_024,
+                limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
+            })
+        );
+        assert_eq!(
+            count_operand_bindings(&[0, 0], &[usize::MAX]),
+            Err(IndexRefinementVerificationError::OperandBindingsTooLarge {
+                actual: usize::MAX,
+                limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
             })
         );
     }

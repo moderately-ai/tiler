@@ -191,14 +191,20 @@ contract has no expanded position that `OperandInterface` could truthfully
 name. Expansion first checked-counts component declarations, saturating only on
 host arithmetic overflow, and refuses any population above the existing public
 `MAX_BOUNDARY_TENSORS` region limit or unequal to the actual verified input
-population before reserving component vectors or deriving component shapes. No
-new resource constant is needed: the verified region cannot retain a larger
-input population. The new error variants and accounting order add no identity
-bytes and move no identity domain or deterministic pin.
+population before reserving component vectors or deriving component shapes.
+Alias expansion is then checked independently before the retained receipt
+bindings are allocated: public `MAX_INDEX_REFINEMENT_OPERAND_BINDINGS` currently
+equals `MAX_BOUNDARY_TENSORS`, but has its own name because repeated uses of one
+encoded input can exceed the distinct region input population. Both IR
+verification and compiler refinement expose the typed public
+`OperandBindingsTooLarge { actual, limit }` refusal. Its count saturates on host
+arithmetic overflow and the final binding vector reserves exactly the accepted
+population. The new constant, error variants, and accounting order add no
+identity bytes and move no identity domain or deterministic pin.
 
 ## Draft verification
 
-The affected four-package nextest population passed 1,785 of 1,785 tests with 5
+The affected four-package nextest population passed 1,786 of 1,786 tests with 5
 configured skips. Package doctests passed 20 with 1 ignored; Clippy passed for
 all targets with warnings denied; formatting, `git diff --check`, `tkt lint`,
 and true-base guard passed. The four preserved artifact/component tests remain
@@ -220,7 +226,12 @@ before any component shape was materialized. A safe zero-component encoded
 contract refused with the new input-indexed error and the compiler mapping
 preserved it exactly. Removing the boundary-ceiling check made the over-limit
 test return `Ok(17408)` and fail (exit 100); restoring it made the same focused
-population pass.
+population pass. Separately, one 1,024-component encoded input aliased sixteen
+times exactly reached the 16,384 receipt-binding limit; a seventeenth use
+refused at 17,408 before final collection, while a synthetic host arithmetic
+overflow saturated to `usize::MAX` and refused. Removing that independent
+binding-ceiling check made the 17-use case return `Ok(17408)` and fail (exit
+100); restoring it made the same focused population pass.
 Before the frozen explain qualifier was
 updated, its existing exact assertion failed and reported the recomputed
 `fb0b64dd69649785` value; that deliberate observation proves the identity check
