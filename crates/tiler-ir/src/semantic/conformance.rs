@@ -1308,14 +1308,13 @@ pub fn check_bound_value(
     shape: &Shape,
     view: &dyn EncodedLogicalView,
 ) -> Result<ResolvedValueConformanceContract, ValueConformanceRejection> {
-    let contract = ResolvedValueConformanceContract::derive(resolved_type, shape).map_err(
-        |unsupported| {
+    let contract =
+        ResolvedValueConformanceContract::derive(resolved_type, shape).map_err(|unsupported| {
             ValueConformanceRejection::structural(
                 ValueConformanceCause::Unsupported(unsupported),
                 None,
             )
-        },
-    )?;
+        })?;
     check_presented_structure(&contract, view)?;
     check_scan_budget(&contract)?;
     if let Some(rejection) = scan_logical_elements(&contract, view) {

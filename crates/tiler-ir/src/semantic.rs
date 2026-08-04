@@ -64,15 +64,14 @@ pub use concatenate::{
 };
 pub use conformance::{
     CoherenceEpoch, ComponentConformanceObligation, ComponentValueDomain, ComposedOperand,
-    DENSE_VALUE_COMPONENT_ROLE,
-    ConformanceValidatorIdentity, EncodedLogicalView, LogicalScalar, LogicalViewFault,
-    MAX_CONFORMANCE_SCAN_ELEMENTS, PreconditionDischargeError, PresentedComponent,
-    ProofCompositionError, ResolvedValueConformanceContract, RouteDependency,
+    ConformanceValidatorIdentity, DENSE_VALUE_COMPONENT_ROLE, EncodedLogicalView, LogicalScalar,
+    LogicalViewFault, MAX_CONFORMANCE_SCAN_ELEMENTS, PreconditionDischargeError,
+    PresentedComponent, ProofCompositionError, ResolvedValueConformanceContract, RouteDependency,
     SemanticPreconditionsDischarged, UnsupportedValueRepresentation, ValueConformanceCause,
     ValueConformanceEvidence, ValueConformanceRejection, ValueConformanceSubject, ValueOrigin,
     ValueOriginError, ValueStability, ValueVersion, check_bound_value,
-    compose_produced_conformance,
-    conform_bound_value, scan_bound_value, standard_binding_validator,
+    compose_produced_conformance, conform_bound_value, scan_bound_value,
+    standard_binding_validator,
 };
 pub use contraction::{
     CONTRACTION_F32_FACT_ACCUMULATOR_TYPE, CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
