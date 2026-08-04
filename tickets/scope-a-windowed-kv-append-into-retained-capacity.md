@@ -22,7 +22,7 @@ This ticket remains deferred until all three conditions hold:
 2. a reproducible B1 measurement shows that the survivor's replacement traffic, allocation behaviour, or peak residency is a binding cost; and
 3. a complete recovery contract makes a post-commit partial update non-destructive or otherwise safely recoverable.
 
-Condition 1 now has a derived proposal: [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) selects one capacity-sized head-major resource per logical K or V member and a governed capacity-derived head-stride root. Conditions 2 and 3 have not fired, so the ticket remains deferred. Any future windowed write must use that governed stride; treating `[8,T,128]` as one dense tail would reproduce the silent-wrongness the layout authority rejects.
+Condition 1 now has a derived proposal: [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) selects two capacity-sized head-major pool banks per logical K or V member while packing each active payload densely at its live extent. Conditions 2 and 3 have not fired, so the ticket remains deferred. Any future windowed write would replace that whole-value dense packing and must prove its own recovery and address authority; it may not silently reinterpret the current pool buffer as capacity-strided payload storage.
 
 [The L5 record](../docs/research/runtime/autoregressive-state-and-kv-cache.md) retains the earlier 1,908,178,944-byte read, 1,908,408,320-byte write, 1.60× weight-traffic, and 3,816,587,264-byte peak figures only as arithmetic for the rejected singular dense-allocation candidate. Those figures demonstrate why the question was filed; they do not fire this trigger or predict the survivor's cost.
 

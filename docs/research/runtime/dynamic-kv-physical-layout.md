@@ -8,7 +8,7 @@ catalog_group: "runtime-integration-placement"
 research_status: "complete"
 disposition: "pending"
 implementation_status: "not-started"
-evidence_classes: ["primary-source-synthesis"]
+evidence_classes: ["primary-source-synthesis", "bounded-measurement", "executable-model"]
 informs: ["tiler.contract.architecture", "tiler.contract.artifact-abi", "tiler.contract.candle-integration"]
 depends_on: ["tiler.research.runtime.autoregressive-state-and-kv-cache", "tiler.research.runtime.execution-contract"]
 ticket: "establish-a-dynamic-kv-physical-layout-authority"
@@ -16,72 +16,166 @@ ticket: "establish-a-dynamic-kv-physical-layout-authority"
 
 # Dynamic KV physical-layout authority
 
-**Status:** completed source research and a derived proposal, not an accepted public or schema boundary. The proposal below is the sole survivor of the required correctness, one-artifact/one-pipeline, and maintainability elimination. Its exact public types, wire fields, identity versions, and Metal realization remain drafts for the carrier tickets and Tom's acceptance.
+**Status:** completed source research and bounded measurement derive one
+implementation direction. This record accepts no public or schema boundary.
+The surviving representation needs the already-filed live semantic-extent
+transport, but no new physical-layout root or artifact schema.
 
-## Boundary and inspected source
+## Inspected boundary and the actual missing operand
 
-**Fact — exact source population, read at `b4e3478d42ce21ed68e23f772b643c6370d36498`.** `ArtifactProgramBuilder::push_stage` derives each ABI binding from a verified program stage and retains only storage/access facts plus accessible-offset and accessible-byte expressions (`crates/tiler-artifact/src/program/builder.rs`). The canonical program model, encoder, decoder, validator, and decoded view carry those same facts (`crates/tiler-artifact/src/program/model.rs` and `crates/tiler-artifact/src/program/codec/{encode,decode,validate,view}.rs`). `place_bindings` evaluates only the offset and byte-count expressions and publishes them as `RoutedBinding::{accessible_offset,accessible_bytes}` (`crates/tiler-runtime/src/load.rs` and `crates/tiler-runtime/src/load/route.rs`). `RuntimeAdapter::plan_dispatch` can compare those ranges before commit, while `allocate_dispatch` and `dispatch` bind and execute them only after commit (`crates/tiler-runtime/src/adapter.rs`). This is a complete trace of the implemented neutral path from verified program to committed route; it contains no physical-stride or layout root.
+**Fact — exact source population at
+`b4e3478d42ce21ed68e23f772b643c6370d36498`.**
+`ArtifactProgramBuilder::push_stage` derives binding offset/count expressions
+from a verified stage. The program model, codec, validator, and decoded view
+retain those expressions. `place_bindings` evaluates them into
+`RoutedBinding::{accessible_offset, accessible_bytes}`. `RuntimeAdapter` checks
+the ranges before `RoutingCommit`. `BufferParameter` and admitted launch
+builtins are the complete structured-kernel parameter population, and the Metal
+emitter emits exactly that population. No payload-consumable scalar extent or
+physical stride exists today.
 
-**Fact — the payload side cannot consume a live layout fact today.** `BufferParameter` carries a scheduled tensor role, optional semantic component role, element type, address space, access, and a compile-time element count. `VerifiedKernel::declared_buffers` is the complete parameter population (`crates/tiler-ir/src/kernel/model.rs`). The Metal emitter turns exactly those buffers into pointer parameters and the admitted launch builtins into Metal attributes (`crates/tiler-metal/src/emit.rs`). There is no scalar-layout parameter population. Although the vocabulary contains `AddressSpace::Constant` and the Metal spelling exists, `verify_kernel` deliberately refuses a constant-space tensor buffer because the schedule's current resource contract derives only device tensor buffers (`crates/tiler-ir/src/kernel/verify.rs`). A runtime descriptor that merely observes a stride could therefore diagnose a mismatch but could not change any emitted load or store address.
+**Fact.** `AbiRoot::InputExtent` already governs artifact-side range, guard,
+and launch evaluation. It does not reach kernel-body address or loop arithmetic.
+[`admit-live-extent-operands-to-payload-indexing`](../../../tickets/admit-live-extent-operands-to-payload-indexing.md)
+owns that gap. The value comes from the existing semantic interface root and is
+excluded from artifact, payload, library, and pipeline identity.
 
-**Fact — the same trace exposes an anterior live-extent gap, and it is a distinct subject.** `AbiRoot::InputExtent` can already drive artifact-side range and launch evaluation, but no bound `C` or `S` reaches structured-kernel body arithmetic through the buffer/builtin signature above. [`admit-symbolic-extents-at-the-compiler-request-boundary`](../../../tickets/admit-symbolic-extents-at-the-compiler-request-boundary.md) only admits the program to planning or declines it accurately, while [`deliver-an-artifact-family-from-a-symbolic-region`](../../../tickets/deliver-an-artifact-family-from-a-symbolic-region.md) previously required only preflight range/launch formulas. Neither makes an emitted address or contributor loop consume the fact. [`admit-live-extent-operands-to-payload-indexing`](../../../tickets/admit-live-extent-operands-to-payload-indexing.md) now owns that prerequisite. Its semantic input-extent root remains distinct from this record's physical layout root even when the implementation reuses one typed dispatch-parameter transport.
+**Inference.** The earlier capacity-strided proposal solved a problem it had
+created. A physical allocation may be capacity-sized while the logical K/V
+payload inside it is packed densely at the current live extent. Allocation
+length is a storage-pool property; it need not be the payload's head stride or
+the routed accessible byte count.
 
-**Fact — identity follows the missing seam.** Kernel canonical identity folds the complete buffer table and body operations; artifact-program identity folds the canonical entry binding records and expressions; the manifest schema is currently `12.0`; and the runtime route publishes the decoded artifact's facts rather than re-deriving them. Introducing governed layout parameters changes the structured-kernel subject, emitted payload compilation subject, artifact-program subject, fixed repeated manifest records, and routed-dispatch surface together. It is a whole identity/schema step, not an additive runtime observation.
+## Candidates and exact negative oracles
 
-**Inference — the exact silent-wrongness case.** For physical F32 `[8, capacity, 128]` at `capacity = 18`, semantic `(head = 1, sequence = 0, component = 0)` begins at byte `18 × 128 × 4 = 9,216`. Dense logical `[8, C, 128]` indexing at `C = 14` instead computes `14 × 128 × 4 = 7,168`; replacement `[8, S, 128]` at `S = 15` would compute `7,680`. All three offsets lie inside the allocation, so accessible-range validation can pass while a payload reads or writes the wrong head. The missing fact is an address operand, not a larger byte bound.
+All candidates retain one K and one V resource per layer, batch 1, eight heads,
+width 128, one artifact, and one prepared pipeline.
 
-## Required alternatives and elimination
+### Exact-live head-major in capacity-sized pooled buffers — survivor
 
-The order is correctness, then preserving one artifact and one prepared pipeline, then long-term maintainability and support. No latency measurement is claimed; the performance comparisons below are exact resource/address arithmetic or structural consequences of the inspected signatures.
+**Proposal.** Old state is packed `[8,C,128]` with head stride `C*128`; the
+replacement is packed `[8,S,128]` with head stride `S*128`. Two physical buffer
+banks per member are allocated once at `capacity*8*128*4` bytes and alternate
+only after exact terminal success. A route exposes only the current live dense
+span. The concatenate/copy payload consumes the governed semantic `C` and `S`
+operands and never consumes capacity.
 
-### A — governed bounded affine layout roots
+**Correctness.** At `capacity=18, C=14, S=15`, old `(1,0,0)` is byte 7,168 and
+replacement `(1,0,0)` is byte 7,680. Substituting the capacity stride yields
+byte 9,216 and must fail the coordinate oracle. Old and replacement are
+disjoint buffers, so their different packings cannot alias; both remain alive
+through final device use, and the new bank plus cursor publish atomically.
+Routed accessible spans are exactly 57,344 and 61,440 bytes even though each
+pool buffer is 73,728 bytes. `S <= capacity`, the additive `S=C+T` relation,
+buffer length, device/context, generation, and poison status are preflight
+checks; none is inferred from an address.
 
-**Proposal.** A physical binding carries a canonical bounded affine layout recipe whose coefficients may name governed live layout roots. The initial admitted recipe is rank-three F32 head-major KV storage with element address `base + head × head_stride + sequence × 128 + component`, where `head_stride` is bound from the runtime state's observed allocation contract and equals `capacity × 128`. The artifact carries the root's role, type, availability phase, binding association, and use sites, never its live value. The kernel signature consumes the evaluated root through a separate read-only dispatch-parameter block, not by pretending it is a semantic tensor or a specialization value.
+**Identity and maintainability.** The semantic extents already belong to the
+program interface. The live-extent carrier makes them consumable without adding
+a second physical fact, storage descriptor grammar, artifact row, or schema
+step. Allocation policy stays runtime-owned. Arbitrary strides, negative or
+overlapping views, permutations, ragged batches, and caller scalars remain
+unsupported rather than being accidentally admitted for one KV case.
 
-**Correctness.** Artifact construction proves every emitted address expression refers only to declared roots and the binding it addresses. Decode proves the root population total, unique, typed, canonically ordered, and used. Runtime preflight derives the root value from the owned state's storage descriptor and observation, rejects missing/extra/misordered/overflowing/dishonest observations, proves `head_stride = capacity × 128` and `S ≤ capacity`, evaluates the maximum addressed byte against the routed accessible span and observed allocation, and freezes the exact parameter bytes into the committed authority. The backend binds those bytes at the governed transport and the payload loads them before indexing. At C1, both old `[8, C, 128]` and replacement `[8, S, 128]` views use `head_stride = 2,304` elements, so head 1 begins at byte 9,216 at both `C = 14` and `S = 15`; changing either live logical extent does not change the physical root. The range is not logical payload bytes: from byte zero the old view's addressed span is `(7 × 2,304 + 14 × 128) × 4 = 71,680` bytes and the replacement's is `(7 × 2,304 + 15 × 128) × 4 = 72,192`, both within the 73,728-byte allocation. The artifact's range formula must consume the same governed root or be derived from the same checked layout recipe; `C × 8 × 128 × 4` would understate the reached address and must refuse.
+### Capacity-strided head-major — correct, then dominated
 
-**One-artifact/one-pipeline performance.** `capacity`, `C`, and `S` are values, not identity subjects or specialization values. One compiled address expression and one prepared pipeline consume different preflight-bound parameter bytes. Compared with componentizing by head, this retains one K resource and one V resource per layer and adds one bounded parameter block per dispatch rather than seven additional tensor transports per logical value. Compared with sequence-major storage, it keeps adjacent sequence rows for one head 512 bytes apart rather than 4,096 bytes apart, the locality L5's score contraction consumes. The cost still requires later measurement: a parameter load and address multiply are not asserted free.
+This representation uses `[8,capacity,128]` and a physical head stride of
+`capacity*128`. Its exact oracle is `(1,0,0) -> 9,216` bytes at capacity 18;
+using 7,168 or 7,680 addresses the wrong head while remaining in bounds. It
+therefore needs a separately typed layout root carried through kernel, Metal,
+artifact schema, identity, runtime preflight, and backend binding.
 
-**Maintainability and support.** The root is a physical-plan/artifact/runtime fact and never changes semantic `[8, C, 128]` meaning. The bounded affine vocabulary is reusable for ordinary positive-stride views without admitting arbitrary code, pointers, negative strides, overlap, or ragged descriptors. Unsupported ranks, permutations, roots, arithmetic overflow, backend parameter mechanisms, or non-injective layouts refuse explicitly. Batch remains 1; a ragged batch needs per-sequence roots and is separate architecture. Capacity remains positive, fixed for one state generation, and at most the workload/checkpoint bound.
+It has no allocation-reuse advantage over the survivor: the survivor uses the
+same two capacity-sized pool banks. It touches capacity-derived reached spans
+instead of compact live spans and adds a consequential schema/public surface
+without improving measured B1 access time. It is rejected as strictly more
+mechanism for no retained benefit.
 
-**Exact negative oracle.** A fixture binds `capacity = 18, C = 14, S = 15`, fills every semantic `(head, sequence, component)` with its coordinate, and asks both the old input and replacement output address evaluators for `(1,0,0)`. Both must return byte 9,216, while their complete addressed spans are 71,680 and 72,192 bytes. Replacing the observed `head_stride` with either logical dense value, claiming the logical payload byte counts 57,344 or 61,440 as the reached spans, omitting the root, swapping it with another binding's root, or changing the parameter transport must refuse before program work; deleting the preflight comparison must make the fixture fail. A post-commit backend that binds different bytes is an adapter failure and poisons the state.
+### Capacity-sized sequence-major — correct, then dominated
 
-### B — representations with no hidden capacity stride
+This representation addresses
+`sequence*8*128 + head*128 + component`. Its exact oracle is
+`(head=1, sequence=0, component=0) -> 512` bytes; presenting head-major storage
+to that formula first corrupts canonical output element 128 in the retained
+fixture. It requires no dynamic stride and shares the survivor's stable pool.
 
-Three concrete members were evaluated rather than treating “contiguous” as one design.
+It changes every consumer's physical order and is about 3.9% slower than both
+head-major candidates at the two measured B1 copy cells. That one-device result
+is not a universal GPU claim. It is enough for this elimination because the
+candidate has no offsetting correctness, allocation, resource-count, identity,
+or support advantage. The conventional head-major survivor preserves the
+existing consumer order and is no slower in the bounded measurement.
 
-**Exact-live dense materialization `[8, C, 128] → [8, S, 128]` is rejected as a solution to this blocker.** It makes each allocation dense, but its head stride is still the live value `C × 128` or `S × 128`; the payload needs a live stride operand to address it. It therefore reduces allocation slack but does not remove the missing payload authority. Its negative oracle is the same coordinate: input head 1 begins at byte 7,168 and output head 1 at byte 7,680, and using either for the other must fail. It becomes a cost alternative after A exists, not an alternative to A.
+### Per-head resources and specialization — rejected structurally
 
-**Sequence-major `[capacity, 8, 128]` is rejected on performance and support after passing correctness.** Its live prefix `[0,S)` is contiguous and the static address is `sequence × 8 × 128 + head × 128 + component`, so it needs no capacity-derived stride. Its exact oracle is `(head = 1, sequence = 0, component = 0) → 512` bytes; a head-major dense formula at `C = 14` would produce 7,168 and must fail the plan/layout proof. But L5's fixed-head score contraction advances 4,096 bytes per sequence instead of 512, exactly 8× the address stride, and every consumer must accept the transposed physical order or materialize. A universal KV layout chosen to optimize append contiguity at the expense of the dominant head-wise contractions is not the performance-first survivor when A preserves both the conventional locality and the one-pipeline property.
+Eight per-head resources turn 56 logical K/V members into 448 retained
+resources and each K/V transport into eight. Their oracle selects resource 1,
+byte 0 for `(1,0,0)`; selecting resource 0 fails. They offer no correctness or
+pooling property the survivor lacks and sharply reduce Metal binding headroom.
 
-**Per-head component resources are rejected as dominated.** Eight `[capacity,128]` resources per K or V make the per-head sequence stride statically 128 elements, but expand 56 logical C1 members to 448 retained resources and each K/V use from one tensor transport to eight. The Metal profile admits 31 buffer bindings per entry; componentization spends fourteen additional slots whenever K and V are both present before Q, result, temporaries, validation, or layout parameters are counted. Its oracle is `(head = 1, sequence = 0, component = 0) → resource 1, byte 0`; selecting resource 0 or byte 7,168 must fail. It supplies no correctness A cannot supply, has higher allocation/binding/retention cardinality, and reserves less signature capacity for later features.
+Per-`C` or per-`S` specialization creates a pipeline per decode extent.
+Capacity specialization makes runtime allocation policy part of compiled
+identity. A two-state oracle at capacities 18 and 8,320 requires identical
+artifact, payload, and pipeline-cache keys. These families violate the stated
+one-artifact/one-pipeline outcome and are not cost candidates.
 
-Materializing a compact sequence-major scratch before each contraction is also rejected as a layout authority: it adds a copy and temporary to recover locality, so it is a physical enforcement/cost alternative downstream of A, not a reason to select a storage representation that needs repair at every use.
+## Bounded Metal evidence
 
-### C — bounded specialization
+**Measurement.** The retained
+[dynamic KV layout spike](../../../spikes/runtime/dynamic-kv-layout/README.md)
+ran on Apple M4 Max (`Mac16,6`), Apple9, macOS 27.0 build `26A5388g`, Xcode
+26.6 build `17F113`, SDK 26.5, and `metalfe-32023.883`. Five rounds rotate
+candidate order; each round records seven dispatches after three warmups.
 
-**Rejected.** Per-`C` or per-`S` specialization creates a pipeline per decode extent by definition. Capacity specialization is no better: capacity is runtime-state policy, not immutable program meaning, so making it a specialization value contaminates the pipeline key and makes a state-creation choice select compiled code. Packaging a finite set of capacity buckets in one artifact still prepares multiple pipelines and leaves capacities outside the buckets unsupported; packaging a single maximum stride silently misaddresses smaller allocations or forces every state to allocate the global maximum. The exact negative oracle creates two states for the same artifact at capacities 18 and 8,320 and asserts one artifact identity, one payload subject, and one pipeline-cache key; any key or selected payload differing because of capacity, `C`, or `S` fails before program work.
+At B1-first (`8192/8320`), the median of five per-round GPU medians is 750.292
+us exact-live head-major, 749.750 us capacity-strided head-major, and 779.708 us
+sequence-major. At B1-last (`8320/8320`) it is 761.875, 761.500, and 791.250
+us. The head-major candidates differ by less than 0.3%; sequence-major is about
+3.9% slower. C1 timings sit near the device timestamp/launch floor and rank
+nothing.
 
-No finite non-cursor layout family survives: a static sequence-major member is candidate B and loses on locality; every head-major member's stride varies with its capacity and therefore either needs A's live root or becomes capacity specialization.
+**Measurement.** A compact-allocation exact-live policy requests 1,318,912
+bytes across one layer's C1 decode lifecycle and 8,724,676,608 bytes across its
+129 B1 extents; allocator-call medians are 85.333 us and 1,609.042 us. The
+survivor's two capacity-sized banks request 294,912 and 136,314,880 bytes once,
+with medians 10.000 and 12.167 us, indistinguishable here from the two other
+stable-pool candidates. Stable reuse is therefore compatible with exact-live
+addressing.
 
-## Derived boundary and layer consequences
+**Measurement boundary.** This is one Apple9 GPU/toolchain row, F32, one-layer
+scaled allocation populations, and four exact live/capacity cells: C1 `5/18`
+and `15/18`, B1 `8192/8320` and `8320/8320`. The access kernel copies every
+live coordinate; it is not complete attention. Allocation pages are not
+touched. Timings do not transfer to another GPU, dtype, batching scheme,
+allocator, or full 28-layer resident population and are never multiplied by 28.
 
-One candidate survives, so there is no product trade-off to ask Tom to choose. Acceptance is still required for its consequential exact public and schema spelling after the carrier produces a tested draft.
+## Consequences and exact traffic
 
-- **Semantic graph:** unchanged; K/V remain `[8,C,128]` inputs and `[8,S,128]` retained outputs with `S = C + T`.
-- **Physical plan and structured kernel:** own a bounded affine layout recipe and typed root uses. Layout roots are distinct from semantic roots, target properties, tensor buffers, launch builtins, and specialization values. Existing dense lowering is removed where the governed recipe replaces it; there is no parallel ungoverned path.
-- **Artifact and identity:** carry the canonical root declarations, binding associations, parameter transports, and address-use proof. The manifest major version, kernel/program/artifact identity domains, payload compilation subject, ledgers, and every affected pin move in one recomputed step. Live values never enter canonical bytes.
-- **Runtime preflight:** derives root values from the owned state descriptor and storage observation, checks totality/order/type/arithmetic/non-overlap/range/backend support, and freezes the parameter bytes before `RoutingCommit`. Callers cannot restate a stride. `RoutedBinding`'s current offset/count remain range facts and do not impersonate layout, but their evaluated span must cover the strided maximum address from the same governed recipe rather than the dense logical payload byte count.
-- **Backend:** maps the governed parameter block to a read-only dispatch mechanism, includes its transport in the compiled signature and reflection/validation, and loads the root in every address expression that names it. A backend without the mechanism refuses during preparation.
-- **Aliasing, retention, publication:** remain population-based. The initial survivor has one resource per K or V logical member; 56 logical members therefore mean 56 old and 56 replacement resources during an out-of-place model transaction. Old and replacement populations are disjoint, both are retained through exact final device use, and all replacement resources plus the one model cursor publish atomically only after terminal success. Live capacity slack exists inside each resource but is neither a logical value nor validation coverage.
-- **Residency:** logical end-state payload remains `capacity × 229,376` bytes for 28 layers. The initial representation adds a bounded parameter block per dispatch, not persistent per-head payload resources. Peak out-of-place KV storage is twice that logical payload while old and replacement populations overlap, plus exact parameter blocks and any plan temporaries; L8 must measure rather than treating this arithmetic as resident-process evidence.
+The semantic graph remains `[8,C,128] -> [8,S,128]`, `S=C+T`. Structured
+kernel and artifact work need the governed semantic live-extent operand only.
+The runtime state owns two capacity-sized buffers per logical K/V member, their
+active bank, valid extent, generation, device/context, and poison state. It
+routes an exact live prefix and publishes the replacement bank atomically.
 
-## Unsupported cases and stop conditions
+For all 28 layers, exact-live out-of-place bytes touched at the first and last
+C1 cells range from 2,293,760 to 8,028,160 rather than the
+capacity-strided 8,257,536-byte transaction. At B1 final they are
+3,816,587,264 rather than 3,816,816,640. Physical pool reservation is the same
+for the two head-major candidates; these figures are reached/touched spans, not
+resident-process measurements.
 
-The first carrier supports rank-three F32, batch 1, exactly eight heads and width 128, positive row-major inner dimensions, one capacity-derived positive head stride, and one device/context scope. It does not support arbitrary rank, negative or zero strides, overlapping/broadcast physical views, arbitrary permutations, ragged or batched cursors, growing capacity, sparse/paged KV, external storage, multiple devices, or in-place publication. Each is unsupported rather than approximated. Generalizing the root vocabulary stops if it requires arbitrary payload code, caller-authored root populations, capacity in immutable identity, or an alias model that cannot prove the exact reached byte set.
+The physical-root carrier tickets are obsolete because their candidate did not
+survive. The KV artifact/runtime ticket depends directly on the live-extent
+carrier and must not add a KV-specific stride schema. No Tom decision remains
+on physical layout; Tom still owns acceptance of the live-extent carrier's
+tested consequential public/schema spelling when that implementation reaches
+review.
 
-No executable spike is required to choose among A, B, and C: inspected source establishes the missing consumable parameter, the Metal backend already emits read-only constant-address-space pointer syntax, and the comparative address/resource counts are exact arithmetic. The carrier must nevertheless prove the mechanism with executable negative fixtures before acceptance; source expressibility is not implementation evidence or a performance measurement.
+## Unsupported cases
 
-## Handoff
-
-[`admit-live-extent-operands-to-payload-indexing`](../../../tickets/admit-live-extent-operands-to-payload-indexing.md) first makes the already-governed semantic input extents consumable by payload indexing without specialization. [`draft-governed-affine-layout-roots-through-kernel-and-artifact`](../../../tickets/draft-governed-affine-layout-roots-through-kernel-and-artifact.md) then reuses that transport while adding a separately typed physical layout root and owns its structured-kernel, Metal, artifact-schema, and identity draft. [`route-governed-layout-roots-from-runtime-state`](../../../tickets/route-governed-layout-roots-from-runtime-state.md) owns layout preflight derivation, frozen committed parameter bytes, backend binding, and failure timing. The KV state boundary may draft its survivor-specific storage descriptor after this research lands, but the cache cannot cross the artifact/runtime boundary until all three carriers land and Tom accepts every consequential public/schema surface.
+Only rank-three F32, batch 1, eight heads, width 128, fixed positive capacity,
+out-of-place publication, and one device/context are selected. Ragged or
+batched cursors, paging, growing capacity, prefix sharing, external storage,
+multiple devices, in-place mutation, and layouts required by another backend
+remain separate architecture. The selected representation reserves no generic
+stride surface for them.

@@ -1,0 +1,13 @@
+field	value
+sw_vers_product_version	27.0
+sw_vers_build_version	26A5388g
+hardware_model	Mac16,6
+hardware_chip	Apple M4 Max
+xcode_version	Xcode 26.6 Build version 17F113
+sdk_version	26.5
+metal_version	Apple metal version 32023.883 (metalfe-32023.883)
+developer_dir	/Applications/Xcode.app/Contents/Developer
+compile_flags	-std=metal4.0 -target air64-apple-macos26.0 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off
+access_schedule	5 rotated-order rounds; 3 warmups and 7 recorded dispatches per round
+allocation_schedule	20 warmups; 101 repetitions
+lifecycle_schedule	C1: 10 warmups/51 repetitions; B1: 3 warmups/11 repetitions

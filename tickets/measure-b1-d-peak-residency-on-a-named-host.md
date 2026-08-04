@@ -25,7 +25,7 @@ candidate's totals; it does not broaden the measurement outcome.
 
 **Fact.** [`design-model-ingestion-and-complete-execution`](design-model-ingestion-and-complete-execution.md) states the model-level peak figures and labels every one an **Inference** over quantities L1, L4, and L5 already state. Nothing has measured any of them.
 
-**Inference — the measurement's primary value is not performance.** The cited totals contain KV terms from the rejected exact-live dense-allocation candidate. [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) replaces them with 56 capacity-sized head-major resources and a disjoint 56-resource replacement population: `2 × capacity × 229,376` bytes for a token transaction, or 3,816,816,640 bytes at B1-d capacity 8,320. This measurement can falsify that arithmetic after the carrier lands; D-16 uses the survivor-derived token-versus-layer delta, while the prefill-decomposition and final-position-projection terms remain separately attributable.
+**Inference — the measurement's primary value is not performance.** The cited totals contain KV terms from a rejected compact-allocation candidate. [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) instead selects 56 logical members with two capacity-sized pool banks each: `2 × capacity × 229,376` reserved bytes, or 3,816,816,640 at B1-d capacity 8,320, while final exact-live bytes touched are 3,816,587,264. This measurement can falsify the reservation arithmetic and distinguish it from resident pages; D-16 uses the measured token-transaction cost while the prefill-decomposition and final-position-projection terms remain separately attributable.
 
 ## Required work
 

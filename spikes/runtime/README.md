@@ -8,12 +8,20 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.runtime.execution-contract", "tiler.research.runtime.semantic-validation", "tiler.research.runtime.candle-post-wait"]
-entrypoints: ["spikes/runtime/runtime_execution_contract.rs", "spikes/runtime/semantic_validation_enforcement.rs", "spikes/runtime/measure_semantic_validation.py", "spikes/runtime/candle_metal_post_wait.rs", "spikes/runtime/check_candle_post_wait_source.py", "spikes/runtime/inline-dispatch/README.md"]
-last_verified: "2026-08-01"
+entrypoints: ["spikes/runtime/runtime_execution_contract.rs", "spikes/runtime/semantic_validation_enforcement.rs", "spikes/runtime/measure_semantic_validation.py", "spikes/runtime/candle_metal_post_wait.rs", "spikes/runtime/check_candle_post_wait_source.py", "spikes/runtime/inline-dispatch/README.md", "spikes/runtime/dynamic-kv-layout/README.md"]
+last_verified: "2026-08-04"
 ticket: "runtime-execution-contract"
 ---
 
 # Runtime execution and validation spikes
+
+## Dynamic KV physical layouts on Metal
+
+[`dynamic-kv-layout/`](dynamic-kv-layout/README.md) compares exact-live
+head-major, capacity-strided head-major, and sequence-major storage at the exact
+C1 and B1 extents. It separates payload address-walk time from physical-buffer
+allocation policy and retains independently failing address oracles for all
+three representations.
 
 ## Inline region dispatch on Metal hardware
 
