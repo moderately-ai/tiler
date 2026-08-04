@@ -1,7 +1,7 @@
 ---
 id: enforce-resolved-encoded-value-binding-conformance
 title: Enforce resolved encoded-value binding conformance
-status: review
+status: done
 priority: p1
 dependencies: [prototype-quantized-value-vertical, produce-typed-strict-affine-assemble-semantic-precondition]
 related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-assemble-semantic-precondition, own-the-dtype-support-maturity-matrix]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/reference, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, validation, compound-values, runtime]
-claimed_from: todo
-assignee: agent-value-conformance
-lease_expires_at: 1785876737
 ---
 
 ## User-visible outcome
@@ -76,3 +73,7 @@ The public value-conformance evidence and adapter binding boundary has Tom's req
 ## Remaining before this ticket closes
 
 The public value-conformance evidence and adapter binding boundary needs Tom's interface review. The ticket sits at `review` with the complete tested draft and one atomic question drafted.
+
+## Acceptance — 2026-08-04
+
+The public value-conformance boundary (ValueConformanceSubject/Evidence as consumer-holdable values, the additive non-exhaustive error variants) is accepted as built, decided by the orchestrator under Tom's same-day delegation of internal API decisions after full-diff review: the capability-token alternative was eliminated on ADR 0081 grounds and on tiler-reference's inability to mint, leaving one survivor. The subject-to-reality honesty gap is deliberately assigned to implement-first-runtime-semantic-value-precondition-enforcement at the adapter seam. The dtype-support matrix corrections (positive-normal scale wording, the two new routes, the L148 host-path qualifier) are deferred integrator edits held until contracts/navigation frees.
