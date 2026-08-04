@@ -20,6 +20,7 @@
 //! | `accuracy` | certified enclosures and the transcendental conformance decision |
 //! | `bf16` | the exact-rational pure-BF16 value set, arithmetic, and rounding |
 //! | `tensor` | what a reference value *is* — elements, components, tensors |
+//! | `value_conformance` | presenting a tensor as a logical view, and the proofs one evaluation holds |
 //! | `registry` | the semantic capability registry and its dispatch vocabulary |
 //! | `evaluate` | executing a semantic program against that registry |
 //! | `silu` | the certified binary32 `SiLU` reference and its exponential |
@@ -55,6 +56,7 @@ mod softmax;
 mod standard;
 mod structural;
 mod tensor;
+mod value_conformance;
 
 pub use accuracy::{
     CertifiedEnclosure, ConformanceDecision, EnclosureError, EnclosurePrecision,
@@ -90,6 +92,7 @@ pub use tensor::{
     FloatBitOrder, InputBinding, ReferenceComponent, ReferenceComponentRole, ReferenceElement,
     Tensor, TensorPayloadView,
 };
+pub use value_conformance::TensorLogicalView;
 
 use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
 

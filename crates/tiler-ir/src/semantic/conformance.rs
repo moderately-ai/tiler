@@ -279,7 +279,7 @@ impl ResolvedValueConformanceContract {
             resolved_type: resolved_type.clone(),
             shape: shape.clone(),
             components: vec![ComponentConformanceObligation {
-                role: DENSE_COMPONENT_ROLE,
+                role: DENSE_VALUE_COMPONENT_ROLE,
                 resolved_type: resolved_type.clone(),
                 shape: shape.clone(),
                 map: None,
@@ -403,8 +403,10 @@ impl ResolvedValueConformanceContract {
 /// The reserved role of the single component of a dense (non-compound) value.
 ///
 /// Zero is reserved: every governed scheme role is nonzero, so a dense
-/// obligation can never be confused with a scheme's own component.
-const DENSE_COMPONENT_ROLE: EncodedComponentRole = EncodedComponentRole::new(0);
+/// obligation can never be confused with a scheme's own component. A view over
+/// a dense value presents this role, which is why it is public rather than an
+/// internal convention a consumer would have to guess.
+pub const DENSE_VALUE_COMPONENT_ROLE: EncodedComponentRole = EncodedComponentRole::new(0);
 
 fn dense_value_domain(
     resolved_type: &ResolvedValueType,
@@ -1284,20 +1286,42 @@ pub fn scan_bound_value(
     subject: &ValueConformanceSubject,
     view: &dyn EncodedLogicalView,
 ) -> Result<ValueConformanceEvidence, ValueConformanceRejection> {
-    let contract =
-        ResolvedValueConformanceContract::derive(subject.resolved_type(), subject.shape())
-            .map_err(|unsupported| {
-                ValueConformanceRejection::structural(
-                    ValueConformanceCause::Unsupported(unsupported),
-                    None,
-                )
-            })?;
+    let contract = check_bound_value(subject.resolved_type(), subject.shape(), view)?;
+    Ok(ValueConformanceEvidence::new(validator, subject, &contract))
+}
+
+/// Checks one bound value against its type's obligations and mints no evidence.
+///
+/// This is the single authority for what a bound value of an admitted type must
+/// satisfy, and [`scan_bound_value`] is it plus a provenance binding. A
+/// consumer whose own validation boundary has no provenance to bind — a
+/// representation validator registered against a type rather than against a
+/// value occurrence — checks here rather than restating a domain, so a scheme
+/// that narrows its contract narrows both paths at once.
+///
+/// # Errors
+///
+/// Returns the deterministic [`ValueConformanceRejection`] naming the first
+/// refusal under the diagnostic order.
+pub fn check_bound_value(
+    resolved_type: &ResolvedValueType,
+    shape: &Shape,
+    view: &dyn EncodedLogicalView,
+) -> Result<ResolvedValueConformanceContract, ValueConformanceRejection> {
+    let contract = ResolvedValueConformanceContract::derive(resolved_type, shape).map_err(
+        |unsupported| {
+            ValueConformanceRejection::structural(
+                ValueConformanceCause::Unsupported(unsupported),
+                None,
+            )
+        },
+    )?;
     check_presented_structure(&contract, view)?;
     check_scan_budget(&contract)?;
     if let Some(rejection) = scan_logical_elements(&contract, view) {
         return Err(rejection);
     }
-    Ok(ValueConformanceEvidence::new(validator, subject, &contract))
+    Ok(contract)
 }
 
 fn check_presented_structure(

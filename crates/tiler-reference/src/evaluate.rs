@@ -25,6 +25,7 @@ use super::registry::{
 use super::tensor::{
     FloatBitOrder, InputBinding, ReferenceComponent, ReferenceElement, Tensor, TensorPayloadView,
 };
+use super::value_conformance::ValueConformanceLedger;
 use super::{
     MAX_REFERENCE_COMPONENT_DEPTH, MAX_REFERENCE_COMPONENTS, MAX_REFERENCE_TENSOR_BYTES,
     MAX_REFERENCE_TENSOR_ELEMENTS, canonicalize_arithmetic_f32,
@@ -130,7 +131,7 @@ impl ReferenceEvaluator {
         program: &SemanticProgram,
         inputs: &[InputBinding<'_>],
     ) -> Result<Vec<Tensor>, EvaluationError> {
-        let (mut values, mut retained_work) = self.bind_inputs(program, inputs)?;
+        let (mut values, mut retained_work, mut conformance) = self.bind_inputs(program, inputs)?;
 
         let reachable_operations = reachable_operations(program)?;
         for operation in program
@@ -205,8 +206,22 @@ impl ReferenceEvaluator {
                         actual: Arc::new(evaluated.resolved_type().clone()),
                     });
                 }
-                self.registry
-                    .validate_value(&evaluated, program.semantic_registry())?;
+                // A value this evaluator produced is proved by composing the
+                // producer's verified semantics, so it is not rescanned. Only a
+                // result no admitted composition rule covers falls through to
+                // the registered representation validator, which is the
+                // authority for exactly those.
+                let composed = conformance.produce_result(
+                    program,
+                    operation,
+                    result,
+                    &expected_type,
+                    expected_shape,
+                )?;
+                if !composed {
+                    self.registry
+                        .validate_value(&evaluated, program.semantic_registry())?;
+                }
                 reserve_evaluation_work(&mut retained_work, &evaluated)?;
                 values.insert(result, evaluated);
             }
@@ -222,7 +237,14 @@ impl ReferenceEvaluator {
         &self,
         program: &SemanticProgram,
         inputs: &[InputBinding<'_>],
-    ) -> Result<(HashMap<ValueId, Tensor>, EvaluationRetention), EvaluationError> {
+    ) -> Result<
+        (
+            HashMap<ValueId, Tensor>,
+            EvaluationRetention,
+            ValueConformanceLedger,
+        ),
+        EvaluationError,
+    > {
         if inputs.len() != program.input_count() {
             return Err(EvaluationError::InputCount {
                 expected: program.input_count(),
@@ -232,6 +254,7 @@ impl ReferenceEvaluator {
 
         let mut values = HashMap::with_capacity(program.value_count());
         let mut retained_work = EvaluationRetention::default();
+        let mut conformance = ValueConformanceLedger::default();
         for (index, (declaration, binding)) in program.inputs().zip(inputs).enumerate() {
             if declaration.key() != binding.key {
                 return Err(EvaluationError::InputKey {
@@ -258,12 +281,26 @@ impl ReferenceEvaluator {
                     actual: Arc::new(binding.tensor.resolved_type().clone()),
                 });
             }
-            self.registry
-                .validate_value(binding.tensor, program.semantic_registry())?;
+            // A directly bound value has no producing occurrence, so its type is
+            // what governs it: the binding validator scans its authoritative
+            // logical view and mints the proof every later composition reads.
+            // A type it does not govern falls through to the registered
+            // representation validator, which is the authority for exactly
+            // those; a governed one is not scanned twice, because both paths
+            // reach the same obligation set.
+            if !conformance.bind_input(
+                program,
+                declaration.key(),
+                declaration.value(),
+                binding.tensor,
+            )? {
+                self.registry
+                    .validate_value(binding.tensor, program.semantic_registry())?;
+            }
             reserve_evaluation_work(&mut retained_work, binding.tensor)?;
             values.insert(declaration.value(), binding.tensor.clone());
         }
-        Ok((values, retained_work))
+        Ok((values, retained_work, conformance))
     }
 }
 
