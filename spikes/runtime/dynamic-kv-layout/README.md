@@ -8,7 +8,7 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement", "executable-model"]
 supports: ["tiler.research.runtime.dynamic-kv-physical-layout"]
-entrypoints: ["spikes/runtime/dynamic-kv-layout/run.sh", "spikes/runtime/dynamic-kv-layout/host.m", "spikes/runtime/dynamic-kv-layout/kernels.metal"]
+entrypoints: ["spikes/runtime/dynamic-kv-layout/run.sh", "spikes/runtime/dynamic-kv-layout/host.m", "spikes/runtime/dynamic-kv-layout/kernels.metal", "spikes/runtime/dynamic-kv-layout/check_arithmetic.py"]
 last_verified: "2026-08-04"
 ticket: "establish-a-dynamic-kv-physical-layout-authority"
 ---
@@ -50,11 +50,18 @@ The harness offline-compiles under `metal4.0` for macOS 26 with safe math,
 precise F32 functions, and contraction disabled. It creates and removes its own
 temporary build directory. No repository gate reaches this spike.
 
+The separate exact arithmetic oracle is reproducible without the GPU:
+
+```sh
+python3 spikes/runtime/dynamic-kv-layout/check_arithmetic.py
+```
+
 ## Retained result
 
 [`results/2026-08-04-apple9-m4max-macos27-xcode26.6-metal32023.883/`](results/2026-08-04-apple9-m4max-macos27-xcode26.6-metal32023.883/)
 records the raw round medians, allocation measurements, environment, producer
-digests, and four fail-capable address-oracle perturbations. The host is an
+digests, exact model-wide arithmetic, and fail-capable address and arithmetic
+oracle perturbations. The host is an
 Apple M4 Max (`Mac16,6`), macOS 27.0 build `26A5388g`, Xcode 26.6 build
 `17F113`, SDK 26.5, and `metalfe-32023.883`.
 
@@ -85,6 +92,8 @@ receives head-major storage. All corruptions stay in bounds. The oracle rejects
 the first three at canonical output element 1,280 and sequence-major at 128. A
 negative command returning success makes `run.sh` fail. Exact terminal
 command-buffer success is required before either timed readback or the oracle.
+The arithmetic oracle separately rejects conflating the two-bank pool
+reservation with payload transfer bytes.
 
 ## Measurement boundary
 

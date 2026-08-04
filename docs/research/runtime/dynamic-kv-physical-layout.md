@@ -86,10 +86,12 @@ therefore needs a separately typed layout root carried through kernel, Metal,
 artifact schema, identity, runtime preflight, and backend binding.
 
 It has no allocation-reuse advantage over the survivor: the survivor uses the
-same two capacity-sized pool banks. It touches capacity-derived reached spans
-instead of compact live spans and adds a consequential schema/public surface
-without improving measured B1 access time. It is rejected as strictly more
-mechanism for no retained benefit.
+same two capacity-sized pool banks, and both copy kernels issue exactly one load
+and one store for every live coordinate. Capacity-strided routing nevertheless
+requires a larger capacity-derived accessible bounding span than the dense live
+payload. It adds that routing requirement and a consequential schema/public
+surface without improving measured B1 access time. It is rejected as strictly
+more mechanism for no retained benefit.
 
 ### Capacity-sized sequence-major — correct, then dominated
 
@@ -153,7 +155,7 @@ Allocation pages are not
 touched. Timings do not transfer to another GPU, dtype, batching scheme,
 allocator, or full 28-layer resident population and are never multiplied by 28.
 
-## Consequences and exact traffic
+## Consequences and exact byte quantities
 
 The semantic graph remains `[8,C,128] -> [8,S,128]`, `S=C+T`. Structured
 kernel and artifact work need the governed semantic live-extent operand only.
@@ -161,12 +163,27 @@ The runtime state owns two capacity-sized buffers per logical K/V member, their
 active bank, valid extent, generation, device/context, and poison state. It
 routes an exact live prefix and publishes the replacement bank atomically.
 
-For all 28 layers, exact-live out-of-place bytes touched at the first and last
-C1 cells range from 2,293,760 to 8,028,160 rather than the
-capacity-strided 8,257,536-byte transaction. At B1 final they are
-3,816,587,264 rather than 3,816,816,640. Physical pool reservation is the same
-for the two head-major candidates; these figures are reached/touched spans, not
-resident-process measurements.
+Three byte quantities must remain separate. There are 56 logical K/V members
+across 28 layers. Both head-major copy kernels issue exactly `8*live*128` F32
+loads and stores per member, so their model-wide payload transfer is identical:
+`56*8*128*4*(C+S)`. It is 2,293,760 bytes at C1 prefill (`C=0,S=10`),
+8,028,160 bytes at C1 final (`C=17,S=18`), and 3,816,587,264 bytes at
+B1 final (`C=8319,S=8320`).
+
+Routing must instead make every addressed byte accessible. An exact-live dense
+resource's accessible span equals its live payload. A capacity-strided
+resource's bounding span is `((8-1)*capacity+live)*128*4` bytes per member;
+the absent `C=0` input contributes no resource. Summed across the model's
+members and old/new resources, the capacity-strided spans are 3,899,392 bytes
+at C1 prefill, 8,228,864 bytes at C1 final, and 3,816,787,968 bytes at B1
+final. These larger spans are a routing/preflight requirement, not additional
+copy-kernel loads or stores.
+
+Finally, both head-major candidates reserve the same two capacity-sized banks:
+`2*capacity*56*8*128*4`, or 8,257,536 bytes for C1 and 3,816,816,640 bytes
+for B1. Reservation is neither payload transfer nor an accessible span. The
+retained arithmetic oracle computes and distinguishes all three quantities;
+none is a resident-process measurement.
 
 All four independently wrong address interpretations fail the retained oracle:
 the two exact-live allocation policies, capacity-strided head-major, and
