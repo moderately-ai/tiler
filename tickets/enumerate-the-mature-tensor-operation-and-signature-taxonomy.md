@@ -1,7 +1,7 @@
 ---
 id: enumerate-the-mature-tensor-operation-and-signature-taxonomy
 title: Enumerate the mature tensor operation and signature taxonomy
-status: review
+status: done
 priority: p0
 dependencies: []
 related: [own-operation-family-support-matrix, enumerate-the-mature-tensor-dtype-taxonomy, numerical-policy-contract]
@@ -9,9 +9,6 @@ scopes: [research/semantic-graph, research/numerics, contracts/foundation, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, operations, signatures, taxonomy, foundation]
-claimed_from: todo
-assignee: agent-op-taxonomy
-lease_expires_at: 1785876199
 ---
 ## User-visible outcome
 

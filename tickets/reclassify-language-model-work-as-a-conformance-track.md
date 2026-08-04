@@ -1,7 +1,7 @@
 ---
 id: reclassify-language-model-work-as-a-conformance-track
 title: Reclassify language-model work as a consumer conformance track
-status: in-progress
+status: done
 priority: p0
 dependencies: [reconcile-the-roadmap-and-public-facades-with-the-consumer-neutral-mission]
 related: [supersede-the-runtime-owned-kv-state-design, retain-the-c1-attention-block-conformance-evidence, retain-the-qwen-conformance-reference-logit-fixture]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, contracts/integrations, research/program-planning
 shared_scopes: [project/tickets]
 paths: []
 tags: [architecture, conformance, language-model, roadmap]
-claimed_from: todo
-assignee: agent-reclassify-lm
-lease_expires_at: 1785876199
 ---
 ## User-visible outcome
 
