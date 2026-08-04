@@ -36,7 +36,8 @@ static uint64_t percentile(uint64_t *values, NSUInteger count, double fraction) 
 static id<MTLBuffer> make_input(id<MTLDevice> device, NSString *layout,
                                 uint32_t live, uint32_t capacity) {
     const uint32_t heads = 8, width = 128;
-    const uint64_t stored = [layout isEqualToString:@"exact-head"]
+    const BOOL exact = [layout hasPrefix:@"exact-head-"];
+    const uint64_t stored = [layout isEqualToString:@"exact-head-compact"]
         ? (uint64_t)heads * live * width
         : (uint64_t)heads * capacity * width;
     id<MTLBuffer> buffer = [device newBufferWithLength:stored * sizeof(float)
@@ -51,7 +52,7 @@ static id<MTLBuffer> make_input(id<MTLDevice> device, NSString *layout,
                 if ([layout isEqualToString:@"sequence-major"]) {
                     index = ((uint64_t)s * heads + h) * width + d;
                 } else {
-                    uint32_t stride = ([layout isEqualToString:@"exact-head"] ? live : capacity) * width;
+                    uint32_t stride = (exact ? live : capacity) * width;
                     index = (uint64_t)h * stride + (uint64_t)s * width + d;
                 }
                 values[index] = value_at(h, s, d);
@@ -86,7 +87,8 @@ static void run_access_case(id<MTLDevice> device, id<MTLCommandQueue> queue,
                             NSString *cell, uint32_t live, uint32_t capacity,
                             NSString *layout, NSString *injected, int round,
                             int warmups, int reps) {
-    NSString *kernel = [layout isEqualToString:@"exact-head"] ? @"copy_exact_head_major" :
+    const BOOL exact = [layout hasPrefix:@"exact-head-"];
+    NSString *kernel = exact ? @"copy_exact_head_major" :
                        [layout isEqualToString:@"capacity-head"] ? @"copy_capacity_head_major" :
                        @"copy_sequence_major";
     id<MTLBuffer> input = make_input(device, layout, live, capacity);
@@ -95,14 +97,18 @@ static void run_access_case(id<MTLDevice> device, id<MTLCommandQueue> queue,
                                                   options:MTLResourceStorageModeShared];
     if (output == nil) die(@"output allocation failed");
     LayoutDims dims = {8, live, 128,
-        ([layout isEqualToString:@"exact-head"] ? live : capacity) * 128};
+        (exact ? live : capacity) * 128};
     if ([injected isEqualToString:layout]) {
         if ([layout isEqualToString:@"sequence-major"]) {
             // A head-major input presented to the sequence-major payload.
             input = make_input(device, @"capacity-head", live, capacity);
+        } else if ([layout isEqualToString:@"exact-head-compact"]) {
+            // A smaller neighbouring stride stays in-bounds but overlaps heads.
+            dims.head_stride = (live - 1) * 128;
         } else {
-            // Swap the two valid head strides; both remain in-bounds.
-            dims.head_stride = ([layout isEqualToString:@"exact-head"] ? capacity : live) * 128;
+            // Both capacity-pooled alternatives remain in-bounds under the
+            // other valid head stride, but address the wrong head.
+            dims.head_stride = (exact ? capacity : live) * 128;
         }
     }
     const int total = warmups + reps;
@@ -150,7 +156,7 @@ static void run_access_case(id<MTLDevice> device, id<MTLCommandQueue> queue,
 static void run_allocation_case(id<MTLDevice> device, NSString *cell,
                                 uint32_t live, uint32_t capacity,
                                 NSString *layout, int warmups, int reps) {
-    uint32_t stored = [layout isEqualToString:@"exact-head"] ? live : capacity;
+    uint32_t stored = [layout isEqualToString:@"exact-head-compact"] ? live : capacity;
     NSUInteger bytes = (NSUInteger)8 * stored * 128 * sizeof(float);
     uint64_t *samples = calloc((size_t)reps, sizeof(uint64_t));
     if (samples == NULL) die(@"allocation sample allocation failed");
@@ -247,10 +253,11 @@ int main(int argc, const char *argv[]) {
         }
         printf("kind\tcell\tlayout\tlive\tcapacity\tround\twarmups\treps\tbytes_or_gpu_median_ns\tp95_ns\twall_median_ns\n");
         NSArray *cells = @[
-            @[@"C1-first", @5, @18], @[@"C1-last", @15, @18],
+            @[@"C1-prefill", @10, @18], @[@"C1-final", @18, @18],
             @[@"B1-first", @8192, @8320], @[@"B1-last", @8320, @8320]
         ];
-        NSArray *layouts = @[@"exact-head", @"capacity-head", @"sequence-major"];
+        NSArray *layouts = @[@"exact-head-compact", @"exact-head-pooled",
+                             @"capacity-head", @"sequence-major"];
         id<MTLCommandQueue> queue = [device newCommandQueue];
         for (NSArray *cell in cells) {
             if (![injected isEqualToString:@"none"]) {
@@ -259,8 +266,8 @@ int main(int argc, const char *argv[]) {
                 return 0;
             }
             for (int round = 0; round < 5; ++round) {
-                for (int position = 0; position < 3; ++position) {
-                    int index = (round + position) % 3;
+                for (int position = 0; position < 4; ++position) {
+                    int index = (round + position) % 4;
                     NSString *layout = layouts[index];
                     run_access_case(device, queue, pipelines, cell[0], [cell[1] unsignedIntValue],
                                     [cell[2] unsignedIntValue], layout, injected, round, 3, 7);
@@ -272,13 +279,9 @@ int main(int argc, const char *argv[]) {
             }
         }
         for (NSString *layout in layouts) {
-            NSString *lifecycleLayout = [layout isEqualToString:@"exact-head"]
-                ? @"exact-head-compact" : layout;
-            run_lifecycle(device, @"C1-decode", 5, 18, lifecycleLayout, 10, 51);
-            run_lifecycle(device, @"B1-decode", 8192, 8320, lifecycleLayout, 3, 11);
+            run_lifecycle(device, @"C1-run", 10, 18, layout, 10, 51);
+            run_lifecycle(device, @"B1-decode", 8192, 8320, layout, 10, 51);
         }
-        run_lifecycle(device, @"C1-decode", 5, 18, @"exact-head-pooled", 10, 51);
-        run_lifecycle(device, @"B1-decode", 8192, 8320, @"exact-head-pooled", 3, 11);
         printf("environment\tdevice\t%s\n", device.name.UTF8String);
     }
     return 0;

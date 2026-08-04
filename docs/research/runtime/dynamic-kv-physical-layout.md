@@ -127,25 +127,29 @@ ran on Apple M4 Max (`Mac16,6`), Apple9, macOS 27.0 build `26A5388g`, Xcode
 26.6 build `17F113`, SDK 26.5, and `metalfe-32023.883`. Five rounds rotate
 candidate order; each round records seven dispatches after three warmups.
 
-At B1-first (`8192/8320`), the median of five per-round GPU medians is 750.667
-us exact-live head-major, 749.750 us capacity-strided head-major, and 779.708 us
-sequence-major. At B1-last (`8320/8320`) it is 761.875, 761.500, and 791.250
-us. The head-major candidates differ by less than 0.3%; sequence-major is about
-3.9% slower. C1 timings sit near the device timestamp/launch floor and rank
-nothing.
+At B1-first (`8192/8320`), the median of five per-round GPU medians is 750.500
+us for the selected capacity-sized exact-live row, 750.500 us for its compact
+allocation control, 750.500 us capacity-strided head-major, and 779.208 us
+sequence-major. At B1-last (`8320/8320`) it is 761.708, 761.708, 761.958, and
+791.375 us. The selected pooled exact-live and capacity-strided rows differ by
+less than 0.1%; sequence-major is 3.8–3.9% slower. C1 timings sit near the
+device timestamp/launch floor and rank nothing. The common output is live-sized,
+so this measures input allocation length and address order, not output pooling.
 
-**Measurement.** A compact-allocation exact-live policy requests 1,318,912
-bytes across one layer's C1 decode lifecycle and 8,724,676,608 bytes across its
-129 B1 extents; allocator-call medians are 85.333 us and 1,609.042 us. The
-survivor's two capacity-sized banks request 294,912 and 136,314,880 bytes once,
-with medians 10.000 and 12.167 us, indistinguishable here from the two other
-stable-pool candidates. Stable reuse is therefore compatible with exact-live
-addressing.
+**Measurement.** A compact-allocation exact-live policy requests 1,032,192
+bytes across one layer's pinned C1 lifecycle `S=10…18` and 8,724,676,608 bytes
+across its 129 B1 extents; allocator-call medians are 72.042 us and 1,675.958
+us. The survivor's two capacity-sized banks request 294,912 and 136,314,880
+bytes once, with medians 13.250 and 17.333 us. Capacity-strided measures 14.458
+and 17.083 us; sequence-major 14.250 and 17.708 us. These stable-pool rows are
+indistinguishable at this boundary. Stable reuse is therefore compatible with
+exact-live addressing.
 
 **Measurement boundary.** This is one Apple9 GPU/toolchain row, F32, one-layer
-scaled allocation populations, and four exact live/capacity cells: C1 `5/18`
-and `15/18`, B1 `8192/8320` and `8320/8320`. The access kernel copies every
-live coordinate; it is not complete attention. Allocation pages are not
+scaled allocation populations, and four exact live/capacity cells: C1 `10/18`
+and `18/18`, B1 `8192/8320` and `8320/8320`. The access kernel reads every
+live coordinate into a common live-sized output; it is not complete attention.
+Allocation pages are not
 touched. Timings do not transfer to another GPU, dtype, batching scheme,
 allocator, or full 28-layer resident population and are never multiplied by 28.
 
@@ -164,12 +168,14 @@ capacity-strided 8,257,536-byte transaction. At B1 final they are
 for the two head-major candidates; these figures are reached/touched spans, not
 resident-process measurements.
 
-The physical-root carrier tickets are obsolete because their candidate did not
-survive. The KV artifact/runtime ticket depends directly on the live-extent
-carrier and must not add a KV-specific stride schema. No Tom decision remains
-on physical layout; Tom still owns acceptance of the live-extent carrier's
-tested consequential public/schema spelling when that implementation reaches
-review.
+All four independently wrong address interpretations fail the retained oracle:
+the two exact-live allocation policies, capacity-strided head-major, and
+sequence-major. The physical-root carrier tickets are obsolete because their
+candidate did not survive. The KV artifact/runtime ticket depends directly on
+the live-extent carrier and must not add a KV-specific stride schema. No Tom
+decision remains on physical layout; Tom still owns acceptance of the
+live-extent carrier's tested consequential public/schema spelling when that
+implementation reaches review.
 
 ## Unsupported cases
 

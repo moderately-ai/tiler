@@ -22,7 +22,8 @@ xcrun -sdk macosx clang -fobjc-arc -framework Foundation -framework Metal \
 "$work/host" "$work/kernels.metallib" > "$out/measurements.tsv"
 
 # Each candidate's independently wrong address spelling must reach the oracle.
-for candidate in exact-head capacity-head sequence-major; do
+: > "$out/negative-address-oracles.tsv"
+for candidate in exact-head-compact exact-head-pooled capacity-head sequence-major; do
     if "$work/host" "$work/kernels.metallib" "$candidate" > "$work/negative-$candidate.out" 2>&1; then
         echo "negative $candidate unexpectedly passed" >&2
         exit 1
@@ -42,9 +43,9 @@ done
     printf 'metal_version\t'; xcrun -sdk macosx metal --version 2>&1 | head -1
     printf 'developer_dir\t%s\n' "$DEVELOPER_DIR"
     printf 'compile_flags\t%s\n' '-std=metal4.0 -target air64-apple-macos26.0 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off'
-    printf 'access_schedule\t5 rotated-order rounds; 3 warmups and 7 recorded dispatches per round\n'
+    printf 'access_schedule\t5 rotated-order rounds over 4 layouts; 3 warmups and 7 recorded dispatches per round\n'
     printf 'allocation_schedule\t20 warmups; 101 repetitions\n'
-    printf 'lifecycle_schedule\tC1: 10 warmups/51 repetitions; B1: 3 warmups/11 repetitions\n'
+    printf 'lifecycle_schedule\tC1 and B1: 10 warmups/51 repetitions\n'
 } > "$out/environment.tsv"
 
 (cd "$here" && shasum -a 256 kernels.metal host.m run.sh) > "$out/source-sha256.txt"
