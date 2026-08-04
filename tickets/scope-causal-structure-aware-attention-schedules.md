@@ -8,7 +8,7 @@ related: [design-attention-program-vertical, plan-the-recomputing-attention-deco
 scopes: [research/scheduling, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, scheduling, numerics, attention, performance, language-model]
+tags: [research, scheduling, numerics, attention, performance, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 

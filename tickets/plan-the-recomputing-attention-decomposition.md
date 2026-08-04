@@ -8,7 +8,7 @@ related: [design-attention-program-vertical, plan-the-materialized-attention-dec
 scopes: [implementation/compiler, implementation/ir, implementation/metal, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, physical-planning, fusion, feasibility, attention, language-model]
+tags: [implementation, physical-planning, fusion, feasibility, attention, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 

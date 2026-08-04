@@ -8,7 +8,7 @@ related: [design-model-level-qualification-and-optimization, qualify-the-model-l
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, testing, performance, regression, policy, language-model]
+tags: [research, testing, performance, regression, policy, language-model, class-performance-study]
 ---
 ## User-visible outcome
 

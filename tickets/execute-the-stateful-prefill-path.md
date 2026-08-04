@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, execute-the-decode-step-path
 scopes: [implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, conformance, prefill, consumer-neutral, language-model]
+tags: [implementation, conformance, prefill, consumer-neutral, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

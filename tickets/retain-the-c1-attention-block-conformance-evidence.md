@@ -8,7 +8,7 @@ related: [design-attention-program-vertical, retain-contraction-conformance-evid
 scopes: [implementation/reference, implementation/compiler, contracts/numerics, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, testing, conformance, attention, numerics, language-model]
+tags: [implementation, testing, conformance, attention, numerics, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

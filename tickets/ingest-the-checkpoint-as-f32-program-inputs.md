@@ -8,7 +8,7 @@ related: [design-model-ingestion-and-complete-execution, derive-transformer-oper
 scopes: [implementation/workspace]
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
-tags: [implementation, ingestion, weights, dtype, consumer, language-model]
+tags: [implementation, ingestion, weights, dtype, consumer, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

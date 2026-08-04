@@ -16,7 +16,7 @@ ticket: "design-attention-program-vertical"
 
 # First attention program vertical
 
-**Status:** durable design record for rung L4 of the language-model inference ladder. It is a research outcome, not a capability: nothing here registers an operation, admits a schedule, installs a lowering capability, or moves any row of the [operation-family support matrix](../../roadmap.md#operation-family-support-matrix). What it delivers is one complete fixed-profile causal self-attention program written down as typed operations over exact shapes, an elimination over its decompositions with the ground stated per candidate, the feasibility predicate that separates the two surviving ones, and ten dependency-ordered delivery tickets.
+**Status:** durable design record for rung L4 of the language-model conformance track. It is a research outcome, not a capability: nothing here registers an operation, admits a schedule, installs a lowering capability, or moves any row of the [operation-family support matrix](../../roadmap.md#operation-family-support-matrix). What it delivers is one complete fixed-profile causal self-attention program written down as typed operations over exact shapes, an elimination over its decompositions with the ground stated per candidate, the feasibility predicate that separates the two surviving ones, and ten dependency-ordered delivery tickets.
 
 ## Traceability
 

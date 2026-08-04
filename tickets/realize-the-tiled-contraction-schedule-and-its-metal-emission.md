@@ -8,7 +8,7 @@ related: [realize-the-strict-contraction-on-metal, realize-the-contraction-throu
 scopes: [implementation/ir, implementation/compiler, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, physical-planning, metal, contraction, language-model, deferred]
+tags: [implementation, physical-planning, metal, contraction, language-model, deferred, class-generic-capability]
 ---
 ## User-visible outcome
 

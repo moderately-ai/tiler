@@ -8,7 +8,7 @@ related: [bound-the-reference-contraction-comparison-for-the-profile-cells, real
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, reference, contraction, language-model]
+tags: [implementation, reference, contraction, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 

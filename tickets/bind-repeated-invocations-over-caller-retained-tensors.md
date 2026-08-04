@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, assemble-the-causal-self-att
 scopes: [implementation/artifact, implementation/runtime, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, artifact, runtime, abi, consumer-neutral, language-model]
+tags: [implementation, artifact, runtime, abi, consumer-neutral, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 

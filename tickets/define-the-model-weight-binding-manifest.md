@@ -8,7 +8,7 @@ related: [design-model-ingestion-and-complete-execution, define-first-metal-lm-w
 scopes: [contracts/integrations, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
-tags: [design, ingestion, weights, identity, validation, language-model]
+tags: [design, ingestion, weights, identity, validation, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

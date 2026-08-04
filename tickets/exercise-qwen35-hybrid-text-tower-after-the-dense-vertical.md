@@ -8,7 +8,7 @@ related: [define-first-metal-lm-workload, derive-transformer-operation-and-shape
 scopes: [research/program-planning, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
-tags: [language-model, qwen, metal, architecture-stress]
+tags: [language-model, qwen, metal, architecture-stress, class-conformance-fixture]
 ---
 ## Activation trigger
 

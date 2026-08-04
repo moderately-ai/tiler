@@ -8,7 +8,7 @@ related: [design-model-ingestion-and-complete-execution, admit-an-indirect-gathe
 scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, semantics, gather, logits, language-model]
+tags: [implementation, semantics, gather, logits, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

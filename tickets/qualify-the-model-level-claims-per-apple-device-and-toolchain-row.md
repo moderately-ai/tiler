@@ -8,7 +8,7 @@ related: [design-model-level-qualification-and-optimization, measure-apple-numer
 scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, apple-targets, metal, qualification, measurement, language-model]
+tags: [research, apple-targets, metal, qualification, measurement, language-model, class-performance-study]
 ---
 ## User-visible outcome
 

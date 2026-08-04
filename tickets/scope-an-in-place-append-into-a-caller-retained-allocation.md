@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending
 scopes: [research/runtime, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, buffer-reuse, performance, consumer-neutral, language-model]
+tags: [research, buffer-reuse, performance, consumer-neutral, language-model, class-performance-study]
 ---
 ## User-visible outcome
 

@@ -8,7 +8,7 @@ related: [design-attention-program-vertical, retain-the-c1-attention-block-confo
 scopes: [implementation/runtime, implementation/metal-aot, implementation/artifact, implementation/compiler, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, runtime, artifacts, attention, transformer, language-model]
+tags: [implementation, runtime, artifacts, attention, transformer, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

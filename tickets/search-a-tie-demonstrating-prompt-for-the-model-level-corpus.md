@@ -8,7 +8,7 @@ related: [define-the-model-level-conformance-corpus, build-the-model-level-measu
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, conformance, testing, language-model, qwen, deferred]
+tags: [research, conformance, testing, language-model, qwen, deferred, class-conformance-fixture]
 ---
 ## Why this is deferred and not todo
 

@@ -8,7 +8,7 @@ related: [design-model-ingestion-and-complete-execution, design-attention-progra
 scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, semantics, transformer, program, language-model]
+tags: [implementation, semantics, transformer, program, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

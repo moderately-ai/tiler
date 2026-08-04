@@ -8,7 +8,7 @@ related: [define-first-metal-lm-workload, design-model-ingestion-and-complete-ex
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, measurement, memory, performance, language-model, metal]
+tags: [research, measurement, memory, performance, language-model, metal, class-performance-study]
 ---
 ## User-visible outcome
 

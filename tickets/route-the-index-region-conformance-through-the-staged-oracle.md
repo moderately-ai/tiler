@@ -8,7 +8,7 @@ related: [decide-the-index-region-oracle-route-past-its-step-budget, route-the-c
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, compiler, contraction, language-model]
+tags: [implementation, compiler, contraction, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 

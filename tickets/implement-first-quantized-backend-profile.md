@@ -7,7 +7,7 @@ dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-prof
 related: [implement-workload-selected-quantized-parameter-maps, own-the-dtype-support-maturity-matrix, admit-a-caller-declared-target-profile, calibrate-device-cost-models, group-internal-compound-materializations-by-logical-value, extend-the-selected-quantized-profile-to-the-tied-embedding-matrix, admit-strict-affine-quantize-physical-candidate]
 scopes: [implementation/compiler, implementation/artifact, implementation/reference, implementation/runtime, implementation/metal]
 shared_scopes: [project/tickets]
-tags: [implementation, quantization, backend, metal, language-model]
+tags: [implementation, quantization, backend, metal, language-model, class-generic-capability]
 ---
 Activate only after a concrete quantized format, operation set, target backend,
 storage layout, numerical contract, and conformance corpus are selected. Then

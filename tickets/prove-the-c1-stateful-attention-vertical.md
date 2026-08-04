@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, retain-the-c1-attention-bloc
 scopes: [implementation/candle, implementation/runtime, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, conformance, attention, consumer-neutral, language-model]
+tags: [implementation, conformance, attention, consumer-neutral, language-model, class-conformance-fixture]
 ---
 ## User-visible outcome
 

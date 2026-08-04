@@ -8,7 +8,7 @@ related: [design-autoregressive-state-and-kv-cache, execute-the-decode-step-path
 scopes: [implementation/ir, implementation/artifact, implementation/runtime, implementation/build, contracts/artifacts, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, validation, shapes, runtime, consumer-neutral, fail-closed]
+tags: [implementation, validation, shapes, runtime, consumer-neutral, fail-closed, class-generic-capability]
 ---
 ## User-visible outcome
 

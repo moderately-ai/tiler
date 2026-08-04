@@ -8,7 +8,7 @@ related: [implement-first-quantized-backend-profile, admit-reassociated-contract
 scopes: [implementation/compiler, implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, quantization, contraction, fusion, metal, language-model]
+tags: [implementation, quantization, contraction, fusion, metal, language-model, class-generic-capability]
 ---
 ## User-visible outcome
 
