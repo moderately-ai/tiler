@@ -44,24 +44,24 @@ fn ordinal(index: usize) -> u32 {
     u32::try_from(index).expect("a bounded verified arena fits u32")
 }
 
-/// A graph-local ordinal of one operation of the bound semantic program.
+/// A canonical graph-local ordinal of one operation of the bound semantic program.
 ///
-/// The ordinal is the *occurrence*: it names where in one exact graph an
-/// implementation is bound, exactly as `RegionOccurrenceIdentity` does for a
-/// region. It is meaningful only alongside the
+/// The ordinal is the *occurrence*: it names where in one exact graph's
+/// canonical traversal an implementation is bound, exactly as
+/// `RegionOccurrenceIdentity` does for a region. It is meaningful only alongside the
 /// [`SemanticGraphIdentity`] encoded with it, and it is never a substitute for
 /// semantic-graph meaning.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SemanticOccurrence(u32);
 
 impl SemanticOccurrence {
-    /// Wraps a graph-local operation ordinal.
+    /// Wraps a canonical graph-local operation ordinal.
     #[must_use]
     pub const fn new(ordinal: u32) -> Self {
         Self(ordinal)
     }
 
-    /// Returns the graph-local operation ordinal.
+    /// Returns the canonical graph-local operation ordinal.
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0
@@ -1371,7 +1371,12 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// The tag steps rather than the section being appended silently, because every
 /// program ever encoded maps to different bytes now and a cache or artifact
 /// holding a `v5` identity must miss rather than match.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v6\0";
+///
+/// `v7` changes every stage-coverage ordinal from semantic-program storage
+/// order to canonical semantic occurrence order. The four-byte field is
+/// unchanged, so the tag must step: under `v6` the same bytes could name a
+/// different operation after equivalent authoring-order changes.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v7\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());

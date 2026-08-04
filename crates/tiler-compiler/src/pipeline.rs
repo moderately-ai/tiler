@@ -69,10 +69,13 @@ use crate::normalize::{
 use crate::physical::{
     PhysicalError, VerifiedKernel, VerifiedScheduledRegion, lower_structured_kernel,
 };
+#[cfg(test)]
+use crate::program::build_split_kernel_program;
 use crate::program::{
     ArtifactConstructionPlan, KernelProgram, ProgramError, assert_kernels_match_program,
-    build_artifact_plan, build_fused_kernel_program, build_kernel_program,
-    build_split_kernel_program, verify_artifact_plan, verify_semantic_output_type,
+    build_artifact_plan_with_lowering, build_fused_kernel_program_with_lowering,
+    build_kernel_program_with_lowering, build_split_kernel_program_with_lowering,
+    verify_artifact_plan_with_lowering, verify_semantic_output_type,
 };
 use crate::region::{
     REGION_FORMATION_SUBJECT, RegionCandidate, RegionError, RegionFormationOutcome,

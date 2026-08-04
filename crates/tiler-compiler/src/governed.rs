@@ -1810,9 +1810,12 @@ mod tests {
             .output_resolved(OutputKey::new("result").unwrap(), result)
             .unwrap();
         let program = program.build().unwrap();
-        let subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
-                .unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
         let signature = LoweringSignature::new(
             subject.signature().operands().iter().cloned(),
             subject.signature().results().iter().cloned(),
@@ -2018,9 +2021,12 @@ mod tests {
                 .unwrap();
         }
         let program = builder.build().unwrap();
-        let occurrence =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
-                .unwrap();
+        let occurrence = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
         for (actual, expected) in occurrence.results().iter().zip(results) {
             assert_eq!(actual.value_type(), expected.value_type());
             assert_eq!(actual.shape(), expected.shape());
@@ -2302,8 +2308,12 @@ mod tests {
             crate::request::StrictF32NumericalContract::governed_flush_to_zero().key,
         )
         .unwrap();
-        let subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), relaxed).unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            relaxed,
+        )
+        .unwrap();
         let signature = LoweringSignature::new(
             subject.signature().operands().iter().cloned(),
             subject.signature().results().iter().cloned(),
@@ -2346,9 +2356,12 @@ mod tests {
             .output_resolved(OutputKey::new("decoded").unwrap(), decoded)
             .unwrap();
         let strict_program = strict_program.build().unwrap();
-        let strict_subject =
-            IndexRefinementSubject::derive(&strict_program, SemanticOccurrence::new(0), contract())
-                .unwrap();
+        let strict_subject = IndexRefinementSubject::derive(
+            &strict_program,
+            strict_program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
         let strict_signature = LoweringSignature::new(
             strict_subject.signature().operands().iter().cloned(),
             strict_subject.signature().results().iter().cloned(),
@@ -2373,7 +2386,7 @@ mod tests {
         let multiply_program = multiply_program.build().unwrap();
         let multiply_subject = IndexRefinementSubject::derive(
             &multiply_program,
-            SemanticOccurrence::new(0),
+            multiply_program.operations().next().unwrap().id(),
             contract(),
         )
         .unwrap();
@@ -2427,9 +2440,12 @@ mod tests {
             .output_resolved(OutputKey::new("result").unwrap(), result)
             .unwrap();
         let program = program.build().unwrap();
-        let subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
-                .unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
         let signature = LoweringSignature::new(
             subject.signature().operands().iter().cloned(),
             subject.signature().results().iter().cloned(),
@@ -2512,9 +2528,12 @@ mod tests {
             .output(OutputKey::new("product").unwrap(), product)
             .unwrap();
         let program = program.build().unwrap();
-        let subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
-                .unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
         let signature = LoweringSignature::new(
             subject.signature().operands().iter().cloned(),
             subject.signature().results().iter().cloned(),
@@ -3037,9 +3056,12 @@ mod tests {
             .output_resolved(OutputKey::new("result").unwrap(), result)
             .unwrap();
         let program = builder.build().unwrap();
-        let subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
-                .unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
         assert_eq!(subject.results()[0].shape(), &Shape::from_dims([3, 2]));
     }
 

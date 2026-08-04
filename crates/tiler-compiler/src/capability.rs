@@ -1645,7 +1645,6 @@ mod tests {
         ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
         ScalarRegistryBuilder, ScalarResults, ScalarValueId, TensorRole, VerifiedIndexRegion,
     };
-    use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::{
         AttributeFieldId, CanonicalValue, CanonicalValueKind, F32, FrozenSemanticRegistry,
         InputKey, NormativeDefinitionRef, OpKey, OutputKey, ProviderDiagnosticCode,
@@ -1845,7 +1844,7 @@ mod tests {
         let program = builder.build().unwrap();
         IndexRefinementSubject::derive(
             &program,
-            SemanticOccurrence::new(0),
+            program.operations().next().unwrap().id(),
             NumericalContractIdentity::try_from_key(
                 crate::request::StrictF32NumericalContract::governed().key,
             )

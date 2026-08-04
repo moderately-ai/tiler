@@ -12,8 +12,8 @@ use super::handles::{
     GraphId, OperationId, OperationIndex, Value, ValueId, ValueIndex, next_graph_id,
 };
 use super::identity::{
-    MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES, SemanticIdentity, canonical_value_ids_for_verified,
-    compute_graph_identity, empty_graph_canonical_work_bytes,
+    MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES, SemanticIdentity,
+    canonical_coordinates_for_verified, compute_graph_identity, empty_graph_canonical_work_bytes,
     graph_identity_encoded_len_for_verified, input_canonical_work_bytes,
     operation_canonical_work_bytes, output_canonical_work_bytes,
 };
@@ -57,6 +57,7 @@ pub(super) struct ProgramData {
     pub(super) graph_identity_encoded_len: usize,
     pub(super) canonical_work_bytes: usize,
     pub(super) canonical_value_ids: Vec<u64>,
+    pub(super) canonical_operation_ordinals: Vec<u32>,
     pub(super) reached_definitions: SemanticDefinitionProjectionIdentity,
     pub(super) admission_provenance: SemanticAdmissionProvenanceIdentity,
     pub(super) registry_snapshot: SemanticRegistrySnapshotIdentity,
@@ -164,6 +165,16 @@ impl SemanticProgram {
             .ok_or(HandleError::InvalidLocal {
                 entity: EntityKind::Operation,
             })
+    }
+
+    pub(crate) fn canonical_operation_ordinal(&self, operation: OperationRef<'_>) -> u32 {
+        debug_assert_eq!(operation.owner, self.data.owner);
+        self.data.canonical_operation_ordinals[operation.index.as_usize()]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn canonical_operation_ordinal_count(&self) -> usize {
+        self.data.canonical_operation_ordinals.len()
     }
 
     /// Resolves one selector produced by the draft committed into this program.
@@ -750,12 +761,16 @@ impl SemanticProgramBuilder {
                 graph_identity_encoded_len: 0,
                 canonical_work_bytes: preview.canonical_work_bytes,
                 canonical_value_ids: Vec::new(),
+                canonical_operation_ordinals: Vec::new(),
                 reached_definitions: reached_definitions.clone(),
                 admission_provenance: admission_provenance.clone(),
                 registry_snapshot: registry_snapshot.clone(),
                 semantic_registry: preview.semantic_registry,
             };
-            preview_data.canonical_value_ids = canonical_value_ids_for_verified(&preview_data);
+            let (canonical_value_ids, canonical_operation_ordinals) =
+                canonical_coordinates_for_verified(&preview_data);
+            preview_data.canonical_value_ids = canonical_value_ids;
+            preview_data.canonical_operation_ordinals = canonical_operation_ordinals;
             preview_data.graph_identity_encoded_len =
                 graph_identity_encoded_len_for_verified(&preview_data);
             obligation_identity_total_encoded_len(&preview_data)
@@ -787,12 +802,16 @@ impl SemanticProgramBuilder {
             graph_identity_encoded_len: 0,
             canonical_work_bytes: self.canonical_work_bytes,
             canonical_value_ids: Vec::new(),
+            canonical_operation_ordinals: Vec::new(),
             reached_definitions,
             admission_provenance,
             registry_snapshot,
             semantic_registry: self.semantic_registry,
         };
-        data.canonical_value_ids = canonical_value_ids_for_verified(&data);
+        let (canonical_value_ids, canonical_operation_ordinals) =
+            canonical_coordinates_for_verified(&data);
+        data.canonical_value_ids = canonical_value_ids;
+        data.canonical_operation_ordinals = canonical_operation_ordinals;
         data.graph_identity_encoded_len = graph_identity_encoded_len_for_verified(&data);
         assert!(
             data.graph_identity_encoded_len <= data.canonical_work_bytes

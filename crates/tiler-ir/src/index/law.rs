@@ -1472,7 +1472,6 @@ fn reindex_operand_coordinates(
 mod tests {
     use super::*;
     use crate::index::{FrozenScalarRegistry, NumericalContractIdentity};
-    use crate::program::SemanticOccurrence;
     use crate::semantic::{
         InputKey, OperationAttributes, OutputKey, SemanticProgramBuilder, StrictAffineU8,
         dequantize_strict_affine_op,
@@ -1516,12 +1515,9 @@ mod tests {
         program
             .output_resolved(OutputKey::new("result").unwrap(), result)
             .unwrap();
-        IndexRefinementSubject::derive(
-            &program.build().unwrap(),
-            SemanticOccurrence::new(0),
-            strict_contract(),
-        )
-        .unwrap()
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap()
     }
 
     #[test]

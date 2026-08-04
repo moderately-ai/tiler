@@ -757,9 +757,10 @@ pub(super) fn build_alternative_for_origin(
             let stage = physical_error_stage(&error);
             failure_at_source(error.into(), stage, cause.copied())
         })?;
-    let program = build_plan_program(semantic, verified, kind, &scheduled).map_err(|error| {
-        failure_at_source(error, ExplainStage::ProgramVerification, cause.copied())
-    })?;
+    let program =
+        build_plan_program(semantic, verified, kind, &scheduled, lowering).map_err(|error| {
+            failure_at_source(error, ExplainStage::ProgramVerification, cause.copied())
+        })?;
     assert_kernels_match_program(verified, &scheduled, &program, &kernels).map_err(|error| {
         failure_at_source(
             error.into(),
@@ -767,13 +768,8 @@ pub(super) fn build_alternative_for_origin(
             cause.copied(),
         )
     })?;
-    let artifact_plan = build_artifact_plan(
-        semantic,
-        verified,
-        &scheduled,
-        &kernels,
-        &program,
-        lowering.providers(),
+    let artifact_plan = build_artifact_plan_with_lowering(
+        semantic, verified, &scheduled, &kernels, &program, lowering,
     )
     .map_err(|error| {
         failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.copied())
@@ -871,16 +867,20 @@ pub(super) fn build_plan_program(
     verified: &crate::request::VerifiedTargetRequest,
     kind: ProgramAlternativeKind,
     scheduled: &[VerifiedScheduledRegion],
+    lowering: &ResolvedLowering,
 ) -> Result<KernelProgram, CompileError> {
     match (kind, scheduled) {
         (ProgramAlternativeKind::Fused, [region]) => {
-            build_fused_kernel_program(semantic, verified, region).map_err(CompileError::from)
+            build_fused_kernel_program_with_lowering(semantic, verified, region, lowering)
+                .map_err(CompileError::from)
         }
         (ProgramAlternativeKind::Materialized, [_, _]) => {
-            build_kernel_program(semantic, verified, scheduled).map_err(CompileError::from)
+            build_kernel_program_with_lowering(semantic, verified, scheduled, lowering)
+                .map_err(CompileError::from)
         }
         (ProgramAlternativeKind::Materialized, [_, _, _]) => {
-            build_split_kernel_program(semantic, verified, scheduled).map_err(CompileError::from)
+            build_split_kernel_program_with_lowering(semantic, verified, scheduled, lowering)
+                .map_err(CompileError::from)
         }
         _ => Err(CompileError::from(ProgramError::Structure {
             rule: "unsupported-plan-shape",

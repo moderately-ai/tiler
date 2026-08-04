@@ -866,6 +866,25 @@ fn canonical_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
 }
 
 #[test]
+fn v7_program_domain_separates_canonical_coverage_from_v6_storage_coverage() {
+    const V6: &[u8] = b"tiler.kernel-program.v6\0";
+    const V7: &[u8] = b"tiler.kernel-program.v7\0";
+    let semantic = serial_sum_program(SCALE_BITS);
+    let program = canonical_program(&semantic);
+    let current = program.canonical_identity().as_bytes();
+    assert!(current.starts_with(V7));
+
+    // Coverage remains a raw four-byte ordinal. Before the version step the
+    // identical payload therefore had one spelling whether that ordinal was
+    // interpreted as storage order or canonical semantic order.
+    let mut v6_storage_meaning = V6.to_vec();
+    v6_storage_meaning.extend_from_slice(&current[V7.len()..]);
+    let v6_canonical_meaning = v6_storage_meaning.clone();
+    assert_eq!(v6_storage_meaning, v6_canonical_meaning);
+    assert_ne!(current, v6_storage_meaning.as_slice());
+}
+
+#[test]
 fn a_verified_program_binds_its_refinements_coverage_and_named_outputs() {
     let semantic = serial_sum_program(SCALE_BITS);
     let program = canonical_program(&semantic);

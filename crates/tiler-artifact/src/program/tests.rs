@@ -44,7 +44,9 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 
 use super::BackendFeatureRequirement;
-use super::model::ARTIFACT_DOMAIN_LABEL;
+use super::model::{
+    ARTIFACT_DOMAIN_LABEL, LEGACY_STAGE_KEY_DOMAIN, STAGE_KEY_DOMAIN, stage_key_with_domain,
+};
 use super::{
     AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiFactBinder, AbiFacts, AbiRoot, AbiType,
     AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
@@ -1429,6 +1431,24 @@ pub(crate) fn default_artifact() -> VerifiedArtifactProgram {
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
     build_artifact(&semantic, &program, provider.clone(), &[provider])
+}
+
+#[test]
+fn v2_artifact_stage_key_separates_canonical_coverage_from_v1_storage_coverage() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let stage = program.stages().next().expect("one fused stage");
+    let current = stage_key_with_domain(stage, STAGE_KEY_DOMAIN);
+    let v1_storage_meaning = stage_key_with_domain(stage, LEGACY_STAGE_KEY_DOMAIN);
+    let v1_canonical_meaning = v1_storage_meaning.clone();
+
+    assert!(current.starts_with(STAGE_KEY_DOMAIN));
+    assert!(!current.starts_with(LEGACY_STAGE_KEY_DOMAIN));
+    assert_eq!(
+        v1_storage_meaning, v1_canonical_meaning,
+        "v1 gave the unchanged raw coverage payload one spelling under both meanings"
+    );
+    assert_ne!(current, v1_storage_meaning);
 }
 
 // -------------------------------------------------------------------------

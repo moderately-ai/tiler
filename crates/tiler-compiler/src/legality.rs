@@ -1330,7 +1330,12 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), result)
             .unwrap();
         let program = builder.build().unwrap();
-        IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract()).unwrap()
+        IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap()
     }
 
     fn constant_subject(bits: u32, contract_key: &str) -> IndexRefinementSubject {
@@ -1342,7 +1347,7 @@ mod tests {
         let program = builder.build().unwrap();
         IndexRefinementSubject::derive(
             &program,
-            SemanticOccurrence::new(0),
+            program.operations().next().unwrap().id(),
             NumericalContractIdentity::try_from_key(contract_key).unwrap(),
         )
         .unwrap()
@@ -1426,12 +1431,18 @@ mod tests {
             .output(OutputKey::new("second").unwrap(), second_result)
             .unwrap();
         let program = builder.build().unwrap();
-        let first_subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
-                .unwrap();
-        let second_subject =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(1), contract())
-                .unwrap();
+        let first_subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
+        let second_subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().nth(1).unwrap().id(),
+            contract(),
+        )
+        .unwrap();
 
         let first = refine_index_region(&resolved, &first_subject, &scalars)
             .unwrap()
@@ -1556,9 +1567,12 @@ mod tests {
         let resolved = square_registry()
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();
-        let occurrence =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
-                .unwrap();
+        let occurrence = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
         let refinement = refine_index_region(&resolved, &occurrence, &scalars)
             .unwrap()
             .into_refined()
@@ -1693,9 +1707,12 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), result)
             .unwrap();
         let program = builder.build().unwrap();
-        let occurrence =
-            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
-                .unwrap();
+        let occurrence = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
         let error = refine_index_region(&resolved, &occurrence, &scalars).unwrap_err();
         assert!(matches!(error, RefinementError::OperationMismatch { .. }));
     }

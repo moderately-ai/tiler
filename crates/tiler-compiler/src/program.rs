@@ -40,6 +40,7 @@ use tiler_ir::program::abi::{
 };
 
 use crate::boundary::ByteAlignment;
+use crate::lowering::ResolvedLowering;
 use crate::physical::{
     NumericalRealization, RegionId, VerifiedKernel, VerifiedScheduledRegion,
     lower_structured_kernel,
@@ -309,17 +310,28 @@ impl From<KernelProgramBuildError> for ProgramError {
 }
 
 /// Builds the two-stage materialized serial-sum program for one request.
+#[cfg(test)]
 pub(crate) fn build_kernel_program(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
+) -> Result<KernelProgram, ProgramError> {
+    let lowering = resolve_program_lowering(semantic, request)?;
+    build_kernel_program_with_lowering(semantic, request, scheduled, &lowering)
+}
+
+pub(crate) fn build_kernel_program_with_lowering(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+    lowering: &ResolvedLowering,
 ) -> Result<KernelProgram, ProgramError> {
     let [pointwise, reduction] = scheduled else {
         return Err(ProgramError::Structure {
             rule: "strategy-cardinality",
         });
     };
-    let core = build_materialized_core(semantic, request, pointwise, reduction)?;
+    let core = build_materialized_core(semantic, request, pointwise, reduction, lowering)?;
     let program = KernelProgram {
         target_profile: request.target_profile().clone(),
         core,
@@ -341,17 +353,28 @@ pub(crate) fn build_kernel_program(
 /// Returns [`ProgramError::Structure`] when the regions are not the three a
 /// split names, when the partial pass declares no split contract, or when the
 /// shared builder or whole-program verifier rejects the assembly.
+#[cfg(test)]
 pub(crate) fn build_split_kernel_program(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
+) -> Result<KernelProgram, ProgramError> {
+    let lowering = resolve_program_lowering(semantic, request)?;
+    build_split_kernel_program_with_lowering(semantic, request, scheduled, &lowering)
+}
+
+pub(crate) fn build_split_kernel_program_with_lowering(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+    lowering: &ResolvedLowering,
 ) -> Result<KernelProgram, ProgramError> {
     let [pointwise, partial, combine] = scheduled else {
         return Err(ProgramError::Structure {
             rule: "strategy-cardinality",
         });
     };
-    let core = build_split_core(semantic, request, pointwise, partial, combine)?;
+    let core = build_split_core(semantic, request, pointwise, partial, combine, lowering)?;
     let program = KernelProgram {
         target_profile: request.target_profile().clone(),
         core,
@@ -382,6 +405,7 @@ fn build_split_core(
     pointwise: &VerifiedScheduledRegion,
     partial: &VerifiedScheduledRegion,
     combine: &VerifiedScheduledRegion,
+    lowering: &ResolvedLowering,
 ) -> Result<VerifiedKernelProgram, ProgramError> {
     let subject = request.serial_sum();
     let partition = crate::physical::declared_partial_partition(partial.region()).ok_or(
@@ -438,14 +462,14 @@ fn build_split_core(
     let map_launch = HostAbi::launch(&mut builder, pointwise)?;
     let map_stage = builder.push_stage(
         &lower(pointwise)?,
-        &covered(subject.members.pointwise()),
+        &covered(subject.members.pointwise(), lowering)?,
         &prologue_accesses,
         map_launch,
     )?;
     let partial_launch = HostAbi::launch(&mut builder, partial)?;
     let partial_stage = builder.push_stage(
         &lower(partial)?,
-        &covered(subject.members.reduction()),
+        &covered(subject.members.reduction(), lowering)?,
         &[
             read(temporary_view, contributor_bytes),
             write(partial_view, partial_abi.bytes),
@@ -487,12 +511,23 @@ fn build_split_core(
 ///
 /// The scheduled region may be a fused serial sum, a standalone governed
 /// pointwise program, or a contraction.
+#[cfg(test)]
 pub(crate) fn build_fused_kernel_program(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     scheduled: &VerifiedScheduledRegion,
 ) -> Result<KernelProgram, ProgramError> {
-    let core = build_fused_core(semantic, request, scheduled)?;
+    let lowering = resolve_program_lowering(semantic, request)?;
+    build_fused_kernel_program_with_lowering(semantic, request, scheduled, &lowering)
+}
+
+pub(crate) fn build_fused_kernel_program_with_lowering(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &VerifiedScheduledRegion,
+    lowering: &ResolvedLowering,
+) -> Result<KernelProgram, ProgramError> {
+    let core = build_fused_core(semantic, request, scheduled, lowering)?;
     let program = KernelProgram {
         target_profile: request.target_profile().clone(),
         core,
@@ -512,6 +547,7 @@ fn build_materialized_core(
     request: &VerifiedTargetRequest,
     pointwise: &VerifiedScheduledRegion,
     reduction: &VerifiedScheduledRegion,
+    lowering: &ResolvedLowering,
 ) -> Result<VerifiedKernelProgram, ProgramError> {
     let subject = request.serial_sum();
     let input_bytes = byte_count(subject.input_elements)?;
@@ -557,14 +593,14 @@ fn build_materialized_core(
     let map_launch = HostAbi::launch(&mut builder, pointwise)?;
     let map_stage = builder.push_stage(
         &lower(pointwise)?,
-        &covered(subject.members.pointwise()),
+        &covered(subject.members.pointwise(), lowering)?,
         &prologue_accesses,
         map_launch,
     )?;
     let reduce_launch = HostAbi::launch(&mut builder, reduction)?;
     let reduce_stage = builder.push_stage(
         &lower(reduction)?,
-        &covered(subject.members.reduction()),
+        &covered(subject.members.reduction(), lowering)?,
         &[
             read(temporary_view, contributor_bytes),
             write(output_view, abi.output_bytes),
@@ -582,6 +618,7 @@ fn build_fused_core(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     scheduled: &VerifiedScheduledRegion,
+    lowering: &ResolvedLowering,
 ) -> Result<VerifiedKernelProgram, ProgramError> {
     // A pointwise region reads every program input at one shared shape; a fused
     // serial sum reads the one its reduction contracts over; a contraction reads
@@ -679,7 +716,12 @@ fn build_fused_core(
         .collect();
     accesses.push(write(output_view, abi.output_bytes));
     let launch = HostAbi::launch(&mut builder, scheduled)?;
-    builder.push_stage(&lower(scheduled)?, &covered(&members), &accesses, launch)?;
+    builder.push_stage(
+        &lower(scheduled)?,
+        &covered(&members, lowering)?,
+        &accesses,
+        launch,
+    )?;
     builder.push_output(output_key, output)?;
     declare_routing_commit(&mut builder)?;
     finish_core(builder)
@@ -882,6 +924,21 @@ fn open_core_builder(
     Ok(KernelProgramBuilder::new(semantic)?)
 }
 
+#[cfg(test)]
+fn resolve_program_lowering(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+) -> Result<ResolvedLowering, ProgramError> {
+    if semantic.semantic_identity() != request.semantic_identity() {
+        return Err(ProgramError::Structure {
+            rule: "semantic-request-binding",
+        });
+    }
+    crate::lowering::resolve_lowering(semantic, request).map_err(|_| ProgramError::Structure {
+        rule: "refinement-coverage-resolution",
+    })
+}
+
 fn finish_core(builder: KernelProgramBuilder) -> Result<VerifiedKernelProgram, ProgramError> {
     builder.build().map_err(|error| {
         error.diagnostics().first().copied().map_or(
@@ -900,10 +957,20 @@ fn lower(scheduled: &VerifiedScheduledRegion) -> Result<VerifiedKernel, ProgramE
     })
 }
 
-fn covered(members: &[SemanticMemberId]) -> Vec<SemanticOccurrence> {
+fn covered(
+    members: &[SemanticMemberId],
+    lowering: &ResolvedLowering,
+) -> Result<Vec<SemanticOccurrence>, ProgramError> {
     members
         .iter()
-        .map(|member| SemanticOccurrence::new(member.0))
+        .map(|member| {
+            lowering
+                .occurrence(*member)
+                .map(crate::lowering::OccurrenceLowering::canonical_occurrence)
+                .ok_or(ProgramError::Structure {
+                    rule: "refinement-coverage-missing",
+                })
+        })
         .collect()
 }
 
@@ -1121,6 +1188,7 @@ fn position(index: u32) -> usize {
     usize::try_from(index).expect("u32 fits every supported host usize")
 }
 
+#[cfg(test)]
 pub(crate) fn build_artifact_plan(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
@@ -1129,7 +1197,25 @@ pub(crate) fn build_artifact_plan(
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
-    verify_artifact_refinements(semantic, request, scheduled, kernels, program)?;
+    let lowering = resolve_program_lowering(semantic, request)?;
+    if providers != lowering.providers() {
+        return Err(ProgramError::Structure {
+            rule: "artifact-provider-coverage",
+        });
+    }
+    drop(providers);
+    build_artifact_plan_with_lowering(semantic, request, scheduled, kernels, program, &lowering)
+}
+
+pub(crate) fn build_artifact_plan_with_lowering(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+    kernels: &[VerifiedKernel],
+    program: &KernelProgram,
+    lowering: &ResolvedLowering,
+) -> Result<ArtifactConstructionPlan, ProgramError> {
+    verify_artifact_refinements(semantic, request, scheduled, kernels, program, lowering)?;
     // Lowering provenance is re-derived from the request's own installed
     // registry rather than trusted from the caller, so a plan cannot claim a
     // provider the registry never resolved for this program.
@@ -1139,6 +1225,7 @@ pub(crate) fn build_artifact_plan(
                 rule: "artifact-provider-resolution",
             }
         })?;
+    let providers = lowering.providers();
     if providers.is_empty() || providers != expected_providers {
         return Err(ProgramError::Structure {
             rule: "artifact-provider-coverage",
@@ -1199,6 +1286,7 @@ fn verify_artifact_refinements(
     scheduled: &[VerifiedScheduledRegion],
     kernels: &[VerifiedKernel],
     program: &KernelProgram,
+    lowering: &ResolvedLowering,
 ) -> Result<(), ProgramError> {
     if semantic.semantic_identity() != request.semantic_identity() {
         return Err(ProgramError::Structure {
@@ -1226,9 +1314,11 @@ fn verify_artifact_refinements(
         }
     }
     let expected_program = match scheduled {
-        [single] => build_fused_kernel_program(semantic, request, single)?,
-        [_, _] => build_kernel_program(semantic, request, scheduled)?,
-        [_, _, _] => build_split_kernel_program(semantic, request, scheduled)?,
+        [single] => build_fused_kernel_program_with_lowering(semantic, request, single, lowering)?,
+        [_, _] => build_kernel_program_with_lowering(semantic, request, scheduled, lowering)?,
+        [_, _, _] => {
+            build_split_kernel_program_with_lowering(semantic, request, scheduled, lowering)?
+        }
         _ => {
             return Err(ProgramError::Structure {
                 rule: "artifact-strategy-cardinality",
@@ -1272,6 +1362,7 @@ fn verify_artifact_refinements(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn verify_artifact_plan(
     plan: &ArtifactConstructionPlan,
     semantic: &SemanticProgram,
@@ -1281,7 +1372,30 @@ pub(crate) fn verify_artifact_plan(
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<(), ProgramError> {
-    let expected = build_artifact_plan(semantic, request, scheduled, kernels, program, providers)?;
+    let lowering = resolve_program_lowering(semantic, request)?;
+    if providers != lowering.providers() {
+        return Err(ProgramError::Structure {
+            rule: "artifact-provider-coverage",
+        });
+    }
+    drop(providers);
+    verify_artifact_plan_with_lowering(
+        plan, semantic, request, scheduled, kernels, program, &lowering,
+    )
+}
+
+pub(crate) fn verify_artifact_plan_with_lowering(
+    plan: &ArtifactConstructionPlan,
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+    kernels: &[VerifiedKernel],
+    program: &KernelProgram,
+    lowering: &ResolvedLowering,
+) -> Result<(), ProgramError> {
+    let expected = build_artifact_plan_with_lowering(
+        semantic, request, scheduled, kernels, program, lowering,
+    )?;
     if plan != &expected {
         return Err(ProgramError::Structure {
             rule: "artifact-receipt",

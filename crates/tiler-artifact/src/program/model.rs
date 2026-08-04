@@ -222,7 +222,15 @@ pub(super) const ARTIFACT_DOMAIN_LABEL: &str = {
     }
 };
 
-const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
+/// Versioned domain of one independently compared and serialized stage key.
+///
+/// `v2` changes the coverage ordinals from semantic-program storage order to
+/// canonical semantic occurrence order. The payload layout is unchanged, so
+/// the separator must step to prevent the same raw ordinal from retaining its
+/// v1 spelling while naming another operation.
+pub(super) const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v2\0";
+#[cfg(test)]
+pub(super) const LEGACY_STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
 ///
@@ -1703,13 +1711,17 @@ pub enum AbiExprView<'a> {
 /// the semantic occurrences it covers — so an artifact entry cross-references a
 /// stage by content rather than by the program's declaration position.
 pub(super) fn stage_key(stage: StageRef<'_>) -> Vec<u8> {
+    stage_key_with_domain(stage, STAGE_KEY_DOMAIN)
+}
+
+pub(super) fn stage_key_with_domain(stage: StageRef<'_>, domain: &[u8]) -> Vec<u8> {
     // Each coverage entry is one `SemanticOccurrence`, a `u32` ordinal.
-    let exact = STAGE_KEY_DOMAIN.len()
+    let exact = domain.len()
         + framed(stage.kernel().canonical_identity().as_bytes().len())
         + LENGTH_BYTES
         + stage.coverage().len() * size_of::<u32>();
     let mut bytes = Vec::with_capacity(exact);
-    bytes.extend_from_slice(STAGE_KEY_DOMAIN);
+    bytes.extend_from_slice(domain);
     push_slice(&mut bytes, stage.kernel().canonical_identity().as_bytes());
     push_len(&mut bytes, stage.coverage().len());
     for occurrence in stage.coverage() {

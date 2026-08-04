@@ -67,8 +67,22 @@ pub(super) fn verify_portfolio(
             cause,
         ));
     }
+    // This is verifier-owned evidence, independently re-derived from the
+    // request rather than borrowed from planning. One portfolio has one
+    // semantic program and request, so reusing it across alternatives keeps
+    // verification independent without multiplying the same proof work.
+    let lowering = resolve_lowering(semantic, request).map_err(|_| {
+        failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-refinement-resolution",
+            }
+            .into(),
+            ExplainStage::CapabilityResolution,
+            cause,
+        )
+    })?;
     for alternative in alternatives {
-        verify_alternative(semantic, request, formation, alternative, cause)?;
+        verify_alternative(semantic, request, formation, alternative, &lowering, cause)?;
     }
     let recomputed = select_non_dominated(portfolio, alternatives)
         .map_err(|source| failure_at_source(source, ExplainStage::Selection, cause))?;
@@ -95,6 +109,7 @@ pub(super) fn verify_alternative(
     request: &crate::request::VerifiedTargetRequest,
     formation: &crate::region::RegionFormationOutcome,
     alternative: &ProgramAlternative,
+    lowering: &ResolvedLowering,
     cause: Option<TerminalCause>,
 ) -> Result<(), TargetFailure> {
     if alternative.stable_id != alternative.identity.label()
@@ -166,7 +181,7 @@ pub(super) fn verify_alternative(
             cause,
         ));
     }
-    let program = build_plan_program(semantic, request, alternative.kind, scheduled)
+    let program = build_plan_program(semantic, request, alternative.kind, scheduled, lowering)
         .map_err(|error| failure_at_source(error, ExplainStage::ProgramVerification, cause))?;
     if alternative.program != program {
         return Err(failure_at_source(
@@ -181,24 +196,14 @@ pub(super) fn verify_alternative(
     // The plan's own recorded provenance is checked against the request's
     // installed registry rather than against itself, so a receipt naming a
     // provider the registry never resolved fails closed here.
-    let providers = crate::lowering::resolve_capabilities(semantic, request).map_err(|_| {
-        failure_at_source(
-            ProgramError::Structure {
-                rule: "portfolio-provider-resolution",
-            }
-            .into(),
-            ExplainStage::CapabilityResolution,
-            cause,
-        )
-    })?;
-    verify_artifact_plan(
+    verify_artifact_plan_with_lowering(
         &alternative.artifact_plan,
         semantic,
         request,
         scheduled,
         &kernels,
         &program,
-        providers,
+        lowering,
     )
     .map_err(|error| failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause))?;
     verify_equivalence(semantic, request, formation, alternative)
