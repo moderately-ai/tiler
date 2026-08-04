@@ -27,7 +27,7 @@ use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::family::{
     ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilyRequirement, SelectedFamily,
 };
-use tiler_metal_aot::input::{ApplePlatform, DeploymentMinimum, MslVersion};
+use tiler_metal_aot::input::{ApplePlatform, AppleSdk, DeploymentMinimum, MslVersion};
 
 use super::{AotRefusal, OPTIMIZATION, RouteFacts, deliver};
 use crate::cache_root::{DISABLE_VALUE, RootEnvironment};
@@ -734,6 +734,272 @@ fn a_toolchain_failure_is_retained_under_the_family_it_belongs_to() {
             crate::delivery::SELECTED_PAYLOAD_BINDING
         )) || !items.contains(crate::delivery::SELECTED_PAYLOAD_BINDING),
         "the selector must be total or absent, never partial: {items}",
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// How a shimmed `metal` makes the real Apple front end reject one real
+/// compilation.
+///
+/// The two ways a `CompileStage::Metal` nonzero exit is reachable at all, and
+/// they are not the same kind of event — see [`super::deliver`]'s
+/// "Reaching the `metal` stage's own refusal". One is a fact about the build
+/// host and can reach a consumer who wrote nothing wrong; the other is a defect
+/// in Tiler's own emitter and cannot be produced from region text.
+#[derive(Clone, Copy, Debug)]
+enum MetalRejection {
+    /// The invocation names a language standard this `metal` does not implement.
+    ///
+    /// Stands in for the host route: an Apple toolchain predating the bound
+    /// declaration's measured MSL 4.0 rejects `-std=metal4.0` exactly this way,
+    /// and nothing between [`super::deliver`] and `run_stage` compares the
+    /// requested standard against the resolved tool. The shim appends a second
+    /// `-std=` naming a value no toolchain will ever implement, because the last
+    /// `-std` wins and a version number chosen today could become valid later.
+    UnsupportedStandard,
+    /// The source `metal` reads is the emitted MSL with one defect appended.
+    ///
+    /// The emitter-defect route, and it is reachable only by injection: the
+    /// shim appends a broken entry point to the *real* scratch file the driver
+    /// wrote, so the file `metal` compiles is this expansion's own emitted MSL
+    /// plus one line, and the reported line and column are real positions in it.
+    DefectiveEmission,
+}
+
+impl MetalRejection {
+    /// The token the real compiler's own text must contain for this rejection.
+    ///
+    /// Read out of `metal`'s message rather than out of the shim's arguments:
+    /// what is being proved is that the tool's bytes reached the consumer, so
+    /// the marker has to be something only the tool would have written.
+    const fn marker(self) -> &'static str {
+        match self {
+            Self::UnsupportedStandard => "invalid value 'tiler-no-such-metal-standard'",
+            Self::DefectiveEmission => "use of undeclared identifier 'tiler_no_such_identifier'",
+        }
+    }
+}
+
+/// Returns the real Apple `metal` binary, or nothing on a host without one.
+///
+/// Resolved through the production driver rather than by spelling `xcrun`, so a
+/// host whose toolchain is absent self-skips through the same query an
+/// expansion would make.
+fn resolved_metal() -> Option<PathBuf> {
+    Toolchain::system()
+        .resolve(AppleSdk::MacOs)
+        .ok()
+        .map(|resolved| resolved.metal.path)
+}
+
+/// Writes one executable shim script.
+fn write_executable(path: &std::path::Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::write(path, body).expect("the shim script is writable");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+        .expect("the shim script is executable");
+}
+
+/// Builds a toolchain whose `metal` is the real one, made to refuse.
+///
+/// Every other query is forwarded to the host's own `xcrun`, so the SDK
+/// identity, the `metallib` linker, and both reported versions are the real
+/// host's: the only substituted observation is the path `--find metal` answers
+/// with, and the binary at that path executes the real compiler. That is what
+/// makes the retained text the Apple front end's own rather than a fixture's.
+fn rejecting_toolchain(
+    directory: &std::path::Path,
+    metal: &std::path::Path,
+    rejection: MetalRejection,
+) -> Toolchain {
+    let wrapper = directory.join("metal");
+    let real = metal.display();
+    let body = match rejection {
+        MetalRejection::UnsupportedStandard => format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = '--version' ]; then exec '{real}' --version; fi\n\
+             exec '{real}' \"$@\" -std=tiler-no-such-metal-standard\n"
+        ),
+        MetalRejection::DefectiveEmission => format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = '--version' ]; then exec '{real}' --version; fi\n\
+             previous=''\n\
+             for argument in \"$@\"; do\n\
+               if [ \"$previous\" = '-c' ]; then\n\
+                 printf '\\nkernel void tiler_injected_defect() {{ tiler_no_such_identifier(); \
+             }}\\n' >> \"$argument\"\n\
+               fi\n\
+               previous=\"$argument\"\n\
+             done\n\
+             exec '{real}' \"$@\"\n"
+        ),
+    };
+    write_executable(&wrapper, &body);
+
+    let launcher = directory.join("xcrun");
+    write_executable(
+        &launcher,
+        &format!(
+            "#!/bin/sh\n\
+             selector=$2\n\
+             shift 2\n\
+             if [ \"$1\" = '--find' ] && [ \"$2\" = 'metal' ]; then\n\
+               echo '{}'\n\
+               exit 0\n\
+             fi\n\
+             exec /usr/bin/xcrun --sdk \"$selector\" \"$@\"\n",
+            wrapper.display(),
+        ),
+    );
+    Toolchain::with_launcher(launcher)
+}
+
+/// The real Apple front end's own rejection of a real compilation is retained
+/// under the family it belongs to.
+///
+/// **This is the ticket's reachability answer, executed.** The retained path was
+/// exercised only by `ToolchainUnavailable` — a host with no Apple tools — so
+/// nothing showed that a tool which *ran* and refused is retained the same way,
+/// and nothing showed what a consumer would read when it does. Both cases below
+/// run the host's real `metal` binary over this expansion's own emitted MSL, so
+/// the text asserted on is the compiler's and not this test's.
+///
+/// **The two cases are the whole population, and they are not equals.**
+/// [`MetalRejection::UnsupportedStandard`] is reachable in production by a build
+/// host alone and is not a defect in anything Tiler emitted;
+/// [`MetalRejection::DefectiveEmission`] is reachable only by injection, because
+/// no region text can reach the emitted source as an identifier or a literal.
+/// Asserting them together is what keeps the second from being read as a
+/// consumer-facing case.
+///
+/// The emitted items are the assertion rather than the returned error, for
+/// `a_toolchain_failure_is_retained_under_the_family_it_belongs_to`'s reason: a
+/// diagnostic that failed the whole invocation would satisfy any check that only
+/// asked whether the expansion refused.
+#[test]
+fn a_real_metal_front_end_rejection_is_retained_under_its_family() {
+    let Some(metal) = resolved_metal() else {
+        return;
+    };
+    let program = approved_region();
+    let cases = [
+        MetalRejection::UnsupportedStandard,
+        MetalRejection::DefectiveEmission,
+    ];
+    assert_eq!(
+        cases.len(),
+        2,
+        "the population is the two ways the `metal` stage can refuse, counted",
+    );
+
+    for rejection in cases {
+        let root = scratch(&format!("metal-rejection-{rejection:?}"));
+        let delivered = deliver(
+            Some(&program),
+            flushing(),
+            macos_selection(),
+            &stating(&root),
+            &rejecting_toolchain(&root, &metal, rejection),
+        )
+        .unwrap_or_else(|refusal| {
+            panic!("{rejection:?} must retain rather than refuse the invocation: {refusal:?}")
+        });
+
+        assert!(
+            delivered.route_facts.is_none(),
+            "{rejection:?}: nothing built, so there are no bytes for a route to name",
+        );
+        let items = delivered.plan.items_source();
+        assert!(
+            items.contains("#[cfg(all(target_os = \"macos\", target_abi = \"\"))]")
+                && items.contains("::core::compile_error!"),
+            "{rejection:?}: the diagnostic must be a gated `compile_error!`: {items}",
+        );
+        assert!(
+            !items.contains(&format!("const {}", crate::delivery::ARTIFACT_BINDING)),
+            "{rejection:?}: a plan where nothing built must embed no artifact: {items}",
+        );
+        // The stage and the status together are what separate this from the
+        // `ToolchainUnavailable` case the retained path was previously proved
+        // by: `metal` ran, and it exited nonzero. `metallib` never ran at all.
+        assert!(
+            items.contains("offline metal failed") && items.contains("exit code 1"),
+            "{rejection:?}: the retained failure must be a nonzero `metal` exit: {items}",
+        );
+        assert!(
+            items.contains(rejection.marker()),
+            "{rejection:?}: the compiler's own words must reach the consumer: {items}",
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // The control, differing from the cases above in the resolved `metal` alone:
+    // the same region and the same selection deliver against the host's own
+    // toolchain. Without it, a `deliver` broken in any other way would produce a
+    // retained diagnostic here too and the shim would be proving nothing.
+    let root = scratch("metal-rejection-control");
+    let delivered = deliver(
+        Some(&program),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &Toolchain::system(),
+    )
+    .expect("the unshimmed toolchain compiles the same region");
+    assert!(
+        delivered.route_facts.is_some(),
+        "the control must build an artifact, or the shim is not what caused the rejection",
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A real `metal` diagnostic reaches the consumer with its own line, column, and
+/// quoted source, and no attribution beyond that.
+///
+/// **The attribution half of the ticket, answered by observation.** What the
+/// consumer receives names a line in the *emitted MSL* — the scratch path the
+/// driver wrote, a line number, a column, and the offending source line — and
+/// nothing in it names the region construct that produced that line, because no
+/// such correspondence exists to carry: `tiler_ir`'s semantic program holds no
+/// frontend spans (it must not; it is consumer-neutral), and `tiler_metal`'s
+/// emitter derives every identifier from an identity digest rather than from
+/// anything a region wrote. Building one is a public correspondence boundary,
+/// filed as `carry-a-source-correspondence-from-region-text-to-emitted-msl`.
+///
+/// This test exists to keep that answer honest as the emitter changes: if an MSL
+/// diagnostic ever stops carrying its own position, the retained text becomes
+/// unusable for a Tiler developer and the deferral's premise is gone.
+#[test]
+fn a_retained_msl_diagnostic_carries_the_emitted_source_position() {
+    let Some(metal) = resolved_metal() else {
+        return;
+    };
+    let root = scratch("msl-position");
+    let delivered = deliver(
+        Some(&approved_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &rejecting_toolchain(&root, &metal, MetalRejection::DefectiveEmission),
+    )
+    .expect("a defective emission is retained, not an invocation failure");
+    let items = delivered.plan.items_source();
+
+    assert!(
+        items.contains("kernel.metal:"),
+        "the diagnostic must name the emitted translation unit it refused: {items}",
+    );
+    assert!(
+        items.contains("tiler_injected_defect"),
+        "the diagnostic must quote the emitted source line it refused: {items}",
+    );
+    // A real compiler diagnostic is several lines. The emitter writes the
+    // retained string through `{:?}`, so those newlines reach the consumer as
+    // `\n` escapes inside one string literal rather than closing it — which is
+    // the property the single-line `ToolchainUnavailable` text could not test.
+    assert!(
+        items.contains("\\n"),
+        "a multi-line diagnostic must survive as escapes inside one literal: {items}",
     );
     let _ = std::fs::remove_dir_all(root);
 }

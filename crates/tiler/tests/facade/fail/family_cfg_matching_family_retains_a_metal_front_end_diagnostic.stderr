@@ -1,0 +1,8 @@
+error: `tiler::tensor!` could not compile this region's artifact on this build host: Metal AOT driver failed: offline metal failed [/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macros-aot-msl-position-7338-ThreadId(2)/metal] (exit code 1): /var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-metal-aot-7338-0-1785871605869051000/kernel.metal:63:39: error: use of undeclared identifier 'tiler_no_such_identifier'
+       kernel void tiler_injected_defect() { tiler_no_such_identifier(); }
+                                             ^
+       1 error generated.
+  --> tests/facade/fail/family_cfg_matching_family_retains_a_metal_front_end_diagnostic.rs:48:17
+   |
+48 | ... { ::core::compile_error!("`tiler::tensor!` coul...                      ^\n1 error generated."); };
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

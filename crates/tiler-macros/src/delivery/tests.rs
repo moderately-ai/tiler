@@ -1268,6 +1268,72 @@ fn the_retained_diagnostic_fixture_compiles_what_this_emitter_produces() {
     );
 }
 
+/// One real Apple `metal` refusal, captured whole.
+///
+/// **Measurement, not composition.** Produced on 2026-08-04 by
+/// `crate::aot::tests::a_retained_msl_diagnostic_carries_the_emitted_source_position`
+/// on macOS 27.0 / Apple M4 Max under Metal Toolchain 27A5228f, running the
+/// host's real `metal` over that expansion's own emitted MSL. The two absolute
+/// paths, the line, and the column are that run's; the framing, the stage, the
+/// exit status, and the compiler's own bytes are what any `metal` refusal
+/// retains. The fixture reading this text records the same provenance, and
+/// neither may be edited into agreement with the other by hand — a capture that
+/// was adjusted is no longer a capture.
+///
+/// It is kept separate from [`RETAINED_DIAGNOSTIC`] because the two prove
+/// different things: that one is a single line, and a real compiler diagnostic
+/// is several with a caret rule and quoted source.
+const METAL_FRONT_END_DIAGNOSTIC: &str = concat!(
+    "`tiler::tensor!` could not compile this region's artifact on this build host: ",
+    "Metal AOT driver failed: offline metal failed ",
+    "[/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/",
+    "tiler-macros-aot-msl-position-7338-ThreadId(2)/metal] (exit code 1): ",
+    "/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/",
+    "tiler-metal-aot-7338-0-1785871605869051000/kernel.metal:63:39: ",
+    "error: use of undeclared identifier 'tiler_no_such_identifier'\n",
+    "kernel void tiler_injected_defect() { tiler_no_such_identifier(); }\n",
+    "                                      ^\n",
+    "1 error generated.",
+);
+
+/// A multi-line `metal` diagnostic reaches the consumer as one emitted item, and
+/// the compile-fail fixture compiles exactly that.
+///
+/// The sibling above pins a one-line retained text, which cannot distinguish an
+/// emitter that escapes newlines from one that writes them through: a raw
+/// newline inside the `compile_error!` literal would close it and turn a
+/// diagnostic into source the consumer's compiler tries to parse. That is why
+/// the line count is asserted rather than only the fixture containment — the
+/// containment check would still pass on a fixture that had been regenerated
+/// from a broken emitter.
+#[test]
+fn the_metal_front_end_fixture_compiles_what_this_emitter_produces() {
+    let plan = plan(
+        vec![selected(ApplePlatform::MacOs, 26, 0)],
+        b"",
+        vec![FamilyDelivery::Retained(
+            METAL_FRONT_END_DIAGNOSTIC.to_owned(),
+        )],
+    );
+    let items = plan.items_source();
+    assert_eq!(
+        METAL_FRONT_END_DIAGNOSTIC.lines().count(),
+        4,
+        "the captured diagnostic must still be the multi-line one, or this test proves nothing",
+    );
+    assert_eq!(
+        items.lines().count(),
+        2,
+        "a four-line diagnostic must emit as one gated item and one attribute: {items}",
+    );
+
+    let source = fixture("fail/family_cfg_matching_family_retains_a_metal_front_end_diagnostic.rs");
+    assert!(
+        source.contains(&items),
+        "the fixture no longer contains the text this emitter produces.\n\nemitted:\n{items}",
+    );
+}
+
 /// Reads one of the facade's `trybuild` fixtures.
 fn fixture(relative: &str) -> String {
     let path = format!(
