@@ -133,8 +133,11 @@ use std::error::Error;
 /// [`observe_highest_gpu_family`] and is reported as
 /// [`MetalGpuFamilySupport::NoneNamed`] or as a lower family, which is a
 /// deliberate consequence of scoping the vocabulary to measured rows rather
-/// than an oversight; `widen-the-metal-gpu-family-vocabulary-to-apple10` owns
-/// the question of whether to widen it.
+/// than an oversight. Widening to `Apple10` is deferred until a retained
+/// measurement observes a device that reports `MTLGPUFamilyApple10` and the
+/// `metal`-binding gap in `prototypes/serial-sum-run` is closed;
+/// `widen-the-metal-gpu-family-vocabulary-to-apple10` records the deferral,
+/// its grounds, and that trigger.
 ///
 /// **An ADR 0074 convention 5b type, deliberately exhaustive.** It carries no
 /// `#[non_exhaustive]`, and the reason is the opposite of the one this

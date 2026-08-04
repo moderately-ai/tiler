@@ -1,7 +1,7 @@
 ---
 id: decide-the-expansion-cache-collection-schedule
 title: Decide what schedules an expansion cache collection
-status: review
+status: done
 priority: p3
 dependencies: [accept-the-tiler-cache-public-boundary]
 related: [design-bounded-expansion-cache-garbage-collection, exercise-the-expansion-cache-under-cargo-and-rust-analyzer]
@@ -9,9 +9,6 @@ scopes: [research/cache, implementation/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, durability, concurrency]
-claimed_from: todo
-assignee: agent-cache-schedule
-lease_expires_at: 1785874216
 ---
 `design-bounded-expansion-cache-garbage-collection` decided that a collection is **never automatic and never on the expansion path**: it is an explicit call returning a report, because a bound has to have a trigger a person can name. It eliminated collecting inside `get_or_publish` on a miss (a walk of every shard on the path the cache exists to make fast, run hardest when the cache is coldest), a background thread the cache spawns (threads inside a compiler process nobody asked to be concurrent, no lifetime in a process that may exit immediately, and a report returned to nobody), and collecting on a fraction of publications (an unexplainable trigger).
 
@@ -144,3 +141,11 @@ The schedule has one survivor, so the *schedule* is not the question. What survi
 - **`crates/tiler-cache/src/expansion/collect.rs:97-99` asserts a fact the tree refutes.** Its module documentation says scheduling "belongs to a consumer that does not exist yet — there is no proc-macro frontend and no maintenance command to hang it on". `crates/tiler-macros/src/aot.rs:649` opens a cache from the expansion path (`:501`). The elimination above did not depend on that sentence, but a doc comment is a claim the next worker reads as fact. `implementation/cache` is declared on this ticket and this dispatch authorized no crate edits, so it is reported rather than corrected.
 - **`docs/research/embedding/self-contained-embedding.md:31` carries the same stale premise** — "`tiler::tensor!` states `ArtifactDeliveryPolicy::FallbackOnly` … it embeds no bytes and opens no cache, and `cache_root.rs` is a crate-private resolver nothing but its own tests calls". Reproduce the refutation with `grep -n 'open_cache(environment)' crates/tiler-macros/src/aot.rs`. That file is `research/embedding`, which this ticket does not hold.
 - **This ticket declared `shared_scopes: []`** while every other in-progress ticket declares `project/tickets`, so a worker editing this ticket's own file had no declared scope for it. Added here, for the reason `AGENTS.md` states: the declaration is scheduling metadata, not product scope.
+
+## Decision — 2026-08-04, Tom, direct session message to the orchestrator
+
+Tom answered the form question, and the answer is neither option as posed: **no dedicated CLI ("overkill"); instead the cache evicts old entries automatically, with the policy definable/customizable through environment variables; and the cache's efficiency is to be verified.**
+
+This is the product owner deliberately re-weighting the two discriminators the elimination used. The report-terminates-in-a-reader and bound-arrives-with-its-trigger properties were product weightings, and Tom weighted background hygiene (the cargo/sccache shape) above per-act attribution. The elimination's *correctness* findings stand unchanged and constrain the implementation: the collector is concurrency- and crash-safe whoever calls it (measured); an eviction pass must stay off the hot path (the `get_or_publish`-miss walk was refused on performance grounds and that refusal has no new evidence against it); and `tiler-cache` deliberately never reads the environment, so environment variables are read at the frontend and arrive as explicit typed bounds. What Tom's decision supersedes is the "never automatic" schedule conclusion of `design-bounded-expansion-cache-garbage-collection` — that supersession is recorded explicitly by the implementation ticket, preserving the original rationale.
+
+Successor tickets: `admit-an-age-bounded-automatic-eviction-into-the-expansion-cache` (cache-side mechanism), `wire-the-env-configured-eviction-policy-through-the-deliver-path` (frontend trigger and env-var reading), `measure-the-expansion-cache-hot-path-efficiency` (the efficiency verification, measurement-first). This ticket's outcome — decide what schedules a collection — is therefore supported: an age-bounded automatic eviction, configured by environment variables, triggered from the frontend off the hot path.

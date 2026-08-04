@@ -1,7 +1,7 @@
 ---
 id: widen-the-metal-gpu-family-vocabulary-to-apple10
 title: Decide whether MetalGpuFamily names Apple10
-status: todo
+status: deferred
 priority: p3
 dependencies: []
 related: [close-the-metal-gpu-family-out-of-crate-total-map, close-the-serial-sum-run-gpu-family-probe-table, correct-the-sdk-apple-family-range-in-the-runtime-answer-record]
@@ -46,3 +46,11 @@ Reproduce in one line: `grep -n MTLGPUFamilyApple "$(xcrun --sdk macosx --show-s
 Either an accepted decision to widen — with the ordering and payload-comparison consequences discharged, and `prototypes/serial-sum-run`'s binding gap from `close-the-serial-sum-run-gpu-family-probe-table` resolved first — or a recorded deferral with a stated trigger, the obvious one being the first device this project measures that reports `MTLGPUFamilyApple10`.
 
 Whichever way it goes, the `MetalGpuFamily` doc comment currently points here by name and must end up pointing at the answer.
+
+## Recorded deferral — 2026-08-04
+
+**The elimination leaves one survivor, so this closes as a deferral with a trigger rather than a question.** Widening now fails on three independent grounds: no retained measurement observes any device reporting `MTLGPUFamilyApple10` (every measured device reports `Apple9`), so an `Apple10` variant would breach the vocabulary's own boundedness contract; widening turns the registered `"Apple10" < "Apple9"` lexicographic hazard from a recorded future risk into a live one for any payload-spelling comparator; and `prototypes/serial-sum-run`'s `metal` 0.33.0 binding cannot name the enumerator, so the compile-time coupling left by `close-the-serial-sum-run-gpu-family-probe-table` breaks the build by design. Deferral costs nothing operationally: an unnamed family is refused fail-closed (`MetalHostApplicabilityRefusal::Unobserved`, `LiveDeviceObservation::Unrecognized`), never silently renamed.
+
+**Verification against the current environment, 2026-08-04.** The selected toolchain moved to the Xcode 27.0 beta since this ticket's facts were recorded; the 27.0 SDK's `MTLDevice.h` declares `MTLGPUFamilyApple1 = 1001` through `MTLGPUFamilyApple10 = 1010` at the same lines (`233–242`), and the cited 26.5 SDK header still names `Apple10`. Reproduce: `grep -n MTLGPUFamilyApple "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLDevice.h"`. The `MetalGpuFamily` doc comment now states the deferral and its trigger directly.
+
+**Reactivation triggers:** a retained measurement of a device reporting `MTLGPUFamilyApple10`, with the `serial-sum-run` binding gap resolved first as a precondition. On reactivation, the ordering and payload-comparison consequences in "Why this is not a transcription" are the work plan.
