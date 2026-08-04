@@ -126,6 +126,64 @@
 //! stated contract this declaration cannot honour is refused by the compiler's
 //! own target feasibility check, and reaches a consumer as
 //! [`AotRefusal::TargetCompile`] naming the contract that was stated.
+//!
+//! # Reaching the `metal` stage's own refusal
+//!
+//! [`retained`] carries whatever the offline driver refused with, and for a long
+//! time the only refusal anything could produce was `ToolchainUnavailable` — a
+//! host with no Apple tools. A `CompileStage::Metal` *nonzero exit* is a
+//! different event, and `retain-and-attribute-a-real-msl-failure-through-an-expansion`
+//! asked which invocations can reach one. There are exactly two routes, and only
+//! one of them is a consumer's to hit.
+//!
+//! **No region text can make `metal` reject the emitted source.** Everything a
+//! consumer writes is a shape, an operation, a contract name, or a family name;
+//! none of it reaches the MSL as a token. `tiler_metal`'s emitter names each
+//! entry point `tiler_kernel_<digest of the kernel's canonical identity>`, each
+//! NaN-canonicalization helper from the canonical bit pattern it enforces, each
+//! staging allocation from its scheduled `StagingId`, and each buffer parameter
+//! `b<argument-table ordinal>`; scalar constants are emitted as hexadecimal bit
+//! patterns through `as_type<float>`. An `InputKey` or `OutputKey` a region
+//! declares never appears in the translation unit at all — not even in the
+//! signature comments, which name a `TensorRole` and an ordinal. A region that
+//! reaches the driver has also passed the compiler's request recognizer, the
+//! program verifier, and the structured-kernel verifier, and emission itself
+//! refuses an unrealizable address space, buffer access, or binding count as
+//! `MetalEmitError` before any process is spawned. So a `metal` rejection *of
+//! the source* means Tiler emitted MSL its own backend believed was legal, which
+//! is a defect in `tiler-metal` or in this frontend — never something an
+//! invocation can be written to cause, and never something a consumer can fix by
+//! changing the region.
+//!
+//! **A build host can reach one without any Tiler defect.** Nothing between here
+//! and `Toolchain::run_stage` compares the language standard the bound
+//! declaration requests against the `metal` that was resolved:
+//! `Toolchain::resolve` locates the tool and reads its version banner, and the
+//! banner is folded into identity rather than checked for a capability. An Apple
+//! toolchain predating the declaration's measured MSL 4.0 therefore accepts the
+//! resolution, runs, and refuses `-std=metal4.0` with its own diagnostic —
+//! reaching a consumer as this family's retained `compile_error!`, which is the
+//! correct outcome: the remedy is the host's toolchain, and the `#[cfg]` gate
+//! keeps an unrelated fallback-only target building.
+//!
+//! Both routes are exercised against the host's real `metal` binary by
+//! `a_real_metal_front_end_rejection_is_retained_under_its_family` below, which
+//! names which one needed injection.
+//!
+//! **What the retained text does not carry is a region span, deliberately.** A
+//! real MSL diagnostic names a line and column in the *emitted* translation unit,
+//! and no correspondence from that position back to an `out` sub-expression
+//! exists to attach: `tiler_ir`'s semantic program holds no frontend spans and
+//! must not, since the compiler core stays independent of any frontend's tokens,
+//! and the emitter derives every name from an identity digest rather than from
+//! anything a region wrote. Building one would be a new public correspondence
+//! carried across three crates, and it would point at a construct that is not at
+//! fault in either route above — the source-rejection route is a Tiler defect
+//! whose reader is a Tiler developer, and the host route is about the machine
+//! rather than the program. It is filed as
+//! `carry-a-source-correspondence-from-region-text-to-emitted-msl` and deferred
+//! with that trigger: the first invocation-controlled text that reaches the
+//! emitted MSL reopens it.
 
 use core::fmt;
 
@@ -466,10 +524,13 @@ fn rendered_target(target: MetalTarget) -> String {
 /// environment cannot be exercised without one, and this crate forbids the
 /// `unsafe` a test would need to mutate it.
 /// `toolchain` is supplied rather than constructed for the reason
-/// `Toolchain::with_launcher` exists: pointing it at a path that is not there
-/// reaches the same `DriverError::ToolchainUnavailable` a host with no Apple
-/// tools produces, which is how the retained-diagnostic path below is exercised
-/// on a machine that does have them.
+/// `Toolchain::with_launcher` exists: an explicit launcher is how a host that
+/// *has* Apple tools exercises the refusals of one that does not. Pointing it at
+/// a path that is not there reaches the same `DriverError::ToolchainUnavailable`
+/// a non-macOS host produces, and pointing it at a launcher whose `--find metal`
+/// answers with a wrapper around the real compiler reaches
+/// `DriverError::ToolFailure` at `CompileStage::Metal` — the two refusals
+/// [`retained`] carries, both exercised below.
 pub(crate) fn deliver(
     program: Option<&SemanticProgram>,
     contract: StatedContract,
