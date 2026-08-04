@@ -8,10 +8,12 @@
 //! is a new authority: `tiler_compiler::session` optimizes, `tiler_metal`
 //! emits, `tiler_metal_aot` compiles, `tiler_artifact` identifies, and
 //! `tiler_cache` stores, and `tiler_build::accept_or_publish_metal_plan`
-//! sequences the five. What this module owns is the two decisions a *frontend*
+//! sequences the five. What this module owns is the three decisions a *frontend*
 //! must make and no one below it can: which target declaration a stated family
-//! selection corresponds to, and where to look for the cache. The numerical
-//! contract used to be a third and is now the region's own statement; see below.
+//! selection corresponds to, where to look for the cache, and — since Tom made
+//! the eviction automatic on 2026-08-04 — at which point in the flow that cache
+//! is trimmed. The numerical contract used to be one of them and is now the
+//! region's own statement; see below.
 //!
 //! # Expansion runs inside `rustc`, so what runs when matters
 //!
@@ -54,6 +56,15 @@
 //!   appears to — and why the invariant is that identity folds a fingerprint read
 //!   by executing the binaries this same prepared token will execute, rather than
 //!   that a resolution happens on some schedule.
+//! - **A publication may trim the cache; a hit never does.** Tom's 2026-08-04
+//!   decision makes the eviction automatic, and [`deliver`] is where it fires:
+//!   after `accept_or_publish_metal_plan` resolves to `Resolution::Published`,
+//!   under the bound [`crate::eviction`] read from the environment, at most once
+//!   per process. Every other route runs nothing — a hit, an `off` cache, a
+//!   `fallback-only` region, and a publication in a process that already swept.
+//!   That module owns the variable, the default, the opt-out, the amortization
+//!   rule, and what becomes of the report; what this module owns is the single
+//!   `Resolution::Published` test that keeps a scan off the hit path.
 //!
 //! # The one family this frontend can build, and why the check is equality
 //!
@@ -203,6 +214,7 @@ use tiler_metal_aot::input::{MetalTarget, OptimizationLevel};
 
 use crate::cache_root::{CacheRootDecision, RootEnvironment, RootRefusal, resolve};
 use crate::delivery::{DeliveryPlan, FamilyDelivery, PlanRefusal};
+use crate::eviction::EvictionSchedule;
 use crate::numerics::StatedContract;
 
 /// The optimization level every delivering expansion compiles at.
@@ -523,6 +535,10 @@ fn rendered_target(target: MetalTarget) -> String {
 /// [`crate::cache_root`]'s own reason: a decision that reaches for the process
 /// environment cannot be exercised without one, and this crate forbids the
 /// `unsafe` a test would need to mutate it.
+/// `eviction` is the automatic cache eviction's policy and its process's
+/// amortization, supplied for the same reason and read at the same point: the
+/// bound is resolved beside the root, so an unusable statement is reported on
+/// any delivering expansion rather than only on one that happens to publish.
 /// `toolchain` is supplied rather than constructed for the reason
 /// `Toolchain::with_launcher` exists: an explicit launcher is how a host that
 /// *has* Apple tools exercises the refusals of one that does not. Pointing it at
@@ -536,6 +552,7 @@ pub(crate) fn deliver(
     contract: StatedContract,
     selection: ArtifactFamilySelection,
     environment: &RootEnvironment,
+    eviction: &EvictionSchedule<'_>,
     toolchain: &Toolchain,
 ) -> Result<Delivered, AotRefusal> {
     let program = program.ok_or(AotRefusal::SymbolicExtent)?;
@@ -560,6 +577,10 @@ pub(crate) fn deliver(
     let plan = compilation.selected().ok_or(AotRefusal::NoSelectedPlan)?;
 
     let cache = open_cache(environment)?;
+    // Resolved here rather than after the publication below, so a consumer whose
+    // statement cannot be read hears about it on any delivering expansion rather
+    // than only on one that misses. It decides nothing about this artifact.
+    let eviction_bound = eviction.bound();
     let accepted = match accept_or_publish_metal_plan(
         &cache,
         toolchain,
@@ -579,6 +600,19 @@ pub(crate) fn deliver(
         // would break exactly that.
         Err(failure) => return retained(selection, failure),
     };
+
+    // The one place an automatic eviction runs. `Published` is the whole of
+    // "off the hit path": a `Hit` read an entry and pays nothing, and an
+    // `Uncached` resolution has no cache to trim. A publication has just spawned
+    // `metal` and `metallib`, so the scan rides on work far larger than itself,
+    // and [`EvictionSchedule::sweep`] admits at most one pass per process on top
+    // of that. The report is deliberately dropped — `crate::eviction` states why
+    // and what stands in for it.
+    if let Some(bound) = eviction_bound
+        && matches!(accepted.resolution(), Resolution::Published { .. })
+    {
+        eviction.sweep(&cache, bound);
+    }
 
     let artifact = accepted.artifact();
     let [payload] = artifact.payloads() else {
