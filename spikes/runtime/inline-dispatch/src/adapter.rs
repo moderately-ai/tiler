@@ -41,8 +41,7 @@ use crate::buffer;
 
 /// A deliberate perturbation of this consumer's own behaviour.
 ///
-/// One value, because one post-commit failure is what this spike has to watch
-/// fail. It perturbs the *adapter* and never the loader or the artifact: the
+/// Each value perturbs the *adapter* and never the loader or the artifact: the
 /// same device, the same region, and the same operands complete moments earlier
 /// in the unperturbed run, which is what makes the failure evidence about the
 /// perturbation.
@@ -63,6 +62,34 @@ pub enum Perturbation {
     /// command buffer into `Error` means provoking a GPU fault, which risks a
     /// device reset and would not reproduce.
     HaltAfterCommit,
+    /// The committed route's entries are encoded back to front.
+    ///
+    /// The one failure in this stack that fails *open*. Nothing refuses it:
+    /// every payload still validates, every pipeline still builds, the plan is
+    /// unchanged, both entries reach terminal success, and the answer is wrong —
+    /// because a stage that reads what an earlier stage writes ran first.
+    ///
+    /// It perturbs the encode order alone, which is exactly the ordering
+    /// guarantee [`RuntimeAdapter::dispatch`] documents: Metal orders *encoders*
+    /// within one command buffer, so the order they are created in is the order
+    /// the entries run in. On a one-entry route it is the identity, which is why
+    /// only a route the compiler actually split can watch it fail.
+    #[allow(
+        dead_code,
+        reason = "this module is compiled into both binaries of this crate and only the two-entry one can construct this arm; a one-entry route's reversal is the identity, so offering it there would be a check nothing could watch fail"
+    )]
+    ReverseEncodeOrder,
+}
+
+/// Whether a perturbation encodes a committed route's entries back to front.
+///
+/// Matched exhaustively rather than compared for equality, so a perturbation
+/// added later is a build error here instead of silently taking the sound path.
+const fn reverses_encode_order(perturbation: Option<Perturbation>) -> bool {
+    match perturbation {
+        Some(Perturbation::ReverseEncodeOrder) => true,
+        Some(Perturbation::HaltAfterCommit) | None => false,
+    }
 }
 
 /// What this consumer observed while its region was routed.
@@ -79,6 +106,16 @@ pub struct Journal {
     pub notes: Vec<String>,
     /// The governed profile key the seam published as the producer's.
     pub declared_profile: Option<String>,
+    /// Slot pairs the pre-commit plan sized as one allocation shared by two entries.
+    ///
+    /// `None` until `plan_dispatch` runs, which is what distinguishes "the route
+    /// declared none" from "the route never got that far".
+    pub shared_allocations: Option<usize>,
+    /// What the committed dispatch reported, when one completed.
+    ///
+    /// Carried structurally as well as in a note because a consumer asserting an
+    /// entry *count* must read a number rather than parse a sentence.
+    pub completion: Option<Completion>,
 }
 
 /// Everything a wrapped value carries: this consumer's device and its journal.
@@ -151,14 +188,43 @@ pub struct HostTensor {
 impl HostTensor {
     /// Builds one dense `f32` vector.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "this module is compiled into both binaries of this crate and each region uses the constructor its own declared interface needs: the pointwise region hands over rank-1 operands and the reduction region a rank-2 one, so exactly one of the two is dead in each"
+    )]
     pub fn f32s(values: &[f32]) -> Self {
+        Self::f32_dense(&[values.len() as u64], values)
+    }
+
+    /// Builds one dense `f32` value of the stated extents, innermost axis fastest.
+    ///
+    /// A region declaring named axes — `f32[rows: 1, cols: 4]` — hands over a
+    /// rank-2 operand, and [`HostTensor::f32s`]'s rank-1 shape would be refused
+    /// against that declared interface before any route existed. The layout is
+    /// the one [`AdapterCapability::DenseRowMajorStorage`] claims, so the extents
+    /// are metadata over the same byte run rather than a second representation.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the extents do not describe exactly `values.len()` elements.
+    /// A consumer that miscounted its own value would otherwise hand the seam a
+    /// length that disagrees with the metadata it published for it.
+    #[must_use]
+    pub fn f32_dense(extents: &[u64], values: &[f32]) -> Self {
+        let elements: u64 = extents.iter().product();
+        assert_eq!(
+            elements,
+            values.len() as u64,
+            "extents {extents:?} describe {elements} element(s) and {} were supplied",
+            values.len(),
+        );
         let mut bytes = Vec::with_capacity(values.len() * 4);
         for value in values {
             bytes.extend_from_slice(&value.to_ne_bytes());
         }
         Self {
             scalar: StorageScalar::F32,
-            extents: vec![values.len() as u64],
+            extents: extents.to_vec(),
             bytes,
         }
     }
@@ -861,6 +927,8 @@ impl RuntimeAdapter for MetalExecutor<'_> {
             routed.len(),
             preflight.shared_allocations().len(),
         ));
+        self.session.journal.borrow_mut().shared_allocations =
+            Some(preflight.shared_allocations().len());
 
         let mut binds_result = false;
         let mut plan = Vec::with_capacity(routed.len());
@@ -1027,7 +1095,10 @@ impl RuntimeAdapter for MetalExecutor<'_> {
     /// within a single compute encoder are not ordered against each other unless
     /// the encoder's dispatch type says so, and a second stage reading what the
     /// first wrote must not overlap it. Metal orders *encoders* within a command
-    /// buffer unconditionally, with an implicit barrier between them.
+    /// buffer unconditionally, with an implicit barrier between them — so the
+    /// order this loop creates them in *is* the order the entries execute in,
+    /// which is what [`Perturbation::ReverseEncodeOrder`] perturbs and nothing
+    /// else here does.
     fn dispatch(
         &mut self,
         context: &LiveExecutionContext,
@@ -1037,7 +1108,16 @@ impl RuntimeAdapter for MetalExecutor<'_> {
         let queue = self.session.device.new_command_queue();
         let command_buffer = queue.new_command_buffer();
         let mut encoded = 0_usize;
-        for entry in &self.planned {
+        // The artifact's declared execution order, or its reverse under the
+        // perturbation. Positions rather than a reversed iterator so that the
+        // sound path's traversal is the one written here and the perturbation is
+        // the single statement that moves it.
+        let mut order: Vec<usize> = (0..self.planned.len()).collect();
+        if reverses_encode_order(self.session.perturbation) {
+            order.reverse();
+        }
+        for position in order {
+            let entry = &self.planned[position];
             if entry.skipped {
                 continue;
             }
@@ -1045,11 +1125,13 @@ impl RuntimeAdapter for MetalExecutor<'_> {
             encoded += 1;
         }
 
-        // The perturbation, and the whole of it. Everything above is the sound
-        // path's own encode; what this arm withholds is the submission, which is
-        // program work after the routing commit. The status check below is then
-        // reached with a live, never-committed command buffer — a non-terminal
-        // state — and refuses the readback.
+        // The halting perturbation, and the whole of it. Everything above is the
+        // sound path's own encode; what this arm withholds is the submission,
+        // which is program work after the routing commit. The status check below
+        // is then reached with a live, never-committed command buffer — a
+        // non-terminal state — and refuses the readback. A reordered route is
+        // submitted and waited exactly like a sound one, because a reordering
+        // that refused would not be the failure it is here to watch.
         if self.session.perturbation != Some(Perturbation::HaltAfterCommit) {
             command_buffer.commit();
             command_buffer.wait_until_completed();
@@ -1091,6 +1173,7 @@ impl RuntimeAdapter for MetalExecutor<'_> {
              profile {}",
             completion.encoded, completion.entries, completion.profile_key,
         ));
+        self.session.journal.borrow_mut().completion = Some(completion.clone());
         Ok(completion)
     }
 }

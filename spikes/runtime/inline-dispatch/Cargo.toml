@@ -1,13 +1,29 @@
 [package]
 name = "inline-dispatch-spike"
-description = "Out-of-tree consumer that dispatches one inline Tiler region on this host's Metal device"
+description = "Out-of-tree consumer that dispatches inline Tiler regions on this host's Metal device"
 version = "0.0.0"
 edition = "2024"
 publish = false
+# So that `cargo run --release` stays the one-entry spike's recorded invocation
+# after a second binary joined it. That transcript is cited from several
+# documents, and a bare `cargo run` becoming ambiguous would invalidate the
+# command those citations tell a reader to type.
+default-run = "inline-dispatch-spike"
 
 [[bin]]
 name = "inline-dispatch-spike"
 path = "src/main.rs"
+
+# The two-entry consumer, sharing this crate's adapter rather than copying it.
+# The adapter is already generic over entry count — it iterates the route's
+# entries in `prepare_entries`, `plan_dispatch`, and `dispatch`, pairs the shared
+# allocations, and creates one Metal encoder per entry — so a second crate would
+# have duplicated 1,300 lines whose *generality* is the thing under test here. A
+# bin target is its own crate root, so `mod adapter;` resolves to `src/adapter.rs`
+# from either file with no path attribute.
+[[bin]]
+name = "multi-entry-dispatch-spike"
+path = "src/multi_entry.rs"
 
 [dependencies]
 # The one crate a Tiler consumer declares. By path rather than by version
