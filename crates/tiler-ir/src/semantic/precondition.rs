@@ -208,7 +208,7 @@ pub enum SemanticLogicalView {
 }
 
 impl SemanticLogicalView {
-    fn encode(self, output: &mut Vec<u8>) {
+    pub(super) fn encode(self, output: &mut Vec<u8>) {
         match self {
             Self::WholeValue => output.push(1),
         }
