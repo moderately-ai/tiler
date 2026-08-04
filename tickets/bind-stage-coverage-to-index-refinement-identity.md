@@ -1,12 +1,12 @@
 ---
 id: bind-stage-coverage-to-index-refinement-identity
 title: Bind kernel-program stage coverage to its refinement evidence
-status: in-progress
+status: blocked
 priority: p1
-dependencies: [correct-adr-0071-retained-lower-layer-identity-cardinality, place-index-refinement-evidence-under-an-ir-owned-verifier]
+dependencies: [correct-adr-0071-retained-lower-layer-identity-cardinality, place-index-refinement-evidence-under-an-ir-owned-verifier, admit-a-strict-affine-index-realization-law]
 related: [bind-the-scheduled-region-to-the-verified-index-region-identity]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts]
-shared_scopes: [project/tickets]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts, implementation/runtime, implementation/frontend, contracts/decisions, research/program-planning]
+shared_scopes: [project/tickets, contracts/navigation, implementation/cargo-lock]
 paths: []
 tags: [implementation, ir, identity]
 claimed_from: todo
@@ -81,3 +81,12 @@ passes.
 - Preserve exhaustive independent encoders so a new coverage field is a compile error in both.
 - Present the exact public draft to Tom before acceptance; no additional shape choice is pending before implementation.
 - Follow `place-index-refinement-evidence-under-an-ir-owned-verifier`; directly storing compiler-owned `IndexRefinementIdentity` in `tiler-ir` is a forbidden dependency inversion.
+
+## Scope additions during implementation
+
+The identity grammar and its source-derived ledger require `implementation/runtime` for the runtime proof adapter, `implementation/frontend` for the recorded-artifact domain pin, `contracts/decisions` for ADR 0071/0072 implementation status, `research/program-planning` for its current-domain statement, and shared `contracts/navigation` for `docs/status.md`. These declare files already required by the accepted outcome; they do not expand it. Before editing `docs/status.md`, the coordinator compared the KV worker's exact six-file branch population against base `32232577`; `docs/status.md` was absent, so the concurrent edits are file-disjoint.
+The sealed receipt authority intentionally leaves no artifact-only fixture constructor: a coverage record can be derived only from an IR-owned verified receipt, and `tiler-artifact` cannot honestly mint one from bytes or an occurrence. Its tests therefore use a `tiler-compiler` **dev-dependency** to obtain real governed receipts. This adds the shared `implementation/cargo-lock` scope because Cargo records that package-local test edge. The edge is absent from `[dependencies]`, so production `tiler-artifact` remains compiler-independent; the compiler already depends on artifact in production, while Cargo permits the reverse edge only for artifact test targets rather than constructing a production dependency cycle.
+
+## Preserved stop — strict-affine coverage has no receipt authority
+
+Static reconstruction exposed one real prerequisite rather than a fixture inconvenience. The governed strict-affine U4 dequantization operation has no `IndexRealizationLaw` row or compiler lowering registration, so `compile_governed` cannot mint coverage for the artifact fixture that preserves one builder/component test and three codec tests. A foreign or synthetic receipt would violate this ticket's exact-evidence outcome, and deleting the tests would erase the only artifact-level component ABI evidence. `admit-a-strict-affine-index-realization-law` now owns the missing consequential public/product boundary. This implementation draft is preserved but is not complete or mergeable until that dependency lands and these four tests use its real receipts.
