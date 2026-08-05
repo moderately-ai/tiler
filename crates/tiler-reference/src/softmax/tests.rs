@@ -19,12 +19,21 @@ const MASK_FILL_BITS: u32 = 0xff7f_ffff;
 /// The canonical arithmetic NaN every arithmetic result is canonicalized to.
 const CANONICAL_NAN: u32 = 0x7fc0_0000;
 
-/// The reference model's implied reciprocal at the retained worked example.
+/// The reference model's implied normalization constant at the retained worked example.
 ///
-/// One ULP below the correctly rounded `1.0 / d`, and the whole of the divergence
-/// this corpus records. Named so that every place it appears points at the same
-/// measurement rather than at a literal.
-const REFERENCE_MODEL_WORKED_EXAMPLE_RECIPROCAL: u32 = 0x3f2a_4d3a;
+/// One ULP below the correctly rounded `1.0 / d` over the pinned strict left fold,
+/// and the whole of the divergence this corpus records. It is not an approximate
+/// reciprocal: it is the correctly rounded reciprocal of
+/// [`REORDERED_DENOMINATOR`], which the same row's exponentials reach under
+/// another contributor order. Named so that every place it appears points at the
+/// same measurement rather than at a literal.
+const REFERENCE_MODEL_WORKED_EXAMPLE_CONSTANT: u32 = 0x3f2a_4d3a;
+
+/// The worked example's denominator under the contributor order `(e₀, e₂, e₁, e₃)`.
+///
+/// One ULP above the strict left fold's `0x3fc06957`, and the denominator whose
+/// correctly rounded reciprocal is what the reference model multiplied the row by.
+const REORDERED_DENOMINATOR: u32 = 0x3fc0_6958;
 
 fn shape(dims: &[u64]) -> Shape {
     Shape::try_from_dims(dims.iter().copied()).expect("a corpus shape is bounded")
@@ -329,18 +338,25 @@ fn registered_contract() -> tiler_ir::semantic::accuracy::AccuracyContract {
 /// intermediate the L3′ record states is reproduced exactly — the maximum, the
 /// shifted scores, the four exponentials including the masked position's exact
 /// `+0.0`, and the denominator `0x3fc06957`. From there the record's recorded
-/// outputs require a reciprocal of `0x3f2a4d3a`, while the correctly rounded
+/// outputs require a constant of `0x3f2a4d3a`, while the correctly rounded
 /// `1.0 / d` is `0x3f2a4d3b`; the record's row-sum of `0x3f7ffffe` follows from
 /// the same one-ULP-low constant, and under the pinned formula the row sums to
 /// exactly `0x3f800000`.
 ///
+/// **The constant is a reordered sum, not an approximate reciprocal, and this
+/// test executes that attribution rather than narrating it.** `0x3f2a4d3a` is the
+/// correctly rounded reciprocal of `0x3fc06958`, which these same four
+/// exponentials reach under the contributor order `(e₀, e₂, e₁, e₃)` — asserted
+/// below from the exponentials themselves, so a claim about the reference model's
+/// arithmetic is decided by arithmetic here. The reference is therefore evaluating
+/// the pinned *formula* over a permuted contributor sequence, which is exactly the
+/// freedom `SOFTMAX_F32_FACT_SUM_FOLD_ORDER` withholds: reproducing these bits
+/// would be performing an unpermitted reassociation, not passing a check.
+///
 /// **Measured, not inferred.** In the retained probe's own pinned environment,
 /// `torch.nn.functional.softmax` on this row returns the record's bits, while
 /// both `e * (1/d)` and `e / d` computed from the reference's *own* `e` and `d`
-/// return this reference's bits. So the reference model's fused kernel applies an
-/// approximate reciprocal on rows of four or more contributors — the same class
-/// of finding as the normalization's `torch.rsqrt` divergence, and recorded here
-/// rather than tuned away.
+/// return this reference's bits. Recorded here rather than tuned away.
 #[test]
 fn the_retained_worked_example_reproduces_the_pinned_formula() {
     let mask = f32::from_bits(MASK_FILL_BITS);
@@ -378,23 +394,39 @@ fn the_retained_worked_example_reproduces_the_pinned_formula() {
     assert_eq!(reciprocal.to_bits(), 0x3f2a_4d3b);
     assert_ne!(
         reciprocal.to_bits(),
-        REFERENCE_MODEL_WORKED_EXAMPLE_RECIPROCAL
+        REFERENCE_MODEL_WORKED_EXAMPLE_CONSTANT
     );
     assert_eq!(
         reciprocal.to_bits() - 1,
-        REFERENCE_MODEL_WORKED_EXAMPLE_RECIPROCAL,
-        "the reference model's implied reciprocal is exactly one ULP below the correctly rounded one"
+        REFERENCE_MODEL_WORKED_EXAMPLE_CONSTANT,
+        "the reference model's implied constant is exactly one ULP below the correctly rounded reciprocal"
     );
     // The record's own recorded outputs are what that constant produces, which is
-    // how this test shows the divergence is the reciprocal rather than the
-    // exponential or the sum.
-    let model = f32::from_bits(REFERENCE_MODEL_WORKED_EXAMPLE_RECIPROCAL);
+    // how this test shows the divergence is one scalar rather than the exponential
+    // or the individual products.
+    let model = f32::from_bits(REFERENCE_MODEL_WORKED_EXAMPLE_CONSTANT);
     assert_eq!(
         exponentials
             .iter()
             .map(|value| (value * model).to_bits())
             .collect::<Vec<u32>>(),
         vec![0x3db8_61f2, 0x3e7a_9a18, 0x3f2a_4d3a, 0x0000_0000]
+    );
+
+    // And where that scalar comes from: the same four exponentials summed in the
+    // order `(e₀, e₂, e₁, e₃)` give a denominator one ULP above the strict left
+    // fold's, whose *correctly rounded* reciprocal is the reference model's
+    // constant exactly. So the divergence is the sum's contributor order — the
+    // freedom `SOFTMAX_F32_FACT_SUM_FOLD_ORDER` withholds — rather than an
+    // approximate reciprocal, and this assertion is what makes that attribution
+    // executable instead of narrated.
+    let reordered = ((exponentials[0] + exponentials[2]) + exponentials[1]) + exponentials[3];
+    assert_eq!(reordered.to_bits(), REORDERED_DENOMINATOR);
+    assert_ne!(reordered.to_bits(), denominator.to_bits());
+    assert_eq!(
+        (1.0_f32 / reordered).to_bits(),
+        REFERENCE_MODEL_WORKED_EXAMPLE_CONSTANT,
+        "the reference model's constant is the correctly rounded reciprocal of the reordered denominator"
     );
 
     // The divide spelling is *not* what separates them: on this row it agrees
@@ -411,12 +443,15 @@ fn the_retained_worked_example_reproduces_the_pinned_formula() {
 
 /// The normalization form is the reciprocal multiply, at the widths that isolate it.
 ///
-/// **Width two and width three are where the question is answerable**, because
-/// from width four upward the reference model's own approximate reciprocal
-/// contributes disagreements belonging to neither spelling. At these widths the
-/// retained probe counts every discriminating element matching the reciprocal
-/// form and none matching the division, and this row is one such element carried
-/// as bits.
+/// **Width two and width three are where an element-by-element comparison is
+/// answerable**, because from width four upward the reference model's own
+/// contributor order moves the constant and its outputs belong to neither
+/// spelling's bits. At these widths the retained probe counts every discriminating
+/// element matching the reciprocal form and none matching the division, and this
+/// row is one such element carried as bits. The probe's single-constant rows carry
+/// the form at every measured width, since a division by a denominator is not one
+/// scalar multiple of the numerators; that argument is order-insensitive and is
+/// recorded in the module documentation rather than here.
 #[test]
 fn the_normalization_multiplies_by_the_reciprocal_rather_than_dividing() {
     // `[0.0, 2.0]`: a row where the two spellings and the reference agree, and

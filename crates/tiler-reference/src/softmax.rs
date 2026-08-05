@@ -38,25 +38,48 @@
 //! counts every discriminating element of a width-two or width-three row matching
 //! this form and none matching the division.
 //!
-//! # Measurement — the reference model performs an approximation this form excludes
+//! # Measurement — the reference model sums the same contributors in another order
 //!
 //! **On rows of four or more contributors, `torch.nn.functional.softmax` matches
-//! neither pinned spelling.** Measured in the retained probe's own pinned
-//! environment (`torch` 2.6.0, `transformers` 4.51.0, CPU, F32): at row widths two
-//! and three the reference agrees with this form at *every* element — 40,000 and
-//! 60,000 elements, zero disagreements — and from width four upward it disagrees
-//! with both `e_i * (1/d)` and `e_i / d` by up to four ULP. At the L3′ record's
-//! own worked example the whole difference is one constant: the reference's
-//! implied reciprocal is `0x3f2a4d3a` where the correctly rounded `1.0 / d` is
-//! `0x3f2a4d3b`, and one such constant explains all three finite outputs. So the
-//! divergence is in the *reciprocal* rather than in the exponential or the sum,
-//! both of which the reference reproduces bit for bit.
+//! neither pinned spelling's bits, and the reason is the denominator's contributor
+//! order rather than an approximation.** Measured in the retained probe's own
+//! pinned environment (`torch` 2.6.0, `transformers` 4.51.0, CPU, F32): at row
+//! widths two and three the reference agrees with this form at *every* element —
+//! 40,000 and 60,000 elements, zero disagreements — and from width four upward it
+//! disagrees with both `e_i * (1/d)` and `e_i / d` by up to four ULP. At the L3′
+//! record's own worked example the whole difference is one constant: the
+//! reference's implied constant is `0x3f2a4d3a` where the correctly rounded
+//! `1.0 / d` over the strict left fold's `d = 0x3fc06957` is `0x3f2a4d3b`. That
+//! constant is not an approximate reciprocal — it is the **correctly rounded**
+//! reciprocal of `0x3fc06958`, which this row's own four exponentials reach under
+//! the contributor order `(e₀, e₂, e₁, e₃)`. So the reference is evaluating *this*
+//! formula over a permuted contributor sequence: the exponential, the reciprocal,
+//! and the per-element multiply are each correctly rounded there, and only the
+//! denominator's contributor order differs.
 //!
-//! This is the same class of finding as the normalization's `torch.rsqrt` one, and
-//! it is recorded rather than tuned: the width-two and width-three agreement is
-//! what pins the *form*, and the width-four disagreement is a property of the
-//! reference model's vectorized path. `the_retained_worked_example_reproduces_the_pinned_formula`
-//! carries both values and the exact reciprocal that separates them.
+//! **That reading is the stronger one, and it is the family's own order contract
+//! observed rather than a numerical defect.** `SOFTMAX_F32_FACT_SUM_FOLD_ORDER`
+//! pins the strict left fold and moves only under the separately resolved
+//! reassociation and permutation permissions, which is exactly the freedom the
+//! reference model is taking here — so *matching* the reference's bits at these
+//! widths would mean performing an unpermitted reassociation, not passing a
+//! conformance check. It also means the reference model cannot settle the legality
+//! question: a schedule that permuted the sum without the permission would agree
+//! with it and would still be illegal.
+//!
+//! **The form question is settled at every width by the same measurement, and the
+//! order attribution carries a boundary.** Over 20,000 rows per width the
+//! reference's output row is exactly one scalar multiple of these exponentials at
+//! every element, at all five measured widths — and a division by a denominator is
+//! not a single-constant multiply, which is why this supports the reciprocal form
+//! more broadly than the width-two and width-three element counts do. At width
+//! four, where the summation orders are enumerable, 19,895 of 20,000 implied
+//! constants are the correctly rounded reciprocal of a denominator those
+//! exponentials reach under some strict left fold or the balanced tree; the
+//! enumeration is not every legal grouping, so that count is a lower bound on
+//! reachability. Widths eight and eighteen are not enumerable and stay open.
+//! `the_retained_worked_example_reproduces_the_pinned_formula` carries both
+//! denominators and both reciprocals as bits.
 
 use std::sync::Arc;
 

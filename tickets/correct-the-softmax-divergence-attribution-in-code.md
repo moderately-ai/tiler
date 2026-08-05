@@ -1,7 +1,7 @@
 ---
 id: correct-the-softmax-divergence-attribution-in-code
 title: Correct the softmax divergence attribution in code and the matrix row
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-softmax-family, correct-the-softmax-worked-example-and-its-recorded-divergence, scope-transformer-nonlinear-normalization-and-reductions]
@@ -43,3 +43,17 @@ Changing `tiler::softmax-f32@1`'s pinned formula, its facts, its corpus bits, or
 ## Closes when
 
 All four sites describe the contributor-order attribution and its measurement boundary, the stale `grep` gap statement points at the retained record, the signed-zero claim matches what was measured in both operand orders, and `make full` is green on the result.
+
+## Outcome
+
+**Done.** All four sites now carry the contributor-order attribution with its boundary, and the worked example's test *executes* the attribution rather than narrating it. No bit asserted anywhere in the softmax corpus changed, no registered fact moved, and no public surface appeared: the two new constants are `#[cfg(test)]`-module items.
+
+**What was wrong, and what the correct attribution is.** All four sites said the reference model applies an *approximate reciprocal* from width four upward. The reference's implied normalization constant at the L3′ worked example is `0x3f2a4d3a`, one ULP below the correctly rounded `1.0 / 0x3fc06957 = 0x3f2a4d3b` — but it is *exactly* the correctly rounded reciprocal of `0x3fc06958`, which the row's own exponentials `[0x3e0a9555, 0x3ebc5ab2, 0x3f800000, 0x00000000]` reach under the contributor order `(e₀, e₂, e₁, e₃)`. So no approximation is needed to explain the row: the exponentials agree bit for bit, and the reciprocal and the multiplies are each correctly rounded — only the denominator's contributor order differs. That is `SOFTMAX_F32_FACT_SUM_FOLD_ORDER` observed rather than a numerical defect, and it inverts the consequence: matching the reference's bits at these widths would be performing an unpermitted reassociation, not passing a conformance check, so the reference model cannot settle the legality question at all.
+
+**The two `crates/tiler-ir/src/semantic/softmax.rs` defects, corrected against the retained record.** The signed-zero sentence claimed `torch.max` over `[+0.0, -0.0]` is `+0.0` and therefore agrees with the `-0.0 < +0.0` ordering; the record's four rows measure `torch.max` = `0x80000000` and `torch.amax` = `0x00000000` on that pair, each reversing when the operands reverse, so each spelling returns a fixed *position* and neither implements the ordering. D-2's three grounds are about NaN, so nothing in the decision moves. The gap statement was doubly stale: the 2026-08-01 record carries `softmax_row_with_a_nan_score` and `torch_max_of_row_with_a_nan_score`, so the NaN measurement is now readable rather than re-run — and the old sentence's own claim that `grep -i nan …/results/*/record.tsv` hits `silu_inputs` and the SiLU rows is false on the current tree, where those two softmax rows are the *only* hits. The replacement points at the record rows by name rather than at a grep.
+
+**Fault-proof, run rather than asserted.** Perturbing the new fold in `the_retained_worked_example_reproduces_the_pinned_formula` from `(e₀, e₂, e₁, e₃)` to the strict left order made it fail at the named assertion — `crates/tiler-reference/src/softmax/tests.rs:424`, `left: 1069574487` (`0x3fc06957`) against `right: 1069574488` (`0x3fc06958`) — and the file was restored and re-run green. So the executable attribution can say no.
+
+**Measurement boundary, carried at every corrected site.** The single-constant result covers all five widths (20,000 rows each, every element); the *order* attribution is enumerated only at width four, where 19,895 of 20,000 constants are reachable under some strict left fold or the balanced tree. The enumeration is not every legal grouping, so that count is a lower bound; widths eight and eighteen are not enumerable and stay open.
+
+**Commands.** `cargo fmt --check -p tiler-ir -p tiler-reference`; `cargo check --workspace`; `cargo clippy -p tiler-ir --all-targets -- -D warnings` and the same for `tiler-reference`; `cargo nextest run -p tiler-ir -p tiler-reference` (982 passed); `cargo test --workspace --doc`; `cargo nextest run --workspace` (2501 passed, 7 skipped — unchanged from the base gate, since the correction adds assertions to an existing test rather than a test).
