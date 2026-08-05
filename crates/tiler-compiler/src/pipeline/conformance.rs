@@ -37,6 +37,9 @@ use tiler_ir::semantic::{
     ValueTypeDefinitionKey, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
+use tiler_reference::{
+    FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
+};
 
 /// The shape-inference behaviour one externally registered operation declares.
 #[derive(Clone, Copy)]
@@ -986,6 +989,199 @@ fn governed_lowerings_never_charge_the_exhaustive_proof_budget() {
         record.rule().key().as_str() == "kernel.index-region-refinement.v1"
             && record.event().disposition() != ExplainDisposition::Admitted
     }));
+}
+
+/// `silu(x)` over one declared input, at the requested shape.
+fn activation_program(shape: Shape) -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), shape)
+        .unwrap();
+    let activated = tiler_ir::semantic::F32Silu::apply(&mut builder, input).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), activated)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// Composes the governed registry with one family's capability omitted.
+fn registry_without(omitted: &OpKey) -> CompilerCapabilitySnapshot {
+    let scalars = FrozenScalarRegistry::standard().unwrap();
+    let mut builder = LoweringCapabilityRegistryBuilder::new(
+        scalars.semantic_authority().clone(),
+        scalars.clone(),
+    )
+    .unwrap();
+    for capability in crate::governed::governed_index_access_capabilities().unwrap() {
+        if capability.operation() == omitted {
+            continue;
+        }
+        capability.register(&mut builder).unwrap();
+    }
+    CompilerCapabilitySnapshot::new(builder.freeze(), scalars)
+}
+
+/// The activation compiles, and its kernel agrees with the reference bit for bit.
+///
+/// **This is the closing evidence that the projection is the composition and not
+/// a plausible chain.** The boundary states `tiler::silu-f32@1`'s per-point body
+/// once, into the physical expression vocabulary; `KirMachine` reads only the
+/// structured kernel, resolving nothing from the semantic graph, the request, or
+/// the schedule; and the expected values come from `tiler-reference`'s own
+/// evaluation of the same semantic program. A reordered composition, a
+/// reciprocal-and-multiply spelling, or a divisor built as `e + 1.0` would each
+/// have to survive a bit comparison against the pinned reference, and the
+/// `-88.73` band below is where the first two stop doing so.
+///
+/// The corpus is the activation's own boundary corpus rather than a sample: both
+/// zeros, both infinities, the one-ULP disagreement point at `-88.0`, the last
+/// normal result at `-88.7228`, and the first exactly `-0.0` at `-88.73`. It runs
+/// in rows of four because the governed profile declares a four-thread grid axis
+/// and a pointwise region launches one invocation per element, so a wider row
+/// would be refused for a reason this test does not model.
+#[test]
+fn the_activation_compiles_and_matches_the_reference_bit_for_bit() {
+    let rows: [[f32; 4]; 3] = [
+        [0.0, -0.0, 1.0, -1.0],
+        [f32::INFINITY, f32::NEG_INFINITY, -88.0, -88.722_8],
+        [-88.73, 2.0, -2.0, 1.0e-30],
+    ];
+    let shape = Shape::from_dims([4]);
+    let program = activation_program(shape.clone());
+    let product = compile(CompilationRequest::governed(&program)).unwrap();
+    // One occurrence covered by one region, so the only retained plan shape is
+    // the whole-program fused one.
+    let fused = alternative(&product, ProgramAlternativeKind::Fused);
+    let key = InputKey::new("input").unwrap();
+    let evaluator = ReferenceEvaluator::standard().unwrap();
+
+    let mut results = Vec::new();
+    for values in rows {
+        let actual = interpret_fused(&fused.kernels[0], &values);
+        let tensor = Tensor::dense(
+            F32::resolved_type(),
+            shape.clone(),
+            values
+                .iter()
+                .map(|value| {
+                    ReferenceElement::from_float_bits(
+                        value.to_bits().to_be_bytes(),
+                        FloatBitOrder::MostSignificantByteFirst,
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap();
+        let expected = evaluator
+            .evaluate(&program, &[InputBinding::new(&key, &tensor)])
+            .unwrap();
+        let TensorPayloadView::Dense(elements) = expected[0].payload() else {
+            panic!("the activation's reference result is a dense f32 tensor")
+        };
+        assert_eq!(
+            actual
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            elements
+                .iter()
+                .map(|element| u32::from_be_bytes(<[u8; 4]>::try_from(element.as_bytes()).unwrap()))
+                .collect::<Vec<_>>(),
+            "row {values:?}",
+        );
+        results.push(actual);
+    }
+
+    // Three values are asserted against their exact bit patterns as well as
+    // against the reference, because each is a point a *wrong* composition can
+    // still reproduce elsewhere. `silu(-0.0)` is `-0.0` only if the negation is
+    // an exact sign flip; `silu(-inf)` is a NaN only if the result is a division
+    // rather than a multiply by a reciprocal; and the `-88.73` band's `-0.0`
+    // comes from a finite negative divided by an overflowed exponential, which a
+    // reciprocal-and-multiply spelling would reach as `-0.0 * inf` — a NaN.
+    assert_eq!(results[0][1].to_bits(), 0x8000_0000);
+    assert!(results[1][1].is_nan());
+    assert_eq!(results[2][0].to_bits(), 0x8000_0000);
+}
+
+/// A recognized family with no installed capability refuses by name.
+///
+/// The perturbation is one omitted registration and nothing else: the same
+/// program, the same request, the same target. Recognition still admits the
+/// activation — a program the boundary refused would report `operation-set`
+/// instead — and lowering resolution then fails closed against the exact
+/// occurrence, which is the disposition an absent capability owes.
+#[test]
+fn omitting_the_activation_capability_refuses_the_recognized_occurrence() {
+    let program = activation_program(Shape::from_dims([4]));
+    let mut request = CompilationRequest::governed(&program);
+    request.capabilities = registry_without(&tiler_ir::semantic::silu_f32_op());
+    let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
+        panic!("a capability refusal retains its explain trace");
+    };
+    assert_eq!(
+        *source,
+        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+            phase: "lowering",
+            rule: "missing-capability",
+        })
+    );
+    // Deferred rather than disproved: the authority was never extended to this
+    // occurrence, which is a different finding from two extensions contradicting
+    // each other.
+    assert!(explain.records().iter().any(|record| {
+        record.rule().key().as_str() == "capability.index-access-resolution.v1"
+            && record.event().disposition() == ExplainDisposition::DeferredUnsupported
+    }));
+}
+
+/// A profile that declares no elementary realization refuses the activation.
+///
+/// **The perturbed profile differs from the governed one in its key alone**, so
+/// every capability, numerical, dispatch, and synchronization fact it declares is
+/// identical and the only thing it has not declared is that it realizes
+/// `tiler::silu-f32@1`'s subordinate exponential. That is what makes the refusal
+/// attributable to the accuracy obligation rather than to a weaker profile.
+///
+/// The pair is completed by the arithmetic control below: the same perturbed
+/// profile compiles a program with no elementary family, so the refusal is the
+/// contract's and not the profile's.
+#[test]
+fn a_profile_declaring_no_elementary_realization_refuses_the_activation() {
+    let unattested = crate::request::TargetProfile::governed_with_key_for_test("acme.gpu.v1");
+
+    let activation = activation_program(Shape::from_dims([4]));
+    let mut request = CompilationRequest::governed(&activation);
+    request.target_profiles = vec![unattested.clone()];
+    let product = compile(request).unwrap();
+    assert_eq!(
+        product.targets[0].failure(),
+        Some(&CompileError::UnsupportedCapability(
+            RequestError::UnrealizedElementaryAccuracy {
+                operation: tiler_ir::semantic::silu_f32_op(),
+                target_profile: unattested.profile_key().clone(),
+                reason: "accuracy.elementary.no-installed-realization",
+            }
+        )),
+    );
+
+    // The control: the same profile, a program whose every operation's result is
+    // fixed by IEEE-754 alone, and no accuracy obligation to place on it.
+    let arithmetic = governed_program(Shape::from_dims([2, 2]), &[Axis::new(1)], false);
+    let mut request = CompilationRequest::governed(&arithmetic);
+    request.target_profiles = vec![unattested];
+    let product = compile(request).unwrap();
+    assert!(
+        product.targets[0].compiled().is_some(),
+        "the perturbed profile refuses only the elementary obligation",
+    );
+
+    // And the governed profile, which does declare the realization, compiles the
+    // activation — so the refusal above is the missing declaration rather than
+    // an obligation nothing can discharge.
+    let product = compile(CompilationRequest::governed(&activation)).unwrap();
+    assert!(product.targets[0].compiled().is_some());
 }
 
 /// An alternate logical realization cannot certify itself as multiply.

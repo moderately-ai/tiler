@@ -53,8 +53,8 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder, StrictSerialF32Sum,
+    F32, F32Add, F32Constant, F32Multiply, F32Reindex, F32Silu, InputKey, OutputKey, ReindexForm,
+    SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -183,15 +183,17 @@ fn prologue_less_fold() -> SemanticProgram {
     builder.build().unwrap()
 }
 
-/// [`composed_region`] with one occurrence's operation set perturbed.
+/// [`composed_region`] with the multiply replaced by the activation.
 ///
-/// The multiply becomes `tiler::silu-f32@1`, and nothing else changes: same
-/// declared inputs at the same domain, same add, same fold, same output. The
-/// activation is registered semantics *and* a registered index-access lowering
-/// capability, so what refuses it is the region vocabulary — no
-/// `PointwiseF32Node` spells a sigmoid-weighted linear unit — rather than an
-/// unknown operation.
-fn composed_region_with_an_unspellable_occurrence() -> SemanticProgram {
+/// `sum(silu(a) + c, axis 1)`: three occurrences, two declared inputs, the same
+/// domain, the same fold, the same output. It is the composed program's
+/// *elementary* neighbour, and it compiles — the activation's per-point body is
+/// projected into the expression vocabulary by the one authority that states it,
+/// so a registered family with no node of its own still reaches a region.
+///
+/// The shape is deliberately preserved from [`composed_region`]: the activation
+/// is elementwise, so nothing but the operation set differs between the two.
+fn composed_region_with_an_activation() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
         .input::<F32>(InputKey::new("a").unwrap(), domain())
@@ -201,6 +203,39 @@ fn composed_region_with_an_unspellable_occurrence() -> SemanticProgram {
         .unwrap();
     let activated = F32Silu::apply(&mut builder, a).unwrap();
     let biased = F32Add::apply(&mut builder, activated, c).unwrap();
+    let sum = StrictSerialF32Sum::apply(&mut builder, biased, [Axis::new(1)]).unwrap();
+    builder.output(OutputKey::new("out").unwrap(), sum).unwrap();
+    builder.build().unwrap()
+}
+
+/// [`composed_region_with_an_activation`] with the activation made structural.
+///
+/// `sum(reverse(a) + c, axis 1)`: the activation becomes `tiler::reindex-f32@1`
+/// over an axis reversal, which preserves the shape, so the two programs differ
+/// in exactly one occurrence's operation and in nothing else. The reindex is
+/// registered semantics *and* a registered index-access lowering capability, so
+/// what refuses it is the region vocabulary — `LogicalAccess` has no reindex map
+/// — rather than an unknown operation.
+///
+/// **The pair is what makes the rule attributable.** Both perturbed occurrences
+/// are registered unary families with registered lowering capabilities; one
+/// compiles and one refuses, so `operation-set` reads which vocabulary is
+/// missing rather than the family's arity or its registration.
+fn composed_region_with_an_unspellable_occurrence() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), domain())
+        .unwrap();
+    let c = builder
+        .input::<F32>(InputKey::new("c").unwrap(), domain())
+        .unwrap();
+    let reversed = F32Reindex::apply(
+        &mut builder,
+        &ReindexForm::reverse_axis(Axis::new(1)).expect("an axis reversal is an admitted form"),
+        a,
+    )
+    .unwrap();
+    let biased = F32Add::apply(&mut builder, reversed, c).unwrap();
     let sum = StrictSerialF32Sum::apply(&mut builder, biased, [Axis::new(1)]).unwrap();
     builder.output(OutputKey::new("out").unwrap(), sum).unwrap();
     builder.build().unwrap()
@@ -323,19 +358,43 @@ fn a_reduction_over_a_declared_input_refuses_under_the_prologue_rule() {
 
 /// Perturbing one occurrence's operation set fires the rule that names it.
 ///
-/// The perturbed program differs from [`composed_region`] in exactly one
-/// occurrence, and that occurrence is the only reason it refuses. The rule is
-/// `operation-set` — the property that was not recognized — and the refusal
-/// precedes any target-qualified trace, which `compile_under` asserts.
+/// The perturbed program differs from [`composed_region_with_an_activation`] in
+/// exactly one occurrence, and that occurrence is the only reason it refuses.
+/// The rule is `operation-set` — the property that was not recognized — and the
+/// refusal precedes any target-qualified trace, which `compile_under` asserts.
 ///
-/// This is the boundary the ticket draws: recognition generalized over the
-/// expression vocabulary, and admission did not become silent.
+/// **Both halves run under every contract, and the pair is the assertion.** Two
+/// registered unary families with registered index-access lowering capabilities
+/// sit in the same position of the same program; the one whose per-point body
+/// the expression vocabulary can express compiles, and the one whose *access
+/// relation* it cannot express refuses. Without the accepted half this would be
+/// consistent with the boundary refusing every unary family, which is what it
+/// used to do.
 #[test]
 fn perturbing_one_occurrence_out_of_the_vocabulary_refuses_by_name() {
+    let accepted = composed_region_with_an_activation();
     let perturbed = composed_region_with_an_unspellable_occurrence();
+    assert_eq!(accepted.operation_count(), 3);
     assert_eq!(perturbed.operation_count(), 3);
 
     for contract in CONTRACTS {
+        // The activation's body carries a multiply and an add inside the same
+        // region as the fold, so it joins the two mixed bodies this file already
+        // declines under the contraction-permitting contract — and it declines
+        // as `NoFeasiblePlan`, *after* recognition admitted it, which is itself
+        // the evidence that recognition admitted it. The refusal below is a
+        // recognition refusal under every contract, so the pair still reads the
+        // missing vocabulary on this row rather than losing its accepted half.
+        assert_eq!(
+            compile_under(&accepted, contract),
+            if contract == CONTRACTION_PERMITTED {
+                Err(CompileFailureClass::NoFeasiblePlan)
+            } else {
+                Ok(())
+            },
+            "{contract:?} did not resolve the elementary neighbour as expected, so \
+             the refusal below would not be evidence about the missing vocabulary",
+        );
         assert_eq!(
             compile_under(&perturbed, contract),
             Err(CompileFailureClass::UnsupportedCapability {

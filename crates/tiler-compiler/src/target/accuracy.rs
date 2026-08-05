@@ -1,6 +1,6 @@
 #![allow(
     dead_code,
-    reason = "the authority is complete and its only consumer today is its own conformance tests: reaching it from the compile path needs a whole-program recognizer that admits an elementary operation, which `reach-a-verified-kernel-through-the-structural-families` owns; wiring it to an unreachable call site would assert a routing this build does not perform"
+    reason = "the authority is now on the compile path — `request::require_elementary_accuracy` calls `assess_program_elementary_accuracy` per target, and the admitted `tiler::silu-f32@1` recognizer reaches it. What remains unconstructed is the *structured* reporting either outcome carries: an admission's refinement basis and per-half evidence discharge, and a refusal's typed reason and declaring-profile provenance. The compile path consumes only the refusal's stable diagnostic code, because no public surface yet carries the richer record — and adding one belongs with the `TargetProfileBuilder` declaration that would let a caller-built profile state an elementary realization at all"
 )]
 
 //! Which elementary-function accuracy contracts a target realization refines.
@@ -718,6 +718,105 @@ pub(crate) fn assess_elementary_accuracy(
             reason: ElementaryRefusalReason::NoInstalledRealization,
         }
     })))
+}
+
+/// Returns the accuracy contract one semantic family requires of a realization.
+///
+/// **The requirement side of [`installed_elementary_realizations`], and the two
+/// are one table read in two directions.** A family with a row here places a hard
+/// accuracy obligation on any target that compiles it; a family with no row
+/// places none, which is the correct answer for every operation whose complete
+/// result is fixed by IEEE-754 alone. Adding a row is therefore a positive claim
+/// that the family's result set is *not* determined by the arithmetic, and
+/// `every_installed_realization_answers_a_required_contract` is what keeps the
+/// two directions paired.
+///
+/// The contracts are read from `tiler-ir`'s own registered definitions rather
+/// than restated: `silu_f32_exponential_accuracy_contract` and its siblings are
+/// the same constructors the semantic registration stores in each family's
+/// definition facts, so this table selects a contract and never authors one.
+#[must_use]
+pub(crate) fn required_elementary_accuracy(operation: &OpKey) -> Option<AccuracyContract> {
+    if operation == &silu_f32_op() {
+        Some(tiler_ir::semantic::silu_f32_exponential_accuracy_contract())
+    } else if operation == &rms_norm_f32_op() {
+        Some(tiler_ir::semantic::rms_norm_f32_rsqrt_accuracy_contract())
+    } else if operation == &softmax_f32_op() {
+        Some(tiler_ir::semantic::softmax_f32_exponential_accuracy_contract())
+    } else {
+        None
+    }
+}
+
+/// Returns the elementary realizations one target profile declares.
+///
+/// **This build declares them for exactly one profile, and the test is that
+/// profile's own canonical declaration bytes rather than its key.** Every row of
+/// [`installed_elementary_realizations`] is attributed to
+/// [`super::honourability::governed_profile_source`], which is the governed
+/// profile's own fact source. A profile that is not byte-identically that
+/// profile has declared nothing about an elementary function, and reading this
+/// build's Metal rows onto it would attribute a quoted specification guarantee
+/// and a measured corpus to a declaration that never made either. Comparing
+/// canonical descriptors rather than profile keys is what makes that unforgeable:
+/// a key is a caller-chosen string, and the descriptor is the complete set of
+/// facts the profile declares.
+///
+/// The consequence is deliberate and fails closed: a caller-built profile cannot
+/// compile a program containing an elementary family, because it has no way to
+/// say that it realizes one. Giving it one is an addition to the public
+/// `TargetProfileBuilder` boundary rather than a widening of this function.
+fn declared_elementary_realizations(target: &super::TargetProfile) -> Vec<ElementaryRealization> {
+    if target.canonical_descriptor() == super::TargetProfile::governed().canonical_descriptor() {
+        installed_elementary_realizations()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Requires every elementary accuracy contract `operations` carries to be
+/// provably refined by a realization `target` declares.
+///
+/// The obligation is the *operation's*, not the region's: a program containing
+/// one `tiler::silu-f32@1` occurrence and a program containing a hundred owe the
+/// same contract, so the requirement set is deduplicated by operation and each
+/// distinct contract is assessed once.
+///
+/// Nothing here is a cost. A target with no realization refining a required
+/// contract is refused with the operation, the declaring profile, and the
+/// refusing reason named — ADR 0043's hard feasibility — and never admitted at a
+/// higher estimated cost or under a narrowed contract.
+///
+/// # Errors
+///
+/// Returns the first [`ElementaryAccuracyRefusal`] in the operations' own order,
+/// so the reported cause is a function of the program rather than of iteration
+/// order over the installed set.
+pub(crate) fn assess_program_elementary_accuracy<'a>(
+    operations: impl IntoIterator<Item = &'a OpKey>,
+    target: &super::TargetProfile,
+) -> Result<(), Box<ElementaryAccuracyRefusal>> {
+    let mut required: Vec<AccuracyContract> = Vec::new();
+    for operation in operations {
+        let Some(contract) = required_elementary_accuracy(operation) else {
+            continue;
+        };
+        if !required
+            .iter()
+            .any(|held| held.operation() == contract.operation())
+        {
+            required.push(contract);
+        }
+    }
+    if required.is_empty() {
+        return Ok(());
+    }
+    let installed = declared_elementary_realizations(target);
+    let registry = installed_implication_registry();
+    for contract in &required {
+        assess_elementary_accuracy(contract, &installed, &registry)?;
+    }
+    Ok(())
 }
 
 /// Returns the elementary realizations this build installs.
