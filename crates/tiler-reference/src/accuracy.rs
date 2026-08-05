@@ -80,14 +80,52 @@ const MAX_SERIES_TERMS: u32 = 512;
 /// outward roundings in the enclosure it returns.
 const REDUCED_ARGUMENT_BITS: u32 = 8;
 
-/// Maximum halvings the argument reduction may apply.
+/// Maximum magnitude, in bits, of the result one enclosure will compute.
 ///
-/// Stated as the reduction depth plus the greatest argument binade the enclosure
-/// admits, so that changing [`REDUCED_ARGUMENT_BITS`] moves the work spent per
-/// argument and never which arguments are admitted: `b + 1 + k > 23 + k` is
-/// `b > 22` at every depth, and `an_over_large_argument_is_refused` watches the
-/// refusal at a binade well past it.
-const MAX_ARGUMENT_HALVINGS: u32 = 23 + REDUCED_ARGUMENT_BITS;
+/// The reduction's halving count is the loop trip count, and bounding *it* was
+/// bounding the wrong quantity: `exp(x)` is about `2^(x * log2 e)`, so the
+/// squaring chain's last operands carry about `x * log2 e` bits of numerator, and
+/// every [`ExactRational`] operation normalizes through a greatest common divisor
+/// quadratic in that width. A halving bound admitted arguments whose *results*
+/// were millions of bits wide — `2^22` needs six million and did not finish in
+/// nine minutes — so the module admitted a region it could not cost. This bounds
+/// the width instead, which is the quantity the cost is actually in.
+///
+/// The budget is stated on the result rather than measured to a knee because the
+/// question it answers is which references are worth producing. Every dtype this
+/// crate brackets sits at or inside binary64, whose range `[2^-1074, 2^1024]`
+/// `exp` reaches at `|x| <= 745`, or 1,075 bits; twice that admits every such
+/// reference with room while excluding arguments whose exponential no supported
+/// format can hold — a reference that decides nothing about any candidate. A
+/// wider format (binary128 reaches `2^16384`) would raise this deliberately, with
+/// its own cost measurement, rather than arrive here by default.
+///
+/// What the budget costs is bounded and small, and the excluded region is where
+/// the curve turns. Measured on an M3 Pro under light background load at
+/// [`EnclosurePrecision::binary32_corpus`], one process, against the greatest
+/// argument the crate's own oracle can present — `|x| = 104`, which
+/// [`crate::certified_exp_f32`]'s guards cap it at, and 0.93 ms there — the
+/// greatest *admitted* argument costs 1.47× and the binary64 floor above costs
+/// 1.23×. Past the bound each doubling of `|x|` roughly quadruples the cost, as a
+/// quadratic normalization over a linearly growing width should: `2^12` costs
+/// 2.8×, `2^13` 7.0×, `2^14` 19.9×, `2^16` 247× (229 ms) and `2^18` 3,830×
+/// (3.55 s). The rows past the bound were taken with this constant temporarily
+/// widened, since they are refusals now; a refusal itself costs about 40 ns.
+///
+/// The absolute figures carry that host's load and are not a portable guarantee.
+/// What the choice rests on is the shape — a bound placed before the quadratic
+/// region rather than inside it — and the ratios, which were taken in one process
+/// so host load reached every row alike.
+const MAX_RESULT_MAGNITUDE_BITS: u32 = 2048;
+
+/// The greatest argument magnitude [`MAX_RESULT_MAGNITUDE_BITS`] admits.
+///
+/// `floor(MAX_RESULT_MAGNITUDE_BITS * ln 2)`, the largest integer whose
+/// exponential fits the budget. The two constants must move together, and
+/// `the_argument_bound_is_the_result_budget_in_argument_units` checks the tie in
+/// exact rational arithmetic against a bracketing pair for `log2 e`, so widening
+/// one alone fails rather than quietly widening the admitted region.
+const MAX_ARGUMENT_MAGNITUDE: i128 = 1419;
 
 /// The width of the binary grid an enclosure rounds outward onto.
 ///
@@ -134,7 +172,7 @@ impl EnclosurePrecision {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum EnclosureError {
-    /// The argument reduction would need more halvings than the governed bound.
+    /// The argument's exponential would exceed the governed result magnitude.
     ArgumentTooLarge {
         /// The rejected argument.
         argument: ExactRational,
@@ -175,7 +213,7 @@ impl fmt::Display for EnclosureError {
         match self {
             Self::ArgumentTooLarge { argument } => write!(
                 formatter,
-                "reducing {argument} would need more than {MAX_ARGUMENT_HALVINGS} halvings"
+                "exp({argument}) would exceed the governed {MAX_RESULT_MAGNITUDE_BITS}-bit result magnitude, which admits arguments up to {MAX_ARGUMENT_MAGNITUDE}"
             ),
             Self::PrecisionUnreachable { terms } => write!(
                 formatter,
@@ -366,18 +404,40 @@ impl CertifiedEnclosure {
 /// Each intermediate is widened outward onto the precision's grid, so magnitudes
 /// stay bounded and the bracket survives.
 ///
+/// # What one admitted call can cost
+///
+/// Every admitted argument has a bounded cost, and the bound is by construction
+/// rather than by extrapolation. The series accumulates at most
+/// `MAX_SERIES_TERMS` terms over `T_i = y^i / i!` with `y` at or below
+/// `2^-REDUCED_ARGUMENT_BITS`, whose magnitudes depend on neither the argument nor
+/// the precision — a coarser or finer grid moves only where the loop stops. The
+/// squaring chain then runs at most `10 + 1 + REDUCED_ARGUMENT_BITS` times, since
+/// `MAX_ARGUMENT_MAGNITUDE` caps the argument's binade at ten, over endpoints
+/// whose numerators carry at most `MAX_RESULT_MAGNITUDE_BITS` plus the squaring
+/// grid's width. Each of the three is a governed constant this module records with
+/// its derivation.
+///
+/// So the only input that can enlarge one call without bound is the caller's own
+/// [`EnclosurePrecision`], which is a request for work rather than a consequence
+/// of one, and which [`EnclosureError::PrecisionUnreachable`] refuses past what
+/// the term bound can supply.
+///
 /// # Errors
 ///
-/// Returns [`EnclosureError`] when the argument needs more halvings than the
-/// governed bound, when the series cannot reach the requested precision within
-/// the term bound, or when the final reciprocal cannot be bracketed away from
-/// zero.
+/// Returns [`EnclosureError`] when the argument's exponential would exceed the
+/// governed result magnitude, when the series cannot reach the requested precision
+/// within the term bound, or when the final reciprocal cannot be bracketed away
+/// from zero.
 ///
 /// # Panics
 ///
-/// Panics only if the governed halving bound or a grid width bounded by the
-/// caller's own [`EnclosurePrecision`] leaves `i32`, which those bounds make
-/// unreachable.
+/// Panics on an [`EnclosurePrecision`] whose grid width leaves `i32`, which
+/// nothing currently prevents: `EnclosurePrecision::new` admits any `u32` and this
+/// negates the width to form an exponent. That is a fail-closed gap on the
+/// precision axis rather than the argument one; see
+/// `tickets/refuse-an-enclosure-precision-the-grid-arithmetic-cannot-express.md`.
+/// The argument's own reduction cannot panic: the governed magnitude bound is
+/// checked before the binade is read, and bounds every exponent derived from it.
 pub fn exp_enclosure(
     argument: &ExactRational,
     precision: EnclosurePrecision,
@@ -389,8 +449,23 @@ pub fn exp_enclosure(
         return Ok(CertifiedEnclosure::exact(ExactRational::one()));
     }
 
+    // Bounded before anything reads the argument's exponent, because a magnitude
+    // large enough to overflow that exponent arithmetic is exactly a magnitude
+    // this refuses: one cross-multiplied comparison is what keeps the reduction
+    // below inside `i32` as well as inside its cost budget.
+    if *argument > ExactRational::from_integer(MAX_ARGUMENT_MAGNITUDE) {
+        return Err(EnclosureError::ArgumentTooLarge {
+            argument: argument.clone(),
+        });
+    }
+
     // `argument` lies in `[2^b, 2^(b+1))`, so halving it `b + 1 + k` times puts it
-    // at or below `2^-k`. A value already that small needs none.
+    // at or below `2^-k`. A value already that small needs none. The magnitude
+    // bound caps `b` at ten, so the count is bounded by construction and needs no
+    // governed limit of its own — and changing `REDUCED_ARGUMENT_BITS` moves the
+    // work per argument without touching which arguments are admitted, which the
+    // superseded halving bound could only achieve by carrying the depth in its
+    // own definition.
     let binade = argument
         .floor_log2_abs()
         .expect("a nonzero argument has a binade");
@@ -400,11 +475,6 @@ pub fn exp_enclosure(
             + i32::try_from(REDUCED_ARGUMENT_BITS).expect("a bounded reduction depth fits i32"),
     )
     .unwrap_or(0);
-    if halvings > MAX_ARGUMENT_HALVINGS {
-        return Err(EnclosureError::ArgumentTooLarge {
-            argument: argument.clone(),
-        });
-    }
     let reduced = argument
         .scale_by_power_of_two(-i32::try_from(halvings).expect("a bounded halving count fits i32"));
 

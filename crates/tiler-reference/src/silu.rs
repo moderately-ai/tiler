@@ -32,10 +32,10 @@
 //!
 //! # The two shortcuts, and why each is exact rather than approximate
 //!
-//! [`exp_enclosure`](crate::accuracy::exp_enclosure) reduces its argument by
-//! halving and refuses beyond a governed halving bound, so it does not cover every
-//! finite binary32 argument. Two guards close that gap, and both are exact
-//! inequalities rather than tolerances:
+//! [`exp_enclosure`](crate::accuracy::exp_enclosure) bounds the magnitude of the
+//! result it will compute and refuses past it, so it does not cover every finite
+//! binary32 argument. Two guards close that gap, and both are exact inequalities
+//! rather than tolerances:
 //!
 //! - `t > 89` implies `e^t > e^88.723 > f32::MAX`, because `ln(f32::MAX)` is
 //!   `88.7228391...`; the finite-overflow rule gives `+inf`.
@@ -43,8 +43,14 @@
 //!   `2^-150` is exactly half the least positive subnormal, so round-to-nearest
 //!   gives `+0.0` — and ties-to-even would give `+0.0` at the midpoint itself.
 //!
-//! Everything in between has `|t| <= 104 < 2^7`, which the halving bound covers
-//! with room to spare.
+//! Everything in between has `|t| <= 104`, an order of magnitude inside the
+//! argument the enclosure's result-magnitude budget admits, so no argument the
+//! binary32 activation or softmax presents can reach that refusal. The claim is
+//! the boundary rather than a remark — a guard moved outward, or a budget
+//! narrowed, would turn a decidable argument into
+//! [`ReferenceOperationError::UndecidedTranscendentalReference`], which a caller
+//! cannot act on — so `every_argument_the_guards_admit_is_inside_the_enclosure_bound`
+//! watches the two representable arguments that actually reach the enclosure.
 
 use std::sync::Arc;
 
