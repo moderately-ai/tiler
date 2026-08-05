@@ -1,7 +1,7 @@
 ---
 id: sweep-the-deferred-tickets-whose-reconsideration-triggers-have-fired
 title: Sweep the deferred tickets whose reconsideration triggers have fired
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [make-adr-acceptance-visible-to-the-work-graph, re-own-or-close-the-open-questions-whose-owner-tickets-are-terminal, add-subgroup-memory-scope-when-collectives-land]
@@ -9,9 +9,6 @@ scopes: [project/tickets]
 shared_scopes: []
 paths: []
 tags: [graph-repair, planning, process]
-claimed_from: todo
-assignee: agent-deferred-sweep
-lease_expires_at: 1785893513
 ---
 ## User-visible outcome
 
