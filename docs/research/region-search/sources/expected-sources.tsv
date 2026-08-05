@@ -1,0 +1,39 @@
+#	Expected source population behind the rewrite-search formalism survey: the database optimizer
+#	lineage, the equality-saturation lineage and its tensor-graph applications, the tensor-compiler
+#	schedule-search lineage, and the phase-ordering literature. One row per preserved unit.
+#	Columns: id <TAB> classification <TAB> path <TAB> sha256
+#	classification: vendored | metadata-only | pending-acquisition
+#	path: path under this directory, or "-" when no bytes are retained here.
+#	sha256: digest over the exact retrieved byte stream, or "-" when no bytes were ever retrieved.
+#	Provenance for each id — owner, edition, retrieval URL and date, licence, verdict — is in README.md.
+#	`verify-sources.sh` enforces the row count, the per-classification counts, id uniqueness, every
+#	vendored digest, and that no file on disk escapes this manifest.
+eqsat-lmcs-7-1-10-2011	vendored	eqsat-lmcs-7-1-10-2011/equality-saturation.pdf	5bb3630c9a2a4766c5614b19148e865ee0797c693607b2cdd700b27c38df0b94
+egg-arxiv-2004.03082v3	vendored	egg-arxiv-2004.03082v3/egg.pdf	058eb744cb833c47ff4f631149e0290bc876394e090efe616469c497758933db
+egglog-arxiv-2304.04332v4	vendored	egglog-arxiv-2304.04332v4/better-together.pdf	bf26d308dc3d3840dfd36e4453c89da57b66cf25c172bef15992e4d27fded487
+egraph-circuits-arxiv-2408.17042v2	vendored	egraph-circuits-arxiv-2408.17042v2/e-graphs-as-circuits.pdf	c5fce6d0d3d8d208fd2e068aeb32d260d3312f1bb78436966c969017ae309673
+guided-eqsat-popl-2024	vendored	guided-eqsat-popl-2024/guided-equality-saturation.pdf	e1e3f161de3c3b715d49b2d4055aafc1e45c0f1b1f45dda4f7a7ce3791106c64
+sketch-guided-eqsat-arxiv-2111.13040v2	vendored	sketch-guided-eqsat-arxiv-2111.13040v2/sketch-guided-equality-saturation.pdf	8725d46dd70a819de62aeea6632d6bd0f159685eb1062f01b6485a59abd280d0
+colored-egraphs-arxiv-2305.19203v1	vendored	colored-egraphs-arxiv-2305.19203v1/colored-e-graph.pdf	e4ed555bceda9e019f84b7b0dc8f676e742740104427b6e160160f8f628af842
+selinger-sigmod-1979	metadata-only	-	d8c02d475b49fc90b9ee2b9e15a686a320b4b537272b8a5a661642db6c800d13
+volcano-icde-1993	metadata-only	-	77a4930474ee3caf2e774c72d1b842190e299fd4f492ea3577f8307972cc3f5f
+cascades-debull-18-3-1995	metadata-only	-	65ba4757f16d09e35324c5381d4b5d404b0e5051eb47be2bf89adc8aaf3712c7
+graefe-csur-1993	metadata-only	-	9db86541e068c9f590f92d4162974d9bc56e3c4babdc5aaaba3747004123ecb3
+orca-sigmod-2014	metadata-only	-	c8d20dd04cef80e46038beee36d33183c9835fa8b9891725b43afa317e1b45e6
+stepp-thesis-ucsd-2011	metadata-only	-	e08524b5211de9486ab7941fb28b525030d2fa97b0082a0f87237ea80533cdec
+taso-sosp-2019	metadata-only	-	1d8aaeae26e45b3839d380be532150ba54ec19c0280f691ef79e0a20ba391dc8
+tensat-arxiv-2101.01332v2	metadata-only	-	d9f95cfc6f484aa8b26c43d92c04214adb8b8520d2c4f2439399fad3dd3b0b87
+spores-pvldb-13-11-2020	metadata-only	-	3691c6bbd31c62d614422c51599a1986f95c822ce164c4265d7624099c7289bb
+halide-autoscheduler-siggraph-2019	metadata-only	-	8f9f173617703ca05d6b77d83f1b2c49585faee2e04957f819894ebac3ec5f41
+halide-autoscheduler-siggraph-2016	metadata-only	-	6b0b0d143d2764073ffada9902d499ad939bab9a425de2d6c8aea21f7452f7f0
+ansor-arxiv-2006.06762v5	metadata-only	-	44a4d77988c6bd03276720d982cc86d620f525cfd3b8cc6a40e79fee9f4093a3
+tvm-arxiv-1802.04799v3	metadata-only	-	6032d5a54db0ec552168a5f5295a954edea6a24d91ae03bed1e0da0d858c9fa9
+click-cooper-toplas-1995	metadata-only	-	de3650937cb42de5ae40dbed362f4ce69e5813a5116ee447ad50ad8c9a1d86c1
+whitfield-soffa-toplas-1997	metadata-only	-	4021ada2dbe830e67318440b6787b5b20c82b796203a40ea6a282dd3503924c2
+touati-barthou-cf-2006	metadata-only	-	8756e64618a9880d4fec7187d83cb0279724024ac7a13ce3fa503878287793e0
+sparse-extraction-oopsla-2024	pending-acquisition	-	-
+columbia-optimizer-thesis-1998	pending-acquisition	-	-
+conditional-eqsat-successor-unlocated	pending-acquisition	-	-
+denali-pldi-2002	pending-acquisition	-	-
+metaflow-mlsys-2019	pending-acquisition	-	-
+elevate-icfp-2020	pending-acquisition	-	-
