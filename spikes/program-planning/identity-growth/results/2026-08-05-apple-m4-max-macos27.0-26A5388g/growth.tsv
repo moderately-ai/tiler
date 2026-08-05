@@ -1,0 +1,46 @@
+requested	operations	coverage_records	stages	alternatives	graph_bytes	program_bytes	widest_alternative_bytes	coverage_bytes	mean_record_bytes	bytes_per_op_squared	compile_ms
+2	2	2	1	1	417	8546	8546	6760	3380.0	2136.500	1
+3	3	3	1	1	551	12866	12866	10851	3617.0	1429.556	1
+4	4	4	1	1	685	17454	17454	15210	3802.5	1090.875	1
+5	5	5	1	1	819	22310	22310	19837	3967.4	892.400	2
+6	6	6	1	1	953	27434	27434	24732	4122.0	762.056	4
+7	7	7	1	1	1087	32826	32826	29895	4270.7	669.918	7
+8	8	8	1	1	1221	38486	38486	35326	4415.8	601.344	16
+
+# measured points: 7
+#
+# structural decomposition (the mechanism, not just the exponent):
+#   operations	graph_bytes	mean_record_bytes	record_minus_graph
+#   2	417	3380.0	2963.0
+#   3	551	3617.0	3066.0
+#   4	685	3802.5	3117.5
+#   5	819	3967.4	3148.4
+#   6	953	4122.0	3169.0
+#   7	1087	4270.7	3183.7
+#   8	1221	4415.8	3194.8
+#
+# consecutive growth (each step adds one operation):
+#   ops_from -> ops_to	ops_ratio	program_bytes_ratio	local_exponent
+#   2 -> 3	1.500	1.505	1.0090
+#   3 -> 4	1.333	1.357	1.0601
+#   4 -> 5	1.250	1.278	1.1000
+#   5 -> 6	1.200	1.230	1.1340
+#   6 -> 7	1.167	1.197	1.1640
+#   7 -> 8	1.143	1.172	1.1913
+#
+# log-log least-squares exponent over all 7 points: 1.0863
+# READ THAT WITH THE FIT BELOW, NOT INSTEAD OF IT. An exponent near 1 does not refute Theta(n^2) here; it reports that the linear term still dominates everywhere the governed budget lets a program reach.
+#
+# MAX_PROGRAM_IDENTITY_BYTES = 67108864 (64 MiB)
+# widest measured point: 8 operations at 38486 bytes, 0.05735% of the bound
+#
+# EXACT FIT over every measured point: program_bytes(n) = 134n^2 + 3650n + 710
+#   graph_bytes(n) = 0n^2 + 134n + 149
+#   THE MECHANISM, stated as an equality a reader can check: the program curve's quadratic coefficient (134) is the graph curve's per-operation slope (134). That is one whole graph identity embedded per coverage record, one record per operation — not a resemblance to n^2 but the product that makes it one.
+#   the quadratic term overtakes the linear term at n = 27 operations; every measured point sits below that, which is what the exponent above is reporting.
+#
+# EXTRAPOLATED refusal point: the fitted curve first exceeds the bound at n = 695 operations (67262810 bytes at n = 695, 67073034 bytes at n = 694).
+# THE FIT IS EXACT ON ITS DOMAIN AND THE DOMAIN IS 2..=8 OPERATIONS. Every coefficient above is a property of this one program family: graph identity per operation depends on operation-key length, arity, result rank, and attribute width, and the per-record remainder depends on the region, the reached definitions, and the admission provenance. A different family moves all three coefficients, so this number is the order of magnitude at which the bound becomes binding, not a refusal a caller can rely on.
+#
+# WALL CONFIRMED at 9 operations: the compilation batch refused: CompileFailure { class: BudgetExhausted, explain: "absent (refused before a target-qualified trace)" }
+# so the ladder above is the entire domain the ordinary compilation path admits, measured rather than read off a constant.
