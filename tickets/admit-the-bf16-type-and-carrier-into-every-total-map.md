@@ -1,7 +1,7 @@
 ---
 id: admit-the-bf16-type-and-carrier-into-every-total-map
 title: Admit the BF16 kernel type and storage carrier into every total map
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [spike-bf16-through-the-second-dtype-seams]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/compiler, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, kernel-ir, vocabulary]
-claimed_from: todo
-assignee: agent-bf16-carrier
-lease_expires_at: 1785943617
 ---
 ## User-visible outcome
 
