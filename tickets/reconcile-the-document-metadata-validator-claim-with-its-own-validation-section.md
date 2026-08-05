@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-document-metadata-validator-claim-with-its-own-validation-section
 title: Reconcile the document-metadata validator claim with its own validation section
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-metadata-validator
+lease_expires_at: 1785947430
 ---
 ## User-visible outcome
 

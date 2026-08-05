@@ -1,16 +1,13 @@
 ---
 id: root-cause-the-intermittent-leaky-test-in-the-workspace-gate
 title: Root-cause the intermittent leaky test in the workspace gate
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [package-a-multi-entry-bundle-from-one-expansion, prototype-inline-aot-integration-proof]
 scopes: [implementation/workspace, implementation/ir]
 shared_scopes: [project/tickets]
 tags: [testing, gate, determinism, process-lifetime]
-claimed_from: todo
-assignee: agent-leak-hunt
-lease_expires_at: 1785945916
 ---
 ## User-visible outcome
 
