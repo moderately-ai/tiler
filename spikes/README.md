@@ -47,11 +47,13 @@ Most harnesses are standard library plus `pytest`. Five are not, and each says s
 
 ### Numerical operations
 
-- [BF16 through the second-dtype seams](numerics/bf16-second-dtype/README.md) — reproducible; executable-model, exhaustive-finite, bounded-measurement; supports: [Mature tensor dtype taxonomy](../docs/research/numerics/mature-dtype-taxonomy.md), [Apple GPU numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md)
+- [BF16 through the second-dtype seams](numerics/bf16-second-dtype/README.md) — reproducible; executable-model, exhaustive-finite, bounded-measurement; supports: [Mature tensor dtype taxonomy](../docs/research/numerics/mature-dtype-taxonomy.md), [Apple GPU numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md), [BF16 computation, accumulator, and conversion](../docs/research/numerics/bf16-computation-accumulator-and-conversion.md)
+- [Metal transcendental emission probe](numerics/metal_transcendental_emission/README.md) — reproducible; bounded-measurement; supports: [Transformer non-linear, normalization, and reduction contracts](../docs/research/numerics/transformer-nonlinear-normalization-and-reductions.md)
 - [Reduction contract probe](numerics/reduction_contract/README.md) — reproducible; executable-model, exhaustive-finite; supports: [Reduction semantics and legality](../docs/research/numerics/reduction-semantics-and-legality.md)
 - [Region accuracy observation probe](numerics/region_accuracy/README.md) — reproducible; bounded-measurement; supports: [Region accuracy contracts and analyzable error budgets](../docs/research/numerics/region-accuracy-contract.md)
 - [Qwen3-0.6B-Base candidate quantization profile probe](numerics/qwen3-weight-quantization-profiles/README.md) — reproducible; bounded-measurement; supports: [First quantized language-model profile](../docs/research/numerics/first-quantized-lm-profile.md)
 - [Sound accuracy probe](numerics/sound_accuracy/README.md) — reproducible; executable-model, bounded-measurement; supports: [Sound region-accuracy analyzer integration spike](../docs/research/numerics/sound-region-analyzer-spike.md), [Region accuracy contracts and analyzable error budgets](../docs/research/numerics/region-accuracy-contract.md)
+- [Transformer reference-semantics probe](numerics/transformer_reference_semantics/README.md) — reproducible; bounded-measurement; supports: [Transformer non-linear, normalization, and reduction contracts](../docs/research/numerics/transformer-nonlinear-normalization-and-reductions.md)
 
 ### Physical planning and lowering
 
@@ -70,7 +72,7 @@ Most harnesses are standard library plus `pytest`. Five are not, and each says s
 
 ### Artifacts, build, and toolchains
 
-- [Apple Metal target compatibility and numerical spikes](apple-targets/README.md) — reproducible; bounded-measurement; supports: [Apple Metal artifact compatibility](../docs/research/apple-targets/artifact-compatibility.md), [Apple GPU numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md)
+- [Apple Metal target compatibility and numerical spikes](apple-targets/README.md) — reproducible; bounded-measurement; supports: [Apple Metal artifact compatibility](../docs/research/apple-targets/artifact-compatibility.md), [Apple GPU numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md), [Authority ledger for the first macOS Metal compile profile](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)
 - [Artifact envelope spike](artifacts/README.md) — reproducible; executable-model; supports: [Target-neutral artifact and backend payload envelope](../docs/research/artifacts/target-neutral-artifact-envelope.md)
 - [Embedded-artifact cost and self-containment probes](embedding/README.md) — reproducible; bounded-measurement; supports: [Direct embedded-artifact costs across Rust crates](../docs/research/embedding/embedded-artifact-costs.md), [Self-contained byte-literal embedding under Cargo and rust-analyzer](../docs/research/embedding/self-contained-embedding.md)
 - [Expansion cache crash and race spike](cache/README.md) — reproducible; executable-model, bounded-measurement; supports: [Expansion cache crash and race protocol](../docs/research/cache/crash-and-race-protocol.md), [Bounded expansion cache collection and accounting](../docs/research/cache/bounded-collection.md), [Supported expansion cache filesystems](../docs/research/cache/supported-filesystems.md), [The expansion cache under Cargo and rust-analyzer](../docs/research/cache/build-tool-exercise.md)
@@ -82,6 +84,7 @@ Most harnesses are standard library plus `pytest`. Five are not, and each says s
 - [Placement and memory-domain model](placement/README.md) — reproducible; executable-model; supports: [Device placement and memory-domain contract](../docs/research/placement/device-placement-and-memory-domains.md)
 - [Runtime execution and validation spikes](runtime/README.md) — reproducible; executable-model, bounded-measurement; supports: [Consumer-neutral runtime execution contract](../docs/research/runtime/runtime-execution-contract.md), [Semantic validation enforcement](../docs/research/runtime/semantic-validation-enforcement.md), [Candle Metal post-wait error checking](../docs/research/runtime/candle-metal-post-wait-error-checking.md)
 - [Dynamic KV physical-layout comparison](runtime/dynamic-kv-layout/README.md) — reproducible; bounded-measurement, executable-model; supports: [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md)
+- [Inline regions dispatched on Metal hardware](runtime/inline-dispatch/README.md) — reproducible; executable-model, bounded-measurement; supports: [Consumer-neutral runtime execution contract](../docs/research/runtime/runtime-execution-contract.md)
 - [Transfer synchronization and lifetime model](transfers/README.md) — reproducible; executable-model; supports: [Transfer synchronization and resource-lifetime contract](../docs/research/transfers/transfer-synchronization-and-resource-lifetime.md)
 
 ### Documentation governance

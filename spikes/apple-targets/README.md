@@ -7,7 +7,7 @@ topics: ["apple-targets", "metal", "compatibility", "numerics", "subnormals", "r
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
-supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour"]
+supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour", "tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger"]
 entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh", "spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py", "spikes/apple-targets/contraction-pragma-runtime-probe/pragma_probe.py"]
 last_verified: "2026-08-02"
 ticket: "apple-artifact-compatibility"
