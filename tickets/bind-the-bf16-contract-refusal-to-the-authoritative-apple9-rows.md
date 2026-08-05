@@ -1,7 +1,7 @@
 ---
 id: bind-the-bf16-contract-refusal-to-the-authoritative-apple9-rows
 title: Bind the BF16 contract refusal to the authoritative Apple9 ledger rows
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [state-and-check-a-bf16-numerical-contract, declare-the-bf16-rows-on-the-authoritative-metal-profile]
@@ -9,6 +9,9 @@ scopes: [implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, bf16, numerics, target-profiles]
+claimed_from: todo
+assignee: agent-bf16-bind
+lease_expires_at: 1785949102
 ---
 ## User-visible outcome
 

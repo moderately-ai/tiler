@@ -1,7 +1,7 @@
 ---
 id: state-and-check-a-bf16-numerical-contract
 title: State and check a BF16 numerical contract
-status: review
+status: done
 priority: p1
 dependencies: [declare-the-bf16-rows-on-the-authoritative-metal-profile]
 related: [admit-bf16-into-the-schedule-and-kernel-vocabulary, design-the-bf16-computation-and-accumulator-contract]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, contracts/numerics, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, bf16, numerics, target-profiles]
-claimed_from: todo
-assignee: agent-bf16-contract
-lease_expires_at: 1785945916
 ---
 ## User-visible outcome
 
