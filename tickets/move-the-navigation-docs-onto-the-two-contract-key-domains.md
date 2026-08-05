@@ -1,7 +1,7 @@
 ---
 id: move-the-navigation-docs-onto-the-two-contract-key-domains
 title: Move the navigation docs onto the two numerical-contract key domains
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [state-and-check-a-bf16-numerical-contract]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics, bf16]
-claimed_from: todo
-assignee: agent-nav-domains
-lease_expires_at: 1785949101
 ---
 ## User-visible outcome
 
