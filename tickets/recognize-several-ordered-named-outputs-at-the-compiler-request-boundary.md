@@ -1,7 +1,7 @@
 ---
 id: recognize-several-ordered-named-outputs-at-the-compiler-request-boundary
 title: Recognize several ordered named outputs at the compiler request boundary
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [admit-ordered-multi-output-programs-at-the-compiler-request-boundary, admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, admit-elementwise-epilogues-over-a-materialized-intermediate, assemble-a-kernel-program-from-an-arbitrary-cover]
