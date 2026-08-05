@@ -1,7 +1,7 @@
 ---
 id: restore-the-cache-build-tool-exercise-against-the-current-artifact-api
 title: Restore the cache build-tool exercise against the current artifact API
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [measure-the-expansion-cache-hot-path-efficiency, exercise-the-expansion-cache-under-cargo-and-rust-analyzer]
@@ -9,6 +9,9 @@ scopes: [research/cache]
 shared_scopes: []
 paths: []
 tags: [cache, spike, maintenance]
+claimed_from: todo
+assignee: agent-cache-tool
+lease_expires_at: 1785935822
 ---
 ## What is broken
 

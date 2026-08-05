@@ -1,7 +1,7 @@
 ---
 id: retain-canonical-msl-under-a-debug-expansion-cache-entry
 title: Retain canonical MSL and tool diagnostics under a debug expansion-cache entry
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [retain-and-attribute-a-real-msl-failure-through-an-expansion]
@@ -9,6 +9,9 @@ scopes: [implementation/cache, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, cache, diagnostics]
+claimed_from: todo
+assignee: agent-debug-msl
+lease_expires_at: 1785935822
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: route-a-zero-extent-program-through-candle-metal-storage
 title: Route a zero-extent program through Candle Metal storage
-status: review
+status: done
 priority: p3
 dependencies: [prototype-candle-metal-adapter]
 related: [decide-whether-the-candle-adapter-may-synthesize-zero-extent-storage]
@@ -9,9 +9,6 @@ scopes: [implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
 tags: [candle, runtime]
-claimed_from: todo
-assignee: agent-zero-extent
-lease_expires_at: 1785934520
 ---
 ## User-visible outcome
 
