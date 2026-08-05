@@ -1,7 +1,7 @@
 ---
 id: cut-the-decoder-layer-reference-evaluation-s-suite-wall-clock
 title: Cut the decoder-layer reference evaluation's suite wall clock
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [assemble-the-decoder-layer-program, audit-the-suite-s-slowest-tests]
