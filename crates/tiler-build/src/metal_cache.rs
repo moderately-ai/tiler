@@ -3,13 +3,15 @@
 //! Everything structural — subject composition, miss-only compilation, identity
 //! agreement before publication, re-validation of every result — belongs to
 //! [`crate::payload_cache`] and is shared with every other backend. What is
-//! Metal's and stays here is exactly two statements: the governed
+//! Metal's and stays here is three statements: the governed
 //! `tiler.metal`/`metallib`/`NativeImage` payload descriptor this backend
-//! declares, and the fact-level correspondence between a carried payload's
-//! metadata and the Apple compilation that was prepared for it. The first is
-//! data and travels in a [`DeclaredPayload`]; the second is a closure, because
-//! naming *which* compilation fact disagreed is a judgement only this backend
-//! can make.
+//! declares, the fact-level correspondence between a carried payload's metadata
+//! and the Apple compilation that was prepared for it, and what a succeeding
+//! compilation retains beside its entry. The first is data and travels in a
+//! [`DeclaredPayload`]; the second is a closure, because naming *which*
+//! compilation fact disagreed is a judgement only this backend can make; the
+//! third is [`stage_retention`], because only this backend knows that a Metal
+//! compilation is two tools and which one wrote what.
 //!
 //! # Several artifact families, one envelope
 //!
@@ -36,11 +38,13 @@ use std::fmt;
 use tiler_artifact::program::{
     ArtifactCodecFailure, ArtifactExecutionPolicy, VerifiedArtifactProgram,
 };
-use tiler_cache::expansion::{ExpansionCache, SubjectRefusal};
+use tiler_cache::expansion::{DebugRetention, ExpansionCache, RetentionRefusal, SubjectRefusal};
+use tiler_metal_aot::diagnostic::CompileStage;
+use tiler_metal_aot::record::StageOutputs;
 
 use crate::MetalPayloadMismatch;
 use crate::metal_assembly::{
-    CompiledMetalPayload, MetalAssemblyError, PAYLOAD_SCHEMA, PreparedMetalPayload,
+    BACKEND, CompiledMetalPayload, MetalAssemblyError, PAYLOAD_SCHEMA, PreparedMetalPayload,
 };
 use crate::metal_payload::validate_metal_payload_metadata;
 use crate::payload_cache::{
@@ -318,6 +322,16 @@ impl<E> From<DeliveredPayloadCacheError<MetalPayloadMismatch, MetalAssemblyError
 /// subject names is the AOT driver's own prepared identity, which has no public
 /// constructor, so it cannot be minted from invented toolchain facts.
 ///
+/// # What a miss retains beside the entry
+///
+/// Each position's `metal` and `metallib` runs are retained under their own
+/// labels — see [`stage_retention`] — so a later hit can be asked what the
+/// compiler said about the object it is serving. None of it reaches the payload
+/// metadata, the payload digest, the composed subject, or the cache key: all of
+/// those are derived before either tool runs, from the prepared compilation and
+/// the pending artifact. A build whose compiler warns therefore resolves to the
+/// same entry as one whose compiler is silent.
+///
 /// # Errors
 ///
 /// Returns a typed subject, compilation, assembly, codec, or protocol failure.
@@ -372,22 +386,22 @@ pub fn accept_or_publish_delivered_metal_artifact<E>(
         &declared,
         |delivery, actual| validate_metal_payload_metadata(&expected_metadata[delivery], actual),
         || {
-            // Retains nothing, and that is a fact about the driver rather than a
-            // decision here. `tiler_metal_aot::driver::Toolchain::run_stage`
-            // keeps a stage's captured output only when the stage *fails*, in
-            // `DriverError::ToolFailure`, and drops both streams on success — so
-            // a succeeding Metal compilation has no diagnostics for this backend
-            // to state. `retain-succeeding-metal-stage-tool-output` owns making
-            // them reachable; until it lands, a retention here would be an empty
-            // section claiming a capability nothing can fill.
-            tokens
-                .into_iter()
-                .map(|(prepared, metadata, _digest)| {
-                    CompiledMetalPayload::compile_prepared(prepared, metadata)
-                        .map(CompiledMetalPayload::into_content)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map(CompiledPayloads::from)
+            // Each compilation's object and its stage output are separated here:
+            // the object is what the artifact carries and every check below
+            // compares, while the output is retained beside the published entry
+            // and reaches no identity at all.
+            let mut contents = Vec::with_capacity(tokens.len());
+            let mut outputs = Vec::with_capacity(tokens.len());
+            for (prepared, metadata, _digest) in tokens {
+                let (content, stage_outputs) =
+                    CompiledMetalPayload::compile_prepared_parts(prepared, metadata)?;
+                contents.push(content);
+                outputs.push(stage_outputs);
+            }
+            Ok(CompiledPayloads {
+                contents,
+                retained: stage_retention(&outputs),
+            })
         },
         |contents| {
             assemble(
@@ -399,4 +413,96 @@ pub fn accept_or_publish_delivered_metal_artifact<E>(
         },
     )
     .map_err(MetalCacheError::from)
+}
+
+/// Names one delivery position's stage run.
+///
+/// The backend key, the delivery position, and the stage's own tool name, in
+/// that order: the run a reader wants is "what did `metallib` say about the
+/// object my build target loads", and every part of that question is in the
+/// label. The position is included because one entry covers the whole selection
+/// — several artifact families are several compilations under one key — so a
+/// label naming only the stage would be two runs fighting over one name, which
+/// [`DebugRetention::retaining`] refuses rather than silently merges.
+fn stage_label(delivery: usize, stage: CompileStage) -> String {
+    format!("{BACKEND}.{delivery}.{}", stage.tool())
+}
+
+/// States what every stage of every position in this selection wrote.
+///
+/// **Always stated, never discovered.** This backend retains its stage output on
+/// every publication rather than consulting an environment variable or a build
+/// profile, which is the ADR 0089 root policy the retention module restates: the
+/// decision lives with the caller that has one, and this caller's decision is
+/// that a Metal compilation's own words belong beside the entry it produced. The
+/// cost is bounded by the retention's own limits and is two empty runs for a
+/// quiet compilation.
+///
+/// **A silent stage is retained as an empty run.** Both stages ran, so both are
+/// named; dropping the quiet one would leave a reader unable to tell a compiler
+/// that warned about nothing from an entry published before any of this existed,
+/// which is the state [`DebugRetention::is_empty`] already answers.
+///
+/// **The text is host-specific, which is the second reason it is not identity.**
+/// A `metal` diagnostic names the file it diagnosed, and the driver compiles from
+/// a per-process scratch directory, so two hosts compiling byte-identical source
+/// under one toolchain retain different bytes for one warning. They resolve to
+/// one entry regardless, because the key is a function of the composed subject
+/// alone; an implementation that folded this text into a subject would have given
+/// them two.
+///
+/// # Where a truncation stops being visible
+///
+/// `tiler_metal_aot::diagnostic::ToolOutput` and
+/// `tiler_cache::expansion::MAX_RETAINED_RUN_BYTES` bound one run identically, at
+/// 16 KiB. A stage that wrote more therefore arrives here already truncated and
+/// exactly at the bound, and the retention records its total as the length it was
+/// handed — so `RetainedText::is_truncated` reads false on the entry while
+/// `ToolOutput::is_truncated` read true at the run that produced it. The fact is
+/// not lost where the compilation happened; it is not carried to a later hit,
+/// because the retention API takes bytes and derives the total from them.
+/// `carry-a-producer-stated-total-into-a-retained-run` owns closing that, and
+/// doing it here instead would mean either a second bound or editing the tool's
+/// own bytes to describe them.
+///
+/// # A refusal is not a build failure
+///
+/// A retention that cannot be stated — a selection wide enough to pass the
+/// run-count limit is the reachable case — leaves the compilation entirely
+/// correct, so it is recorded as one run saying so rather than returned as an
+/// error. Failing a successful compilation over a diagnostic would make a warning
+/// a compilation input in the only way that actually matters.
+fn stage_retention(outputs: &[StageOutputs]) -> DebugRetention {
+    let mut retention = DebugRetention::none();
+    for (delivery, stage_outputs) in outputs.iter().enumerate() {
+        for stage in CompileStage::ALL {
+            match retention.retaining(
+                &stage_label(delivery, stage),
+                stage_outputs.stage(stage).as_bytes(),
+            ) {
+                Ok(extended) => retention = extended,
+                // All or nothing: a partial run set reads as a selection with
+                // fewer positions than it had, and a reader cannot tell which.
+                Err(refusal) => return elided_retention(&refusal),
+            }
+        }
+    }
+    retention
+}
+
+/// Retains one run stating why no stage output is here.
+///
+/// A positive statement rather than an absent section, because absence already
+/// means "published by a build that retained nothing" and a reader that could
+/// not tell the two apart would go looking for a compiler that never spoke.
+fn elided_retention(refusal: &RetentionRefusal) -> DebugRetention {
+    DebugRetention::none()
+        .retaining(
+            &format!("{BACKEND}.retention-elided"),
+            format!("no Metal stage output was retained: {refusal}").as_bytes(),
+        )
+        // One governed label and one run cannot exceed a bound, so this is the
+        // unreachable arm of a total function rather than a case to handle: it
+        // resolves to the same "nothing to show" a non-retaining build leaves.
+        .unwrap_or_else(|_| DebugRetention::none())
 }

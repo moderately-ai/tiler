@@ -16,6 +16,22 @@ pub enum CompileStage {
 }
 
 impl CompileStage {
+    /// Every stage one offline compilation runs, in execution order.
+    ///
+    /// A caller that names both stages — retaining what each wrote, say — reads
+    /// them from here rather than writing the pair out again, so the order and
+    /// the membership are stated once.
+    pub const ALL: [Self; 2] = {
+        // A guard, not a computation. An array literal would keep compiling with
+        // one stage missing the day a variant lands, and a caller iterating it
+        // would silently stop visiting the new stage; this match goes
+        // non-exhaustive instead, which is the same completeness the matches
+        // below rely on.
+        match Self::Metal {
+            Self::Metal | Self::Metallib => [Self::Metal, Self::Metallib],
+        }
+    };
+
     /// Returns the offline tool name for this stage.
     #[must_use]
     pub const fn tool(self) -> &'static str {
@@ -93,6 +109,12 @@ impl fmt::Display for ToolStatus {
 pub const MAX_RETAINED_OUTPUT_BYTES: usize = 16 * 1024;
 
 /// Captured tool output, retained as bytes and bounded.
+///
+/// One type for both outcomes: a stage that fails carries it in
+/// [`DriverError::ToolFailure`] and a stage that succeeds carries it in
+/// [`StageOutputs`](crate::record::StageOutputs). A second success-path capture
+/// would be a second bound to keep in step with this one, and the two would
+/// disagree the first time either moved.
 ///
 /// **Bytes, not `String`.** A compiler's diagnostics are whatever it wrote, and
 /// `String::from_utf8_lossy` at the capture site would replace invalid

@@ -20,6 +20,7 @@ use tiler_metal_aot::input::{
     ApplePlatform, CompileRequest, DeploymentMinimum, FpContract, MathMode, MetalTarget,
     MetalTargetError, MslVersion, NumericalRealization, OptimizationLevel,
 };
+use tiler_metal_aot::record::StageOutputs;
 
 use crate::metal_payload::{COMPILER_ROLE, LINKER_ROLE, SOURCE_REPRESENTATION, TOOLCHAIN};
 use crate::{MetalPayloadMismatch, validate_prepared_metal_payload};
@@ -176,6 +177,9 @@ impl<'request> PreparedMetalPayload<'request> {
 
     /// Compiles the prepared operation and binds its object to the checked metadata.
     ///
+    /// The result carries what each offline stage wrote, reachable through
+    /// [`CompiledMetalPayload::stage_outputs`].
+    ///
     /// # Errors
     ///
     /// Returns the AOT driver's typed compilation failure.
@@ -187,24 +191,48 @@ impl<'request> PreparedMetalPayload<'request> {
 
 impl CompiledMetalPayload {
     pub(crate) const fn from_content(content: PayloadContent) -> Self {
-        Self { content }
-    }
-
-    pub(crate) fn into_content(self) -> PayloadContent {
-        self.content
+        Self {
+            content,
+            // No compiler ran to produce this value: it was rebuilt from an
+            // object the cache seam resolved, and a stage that did not run in
+            // this process wrote nothing to report. That is `None`, not two
+            // empty outputs, which would claim two silent runs happened.
+            stage_outputs: None,
+        }
     }
 
     pub(crate) fn compile_prepared(
         prepared: PreparedCompilation<'_>,
         metadata: PayloadMetadata,
     ) -> Result<Self, MetalAssemblyError> {
-        let compiled = prepared.compile()?;
+        let (content, stage_outputs) = Self::compile_prepared_parts(prepared, metadata)?;
         Ok(Self {
-            content: PayloadContent {
+            content,
+            stage_outputs: Some(stage_outputs),
+        })
+    }
+
+    /// Compiles and returns the object and the stage output separately.
+    ///
+    /// The cache seam needs both halves under different obligations — the object
+    /// is validated against the declaration and published, while the output is
+    /// retained beside the entry and validated by nothing — and reaching them
+    /// through a payload it would immediately destructure would only hide which
+    /// half goes where. It is the same compilation as [`Self::compile_prepared`],
+    /// which is written in terms of it, so there is one route from a prepared
+    /// token to an object.
+    pub(crate) fn compile_prepared_parts(
+        prepared: PreparedCompilation<'_>,
+        metadata: PayloadMetadata,
+    ) -> Result<(PayloadContent, StageOutputs), MetalAssemblyError> {
+        let compiled = prepared.compile()?;
+        Ok((
+            PayloadContent {
                 metadata,
                 code: compiled.metallib,
             },
-        })
+            compiled.stage_outputs,
+        ))
     }
 }
 
@@ -212,6 +240,7 @@ impl CompiledMetalPayload {
 #[derive(Debug)]
 pub struct CompiledMetalPayload {
     content: PayloadContent,
+    stage_outputs: Option<StageOutputs>,
 }
 
 impl CompiledMetalPayload {
@@ -219,6 +248,21 @@ impl CompiledMetalPayload {
     #[must_use]
     pub const fn content(&self) -> &PayloadContent {
         &self.content
+    }
+
+    /// Returns what the offline stages wrote, when this object was compiled here.
+    ///
+    /// `Some` for a payload this process compiled, carrying one output per
+    /// stage — including the empty output of a stage that said nothing. `None`
+    /// for one rebuilt from an object the cache resolved, where no stage ran to
+    /// write anything; a reader that cannot tell those apart would report a
+    /// silent compiler for a compilation that never happened.
+    ///
+    /// Nothing here reaches the payload metadata, its digest, or the cache
+    /// subject: a warning is not a compilation input.
+    #[must_use]
+    pub const fn stage_outputs(&self) -> Option<&StageOutputs> {
+        self.stage_outputs.as_ref()
     }
 
     /// Carries this compiled payload in an artifact builder.

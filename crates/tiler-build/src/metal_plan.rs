@@ -515,6 +515,23 @@ mod tests {
     }
 
     fn counted_toolchain(directory: &Path) -> (Toolchain, PathBuf) {
+        warning_toolchain(directory, "", "")
+    }
+
+    /// A counted fake toolchain whose stages write the supplied text to standard
+    /// error and still succeed.
+    ///
+    /// A fake tool is what makes a warning deterministic: the real `metal` warns
+    /// on whatever it chooses to warn about, so a case built on real warning text
+    /// would be asserting on this host's compiler release rather than on the
+    /// retention. Empty text writes nothing at all, which is how
+    /// [`counted_toolchain`] remains this one fixture rather than a second one to
+    /// keep in step with it.
+    fn warning_toolchain(
+        directory: &Path,
+        metal_warning: &str,
+        metallib_warning: &str,
+    ) -> (Toolchain, PathBuf) {
         let counter = directory.join("compiler-invocations");
         let metal = directory.join("metal");
         let metallib = directory.join("metallib");
@@ -524,6 +541,7 @@ mod tests {
             &format!(
                 "#!/bin/sh\n\
                  if [ \"$1\" = \"--version\" ]; then echo 'Metal plan-v1'; exit 0; fi\n\
+                 printf '%s' '{metal_warning}' >&2\n\
                  printf 'metal\\n' >> '{}'\n\
                  while [ \"$#\" -gt 0 ]; do\n\
                    if [ \"$1\" = \"-o\" ]; then shift; printf AIR > \"$1\"; exit 0; fi\n\
@@ -538,6 +556,7 @@ mod tests {
             &format!(
                 "#!/bin/sh\n\
                  if [ \"$1\" = \"--version\" ]; then echo 'metallib plan-v1'; exit 0; fi\n\
+                 printf '%s' '{metallib_warning}' >&2\n\
                  printf 'metallib\\n' >> '{}'\n\
                  while [ \"$#\" -gt 0 ]; do\n\
                    if [ \"$1\" = \"-o\" ]; then shift; printf MTLBplan > \"$1\"; exit 0; fi\n\
@@ -629,6 +648,230 @@ mod tests {
                 .count(),
             2,
             "one metal and one metallib invocation prove the hit skipped compilation",
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// What the fake front end says, and what the fake linker says.
+    ///
+    /// Deliberately different sentences: a retention that named one run for both
+    /// stages, or bound them in collection order, would report one of these under
+    /// the other's label and a reader would act on the wrong tool's opinion.
+    const METAL_WARNING: &str = "warning: the front end has an opinion";
+    const METALLIB_WARNING: &str = "warning: the linker has another";
+
+    /// Whether one byte run occurs inside another.
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
+
+    /// Reads the entry a resolution carries, whichever way it resolved.
+    fn entry_of(resolution: &Resolution) -> &tiler_cache::expansion::CachedEntry {
+        match resolution {
+            Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => entry,
+            Resolution::Uncached { .. } => panic!("the fixture cache stores entries"),
+        }
+    }
+
+    /// A succeeding compilation's stage output comes back from a validated hit.
+    ///
+    /// The read is from the *hit*, not from the run that produced the text, and
+    /// the invocation counter proves the hit compiled nothing — so what is
+    /// asserted came off disk through the cache's own validation rather than out
+    /// of a compiler this call ran. Both stages are asserted by label, because
+    /// the fact worth having is which tool said what.
+    #[test]
+    fn a_succeeding_stages_output_returns_from_a_validated_cache_hit() {
+        let directory = scratch("retention-hit");
+        let cache = ExpansionCache::open(directory.join("cache"));
+        let (toolchain, counter) = warning_toolchain(&directory, METAL_WARNING, METALLIB_WARNING);
+        let program = semantic_program();
+        let declaration = declaration();
+        let compilation = declared_compilation(&declaration, &program);
+        let plan = compilation.selected().expect("one selected plan");
+
+        let published = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            std::slice::from_ref(&declaration),
+            OptimizationLevel::Default,
+        )
+        .expect("the warning compilation resolves");
+        assert!(matches!(
+            published.resolution(),
+            Resolution::Published { .. }
+        ));
+
+        let hit = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            std::slice::from_ref(&declaration),
+            OptimizationLevel::Default,
+        )
+        .expect("the stored entry resolves");
+        let Resolution::Hit { entry, .. } = hit.resolution() else {
+            panic!("the second run hits");
+        };
+        assert_eq!(
+            std::fs::read_to_string(&counter)
+                .expect("the miss wrote its counter")
+                .lines()
+                .count(),
+            2,
+            "a hit must not re-enter the compiler to acquire retained text",
+        );
+
+        let retained = entry.retained_debug();
+        assert_eq!(
+            retained.runs().len(),
+            2,
+            "one compilation is two stages, and both ran: {retained:?}",
+        );
+        let front_end = retained
+            .run("tiler.metal.0.metal")
+            .expect("the front end's run survived the round trip");
+        let linker = retained
+            .run("tiler.metal.0.metallib")
+            .expect("the linker's run survived the round trip");
+        assert_eq!(front_end.as_bytes(), METAL_WARNING.as_bytes());
+        assert_eq!(linker.as_bytes(), METALLIB_WARNING.as_bytes());
+        assert!(!front_end.is_truncated());
+        assert!(front_end.is_valid_utf8());
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// A stage that said nothing is retained as an empty run, not a missing one.
+    ///
+    /// Both stages ran, so the entry names both. An absent linker run would read
+    /// as an entry published by a build that retained nothing for it, which is a
+    /// different fact and the one [`DebugRetention::is_empty`] already answers.
+    #[test]
+    fn a_silent_stage_is_retained_as_an_empty_run() {
+        let directory = scratch("retention-silent");
+        let cache = ExpansionCache::open(directory.join("cache"));
+        let (toolchain, _counter) = warning_toolchain(&directory, METAL_WARNING, "");
+        let program = semantic_program();
+        let declaration = declaration();
+        let compilation = declared_compilation(&declaration, &program);
+        let plan = compilation.selected().expect("one selected plan");
+
+        let published = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            std::slice::from_ref(&declaration),
+            OptimizationLevel::Default,
+        )
+        .expect("the half-quiet compilation resolves");
+        let retained = entry_of(published.resolution()).retained_debug();
+
+        assert_eq!(retained.runs().len(), 2);
+        assert!(!retained.is_empty());
+        let linker = retained
+            .run("tiler.metal.0.metallib")
+            .expect("a silent stage is still a run this backend names");
+        assert!(linker.is_empty());
+        assert_eq!(linker.total_bytes(), 0);
+        assert!(
+            !retained
+                .run("tiler.metal.0.metal")
+                .expect("the front end spoke")
+                .is_empty(),
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Retaining a stage's output moves no identity and enters no envelope.
+    ///
+    /// Two compilations of one plan differing *only* in what their tools wrote to
+    /// standard error: same versions, same flags, same source. They must compose
+    /// one subject, file under one key, and produce one artifact identity, or a
+    /// host whose compiler warns would miss every entry a quiet host published.
+    /// The envelope is searched for the warning text as well, because the way
+    /// that guarantee dies is a producer folding a diagnostic into payload
+    /// metadata, where it would reach the payload digest and the artifact
+    /// identity through the canonical bytes the digest is taken over.
+    #[test]
+    fn retaining_a_stages_output_moves_no_identity() {
+        let directory = scratch("retention-identity");
+        let quiet_directory = directory.join("quiet");
+        let warned_directory = directory.join("warned");
+        std::fs::create_dir_all(&quiet_directory).expect("the quiet directory is creatable");
+        std::fs::create_dir_all(&warned_directory).expect("the warned directory is creatable");
+        let program = semantic_program();
+        let declaration = declaration();
+        let compilation = declared_compilation(&declaration, &program);
+        let plan = compilation.selected().expect("one selected plan");
+
+        let quiet_cache = ExpansionCache::open(quiet_directory.join("cache"));
+        let (quiet_toolchain, _quiet_counter) = counted_toolchain(&quiet_directory);
+        let warned_cache = ExpansionCache::open(warned_directory.join("cache"));
+        let (warned_toolchain, _warned_counter) =
+            warning_toolchain(&warned_directory, METAL_WARNING, METALLIB_WARNING);
+
+        let mut accepted = Vec::new();
+        for (cache, toolchain) in [
+            (&quiet_cache, &quiet_toolchain),
+            (&warned_cache, &warned_toolchain),
+        ] {
+            accepted.push(
+                accept_or_publish_metal_plan(
+                    cache,
+                    toolchain,
+                    &program,
+                    plan,
+                    std::slice::from_ref(&declaration),
+                    OptimizationLevel::Default,
+                )
+                .expect("both compilations resolve"),
+            );
+        }
+        let [quiet, warned] = <[_; 2]>::try_from(accepted).expect("two resolutions");
+
+        assert_eq!(
+            quiet.cache_subject().as_bytes(),
+            warned.cache_subject().as_bytes(),
+            "a warning is not a compilation input, so it cannot compose a second subject",
+        );
+        assert_eq!(
+            *entry_of(quiet.resolution()).key(),
+            *entry_of(warned.resolution()).key(),
+            "a warning that moved the key would make a warned build miss every entry",
+        );
+        assert_eq!(
+            quiet.artifact().canonical_identity().as_bytes(),
+            warned.artifact().canonical_identity().as_bytes(),
+        );
+
+        // The text is in the retention beside the entry and nowhere inside the
+        // artifact the entry carries.
+        let warned_entry = entry_of(warned.resolution());
+        assert!(
+            warned_entry
+                .retained_debug()
+                .run("tiler.metal.0.metal")
+                .is_some(),
+        );
+        assert!(
+            !contains(warned_entry.envelope_bytes(), METAL_WARNING.as_bytes()),
+            "tool output inside the envelope would reach the payload digest and the artifact \
+             identity",
+        );
+        assert!(!contains(
+            warned_entry.envelope_bytes(),
+            METALLIB_WARNING.as_bytes(),
+        ));
+        assert_eq!(
+            entry_of(quiet.resolution()).retained_debug().runs().len(),
+            2,
+            "a quiet compilation retains two empty runs rather than nothing",
         );
         let _ = std::fs::remove_dir_all(directory);
     }
