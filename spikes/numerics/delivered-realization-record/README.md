@@ -7,7 +7,7 @@ topics: ["numerics", "artifacts", "provenance", "api", "feasibility"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "exhaustive-finite"]
-supports: ["tiler.contract.artifact-abi", "tiler.contract.numerical-semantics"]
+supports: ["tiler.research.numerics.delivered-numerical-realization-record"]
 entrypoints: ["spikes/numerics/delivered-realization-record/src/main.rs"]
 last_verified: "2026-08-05"
 ticket: "redesign-the-delivered-realization-record-from-typed-evidence"
