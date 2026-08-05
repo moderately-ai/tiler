@@ -56,7 +56,7 @@ const COLUMNS: u64 = 3;
 #[must_use]
 pub fn encoded_envelope() -> Vec<u8> {
     let semantic = serial_sum_program(ROWS, COLUMNS);
-    let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+    let compilation = compile_governed(&semantic, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32)
         .expect("the governed program compiles");
     let plan = compilation.selected().expect("a selected plan alternative");
     assemble(&semantic, &compilation, plan)
@@ -157,7 +157,7 @@ fn assemble(
                 preconditions: Vec::new(),
             },
             implementation: BackendEntryRef {
-                payload,
+                payloads: vec![payload],
                 entry_key: BackendEntryKey::from_bytes(
                     stage.kernel().canonical_identity().as_bytes(),
                 )
