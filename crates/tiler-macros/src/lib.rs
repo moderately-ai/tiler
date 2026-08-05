@@ -37,8 +37,10 @@
 //!
 //! `binding` owns what `sym n;` means, `delivery` owns the artifact-family
 //! policy an expansion states, `numerics` owns the numerical contract it states,
-//! `cache_root` owns where an expansion would look for an expansion cache, and
-//! `eviction` owns when and under what bound that cache is trimmed.
+//! `cache_root` owns where an expansion would look for an expansion cache,
+//! `preflight` owns whether that root can do what the cache's publication
+//! protocol needs, and `eviction` owns when and under what bound that cache is
+//! trimmed.
 //!
 //! # What an invocation evaluates to
 //!
@@ -91,6 +93,7 @@ mod eviction;
 mod family_cfg;
 mod grammar;
 mod numerics;
+mod preflight;
 mod region;
 mod tokens;
 
@@ -308,10 +311,12 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
             contract,
             selection,
             &cache_root::RootEnvironment::from_process(),
-            // The gate is the process's, so the automatic eviction amortizes
-            // across every expansion this `rustc` or proc-macro server performs;
-            // the environment beside it is re-read per expansion, because
-            // rust-analyzer supplies one per request.
+            // Both gates are the process's, so the root probe and the automatic
+            // eviction each amortize across every expansion this `rustc` or
+            // proc-macro server performs; the eviction environment beside them
+            // is re-read per expansion, because rust-analyzer supplies one per
+            // request.
+            preflight::PreflightGate::process(),
             &eviction::EvictionSchedule::from_process(eviction::EvictionGate::process()),
             &tiler_metal_aot::driver::Toolchain::system(),
         )

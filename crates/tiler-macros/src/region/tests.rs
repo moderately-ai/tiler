@@ -1037,6 +1037,7 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
                 Some(std::ffi::OsString::from("/tiler-no-such-cache-root")),
                 None,
             ),
+            &crate::preflight::PreflightGate::new(),
             &crate::eviction::EvictionSchedule::stated(
                 crate::eviction::EvictionEnvironment::new(None),
                 &crate::eviction::EvictionGate::new(),

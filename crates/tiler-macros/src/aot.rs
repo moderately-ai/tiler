@@ -65,6 +65,13 @@
 //!   That module owns the variable, the default, the opt-out, the amortization
 //!   rule, and what becomes of the report; what this module owns is the single
 //!   `Resolution::Published` test that keeps a scan off the hit path.
+//! - **A rooted cache is probed once per process, and the probe refuses
+//!   nothing.** [`open_cache`] hands the root it just opened to
+//!   [`crate::preflight`], which reports an unsuitable filesystem on standard
+//!   error and lets the expansion continue. It runs *before* the cache is used
+//!   rather than after a publication, because the symptom it describes is a root
+//!   that never publishes; a disabled cache has no root and is skipped without
+//!   spending the process's one probe.
 //!
 //! # The one family this frontend can build, and why the check is equality
 //!
@@ -216,6 +223,7 @@ use crate::cache_root::{CacheRootDecision, RootEnvironment, RootRefusal, resolve
 use crate::delivery::{DeliveryPlan, FamilyDelivery, PlanRefusal};
 use crate::eviction::EvictionSchedule;
 use crate::numerics::StatedContract;
+use crate::preflight::{PreflightGate, report_unsuitable_root};
 
 /// The optimization level every delivering expansion compiles at.
 ///
@@ -535,6 +543,10 @@ fn rendered_target(target: MetalTarget) -> String {
 /// [`crate::cache_root`]'s own reason: a decision that reaches for the process
 /// environment cannot be exercised without one, and this crate forbids the
 /// `unsafe` a test would need to mutate it.
+/// `preflight` is the process's one root probe, supplied rather than reached for
+/// so that a test states its own: the rule is per process, and a `static` gate
+/// alone would let whichever test ran first decide whether any of the others
+/// probed at all.
 /// `eviction` is the automatic cache eviction's policy and its process's
 /// amortization, supplied for the same reason and read at the same point: the
 /// bound is resolved beside the root, so an unusable statement is reported on
@@ -552,6 +564,7 @@ pub(crate) fn deliver(
     contract: StatedContract,
     selection: ArtifactFamilySelection,
     environment: &RootEnvironment,
+    preflight: &PreflightGate,
     eviction: &EvictionSchedule<'_>,
     toolchain: &Toolchain,
 ) -> Result<Delivered, AotRefusal> {
@@ -576,7 +589,7 @@ pub(crate) fn deliver(
         })?;
     let plan = compilation.selected().ok_or(AotRefusal::NoSelectedPlan)?;
 
-    let cache = open_cache(environment)?;
+    let cache = open_cache(environment, preflight)?;
     // Resolved here rather than after the publication below, so a consumer whose
     // statement cannot be read hears about it on any delivering expansion rather
     // than only on one that misses. It decides nothing about this artifact.
@@ -741,9 +754,22 @@ fn require_buildable(
 /// compiles and still embeds its artifact — it simply shares the compiler work
 /// with nobody. `ExpansionCache::disabled` takes no root, which is what keeps
 /// that promise structural rather than remembered.
-fn open_cache(environment: &RootEnvironment) -> Result<ExpansionCache, AotRefusal> {
+///
+/// A decided root is probed here, once per process, and the probe decides
+/// nothing about this expansion: [`crate::preflight`] reports a filesystem the
+/// publication protocol cannot rely on and returns. The call sits on the
+/// `Directory` arm rather than after the `match`, because `off` has no root to
+/// probe and must not spend the process's one probe on having none.
+fn open_cache(
+    environment: &RootEnvironment,
+    preflight: &PreflightGate,
+) -> Result<ExpansionCache, AotRefusal> {
     match resolve(environment).map_err(AotRefusal::CacheRoot)? {
-        CacheRootDecision::Directory { root, .. } => Ok(ExpansionCache::open(root)),
+        CacheRootDecision::Directory { root, .. } => {
+            let cache = ExpansionCache::open(root);
+            report_unsuitable_root(preflight, &cache);
+            Ok(cache)
+        }
         CacheRootDecision::Disabled => Ok(ExpansionCache::disabled()),
     }
 }
