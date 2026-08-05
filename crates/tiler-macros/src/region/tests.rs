@@ -520,8 +520,15 @@ fn an_operand_the_body_does_not_use_stays_in_the_interface() {
 ///
 /// The reduction fixture every case below perturbs, and the whole-program shape
 /// the compiler recognizes besides a pointwise chain. Both extents are 2 because
-/// the bound declaration's measured grid-axis capacity is four threads, so a
-/// wider region would make a reachability test into a capacity test.
+/// that is the smallest shape at which the reduction is observable at all: more
+/// than one contributor, so the fold has an order, and more than one row, so the
+/// dropped axis is distinguishable from a collapse to rank zero — which is what
+/// the case below asserts.
+///
+/// It was *also* the widest the bound declaration's grid-axis row admitted when
+/// this was written. That row is now a measured 268,435,456, so the shape is no
+/// longer forced by capacity; the reason above is what keeps it, and a wider
+/// region would exercise nothing this module tests.
 fn serial_sum_region() -> RegionSyntax<At> {
     RegionSyntax {
         region: REGION,
@@ -960,10 +967,15 @@ fn the_recognized_serial_sum_shape_is_reachable_from_a_region() {
 
 /// `in x: f32[rows: 1, cols: 4]; out strict_serial_sum(x * 2.0 + 1.0, [cols])`.
 ///
-/// [`serial_sum_region`] at the one shape whose selected plan splits. Four
-/// contributors along the reduced axis is both what the governed partition
-/// divides two-by-two and the most the bound declaration's measured grid-axis
-/// capacity admits, so it is the window rather than a size chosen from a range.
+/// [`serial_sum_region`] at the smallest shape whose selected plan splits. The
+/// governed partition needs at least two partitions of at least two contributors
+/// each, so four along the reduced axis is the least that admits a split at all,
+/// and one row is the fewest that carries it.
+///
+/// Four was once the *most* the bound declaration's grid-axis row admitted as
+/// well, which made this the only such shape. That row is now a measured
+/// 268,435,456, so the lower edge is the whole reason: this is the smallest
+/// splitting shape, not the only one.
 fn splitting_serial_sum_region() -> RegionSyntax<At> {
     RegionSyntax {
         operands: vec![operand(

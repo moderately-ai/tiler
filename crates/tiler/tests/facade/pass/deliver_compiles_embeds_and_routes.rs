@@ -241,8 +241,12 @@ fn main() {
     // the same eight steps and costs a second Metal compilation on a cold cache,
     // and that is what it is here to prove — that a region a consumer *writes*
     // reaches a shape the compiler recognizes, rather than only a program a test
-    // assembled by hand. Both extents are 2 because the bound declaration's
-    // measured grid-axis capacity is four threads.
+    // assembled by hand. Both extents are 2 because that is the smallest shape
+    // whose reduction is observable — more than one contributor and more than
+    // one row — and because a bigger one would only make the cold compilation
+    // above cost more. It was the widest the bound declaration's grid-axis row
+    // admitted when this was written; that row is now a measured 268,435,456, so
+    // the shape is chosen rather than forced.
     let x: Tensor<Toy> = Tensor::new(Buffer::dense(StorageScalar::F32, vec![2, 2]), ());
     let summed = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
@@ -272,10 +276,13 @@ fn main() {
     // where the artifact is readable — `tiler-macros`'
     // `a_split_selection_packages_every_entry_in_the_one_embedded_artifact`.
     //
-    // `[rows: 1, cols: 4]` is the window rather than a taste: the governed
-    // partition splits four contributors two-by-two, and four is also the largest
-    // the bound declaration's measured grid-axis capacity admits, so wider or
-    // taller shapes are refused before any plan exists.
+    // `[rows: 1, cols: 4]` is the smallest shape whose selected plan splits
+    // rather than a taste: the governed partition needs at least two partitions
+    // of at least two contributors each, so four is the least that admits a
+    // split at all. Four was once also the most the bound declaration's
+    // grid-axis row admitted, which made wider and taller shapes refuse before
+    // any plan existed; that row is now a measured 268,435,456, so what fixes
+    // this shape is the lower edge alone.
     let x: Tensor<Toy> = Tensor::new(Buffer::dense(StorageScalar::F32, vec![1, 4]), ());
     let split = tiler::tensor! {
         in x: f32[rows: 1, cols: 4];

@@ -228,13 +228,19 @@ const ROWS: u64 = 4;
 const COLUMNS: u64 = 3;
 /// Rows of the parallel strategies' input.
 ///
-/// **One, because the widest stage has to fit the grid axis.** The
-/// authoritative profile's `GridAxisThreads` row admits four threads, and the
-/// multi-pass split's *pointwise* stage launches one invocation per element. At
-/// one row of [`PARALLEL_COLUMNS`] contributors that is four, exactly at the
-/// limit; a second row makes it eight and the whole compilation fails
-/// `target.grid-axis` before any plan composes, so there would be no strategy
-/// left to execute.
+/// **One, because the grouping-sensitive case enumerates one row's orderings.**
+/// That case walks every order-preserving grouping of a single contributor
+/// sequence, and the `const` assertion standing beside it stops the build if
+/// this value moves without the enumeration being made per row. Both operand
+/// sets are one row of [`PARALLEL_COLUMNS`] values for the same reason: a second
+/// row would need a second set and would add no grouping to observe.
+///
+/// It was one for a capacity reason that no longer holds. The authoritative
+/// profile's `GridAxisThreads` row admitted four threads, and the multi-pass
+/// split's *pointwise* stage launches one invocation per element, so one row of
+/// four contributors sat exactly at the limit and a second failed
+/// `target.grid-axis` before any plan composed. That row is now a measured
+/// 268,435,456; a wider shape composes, and nothing here wants one.
 const PARALLEL_ROWS: u64 = 1;
 /// Contributors reduced per output on the parallel strategies' input.
 ///
@@ -5490,9 +5496,14 @@ mod tests {
 
     /// Rows of every member `prototypes/serial-sum-compile` publishes.
     ///
-    /// **One, and deliberately not [`ROWS`].** The producer packages one row so
-    /// the materialized plan's pointwise stage stays inside the declared
-    /// four-thread grid guarantee; the direct path reduces four.
+    /// **One, and deliberately not [`ROWS`].** The producer packages one row —
+    /// its own `ROWS` carries why — and this crate's direct path reduces four.
+    ///
+    /// The producer used to have no choice: the authoritative profile's
+    /// `GridAxisThreads` row admitted four threads and the materialized plan's
+    /// pointwise stage launches one invocation per element. That row is now a
+    /// measured 268,435,456, so what fixes the value on both sides is the pinned
+    /// pair below rather than the target.
     ///
     /// It lives under `#[cfg(test)]`, and that is the enforcement rather than a
     /// filing decision: the envelope path may take a shape from the artifact and

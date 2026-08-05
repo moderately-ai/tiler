@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger"]
 entrypoints: ["spikes/program-planning/reduction-crossover/src/main.rs"]
-last_verified: "2026-08-02"
+last_verified: "2026-08-05"
 ticket: "calibrate-and-activate-parallel-reduction-selection"
 ---
 
@@ -17,13 +17,13 @@ ticket: "calibrate-and-activate-parallel-reduction-selection"
 
 This spike answers the question `calibrate-and-activate-parallel-reduction-selection` has to settle before a timing harness is worth building: **over which shapes does the authoritative Apple profile retain all three reduction alternatives at once?** A crossover is a shape at which the winner changes, so it needs at least two shapes on which every alternative exists and can be timed.
 
-The answer is one shape. There is no crossover to measure, and the reason is a target-profile row rather than a property of the strategies.
+**The retained answer, measured 2026-08-02, is one shape** — no crossover was measurable, and the reason was a target-profile row rather than a property of the strategies. **That row has since moved, and the domain opened**: see [What reopened this](#what-reopened-this-the-row-is-a-measurement-now) below. Everything between here and that section describes the profile as it stood on 2026-08-02 and is kept as the record of it; nothing in it is a claim about the profile today.
 
 ## What it drives
 
 For each `(rows, contributors)` in a 3x12 matrix it builds the same program shape the parallel-portfolio test uses — an elementwise multiply-add prologue feeding a sum over the trailing axis — compiles it under `NumericalContract::FLUSH_AND_REASSOCIATE_F32` against `BoundMetalCompileDeclaration::first_macos_apple9`, and records one row per shape: whether a portfolio was produced, how many alternatives it retained, which strategies those were, which one selection chose, and the refusing predicate when there was none.
 
-It is compile-only. It emits no MSL, links nothing, and dispatches nothing, because the domain question is decided entirely at compile-phase feasibility and never reaches the device. That is not a shortcut — it is the finding: the shapes a timing harness would need are refused before any kernel exists.
+It is compile-only. It emits no MSL, links nothing, and dispatches nothing, because the domain question is decided entirely at compile-phase feasibility and never reaches the device. In 2026-08-02 that was not a shortcut but the finding itself: the shapes a timing harness would have needed were refused before any kernel existed. Against the measured row it is a shortcut again, and a correct one — the harness those shapes now permit is a separate, dispatching thing that this sweep sizes rather than replaces.
 
 The three strategies are told apart by the same device-independent structure the realization work used, and by structure rather than by name: the multi-pass split is the alternative with three kernels, the single-workgroup tree is the one whose widest declared workgroup exceeds one thread, and the serial fold is the one with neither.
 
@@ -47,31 +47,34 @@ Of 36 shapes, **exactly one retains all three alternatives: `rows=1, contributor
 - **Refused by hard feasibility on the grid axis.** `event=feasibility:grid-axis:rejected:target-infeasible:threads=<required>:4`, at subject `region:region:pointwise`. The bound is 4 and the requirement is the prologue's work items, so every shape with more than four elements is refused. Wide shapes report two distinct rejections, the prologue's and the split's partial pass's.
 - **Refused by a known defect before feasibility is reached.** Contributor counts admitting no balanced exact partition — below four, and primes, observed at 5 — fail the whole batch with `InvalidCompilerOutput`. That is [`correct-the-declined-strategy-record-for-an-unsplittable-reduction`](../../../tickets/correct-the-declined-strategy-record-for-an-unsplittable-reduction.md), not a statement about the measurable domain. Two things this sweep adds to that ticket's record are noted on it.
 
-## The single point is forced by arithmetic, not by the sample
+## The single point was forced by arithmetic, not by the sample
 
-The sweep confirms a result that does not depend on which shapes were sampled. Two constraints bound the domain from opposite sides:
+Under the profile as it stood on 2026-08-02, the sweep confirmed a result that did not depend on which shapes were sampled. Two constraints bounded the domain from opposite sides:
 
-- `governed_partition` returns `None` below four contributors, so **both** parallel strategies require `contributors >= 4`. Below that the portfolio holds the serial fold alone and there is nothing to compare it against.
-- The profile's `GridAxisThreads` row is 4, and the prologue launches one invocation per element, so a plan exists only where `rows * contributors <= 4`.
+- `governed_partition` returns `None` below four contributors, so **both** parallel strategies require `contributors >= 4`. Below that the portfolio holds the serial fold alone and there is nothing to compare it against. **This half still holds.**
+- The profile's `GridAxisThreads` row was 4, and the prologue launches one invocation per element, so a plan existed only where `rows * contributors <= 4`. **This half is the one that moved.**
 
-Since `rows >= 1`, the two give `4 <= contributors <= rows * contributors <= 4`, which forces `rows = 1` and `contributors = 4`. **The domain is a single point by derivation.** Sampling more shapes cannot enlarge it.
+Since `rows >= 1`, the two gave `4 <= contributors <= rows * contributors <= 4`, which forced `rows = 1` and `contributors = 4`. **The domain was a single point by derivation**, and sampling more shapes could not have enlarged it. The derivation is not wrong; its second premise is simply no longer the profile's row.
 
-The workgroup axis does not vary independently either: the tree's participant count is `governed_partition(4)`, which is a balanced exact split into 2 partitions of 2. One shape, one workgroup width, one point.
+The workgroup axis did not vary independently either: the tree's participant count is `governed_partition(4)`, a balanced exact split into 2 partitions of 2. One shape, one workgroup width, one point.
 
-## Why no timing run followed
+## Why no timing run followed in 2026-08-02
 
-A crossover, a calibration, and a held-out prediction each need at least two points; a fit through one point is not a model and a prediction from it is not evidence. So no amount of timing precision at `1x4` could close any of the owning ticket's requirements, and the performance loop correctly stops before measuring rather than producing a number that would have to be caveated into uselessness.
+A crossover, a calibration, and a held-out prediction each need at least two points; a fit through one point is not a model and a prediction from it is not evidence. So no amount of timing precision at `1x4` could have closed any of the owning ticket's requirements, and the performance loop correctly stopped before measuring rather than producing a number that would have to be caveated into uselessness.
 
-**Inference, stated so it can be refuted.** Even the one available point has no discriminating power: at four contributors the arithmetic is a handful of operations, so any wall-clock difference between the three alternatives would be dominated by dispatch and submission overhead rather than by the reduction strategy. This is reasoning about magnitudes, not a measurement — nothing here timed anything — but it is why widening the domain, not instrumenting the point, is the work that unblocks calibration.
+**Inference, stated so it can be refuted.** Even the one available point had no discriminating power: at four contributors the arithmetic is a handful of operations, so any wall-clock difference between the three alternatives would be dominated by dispatch and submission overhead rather than by the reduction strategy. This is reasoning about magnitudes, not a measurement — nothing here timed anything — but it is why widening the domain, rather than instrumenting the point, was named as the work that unblocks calibration. That widening has now happened; the timing harness has not been written, and remains [`calibrate-and-activate-parallel-reduction-selection`](../../../tickets/calibrate-and-activate-parallel-reduction-selection.md)'s to write.
 
-## What would reopen this
+## What reopened this: the row is a measurement now
 
-The blocking row is `grid_axis_threads: 4` in `crates/tiler-build/src/metal_declaration.rs`, and its own comment records that it is **a deliberately conservative compile guarantee rather than a maximum**: the macOS 26.5 SDK's `dispatchThreads:` contract proves extent 4 is representable and establishes no upper bound at all. So the row is not a hardware limit that measurement would confirm — it is a floor awaiting an authority that states a real one.
+**Fact, 2026-08-04.** The blocking row was `grid_axis_threads: 4` in `crates/tiler-build/src/metal_declaration.rs`, which its own comment described as a deliberately conservative compile guarantee rather than a maximum — a floor awaiting an authority that stated a real one. [`establish-an-upper-bound-authority-for-the-metal-grid-axis-row`](../../../tickets/establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md) found that **no normative source can fill that row at all**: the row is consumed as a *guarantee*, so its authority has to state a floor on capability, while every available Metal source states a ceiling on the space. It is now a bounded measurement at **268,435,456**, carried by [the retained extent ladder](../../target-profiles/metal-grid-axis-extent/README.md) and recorded in the [authority ledger](../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md).
 
-Raising it needs a new normative source or a retained measurement, which is target-profile authority work in `research/target-profiles` and `implementation/build`. It is filed as [`establish-an-upper-bound-authority-for-the-metal-grid-axis-row`](../../../tickets/establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md). When that row admits a wider grid, rerun this sweep first: it reports the new domain, and only a domain with at least two points makes a timing harness worth writing.
+**Measurement, 2026-08-05 — this sweep was rerun against the moved row, and the result is not retained here.** Rerun unchanged, it reports **24 of 36 shapes retaining all three strategies (was 1), with zero grid-axis refusals (was 23)**, and every one of the 23 previously grid-axis-refused shapes is now in the domain. The remaining twelve are the contributor counts admitting no balanced exact partition; those previously failed the whole batch with `InvalidCompilerOutput` and now return a portfolio, which is [`correct-the-declined-strategy-record-for-an-unsplittable-reduction`](../../../tickets/correct-the-declined-strategy-record-for-an-unsplittable-reduction.md) (done) rather than anything the row changed. The rerun is recorded in full on the grid-axis ticket's outcome.
+
+**Why no `results/` directory accompanies that paragraph, stated so the absence is not read as an oversight.** A retained results directory is a positive measurement claim carrying its own environment, provenance, and boundary, and it belongs to the ticket that owns the measurement. The grid-axis ticket ran this rerun read-only and recorded exactly that — a new result under `spikes/program-planning/` is the calibration ticket's to retain — and this spike's own `ticket:` field already names [`calibrate-and-activate-parallel-reduction-selection`](../../../tickets/calibrate-and-activate-parallel-reduction-selection.md), whose next act is to rerun this sweep as the first step of the timing work the widened domain unblocks. Retaining a directory here under the documentation-correction ticket that wrote this paragraph would attach a measurement to a ticket that ran no harness and recorded no execution environment. **So the 2026-08-02 directory is the only retained result, and it remains the record of the superseded row rather than of the current one.**
 
 ## Boundary
 
 - One profile (`tiler.metal.macos-apple9.msl4-0.f32.v1`), one contract (`FLUSH_AND_REASSOCIATE_F32`), one program family (multiply-add prologue into a trailing-axis sum), `f32` only.
 - The result is about **which plans exist**, not about how fast any of them runs. Nothing here was dispatched, so this spike makes no performance claim of any kind.
-- The `InvalidCompilerOutput` rows are a defect's signature, not a domain boundary. If that defect is fixed, those shapes will report their real feasibility outcome, and the derivation above says the ones with more than four work items will still be refused on the grid axis.
+- The `InvalidCompilerOutput` rows are a defect's signature, not a domain boundary. That defect is now fixed and those rows report their real outcome: a portfolio holding the serial fold alone, because the contributor counts that produced them admit no balanced exact partition. The rest of that bullet's prediction — that shapes above four work items would still refuse on the grid axis — was made under the superseded row and is falsified by the 2026-08-05 rerun, which observed no grid-axis refusal at any shape.
+- Both retained result classes describe the profile of 2026-08-02. The 2026-08-05 rerun above is stated as a count, not retained, and is therefore weaker evidence than the `sweep.tsv` beside it; a reader who needs the per-shape rows against the measured row has to rerun.
