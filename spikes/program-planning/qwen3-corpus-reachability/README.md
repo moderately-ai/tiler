@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.spike.program-planning.qwen3-corpus-reachability"
+kind: "experiment"
+title: "Qwen3-0.6B-Base conformance-corpus reachability probe"
+topics: ["program-planning", "language-model", "conformance", "qwen", "numerics", "subnormals"]
+experiment_status: "reproducible"
+implementation_status: "spike-only"
+evidence_classes: ["exhaustive-finite", "bounded-measurement"]
+supports: ["tiler.research.program-planning.model-level-qualification", "tiler.research.program-planning.first-metal-lm-workload"]
+entrypoints: ["spikes/program-planning/qwen3-corpus-reachability/probe_corpus.py"]
+last_verified: "2026-08-02"
+ticket: "define-the-model-level-conformance-corpus"
+---
+
 # Qwen3-0.6B-Base conformance-corpus reachability probe
 
 **What it answers.** Three rows of [the model-level adversarial corpus](../../../docs/research/program-planning/model-level-qualification.md#the-adversarial-corpus-derived-from-refusals-that-already-exist) turn on whether the pinned checkpoint can reach a condition at all, and each would otherwise be settled by an assumption. This probe answers all three from the same verified bytes in one run, so a reader gets one environment row and one manifest instead of three probes that could have run against different files.

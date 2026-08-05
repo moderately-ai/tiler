@@ -1,9 +1,16 @@
 ---
-id: tiler.spike.target-profiles.metal-grid-axis-extent
-experiment_status: reproducible
-evidence_classes: ["measurement", "exhaustive-finite"]
+schema: "tiler-doc/v1"
+id: "tiler.spike.target-profiles.metal-grid-axis-extent"
+kind: "experiment"
+title: "What grid-axis extent this Apple9 macOS row actually dispatches"
+topics: ["target-profiles", "metal", "apple-targets", "feasibility", "provenance"]
+experiment_status: "reproducible"
+implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement", "exhaustive-finite"]
+supports: ["tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger"]
 entrypoints: ["spikes/target-profiles/metal-grid-axis-extent/src/main.rs"]
-last_verified: 2026-08-04
+last_verified: "2026-08-04"
+ticket: "establish-an-upper-bound-authority-for-the-metal-grid-axis-row"
 ---
 
 # What grid-axis extent this Apple9 macOS row actually dispatches
