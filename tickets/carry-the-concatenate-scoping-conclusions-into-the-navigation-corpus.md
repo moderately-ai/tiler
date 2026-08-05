@@ -1,7 +1,7 @@
 ---
 id: carry-the-concatenate-scoping-conclusions-into-the-navigation-corpus
 title: Carry the concatenate scoping conclusions into the navigation corpus
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [scope-the-concatenate-fusion-role-and-lowering]
