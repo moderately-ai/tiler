@@ -1,7 +1,7 @@
 ---
 id: admit-the-registered-unary-families-at-the-compiler-request-boundary
 title: Admit the registered unary families at the compiler request boundary
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary]
 related: [admit-the-silu-activation-family, admit-the-reindex-and-broadcast-operation-families, admit-the-rms-normalization-family, admit-the-softmax-family]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, optimizer]
+claimed_from: todo
+assignee: agent-unary-families
+lease_expires_at: 1785893513
 ---
 ## User-visible outcome
 

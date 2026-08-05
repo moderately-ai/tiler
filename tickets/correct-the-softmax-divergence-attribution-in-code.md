@@ -1,7 +1,7 @@
 ---
 id: correct-the-softmax-divergence-attribution-in-code
 title: Correct the softmax divergence attribution in code and the matrix row
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-the-softmax-family, correct-the-softmax-worked-example-and-its-recorded-divergence, scope-transformer-nonlinear-normalization-and-reductions]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, softmax, correction, measurement, transformer]
+claimed_from: todo
+assignee: agent-softmax-attr
+lease_expires_at: 1785893513
 ---
 ## User-visible outcome
 
