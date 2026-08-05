@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-document-metadata-validator-claim-with-its-own-validation-section
 title: Reconcile the document-metadata validator claim with its own validation section
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: []
