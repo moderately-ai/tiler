@@ -1,7 +1,7 @@
 ---
 id: bind-stage-coverage-to-index-refinement-identity
 title: Bind kernel-program stage coverage to its refinement evidence
-status: todo
+status: in-progress
 priority: p1
 dependencies: [correct-adr-0071-retained-lower-layer-identity-cardinality, place-index-refinement-evidence-under-an-ir-owned-verifier, admit-a-strict-affine-index-realization-law, derive-a-reached-only-executable-coverage-identity]
 related: [bind-the-scheduled-region-to-the-verified-index-region-identity]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, co
 shared_scopes: [project/tickets, contracts/navigation, implementation/cargo-lock]
 paths: []
 tags: [implementation, ir, identity]
+claimed_from: todo
+assignee: agent-bind-stage
+lease_expires_at: 1785934519
 ---
 ## User-visible outcome
 

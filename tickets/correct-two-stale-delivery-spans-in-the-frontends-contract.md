@@ -1,7 +1,7 @@
 ---
 id: correct-two-stale-delivery-spans-in-the-frontends-contract
 title: Correct the two stale delivery spans in the frontends contract
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [draft-an-adr-for-the-inline-delivery-statement, accept-the-inline-artifact-family-profile-syntax, first-authoritative-ios-metal-compile-declaration]
@@ -9,6 +9,9 @@ scopes: [contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contracts, frontend, inline-dx, apple-targets, staleness]
+claimed_from: todo
+assignee: agent-delivery-spans
+lease_expires_at: 1785934519
 ---
 ## Why this exists
 

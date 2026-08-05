@@ -1,14 +1,17 @@
 ---
 id: raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells
 title: Raise the Metal grid-axis row so the L3 contraction cells are reachable
-status: todo
+status: in-progress
 priority: p2
 dependencies: [establish-an-upper-bound-authority-for-the-metal-grid-axis-row]
 related: [integrate-the-contraction-vertical-into-the-runtime]
 scopes: [implementation/build, research/target-profiles]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, contraction, target-profiles]
+claimed_from: todo
+assignee: agent-grid-axis
+lease_expires_at: 1785934520
 ---
 ## User-visible outcome
 
