@@ -50,6 +50,13 @@
 //! program *and* keeps the materialized program as its numerical reference; a
 //! selected-only surface could not express that.
 
+mod realization;
+
+pub(crate) use realization::DeliveredRealizationEvidence;
+pub use realization::{
+    DeliveredRealizationView, SelectedEvidence, SelectedObligation, SelectedScalarArithmetic,
+};
+
 use std::{fmt, sync::Arc};
 
 use tiler_ir::kernel::VerifiedKernel;
@@ -932,6 +939,27 @@ impl<'a> PlanAlternative<'a> {
     #[must_use]
     pub fn abi(&self) -> AbiConstruction<'_> {
         AbiConstruction(self.alternative.artifact_plan.verified_program())
+    }
+
+    /// Returns this alternative's complete delivered-realization evidence.
+    ///
+    /// ADR 0076 item 4's readable statement, in its compiler-side form: the
+    /// policy subjects the checked request selected with their complete
+    /// eleven-dimension contracts, and the locus-keyed obligations every
+    /// packaged stage relies on, each carrying the exact checked fact that
+    /// honours it — the declared behaviour, the structured means with its
+    /// relaxation payload, and the complete provenance ADR 0076 item 3 governs.
+    ///
+    /// One view rather than three iterators, because a total translation has to
+    /// cross-check subjects, coverage, obligation associations, and the evidence
+    /// pool together; three iterators can be zipped wrongly.
+    #[must_use]
+    pub fn delivered_realization(&self) -> DeliveredRealizationView<'_> {
+        DeliveredRealizationView::new(
+            self.compilation.target_profile_key(),
+            self.compilation.target_profile_descriptor(),
+            &self.alternative.realization,
+        )
     }
 
     /// Returns every compiler-minted prepared-entry target requirement, in exact program
@@ -2575,6 +2603,140 @@ mod tests {
     impl PlanAlternativeExt for super::PlanAlternative<'_> {
         fn fused(&self) -> bool {
             self.is_fused()
+        }
+    }
+
+    /// Every retained plan offers one complete eleven-dimension policy subject.
+    ///
+    /// The completeness is what makes an unenumerated dimension fail closed: a
+    /// subject that could be short would let a record be silent about a
+    /// dimension, and silence is what ADR 0076 item 4 exists to remove.
+    #[test]
+    fn every_retained_plan_offers_one_complete_scalar_arithmetic_subject() {
+        use tiler_ir::numerics::{CANONICAL_DIMENSIONS, DimensionBehaviour, NumericalDimension};
+        use tiler_ir::schedule::ArithmeticType;
+
+        let program = semantic_program();
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
+            .expect("the governed program compiles");
+        for plan in compilation.alternatives() {
+            let view = plan.delivered_realization();
+            assert_eq!(view.profile_key(), compilation.target_profile_key());
+            assert_eq!(
+                view.profile_descriptor(),
+                compilation.target_profile_descriptor(),
+            );
+            let subjects: Vec<_> = view.scalar_arithmetic().collect();
+            assert_eq!(
+                subjects.len(),
+                1,
+                "one selected scalar contract yields one subject",
+            );
+            let contract = subjects[0];
+            assert_eq!(contract.subject().arithmetic(), ArithmeticType::F32);
+            // The strict resolution of every governed dimension, read through
+            // the dense array rather than through eleven named getters.
+            for dimension in CANONICAL_DIMENSIONS {
+                let behaviour = contract.resolution(dimension);
+                assert!(
+                    dimension.admits(behaviour),
+                    "{dimension} resolves inside its own behaviour space",
+                );
+                assert_eq!(
+                    contract.resolutions()[dimension.index()],
+                    behaviour,
+                    "the dense array and the accessor are one lookup",
+                );
+            }
+            assert_eq!(
+                contract.resolution(NumericalDimension::Contraction),
+                DimensionBehaviour::Transform(tiler_ir::schedule::NumericalPermission::Forbidden),
+                "the strict contract forbids contraction",
+            );
+        }
+    }
+
+    /// Every obligation names the offered subject, a covered occurrence, and the
+    /// exact checked fact that honours it.
+    ///
+    /// Each coordinate is asserted rather than the count alone: an obligation
+    /// pointing at a neighbouring dimension's fact, or at an occurrence the
+    /// packaged program does not cover, would otherwise read as evidence.
+    #[test]
+    fn every_obligation_carries_its_own_checked_evidence() {
+        use tiler_ir::numerics::{HonouringMeans, PolicyLocus};
+        use tiler_ir::program::abi::AvailabilityPhase;
+
+        let program = semantic_program();
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
+            .expect("the governed program compiles");
+        let plan = compilation.selected().expect("a selected alternative");
+        let view = plan.delivered_realization();
+        let contract = view
+            .scalar_arithmetic()
+            .next()
+            .expect("one offered subject");
+        let subject = contract.subject().clone();
+        let covered: Vec<u32> = plan
+            .abi()
+            .kernel_program()
+            .stages()
+            .flat_map(|stage| {
+                stage
+                    .coverage()
+                    .iter()
+                    .map(|record| record.occurrence().get())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        let obligations: Vec<_> = view.obligations().collect();
+        assert!(
+            !obligations.is_empty(),
+            "a strict contract over admitted operations places obligations on the target",
+        );
+        for obligation in obligations {
+            assert_eq!(obligation.subject(), &subject);
+            assert_eq!(obligation.locus().locus(), PolicyLocus::Computation);
+            assert!(obligation.locus().is_well_formed());
+            assert!(
+                covered.contains(&obligation.locus().occurrence().get()),
+                "an obligation names an occurrence the packaged program covers",
+            );
+            assert!(obligation.dimension().admits(obligation.required()));
+
+            let evidence = obligation.evidence();
+            // Not `declared() == required()`: today's `HonouredDimension`
+            // resolves both from one field, so that comparison could not fail.
+            // The subject's dense resolution is materialized from the resolved
+            // contract and the obligation's behaviour from the retained fact, so
+            // this comparison crosses two independently built structures.
+            assert_eq!(
+                evidence.declared(),
+                contract.resolution(obligation.dimension()),
+                "the retained fact speaks about the behaviour the contract resolved",
+            );
+            assert_eq!(evidence.profile_key(), compilation.target_profile_key());
+            assert_eq!(
+                evidence.profile_descriptor(),
+                compilation.target_profile_descriptor(),
+            );
+            assert!(
+                evidence.source().is_valid(),
+                "every carried provenance is complete and internally consistent",
+            );
+            assert!(
+                evidence.source().phase() <= AvailabilityPhase::ArtifactEvidence,
+                "a produced artifact rests only on facts readable by the time it exists",
+            );
+            // The means is read structurally, not through its non-injective
+            // presentation label: the label is what a record could not carry.
+            assert!(matches!(
+                evidence.means(),
+                HonouringMeans::SupportedExactly
+                    | HonouringMeans::SupportedWithExactEmulation
+                    | HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { .. }
+            ));
         }
     }
 
