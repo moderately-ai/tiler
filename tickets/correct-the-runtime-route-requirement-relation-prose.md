@@ -1,7 +1,7 @@
 ---
 id: correct-the-runtime-route-requirement-relation-prose
 title: Correct the floor and capacity-comparison relation prose inside tiler-runtime
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [correct-the-residual-floor-relation-prose-outside-the-artifact-scopes, correct-the-subgroup-threads-route-dimension-meaning, rename-the-route-resource-floor-vocabulary-for-its-corrected-relation]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime, contracts/decisions, research/extensions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, runtime, naming]
-claimed_from: todo
-assignee: agent-runtime-prose
-lease_expires_at: 1785956614
 ---
 The relation-vocabulary sweep that produced [`correct-the-residual-floor-relation-prose-outside-the-artifact-scopes`](correct-the-residual-floor-relation-prose-outside-the-artifact-scopes.md) reached only that ticket's three documentation scopes. Two sentences in `tiler-runtime`'s own documentation still describe the live-device route-requirement relation as a floor, and a third framing — "a capacity comparison" — is now imprecise on both sides of the code/docs boundary. The type-name sweep `rename-the-route-resource-floor-vocabulary-for-its-corrected-relation` ran (`ResourceFloor`, `route_floor`, `PROBE_FLOOR`, …) could not have caught these: they name the relation in prose, not the type.
 

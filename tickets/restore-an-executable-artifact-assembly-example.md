@@ -1,7 +1,7 @@
 ---
 id: restore-an-executable-artifact-assembly-example
 title: Restore the three assembly examples proof-bound coverage made unbuildable
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, artifact]
-claimed_from: todo
-assignee: agent-assembly-examples
-lease_expires_at: 1785955637
 ---
 ## User-visible outcome
 
