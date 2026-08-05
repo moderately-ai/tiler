@@ -1,7 +1,7 @@
 ---
 id: make-stage-retention-reachable-from-a-test
 title: Make stage_retention reachable from a test
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [retain-succeeding-metal-stage-tool-output, carry-a-producer-stated-total-into-a-retained-run, cover-multi-position-stage-retention]
@@ -9,9 +9,6 @@ scopes: [implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, diagnostics, testing]
-claimed_from: todo
-assignee: agent-stage-reach
-lease_expires_at: 1785975633
 ---
 ## User-visible outcome
 
