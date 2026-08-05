@@ -1,7 +1,7 @@
 ---
 id: cite-adr-0095-in-the-milestone-6-distributivity-framing
 title: Cite ADR 0095 at the reserved-framing sites the landing branch could not reach
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [decide-whether-to-admit-a-distributivity-permission, realize-the-strict-contraction-on-metal]
