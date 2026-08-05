@@ -56,8 +56,38 @@ use tiler_ir::semantic::accuracy::{
 /// [`EnclosureError::PrecisionUnreachable`].
 const MAX_SERIES_TERMS: u32 = 512;
 
+/// Fraction bits the argument reduction drives the reduced argument below.
+///
+/// The series converges for any `y <= 1/2`, so reducing past that buys nothing
+/// numerically and a great deal in cost. `T_i = y^i / i!` carries `2^(m * i) * i!`
+/// in its denominator, every [`ExactRational`] operation re-normalizes through a
+/// greatest common divisor over those magnitudes, and that divisor is quadratic in
+/// the magnitude — so the series cost grows faster than linearly in the term
+/// count, and each bit of extra reduction removes terms from its expensive end.
+/// What it costs instead is one further squaring per bit, and a squaring operates
+/// on an enclosure already rounded onto a grid, so its operands stay bounded and
+/// its cost does not grow along the chain.
+///
+/// The depth is measured rather than reasoned to, because the two costs move in
+/// opposite directions and only their sum decides. Each candidate depth was timed
+/// against the one-bit reduction in the same process, alternating call by call so
+/// that host load reached both alike, over four hundred binary32 arguments
+/// spanning `[-40, 40]` at [`EnclosurePrecision::binary32_corpus`], three rounds,
+/// on an M4 Max under concurrent load. The ratio of the candidate's cost to the
+/// one-bit cost was 0.60 at four bits, 0.47 at eight, 0.47 at twelve, 0.51 at
+/// sixteen and 0.57 at twenty. Eight and twelve tie, and eight is taken because
+/// it reaches the same cost with four fewer squarings and therefore four fewer
+/// outward roundings in the enclosure it returns.
+const REDUCED_ARGUMENT_BITS: u32 = 8;
+
 /// Maximum halvings the argument reduction may apply.
-const MAX_ARGUMENT_HALVINGS: u32 = 24;
+///
+/// Stated as the reduction depth plus the greatest argument binade the enclosure
+/// admits, so that changing [`REDUCED_ARGUMENT_BITS`] moves the work spent per
+/// argument and never which arguments are admitted: `b + 1 + k > 23 + k` is
+/// `b > 22` at every depth, and `an_over_large_argument_is_refused` watches the
+/// refusal at a binade well past it.
+const MAX_ARGUMENT_HALVINGS: u32 = 23 + REDUCED_ARGUMENT_BITS;
 
 /// The width of the binary grid an enclosure rounds outward onto.
 ///
@@ -251,6 +281,19 @@ impl CertifiedEnclosure {
     /// array makes unreachable.
     #[must_use]
     pub fn multiply(&self, other: &Self) -> Self {
+        // Two brackets that both sit at or above zero order their corners: the
+        // least product is the two least ends and the greatest is the two
+        // greatest. Taking it directly is the same interval the general case
+        // computes, and it is the case the exponential's repeated squaring is
+        // always in — where the general form would otherwise pay two products it
+        // discards and six cross-multiplied comparisons to discover an order it
+        // already has.
+        if !self.lower.is_negative() && !other.lower.is_negative() {
+            return Self {
+                lower: self.lower.multiply(&other.lower),
+                upper: self.upper.multiply(&other.upper),
+            };
+        }
         let products = [
             self.lower.multiply(&other.lower),
             self.lower.multiply(&other.upper),
@@ -310,7 +353,9 @@ impl CertifiedEnclosure {
 ///    side, where the series is well conditioned.
 /// 2. **Argument reduction squares.** `exp(y) = exp(y / 2^s)^(2^s)`. `s` is
 ///    chosen so the reduced argument is at most one half, which is what bounds
-///    the tail below.
+///    the tail below. It is driven further below that — how far, and why it is a
+///    measured cost choice rather than a numerical one, is recorded on this
+///    module's `REDUCED_ARGUMENT_BITS`.
 /// 3. **The series has a rigorous tail bound.** For `0 <= y <= 1/2`, the
 ///    remainder after the term `T_i = y^i / i!` is `sum_{j >= i} y^j / j! <=
 ///    T_i / (1 - y) <= 2 * T_i`. The enclosure is `[S, S + 2 * T_i]`, and both
@@ -344,12 +389,17 @@ pub fn exp_enclosure(
         return Ok(CertifiedEnclosure::exact(ExactRational::one()));
     }
 
-    // `argument` lies in `[2^k, 2^(k+1))`, so halving it `k + 2` times puts it at
-    // or below one half. A value already below one half needs none.
+    // `argument` lies in `[2^b, 2^(b+1))`, so halving it `b + 1 + k` times puts it
+    // at or below `2^-k`. A value already that small needs none.
     let binade = argument
         .floor_log2_abs()
         .expect("a nonzero argument has a binade");
-    let halvings = u32::try_from(binade + 2).unwrap_or(0);
+    let halvings = u32::try_from(
+        binade
+            + 1
+            + i32::try_from(REDUCED_ARGUMENT_BITS).expect("a bounded reduction depth fits i32"),
+    )
+    .unwrap_or(0);
     if halvings > MAX_ARGUMENT_HALVINGS {
         return Err(EnclosureError::ArgumentTooLarge {
             argument: argument.clone(),
@@ -382,14 +432,29 @@ pub fn exp_enclosure(
             return Err(EnclosureError::PrecisionUnreachable { terms });
         }
     }
+    // Squaring doubles the bracket's relative width, so a rounding performed on
+    // the caller's own grid partway up the chain is amplified by every squaring
+    // that follows it. Deepening the reduction adds squarings, and rounding onto
+    // the caller's grid inside the loop would therefore have made a coarse grid
+    // degrade geometrically worse than it did before — visibly so at two fraction
+    // bits, where the amplified upper end left the format's range entirely and
+    // turned a straddling bracket into an undefined metric. Squaring on a grid
+    // that many bits finer keeps the amplification inside the step the caller
+    // asked for, and one final rounding puts the result on the caller's grid.
+    let squaring = EnclosurePrecision::new(
+        precision
+            .fraction_bits()
+            .saturating_add(REDUCED_ARGUMENT_BITS)
+            .saturating_add(2),
+    );
     let mut enclosure =
         CertifiedEnclosure::new(sum.clone(), sum.add(&term.scale_by_power_of_two(1)))
-            .coarsen(precision);
+            .coarsen(squaring);
 
     for _ in 0..halvings {
-        enclosure = enclosure.multiply(&enclosure.clone()).coarsen(precision);
+        enclosure = enclosure.multiply(&enclosure.clone()).coarsen(squaring);
     }
-    Ok(enclosure)
+    Ok(enclosure.coarsen(precision))
 }
 
 /// Returns a certified enclosure of `1 / sqrt(argument)`.
