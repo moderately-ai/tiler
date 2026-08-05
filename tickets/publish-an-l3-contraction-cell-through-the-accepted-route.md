@@ -1,7 +1,7 @@
 ---
 id: publish-an-l3-contraction-cell-through-the-accepted-route
 title: Publish an L3 contraction cell through the accepted route and compare its retained digest
-status: in-progress
+status: review
 priority: p2
 dependencies: [raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells]
 related: [integrate-the-contraction-vertical-into-the-runtime, correct-the-four-thread-grid-rationales-the-measured-row-falsified, realize-the-tiled-contraction-schedule-and-its-metal-emission]
@@ -46,3 +46,18 @@ The grid-axis row is `MeasuredEnvironment`-valid on the macOS 27.0 `26A5388g` / 
 ## Closes when
 
 One L3 correctness cell is published through `prototypes/serial-sum-compile` and dispatched through `prototypes/serial-sum-run` with exact `MTLCommandBufferStatusCompleted` before readback, and the SHA-256 of its executed result bytes is compared against the retained value for that cell on a matching host row — reported as a match, or as a correctness finding with full evidence if it is not.
+
+## Outcome
+
+**Measurement — 2026-08-05, Apple M4 Max, macOS 27.0 `26A5388g`, Xcode 26.6 `17F113`, SDK 26.5 `25F70`, offline Metal compiler `Apple metal version 32023.883 (metalfe-32023.883)`, `arm64`.** Every field was read from the host and compared against the retained record's own `environment.tsv` before any comparison was made; all six agree, so the boundary above admits the comparison.
+
+`w_decode_kv` (`1x1024x1024`) is published as the `contraction-w-decode-kv` member — a *second* contraction member, not a move of the `2x2x3` one, for the reason the implementation keys give — with operands generated from the probe's own `SplitMix64` stream. Dispatched through the accepted route, the SHA-256 of the **executed** result bytes is `79810ce471cbd6cd05e5c0c30ea6023e74b997bd5b349212b71cd4a23fe8701f`, which **matches** the retained `direct` value in `spikes/scheduling/metal_contraction_vertical/results/2026-07-31-correctness-apple9-f32-msl4-macos26-m4max-metal32023.883/workload.tsv`. The producer's embedded reference expectation hashes to the same value; that is reported beside it as a validity condition on the fixture and is not counted as a second device claim.
+
+```
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo run -p tiler-prototype-compile -- --out <base>
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo run -p tiler-prototype-run     -- --artifact <base>
+```
+
+Both digest checks were watched refusing before either was trusted. With one bit of the producer's `RIGHT_SEED_MASK` flipped, the run exited non-zero with executed and embedded both at `1a8d7035152213cd6f840167e3594a609c37871deff86099103a6d17aa5ec853` against the retained `79810ce4…` — the device agreeing with a record that asks the wrong question, which is the pairing's whole diagnostic purpose — and `sidecar::tests::the_probe_stream_is_pinned_against_the_probes_own_implementation` failed in the gate on the seed itself. The perturbation was reverted.
+
+**Boundary.** This is one cell of six and one host row. The comparison establishes that the accepted AOT and runtime route reproduces a measured device result for this cell's operands on this row; it says nothing about the other five cells, about any other host, or about the tiled realization.

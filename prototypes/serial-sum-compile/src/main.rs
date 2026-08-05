@@ -33,13 +33,17 @@
 //! cargo run -p tiler-prototype-compile -- --out <path>
 //! ```
 //!
-//! It writes twelve files: one envelope and one `.proof` sidecar for each of
-//! six members, named `<path>.<class>.<role>`. The six are three reduction
+//! It writes sixteen files: one envelope and one `.proof` sidecar for each of
+//! eight members, named `<path>.<class>.<role>`. Six are three reduction
 //! classes — an empty domain, a singleton, and a nontrivial reduction — times
 //! two plan roles, the portfolio's selected (fused) plan and the retained
 //! materialized alternative that dispatches two stages through one
-//! intermediate. Each sidecar carries the artifact identity, the operands, and
-//! the expected outputs the governed reference produced for them.
+//! intermediate. The remaining two are contractions of the L3 profile's index
+//! structure: [`CONTRACTION_CLASS`] at a discriminating `2x2x3` over five
+//! adversarial numerical classes, and [`L3_CELL_CLASS`] at the realization
+//! probe's own `w_decode_kv` cell over the operands that probe measured. Each
+//! sidecar carries the artifact identity, the operands, and the expected outputs
+//! the governed reference produced for them.
 //!
 //! `prototypes/serial-sum-run` consumes the set, and those files are the whole
 //! interface between the two halves of this vertical slice — no module, type,
@@ -195,25 +199,19 @@ const CONTRACTION_CLASS: &str = "contraction";
 
 /// Rows of the published contraction's activations operand, and of its result.
 ///
-/// **The whole `M x N` output has to fit the grid axis**, and the authoritative
-/// declaration's `GridAxisThreads` row is a deliberately conservative four-thread
-/// compile guarantee. The `direct` realization launches one invocation per
-/// output element, so `M * N <= 4` is the entire shape budget; `2 x 2` spends it
-/// on a result with more than one row *and* more than one column, which is what
-/// makes the two operand access relations — `(t, o, d) -> (t, d)` never
-/// mentioning `o`, and `(t, o, d) -> (o, d)` never mentioning `t` — separately
-/// observable. A `1 x 4` or `4 x 1` result would let a kernel that confused the
-/// two still agree.
-///
-/// **The L3 profile's own cells are refused at this bound and are not published
-/// here.** Its smallest correctness cell is `w_decode_kv` at `M=1, N=1024`,
-/// whose 1,024 output elements resolve `target.grid-axis` as
-/// `required: Threads(1024), available: Threads(4)` before any plan composes.
-/// That is a property of the declared profile rather than of the contraction,
-/// and raising it is a target-fact change in `tiler-build`.
+/// **`2 x 2` is a discriminating shape, and that is why it is small rather than
+/// because anything forces it to be.** A result with more than one row *and*
+/// more than one column is what makes the two operand access relations —
+/// `(t, o, d) -> (t, d)` never mentioning `o`, and `(t, o, d) -> (o, d)` never
+/// mentioning `t` — separately observable. A `1 x N` or `M x 1` result would let
+/// a kernel that confused the two still agree, which is why
+/// [`L3_CELL_CLASS`] arrives as a second member rather than as a move of this
+/// one: every L3 correctness cell is `M = 1` or has `M != N`, so repointing this
+/// member at a cell would trade a discriminating shape and five adversarial
+/// numerical cases for a non-discriminating one.
 const CONTRACTION_M: u64 = 2;
 /// Rows of the published contraction's weights operand, and columns of its
-/// result. See [`CONTRACTION_M`] for why the product is bounded at four.
+/// result. See [`CONTRACTION_M`] for why the shape is `2 x 2`.
 const CONTRACTION_N: u64 = 2;
 /// The contracted extent, shared by both operands.
 ///
@@ -224,6 +222,37 @@ const CONTRACTION_N: u64 = 2;
 /// than an untested claim. Three contributors is also the smallest extent at
 /// which the fold's *order* is observable.
 const CONTRACTION_K: u64 = 3;
+
+/// The class name of the published L3 correctness cell.
+///
+/// Named for the retained cell rather than for the profile, because the
+/// remaining five cells follow at no architectural cost and `contraction-l3`
+/// would then name whichever of the six happened to land first.
+const L3_CELL_CLASS: &str = "contraction-w-decode-kv";
+/// Rows of the published L3 cell's activations operand, and of its result.
+///
+/// **`w_decode_kv`, the smallest of the L3 correctness profile's six cells.** Its
+/// 1,024 output elements were unreachable while the authoritative declaration's
+/// `GridAxisThreads` row read four — the `direct` realization launches one
+/// invocation per output element, so the whole `M x N` output has to fit the
+/// grid axis, and this cell resolved `target.grid-axis` as
+/// `required: Threads(1024), available: Threads(4)` before any plan composed.
+/// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` moved that
+/// row to a measured 268,435,456, which is what makes this member publishable at
+/// all.
+///
+/// **The shape is not this producer's to choose.** A `result_sha256` was retained
+/// for this exact cell at these exact extents under
+/// `spikes/scheduling/metal_contraction_vertical/results/`, so operands at any
+/// other shape would be compared against a digest that never described them.
+/// `sidecar::cases_for` refuses every other shape for that reason.
+const L3_CELL_M: u64 = 1;
+/// Rows of the published L3 cell's weights operand, and columns of its result.
+/// See [`L3_CELL_M`].
+const L3_CELL_N: u64 = 1024;
+/// The published L3 cell's contracted extent, shared by both operands. See
+/// [`L3_CELL_M`].
+const L3_CELL_K: u64 = 1024;
 
 /// Suffix appended to the envelope path to name the proof-case sidecar.
 ///
@@ -527,6 +556,35 @@ fn run() -> Result<(), ProducerError> {
     )?;
     published += 1;
 
+    // ---- the L3 correctness cell -----------------------------------------
+    // A second contraction member rather than a move of the one above: this
+    // cell's `1 x 1024` result cannot separate the two operand access relations,
+    // and the member above exists to do exactly that. What this one adds is the
+    // only thing the member above cannot supply — operands the L3 realization
+    // probe actually measured, so the executed bytes have a retained
+    // `result_sha256` to be compared against.
+    let l3_cell = contraction_program(L3_CELL_M, L3_CELL_N, L3_CELL_K);
+    let compilation = compile_under(&declaration, &l3_cell)?;
+    println!(
+        "{L3_CELL_CLASS} ({L3_CELL_M}x{L3_CELL_N}x{L3_CELL_K}, \
+         {} declared input(s)): target profile {}",
+        l3_cell.input_count(),
+        compilation.target_profile_key(),
+    );
+    publish_member(
+        &publication,
+        L3_CELL_CLASS,
+        "selected",
+        sidecar::ProofFamily::L3CorrectnessCell {
+            m: L3_CELL_M,
+            n: L3_CELL_N,
+            k: L3_CELL_K,
+        },
+        &l3_cell,
+        compilation.selected().ok_or(ProducerError::NoSelection)?,
+    )?;
+    published += 1;
+
     println!(
         "published {published} proof member(s) under {}",
         base.display()
@@ -692,9 +750,9 @@ impl fmt::Display for ProducerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        COLUMNS, CONTRACTION_CLASS, CONTRACTION_K, CONTRACTION_M, CONTRACTION_N, OPTIMIZATION,
-        PLAN_ROLES, REDUCTION_CLASSES, ROWS, compile_under, declaration, serial_sum_program,
-        sidecar,
+        COLUMNS, CONTRACTION_CLASS, CONTRACTION_K, CONTRACTION_M, CONTRACTION_N, L3_CELL_CLASS,
+        L3_CELL_K, L3_CELL_M, L3_CELL_N, OPTIMIZATION, PLAN_ROLES, REDUCTION_CLASSES, ROWS,
+        compile_under, declaration, serial_sum_program, sidecar,
     };
     use crate::{ArtifactCodecFailure, decode_artifact};
     use tiler_artifact::program::PayloadPlatform;
@@ -1238,11 +1296,11 @@ mod tests {
             })
             .map(|path| path.display().to_string())
             .collect();
-        names.push(
-            super::proof_member(base, CONTRACTION_CLASS, "selected")
+        names.extend([CONTRACTION_CLASS, L3_CELL_CLASS].into_iter().map(|class| {
+            super::proof_member(base, class, "selected")
                 .display()
-                .to_string(),
-        );
+                .to_string()
+        }));
         assert_eq!(
             names,
             [
@@ -1253,6 +1311,7 @@ mod tests {
                 "/tmp/a.tiler.nontrivial.selected",
                 "/tmp/a.tiler.nontrivial.materialized",
                 "/tmp/a.tiler.contraction.selected",
+                "/tmp/a.tiler.contraction-w-decode-kv.selected",
             ],
         );
         assert_eq!(
@@ -1322,6 +1381,13 @@ mod tests {
              checks the artifact's declared interface against these extents; moving the \
              published contraction means moving its half too",
         );
+        assert_eq!(
+            (L3_CELL_CLASS, L3_CELL_M, L3_CELL_N, L3_CELL_K),
+            ("contraction-w-decode-kv", 1, 1024, 1024),
+            "`prototypes/serial-sum-run` opens the L3 cell by this class name and compares its \
+             executed bytes against the `result_sha256` retained for `w_decode_kv` at exactly \
+             these extents; moving either means moving its half too",
+        );
     }
 
     /// The published contraction is a two-input program, and its interface is
@@ -1378,6 +1444,45 @@ mod tests {
                 }
             ),
             "the refusal must name both shapes: {error}",
+        );
+    }
+
+    /// An L3 cell with no retained measurement is refused.
+    ///
+    /// **The probe's stream is defined at every shape, which is exactly why this
+    /// refusal has to exist.** The contraction table above refuses an unwritten
+    /// shape because no literal rows exist for it; nothing stops
+    /// [`sidecar::ProofFamily::L3CorrectnessCell`] from generating perfectly
+    /// good operands for `w_vocab_slice` or for a shape no probe ever ran, and a
+    /// member published that way would carry expected bytes that the retained
+    /// `result_sha256` this family exists to be compared against never described.
+    /// The other five cells become publishable by retaining their digests, not
+    /// by widening this guard.
+    #[test]
+    fn an_l3_cell_without_a_retained_digest_is_refused() {
+        let (artifact, program) = published_contraction();
+        let error = sidecar::encoded(
+            &artifact,
+            &program,
+            // `w_vocab_slice`: a real cell of the same profile, whose digest is
+            // retained in the probe's record and is not the one this member is
+            // compared against.
+            sidecar::ProofFamily::L3CorrectnessCell {
+                m: 1,
+                n: 8192,
+                k: 1024,
+            },
+        )
+        .expect_err("no retained digest names a 1x8192x1024 cell for this member");
+        assert!(
+            matches!(
+                error,
+                sidecar::SidecarError::UnretainedProbeCell {
+                    requested: (1, 8192, 1024),
+                    retained: (1, 1024, 1024),
+                }
+            ),
+            "the refusal must name both cells: {error}",
         );
     }
 

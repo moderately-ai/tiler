@@ -349,6 +349,30 @@ const CONTRACTION_OUTPUT_KEY: &str = "projected";
 /// crates, so each pins it in a test naming the other side, exactly as
 /// [`SIDECAR_SUFFIX`] and [`REDUCTION_CLASSES`] are pinned.
 const CONTRACTION_CLASS: &str = "contraction";
+/// Class name of the published L3 correctness cell, `w_decode_kv`.
+///
+/// `prototypes/serial-sum-compile` writes this name, and both halves pin it in
+/// the same idiom [`CONTRACTION_CLASS`] is under.
+const L3_CELL_CLASS: &str = "contraction-w-decode-kv";
+/// SHA-256 of the `direct` realization's result bytes for `w_decode_kv`,
+/// retained by the L3 realization probe.
+///
+/// **This is a measurement, not a constant this workspace derived.** It was
+/// recorded on an Apple M4 Max under macOS 27.0 `26A5388g`, Xcode 26.6
+/// `17F113`, SDK 26.5 `25F70`, and the offline Metal compiler
+/// `32023.883`, by `spikes/scheduling/metal_contraction_vertical`, and it lives
+/// in that spike's
+/// `results/2026-07-31-correctness-apple9-f32-msl4-macos26-m4max-metal32023.883/workload.tsv`.
+/// A run on any other host row is a different claim: this binary states the row
+/// it compared against and a reader who is not on it must treat the comparison
+/// as unmade rather than as evidence.
+///
+/// The digest domain is the probe's own — little-endian `f32` bytes in row-major
+/// order, exactly the buffer the probe's host handed to `CC_SHA256` — so
+/// [`result_digest`] reproduces it from readback bit patterns without an
+/// intervening shape or dtype.
+const L3_CELL_RESULT_SHA256: &str =
+    "79810ce471cbd6cd05e5c0c30ea6023e74b997bd5b349212b71cd4a23fe8701f";
 /// Suffix appended to the envelope path to name the proof-case sidecar.
 ///
 /// `prototypes/serial-sum-compile` writes this name. Nothing links the two
@@ -3945,6 +3969,257 @@ fn prove_member(
     Ok(proved)
 }
 
+/// One published contraction member, and what its executed bytes are compared
+/// against.
+///
+/// **The two members are the same route and two different claims**, which is why
+/// one function drives both rather than two functions sharing a helper. The
+/// `2x2x3` member's result has more than one row *and* more than one column, so
+/// it is the one that can separate the two operand access relations, and its
+/// five operand classes are adversarial numerical cases with no measured device
+/// result anywhere to compare against. The L3 cell's `1x1024` result cannot
+/// separate those relations at all, and carries the one thing the other cannot:
+/// a `result_sha256` a device measured over these exact operands.
+struct ContractionMember {
+    /// The class name `prototypes/serial-sum-compile` publishes it under.
+    class: &'static str,
+    /// The retained `direct` result digest, for a member the L3 realization
+    /// probe measured.
+    ///
+    /// `None` is a statement rather than an omission: no measurement exists for
+    /// the adversarial member's operands, so there is nothing to compare its
+    /// executed bytes against beyond the published reference, and a comparison
+    /// against a digest computed here would be this process checking itself.
+    retained_result_sha256: Option<&'static str>,
+}
+
+/// The two contraction members this proof routes, in the order it routes them.
+const CONTRACTION_MEMBERS: [ContractionMember; 2] = [
+    ContractionMember {
+        class: CONTRACTION_CLASS,
+        retained_result_sha256: None,
+    },
+    ContractionMember {
+        class: L3_CELL_CLASS,
+        retained_result_sha256: Some(L3_CELL_RESULT_SHA256),
+    },
+];
+
+/// How one member's executed bytes compared against a retained measurement.
+///
+/// **Three facts reported together, because on a mismatch each one narrows the
+/// cause and no two of them are the same claim.** `executed` is the digest of
+/// the bytes this device produced and is the deliverable. `embedded` is the
+/// digest of the expected bytes the *producer* published beside the artifact,
+/// and is a validity condition on the fixture: it says the published record
+/// describes the probe's workload rather than some other operand set. Reporting
+/// only the first would leave a mismatch unable to say whether the device
+/// computed the wrong answer or the record asked the wrong question.
+#[derive(Debug)]
+struct RetainedComparison {
+    executed: String,
+    embedded: String,
+    retained: &'static str,
+}
+
+impl RetainedComparison {
+    /// Whether the executed bytes carry the retained digest.
+    fn executed_matches(&self) -> bool {
+        self.executed == self.retained
+    }
+
+    /// Whether the producer's published expectation carries it too.
+    fn embedded_matches(&self) -> bool {
+        self.embedded == self.retained
+    }
+}
+
+/// The probe's digest domain: little-endian `f32` bytes in row-major order.
+///
+/// The readback already yields bit patterns in the buffer's own element order —
+/// [`crate::buffer::read_f32`] copies the mapping out verbatim — so this is the
+/// identity re-encoding of the bytes the device wrote, not a reinterpretation of
+/// them. Written as `to_le_bytes` rather than a raw byte copy so the byte order
+/// is stated where a reader can check it against the probe's host, which digests
+/// the result buffer's storage directly.
+fn result_digest(bits: &[u32]) -> String {
+    let bytes: Vec<u8> = bits.iter().flat_map(|value| value.to_le_bytes()).collect();
+    sha256_hex(&bytes)
+}
+
+/// FIPS 180-4 SHA-256 over a byte string, as lowercase hexadecimal.
+///
+/// **Written out here rather than reached for, and the reason is scope rather
+/// than preference.** `sha2` is a workspace dependency and `tiler-artifact` —
+/// which this crate already takes — owns the governed artifact digest, but that
+/// API digests under a mandatory domain separator and cannot express the raw
+/// pre-image the probe hashed, while adding `sha2` to this manifest would edit
+/// `Cargo.lock`, which this work does not own.
+/// `crates/tiler-compiler/src/governed/contraction_conformance.rs` reached the
+/// same conclusion for the same reason and this is the same implementation.
+///
+/// It is checked against the two published FIPS 180-4 vectors before any
+/// comparison rests on it, by [`the_digest_helper_reproduces_the_published_vectors`]
+/// and again at run time in [`prove_contraction`]: a digest function that
+/// silently computed something else would make every retained-value comparison
+/// disagree, and a reader would have no way to tell that from a device defect.
+///
+/// [`the_digest_helper_reproduces_the_published_vectors`]: tests::the_digest_helper_reproduces_the_published_vectors
+fn sha256_hex(message: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    const K: [u32; 64] = [
+        0x428a_2f98,
+        0x7137_4491,
+        0xb5c0_fbcf,
+        0xe9b5_dba5,
+        0x3956_c25b,
+        0x59f1_11f1,
+        0x923f_82a4,
+        0xab1c_5ed5,
+        0xd807_aa98,
+        0x1283_5b01,
+        0x2431_85be,
+        0x550c_7dc3,
+        0x72be_5d74,
+        0x80de_b1fe,
+        0x9bdc_06a7,
+        0xc19b_f174,
+        0xe49b_69c1,
+        0xefbe_4786,
+        0x0fc1_9dc6,
+        0x240c_a1cc,
+        0x2de9_2c6f,
+        0x4a74_84aa,
+        0x5cb0_a9dc,
+        0x76f9_88da,
+        0x983e_5152,
+        0xa831_c66d,
+        0xb003_27c8,
+        0xbf59_7fc7,
+        0xc6e0_0bf3,
+        0xd5a7_9147,
+        0x06ca_6351,
+        0x1429_2967,
+        0x27b7_0a85,
+        0x2e1b_2138,
+        0x4d2c_6dfc,
+        0x5338_0d13,
+        0x650a_7354,
+        0x766a_0abb,
+        0x81c2_c92e,
+        0x9272_2c85,
+        0xa2bf_e8a1,
+        0xa81a_664b,
+        0xc24b_8b70,
+        0xc76c_51a3,
+        0xd192_e819,
+        0xd699_0624,
+        0xf40e_3585,
+        0x106a_a070,
+        0x19a4_c116,
+        0x1e37_6c08,
+        0x2748_774c,
+        0x34b0_bcb5,
+        0x391c_0cb3,
+        0x4ed8_aa4a,
+        0x5b9c_ca4f,
+        0x682e_6ff3,
+        0x748f_82ee,
+        0x78a5_636f,
+        0x84c8_7814,
+        0x8cc7_0208,
+        0x90be_fffa,
+        0xa450_6ceb,
+        0xbef9_a3f7,
+        0xc671_78f2,
+    ];
+    let mut state: [u32; 8] = [
+        0x6a09_e667,
+        0xbb67_ae85,
+        0x3c6e_f372,
+        0xa54f_f53a,
+        0x510e_527f,
+        0x9b05_688c,
+        0x1f83_d9ab,
+        0x5be0_cd19,
+    ];
+    let mut padded = message.to_vec();
+    padded.push(0x80);
+    while padded.len() % 64 != 56 {
+        padded.push(0);
+    }
+    let bit_length = u64::try_from(message.len())
+        .expect("a message length fits in u64")
+        .wrapping_mul(8);
+    padded.extend_from_slice(&bit_length.to_be_bytes());
+
+    let (blocks, remainder) = padded.as_chunks::<64>();
+    debug_assert!(
+        remainder.is_empty(),
+        "the padding makes the length a multiple of 64"
+    );
+    for block in blocks {
+        let mut schedule = [0_u32; 64];
+        let (words, _) = block.as_chunks::<4>();
+        for (slot, bytes) in schedule.iter_mut().zip(words) {
+            *slot = u32::from_be_bytes(*bytes);
+        }
+        for index in 16..64 {
+            let s0 = schedule[index - 15].rotate_right(7)
+                ^ schedule[index - 15].rotate_right(18)
+                ^ (schedule[index - 15] >> 3);
+            let s1 = schedule[index - 2].rotate_right(17)
+                ^ schedule[index - 2].rotate_right(19)
+                ^ (schedule[index - 2] >> 10);
+            schedule[index] = schedule[index - 16]
+                .wrapping_add(s0)
+                .wrapping_add(schedule[index - 7])
+                .wrapping_add(s1);
+        }
+        // The eight working variables, indexed rather than named: the standard
+        // calls them `a` through `h`, and eight single-letter bindings is a
+        // readability rule this workspace holds even where the source it
+        // transcribes does not.
+        let mut working = state;
+        for index in 0..64 {
+            let s1 = working[4].rotate_right(6)
+                ^ working[4].rotate_right(11)
+                ^ working[4].rotate_right(25);
+            let choice = (working[4] & working[5]) ^ (!working[4] & working[6]);
+            let temp1 = working[7]
+                .wrapping_add(s1)
+                .wrapping_add(choice)
+                .wrapping_add(K[index])
+                .wrapping_add(schedule[index]);
+            let s0 = working[0].rotate_right(2)
+                ^ working[0].rotate_right(13)
+                ^ working[0].rotate_right(22);
+            let majority =
+                (working[0] & working[1]) ^ (working[0] & working[2]) ^ (working[1] & working[2]);
+            let temp2 = s0.wrapping_add(majority);
+            working = [
+                temp1.wrapping_add(temp2),
+                working[0],
+                working[1],
+                working[2],
+                working[3].wrapping_add(temp1),
+                working[4],
+                working[5],
+                working[6],
+            ];
+        }
+        for (slot, value) in state.iter_mut().zip(working) {
+            *slot = slot.wrapping_add(value);
+        }
+    }
+    let mut hex = String::with_capacity(64);
+    for byte in state.iter().flat_map(|word| word.to_be_bytes()) {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
 /// Proves the published two-input contraction end to end through the accepted route.
 ///
 /// **This is the L3 remainder, and what it establishes is the *route* rather
@@ -3975,12 +4250,26 @@ fn prove_member(
 /// command buffer's terminal state is checked inside [`submit`] *before* the
 /// host reads a byte back, so a failed dispatch is reported as a dispatch
 /// failure rather than compared as arithmetic.
+///
+/// # Which comparison a member makes, stated exactly
+///
+/// Every member's executed bytes are compared against the expected bytes the
+/// producer published beside the artifact. A member carrying a
+/// [`ContractionMember::retained_result_sha256`] additionally has the SHA-256 of
+/// **the bytes this device produced** compared against a digest a device
+/// measured — which is the only comparison here that reaches outside this
+/// workspace's own two implementations of the contraction. The digest of the
+/// producer's *expected* bytes is computed and reported beside it, and it is a
+/// validity condition on the published record rather than a second device claim:
+/// it says the fixture asks the probe's question, and it would agree with the
+/// retained value even if nothing had been dispatched at all.
 fn prove_contraction(
     device: &Device,
     declaration: &BoundMetalCompileDeclaration,
     base: &Path,
+    member: &ContractionMember,
 ) -> Result<usize, ProofError> {
-    let path = proof_member(base, CONTRACTION_CLASS, "selected");
+    let path = proof_member(base, member.class, "selected");
     let (bytes, sidecar) = read_artifact(&path)?;
     let environment = declared_route_environment(declaration)?;
     let recorded = RecordedArtifactProgramIdentity::from_bytes(sidecar.artifact_identity_bytes())
@@ -4074,6 +4363,19 @@ fn prove_contraction(
         // ---- the routing commit, one way ---------------------------------
         let routed = preflight.commit();
         let observed = dispatch_prepared(device, &routed, &prepared)?;
+
+        // Both digests are taken before either comparison, so a mismatch reports
+        // all three values at once. Returning at the first disagreement would
+        // hide exactly the fact that separates a device defect from a fixture
+        // that asks the wrong question.
+        let comparison = member
+            .retained_result_sha256
+            .map(|retained| RetainedComparison {
+                executed: result_digest(&observed),
+                embedded: result_digest(&expected),
+                retained,
+            });
+
         if observed != expected {
             return Err(ProofError::Mismatch {
                 path: "contraction",
@@ -4081,10 +4383,42 @@ fn prove_contraction(
                 reference: expected,
             });
         }
-        println!(
-            "    {}: {observed:08x?} against {expected:08x?}",
-            case.key(),
-        );
+        // Both verdicts, not one: a member is only proved against its retained
+        // measurement when the bytes this device produced *and* the record they
+        // were compared through carry the digest.
+        if let Some(comparison) = &comparison
+            && !(comparison.executed_matches() && comparison.embedded_matches())
+        {
+            return Err(ProofError::RetainedDigestMismatch {
+                member: member.class,
+                case: case.key().as_str().to_owned(),
+                executed: comparison.executed.clone(),
+                embedded: comparison.embedded.clone(),
+                retained: comparison.retained,
+            });
+        }
+
+        // The whole result is printed for a handful of elements and elided for a
+        // profile cell: a thousand hexadecimal words is not a reader's evidence,
+        // and the digest below is. The element count is stated either way so an
+        // elided line still says how much agreed.
+        match &comparison {
+            None => println!(
+                "    {}: {observed:08x?} against {expected:08x?}",
+                case.key(),
+            ),
+            Some(comparison) => println!(
+                "    {}: {} element(s) agree with the published reference; SHA-256 of the \
+                 EXECUTED result bytes {} == retained {} (the producer's published expectation \
+                 hashes to {}, which is this fixture's validity condition and not a second \
+                 device claim)",
+                case.key(),
+                observed.len(),
+                comparison.executed,
+                comparison.retained,
+                comparison.embedded,
+            ),
+        }
         proved += 1;
     }
 
@@ -4092,9 +4426,15 @@ fn prove_contraction(
         return Err(ProofError::SidecarWithoutCases);
     }
     println!(
-        "  {m}x{n}x{k} contraction: {proved} operand case(s) agree bit for bit with the published \
-         reference, over {} declared operand(s)",
+        "  {}: {m}x{n}x{k} contraction, {proved} operand case(s) agree bit for bit with the \
+         published reference, over {} declared operand(s){}",
+        member.class,
         shape.inputs.len(),
+        if member.retained_result_sha256.is_some() {
+            ", and the executed bytes carry the retained realization-probe digest"
+        } else {
+            "; no realization-probe measurement exists for these operands"
+        },
     );
     Ok(proved)
 }
@@ -4422,18 +4762,64 @@ fn run() -> Result<(), ProofError> {
     );
 
     // ---- the contraction vertical ----------------------------------------
-    // The L3 remainder: one contraction of the profile's index structure
+    // The L3 remainder: contractions of the profile's index structure
     // `td,od->to`, carried through the accepted AOT and runtime route rather
     // than through a spike's own dispatch host. It runs last because everything
     // above establishes that the route works for a one-operand program, so a
-    // failure here isolates to what this member adds — a second tensor input.
+    // failure here isolates to what these members add — a second tensor input,
+    // and then a profile cell with a measured result to be compared against.
+    //
+    // The digest helper is checked against the published FIPS 180-4 vectors here
+    // rather than only in the gate, because the comparison it carries out below
+    // is the one claim in this binary that reaches a value measured outside this
+    // workspace, and a helper that computed something else would report that
+    // claim as failing for a reason no output would name.
     println!("the contraction vertical, through the accepted AOT and runtime route:");
-    let contraction_cases = prove_contraction(device, &declaration, &base)?;
+    require_digest_vectors()?;
+    let mut contraction_cases = 0_usize;
+    let mut retained_compared = 0_usize;
+    for member in &CONTRACTION_MEMBERS {
+        contraction_cases += prove_contraction(device, &declaration, &base, member)?;
+        retained_compared += usize::from(member.retained_result_sha256.is_some());
+    }
     println!(
-        "{contraction_cases} contraction case(s) proved through the accepted route; the L3 \
-         profile's own cells are refused by this profile's four-thread grid-axis row and are not \
-         published here",
+        "{contraction_cases} contraction case(s) proved through the accepted route across {} \
+         member(s); {retained_compared} of them had the SHA-256 of its EXECUTED result bytes \
+         compared against a retained L3 realization-probe measurement, on the host row that \
+         measurement was taken on",
+        CONTRACTION_MEMBERS.len(),
     );
+    Ok(())
+}
+
+/// Requires the local digest helper to reproduce the published SHA-256 vectors.
+///
+/// A comparison against a sixty-four character constant passes trivially if the
+/// bytes never reach it, and fails opaquely if the function hashing them is not
+/// SHA-256. This is the second half: the run-time check that the helper carrying
+/// the retained comparison is the algorithm that measurement was taken with.
+fn require_digest_vectors() -> Result<(), ProofError> {
+    const VECTORS: [(&[u8], &str); 2] = [
+        (
+            b"",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        (
+            b"abc",
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+    ];
+    for (message, expected) in VECTORS {
+        let observed = sha256_hex(message);
+        if observed != expected {
+            return Err(ProofError::DigestHelper {
+                message: message.len(),
+                observed,
+                expected,
+            });
+        }
+    }
+    println!("  digest helper: both published FIPS 180-4 vectors reproduced");
     Ok(())
 }
 
@@ -4569,6 +4955,36 @@ enum ProofError {
     UnboundOperand {
         bound: usize,
         declared: usize,
+    },
+    /// A member's bytes do not carry the digest a device measured over the same
+    /// operands.
+    ///
+    /// **Its own class rather than a [`Self::Mismatch`], because it is a
+    /// different disagreement.** `Mismatch` says this device and the published
+    /// reference computed different bits. This says the two agreed with each
+    /// other and disagreed with a *measurement* — which is a correctness finding
+    /// about the vertical rather than about one dispatch, and the three digests
+    /// it carries are what narrow it: an `embedded` that already misses the
+    /// retained value indicts the operands the producer generated, and an
+    /// `embedded` that matches while `executed` does not cannot happen without
+    /// `Mismatch` firing first, so the pairing is itself diagnostic.
+    RetainedDigestMismatch {
+        member: &'static str,
+        case: String,
+        executed: String,
+        embedded: String,
+        retained: &'static str,
+    },
+    /// The local SHA-256 helper does not reproduce a published FIPS 180-4 vector.
+    ///
+    /// Separate from every comparison that uses it: a digest function computing
+    /// something other than SHA-256 makes every retained-value comparison fail,
+    /// and reporting that as a numerical disagreement would name the device for
+    /// this process's own defect.
+    DigestHelper {
+        message: usize,
+        observed: String,
+        expected: &'static str,
     },
     /// The direct path was handed a program with more than one tensor input.
     ///
@@ -4789,6 +5205,29 @@ impl fmt::Display for ProofError {
                 "the route binds storage for {bound} program input(s) and the artifact declares \
                  {declared}; an unbound operand buffer is read as zeroes rather than refused",
             ),
+            Self::RetainedDigestMismatch {
+                member,
+                case,
+                executed,
+                embedded,
+                retained,
+            } => write!(
+                formatter,
+                "{member} case {case:?}: the SHA-256 of the executed result bytes is {executed} \
+                 and the retained realization-probe measurement is {retained}; the producer's \
+                 published expectation hashes to {embedded}. This is a correctness finding about \
+                 the contraction vertical, not a dispatch failure",
+            ),
+            Self::DigestHelper {
+                message,
+                observed,
+                expected,
+            } => write!(
+                formatter,
+                "this build's SHA-256 helper digests a {message}-byte published vector to \
+                 {observed} and FIPS 180-4 publishes {expected}; no retained-value comparison in \
+                 this run means anything until that is repaired",
+            ),
             Self::DirectPathMultiInput { inputs } => write!(
                 formatter,
                 "the direct path binds one operand slice by local knowledge and this program \
@@ -4988,11 +5427,12 @@ mod tests {
 
     use super::{
         BACKEND_KEY, BINDING_APPLE_FAMILIES, CONTRACTION_ACTIVATIONS_KEY, CONTRACTION_CLASS,
-        CONTRACTION_OUTPUT_KEY, CONTRACTION_WEIGHTS_KEY, DeclaredInput, DeclaredInterface,
-        DeviceFacts, LiveDeviceObservation, LiveDeviceQualification, LoadRejection,
-        METAL_MINIMUM_GPU_FAMILY, METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily,
-        MetalGpuFamilySupport, MetalHostApplicabilityPolicy, PLAN_ROLES, Path, Placement,
-        ProbeSubject, ProbedGpuFamily, ProofError, REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS,
+        CONTRACTION_MEMBERS, CONTRACTION_OUTPUT_KEY, CONTRACTION_WEIGHTS_KEY, DeclaredInput,
+        DeclaredInterface, DeviceFacts, L3_CELL_CLASS, L3_CELL_RESULT_SHA256,
+        LiveDeviceObservation, LiveDeviceQualification, LoadRejection, METAL_MINIMUM_GPU_FAMILY,
+        METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily, MetalGpuFamilySupport,
+        MetalHostApplicabilityPolicy, PLAN_ROLES, Path, Placement, ProbeSubject, ProbedGpuFamily,
+        ProofError, REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS, RetainedComparison,
         RoutePreparation, RouteRequirement, RouteResourceDimension, SOLE_DELIVERY,
         bind_declared_interface, bind_interface, binding_apple_enumerator, compile_under,
         contraction_program, decide_live_device_requirement, declaration,
@@ -5001,8 +5441,8 @@ mod tests {
         probe_damaged_interior_byte, probe_damaged_section_content,
         probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_other_profile_key, probe_truncated_envelope,
-        proof_member, require_contraction_interface, require_serial_sum_interface,
-        serial_sum_program, stating_probed_family,
+        proof_member, require_contraction_interface, require_serial_sum_interface, result_digest,
+        serial_sum_program, sha256_hex, stating_probed_family,
     };
     use tiler_artifact::program::{
         AbiExprId, AbiFactBinder, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder,
@@ -5141,6 +5581,133 @@ mod tests {
             .to_string(),
             "/tmp/a.tiler.contraction.selected",
         );
+    }
+
+    /// The runner's half of the published L3 cell, pinned.
+    ///
+    /// The same pair idiom, over the one member whose class name, extents, and
+    /// retained digest must all three agree with the producer's: a cell renamed
+    /// on one side leaves the other opening a file nobody writes, and a cell
+    /// moved to other extents leaves this half comparing executed bytes against
+    /// a measurement of a different program.
+    const FIXTURE_L3_CELL: (u64, u64, u64) = (1, 1024, 1024);
+
+    #[test]
+    fn the_published_l3_cell_is_the_one_the_producer_writes() {
+        assert_eq!(L3_CELL_CLASS, "contraction-w-decode-kv");
+        assert_eq!(FIXTURE_L3_CELL, (1, 1024, 1024));
+        assert_eq!(
+            proof_member(
+                std::path::Path::new("/tmp/a.tiler"),
+                L3_CELL_CLASS,
+                "selected"
+            )
+            .display()
+            .to_string(),
+            "/tmp/a.tiler.contraction-w-decode-kv.selected",
+        );
+        assert_eq!(
+            L3_CELL_RESULT_SHA256,
+            "79810ce471cbd6cd05e5c0c30ea6023e74b997bd5b349212b71cd4a23fe8701f",
+            "the retained `w_decode_kv` `direct` digest, from this spike's own record: \
+             spikes/scheduling/metal_contraction_vertical/results/\
+             2026-07-31-correctness-apple9-f32-msl4-macos26-m4max-metal32023.883/workload.tsv",
+        );
+    }
+
+    /// Exactly one routed member carries a retained measurement, and it is the
+    /// L3 cell.
+    ///
+    /// **The negative half is the load-bearing one.** A `Some(...)` added to the
+    /// adversarial member would compare its executed bytes against a digest no
+    /// device ever produced for those operands, and that comparison would fail
+    /// on hardware in a way that reads as a device defect. Pinned so the
+    /// distinction between "measured elsewhere" and "not measured at all" cannot
+    /// be lost by editing a table.
+    #[test]
+    fn only_the_l3_cell_is_compared_against_a_retained_measurement() {
+        let compared: Vec<&str> = CONTRACTION_MEMBERS
+            .iter()
+            .filter(|member| member.retained_result_sha256.is_some())
+            .map(|member| member.class)
+            .collect();
+        assert_eq!(compared, [L3_CELL_CLASS]);
+        assert_eq!(
+            CONTRACTION_MEMBERS.len(),
+            2,
+            "both published contraction members must be routed; a member the producer writes and \
+             this half never opens is a file nobody reads",
+        );
+        assert_eq!(CONTRACTION_MEMBERS[0].class, CONTRACTION_CLASS);
+    }
+
+    /// The digest helper reproduces the published FIPS 180-4 vectors, and its
+    /// domain is the probe's.
+    ///
+    /// **Both halves, because either alone is satisfiable by a wrong function.**
+    /// The vectors say this is SHA-256. The domain case says the bytes it is fed
+    /// are the ones the probe hashed — little-endian `f32`, row-major — which a
+    /// correct SHA-256 over big-endian words would fail while passing every
+    /// vector.
+    #[test]
+    fn the_digest_helper_reproduces_the_published_vectors() {
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        );
+        // `1.0f32` is `0x3f800000`, whose little-endian bytes are
+        // `00 00 80 3f`. Digesting the big-endian spelling instead would be a
+        // different message, and this is the assertion that says which one.
+        assert_eq!(
+            result_digest(&[0x3f80_0000]),
+            sha256_hex(&[0x00, 0x00, 0x80, 0x3f]),
+        );
+        assert_ne!(
+            result_digest(&[0x3f80_0000]),
+            sha256_hex(&[0x3f, 0x80, 0x00, 0x00]),
+        );
+        // Row-major order is element order: two results that differ only in the
+        // order of their elements are different messages.
+        assert_ne!(
+            result_digest(&[0x3f80_0000, 0x4000_0000]),
+            result_digest(&[0x4000_0000, 0x3f80_0000]),
+        );
+    }
+
+    /// A retained comparison reports its two verdicts independently.
+    ///
+    /// The pairing is what makes a mismatch diagnosable, so it is asserted
+    /// rather than left to the mismatch that would exercise it — which needs
+    /// hardware and a defect at once.
+    #[test]
+    fn a_retained_comparison_separates_the_executed_bytes_from_the_published_record() {
+        let matching = RetainedComparison {
+            executed: L3_CELL_RESULT_SHA256.to_owned(),
+            embedded: L3_CELL_RESULT_SHA256.to_owned(),
+            retained: L3_CELL_RESULT_SHA256,
+        };
+        assert!(matching.executed_matches() && matching.embedded_matches());
+
+        // The device disagreed with a record that asks the right question.
+        let device_wrong = RetainedComparison {
+            executed: sha256_hex(b"another result"),
+            embedded: L3_CELL_RESULT_SHA256.to_owned(),
+            retained: L3_CELL_RESULT_SHA256,
+        };
+        assert!(!device_wrong.executed_matches() && device_wrong.embedded_matches());
+
+        // The record asks a different question, and the device answered it
+        // faithfully — which is the case that must not read as a device defect.
+        let record_wrong = RetainedComparison {
+            executed: sha256_hex(b"another workload"),
+            embedded: sha256_hex(b"another workload"),
+            retained: L3_CELL_RESULT_SHA256,
+        };
+        assert!(!record_wrong.executed_matches() && !record_wrong.embedded_matches());
     }
 
     /// Builds one declared interface literal, for the family-recognition cases.

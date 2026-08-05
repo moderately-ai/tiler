@@ -33,14 +33,16 @@ Enumerated so this ticket is executable without rediscovering them. Each is a do
 
 **`implementation/metal-aot`**
 
-- `prototypes/serial-sum-compile/src/main.rs:136-137` — `ROWS`: "a deliberately conservative four-thread compile guarantee — the macOS 26.5 SDK contract proves that extent representable and states no maximum at all".
-- `prototypes/serial-sum-compile/src/main.rs:199,210-211` — `CONTRACTION_M`: "`M * N <= 4` is the entire shape budget", and "the L3 profile's own cells are refused at this bound", quoting `required: Threads(1024), available: Threads(4)`. **Those cells are now reachable**, which is the whole point of `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells`; coordinate with it rather than editing past it.
+- `prototypes/serial-sum-compile/src/main.rs:136-137` — `ROWS`: "a deliberately conservative four-thread compile guarantee — the macOS 26.5 SDK contract proves that extent representable and states no maximum at all". **Still owed.**
+- ~~`prototypes/serial-sum-compile/src/main.rs:199,210-211`~~ — `CONTRACTION_M`. **Corrected** by `publish-an-l3-contraction-cell-through-the-accepted-route`, which had to: that ticket publishes `w_decode_kv` as a second contraction member, so "the L3 profile's own cells are refused at this bound and are not published here" became false about this producer's own output rather than only about the row. The rewritten text says `2x2` is small because it is *discriminating* — a result with more than one row and more than one column separates the two operand access relations — and points at the new member for why it was not repointed.
 
 **`implementation/runtime`**
 
-- `prototypes/serial-sum-run/src/proof.rs:230-238` with `PARALLEL_ROWS = 1` at `:5059` — "The authoritative profile's `GridAxisThreads` row admits four threads… a second row makes it eight and the whole compilation fails `target.grid-axis`".
-- `prototypes/serial-sum-run/src/proof.rs:5052-5056` — "stays inside the declared four-thread grid guarantee".
-- `prototypes/serial-sum-run/src/proof.rs:4434` — printed run text naming "this profile's four-thread grid-axis row". This one reaches a reader as program output rather than as a comment, so it is the highest-severity item here.
+- `prototypes/serial-sum-run/src/proof.rs:230-238` with `PARALLEL_ROWS = 1` — "The authoritative profile's `GridAxisThreads` row admits four threads… a second row makes it eight and the whole compilation fails `target.grid-axis`". **Still owed.**
+- `prototypes/serial-sum-run/src/proof.rs`, `PUBLISHED_ROWS` — "stays inside the declared four-thread grid guarantee". **Still owed.**
+- ~~`prototypes/serial-sum-run/src/proof.rs:4434`~~ — printed run text. **Corrected** by `publish-an-l3-contraction-cell-through-the-accepted-route`, for the same reason and with more force: the sentence claimed "the L3 profile's own cells are refused by this profile's four-thread grid-axis row and are not published here" in a run that had just dispatched one. The summary now names how many members were routed and how many had the SHA-256 of their executed bytes compared against a retained realization-probe measurement.
+
+**Line numbers in the two `prototypes/` entries above are pre-2026-08-05 and have shifted**; that landing inserted several hundred lines into `proof.rs`. Locate the two remaining sites by the constants they document — `PARALLEL_ROWS` and the test module's `PUBLISHED_ROWS` — rather than by line. `rg -n 'four-thread|four threads' prototypes/` returned exactly three hits after it landed: those two, and `ROWS` in the producer.
 
 **`research/program-planning`**
 

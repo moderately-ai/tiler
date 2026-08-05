@@ -224,6 +224,37 @@ const CONTRACTION_CASES: [ContractionCase; 5] = [
     ),
 ];
 
+/// The extents of the one L3 correctness cell this producer publishes,
+/// `w_decode_kv`.
+///
+/// Stated and checked for the same reason [`CONTRACTION_M`] is, and one reason
+/// more: a *retained* `result_sha256` exists for exactly this cell at exactly
+/// these extents, so operands generated at any other shape would be compared
+/// against a digest that never described them.
+const L3_CELL_M: u64 = 1;
+/// See [`L3_CELL_M`].
+const L3_CELL_N: u64 = 1024;
+/// See [`L3_CELL_M`].
+const L3_CELL_K: u64 = 1024;
+
+/// The probe's workload seed, `contraction_probe.py`'s `WORKLOAD_SEED`.
+///
+/// Read from `crates/tiler-compiler/src/governed/contraction_conformance.rs`,
+/// which already reconstructs the probe's stream to compare the governed
+/// reference against the retained measurement, rather than re-derived from the
+/// probe. Two independent reconstructions of one stream agree until they do not,
+/// and the digest they are both compared against cannot tell which drifted.
+const WORKLOAD_SEED: u64 = 0x5445_524D;
+/// The probe's right-operand seed derivation, `host.m`'s `fill_prng` call.
+const RIGHT_SEED_MASK: u64 = 0xA5A5_A5A5_A5A5_A5A5;
+/// The stable case key of the one operand set the probe measured.
+///
+/// One case rather than five: the retained digest is a measurement of this exact
+/// workload, and an adversarial operand class published beside it would carry no
+/// retained value to be compared against. The five adversarial classes stay on
+/// the `2x2x3` member, which is what that member is for.
+const L3_CELL_CASE_KEY: &str = "probe-workload";
+
 /// Which program family a published member carries.
 ///
 /// The sidecar's operand and expectation shapes follow from the family, so the
@@ -242,6 +273,23 @@ pub enum ProofFamily {
     /// The L3 profile's index structure `td,od->to` over `[m, k]` activations
     /// and `[n, k]` weights, publishing `[m, n]`.
     Contraction {
+        /// Rows of the activations operand and of the result.
+        m: u64,
+        /// Rows of the weights operand and columns of the result.
+        n: u64,
+        /// The contracted extent, shared by both operands.
+        k: u64,
+    },
+    /// The same index structure over the L3 realization probe's **own** workload
+    /// operands, at a cell for which a `result_sha256` was retained.
+    ///
+    /// A separate variant rather than a shape of [`ProofFamily::Contraction`],
+    /// because the operands come from somewhere else and that is the whole point
+    /// of the member: [`ProofFamily::Contraction`]'s five cases are adversarial
+    /// numerical classes this producer chose, and this one's single case is a
+    /// pseudorandom stream this producer must reproduce byte for byte or the
+    /// retained digest is a comparison against unrelated bits.
+    L3CorrectnessCell {
         /// Rows of the activations operand and of the result.
         m: u64,
         /// Rows of the weights operand and columns of the result.
@@ -270,6 +318,19 @@ pub enum SidecarError {
         /// The extents the case table is written for.
         written: (u64, u64, u64),
     },
+    /// A published L3 cell is not the one a retained `result_sha256` describes.
+    ///
+    /// Its own class, and a stricter one than [`Self::UnwrittenContractionShape`]:
+    /// that refusal says an operand table would have to be written, and this one
+    /// says a *measurement* would have to be taken. The probe's stream is defined
+    /// at every shape, so generating operands for another cell would succeed and
+    /// publish a member whose expected bytes no retained digest describes.
+    UnretainedProbeCell {
+        /// The extents the producer asked for.
+        requested: (u64, u64, u64),
+        /// The extents a retained digest exists for.
+        retained: (u64, u64, u64),
+    },
 }
 
 impl std::fmt::Display for SidecarError {
@@ -284,6 +345,15 @@ impl std::fmt::Display for SidecarError {
                 formatter,
                 "the producer publishes a {m}x{n}x{k} contraction and this module's operand table \
                  is written for {wm}x{wn}x{wk}; move the table with the shape",
+            ),
+            Self::UnretainedProbeCell {
+                requested: (m, n, k),
+                retained: (rm, rn, rk),
+            } => write!(
+                formatter,
+                "the producer publishes a {m}x{n}x{k} L3 cell and the retained realization-probe \
+                 digest this member is compared against was measured at {rm}x{rn}x{rk}; a cell \
+                 with no retained measurement cannot be published through this family",
             ),
         }
     }
@@ -314,6 +384,48 @@ fn input_bits(pattern: [u32; 3], rows: u64, columns: u64) -> Vec<u32> {
 /// Flattens a literal row table into one dense operand.
 fn rows_of(table: [[u32; 3]; 2]) -> Vec<u32> {
     table.into_iter().flatten().collect()
+}
+
+/// The probe's `SplitMix64` finalizer, transcribed rather than approximated.
+fn splitmix64(x: u64) -> u64 {
+    let x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let z = x;
+    let z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The probe's operand value at one index: `m * 2^-24` with `m` an integer in
+/// `[-2^23, 2^23)`.
+///
+/// Every such value is exactly representable in binary32, which is the property
+/// the probe chose it for: the operands themselves introduce no rounding, so any
+/// difference a comparison reports is a difference in how the contraction was
+/// evaluated rather than in how its inputs were written down.
+fn probe_value(seed: u64, index: u64) -> f32 {
+    let bits = splitmix64(seed.wrapping_add(index.wrapping_mul(0x2545_F491_4F6C_DD1D)));
+    let field =
+        i64::from(u32::try_from((bits >> 40) & 0xFF_FFFF).expect("a 24-bit field fits in u32"));
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "an integer in [-2^23, 2^23) is exactly representable in binary32"
+    )]
+    let magnitude = (field - 8_388_608) as f32;
+    magnitude * (1.0 / 16_777_216.0)
+}
+
+/// Generates one dense operand from the probe's stream, in row-major index
+/// order.
+///
+/// The index is the flat row-major position, which is what makes this the
+/// probe's operand rather than a permutation of it: the probe fills a `[rows,
+/// columns]` buffer linearly and the device reads it the same way, so an
+/// index derived from anything but the flat position would produce the same
+/// multiset of values and a different tensor.
+fn probe_bits(elements: u64, seed: u64) -> Vec<u32> {
+    (0..elements)
+        .map(|index| probe_value(seed, index).to_bits())
+        .collect()
 }
 
 /// Builds one reference tensor from big-endian `f32` bit patterns.
@@ -421,6 +533,33 @@ fn cases_for(family: ProofFamily) -> Result<Vec<(&'static str, Vec<Operand>)>, S
                 })
                 .collect())
         }
+        ProofFamily::L3CorrectnessCell { m, n, k } => {
+            if (m, n, k) != (L3_CELL_M, L3_CELL_N, L3_CELL_K) {
+                return Err(SidecarError::UnretainedProbeCell {
+                    requested: (m, n, k),
+                    retained: (L3_CELL_M, L3_CELL_N, L3_CELL_K),
+                });
+            }
+            // The right operand's seed is the workload seed masked, exactly as
+            // the probe's host derives it. Seeding both operands identically
+            // would make `activations` a prefix of `weights` and the contraction
+            // a self-inner-product, which is a different measurement.
+            Ok(vec![(
+                L3_CELL_CASE_KEY,
+                vec![
+                    Operand {
+                        key: InputKey::new(ACTIVATIONS_KEY).expect("the activations key is valid"),
+                        shape: Shape::from_dims([m, k]),
+                        bits: probe_bits(m * k, WORKLOAD_SEED),
+                    },
+                    Operand {
+                        key: InputKey::new(WEIGHTS_KEY).expect("the weights key is valid"),
+                        shape: Shape::from_dims([n, k]),
+                        bits: probe_bits(n * k, WORKLOAD_SEED ^ RIGHT_SEED_MASK),
+                    },
+                ],
+            )])
+        }
     }
 }
 
@@ -428,7 +567,7 @@ fn cases_for(family: ProofFamily) -> Result<Vec<(&'static str, Vec<Operand>)>, S
 fn output_key_for(family: ProofFamily) -> OutputKey {
     let key = match family {
         ProofFamily::SerialSum { .. } => OUTPUT_KEY,
-        ProofFamily::Contraction { .. } => PROJECTED_KEY,
+        ProofFamily::Contraction { .. } | ProofFamily::L3CorrectnessCell { .. } => PROJECTED_KEY,
     };
     OutputKey::new(key).expect("the output key is valid")
 }
@@ -479,4 +618,85 @@ pub fn encoded(
         .map_err(SidecarError::Build)?
         .encode()
         .map_err(SidecarError::Encode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        L3_CELL_K, L3_CELL_M, L3_CELL_N, RIGHT_SEED_MASK, WORKLOAD_SEED, probe_bits, probe_value,
+    };
+
+    /// The published cell's operand stream is the probe's, pinned against values
+    /// the probe's own Python produced.
+    ///
+    /// **These four literals are the only independent evidence in this file, and
+    /// that is why they are literals.** Every other property below — the value
+    /// rule, the two distinct streams, the element counts — is satisfied by any
+    /// stream of the same *shape*, so a transcription that had drifted in the
+    /// mixing constants would pass all of them. The literals were produced by
+    /// running `splitmix64`/`prng_value` out of
+    /// `spikes/scheduling/metal_contraction_vertical/contraction_probe.py`, which
+    /// is the probe's own reference implementation of the stream `host.m` filled
+    /// the device buffers from, so they are a second implementation's answer
+    /// rather than this one's recorded back.
+    ///
+    /// To reproduce or refute them, copy `MASK64`, `splitmix64`, and
+    /// `prng_value` out of that file — importing it would run a probe — and
+    /// print `prng_value(0x5445524D, 0)` and
+    /// `prng_value(0x5445524D ^ 0xA5A5A5A5A5A5A5A5, 0)` as `f32` bit patterns.
+    #[test]
+    fn the_probe_stream_is_pinned_against_the_probes_own_implementation() {
+        let right_seed = WORKLOAD_SEED ^ RIGHT_SEED_MASK;
+        assert_eq!(right_seed, 0xa5a5_a5a5_f1e0_f7e8);
+        assert_eq!(probe_value(WORKLOAD_SEED, 0).to_bits(), 0x3e32_47dc);
+        assert_eq!(probe_value(WORKLOAD_SEED, 1023).to_bits(), 0xbd54_d680);
+        assert_eq!(probe_value(right_seed, 0).to_bits(), 0x3ea3_db76);
+        assert_eq!(probe_value(right_seed, 1_048_575).to_bits(), 0xbeed_2a46);
+    }
+
+    /// Every operand of the published cell is exactly representable as
+    /// `m * 2^-24`, over a counted population.
+    ///
+    /// The property the probe chose the stream *for*: the operands introduce no
+    /// rounding of their own, so a difference the digest comparison reports is a
+    /// difference in how the contraction was evaluated. Counted rather than
+    /// sampled, because a check that silently examined nothing would be
+    /// indistinguishable from one that examined everything — the exact failure
+    /// mode this repository has recorded.
+    #[test]
+    fn every_published_cell_operand_is_exactly_representable() {
+        let activations = probe_bits(L3_CELL_M * L3_CELL_K, WORKLOAD_SEED);
+        let weights = probe_bits(L3_CELL_N * L3_CELL_K, WORKLOAD_SEED ^ RIGHT_SEED_MASK);
+        assert_eq!(activations.len(), 1024);
+        assert_eq!(weights.len(), 1_048_576);
+
+        let mut examined = 0_usize;
+        for bits in activations.iter().chain(&weights) {
+            let scaled = f32::from_bits(*bits) * 16_777_216.0;
+            assert!(
+                scaled.fract() == 0.0 && (-8_388_608.0..8_388_608.0).contains(&scaled),
+                "{bits:#010x} scales to {scaled}, which is not an integer in [-2^23, 2^23)",
+            );
+            examined += 1;
+        }
+        assert_eq!(
+            examined,
+            1024 + 1_048_576,
+            "the loop must have examined every operand of both streams",
+        );
+    }
+
+    /// The two operands are drawn from different streams.
+    ///
+    /// A mask applied to the wrong side, or dropped, would make `weights` open
+    /// with `activations`' 1,024 values — turning the cell into a partial
+    /// self-inner-product that still contracts, still publishes 1,024 elements,
+    /// and disagrees with the retained digest for a reason no other check here
+    /// names.
+    #[test]
+    fn the_two_operands_are_not_the_same_stream() {
+        let activations = probe_bits(L3_CELL_M * L3_CELL_K, WORKLOAD_SEED);
+        let weights = probe_bits(L3_CELL_M * L3_CELL_K, WORKLOAD_SEED ^ RIGHT_SEED_MASK);
+        assert_ne!(activations, weights);
+    }
 }
