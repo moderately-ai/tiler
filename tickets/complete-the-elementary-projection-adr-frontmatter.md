@@ -1,7 +1,7 @@
 ---
 id: complete-the-elementary-projection-adr-frontmatter
 title: Complete the drafted elementary-projection ADR frontmatter to the decision schema
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [admit-the-registered-unary-families-at-the-compiler-request-boundary, land-the-elementary-family-projection-adr]
@@ -45,3 +45,22 @@ Re-deriving or rewording the decision. The elimination is the deriving ticket's 
 ## Closes when
 
 The fenced draft's frontmatter satisfies every rule in [the metadata contract](../docs/document-metadata.md) for `kind: decision`, each chosen value has its ground recorded beside the amendment, and `evidence` either names a research record the decision rests on or the schema question is with Tom with the derivation stated.
+
+## Outcome, 2026-08-04
+
+**The draft is schema-valid and landable, `evidence` names one research record the decision genuinely rests on, and nothing went to Tom.** The amendment is in [the deriving ticket](admit-the-registered-unary-families-at-the-compiler-request-boundary.md) under *Amendment 2026-08-04 — the frontmatter block completed to the decision schema, field by field*, which carries every value's derivation, the reproduce command for each schema rule, and the failing control each check was shown against. The body's prose is untouched, so the carrier's byte-identical transfer is still a transfer.
+
+The landed block is `schema`, `id: "ADR-0099"`, `kind`, `title`, `topics`, `catalog_group: "physical-planning-lowering"`, `decision_status: "proposed"`, `implementation_status: "partial"`, `applies_to: ["tiler.contract.optimizer", "tiler.contract.ir"]`, `evidence: ["tiler.research.numerics.transformer-nonlinear-normalization-and-reductions"]`, `ticket`, with the heading `# 0099: …`.
+
+### The evidence disposition, which is the one this ticket was filed for
+
+**The carrier's elimination is upheld for the Metal record and refuted for the L3′ record, and both halves are derivations rather than preferences.** The [Metal elementary-function accuracy record](../docs/research/numerics/metal-elementary-function-accuracy.md) is **not** named: this record states no accuracy claim, and the machinery consuming Table 8.1 is `crates/tiler-compiler/src/target/accuracy.rs`'s obligation assessment, which the decision neither states nor governs. The [L3′ derivation](../docs/research/numerics/transformer-nonlinear-normalization-and-reductions.md) **is** named, because the carrier's test — does the record reason about the projection? — is the test for `adopted_by` rather than for `evidence`. [The metadata contract](../docs/document-metadata.md#typed-relationships) states the predicates are independent, the corpus uses the edge that way (ADRs 0055, 0080, and 0095 cite `tiler.research.numerics.reduction-semantics-and-legality`, whose `adopted_by` names only 0012, 0013, 0014, 0022, and 0025), and the decision's rejection of a per-family node rests on a measurement the L3′ record carries and the implementing code cites at its exact argument, `0xc2b00000`.
+
+**Candidate (b) was eliminated rather than skipped.** Authoring a research record to fill a required field, after the decision it would justify has landed, restates the deriving ticket's derivation under a different kind and adds an authority nobody consulted; it is also unnecessary once a genuine edge exists. No ticket is filed for it. The refutation that would reopen it is named in the amendment: a demonstration that the rounding-explicitness ground is not load-bearing for the Decision.
+
+**One judgment departs from this ticket's own framing, deliberately.** Required delivery offered `foundation-semantics-extensions` and `numerical-operations` as the two defensible `catalog_group` values. Both are eliminated on what the record *decides* rather than what it is about — it pins no formula and admits no accuracy contract, and it touches no semantic registration and mints no extension seam — and `physical-planning-lowering` survives, which is where the corpus already files the four optimizer-governing decisions this one composes with (0007, 0043, 0069, 0073). The elimination is stated in the amendment so a reader can refute it rather than only the conclusion.
+
+### Graph maintenance
+
+- [`land-the-elementary-family-projection-adr`](land-the-elementary-family-projection-adr.md) moved `blocked` → `todo` and its stale claim was released; its *Unblocked 2026-08-04* section discharges each fact its stop recorded, preserves the stop's rationale, and marks the single inference the amendment refutes. It is **not** dispatchable yet and should not be: its dependency edge on this ticket holds it until this ticket is `done`, which `tkt ready` confirms by omitting it. One stale assertion in its Required delivery — a filename spelling the title's apostrophe as `-s-`, against the corpus's own handling in 0092 and 0098 — was corrected in the same edit.
+- **No new ticket is filed, and the two candidates were tested.** The `evidence` edge is unqualified in the ADR body because the body is fixed; the qualification is the amendment note, reachable from the landed record through its `ticket:` field, which is what that field is for. And the optimizer contract's stale claim that all three families refuse is already owned by [`correct-the-optimizer-stage-generality-claims-for-the-admitted-activation`](correct-the-optimizer-stage-generality-claims-for-the-admitted-activation.md) at `todo` under `contracts/optimizer`; naming `tiler.contract.optimizer` in `applies_to` makes that correction more load-bearing but files nothing new.
