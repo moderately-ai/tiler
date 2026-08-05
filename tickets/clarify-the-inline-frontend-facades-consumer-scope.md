@@ -1,7 +1,7 @@
 ---
 id: clarify-the-inline-frontend-facades-consumer-scope
 title: Clarify the inline frontend facade's consumer scope
-status: in-progress
+status: done
 priority: p1
 dependencies: [reconcile-the-roadmap-and-public-facades-with-the-consumer-neutral-mission]
 related: [accept-the-public-compiler-facade-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, frontend, consumer-neutral, public-boundary]
-claimed_from: todo
-assignee: agent-facade-scope
-lease_expires_at: 1785894582
 ---
 ## User-visible outcome
 
