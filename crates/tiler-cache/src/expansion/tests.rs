@@ -575,7 +575,16 @@ fn retaining(label: &str, bytes: &[u8]) -> DebugRetention {
 }
 
 fn decode_default(bytes: &[u8], key: &CacheKey) -> Result<(), BundleRejection> {
-    bundle::decode(bytes, key, &Limits::default()).map(|_| ())
+    decode_default_view(bytes, key).map(|_| ())
+}
+
+/// Decodes under the default bounds and keeps the view, for the one case that
+/// asserts *which bytes* a validated bundle then hands on.
+fn decode_default_view(
+    bytes: &[u8],
+    key: &CacheKey,
+) -> Result<bundle::BundleView, BundleRejection> {
+    bundle::decode(bytes, key, &Limits::default())
 }
 
 /// A bundle round-trips its subject and its envelope.
@@ -732,6 +741,62 @@ fn a_resealed_forgery_is_refused_by_the_key_derivation() {
             embedded: key.label(),
             derived: CacheKey::derive_bytes(b"subject-b").label(),
         }),
+    );
+}
+
+/// The envelope section's digest is the only thing binding a bundle to the
+/// envelope its publisher framed.
+///
+/// This is the counterpart of the case above and it comes out the other way. A
+/// re-sealed *subject* is refused, because the key is that subject's own digest.
+/// Nothing plays that role for the envelope: the key does not reach it, and the
+/// payload validator — [`tiler_artifact::program::decode_artifact`] on the
+/// public path — validates an envelope against *itself* and so accepts any valid
+/// one. The three assertions are the three halves of that, in order: the digest
+/// refuses the substitution; the payload validator does not, so it contributes
+/// nothing to refusing it; and re-sealing that one descriptor field makes the
+/// whole bundle validate again while carrying an envelope its publisher never
+/// framed.
+///
+/// It is retained as the in-crate statement of
+/// `decide-whether-the-bundle-envelope-section-digest-is-redundant`, whose
+/// evidence against the *real* artifact decoder — thirty-six corruption classes
+/// and every byte position of a real envelope, driven through a build with the
+/// comparison removed — is `spikes/cache/envelope-digest-coverage/`. A future
+/// reader who reaches for that digest as 19–24% of a cache hit meets this test
+/// first.
+#[test]
+fn only_the_envelope_section_digest_binds_a_bundle_to_the_envelope_it_framed() {
+    const PUBLISHED: &[u8] = b"envelope-alpha";
+    const SUBSTITUTE: &[u8] = b"envelope-bravo";
+    assert_eq!(
+        PUBLISHED.len(),
+        SUBSTITUTE.len(),
+        "the substitution keeps every offset, length, and total the frame declares",
+    );
+
+    let (key, mut bytes) = encoded(b"subject", PUBLISHED);
+    let (start, end) = section_span(&bytes, 1);
+    assert_eq!(&bytes[start..end], PUBLISHED, "section 1 is the envelope");
+    bytes[start..end].copy_from_slice(SUBSTITUTE);
+
+    assert_eq!(
+        decode_default(&bytes, &key),
+        Err(BundleRejection::SectionDigest {
+            purpose: BundleSection::ArtifactEnvelope,
+        }),
+    );
+    assert!(
+        any_payload(SUBSTITUTE).is_ok(),
+        "a payload validator accepts the substitute, so it is not what refuses it",
+    );
+
+    reseal_section(&mut bytes, 1);
+    let view = decode_default_view(&bytes, &key)
+        .expect("every remaining check passes over a substituted envelope");
+    assert_eq!(
+        &bytes[view.envelope], SUBSTITUTE,
+        "with that one digest satisfied, the frame carries the substitute and says so",
     );
 }
 

@@ -484,6 +484,22 @@ fn decode_sections(
             usize::try_from(end).map_err(|_| bounds)?,
         );
         let content = &bytes[start..stop];
+        // The envelope section's digest is **retained on evidence**, not on the
+        // argument that `decode_artifact` re-proves the same bytes a moment
+        // later. It is the only thing binding a stored bundle to the envelope
+        // its publisher framed: the key is a function of the subject alone, and
+        // the artifact decoder validates an envelope against *itself*, so an
+        // envelope run replaced by a different valid envelope satisfies every
+        // other check in both layers and is served as a validated hit.
+        // `decide-whether-the-bundle-envelope-section-digest-is-redundant` drove
+        // thirty-five named corruption classes and every byte position of a real
+        // envelope under two perturbations — 226,606 decodes — through both
+        // paths with this comparison genuinely removed. Every single-byte
+        // corruption is caught by the artifact decoder as well; whole-run
+        // substitution is caught by nothing else at all. See
+        // `spikes/cache/envelope-digest-coverage/`, and
+        // `only_the_envelope_section_digest_binds_a_bundle_to_the_envelope_it_framed`
+        // for the same property stated in this crate.
         if section_digest(content) != Digest::from_wire(declared) {
             return Err(BundleRejection::SectionDigest { purpose });
         }
