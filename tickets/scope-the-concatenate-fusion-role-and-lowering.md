@@ -1,7 +1,7 @@
 ---
 id: scope-the-concatenate-fusion-role-and-lowering
 title: Scope the concatenate family's fusion role and lowering
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [scope-an-in-place-append-into-a-caller-retained-allocation, admit-a-fusion-role-for-the-tensor-contraction, reach-a-verified-kernel-through-the-structural-families, derive-the-operation-family-and-signature-delivery-graph]
@@ -9,9 +9,6 @@ scopes: [research/indexing]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, operation-families, concatenate, fusion, lowering]
-claimed_from: todo
-assignee: agent-concat-scope
-lease_expires_at: 1785960717
 ---
 ## User-visible outcome
 

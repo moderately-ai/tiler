@@ -1,7 +1,7 @@
 ---
 id: carry-the-concatenate-scoping-conclusions-into-the-navigation-corpus
 title: Carry the concatenate scoping conclusions into the navigation corpus
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [scope-the-concatenate-fusion-role-and-lowering]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, navigation, catalog, carrier]
+claimed_from: todo
+assignee: agent-concat-carrier
+lease_expires_at: 1785962295
 ---
 ## User-visible outcome
 
