@@ -97,7 +97,11 @@
 //! the producer writing evidence beside the artifact it just built, and a
 //! consumer holding bytes verifying it.
 //!
-//! ```
+//! `ignore`d for the reason [`crate::program`]'s own walk-through is: the
+//! hidden artifact assembly needs proof-derived stage coverage, which no
+//! documentation example can produce.
+//!
+//! ```ignore
 //! use tiler_artifact::proof::{
 //!     ProofCaseKey, ProofCaseSpec, ProofNumericalIdentity, ProofProvenance,
 //!     ProofReferenceIdentity, ProofSidecarBuilder, decode_proof_sidecar,
@@ -113,9 +117,9 @@
 //! # };
 //! # use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 //! # use tiler_ir::program::{
-//! #     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
-//! #     MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
-//! #     SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
+//! #     AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
+//! #     MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
+//! #     RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
 //! #     StorageScalar, ValueRole,
 //! # };
 //! # use tiler_ir::schedule::{
@@ -143,6 +147,7 @@
 //! # let sum = StrictSerialF32Sum::apply(&mut draft, mapped, [Axis::new(1)])?;
 //! # draft.output(OutputKey::new("result")?, sum)?;
 //! # let semantic = draft.build()?;
+//! # let coverage: Vec<CoveredOccurrence> = proof_derived_coverage(&semantic);
 //! # let axes = vec![Axis::new(1)];
 //! # let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
 //! # region.iteration_shape(Shape::from_dims([2]))?;
@@ -274,7 +279,7 @@
 //! # plan.applicability_guard(program_guard)?;
 //! # plan.push_stage(
 //! #     &kernel,
-//! #     &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+//! #     &coverage,
 //! #     &[
 //! #         StageAccess { view: read, mode: StageAccessMode::Read, accessible_bytes: read_bytes },
 //! #         StageAccess { view: write, mode: StageAccessMode::Write, accessible_bytes: write_bytes },

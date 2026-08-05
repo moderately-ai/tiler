@@ -63,7 +63,8 @@
 //! ordered interface — keys in the subject's order, each key's component records
 //! contiguous and in the encoded contract's declared component order, anything
 //! else refused as `misordered-named-output` — and `encode_identity` folds the
-//! list in that order under `tiler.kernel-program.v8` rather than sorting the
+//! list in that order — under `tiler.kernel-program.v8` when the rule landed
+//! and `v9` since — rather than sorting the
 //! records by content. So the ordered interface a widening must plan for is a
 //! fact a consumer reads from `VerifiedKernelProgram::outputs`, not one it
 //! re-derives by key, and a permuted publication is not a second program to

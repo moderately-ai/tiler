@@ -25,9 +25,9 @@ use std::fmt;
 
 use tiler_ir::kernel::KernelType;
 use tiler_ir::program::{
-    AbiExprId, AllocationOwnership, AllocationSpec, KernelProgramBuildError, KernelProgramBuilder,
-    KernelProgramDiagnostic, MaterializedOrigin, MaterializedValueSpec, MemorySpace,
-    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
+    AbiExprId, AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuildError,
+    KernelProgramBuilder, KernelProgramDiagnostic, MaterializedOrigin, MaterializedValueSpec,
+    MemorySpace, RoutingCommitState, RoutingCommitTransition, StageAccess, StageAccessMode,
     StageLaunch, StageRef, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
     ViewId,
 };
@@ -1450,16 +1450,23 @@ fn lower(scheduled: &VerifiedScheduledRegion) -> Result<VerifiedKernel, ProgramE
     })
 }
 
+/// Projects the coverage a stage declares onto the receipts that prove it.
+///
+/// The occurrence and its evidence are read from one `OccurrenceLowering`, so
+/// they cannot be paired wrongly here: a member with no resolved lowering has no
+/// receipt and produces a refusal rather than a bare occurrence. That is the
+/// compiler half of the fail-closed rule — a proof gap never reaches
+/// `push_stage` in a form the IR could accept.
 fn covered(
     members: &[SemanticMemberId],
     lowering: &ResolvedLowering,
-) -> Result<Vec<SemanticOccurrence>, ProgramError> {
+) -> Result<Vec<CoveredOccurrence>, ProgramError> {
     members
         .iter()
         .map(|member| {
             lowering
                 .occurrence(*member)
-                .map(crate::lowering::OccurrenceLowering::canonical_occurrence)
+                .map(crate::lowering::OccurrenceLowering::covered_occurrence)
                 .ok_or(ProgramError::Structure {
                     rule: "refinement-coverage-missing",
                 })

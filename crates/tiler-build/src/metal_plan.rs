@@ -846,6 +846,18 @@ mod tests {
     /// separator included, so neither the artifact domain nor the manifest
     /// schema needed a step of its own.
     ///
+    /// **Both moved again at `tiler.kernel-program.v9`, which binds every
+    /// covered occurrence to the reached-only executable-coverage identity of
+    /// the refinement receipt that proved it.** Unlike the four steps above,
+    /// this one is not a separator over unchanged bytes: each of the five
+    /// coverage records in this program's one stage gained a length-framed
+    /// evidence run, so the program section grew and so did everything that
+    /// folds it. The artifact stage key stepped with it to
+    /// `tiler.artifact-program.stage.v3`, because an entry writes that subject
+    /// itself rather than only through the nested program identity; the
+    /// artifact domain and the manifest schema did not, because both frame the
+    /// complete stepped key with its own separator.
+    ///
     /// **And again when the grid-axis row became a measurement.** The
     /// profile's canonical descriptor is folded into artifact identity and the
     /// cache subject, and that row moved twice over in one step: its value went
@@ -889,9 +901,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "886ed671cb98364ed0e020e7e2d51d69db1cd210d11f11d8ed7ee2c82f403892";
+            "1c84ec3aa0125950303dd26762f0606781466a29b285afbbe4a015f12ffc481d";
         const CACHE_SUBJECT: &str =
-            "f23ac9ddf349011f751e3128a8d89d7c423d4f155a37d9a03d1d8838deb64ba1";
+            "2700a51f08ab08cb556e2db9bbe4aa70091dfc0c6224b0eebb11344483ce4ff1";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

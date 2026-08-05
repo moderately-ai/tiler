@@ -227,7 +227,12 @@ fn verify_coverage(
     let covered: BTreeSet<u32> = data
         .stages
         .iter()
-        .flat_map(|stage| stage.coverage.iter().map(|occurrence| occurrence.get()))
+        .flat_map(|stage| {
+            stage
+                .coverage
+                .iter()
+                .map(|covered| covered.occurrence().get())
+        })
         .collect();
     let covered_count = ordinal(covered.len());
     if covered_count != subject.operations

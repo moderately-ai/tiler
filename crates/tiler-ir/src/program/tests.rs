@@ -5,13 +5,20 @@
 //! that every operation of the bound graph is covered exactly once, never that
 //! a given kernel computes the operations its stage claims.
 
+use crate::index::{
+    FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexDomainProofBudget,
+    IndexRealizationAuthority, IndexRefinementSubject, IndexRefinementVerificationOutcome,
+    MAX_FINITE_DOMAIN_PROOF_CELLS, NumericalContractIdentity, ResolvedIndexRealization,
+};
 use crate::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
 use crate::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
-    ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
+    Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey,
+    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
+    MaterializationRounding, NumericalPermission, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology,
+    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    VerifiedScheduledRegion,
 };
 use crate::semantic::{
     EncodedComponentRole, F32, F32Add, F32Constant, F32Multiply, InputKey, OperationAttributes,
@@ -23,7 +30,7 @@ use crate::shape::{Axis, Shape};
 
 use super::abi::{AbiBinaryOp, AbiRoot, AbiType, AbiUnaryOp, AvailabilityPhase, TargetPropertyKey};
 use super::{
-    AbiExprId, AllocationId, AllocationOwnership, AllocationSpec, ByteWindow,
+    AbiExprId, AllocationId, AllocationOwnership, AllocationSpec, ByteWindow, CoveredOccurrence,
     KernelProgramBuildError, KernelProgramBuilder, KernelProgramDiagnostic,
     MaterializedComponentSpec, MaterializedOrigin, MaterializedValueId, MaterializedValueSpec,
     MemorySpace, PartialReduction, ProgramAbiUse, ProgramEntityKind, RoutingCommitState,
@@ -454,8 +461,128 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         .expect("verified structured kernel")
 }
 
-fn occurrences(range: std::ops::Range<u32>) -> Vec<SemanticOccurrence> {
-    range.map(SemanticOccurrence::new).collect()
+/// The governed strict F32 contract every fixture kernel realizes.
+fn strict_contract() -> NumericalContractIdentity {
+    f32_contract(SubnormalMode::Preserve)
+}
+
+/// The same contract flushing subnormals, used only to perturb *evidence*.
+///
+/// A numerical contract is folded into a refinement receipt's executable
+/// coverage and is not part of semantic graph meaning, so two coverages minted
+/// under these two contracts name the same occurrences of the same graph and
+/// carry different proofs. That is the exact perturbation the identity tests
+/// need, and there is no honest way to fabricate it.
+fn flush_contract() -> NumericalContractIdentity {
+    f32_contract(SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
+    })
+}
+
+fn f32_contract(subnormals: SubnormalMode) -> NumericalContractIdentity {
+    F32NumericalContractKey::new(
+        subnormals,
+        subnormals,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        MaterializationRounding::NearestTiesToEven,
+    )
+    .expect("the fixture contract vector is coherent")
+    .into()
+}
+
+/// Mints one real refinement receipt per operation of `semantic`.
+///
+/// Nothing here is a fixture shortcut: each record comes from the same sealed
+/// path a lowering consumer walks — derive the subject, resolve the registered
+/// realization law, realize that law's exact canonical region, admit an
+/// authority whose scalar-emission ceiling is the region's own reached set, and
+/// submit the pair to the verifier. Only the verifier mints the receipt, so a
+/// coverage record this suite hands to `push_stage` is evidence rather than an
+/// assertion, and the identity properties tested below are properties of real
+/// evidence bytes.
+///
+/// The result is indexed by canonical occurrence ordinal, which is what the
+/// coverage partitions below select ranges of.
+fn checked_coverage(
+    semantic: &SemanticProgram,
+    contract: &NumericalContractIdentity,
+) -> Vec<CoveredOccurrence> {
+    let registry = semantic.semantic_registry().clone();
+    let scalars = FrozenScalarRegistry::standard().expect("the standard scalar authority freezes");
+    let laws = FrozenIndexRealizationLawRegistry::from_semantic(registry.clone(), scalars.clone())
+        .expect("the standard scalar authority coheres with its semantic authority");
+    let mut coverage: Vec<CoveredOccurrence> = semantic
+        .operations()
+        .map(|operation| {
+            let subject =
+                IndexRefinementSubject::derive(semantic, operation.id(), contract.clone())
+                    .expect("every fixture operation derives a refinement subject");
+            let law = registry
+                .index_realization_law(subject.operation())
+                .expect("every fixture operation has a registered realization law")
+                .law
+                .clone();
+            let region = law
+                .realize(&subject, &scalars)
+                .expect("the registered law realizes its own subject");
+            let reached = scalars
+                .revalidate_region(&region)
+                .expect("the law's own region revalidates against the scalar authority");
+            let authority = IndexRealizationAuthority::admit(
+                &registry,
+                &scalars,
+                subject.operation().clone(),
+                subject.signature().clone(),
+                reached.reached_operations(),
+            )
+            .expect("the region's reached scalar operations are an admissible ceiling");
+            let resolution = laws
+                .resolve(&subject)
+                .expect("the registered law resolves for its own subject");
+            let receipt = match resolution
+                .verify(&authority, &region)
+                .expect("the law's own region satisfies the law")
+            {
+                IndexRefinementVerificationOutcome::Verified(receipt) => *receipt,
+                IndexRefinementVerificationOutcome::Pending(pending) => {
+                    ResolvedIndexRealization::complete(&pending, proof_budget())
+                        .expect("the fixture's residual index-domain obligations are provable")
+                        .0
+                }
+            };
+            CoveredOccurrence::from_receipt(&receipt)
+        })
+        .collect();
+    coverage.sort_unstable_by_key(CoveredOccurrence::occurrence);
+    coverage
+}
+
+fn proof_budget() -> IndexDomainProofBudget {
+    IndexDomainProofBudget::try_new(MAX_FINITE_DOMAIN_PROOF_CELLS, 1 << 20)
+        .expect("the fixture proof budget is within IR's hard bounds")
+}
+
+/// Selects the coverage records for one canonical occurrence range.
+fn occurrences(semantic: &SemanticProgram, range: std::ops::Range<u32>) -> Vec<CoveredOccurrence> {
+    coverage_range(&checked_coverage(semantic, &strict_contract()), range)
+}
+
+fn coverage_range(
+    coverage: &[CoveredOccurrence],
+    range: std::ops::Range<u32>,
+) -> Vec<CoveredOccurrence> {
+    coverage
+        .iter()
+        .filter(|covered| range.contains(&covered.occurrence().get()))
+        .cloned()
+        .collect()
 }
 
 fn device(capacity_bytes: u64, ownership: AllocationOwnership) -> AllocationSpec {
@@ -672,6 +799,13 @@ enum TwoStageShape {
     /// The identical accessible byte counts, written as products rather than
     /// literals.
     ComputedAccessibleBytes,
+    /// The canonical structure over coverage proved under another contract.
+    ///
+    /// Every stage, kernel, value, view, allocation, and covered occurrence is
+    /// the canonical shape's; only the refinement evidence differs, because the
+    /// receipts were minted under a numerical contract the semantic graph does
+    /// not carry.
+    AlternateRefinementEvidence,
     /// The first stage claims every occurrence and the second claims none.
     ///
     /// This is the coverage shape of a split reduction: the pass that computes
@@ -762,14 +896,22 @@ fn wire_two_stage(
     reduction_kernel: &VerifiedKernel,
     shape: TwoStageShape,
 ) -> TwoStage {
+    let contract = if shape == TwoStageShape::AlternateRefinementEvidence {
+        flush_contract()
+    } else {
+        strict_contract()
+    };
+    let coverage = checked_coverage(semantic, &contract);
+    let split = |range: std::ops::Range<u32>| coverage_range(&coverage, range);
     let (pointwise_coverage, reduction_coverage) = match shape {
-        TwoStageShape::ShiftedCoverage => (occurrences(0..3), occurrences(3..5)),
-        TwoStageShape::ReservedCoverage => (occurrences(0..2), occurrences(2..4)),
-        TwoStageShape::UncoveringSecondStage => (occurrences(0..5), Vec::new()),
+        TwoStageShape::ShiftedCoverage => (split(0..3), split(3..5)),
+        TwoStageShape::ReservedCoverage => (split(0..2), split(2..4)),
+        TwoStageShape::UncoveringSecondStage => (split(0..5), Vec::new()),
         TwoStageShape::Canonical
         | TwoStageShape::SharedOutputStorage
         | TwoStageShape::ReversedDeclaration
-        | TwoStageShape::ComputedAccessibleBytes => (occurrences(0..4), occurrences(4..5)),
+        | TwoStageShape::AlternateRefinementEvidence
+        | TwoStageShape::ComputedAccessibleBytes => (split(0..4), split(4..5)),
     };
     let mut builder = KernelProgramBuilder::new(semantic).expect("builder");
     let abi = if shape == TwoStageShape::ComputedAccessibleBytes {
@@ -875,32 +1017,39 @@ fn canonical_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
         .expect("verified kernel program")
 }
 
-/// The separator is what distinguishes the last two steps, and only it.
+/// The separator is what distinguishes the reinterpreting steps, and only it.
 ///
-/// Both steps reinterpret retained bytes rather than adding any: `v7` reads the
-/// same raw four-byte coverage ordinal as a canonical semantic occurrence, and
-/// `v8` reads the same output records in interface order rather than sorted by
-/// content. This fixture publishes exactly one output — asserted, because that
-/// is the argument — so sorting its record list is the identity permutation and
-/// its payload is byte-identical under all three tags. A one-output program's
-/// identity therefore moves at the domain step and at nothing else, and a `v6`
-/// or `v7` reader handed these bytes would recover the same records under a
-/// meaning this layer no longer holds, which is exactly why each tag stepped.
+/// `v7` and `v8` reinterpret retained bytes rather than adding any: `v7` reads
+/// the same raw four-byte coverage ordinal as a canonical semantic occurrence,
+/// and `v8` reads the same output records in interface order rather than sorted
+/// by content. This fixture publishes exactly one output — asserted, because
+/// that is the argument — so sorting its record list is the identity
+/// permutation and its payload is byte-identical under all of those tags. A
+/// `v6`, `v7`, or `v8` reader handed these bytes would recover records under a
+/// meaning this layer no longer holds, which is why each tag stepped.
+///
+/// `v9` is a different kind of step and is included here for the same reason:
+/// it *adds* framed refinement evidence inside the stage section, so the
+/// historical spellings below are not merely reinterpretations of the current
+/// payload — they are shorter encodings this test cannot reconstruct. What the
+/// loop still proves is the property that matters at every step: no historical
+/// separator over these bytes is the current identity.
 #[test]
 fn the_program_domain_separator_is_what_distinguishes_the_reinterpreting_steps() {
     const V6: &[u8] = b"tiler.kernel-program.v6\0";
     const V7: &[u8] = b"tiler.kernel-program.v7\0";
     const V8: &[u8] = b"tiler.kernel-program.v8\0";
+    const V9: &[u8] = b"tiler.kernel-program.v9\0";
     let semantic = serial_sum_program(SCALE_BITS);
     let program = canonical_program(&semantic);
     // One record: the v8 encoding and the v7 sort agree on this payload.
     assert_eq!(program.outputs().len(), 1);
     let current = program.canonical_identity().as_bytes();
-    assert!(current.starts_with(V8));
+    assert!(current.starts_with(V9));
 
-    for historical in [V6, V7] {
+    for historical in [V6, V7, V8] {
         let mut spelling = historical.to_vec();
-        spelling.extend_from_slice(&current[V8.len()..]);
+        spelling.extend_from_slice(&current[V9.len()..]);
         assert_eq!(spelling.len(), current.len());
         assert_ne!(current, spelling.as_slice());
     }
@@ -920,11 +1069,17 @@ fn byte_offsets_of(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
 ///
 /// The fixture's interface order is the reverse of the order the `v7` sort
 /// produced — `z_sum` is declared first and sorts second — so the two rules
-/// disagree on this program and agree on every one-output program. Each key
-/// appears exactly twice in the identity: once inside the folded semantic graph
-/// identity, which has encoded outputs in declaration order all along, and once
-/// in the program's own output section. Both occurrences must now agree on the
-/// order; under the sorted rule the second pair was transposed.
+/// disagree on this program and agree on every one-output program. Every place
+/// a key appears must now agree on the order; under the sorted rule the output
+/// section was transposed against the rest.
+///
+/// The population is counted rather than pinned. A key appears once inside the
+/// folded semantic graph identity, which has encoded outputs in declaration
+/// order all along; once inside each coverage record's refinement evidence,
+/// which nests that same graph identity; and once in the program's own output
+/// section. Deriving the expected count from the program's own coverage is what
+/// keeps this check able to say no after a coverage change, instead of failing
+/// on a stale literal that says nothing about ordering.
 #[test]
 fn published_output_interface_order_reaches_program_identity() {
     let semantic = two_chain_program_keyed(["z_sum", "a_sum"]);
@@ -943,12 +1098,14 @@ fn published_output_interface_order_reaches_program_identity() {
     let identity = program.canonical_identity().as_bytes();
     let declared_first = byte_offsets_of(identity, b"z_sum");
     let declared_second = byte_offsets_of(identity, b"a_sum");
+    let coverage_records: usize = program.stages().map(|stage| stage.coverage().len()).sum();
+    let expected = coverage_records + 2;
     assert_eq!(
         declared_first.len(),
-        2,
-        "semantic fold, then output section"
+        expected,
+        "semantic fold, one per coverage record, then output section"
     );
-    assert_eq!(declared_second.len(), 2);
+    assert_eq!(declared_second.len(), expected);
     for (first, second) in declared_first.iter().zip(&declared_second) {
         assert!(
             first < second,
@@ -1020,7 +1177,10 @@ fn a_verified_program_binds_its_refinements_coverage_and_named_outputs() {
         .execution_order()
         .map(|stage| stage.coverage().to_vec())
         .collect();
-    assert_eq!(order, vec![occurrences(0..4), occurrences(4..5)]);
+    assert_eq!(
+        order,
+        vec![occurrences(&semantic, 0..4), occurrences(&semantic, 4..5)]
+    );
 
     // Each stage retains the exact structured kernel it dispatches, which in
     // turn retains the exact scheduled region that kernel refines.
@@ -1173,6 +1333,85 @@ fn identity_changes_when_a_bound_refinement_changes() {
     );
 }
 
+/// Evidence is identity, not decoration.
+///
+/// The two programs agree on the semantic graph, the bound kernels, the
+/// coverage partition, and every covered occurrence — asserted, because those
+/// agreements are what make the remaining difference the refinement evidence
+/// and nothing else. The receipts were minted under two governed numerical
+/// contracts, which is a real difference in what was proved and not a fixture
+/// trick: a contract is folded into executable coverage and is deliberately
+/// absent from semantic graph meaning.
+#[test]
+fn identity_changes_when_only_the_refinement_evidence_changes() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let strict = canonical_program(&semantic);
+    let alternative = complete_two_stage(two_stage(
+        &semantic,
+        TwoStageShape::AlternateRefinementEvidence,
+    ))
+    .build()
+    .expect("verified kernel program over alternate refinement evidence");
+
+    assert_eq!(
+        strict.semantic_graph_identity(),
+        alternative.semantic_graph_identity()
+    );
+    let paired = || strict.stages().zip(alternative.stages());
+    assert!(paired().all(|(left, right)| left.kernel() == right.kernel()));
+    assert!(paired().all(|(left, right)| {
+        left.coverage()
+            .iter()
+            .map(CoveredOccurrence::occurrence)
+            .eq(right.coverage().iter().map(CoveredOccurrence::occurrence))
+    }));
+    assert!(paired().any(|(left, right)| {
+        left.coverage()
+            .iter()
+            .zip(right.coverage())
+            .any(|(left, right)| left.refinement() != right.refinement())
+    }));
+
+    assert_ne!(
+        strict.canonical_identity().as_bytes(),
+        alternative.canonical_identity().as_bytes(),
+    );
+}
+
+/// A receipt from another graph is refused before it can stand in for one here.
+///
+/// The foreign graph has the same five operations at the same canonical
+/// ordinals, so nothing about the occurrence itself would catch the
+/// substitution — only the retained graph does.
+#[test]
+fn coverage_proved_against_another_graph_is_rejected_at_insertion() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let foreign = serial_sum_program(OTHER_SCALE_BITS);
+    assert_ne!(
+        semantic.semantic_identity().graph(),
+        foreign.semantic_identity().graph()
+    );
+    let mut builder = KernelProgramBuilder::new(&semantic).expect("builder");
+    let abi = fixture_abi(&mut builder);
+    let storage = wire_two_stage_storage(&mut builder, TwoStageShape::Canonical);
+    assert_eq!(
+        builder
+            .push_stage(
+                &pointwise_kernel(0, SCALE_BITS),
+                &occurrences(&foreign, 0..4),
+                &[
+                    read(storage.source_view, abi.input_bytes),
+                    write(storage.temporary_view, abi.input_bytes),
+                ],
+                abi.pointwise_launch(),
+            )
+            .expect_err("a receipt minted against another graph is not evidence here"),
+        KernelProgramBuildError::ForeignCoverageGraph {
+            occurrence: SemanticOccurrence::new(0),
+        }
+    );
+}
+
 #[test]
 fn identity_changes_when_complete_coverage_is_partitioned_differently() {
     // One semantic graph and one pair of bound implementations; two different
@@ -1235,7 +1474,7 @@ fn incomplete_coverage_of_the_bound_graph_is_rejected() {
         .push_stage(
             &pointwise_kernel(0, SCALE_BITS),
             // One graph operation is left uncovered.
-            &occurrences(0..3),
+            &occurrences(&semantic, 0..3),
             &[
                 read(source_view, abi.input_bytes),
                 write(temporary_view, abi.input_bytes),
@@ -1246,7 +1485,7 @@ fn incomplete_coverage_of_the_bound_graph_is_rejected() {
     let reduction = builder
         .push_stage(
             &reduction_kernel(1),
-            &occurrences(3..4),
+            &occurrences(&semantic, 3..4),
             &[
                 read(temporary_view, abi.input_bytes),
                 write(output_view, abi.output_bytes),
@@ -1275,12 +1514,18 @@ fn incomplete_coverage_of_the_bound_graph_is_rejected() {
 fn covering_one_occurrence_twice_is_rejected_at_insertion() {
     let semantic = serial_sum_program(SCALE_BITS);
     let mut wired = two_stage(&semantic, TwoStageShape::Canonical);
+    // Coverage the two wired stages already claim, but proved under another
+    // numerical contract. The refusal is therefore about the occurrence being
+    // claimed twice and not about a record repeating byte for byte — the case
+    // that matters, because two *different* proofs of one occurrence are the
+    // ambiguity this binding exists to make impossible.
+    let conflicting = coverage_range(&checked_coverage(&semantic, &flush_contract()), 3..5);
     assert_eq!(
         wired
             .builder
             .push_stage(
                 &pointwise_kernel(2, OTHER_SCALE_BITS),
-                &occurrences(3..5),
+                &conflicting,
                 &[
                     read(wired.source_view, wired.abi.input_bytes),
                     write(wired.temporary_view, wired.abi.input_bytes),
@@ -1425,7 +1670,7 @@ fn a_value_with_no_writer_or_two_writers_is_rejected() {
     builder
         .push_stage(
             &reduction_kernel(1),
-            &occurrences(0..5),
+            &occurrences(&semantic, 0..5),
             &[
                 read(temporary_view, abi.input_bytes),
                 write(output_view, abi.output_bytes),
@@ -1446,7 +1691,7 @@ fn a_value_with_no_writer_or_two_writers_is_rejected() {
         .builder
         .push_stage(
             &pointwise_kernel(2, OTHER_SCALE_BITS),
-            &occurrences(4..5),
+            &occurrences(&semantic, 4..5),
             &[
                 read(wired.source_view, wired.abi.input_bytes),
                 write(wired.temporary_view, wired.abi.input_bytes),
@@ -1507,7 +1752,7 @@ fn a_handle_minted_by_another_program_builder_is_rejected() {
             .builder
             .push_stage(
                 &pointwise_kernel(3, SCALE_BITS),
-                &occurrences(4..5),
+                &occurrences(&semantic, 4..5),
                 &[
                     read(foreign.source_view, wired.abi.input_bytes),
                     write(foreign.temporary_view, wired.abi.input_bytes),
@@ -1524,7 +1769,7 @@ fn a_handle_minted_by_another_program_builder_is_rejected() {
             .builder
             .push_stage(
                 &pointwise_kernel(3, SCALE_BITS),
-                &occurrences(4..5),
+                &occurrences(&semantic, 4..5),
                 &[
                     read(wired.source_view, foreign.abi.input_bytes),
                     write(wired.temporary_view, wired.abi.input_bytes),
@@ -1560,7 +1805,7 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .builder
             .push_stage(
                 &kernel,
-                &occurrences(3..4),
+                &occurrences(&semantic, 3..4),
                 &[read(wired.source_view, bytes)],
                 launch,
             )
@@ -1575,7 +1820,7 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .builder
             .push_stage(
                 &kernel,
-                &occurrences(3..4),
+                &occurrences(&semantic, 3..4),
                 &[
                     read(wired.temporary_view, bytes),
                     write(wired.temporary_view, bytes),
@@ -1596,7 +1841,7 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .builder
             .push_stage(
                 &kernel,
-                &occurrences(3..4),
+                &occurrences(&semantic, 3..4),
                 &[
                     write(wired.source_view, bytes),
                     write(wired.temporary_view, bytes),
@@ -1626,7 +1871,7 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .builder
             .push_stage(
                 &kernel,
-                &occurrences(3..4),
+                &occurrences(&semantic, 3..4),
                 &[read(partial, bytes), write(wired.temporary_view, bytes)],
                 launch,
             )
@@ -1669,11 +1914,14 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
     let mut builder = KernelProgramBuilder::new(semantic).expect("builder");
     let abi = fixture_abi(&mut builder);
     let storage = wire_chain_storage(&mut builder);
+    // Verified once for the whole eight-operation graph, then partitioned; the
+    // four stages claim disjoint ranges of the same evidence.
+    let coverage = checked_coverage(semantic, &strict_contract());
 
     let first_map = builder
         .push_stage(
             &pointwise,
-            &occurrences(0..4),
+            &coverage_range(&coverage, 0..4),
             &[
                 read(storage.first_source_view, abi.input_bytes),
                 write(storage.first_temporary_view, abi.input_bytes),
@@ -1684,7 +1932,7 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
     let first_reduce = builder
         .push_stage(
             &reduction,
-            &occurrences(4..5),
+            &coverage_range(&coverage, 4..5),
             &[
                 read(storage.first_temporary_view, abi.input_bytes),
                 write(storage.first_output_view, abi.output_bytes),
@@ -1695,7 +1943,7 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
     let second_map = builder
         .push_stage(
             &pointwise,
-            &occurrences(5..7),
+            &coverage_range(&coverage, 5..7),
             &[
                 read(storage.second_source_view, abi.input_bytes),
                 write(storage.second_temporary_view, abi.input_bytes),
@@ -1706,7 +1954,7 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
     let second_reduce = builder
         .push_stage(
             &reduction,
-            &occurrences(7..8),
+            &coverage_range(&coverage, 7..8),
             &[
                 read(storage.second_temporary_view, abi.input_bytes),
                 write(storage.second_output_view, abi.output_bytes),
@@ -2167,7 +2415,7 @@ fn strict_affine_stage_bindings_are_addressed_by_component_role() {
     let error = builder
         .push_stage(
             &kernel,
-            &[SemanticOccurrence::new(0)],
+            &occurrences(&semantic, 0..1),
             &[
                 read(zero_point, zero_point_bytes),
                 read(scale, scale_bytes),
@@ -2358,7 +2606,7 @@ fn an_accessible_range_the_declared_view_contradicts_is_rejected() {
             .builder
             .push_stage(
                 &pointwise_kernel(2, OTHER_SCALE_BITS),
-                &occurrences(3..4),
+                &occurrences(&semantic, 3..4),
                 &[
                     read(wired.source_view, wrong),
                     write(wired.temporary_view, abi.input_bytes),
@@ -2385,7 +2633,7 @@ fn a_workgroup_width_the_bound_kernel_contradicts_is_rejected() {
             .builder
             .push_stage(
                 &pointwise_kernel(2, OTHER_SCALE_BITS),
-                &occurrences(3..4),
+                &occurrences(&semantic, 3..4),
                 &[
                     read(wired.source_view, abi.input_bytes),
                     write(wired.temporary_view, abi.input_bytes),
@@ -2451,7 +2699,7 @@ fn an_abi_use_site_rejects_a_mistyped_or_target_dependent_expression() {
             .builder
             .push_stage(
                 &pointwise_kernel(2, OTHER_SCALE_BITS),
-                &occurrences(0..1),
+                &occurrences(&semantic, 0..1),
                 &[
                     read(wired.source_view, abi.input_bytes),
                     write(wired.temporary_view, abi.input_bytes),

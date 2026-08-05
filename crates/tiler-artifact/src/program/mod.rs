@@ -62,13 +62,25 @@
 //!
 //! ADR 0068 and ADR 0070 place `AbiExpr` in `tiler_ir::program`, and ADR 0072
 //! says complete program identity covers buffers, ABI, guards, and routing.
-//! `complete-program-identity-with-abi-guards-and-routing` moved the entry ABI, the applicability guard, and the routing-commit lifecycle down: a [`tiler_ir::program::VerifiedKernelProgram`] carries its own expression arena, guard, per-stage launch, and per-access accessible byte range. Historical v2 first folded those facts; later encoding, ABI-completeness, split-reduction, canonical-coverage, and published-output-order changes moved the current domain to `tiler.kernel-program.v8`.
+//! `complete-program-identity-with-abi-guards-and-routing` moved the entry ABI, the applicability guard, and the routing-commit lifecycle down: a [`tiler_ir::program::VerifiedKernelProgram`] carries its own expression arena, guard, per-stage launch, and per-access accessible byte range. Historical v2 first folded those facts; later encoding, ABI-completeness, split-reduction, canonical-coverage, published-output-order, and proof-bound-coverage changes moved the current domain to `tiler.kernel-program.v9`.
 //!
 //! Artifact construction now replays that exact program ABI onto the artifact arena and derives the guard, launch geometry, accessible byte offset and extent, binding target, component role, storage scalar and encoding, kernel access type, access mode, address space, and alignment from the verified program. [`VariantSpec`](crate::program::VariantSpec) supplies only artifact-owned facts: target and feasibility references, typed [`PreparedEntryTargetRequirement`](crate::program::PreparedEntryTargetRequirement) values associated with program-entry ordinals, binding transport kinds, launch preconditions and zero-work policy, and backend entry selection. The builder mints each executable deferred predicate from the whole checked requirement, so an assembler cannot reverse its comparison or replace the requirement's exact-entry query with a global property observation. The low-level builder validates the producer assertion and entry range but cannot authenticate that an arbitrary caller preserved the compiler's requirement-to-entry association; the ordinary `tiler-build` translation provides that stronger guarantee by forwarding the compiler's borrowed view without reconstruction. This is one ABI authority with an explicit producer trust boundary, not two ABIs kept in agreement; the artifact layer still owns portfolio priority and the predicates no single target-neutral program can carry.
 //!
 //! A variant's live-device route requirements arrive through [`ArtifactProgramBuilder::require_route`](crate::program::ArtifactProgramBuilder::require_route) rather than through `VariantSpec`, because they state what the *emitted payload* consumes and are known only after backend emission — to a different producer stage from the one that assembles a variant. See [`RouteRequirement`](crate::program::RouteRequirement) for the derivability test that decides what may be declared there and what stays a derived requirement.
 //!
-//! ```
+//! The walk-through below is `ignore`d, and the omission is worth stating
+//! because it used to compile. Its hidden preamble assembles a real kernel
+//! program, and a stage's coverage is now proof-derived: each record needs a
+//! completed [`tiler_ir::index::IndexRefinementReceipt`], which this crate
+//! cannot mint and which a documentation example cannot fake. The two ways to
+//! obtain one are compiling the graph — a `tiler-compiler` dev-dependency,
+//! which `tiler-runtime`'s consumer-closure test refuses through this crate —
+//! or building a candidate index region per operation, which is a page of
+//! setup per operation. The executable form of this assembly is
+//! `crate::program::tests`, whose coverage comes from the real verifier;
+//! `restore-an-executable-artifact-assembly-example` owns closing the gap.
+//!
+//! ```ignore
 //! use tiler_artifact::program::{
 //!     AbiBinaryOp, AbiRoot, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
 //!     BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec,
@@ -79,9 +91,9 @@
 //! };
 //! use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 //! use tiler_ir::program::{
-//!     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
-//!     MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
-//!     SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
+//!     AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
+//!     MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
+//!     RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
 //!     StorageScalar, ValueRole,
 //! };
 //! use tiler_ir::schedule::{
@@ -108,6 +120,9 @@
 //! # let sum = StrictSerialF32Sum::apply(&mut draft, mapped, [Axis::new(1)])?;
 //! # draft.output(OutputKey::new("result")?, sum)?;
 //! # let semantic = draft.build()?;
+//! # // One `CoveredOccurrence` per operation, each minted from the completed
+//! # // refinement receipt the consumer's lowering produced for it.
+//! # let coverage: Vec<CoveredOccurrence> = proof_derived_coverage(&semantic);
 //! # let axes = vec![Axis::new(1)];
 //! # let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
 //! # region.iteration_shape(Shape::from_dims([2]))?;
@@ -239,7 +254,7 @@
 //! # plan.applicability_guard(program_guard)?;
 //! # plan.push_stage(
 //! #     &kernel,
-//! #     &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+//! #     &coverage,
 //! #     &[
 //! #         StageAccess { view: read, mode: StageAccessMode::Read, accessible_bytes: read_bytes },
 //! #         StageAccess { view: write, mode: StageAccessMode::Write, accessible_bytes: write_bytes },
