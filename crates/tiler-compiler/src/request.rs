@@ -2854,13 +2854,45 @@ fn resolve_numerical_contract(
 /// regions write several, and the program layer binds each stage's buffers to
 /// values positionally, which [`tiler_ir::program::ValueRole::fills`] states.
 ///
-/// What is missing is *this crate's* planner: `program.rs`'s artifact
-/// refinement matches the scheduled regions against three fixed strategy
-/// shapes, all single-output pipelines, and nothing upstream produces a cover
-/// assigning regions to several ordered outputs. `implement-general-dag-partitioning`
-/// closing condition 2 owns exactly that. Relaxing this guard before it lands
-/// could only admit a program the planner cannot cover — failing mid-pipeline
-/// instead of refusing here, which is strictly worse than refusing.
+/// What is missing is *this function's own shape*, and the paragraph that used
+/// to stand here named the wrong owner. It said the planner matched three fixed
+/// single-output plan shapes and that nothing produced a cover assigning regions
+/// to several ordered outputs, with `implement-general-dag-partitioning` owning
+/// the widening. Both dependencies landed: [`crate::cover`] collects the ordered
+/// named outputs a cover must produce and `verify_cover` checks each is produced
+/// by exactly one region, and
+/// `assemble-a-kernel-program-from-an-arbitrary-cover` replaced the three plan
+/// shapes with a derivation over a cover of any region count. Neither is the
+/// wall any more.
+///
+/// The wall is that a recognized program is **one whole-program strategy reached
+/// from one output**. This function reads `outputs().next()`, classifies that
+/// occurrence, and each recognizer below then requires its walk to cover the
+/// program exactly — [`recognize_pointwise`] under `operation-set`,
+/// [`recognize_reduction`] through [`check_recognized_operation_cover`].
+/// [`NormalizedProgram`] holds one expression, one output shape, and one member
+/// partition to match, and [`crate::physical::spell_region`] can spell only a
+/// cover region whose members equal one of that partition's parts.
+///
+/// That makes the admissible multi-output set empty, and the argument is
+/// structural rather than a list of cases. A second declared output either has
+/// its producing occurrence inside the first output's walk or it does not. If it
+/// does not, the walk covers less than the program and `operation-set` refuses.
+/// If it does, that value is consumed by another occurrence of the same walk, so
+/// its producing region either materializes for a consumer in another region —
+/// leaving its one owning write to serve both the edge and the publication — or
+/// contains that consumer and must publish two named outputs from one write.
+/// A region writes one owning tensor and [`tiler_ir::program::ValueRole`] is
+/// exclusive, so both are refused a layer down.
+///
+/// Relaxing this guard would therefore trade a boundary refusal for a
+/// mid-pipeline one and admit nothing. Measured at `3adc0689` by relaxing this
+/// guard and the `semantic-output-coverage` arity check together: an independent
+/// two-output program reached `strategy`/`operation-set`, and the
+/// reduction-epilogue fixture reached
+/// `program-assembly`/`cover-named-output-attribution`.
+/// `recognize-several-ordered-named-outputs-at-the-compiler-request-boundary`
+/// owns the widening, and
 /// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence.
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
     // Program-wide properties first, each under the rule that names it. A

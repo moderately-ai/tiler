@@ -1,10 +1,11 @@
 //! Where the ordered multi-output boundary is, and which layer actually holds it.
 //!
 //! `select_supported_strategy` refuses every program declaring more than one
-//! output under `output-arity` (`crates/tiler-compiler/src/request.rs:2491`), and
-//! `verify_artifact_refinements` carries the same condition on the assembly path
-//! (`crates/tiler-compiler/src/program.rs:1254`). This file exists because the
-//! obvious reading of those two guards — that a schedule or artifact vocabulary
+//! output under `output-arity`, and `verify_artifact_refinements` carries the
+//! same condition on the assembly path under `semantic-output-coverage` (both in
+//! `crates/tiler-compiler/src`, located by name rather than by line: the line
+//! numbers this header used to carry went stale three times). This file exists
+//! because the obvious reading of those two guards — that a schedule or artifact vocabulary
 //! below `tiler-compiler` cannot say "a second program output", the way it once
 //! could not say "a second input tensor" — is **wrong**, and acting on it would
 //! send the widening at the wrong crate.
@@ -32,23 +33,71 @@
 //! binds each stage's buffers to values positionally — which
 //! `tiler_ir::program::ValueRole::fills` states outright, and this file pins.
 //!
-//! # Where the wall actually is
+//! # Where the wall actually is, and what moved it there
 //!
-//! In `tiler-compiler`'s own planner. `verify_artifact_refinements` matches the
-//! scheduled regions against exactly three fixed strategy shapes — `[single]`,
-//! `[_, _]`, and `[_, _, _]` — which are the fused, materialized two-stage, and
-//! split-reduction forms of a **single-output** pipeline, and it then reads the
-//! program's one output with `semantic.outputs().next()`. Nothing upstream of it
-//! produces a cover that assigns regions to several ordered outputs.
+//! This section used to say the wall was the planner: that
+//! `verify_artifact_refinements` matched the scheduled regions against three
+//! fixed single-output strategy shapes, that nothing upstream produced a cover
+//! assigning regions to several ordered outputs, and that
+//! `implement-general-dag-partitioning` closing condition 2 owned the widening.
+//! **All three statements have since stopped being true, and the guards did not
+//! move.** `implement-general-dag-partitioning` landed: `cover.rs` collects the
+//! ordered named outputs a cover must produce and `verify_cover` checks each is
+//! produced by exactly one region. `assemble-a-kernel-program-from-an-arbitrary-cover`
+//! landed: the three plan shapes are gone, replaced by a derivation over a cover
+//! of any region count. `carry-artifact-program-output-order-into-kernel-program-identity`
+//! landed, putting output order into kernel-program identity.
 //!
-//! That widening is already owned, and not by this file's ticket:
-//! `implement-general-dag-partitioning` closing condition 2 is "named and
-//! multi-result outputs are planned as ordered graph outputs, not reduced to a
-//! single root, and a plan naming fewer outputs than the program declares is
-//! rejected rather than accepted as a subset" — this obligation exactly. Until a
-//! cover can name two outputs, relaxing `output-arity` could only admit a program
-//! the planner cannot cover, failing mid-pipeline instead of refusing at the
-//! boundary, which is strictly worse than refusing.
+//! The wall is now the **request-boundary recognition**, one layer above
+//! everything those tickets fixed. `select_supported_strategy` reads
+//! `outputs().next()`, classifies that one occurrence, and each recognizer below
+//! it requires its walk to cover the program exactly — `recognize_pointwise`
+//! under `operation-set`, `recognize_reduction` through
+//! `check_recognized_operation_cover`. `NormalizedProgram` carries one
+//! expression, one output shape, and one member partition, and
+//! `physical::spell_region` can spell only a cover region whose members equal one
+//! of that partition's parts.
+//!
+//! # Why relaxing `output-arity` today would admit nothing
+//!
+//! The admissible multi-output set is empty, and the argument is structural
+//! rather than a survey of fixtures. A second declared output either has its
+//! producing occurrence inside the first output's recognition walk or it does
+//! not.
+//!
+//! - **Outside the walk.** The walk then covers less than the program and
+//!   `operation-set` refuses at the request boundary. [`two_output_region`] is
+//!   exactly this case: `product = a * b` and `sum = a + b` share no operation,
+//!   so a walk from either root reaches one of the two.
+//! - **Inside the walk.** Then the value is consumed by another occurrence of the
+//!   same walk, so its producing region either materializes for a consumer in
+//!   another region — leaving its one owning write to serve both the edge and the
+//!   publication — or contains that consumer and must publish two named outputs
+//!   from one write. A region writes one owning tensor and `ValueRole` is
+//!   exclusive, so both are refused a layer down;
+//!   [`a_published_output_value_cannot_fill_an_intermediate_buffer`] pins the
+//!   mechanism.
+//!
+//! **Measurement (2026-08-05, at `3adc0689`).** Both branches were observed
+//! rather than argued. Relaxing `select_supported_strategy`'s
+//! `output_count() != 1` and `verify_artifact_refinements`'s
+//! `semantic-output-coverage` arity check together, then compiling two fixtures
+//! through the ordinary entry point: an independent two-output program reached
+//! `phase: "strategy", rule: "operation-set"`, and the reduction-epilogue fixture
+//! from `pipeline::conformance` — which publishes `scaled` and reduces it into
+//! `reduced` — reached `phase: "program-assembly", rule:
+//! "cover-named-output-attribution"`. The perturbation was reverted; it is
+//! recorded here rather than retained because a relaxed guard that admits nothing
+//! is strictly worse than the refusal it replaces, converting a boundary refusal
+//! into a mid-pipeline one.
+//!
+//! So the guards stay until the recognizer can name several ordered outputs.
+//! `recognize-several-ordered-named-outputs-at-the-compiler-request-boundary`
+//! owns that widening and
+//! `admit-ordered-multi-output-programs-at-the-compiler-request-boundary` depends
+//! on it; the epilogue shape additionally needs
+//! `admit-elementwise-epilogues-over-a-materialized-intermediate`, because the
+//! copy stage it requires reads a materialized intermediate.
 //!
 //! # Output order is identity at both layers, and this file pins the semantic half
 //!
@@ -101,6 +150,11 @@ const CONTRACTS: [NumericalContract; 5] = [
 /// deliberately the easiest multi-output program that exists. A wall that stops
 /// this one is not a wall about sharing, materialization, or lifetime; it is a
 /// wall about output cardinality alone.
+///
+/// Independence is also what makes this fixture the first branch of the header's
+/// structural argument: `product` and `sum` share no operation, so whichever root
+/// the recognizer walks from covers one of the two. With `output-arity` relaxed
+/// it refuses under `operation-set` instead — measured, not assumed.
 fn two_output_region() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
@@ -214,7 +268,8 @@ fn an_ordered_two_output_program_refuses_under_output_arity() {
             Err(CompileFailureClass::UnsupportedCapability {
                 rule: "output-arity"
             }),
-            "{contract:?} admitted a program the planner cannot cover",
+            "{contract:?} admitted a program no layer below this boundary can \
+             realize, trading a boundary refusal for a mid-pipeline one",
         );
     }
 }
