@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-research-and-experiment-catalogs-with-their-frontmatter
 title: Reconcile the research and experiment catalogs with their frontmatter
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [design-model-level-qualification-and-optimization, land-the-model-level-qualification-record]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, navigation, catalog]
-claimed_from: todo
-assignee: agent-catalogs
-lease_expires_at: 1785942011
 ---
 ## User-visible outcome
 
