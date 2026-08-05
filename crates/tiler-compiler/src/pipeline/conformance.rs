@@ -20,7 +20,7 @@ use crate::cover::RegionCover;
 use crate::explain::{ExplainDisposition, ExplainStage, ProviderRef};
 use crate::region::form_region_candidates;
 use crate::request::{
-    CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_request,
+    CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_planned_request,
 };
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexRealizationLaw, ScalarAttributes, ScalarRegistryBuilder,
@@ -792,7 +792,7 @@ fn equal_semantic_snapshots_cannot_substitute_the_programs_law() {
     let mut request = CompilationRequest::governed(&program);
     request.capabilities = CompilerCapabilitySnapshot::new(lowerings.freeze(), scalars);
     assert_eq!(
-        verify_request(request),
+        verify_planned_request(request),
         Err(RequestError::UnsupportedCapability {
             phase: "capability",
             rule: "semantic-authority-pairing",

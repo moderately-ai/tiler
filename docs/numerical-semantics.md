@@ -193,22 +193,56 @@ governed key, and the canonical arithmetic-NaN bits. A key names the governing
 contract and the bits are a produced value, so neither is a behaviour a profile
 can be asked whether it honours.
 
-**The dense contract is `f32` and is not a general policy shape.** Every
-resolution above is stated for exactly one `ArithmeticType`, because subnormal
-behaviour is measurably per-dtype: one Apple row flushes in `f32`, preserves in
-`f16`, and flushes in `bf16`, so a dtype-free contract would state something
-already known to be false for one of them. Nothing here generalizes to integer,
-boolean, quantized-compound, or any other future policy family — those have their
-own semantics elsewhere in this document, and this dimension set is not a
-template for them.
+**The dense contract is per arithmetic type and is not a general policy shape.**
+Every resolution above is stated for exactly one `ArithmeticType`, because
+subnormal behaviour is measurably per-dtype: one Apple row flushes in `f32`,
+preserves in `f16`, and flushes in `bf16`, so a dtype-free contract would state
+something already known to be false for one of them. Nothing here generalizes to
+integer, boolean, quantized-compound, or any other future policy family — those
+have their own semantics elsewhere in this document, and this dimension set is
+not a template for them.
+
+**Fact — two widths are statable, `f32` and `bf16`, and the width is never
+defaulted.** `NumericalContractBuilder::strict_f32` and
+`NumericalContractBuilder::strict_bf16` are the only entry points and each names
+its width, so there is no width-free composition for an omission to fall through
+— an omitted width would be the same fail-open direction as an omitted dimension,
+one level up. The two contracts are independent statements even when they
+resolve every dimension alike: they require their behaviour of different
+arithmetic, a profile declares the two by separate rows, and neither answers for
+the other. `f16` and `f64` are named by the arithmetic vocabulary and by the
+scalar catalog, and no contract may be stated in them: the key scheme mints no
+domain for either, so such a contract is refused at admission rather than
+reaching a target that would have to report a missing declaration for a width no
+caller may state.
+
+**Fact — the subject a target is asked about is derived from the contract's
+width, not written beside it.** The per-dimension requirement carries a
+`ScalarArithmetic` built by the same validated route a profile's declaration is
+built by, so a requirement and a declaration speak about one registered value
+identity by construction. A requirement stating `bf16` beside `tiler::f32@1`
+would match no row any profile could declare, and every `bf16` contract would
+resolve `Unknown` for a reason no reader could locate.
+
+**Fact — statable is not planned, and BF16 is the case that separates them.**
+A BF16 contract can be stated, keyed, and assessed against a target's measured
+BF16 rows. Nothing below the request boundary realizes BF16: the registered
+`tiler::constant-bf16@1`, `tiler::multiply-bf16@1`, and `tiler::add-bf16@1` carry
+no numerical capability row, no lowering capability, and no scheduled-region
+vocabulary, so a BF16 program that clears numerical feasibility is then refused
+by the recognizer's `dtype-f32` rule. `crates/tiler-compiler/tests/bf16_numerical_contract.rs`
+asserts that wall rather than avoiding it, so a positive numerical answer cannot
+be read as execution support.
 
 **Fact — a caller resolves the dimensions, and does not choose from a list.** The implemented boundary was a four-value preset enumeration (strict, flush-to-zero, relaxed, permit-reassociation), and it is now `tiler_compiler::session::NumericalContract`, composed one dimension at a time from a strict base. The elimination is on the record: every axis the enumeration spanned had already been decided independent — [ADR 0011](decisions/0011-per-operation-numerical-permissions.md) holds that one permission never implies another, [ADR 0014](decisions/0014-reassociation-vs-permutation.md) split ordered regrouping from contributor permutation on evidence, [ADR 0080](decisions/0080-treat-distributivity-as-a-third-numerical-dimension.md) added a third independent dimension — and the target side already declares honourability and refuses per dimension. The enumeration was the one point-shaped surface left, and it produced its predictable failure the first time real hardware needed a corner no preset named: Apple `f32` arithmetic flushes subnormals in every measured math mode, both reassociating presets required them preserved, and so no parallel reduction was statable on the one measured Apple row — for want of a contract a caller could name, not for want of a target fact. Tom decided the direction on 2026-08-01 in the live session, relayed by the coordinator who witnessed it.
 
 **Fact — omission never widens.** A composition starts at the strict resolution of every dimension and a caller resolves the ones it means to move, so an unstated dimension is forbidden rather than unconstrained, and a dimension added to the vocabulary later arrives forbidden in every contract written before it existed. This is the same fail-closed direction the [honesty rule](#the-honesty-rule-in-both-directions) states for a target's declaration, read from the caller's side.
 
-**Fact — the contract key is derived, not chosen.** A contract's key is the canonical, injective encoding of its dimension vector under the versioned domain `tiler.contract.f32.v2`: the arithmetic type's tag, the canonical arithmetic-NaN bits, and then each dimension's tag and behaviour in the canonical order above, rendered as lowercase hex. Injectivity is what the key has to carry, because several authorities identify a contract by its key *alone* with no dimension beside it — the scheduled region's `profile_key`, the compiler's fusion-legality content identity, and its semantic-occurrence contract identity — so two contracts sharing a key would give two stated meanings one artifact and one cache entry. The predecessor scheme was four hand-written names (`tiler.strict-f32.v1` and siblings); those named exactly the four presets and could not name the rest of the space, which is why the domain stepped rather than the names growing. Injectivity over the whole statable space is checked exhaustively rather than sampled, in `crates/tiler-compiler/src/request.rs`.
+**Fact — the contract key is derived, not chosen.** A contract's key is the canonical, injective encoding of its dimension vector under a versioned domain *per arithmetic type* — `tiler.contract.f32.v2` and `tiler.contract.bf16.v1` — carrying the arithmetic type's tag, the canonical arithmetic-NaN bits of that width, and then each dimension's tag and behaviour in the canonical order above, rendered as lowercase hex. Injectivity is what the key has to carry, because several authorities identify a contract by its key *alone* with no dimension beside it — the scheduled region's `profile_key`, the compiler's fusion-legality content identity, and its semantic-occurrence contract identity — so two contracts sharing a key would give two stated meanings one artifact and one cache entry. The predecessor scheme was four hand-written names (`tiler.strict-f32.v1` and siblings); those named exactly the four presets and could not name the rest of the space, which is why the `f32` domain stepped rather than the names growing. Injectivity over the whole statable space is checked exhaustively rather than sampled, in `crates/tiler-compiler/src/request.rs`.
 
-**Fact — five named contracts are retained, and they are points rather than the space.** Strict, flush-to-zero, relaxed, permit-reassociation, and flush-and-reassociate. They keep their documentation value as named constants; nothing selects between them and they are not ordered by strength.
+**Fact — the domains are siblings rather than one widened domain, and no `f32` key moved.** The two grammars are mutually closed: each parser refuses the other's rendering, so a validated key always tells its holder which width it has before a byte of preimage is decoded. Adding `bf16` therefore left every `f32` key byte-identical — the `f32` domain string, header, and dimension rows are unchanged, and `tiler-ir` pins the rendered strict-`f32` key as a literal so a change to the shared dimension writer fails there rather than silently restating an artifact identity. The `bf16` domain opens at `v1` because the version counts its own rendering revisions and this is its first; the `f32` domain reached `v2` by replacing a preset-naming scheme `bf16` never had.
+
+**Fact — seven named contracts are retained, and they are points rather than the space.** Five in `f32` — strict, flush-to-zero, relaxed, permit-reassociation, and flush-and-reassociate — and two in `bf16`: strict and flush-to-zero. They keep their documentation value as named constants; nothing selects between them and they are not ordered by strength. The `bf16` pair is deliberately the two the measured Apple rows make a decision about — preserve, which that row refuses, and the sign-preserving flush, which it delivers — rather than a translation of all five.
 
 **Fact — why permit-reassociation is a point rather than a setting of relaxed.** Ordered regrouping and fused-multiply-add contraction are independent dimensions by [ADR 0015](decisions/0015-fma-vs-contraction.md), and until `admit-a-reassociating-contract-without-contraction` the only registered contract permitting the first also permitted the second. A caller wanting a split reduction over exactly the strict reading's rounding boundaries therefore could not state its program at all, and the compiler's own fusion-legality authority refused every mixed multiply/add region under the relaxed contract because a permitted-but-unrealized contraction leaves the delivered arithmetic undetermined. Permit-reassociation resolves `reassociation` to `Permitted` and every other dimension — contraction included — at the strict resolution, so the delivered realization stays pinned. It is a different meaning rather than a weaker one, and a program under it may return different bits from both the strict and the relaxed reading.
 

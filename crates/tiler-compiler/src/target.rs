@@ -1401,6 +1401,32 @@ fn registered_arithmetic_facts(arithmetic: ArithmeticType) -> Option<CanonicalVa
         .and_then(builtin_scalar_value_type_facts)
 }
 
+/// Returns the registered value identity `arithmetic` names.
+///
+/// The complement of [`registered_arithmetic_facts`], reading the same catalog
+/// row for its *key* rather than its descriptor. Every arithmetic type resolves
+/// here — the vocabulary and the catalog are pinned to each other by a
+/// `tiler-ir` test — so a numerical requirement can always be stated for the
+/// exact value identity its width computes over, including the widths this build
+/// registers no contract key for.
+///
+/// That totality is what a requirement needs and what a *contract* deliberately
+/// does not get: a subject a profile can be asked about is not a contract a
+/// caller may state.
+///
+/// `None` when no catalog row carries that spelling, which would mean the
+/// arithmetic vocabulary and the catalog had drifted apart.
+pub(crate) fn registered_arithmetic_value_type(
+    arithmetic: ArithmeticType,
+) -> Option<ResolvedValueType> {
+    builtin_scalar_value_types().into_iter().find_map(|value| {
+        value
+            .nominal_key()
+            .filter(|key| key.to_string() == arithmetic.canonical_type_key())
+            .map(|key| ResolvedValueType::nominal(key.clone()))
+    })
+}
+
 /// Returns the format class and stated width of one registered scalar descriptor.
 ///
 /// `None` when the descriptor states neither, which is a real answer rather than

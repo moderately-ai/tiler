@@ -166,10 +166,11 @@ pub use model::{
     partial_reduction_shape,
 };
 pub use numerics::{
-    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption,
-    F32_NUMERICAL_CONTRACT_KEY_DOMAIN, F32NumericalContractKey, FlushedZeroSign,
-    MaterializationRounding, NumericalContractKeyError, NumericalPermission, NumericalRealization,
-    SubnormalFreedom, SubnormalMode, ValueDomainProvenance,
+    ApproximationEnvelope, ArithmeticType, BF16_NUMERICAL_CONTRACT_KEY_DOMAIN,
+    Bf16NumericalContractKey, ExceptionalValueAssumption, F32_NUMERICAL_CONTRACT_KEY_DOMAIN,
+    F32NumericalContractKey, FlushedZeroSign, MaterializationRounding, NumericalContractKeyError,
+    NumericalPermission, NumericalRealization, SubnormalFreedom, SubnormalMode,
+    ValueDomainProvenance,
 };
 pub use pointwise::{
     MAX_POINTWISE_F32_EXPRESSION_NODES, PointwiseF32Expression,

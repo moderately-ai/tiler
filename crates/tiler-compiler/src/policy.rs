@@ -85,8 +85,9 @@ use tiler_ir::schedule::{
 };
 
 use crate::request::StrictF32NumericalContract;
+use crate::target::ScalarArithmetic;
 use crate::target::honourability::{DimensionBehaviour, NumericalDimension, NumericalRequirement};
-use tiler_ir::semantic::{F32, OpKey};
+use tiler_ir::semantic::OpKey;
 
 /// The accuracy envelope the relaxed preset authorizes.
 ///
@@ -637,18 +638,62 @@ pub(crate) fn unrepresentable_dimension(
 pub(crate) fn dimension_requirements(
     contract: &StrictF32NumericalContract,
 ) -> Vec<NumericalRequirement> {
+    // The subject is derived from the contract's own width through the governed
+    // scalar catalog, not written beside it. A profile declares honourability
+    // for a `ScalarArithmetic` built by the same constructor, and a requirement
+    // matches a declaration only when *both* halves of the subject agree — so a
+    // requirement carrying `tiler::f32@1` beside `ArithmeticType::Bf16` would
+    // match no `bf16` row a target could ever declare, and every `bf16` contract
+    // would resolve `Unknown` for a reason no reader could locate.
+    //
+    // Every arithmetic type resolves a subject, including the two this build
+    // registers no contract key for. That totality is deliberate and is the
+    // difference between "no target declares this" and "nothing was asked": a
+    // requirement set that shrank for an unregistered width would be *vacuously
+    // feasible*, so a contract naming one would be proven by every profile
+    // rather than reported `Unknown` by all of them.
+    let Some(subject) = arithmetic_subject(contract.arithmetic) else {
+        return Vec::new();
+    };
     crate::target::honourability::CANONICAL_DIMENSIONS
         .into_iter()
         .filter(|dimension| is_consumable(*dimension))
         .map(|dimension| {
             NumericalRequirement::new(
                 dimension,
-                contract.arithmetic,
-                F32::resolved_type(),
+                subject.arithmetic(),
+                subject.resolved_type().clone(),
                 contract.behaviour(dimension),
             )
         })
         .collect()
+}
+
+/// The validated scalar subject one arithmetic type computes over.
+///
+/// **The same association a target profile's declaration is built from, reached
+/// by the same constructor.** [`ScalarArithmetic::new`] proves the pair from the
+/// governed built-in scalar catalog rather than from either name's spelling, so
+/// a requirement and a declaration that both went through it are speaking about
+/// one registered value identity by construction. Writing the pairing out here
+/// instead would be a second copy of the association, and a copy is a second
+/// place for it to be wrong.
+///
+/// **Total over the arithmetic vocabulary, and that is not the same claim as
+/// "this build states contracts in every width".** A subject is what a target is
+/// *asked about*; whether a caller may state a contract in that width is decided
+/// by whether the key scheme mints one, which is a separate and narrower gate.
+/// Keeping the two apart is what lets an `f16` contract be reported `Unknown` by
+/// a profile that never mentions `f16`, instead of being proven by a requirement
+/// set that quietly emptied itself.
+///
+/// `None` only if the arithmetic vocabulary and the governed scalar catalog have
+/// drifted apart, which `tiler-ir` pins with a test of its own; it is a refusal
+/// rather than a panic so drift refuses a subject instead of admitting one no
+/// registry describes.
+pub(crate) fn arithmetic_subject(arithmetic: ArithmeticType) -> Option<ScalarArithmetic> {
+    let resolved_type = crate::target::registered_arithmetic_value_type(arithmetic)?;
+    ScalarArithmetic::new(arithmetic, resolved_type).ok()
 }
 
 /// The strict resolution of every dimension, for one arithmetic type.

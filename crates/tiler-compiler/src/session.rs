@@ -1315,12 +1315,30 @@ const fn rule_of(error: &RequestError) -> &'static str {
 ///
 /// # One arithmetic type
 ///
-/// Every resolution is stated for `f32`. Subnormal behaviour is measurably
-/// per-dtype — one Apple row flushes in `f32`, preserves in `f16`, and flushes in
-/// `bf16` — so a contract that spoke for every width at once would be stating
-/// something already known to be false for one of them.
+/// Every resolution is stated for exactly one [`ArithmeticType`], and the
+/// contract carries which. Subnormal behaviour is measurably per-dtype — one
+/// Apple row flushes in `f32`, preserves in `f16`, and flushes in `bf16` — so a
+/// contract that spoke for every width at once would be stating something
+/// already known to be false for one of them.
+///
+/// The width is never defaulted and never inferred from the program: a
+/// composition starts at [`NumericalContractBuilder::strict_f32`] or
+/// [`NumericalContractBuilder::strict_bf16`], each of which names its width in
+/// its own name, and there is no width-free entry point for an omission to fall
+/// through. The subject a target is then asked about is derived from that width
+/// through the governed scalar catalog, so a contract and a profile row speak
+/// about the same value identity by construction rather than by coincidence.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct NumericalContract {
+    /// The arithmetic type every resolution below is stated for.
+    arithmetic: ArithmeticType,
+    /// The canonical arithmetic NaN pattern of that width.
+    ///
+    /// Carried beside the width rather than looked up at resolution, because it
+    /// is part of what the contract *is*: two contracts resolving the same
+    /// dimensions and producing different NaN patterns are different contracts
+    /// (ADR 0076 item 6), and the key encodes it for exactly that reason.
+    canonical_arithmetic_nan_bits: u32,
     input_subnormals: SubnormalMode,
     result_subnormals: SubnormalMode,
     contraction: NumericalPermission,
@@ -1408,6 +1426,47 @@ impl NumericalContract {
         .result_subnormals(SIGN_PRESERVING_FLUSH)
         .reassociation(NumericalPermission::Permitted)
         .resolved();
+
+    /// Every freedom refused in `bf16`; subnormals preserved on both dimensions.
+    ///
+    /// **Not [`Self::STRICT_F32`] read in another width, and the difference is
+    /// measured rather than stylistic.** The two resolve every dimension
+    /// identically and are still different contracts with different keys,
+    /// because the behaviour they require is required of different arithmetic:
+    /// on one measured Apple row `f32` flushes, `f16` preserves, and `bf16`
+    /// flushes, so a target's answer to this contract is not its answer to the
+    /// `f32` one and neither may be read off the other.
+    ///
+    /// A caller states it when it needs `bf16` gradual underflow preserved and
+    /// would rather not run than run wrong. The measured macOS Apple9 row
+    /// declares a sign-preserving flush for `bf16`, so that profile refuses this
+    /// contract by name.
+    pub const STRICT_BF16: Self = NumericalContractBuilder::strict_bf16().resolved();
+
+    /// Strict `bf16`, except that both subnormal dimensions flush to the
+    /// sign-preserving zero.
+    ///
+    /// The `bf16` counterpart of [`Self::FLUSH_SUBNORMALS_TO_ZERO_F32`], and a
+    /// separately measured claim rather than a translation of it: the two widths
+    /// are declared by independent rows on a target profile, and the measured
+    /// Apple row that flushes in both preserves in `f16`.
+    ///
+    /// It widens exactly two dimensions; accepting flushing does not thereby
+    /// accept reassociated sums.
+    pub const FLUSH_SUBNORMALS_TO_ZERO_BF16: Self = NumericalContractBuilder::strict_bf16()
+        .input_subnormals(SIGN_PRESERVING_FLUSH)
+        .result_subnormals(SIGN_PRESERVING_FLUSH)
+        .resolved();
+
+    /// The arithmetic type every resolution in this contract is stated for.
+    ///
+    /// Reported because a caller branching on a refusal needs to distinguish
+    /// "this target cannot preserve `bf16` subnormals" from the same sentence
+    /// about `f32`, and the refusal names the width precisely so it can.
+    #[must_use]
+    pub const fn arithmetic(self) -> ArithmeticType {
+        self.arithmetic
+    }
 
     /// The treatment of subnormal operands before arithmetic.
     #[must_use]
@@ -1498,6 +1557,8 @@ impl NumericalContract {
     /// widened in one place and not the other.
     pub(crate) fn resolve(self) -> StrictF32NumericalContract {
         StrictF32NumericalContract {
+            arithmetic: self.arithmetic,
+            canonical_arithmetic_nan_bits: self.canonical_arithmetic_nan_bits,
             input_subnormals: self.input_subnormals,
             result_subnormals: self.result_subnormals,
             contraction: self.contraction,
@@ -1509,13 +1570,21 @@ impl NumericalContract {
             nan_assumptions: self.nan_assumptions,
             infinity_assumptions: self.infinity_assumptions,
             materialization_rounding: self.materialization_rounding,
-            ..StrictF32NumericalContract::governed()
+            // The strict resolution of the *stated* width, so the base a
+            // composition is completed from names the same arithmetic the
+            // composition does. Reading the base off the governed `f32` contract
+            // would give a `bf16` statement an `f32` NaN pattern.
+            ..crate::policy::strict_contract(self.arithmetic, self.canonical_arithmetic_nan_bits)
         }
         .keyed()
     }
 }
 
-/// The flush behaviour the measured Apple `f32` row delivers.
+/// The flush behaviour the measured Apple row delivers in `f32` and in `bf16`.
+///
+/// One constant for both widths because it names a *behaviour*, not a target
+/// answer: which widths deliver it is a per-dtype profile row, and the measured
+/// Apple `f16` row deliberately does not.
 const SIGN_PRESERVING_FLUSH: SubnormalMode = SubnormalMode::FlushToZero {
     zero_sign: FlushedZeroSign::PreservesSign,
 };
@@ -1552,15 +1621,59 @@ const SIGN_PRESERVING_FLUSH: SubnormalMode = SubnormalMode::FlushToZero {
 pub struct NumericalContractBuilder(NumericalContract);
 
 impl NumericalContractBuilder {
-    /// Starts a composition with every dimension at its strict resolution.
+    /// Starts an `f32` composition with every dimension at its strict
+    /// resolution.
     ///
-    /// There is deliberately no other entry point. Starting from a laxer
-    /// contract would make an omitted dimension inherit a freedom the caller
-    /// never stated, which is the one direction a numerical default must not
-    /// have.
+    /// Every entry point is per width and says so in its name. Starting from a
+    /// laxer contract would make an omitted dimension inherit a freedom the
+    /// caller never stated, which is the one direction a numerical default must
+    /// not have; and there is deliberately no width-free entry point, because an
+    /// omitted *width* is the same failure one level up — a contract that spoke
+    /// for every float width at once would state something the measurements
+    /// already refute for one of them.
     #[must_use]
     pub const fn strict_f32() -> Self {
+        Self::strict(
+            ArithmeticType::F32,
+            tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+        )
+    }
+
+    /// Starts a `bf16` composition with every dimension at its strict
+    /// resolution.
+    ///
+    /// The `bf16` sibling of [`Self::strict_f32`], and a separate statement
+    /// rather than a mode of it: the two produce different contracts with
+    /// different keys even when every dimension is resolved alike, because they
+    /// require their behaviour of different arithmetic and a target declares the
+    /// two independently.
+    ///
+    /// **Statable is not planned.** The semantic registry admits
+    /// `tiler::constant-bf16@1`, `tiler::multiply-bf16@1`, and
+    /// `tiler::add-bf16@1`, and a profile can declare measured `bf16`
+    /// honourability, so a `bf16` contract can be stated and assessed against a
+    /// target. Nothing below the request boundary realizes `bf16`: a program in
+    /// it is refused by the recognizer's `dtype-f32` rule after the contract has
+    /// been assessed, which is why a positive answer here reports feasibility
+    /// rather than support.
+    #[must_use]
+    pub const fn strict_bf16() -> Self {
+        Self::strict(
+            ArithmeticType::Bf16,
+            tiler_ir::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS as u32,
+        )
+    }
+
+    /// The strict resolution of every dimension, for one stated width.
+    ///
+    /// Private, and the one place the strict vector is spelled: two per-width
+    /// copies would be two places for "strict" to drift, and the whole
+    /// fail-closed argument rests on every entry point starting from the same
+    /// resolution.
+    const fn strict(arithmetic: ArithmeticType, canonical_arithmetic_nan_bits: u32) -> Self {
         Self(NumericalContract {
+            arithmetic,
+            canonical_arithmetic_nan_bits,
             input_subnormals: SubnormalMode::Preserve,
             result_subnormals: SubnormalMode::Preserve,
             contraction: NumericalPermission::Forbidden,

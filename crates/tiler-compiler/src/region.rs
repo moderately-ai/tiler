@@ -1898,7 +1898,7 @@ fn digest_from(state: u64, bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::{CompilationRequest, verify_request};
+    use crate::request::{CompilationRequest, verify_planned_request};
     use std::collections::BTreeMap as OracleMap;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
@@ -2621,7 +2621,7 @@ mod tests {
     fn stage_records_are_typed_bounded_and_causally_chained() {
         let program = serial_sum_program();
         let outcome = form(&program);
-        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         let target = verified.for_target(verified.target_profiles()[0]).unwrap();
         let mut explain = ExplainWriter::new(&target).unwrap();
 
@@ -2690,7 +2690,7 @@ mod tests {
         let mut budgets = DeterministicBudgets::governed();
         budgets.region_candidates_per_seed = 0;
         let outcome = form_with(&program, budgets);
-        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         let target = verified.for_target(verified.target_profiles()[0]).unwrap();
         let mut explain = ExplainWriter::new(&target).unwrap();
 

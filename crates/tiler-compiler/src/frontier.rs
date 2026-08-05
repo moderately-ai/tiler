@@ -3307,7 +3307,7 @@ mod tests {
     use crate::call_registry::{OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry};
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
     use crate::request::{
-        CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_request,
+        CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_planned_request,
     };
     use tiler_ir::schedule::{
         AccessMode, ContributorOrder, ExceptionalValueAssumption, InputOrdinal,
@@ -3336,7 +3336,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         let program = builder.build().unwrap();
-        let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let request = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         request.for_target(0).unwrap()
     }
 
@@ -5336,7 +5336,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         let program = builder.build().unwrap();
-        let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let request = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         request.for_target(0).unwrap()
     }
 
@@ -5366,7 +5366,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), product)
             .unwrap();
         let program = builder.build().unwrap();
-        let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let request = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         request.for_target(0).unwrap()
     }
 
@@ -5546,7 +5546,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         let program = builder.build().unwrap();
-        let request = verify_request(CompilationRequest::governed_under(
+        let request = verify_planned_request(CompilationRequest::governed_under(
             &program,
             crate::request::StrictF32NumericalContract::governed_relaxed(),
         ))

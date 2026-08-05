@@ -3211,7 +3211,7 @@ mod tests {
     use super::*;
     use crate::fusion::prove_fused_numerics;
     use crate::region::form_region_candidates;
-    use crate::request::{CompilationRequest, verify_request};
+    use crate::request::{CompilationRequest, verify_planned_request};
     use tiler_ir::program::abi::{
         PreparedEntryTargetRequirement, TargetPropertyKey, TargetPropertyProviderIdentity,
         TargetPropertyQuery, TargetPropertyRequirementRelation,
@@ -3240,7 +3240,7 @@ mod tests {
 
     fn request(scale: f32) -> VerifiedTargetRequest {
         let program = program(scale);
-        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         verified.for_target(verified.target_profiles()[0]).unwrap()
     }
 
