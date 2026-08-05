@@ -39,15 +39,63 @@ compiler consumers use the separately governed graph/compiler surfaces until a
 later facade is accepted. Do not redesign dependencies, accept the pending
 compiler facade, or change generated paths.
 
-This ticket is deferred while the architecture-review code freeze applies,
-because Rustdoc text lives in source files. Its activation trigger is Tom
-lifting that freeze.
+This ticket was filed deferred on the premise that an architecture-review code
+freeze barred editing source files, with "Tom lifting that freeze" as its
+activation trigger. The premise is refuted rather than satisfied — see the
+trigger check log below, and the independent re-check recorded in the outcome —
+so the deferral is spent and the work was done under no freeze.
 
 ## Closes when
 
 Every unqualified universal-consumer claim in the two frontend crates is either
 narrowed to the inline frontend or supported by an accepted general facade, and
 the Markdown packaging contract agrees with the code documentation.
+
+## Outcome
+
+The two frontend crates' documentation now scopes itself the way
+[`docs/architecture.md`](../docs/architecture.md) already did, and states the
+compiler-facade boundary as undecided rather than as either settled direction.
+
+**Fact — what changed.** `crates/tiler/src/lib.rs` opens "The one crate a
+consumer of Tiler's inline Rust frontend depends on", keeps ADR 0088 item 1's
+closure claim scoped to *that* contract, and gains a section saying that a
+program not written as a `tensor!` region has no entry point here, that the
+general graph and compiler surfaces live in `tiler-ir` and `tiler-compiler`
+today, and that `"internal" is the wrong reading of the other members` — what is
+decided is that the inline frontend routes through none of them, not what a
+non-inline consumer may name. `crates/tiler-macros/src/lib.rs` narrows "the
+durable facade a consumer imports" to an inline-frontend consumer and adds the
+same undecided-boundary sentence. Two smaller scope claims were narrowed: the
+`runtime` module's "the only one a consumer declares" and the "internal crates
+the consumer did not declare" clause in the crate header.
+
+**Fact — the pending boundary is described, not decided.** Both new sections name
+`tiler_compiler::session` as a reviewed experimental draft rather than an
+accepted API and point at
+[`accept-the-public-compiler-facade-boundary`](accept-the-public-compiler-facade-boundary.md),
+which matches `docs/correctness-and-testing.md:117`. The diff adds and removes
+only `//!` and `///` lines, so no item's signature, visibility, or path moved and
+no interface was accepted here.
+
+**Fact — the Markdown contract already agreed and still does.**
+`docs/architecture.md:331` describes `tiler` as "The inline Rust frontend's
+import path", and `:424` states that this "does not make `tiler` the accepted
+facade for consumers that construct and compile arbitrary semantic programs".
+The code documentation now says the same thing; no Markdown edit was required,
+and none was in scope.
+
+**Fact — the freeze was re-checked independently before editing.**
+`grep -rn "code freeze\|review freeze\|architecture-review" .` (excluding the
+vendored LLVM sources) returns only this ticket, the sweep ticket, and the `done`
+dependency. No durable contract records a freeze.
+
+**Measurement — verification.** `cargo fmt -p tiler -p tiler-macros -- --check`;
+`cargo check --workspace`; `RUSTDOCFLAGS='-D warnings' cargo doc -p tiler
+--no-deps`; `cargo test -p tiler -p tiler-macros --doc` (1 passed — the crate
+header's example still compiles and runs); `cargo clippy -p tiler -p tiler-macros
+--all-targets -- -D warnings`; `cargo nextest run -p tiler -p tiler-macros` (196
+passed, 1 skipped).
 
 ## Trigger check log
 

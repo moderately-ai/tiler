@@ -1,12 +1,20 @@
 //! The procedural macro implementation behind Tiler's inline tensor regions.
 //!
 //! Rust forbids a `proc-macro` crate from exporting anything but macros, so
-//! this crate cannot be the durable facade a consumer imports. It is the
-//! implementation half of a two-crate pair: consumers depend on `tiler`, which
-//! re-exports [`tensor`] from here, and generated tokens name paths under
-//! `tiler` rather than under this crate. A consumer therefore never names
-//! `tiler-macros` — not in a manifest, not in an import, and not through a
-//! path this macro expands to.
+//! this crate cannot be the durable facade an inline-frontend consumer imports.
+//! It is the implementation half of the inline Rust frontend pair ADR 0088
+//! admits: a consumer of that frontend depends on `tiler`, which re-exports
+//! [`tensor`] from here, and generated tokens name paths under `tiler` rather
+//! than under this crate. A consumer of that frontend therefore never names
+//! `tiler-macros` — not in a manifest, not in an import, and not through a path
+//! this macro expands to.
+//!
+//! That pair is the accepted frontend for inline Rust tensor regions and is not
+//! a claim about any other way into Tiler. The general graph and compiler
+//! surfaces this crate calls during an expansion — `tiler-ir` and
+//! `tiler-compiler` — are governed on their own, and whether they are presented
+//! as one coherent public compiler facade is an undecided boundary owned by
+//! `accept-the-public-compiler-facade-boundary`.
 //!
 //! # The pipeline, and why it is four modules
 //!
