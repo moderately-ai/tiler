@@ -126,6 +126,28 @@ pub(crate) struct SemanticMemberId(pub(crate) u32);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SemanticValueId(pub(crate) u32);
 
+/// Returns the graph-local ordinal one verified program gives a value.
+///
+/// **The coordinate is the value's position in the program's own value list**,
+/// which is what [`RegionGraph::from_program`] assigns when it builds the same
+/// mapping for every value at once. This is its single-lookup form, and it is
+/// stated beside the type rather than at its caller so that a stage which holds
+/// a [`SemanticProgram`] but no [`RegionGraph`] — program assembly, attributing
+/// declared outputs to the regions that publish them — asks the coordinate's
+/// owning module rather than re-deriving it.
+/// `tests::the_value_ordinal_lookup_indexes_the_graph_view_s_own_record` is what
+/// keeps the two spellings in agreement.
+///
+/// Answers `None` for a value the program does not hold, which is the
+/// fail-closed direction: a caller may not treat an unknown handle as ordinal
+/// zero.
+pub(crate) fn value_ordinal(program: &SemanticProgram, value: ValueId) -> Option<SemanticValueId> {
+    let position = program
+        .values()
+        .position(|candidate| candidate.id() == value)?;
+    u32::try_from(position).ok().map(SemanticValueId)
+}
+
 /// Producer duplication allowed for one candidate.
 ///
 /// The first implementation fixes this to [`Self::Disabled`]; the exhaustive
@@ -2737,5 +2759,51 @@ mod tests {
             error.to_string(),
             "compile.region.invalid.convexity: region:0000000000000000 rejected"
         );
+    }
+
+    /// The single-lookup value ordinal is the one the graph view assigns.
+    ///
+    /// [`value_ordinal`] and [`RegionGraph::from_program`]'s bulk mapping are two
+    /// spellings of one coordinate, and nothing in the type system holds them
+    /// together — so this reads the graph's own per-value record *through* the
+    /// helper's answer. A helper returning a different ordinal indexes a
+    /// different value's record, and every arm below then reports about the
+    /// wrong slot.
+    ///
+    /// Observed failing: shifting [`value_ordinal`] by one slot fails this test,
+    /// because the fixture's declared input sits at one end of its value list
+    /// and its declared output at the other with unmarked values between them.
+    #[test]
+    fn the_value_ordinal_lookup_indexes_the_graph_view_s_own_record() {
+        let program = serial_sum_program();
+        let graph = RegionGraph::from_program(&program).expect("the fixture is a valid graph");
+
+        for (position, input) in program.inputs().enumerate() {
+            let ordinal = value_ordinal(&program, input.value()).expect("a declared input");
+            assert_eq!(
+                graph.values[usize::try_from(ordinal.0).unwrap()].input_position,
+                Some(u32::try_from(position).unwrap()),
+            );
+        }
+        for output in program.outputs() {
+            let ordinal = value_ordinal(&program, output.value()).expect("a declared output");
+            assert!(graph.values[usize::try_from(ordinal.0).unwrap()].named_result);
+        }
+
+        // The marks are sparse, which is what makes the assertions above
+        // discriminating rather than vacuous.
+        let marked = graph
+            .values
+            .iter()
+            .filter(|value| value.named_result || value.input_position.is_some())
+            .count();
+        assert_eq!(marked, 2);
+        assert!(graph.values.len() > marked);
+
+        // A value of another program is not one this program holds, which is the
+        // fail-closed direction the helper answers `None` for.
+        let other = shared_constant_program();
+        let foreign = other.outputs().next().expect("one declared output").value();
+        assert_eq!(value_ordinal(&program, foreign), None);
     }
 }

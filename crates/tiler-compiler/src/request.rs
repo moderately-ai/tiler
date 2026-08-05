@@ -1650,27 +1650,30 @@ impl VerifiedTargetRequest {
             .expect("a resolved output position names a recognized output")
     }
 
-    /// Returns the one recognized output of a program this boundary admitted.
+    /// Returns the one recognized output of a single-output request.
     ///
-    /// **It exists because `output-arity` still stands, and it is named so that
-    /// its removal is a compile error rather than a silent mis-attribution.**
-    /// Recognition produces one partition per declared output, but
-    /// [`select_supported_strategy`] admits only a program declaring exactly
-    /// one, so a whole-program derivation — the canonical two-region pair, the
-    /// fused whole-program region, and the fixtures that drive them — has
-    /// exactly one output to derive from. Every *per-region* authority uses
-    /// [`Self::output_for_region`] instead;
-    /// `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`
-    /// relaxes the guard, and each caller of this accessor is then a site that
-    /// must say which output it means.
+    /// **No compile-path derivation reads this, and the `output-arity` guard
+    /// that used to justify it is gone.** Relaxing that guard surfaced no caller
+    /// to convert, which is the fact worth recording: every per-region authority
+    /// on the compile path already resolves through
+    /// [`crate::physical::spell_region`] and [`Self::output_at`], and the two
+    /// whole-program constructors that still call this —
+    /// [`crate::physical::build_scheduled_regions`] and
+    /// [`crate::physical::build_fused_scheduled_region`] — are retained as the
+    /// single definition of each canonical region and are reached only from
+    /// tests. This accessor is what lets those, and the fixtures around them,
+    /// name a one-output program's shape without repeating a destructuring.
     ///
     /// # Panics
     ///
-    /// Panics for a request whose program declares other than one output, which
-    /// the request boundary does not produce.
+    /// Panics for a request whose program declares other than one declared
+    /// output. That is now a *reachable* state — the boundary admits ordered
+    /// multi-output programs — so the panic is the guarantee: a fixture or
+    /// constructor that grows a second output fails loudly here rather than
+    /// silently asserting about the first.
     pub(crate) fn sole_output(&self) -> &NormalizedOutput {
         let [output] = self.normalized.outputs() else {
-            panic!("the request boundary admits exactly one declared output");
+            panic!("this derivation is for a request declaring exactly one output");
         };
         output
     }
@@ -3046,13 +3049,13 @@ fn resolve_numerical_contract(
 ///
 /// This is **not** a match against whole-program templates. The program-wide
 /// properties every recognized program shares — at least one declared input,
-/// exactly one output, `f32` throughout — are checked once and each names its
-/// own rule, and the program's shape is then decided by *the occurrence that
-/// produces the output*, walked outward through the occurrences that feed it.
-/// A program whose exact shape nothing here was taught is admitted when every
-/// occurrence it contains is one the physical layer can realize and they compose
-/// into a region chain it can assemble; nothing asks whether the whole graph
-/// matches a spelling.
+/// `f32` throughout — are checked once and each names its own rule, and the
+/// program's shape is then decided per declared output by *the occurrence that
+/// produces it*, walked outward through the occurrences that feed it. A program
+/// whose exact shape nothing here was taught is admitted when every occurrence
+/// it contains is one the physical layer can realize and they compose into a
+/// region chain it can assemble; nothing asks whether the whole graph matches a
+/// spelling.
 ///
 /// Concretely, the elementwise dimension is now the general
 /// [`PointwiseF32Expression`] vocabulary rather than a leaf count. A reduction
@@ -3108,55 +3111,40 @@ fn resolve_numerical_contract(
 /// Which refusal a rejected program reports is settled by the occurrence it
 /// actually ends in rather than by enumeration order: a program whose output is
 /// a reduction gets the reduction's reason, one whose output is a contraction
-/// gets the contraction's, and any other gets the elementwise walk's.
+/// gets the contraction's, and any other gets the elementwise walk's. With
+/// several declared outputs the walks run in declaration order and the first
+/// one that cannot be recognized reports, so the rule names a property of the
+/// caller's own interface rather than of a traversal it cannot see.
 ///
-/// # The one refusal here that is *not* a wall below this boundary
+/// # Ordered multi-output programs are admitted, and the arity guard is gone
 ///
-/// **Multiple outputs** (`output-arity`) is refused for a different reason than
-/// the three above, and reading it as a physical-vocabulary gap sends the
-/// widening at the wrong crate. `tiler-ir` already expresses ordered
-/// multi-output: [`tiler_ir::program::KernelProgramBuilder::push_output`] is
-/// general and bounded by [`tiler_ir::program::MAX_PROGRAM_OUTPUTS`] rather than
-/// by one, its verifier already rejects a plan naming fewer outputs than the
-/// program declares, and its own tests build and verify a two-output program.
-/// A region writing one owning tensor is not the obstruction either — several
-/// regions write several, and the program layer binds each stage's buffers to
-/// values positionally, which [`tiler_ir::program::ValueRole::fills`] states.
+/// This function used to open with `output_count() != 1`, refusing every
+/// multi-output program under `output-arity` before any occurrence was
+/// classified. That refusal is gone in both of the places it stood — here and
+/// `verify_artifact_refinements`'s `semantic-output-coverage` arity check — and
+/// nothing replaced it with a narrower cardinality rule: a program declaring
+/// several ordered named outputs is now recognized, covered, planned, and
+/// assembled like any other.
 ///
-/// **Recognition is no longer the wall, and the guard below is now the only
-/// thing standing between a two-output program and a plan.** It used to be:
-/// this function read `outputs().next()`, classified that one occurrence, and
-/// each recognizer below required *its* walk to cover the program exactly, so a
-/// second declared output was either outside the walk — leaving the program
-/// uncovered, refused under `operation-set` — or inside it, where one region's
-/// owning write would have had to serve both a materialization edge and a
-/// publication. [`recognize_program_outputs`] replaced that with one walk per
-/// declared output and moved the whole-program obligation onto the relation
-/// between the walks: [`check_output_cover`] requires them to *partition* the
-/// occurrences, so every occurrence is claimed exactly once and every published
-/// value has one region that owns its write.
+/// What made it removable is that every layer it was standing in for now answers
+/// for itself. [`recognize_program_outputs`] walks each declared output and
+/// [`check_output_cover`] requires the walks to *partition* the occurrences, so
+/// every occurrence is claimed exactly once and every published value has one
+/// region that owns its write. The cover carries which named result each region
+/// retains, so `CoverAssembly::from_plan` attributes each declared output to its
+/// publishing region *by value* rather than by execution order — the pairing
+/// that made the guard load-bearing after recognition had already been widened.
 ///
-/// The guard therefore stays for one remaining reason, and it is downstream
-/// rather than here. `CoverAssembly::from_plan` pairs the ordered named outputs
-/// with the regions that publish them, and the cover states which regions
-/// publish *an* output but not which named result each retains, so with two of
-/// either it refuses under `cover-named-output-attribution`
-/// (`crates/tiler-compiler/src/program.rs`), and
-/// `verify_artifact_refinements` carries its own `semantic-output-coverage`
-/// arity check. Relaxing `output-arity` before those two are supplied would
-/// trade a boundary refusal for a mid-pipeline one, which is what the multi-input
-/// precedent calls strictly worse than refusing.
-/// `admit-ordered-multi-output-programs-at-the-compiler-request-boundary` owns
-/// relaxing it together with that attribution;
-/// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence for
-/// where the boundary is, and this module's own
-/// `recognizing_several_ordered_named_outputs_*` tests hold the evidence that
-/// recognition is no longer what holds it.
-///
-/// The guard runs **before** recognition rather than after, so which refusal a
-/// multi-output program reports has not moved: a program whose second output is
-/// inside the first's walk still reports `output-arity` rather than the
-/// partition rule it would now also fail.
+/// **What a multi-output program is still refused for is the shape of its
+/// outputs, never their number.** Two outputs whose walks share an occurrence
+/// refuse under `output-partition-overlap`, which is the branch where one
+/// region's owning write would have to serve both a materialization edge and a
+/// publication: two keys naming one value, and a published intermediate that is
+/// also consumed. [`tiler_ir::program::ValueRole`] is exclusive and a region
+/// writes one owning tensor, so both are refused a layer down, and
+/// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
+/// stage that lifts the second. `crates/tiler-compiler/tests/multi_output_boundary.rs`
+/// holds the evidence for where that boundary now is.
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
     // Program-wide properties first, each under the rule that names it. A
     // program failing one of these fails it for every shape below, so reporting
@@ -3164,9 +3152,6 @@ fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProg
     // depend on which occurrence happens to produce the output.
     if program.input_count() == 0 {
         return mismatch("input-arity");
-    }
-    if program.output_count() != 1 {
-        return mismatch("output-arity");
     }
     if program
         .values()
@@ -4421,17 +4406,11 @@ mod tests {
 
     /// Recognizes one program's ordered named outputs, or reports the rule.
     ///
-    /// Drives [`recognize_program_outputs`] directly, below the standing
-    /// `output-arity` guard, which is what makes every refusal the widened walk
-    /// introduces reachable and watchable. The guard itself belongs to
-    /// `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`,
-    /// so a program declaring several outputs is refused by
-    /// [`select_supported_strategy`] and recognized by this.
-    ///
-    /// The two program-wide properties the boundary checks *besides* arity are
-    /// asserted rather than reported, so a fixture reaching the walk has cleared
-    /// exactly what a one-output program clears and a refusal this helper does
-    /// return is one the walk itself produced.
+    /// Drives [`recognize_program_outputs`] directly rather than through
+    /// [`select_supported_strategy`], so a refusal this helper returns is one
+    /// the walks themselves produced. The two program-wide properties the
+    /// boundary checks before them are asserted rather than reported, which is
+    /// what makes that attribution exact.
     fn recognize_outputs(program: &SemanticProgram) -> Result<NormalizedProgram, &'static str> {
         assert_ne!(program.input_count(), 0, "the fixture declares an input");
         assert!(
@@ -4906,8 +4885,12 @@ mod tests {
         assert_eq!(all_constant.input_count(), 0);
         assert_eq!(recognize(&all_constant).unwrap_err(), "input-arity");
 
-        // `output-arity`: two named outputs over one admitted expression. The
-        // neighbour is the same graph naming only the root.
+        // `output-partition-overlap`: two named outputs one walk would have to
+        // publish, because the second names a value the first's walk consumes.
+        // The neighbour is the same graph naming only the root, which recognizes
+        // — so the rule reads the *sharing* rather than the second output. This
+        // row replaced an `output-arity` row: the arity guard is gone, and what
+        // refuses this program is the partition obligation it actually violates.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), shape())
@@ -4923,7 +4906,10 @@ mod tests {
             .unwrap();
         let two_outputs = builder.build().unwrap();
         assert_eq!(two_outputs.output_count(), 2);
-        assert_eq!(recognize(&two_outputs).unwrap_err(), "output-arity");
+        assert_eq!(
+            recognize(&two_outputs).unwrap_err(),
+            "output-partition-overlap",
+        );
 
         // `operation-set`: a registered family whose *access relation* the
         // region vocabulary cannot spell. `tiler::reindex-f32@1` has a
@@ -5021,11 +5007,11 @@ mod tests {
     /// makes each one a region a cover can place without two regions claiming
     /// one occurrence.
     ///
-    /// The standing refusal is asserted beside it, because the two facts
-    /// together are the ticket's boundary: recognition admits the program and
-    /// `output-arity` still refuses it, so the wall that remains is the guard
-    /// `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`
-    /// owns rather than anything about recognizing several outputs.
+    /// The whole boundary is asserted beside the walk, because the two together
+    /// are what the claim needs: the same program recognizes into two partitions
+    /// *and* clears [`select_supported_strategy`], which used to refuse it under
+    /// `output-arity` before any occurrence was classified. That guard is gone,
+    /// so the two derivations now agree rather than contradicting each other.
     #[test]
     fn recognizing_several_ordered_named_outputs_names_one_partition_each() {
         let program = independent_two_output_program();
@@ -5053,14 +5039,19 @@ mod tests {
         // which occurrence they name.
         assert_ne!(product.expression, sum.expression);
 
-        // The accepted neighbour: the same recognition reached through the
-        // ordinary boundary still refuses, and under the guard's own rule.
+        // The same recognition reached through the ordinary boundary, which is
+        // where the arity guard stood. Compared by the same fields rather than
+        // by whole-value equality, for the reason
+        // `two_programs_differing_only_in_output_order_recognize_differently`
+        // gives about `ValueId` carrying its graph.
+        let admitted = select_supported_strategy(&program).expect("the boundary admits it");
         assert_eq!(
-            select_supported_strategy(&program),
-            Err(RequestError::UnsupportedCapability {
-                phase: "strategy",
-                rule: "output-arity",
-            }),
+            admitted
+                .outputs()
+                .iter()
+                .map(NormalizedOutput::members)
+                .collect::<Vec<_>>(),
+            vec![product.members.clone(), sum.members.clone()],
         );
     }
 
@@ -5222,15 +5213,31 @@ mod tests {
     /// subject; the semantic half of the same claim is pinned in
     /// `crates/tiler-compiler/tests/multi_output_boundary.rs`.
     ///
-    /// **Measurement boundary, twice over.** This checks the recognized list,
-    /// not the encoded subject bytes: a subject is minted only for a request the
-    /// boundary admitted, and `output-arity` admits no two-output program, so
-    /// the encoded form of this claim becomes checkable in the same change that
-    /// relaxes the guard. And it compares each entry by the fields the subject
-    /// encodes rather than by the whole recognized value, because a
-    /// [`ValueId`] carries the graph it was built in: two separately built
-    /// programs never share one, so whole-value equality would report a
-    /// difference this test is not about and would hold whatever the order.
+    /// **The subject half is asserted here too, and it was not reachable until
+    /// `output-arity` was relaxed:** a subject is minted only for a request the
+    /// boundary admitted, and that guard admitted no two-output program at all.
+    /// Both orders now mint one, and the two subjects name their outputs in the
+    /// order their programs declared them.
+    ///
+    /// **Measurement boundary, and it is a limit on what any test here can
+    /// claim.** The subject's *output list* is compared against the program's
+    /// declared keys, not its canonical bytes. The previous version of this
+    /// comment predicted the encoded form would become checkable once the guard
+    /// moved, and it does not: the subject folds the semantic graph identity,
+    /// output order is already part of that identity, and no two programs can
+    /// differ *only* in the recognized list — so two subjects' bytes differ
+    /// whatever the list order, observed by sorting the arms in
+    /// [`VerifiedRequestSubject::canonical_explain_subject_bytes`] and watching
+    /// the inequality still hold. A check that cannot say no is not evidence.
+    /// The list comparison is anchored to the declared keys for the same reason:
+    /// comparing the two subjects only to each other survives a list reversed
+    /// for both, which was also observed.
+    ///
+    /// The recognized entries are compared by the fields the subject encodes
+    /// rather than by the whole recognized value, because a [`ValueId`] carries
+    /// the graph it was built in: two separately built programs never share one,
+    /// so whole-value equality would report a difference this test is not about
+    /// and would hold whatever the order.
     #[test]
     fn two_programs_differing_only_in_output_order_recognize_differently() {
         fn ordered(product_first: bool) -> SemanticProgram {
@@ -5282,6 +5289,38 @@ mod tests {
             product_first,
             encoded(&recognize_outputs(&ordered(true)).expect("recognized")),
         );
+
+        // The same claim about the *subject*, minted through the ordinary
+        // boundary rather than from the walk alone, and anchored to the
+        // program's own declared order rather than only to the other subject.
+        // Comparing the two subjects to each other is not enough: a subject list
+        // reversed for *both* programs still swaps entry for entry, so that
+        // relation holds while the interface is backwards. The declared keys are
+        // the fixed point a reversal moves away from.
+        for product_first in [true, false] {
+            let program = ordered(product_first);
+            let declared: Vec<OutputKey> = program
+                .outputs()
+                .map(|output| output.key().clone())
+                .collect();
+            let request = verify_planned_request(CompilationRequest::governed(&program))
+                .expect("the boundary admits an ordered two-output program");
+            let request = request.for_target(0).expect("one governed target");
+            let subject: Vec<OutputKey> = request
+                .subject()
+                .normalized()
+                .outputs()
+                .iter()
+                .map(|output| match output {
+                    NormalizedOutputSubject::Pointwise(normalized) => normalized.output_key.clone(),
+                    _ => panic!("both outputs of the fixture are elementwise"),
+                })
+                .collect();
+            assert_eq!(
+                subject, declared,
+                "the request subject does not name the outputs in declaration order",
+            );
+        }
     }
 
     /// Builds a binary contraction, optionally with an elementwise epilogue.

@@ -462,10 +462,137 @@ fn shared_producer_fan_out_compiles_without_duplicating_the_producer() {
     }
 }
 
-/// An ordered multi-output program is not silently approximated; the bounded
-/// profile rejects it explicitly at the request boundary.
+/// Two ordered named outputs over two distinct domains, in one declaration
+/// order.
+///
+/// `summed = a + b` at `[2, 2]` and `reduced = sum(a * b, axis 1)` at `[2]`,
+/// over the same two declared `[2, 2]` inputs.
+///
+/// Three properties, each load-bearing. The two outputs are **independent** —
+/// neither reads the other — so each recognition walk claims its own part of
+/// the partition. Each walk reads **both** declared inputs, which is what the
+/// elementwise reader requires and what
+/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` owns
+/// widening. And the two are published at **different domains**, which is what
+/// makes the assembler's output attribution observable at all: a cover's regions
+/// run in canonical occurrence order, which has nothing to do with declaration
+/// order, so an assembler pairing the two lists positionally binds a
+/// `[2]`-shaped write to a `[2, 2]`-shaped published value for whichever
+/// declaration order disagrees.
+fn independent_two_output_program(wide_first: bool) -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let wide = tiler_ir::semantic::F32Add::apply(&mut builder, a, b).unwrap();
+    let contributor = tiler_ir::semantic::F32Multiply::apply(&mut builder, a, b).unwrap();
+    let narrow =
+        tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, contributor, [Axis::new(1)])
+            .unwrap();
+    let wide_key = OutputKey::new("summed").unwrap();
+    let narrow_key = OutputKey::new("reduced").unwrap();
+    if wide_first {
+        builder.output(wide_key, wide).unwrap();
+        builder.output(narrow_key, narrow).unwrap();
+    } else {
+        builder.output(narrow_key, narrow).unwrap();
+        builder.output(wide_key, wide).unwrap();
+    }
+    builder.build().unwrap()
+}
+
+/// The gate's multi-output row, discharged by a program that compiles.
+///
+/// **This assertion was the inverse until `output-arity` was relaxed.** It read
+/// the refusal and recorded the multi-output row of
+/// `docs/correctness-and-testing.md`'s requirement as a negative test; the row
+/// is now positive, and what it reports is a complete legal cover, one
+/// implementation selected per region, a verified kernel program, and an
+/// artifact construction plan for a program declaring two ordered named
+/// outputs.
+///
+/// **Both declaration orders are compiled, and that is the check that can say
+/// no.** The published interface must follow the caller's declaration order,
+/// and each key must carry the domain its own producing occurrence computes —
+/// which is what an attribution by value proves and an attribution by execution
+/// order does not. One of the two orders necessarily disagrees with the cover's
+/// canonical region order, so pairing positionally makes exactly one of these
+/// two compilations fail.
 #[test]
-fn ordered_multi_output_programs_reject_explicitly() {
+fn ordered_multi_output_programs_compile_through_the_ordinary_path() {
+    for wide_first in [true, false] {
+        let program = independent_two_output_program(wide_first);
+        assert_eq!(program.output_count(), 2);
+        assert_eq!(program.operation_count(), 3);
+
+        let product = compile(CompilationRequest::governed(&program)).unwrap();
+        assert_eq!(product.targets[0].failure(), None);
+        let target = &product.targets[0];
+        assert!(!target.portfolio.alternatives.is_empty());
+
+        let declared: Vec<(OutputKey, Shape)> = program
+            .outputs()
+            .map(|output| {
+                (
+                    output.key().clone(),
+                    program.shape(output.value()).unwrap().clone(),
+                )
+            })
+            .collect();
+        for alternative in &target.portfolio.alternatives {
+            // A complete legal cover over both outputs' partitions, with one
+            // implementation selected per region: this is the complete-plan
+            // selection evidence a multi-output program had never reached.
+            assert_complete_partition(
+                alternative.plan.cover(),
+                u32::try_from(program.operation_count()).unwrap(),
+            );
+            assert_eq!(
+                alternative.plan.selections().len(),
+                alternative.plan.cover().region_count()
+            );
+            assert_eq!(
+                alternative.kernels.len(),
+                alternative.scheduled_regions.len()
+            );
+
+            // The published interface, in the caller's declaration order, with
+            // each key bound to a value at its own producing occurrence's
+            // domain.
+            let published: Vec<(OutputKey, Shape)> = alternative
+                .program
+                .core()
+                .outputs()
+                .map(|output| (output.key().clone(), output.value().shape().clone()))
+                .collect();
+            assert_eq!(
+                published, declared,
+                "the assembled interface does not match the declared one",
+            );
+            assert!(!alternative.artifact_plan.lowering_providers().is_empty());
+            assert!(!alternative.plan.guards().is_empty());
+        }
+    }
+}
+
+/// A program publishing an intermediate it also consumes still refuses, by name.
+///
+/// This is the shape the multi-output row used to be asserted with — publish
+/// `scaled` and reduce it into `reduced` — and it is *not* what discharges the
+/// row, because it does not compile. Recording which refusal it now reports is
+/// what keeps the gate's bound honest: the two outputs' recognition walks share
+/// the scaling occurrence, so it refuses at the request boundary under
+/// `output-partition-overlap` rather than at any layer below it. One region's
+/// owning write would otherwise have to serve both the materialization edge its
+/// consumer reads across and the publication, and
+/// `tiler_ir::program::ValueRole` is exclusive.
+/// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
+/// stage that lifts it.
+#[test]
+fn a_published_and_consumed_intermediate_refuses_by_name() {
     let mut registry = SemanticRegistryBuilder::new();
     registry
         .register_provider(&ExternalSemantics { revision: 1 })
@@ -492,7 +619,7 @@ fn ordered_multi_output_programs_reject_explicitly() {
         error,
         CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
             phase: "strategy",
-            rule: "output-arity",
+            rule: "output-partition-overlap",
         })
     );
 }

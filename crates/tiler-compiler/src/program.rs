@@ -40,13 +40,13 @@ use tiler_ir::program::abi::{
 };
 
 use crate::boundary::ByteAlignment;
-use crate::cover::RegionCover;
+use crate::cover::{CoverRegion, RegionCover};
 use crate::lowering::ResolvedLowering;
 use crate::physical::{
     AccessMode, ContributorPartition, NumericalRealization, RegionId, TensorRole, VerifiedKernel,
     VerifiedScheduledRegion, lower_structured_kernel,
 };
-use crate::region::{RegionOccurrenceIdentity, SemanticMemberId};
+use crate::region::{RegionOccurrenceIdentity, SemanticMemberId, SemanticValueId, value_ordinal};
 use crate::request::{LoweringProviderIdentity, TargetProfile, VerifiedTargetRequest};
 use crate::selection::SelectedPlan;
 use crate::target::feasibility::DeferredPredicate;
@@ -619,38 +619,41 @@ impl CoverAssembly {
                 });
             }
         }
-        // One value per ordered named program output, in declaration order. The
-        // region that publishes it is the one no materialization edge names as a
-        // producer, which is the same rule the frontier's region subject already
-        // decides `RegionWrite` by.
-        let publishing: Vec<usize> = order
+        // One value per ordered named program output, in declaration order,
+        // attributed to the region the *cover* says retains that named result.
+        //
+        // Deliberately by value rather than by the position a publishing region
+        // occupies in execution order. Execution order is the cover's canonical
+        // occurrence order, which has nothing to do with the order the caller
+        // declared its interface in — so pairing the two lists positionally
+        // publishes the right buffers under the wrong keys whenever they
+        // disagree, which is the interchangeable-outputs interface the
+        // architectural contract forbids. With one declared output the two
+        // agree, which is why the guess was invisible while `output-arity`
+        // stood.
+        let materializing: Vec<bool> = regions
             .iter()
-            .copied()
-            .filter(|position| {
-                !cover
+            .map(|region| {
+                cover
                     .materializations()
                     .iter()
-                    .any(|edge| edge.producer() == regions[*position].occurrence())
+                    .any(|edge| edge.producer() == region.occurrence())
             })
             .collect();
+        let named_results: Vec<&[SemanticValueId]> =
+            regions.iter().map(CoverRegion::named_results).collect();
+        let attribution = attribute_named_outputs(semantic, &named_results, &materializing)
+            .map_err(|failure| {
+                AssemblyRefusal::missing(
+                    failure
+                        .region()
+                        .map_or(COVER_SUBJECT, |position| regions[position].label()),
+                    "cover-named-output-attribution",
+                )
+            })?;
         let mut outputs: Vec<(OutputKey, usize)> = Vec::new();
         let mut output_value: Vec<Option<usize>> = vec![None; regions.len()];
-        if publishing.len() != semantic.output_count() || publishing.len() != 1 {
-            // The cover carries which regions publish *an* output but not which
-            // named result each retains, so pairing several publishing regions
-            // with several declared outputs would be a guess. That attribution
-            // is what `admit-ordered-multi-output-programs-at-the-compiler-
-            // request-boundary` owns; until it supplies one, a program with more
-            // than one of either is a named missing capability rather than a
-            // silently mis-ordered interface.
-            return Err(AssemblyRefusal::missing(
-                publishing
-                    .first()
-                    .map_or(COVER_SUBJECT, |position| regions[*position].label()),
-                "cover-named-output-attribution",
-            ));
-        }
-        for (output, position) in semantic.outputs().zip(&publishing) {
+        for (output, position) in semantic.outputs().zip(&attribution) {
             let shape = semantic
                 .shape(output.value())
                 .map_err(|_| {
@@ -873,6 +876,122 @@ impl CoverAssembly {
             outputs,
         })
     }
+}
+
+/// Why a cover's regions cannot be paired with a program's declared outputs.
+///
+/// Every variant is a statement about the *pairing*, never about either side
+/// alone: the cover is legal and the program is admitted, and what is missing is
+/// a one-to-one correspondence between the ordered named outputs and the regions
+/// that write them. They are separate variants rather than one flag because each
+/// names a different thing a caller or a later widening would have to change,
+/// and because a check that cannot distinguish them cannot be driven against
+/// each case that must fail.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AttributionFailure {
+    /// No placed region retains this declared output as a named result.
+    ///
+    /// Also the answer for a declared output the program holds no value ordinal
+    /// for. That is the fail-closed reading of an impossible state rather than a
+    /// variant of its own: [`SemanticProgram::outputs`] yields values of the
+    /// same program [`value_ordinal`] searches, so no input distinguishes the
+    /// two and a separate variant would be an arm nothing could drive.
+    Unattributed { output: usize },
+    /// Several placed regions retain one declared output.
+    Ambiguous { output: usize, region: usize },
+    /// One region retains two declared outputs, so its one owning write would
+    /// have to publish both.
+    Shared { region: usize },
+    /// The region retaining a declared output also materializes an edge, so its
+    /// one owning write would have to serve the publication and the edge.
+    MaterializesAndPublishes { region: usize },
+    /// A region that materializes nothing is attributed no declared output, so
+    /// nothing names what its owning write produces.
+    Unpublished { region: usize },
+}
+
+impl AttributionFailure {
+    /// Returns the region the failure is about, when it is about one.
+    const fn region(self) -> Option<usize> {
+        match self {
+            Self::Unattributed { .. } => None,
+            Self::Ambiguous { region, .. }
+            | Self::Shared { region }
+            | Self::MaterializesAndPublishes { region }
+            | Self::Unpublished { region } => Some(region),
+        }
+    }
+}
+
+/// Pairs a program's ordered named outputs with the regions that publish them.
+///
+/// Returns, for each declared output in declaration order, the position of its
+/// publishing region — which is what lets [`CoverAssembly::from_plan`] mint one
+/// output value per declared output and bind it to the write that produces it.
+///
+/// **The pairing is a proved bijection, not a zip.** Each declared output is
+/// attributed to the region whose retained named results contain its value
+/// ordinal, and the two directions are checked separately: no output may be
+/// attributed to zero or several regions, and no region may be attributed
+/// several outputs or none while writing an output rather than a
+/// materialization edge. A region's one owning write goes to exactly one place,
+/// so anything else is a description the schedule cannot realize.
+///
+/// **Every refusal below is defence in depth against the search as it stands,
+/// and that is stated rather than presented as a live gate.** `verify_cover`
+/// already proved each ordered named output is produced by exactly one placed
+/// region, region formation refuses a duplicated named-result producer, and
+/// `physical::spell_region` declines a region straddling two outputs' recognized
+/// partitions before any of them can be proposed — so no cover the boundary
+/// currently admits reaches any arm. They are the conditions rather than their
+/// consequences: a profile that lets one write serve two consumers, or a
+/// duplication policy that admits a named-result producer, makes each reachable,
+/// and `named_output_attribution_can_say_no_in_every_direction` is what proves
+/// meanwhile that they can say no.
+///
+/// # Errors
+///
+/// Returns the [`AttributionFailure`] naming which pairing obligation failed and
+/// the region it is about.
+fn attribute_named_outputs(
+    semantic: &SemanticProgram,
+    named_results: &[&[SemanticValueId]],
+    materializing: &[bool],
+) -> Result<Vec<usize>, AttributionFailure> {
+    let mut attribution = Vec::with_capacity(semantic.output_count());
+    let mut attributed: Vec<Option<usize>> = vec![None; named_results.len()];
+    for (output, declared) in semantic.outputs().enumerate() {
+        let value = value_ordinal(semantic, declared.value())
+            .ok_or(AttributionFailure::Unattributed { output })?;
+        let mut retaining = named_results
+            .iter()
+            .enumerate()
+            .filter(|(_, retained)| retained.contains(&value))
+            .map(|(position, _)| position);
+        let position = retaining
+            .next()
+            .ok_or(AttributionFailure::Unattributed { output })?;
+        if let Some(region) = retaining.next() {
+            return Err(AttributionFailure::Ambiguous { output, region });
+        }
+        if attributed[position].is_some() {
+            return Err(AttributionFailure::Shared { region: position });
+        }
+        if materializing.get(position).copied().unwrap_or(true) {
+            return Err(AttributionFailure::MaterializesAndPublishes { region: position });
+        }
+        attributed[position] = Some(output);
+        attribution.push(position);
+    }
+    // The converse direction. A region materializing nothing has an owning write
+    // whose only remaining destination is a declared output, so one that no
+    // output claims describes a buffer the program's interface never names.
+    for (region, claim) in attributed.iter().enumerate() {
+        if claim.is_none() && !materializing.get(region).copied().unwrap_or(true) {
+            return Err(AttributionFailure::Unpublished { region });
+        }
+    }
+    Ok(attribution)
 }
 
 /// Refuses an assembly that materializes a value no stage reads.
@@ -1843,19 +1962,24 @@ fn verify_artifact_refinements(
         });
     }
     assert_kernels_match_program(request, scheduled, program, kernels)?;
-    let semantic_output = semantic.outputs().next().ok_or(ProgramError::Structure {
-        rule: "semantic-output-coverage",
-    })?;
-    let named = program
-        .core
-        .outputs()
-        .next()
-        .ok_or(ProgramError::Structure {
-            rule: "semantic-output-coverage",
-        })?;
-    if semantic.output_count() != 1
-        || program.core.outputs().len() != 1
-        || named.key() != semantic_output.key()
+    // The published interface is the declared one, key for key and in order.
+    //
+    // Both halves matter and they are different claims. The count catches an
+    // assembly that published a subset or invented an entry; the ordered
+    // key-by-key comparison catches one that published the right set under a
+    // permuted interface, which is the failure a program declaring several
+    // ordered named outputs makes possible and which no count can see. This
+    // check used to additionally require both counts to be one — the second of
+    // the two arity guards `admit-ordered-multi-output-programs-at-the-compiler-
+    // request-boundary` relaxed — and widening it here is what keeps the receipt
+    // path checking the interface rather than merely its size.
+    if program.core.outputs().len() != semantic.output_count()
+        || semantic.output_count() == 0
+        || program
+            .core
+            .outputs()
+            .zip(semantic.outputs())
+            .any(|(named, declared)| named.key() != declared.key())
     {
         return Err(ProgramError::Structure {
             rule: "semantic-output-coverage",

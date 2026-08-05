@@ -567,12 +567,14 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
     // opened against is left uncovered.
     //
     // The diagnostic is `EmptyProgram` rather than `MissingNamedOutput` because
-    // this fixture declares exactly one named output: publishing *fewer* outputs
-    // than declared while publishing at least one needs a program declaring two,
-    // which the request boundary refuses under `output-arity` and which
-    // `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`
-    // owns. `MissingNamedOutput` is proven reachable in
-    // `tiler_ir::program::tests`, on a program this compiler cannot yet request.
+    // this fixture declares exactly one named output, and publishing *fewer*
+    // outputs than declared while publishing at least one needs a program
+    // declaring two. `MissingNamedOutput` is proven reachable in
+    // `tiler_ir::program::tests`; reaching it from a compiler-built assembly
+    // needs a described plan that drops one of two attributed outputs, which
+    // `CoverAssembly::from_plan` refuses one layer earlier under
+    // `cover-named-output-attribution` — so the state it names stays this
+    // fixture's neighbour rather than its own row.
     let unpublished = CoverAssembly::stated(
         scheduled.clone(),
         vec![
@@ -863,5 +865,113 @@ fn a_split_under_a_reassociation_forbidding_contract_is_refused() {
             rule: "numerical-or-access-refinement",
             region: crate::physical::RegionId::new(2),
         })
+    );
+}
+
+/// Builds a two-output program and returns it with its declared value ordinals.
+///
+/// `product = a * b` and `sum = a + b`: two ordered named outputs over two
+/// declared inputs, whose producing occurrences are disjoint. It is the smallest
+/// program for which "which region publishes which named output" has more than
+/// one answer, which is the whole subject of [`attribute_named_outputs`].
+fn two_output_attribution_fixture() -> (SemanticProgram, Vec<SemanticValueId>) {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let product = F32Multiply::apply(&mut builder, a, b).unwrap();
+    let sum = F32Add::apply(&mut builder, a, b).unwrap();
+    builder
+        .output(OutputKey::new("product").unwrap(), product)
+        .unwrap();
+    builder.output(OutputKey::new("sum").unwrap(), sum).unwrap();
+    let program = builder.build().unwrap();
+    let ordinals = program
+        .outputs()
+        .map(|output| {
+            crate::region::value_ordinal(&program, output.value())
+                .expect("a declared output names a value the program holds")
+        })
+        .collect();
+    (program, ordinals)
+}
+
+/// The named-output attribution refuses in every direction it can be wrong in.
+///
+/// **Each row is driven against a case that must fail, because none of them is
+/// reachable through the request boundary today** — `verify_cover` proves each
+/// named output is produced by exactly one placed region, and
+/// `physical::spell_region` declines a region straddling two outputs' recognized
+/// partitions before it can be proposed. Stating the inputs directly is what
+/// makes the arms drivable at all, and it is the same trade
+/// [`CoverAssembly::stated`] makes for the assembler itself.
+///
+/// The accepted neighbour comes first and every row differs from it by exactly
+/// one fact, so a row that stopped failing would be reporting about the
+/// perturbation rather than about the check.
+#[test]
+fn named_output_attribution_can_say_no_in_every_direction() {
+    let (program, [product, sum]) = {
+        let (program, ordinals) = two_output_attribution_fixture();
+        let [product, sum] = ordinals.as_slice() else {
+            panic!("the fixture declares two outputs");
+        };
+        (program, [*product, *sum])
+    };
+    let publishes_both = [false, false];
+
+    // The neighbour: one region per declared output, each retaining its own,
+    // neither materializing. Declaration order is `product` then `sum`, and the
+    // regions are stated in the opposite order — so a correct attribution
+    // answers `[1, 0]` and a positional one would answer `[0, 1]`.
+    assert_eq!(
+        attribute_named_outputs(&program, &[&[sum], &[product]], &publishes_both),
+        Ok(vec![1, 0]),
+    );
+
+    // No region retains `sum`, so nothing writes what the interface names.
+    assert_eq!(
+        attribute_named_outputs(&program, &[&[product], &[]], &publishes_both),
+        Err(AttributionFailure::Unattributed { output: 1 }),
+    );
+
+    // Two regions retain `product`: the cover would have two writers for one
+    // destination.
+    assert_eq!(
+        attribute_named_outputs(&program, &[&[product], &[product, sum]], &publishes_both),
+        Err(AttributionFailure::Ambiguous {
+            output: 0,
+            region: 1
+        }),
+    );
+
+    // One region retains both, so its one owning write would publish twice.
+    assert_eq!(
+        attribute_named_outputs(&program, &[&[product, sum], &[]], &publishes_both),
+        Err(AttributionFailure::Shared { region: 0 }),
+    );
+
+    // The region retaining `sum` also materializes an edge, so its owning write
+    // is already spoken for.
+    assert_eq!(
+        attribute_named_outputs(&program, &[&[sum], &[product]], &[true, false]),
+        Err(AttributionFailure::MaterializesAndPublishes { region: 0 }),
+    );
+
+    // A third region materializes nothing and publishes nothing, so its owning
+    // write has no destination the program's interface names.
+    assert_eq!(
+        attribute_named_outputs(&program, &[&[product], &[sum], &[]], &[false, false, false]),
+        Err(AttributionFailure::Unpublished { region: 2 }),
+    );
+    // The same three regions with the third materializing instead: the converse
+    // check reads the write's destination and not merely the absence of a
+    // declared output.
+    assert_eq!(
+        attribute_named_outputs(&program, &[&[product], &[sum], &[]], &[false, false, true]),
+        Ok(vec![0, 1]),
     );
 }

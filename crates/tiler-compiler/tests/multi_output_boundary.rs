@@ -1,103 +1,68 @@
-//! Where the ordered multi-output boundary is, and which layer actually holds it.
+//! Ordered multi-output programs compile, and what still refuses is the sharing.
 //!
-//! `select_supported_strategy` refuses every program declaring more than one
-//! output under `output-arity`, and `verify_artifact_refinements` carries the
-//! same condition on the assembly path under `semantic-output-coverage` (both in
-//! `crates/tiler-compiler/src`, located by name rather than by line: the line
-//! numbers this header used to carry went stale three times). This file exists
-//! because the obvious reading of those two guards — that a schedule or artifact vocabulary
-//! below `tiler-compiler` cannot say "a second program output", the way it once
-//! could not say "a second input tensor" — is **wrong**, and acting on it would
-//! send the widening at the wrong crate.
+//! This file used to record where the multi-output *wall* was, and it moved
+//! three times before it fell: not `tiler-ir`, then the planner, then the
+//! request-boundary recognition. The guards it described —
+//! `select_supported_strategy`'s `output_count() != 1` under `output-arity` and
+//! `verify_artifact_refinements`'s arity check under `semantic-output-coverage`
+//! — are both gone, relaxed together, and a program declaring several ordered
+//! named outputs is now recognized, covered, planned, and assembled like any
+//! other. `pipeline::conformance`'s
+//! `ordered_multi_output_programs_compile_through_the_ordinary_path` is the
+//! end-to-end evidence; this file holds the boundary the caller sees.
 //!
-//! # What the layer below can already do
+//! # What each layer contributed, so the removal is attributable
 //!
-//! `tiler-ir`'s artifact program vocabulary expresses ordered multi-output today,
-//! and its own tests prove it rather than this file asserting it:
+//! `tiler-ir` was never the wall, and its own tests prove that rather than this
+//! file asserting it: `KernelProgramBuilder::push_output` is general and bounded
+//! by `MAX_PROGRAM_OUTPUTS` (4096) rather than by one,
+//! `program::tests::storage_reuse_is_admitted_only_with_an_explicit_handoff`
+//! builds and *verifies* a two-output program, `a_missing_named_output_is_rejected`
+//! already refuses a plan naming fewer outputs than the program declares, and
+//! `KernelProgramBuildError::DuplicateOutput` refuses two publications of one
+//! key. `TensorRole::Output` carrying no ordinal was never the obstruction
+//! either: a region writes one owning tensor, several regions write several, and
+//! the program layer binds each stage's buffers to values positionally, which
+//! `tiler_ir::program::ValueRole::fills` states outright and this file pins.
 //!
-//! - `KernelProgramBuilder::push_output` is general, bounded by
-//!   `tiler_ir::program::MAX_PROGRAM_OUTPUTS` (4096), not by one.
-//! - `program::tests::storage_reuse_is_admitted_only_with_an_explicit_handoff`
-//!   builds and *verifies* a two-output program — `sum_a` and `sum_b` over four
-//!   stages and five allocations — and asserts `outputs().len() == 2`.
-//! - `program::tests::a_missing_named_output_is_rejected` already discharges the
-//!   rule that a plan naming fewer outputs than the program declares is refused,
-//!   as `KernelProgramDiagnostic::MissingNamedOutput`.
-//! - `KernelProgramBuildError::DuplicateOutput` already refuses two publications
-//!   of one output key.
-//!
-//! So the multi-output wall is **not** the shape the multi-input one was. There
-//! is no missing `tiler-ir` noun here to add before a guard may move, and the
-//! sibling `TensorRole::Output` carrying no ordinal is not one either: a region
-//! writes one owning tensor, several regions write several, and the program layer
-//! binds each stage's buffers to values positionally — which
-//! `tiler_ir::program::ValueRole::fills` states outright, and this file pins.
-//!
-//! # Where the wall actually is, and what moved it there
-//!
-//! This section used to say the wall was the planner: that
-//! `verify_artifact_refinements` matched the scheduled regions against three
-//! fixed single-output strategy shapes, that nothing upstream produced a cover
-//! assigning regions to several ordered outputs, and that
-//! `implement-general-dag-partitioning` closing condition 2 owned the widening.
-//! **All three statements have since stopped being true, and the guards did not
-//! move.** `implement-general-dag-partitioning` landed: `cover.rs` collects the
-//! ordered named outputs a cover must produce and `verify_cover` checks each is
-//! produced by exactly one region. `assemble-a-kernel-program-from-an-arbitrary-cover`
-//! landed: the three plan shapes are gone, replaced by a derivation over a cover
-//! of any region count. `carry-artifact-program-output-order-into-kernel-program-identity`
-//! landed, putting output order into kernel-program identity.
-//!
-//! The wall is now the **request-boundary recognition**, one layer above
-//! everything those tickets fixed. `select_supported_strategy` reads
-//! `outputs().next()`, classifies that one occurrence, and each recognizer below
-//! it requires its walk to cover the program exactly — `recognize_pointwise`
-//! under `operation-set`, `recognize_reduction` through
-//! `check_recognized_operation_cover`. `NormalizedProgram` carries one
-//! expression, one output shape, and one member partition, and
-//! `physical::spell_region` can spell only a cover region whose members equal one
-//! of that partition's parts.
-//!
-//! # Why relaxing `output-arity` today would admit nothing
-//!
-//! The admissible multi-output set is empty, and the argument is structural
-//! rather than a survey of fixtures. A second declared output either has its
-//! producing occurrence inside the first output's recognition walk or it does
-//! not.
-//!
-//! - **Outside the walk.** The walk then covers less than the program and
-//!   `operation-set` refuses at the request boundary. [`two_output_region`] is
-//!   exactly this case: `product = a * b` and `sum = a + b` share no operation,
-//!   so a walk from either root reaches one of the two.
-//! - **Inside the walk.** Then the value is consumed by another occurrence of the
-//!   same walk, so its producing region either materializes for a consumer in
-//!   another region — leaving its one owning write to serve both the edge and the
-//!   publication — or contains that consumer and must publish two named outputs
-//!   from one write. A region writes one owning tensor and `ValueRole` is
-//!   exclusive, so both are refused a layer down;
-//!   [`a_published_output_value_cannot_fill_an_intermediate_buffer`] pins the
-//!   mechanism.
-//!
-//! **Measurement (2026-08-05, at `3adc0689`).** Both branches were observed
-//! rather than argued. Relaxing `select_supported_strategy`'s
-//! `output_count() != 1` and `verify_artifact_refinements`'s
-//! `semantic-output-coverage` arity check together, then compiling two fixtures
-//! through the ordinary entry point: an independent two-output program reached
-//! `phase: "strategy", rule: "operation-set"`, and the reduction-epilogue fixture
-//! from `pipeline::conformance` — which publishes `scaled` and reduces it into
-//! `reduced` — reached `phase: "program-assembly", rule:
-//! "cover-named-output-attribution"`. The perturbation was reverted; it is
-//! recorded here rather than retained because a relaxed guard that admits nothing
-//! is strictly worse than the refusal it replaces, converting a boundary refusal
-//! into a mid-pipeline one.
-//!
-//! So the guards stay until the recognizer can name several ordered outputs.
+//! Four widenings then landed under the compiler. `implement-general-dag-partitioning`
+//! made covers carry the ordered named outputs with `verify_cover` checking each
+//! is produced by exactly one region; `assemble-a-kernel-program-from-an-arbitrary-cover`
+//! replaced three fixed single-output plan shapes with a derivation over a cover
+//! of any region count; `carry-artifact-program-output-order-into-kernel-program-identity`
+//! put output order into kernel-program identity; and
 //! `recognize-several-ordered-named-outputs-at-the-compiler-request-boundary`
-//! owns that widening and
-//! `admit-ordered-multi-output-programs-at-the-compiler-request-boundary` depends
-//! on it; the epilogue shape additionally needs
-//! `admit-elementwise-epilogues-over-a-materialized-intermediate`, because the
-//! copy stage it requires reads a materialized intermediate.
+//! replaced the single walk from `outputs().next()` with one walk per declared
+//! output, moving the whole-program obligation onto `check_output_cover`.
+//!
+//! **The last piece was not a guard but a derivation.** With the guards relaxed
+//! and nothing else changed, an independent two-output program reached
+//! `phase: "program-assembly", rule: "cover-named-output-attribution"`: the cover
+//! stated which regions publish *an* output but not which named result each
+//! retained, so `CoverAssembly::from_plan` paired the declared outputs with the
+//! publishing regions by execution order — a guess that is invisible with one
+//! output and wrong whenever the caller's declaration order disagrees with the
+//! cover's canonical region order. `CoverRegion::named_results` supplies the
+//! missing fact and the pairing is now by value.
+//!
+//! # What still refuses, and it is about sharing rather than arity
+//!
+//! Two declared outputs whose recognition walks share an occurrence refuse at
+//! the request boundary under `output-partition-overlap`. That is the branch
+//! where one region's owning write would have to serve both a materialization
+//! edge and a publication: two output keys naming one value, and a published
+//! intermediate that is also consumed. `ValueRole` is exclusive and a region
+//! writes one owning tensor, so both are refused a layer down —
+//! [`a_published_output_value_cannot_fill_an_intermediate_buffer`] pins the
+//! mechanism — and `admit-elementwise-epilogues-over-a-materialized-intermediate`
+//! owns the copy stage that lifts the second.
+//!
+//! One further limit is *not* about outputs at all and is recorded here because
+//! multi-output is what makes it reachable: an elementwise walk must read every
+//! declared input (`elementwise-reads`), so two outputs each reading a different
+//! subset of the program's inputs refuse even though neither shares an
+//! occurrence with the other. `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs`
+//! owns it, and [`disjoint_input_two_output_program`] is the fixture.
 //!
 //! # Output order is identity at both layers, and this file pins the semantic half
 //!
@@ -112,12 +77,10 @@
 //! ordered interface — keys in the subject's order, each key's component records
 //! contiguous and in the encoded contract's declared component order, anything
 //! else refused as `misordered-named-output` — and `encode_identity` folds the
-//! list in that order — under `tiler.kernel-program.v8` when the rule landed
-//! and `v9` since — rather than sorting the
-//! records by content. So the ordered interface a widening must plan for is a
-//! fact a consumer reads from `VerifiedKernelProgram::outputs`, not one it
-//! re-derives by key, and a permuted publication is not a second program to
-//! distinguish but a program that does not verify.
+//! list in that order rather than sorting the records by content. So the ordered
+//! interface a consumer reads from `VerifiedKernelProgram::outputs` is a fact
+//! rather than something it re-derives by key, and a permuted publication is not
+//! a second program to distinguish but a program that does not verify.
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
@@ -147,14 +110,10 @@ const CONTRACTS: [NumericalContract; 5] = [
 /// Two ordered outputs over two inputs: `product = a * b`, `sum = a + b`.
 ///
 /// The two outputs are *independent* — neither reads the other — which is
-/// deliberately the easiest multi-output program that exists. A wall that stops
-/// this one is not a wall about sharing, materialization, or lifetime; it is a
-/// wall about output cardinality alone.
-///
-/// Independence is also what makes this fixture the first branch of the header's
-/// structural argument: `product` and `sum` share no operation, so whichever root
-/// the recognizer walks from covers one of the two. With `output-arity` relaxed
-/// it refuses under `operation-set` instead — measured, not assumed.
+/// deliberately the easiest multi-output program that exists, and both walks
+/// read both declared inputs — so it differs from [`one_output_control`] by
+/// exactly the second declared output and the occurrence producing it. It is
+/// the program the arity guard refused and the program that compiles now.
 fn two_output_region() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
@@ -174,9 +133,9 @@ fn two_output_region() -> SemanticProgram {
 
 /// The control: `out = a * b`, the same two inputs and one of the same two roots.
 ///
-/// Without a program that compiles under the identical request, "refuses" above
-/// would be consistent with a broken target profile or an unusable session
-/// boundary, and this file would prove nothing about output cardinality.
+/// It travels with every assertion below so that an outcome — compiling or
+/// refusing — is evidence about the program's *outputs* rather than about the
+/// target profile, the session boundary, or the shared `a * b` body.
 fn one_output_control() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
@@ -195,10 +154,10 @@ fn one_output_control() -> SemanticProgram {
 /// Two output keys publishing one semantic value: `product` and `alias`.
 ///
 /// Distinct from [`two_output_region`] in that the two outputs *collide* on one
-/// value rather than naming two. It is here because a widening that counted
-/// distinct produced values rather than declared outputs would admit this one
-/// while still refusing the other, and the interface it must produce has two
-/// ordered entries either way.
+/// value rather than naming two, which is the smallest program where one owning
+/// write would have to publish twice. It is here because the admission is about
+/// what the outputs share, not how many there are: this one still refuses while
+/// its two-output neighbour compiles.
 fn colliding_output_region() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
@@ -213,6 +172,30 @@ fn colliding_output_region() -> SemanticProgram {
         .unwrap();
     builder
         .output(OutputKey::new("alias").unwrap(), product)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// Two independent ordered outputs whose walks read *different* declared inputs.
+///
+/// `doubled = a + a` and `squared = b * b`: the same shape as
+/// [`two_output_region`] and the same independence, differing only in that
+/// neither walk reads the input the other does.
+fn disjoint_input_two_output_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([4]))
+        .unwrap();
+    let doubled = F32Add::apply(&mut builder, a, a).unwrap();
+    let squared = F32Multiply::apply(&mut builder, b, b).unwrap();
+    builder
+        .output(OutputKey::new("doubled").unwrap(), doubled)
+        .unwrap();
+    builder
+        .output(OutputKey::new("squared").unwrap(), squared)
         .unwrap();
     builder.build().unwrap()
 }
@@ -241,14 +224,21 @@ fn compile_under(
     }
 }
 
-/// An ordered two-output program refuses under `output-arity`, at every contract.
+/// An ordered two-output program compiles, at every contract.
 ///
-/// The one-output control travels with it and must compile under the identical
-/// request, which is what makes the refusal evidence about output cardinality
-/// rather than about the profile, the session boundary, or the shared `a * b`
-/// body the two programs have in common.
+/// **This assertion was the inverse of itself until the arity guards were
+/// relaxed**, and it is the same program either way: two independent ordered
+/// named outputs over the same two declared inputs. The one-output control
+/// travels with it and must compile under the identical request, so a green run
+/// is evidence that output cardinality no longer decides admission rather than
+/// evidence that the profile happens to accept everything.
+///
+/// Every contract is stated rather than sampled, for the reason the sibling
+/// multi-input file gives: the outcome is structural, so a contract behaving
+/// differently would mean the boundary moved for a reason this file does not
+/// model.
 #[test]
-fn an_ordered_two_output_program_refuses_under_output_arity() {
+fn an_ordered_two_output_program_compiles() {
     let region = two_output_region();
     assert_eq!(region.input_count(), 2);
     assert_eq!(region.output_count(), 2);
@@ -265,22 +255,23 @@ fn an_ordered_two_output_program_refuses_under_output_arity() {
         );
         assert_eq!(
             compile_under(&region, contract),
-            Err(CompileFailureClass::UnsupportedCapability {
-                rule: "output-arity"
-            }),
-            "{contract:?} admitted a program no layer below this boundary can \
-             realize, trading a boundary refusal for a mid-pipeline one",
+            Ok(()),
+            "{contract:?} refused a program whose only difference from the \
+             control is a second independent ordered named output",
         );
     }
 }
 
-/// Two output keys colliding on one value refuse under the same rule.
+/// Two output keys colliding on one value refuse, and it is about the sharing.
 ///
-/// The refusal reads the *declared output count*, not the number of distinct
-/// produced values — so a widening cannot discharge this case by observing that
-/// one region already computes everything the program publishes.
+/// Its accepted neighbour is [`two_output_region`], which declares the same
+/// number of outputs and compiles. What differs is that both keys here name one
+/// produced value, so whichever region owns that write would have to publish it
+/// twice — refused at the request boundary under `output-partition-overlap`
+/// rather than admitted and dropped when
+/// `tiler_ir::program::KernelProgramBuilder` refuses the second publication.
 #[test]
-fn two_output_keys_publishing_one_value_refuse_under_output_arity() {
+fn two_output_keys_publishing_one_value_refuse_for_their_shared_write() {
     let region = colliding_output_region();
     assert_eq!(region.output_count(), 2);
     // One produced value, published twice: the operation count is the control's.
@@ -288,12 +279,48 @@ fn two_output_keys_publishing_one_value_refuse_under_output_arity() {
         region.operation_count(),
         one_output_control().operation_count()
     );
+    let accepted = two_output_region();
+    assert_eq!(accepted.output_count(), region.output_count());
 
     for contract in CONTRACTS {
+        assert_eq!(compile_under(&accepted, contract), Ok(()));
         assert_eq!(
             compile_under(&region, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "output-arity"
+                rule: "output-partition-overlap"
+            }),
+        );
+    }
+}
+
+/// Two independent outputs reading *different* declared inputs still refuse.
+///
+/// Recorded here because multi-output admission is what makes this reachable and
+/// because it is the one refusal above that is not about outputs at all. Each
+/// elementwise walk must read every declared input (`elementwise-reads`), since
+/// the region it builds binds one buffer per declared program input and the
+/// expression's dense-ordinal rule refuses a gap. With one declared output the
+/// state cannot arise — a frozen program drops an input no output reaches — so
+/// nothing observed it until two outputs could split the input set between them.
+///
+/// Its accepted neighbour is [`two_output_region`]: the same two inputs, the
+/// same two families, the same two independent outputs, differing only in that
+/// each walk there reads both inputs.
+/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` owns
+/// the widening.
+#[test]
+fn two_outputs_reading_disjoint_declared_inputs_refuse_for_their_unread_buffers() {
+    let region = disjoint_input_two_output_program();
+    assert_eq!(region.input_count(), 2);
+    assert_eq!(region.output_count(), 2);
+    let accepted = two_output_region();
+
+    for contract in CONTRACTS {
+        assert_eq!(compile_under(&accepted, contract), Ok(()));
+        assert_eq!(
+            compile_under(&region, contract),
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "elementwise-reads"
             }),
         );
     }
