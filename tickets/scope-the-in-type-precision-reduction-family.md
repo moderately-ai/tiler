@@ -1,0 +1,52 @@
+---
+id: scope-the-in-type-precision-reduction-family
+title: Scope the in-type precision reduction family
+status: deferred
+priority: p3
+dependencies: []
+related: [test-the-directional-conversion-pair-generalization, derive-the-operation-family-and-signature-delivery-graph]
+scopes: [research/semantic-graph, research/numerics]
+shared_scopes: [project/tickets]
+paths: []
+tags: [research, operations, numerics, precision, deferred]
+---
+## User-visible outcome
+
+A caller who needs a value rounded to a narrower exponent and significand *and left in its own type* can say so, and the operation is not modelled as a dtype conversion, which it is not.
+
+## Why this is deferred rather than open
+
+**Fact.** [the mature operation and signature taxonomy](../docs/research/semantic-graph/mature-operation-and-signature-taxonomy.md)'s F-21 is atomic, one operand and one result, where "operand and result carry the *same* resolved type; the reduction is to a narrower exponent and significand and back", carrying exponent-bit and mantissa-bit attributes, with "round-to-nearest-ties-to-even to the reduced significand, then overflow to a signed infinity or underflow to a signed zero if the reduced exponent range cannot hold the result". Its D8 is a single sentence and it is the reason this is a separate track: "It is not a dtype conversion and must not be modelled as one, because the result type never changes."
+
+**Fact — the grouping that survives three primary sources puts it alone.** The taxonomy records that TOSA keeps `CAST` and `RESCALE` in one category, ONNX separates five conversion operations, and StableHLO separates `convert`, `uniform_quantize`, `uniform_dequantize`, and `reduce_precision`; the grouping that survives all three is "by *what the transition preserves*: F-18 and F-19 change the type, F-20 changes the numeric interpretation while the code type may be unchanged, and F-21 changes neither. Those are three different obligations, and collapsing any two of them puts an unstated rounding into a family whose signature does not mention rounding."
+
+**Fact — the matrix has no row for it.** F-21 is one of the twenty-three families the join table lists under *(no matrix row today)*, and the cast-and-convert row's name does not reach it. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+
+**Inference — its physical route already exists and that is not a reason to admit it.** [the minimum correct physical realization profile](../docs/research/program-planning/minimum-correct-physical-realization-profile.md) places F-21 in the *covered — direct scalar or map route* class, so the profile would owe it a scalar kernel the day it is admitted. What is missing is a producer: nothing in the corpus asks for a deliberately reduced-precision value in its own type.
+
+## Activation trigger
+
+A named producer requires precision reduction within one type — a mixed-precision emulation, a deliberate accuracy-degradation study, or a frontend lowering that spells `reduce_precision` — and can state the exponent and mantissa bits as identity rather than as configuration.
+
+## What the work would be, when it starts
+
+The key and its two attributes; whether the exponent and mantissa bit counts are part of identity, which they must be by the same argument that makes the normalization's `eps` part of identity — two reductions differing only in mantissa bits are different operations; the exact round-trip oracle; the overflow-to-signed-infinity and underflow-to-signed-zero rules stated separately from the rounding rule; and the scalar emission, with the note that a native instruction is an optimization rather than the definition.
+
+## Explicit non-goals
+
+- Any conversion family. If the result type changes it is F-18 or F-19 and belongs to [`test-the-directional-conversion-pair-generalization`](test-the-directional-conversion-pair-generalization.md).
+- Quantization. F-20 changes the numeric interpretation; this changes neither type nor interpretation.
+- A target-driven emulation of a reduced-precision dtype, which is an execution-only format question on the dtype axis.
+
+## Closes when
+
+The family has a key whose attributes are part of identity, an exact round-trip oracle, separately stated overflow and underflow rules, and a scalar emission — or is recorded as permanently unneeded with the producer that would have needed it named.
+
+## Graph maintenance
+
+- Filed by [`derive-the-operation-family-and-signature-delivery-graph`](derive-the-operation-family-and-signature-delivery-graph.md) as track **O-23** of [Operation-family delivery graph](../docs/research/semantic-graph/operation-family-delivery-graph.md), which covers F-21 alone and states why they are one track rather than several.
+- [operation-family support matrix](../docs/roadmap.md#operation-family-support-matrix) owns delivered maturity. This ticket moves no rung, and a scoping record delivers nothing.
+
+## Trigger check log
+
+- 2026-08-05 — **not fired.** No named producer requires precision reduction within one type; the corpus's only in-type transformation is `ConvertOp::CanonicalizeF32Nan`, an `f32`-to-`f32` NaN canonicalization, which changes no exponent or significand width. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
