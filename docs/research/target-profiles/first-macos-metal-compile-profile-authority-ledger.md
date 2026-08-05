@@ -82,6 +82,10 @@ Five quantitative axes reach every current scheduled-region proposal, plus one o
 - **Still eliminated:** 65,535 (no inspected source states it); any Apple9 *hardware* grid maximum (no source states one).
 - **What the measured number is not.** `2^28` is the extent ladder's stop condition, set by the four-bytes-per-thread cost of verifying every slot and by covering the widest tensor in the project's conformance corpus. Every rung passed, so **nothing measured a failure and nothing here says where one is.** A later run finding a failing extent would narrow this row; this one cannot widen into "the hardware supports exactly this much". Evidence is exhaustive over the integers below 2,049 and sampled above, so the guarantee between two sampled rungs is an interpolation.
 
+**What the moved row admits, checked by compiling rather than by arithmetic (2026-08-05).** `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` owns the consequence this row was moved for: the L3 realization profile's six contraction correctness cells were refused by the superseded four-thread row before any plan composed, so the [retained `result_sha256` values](../../../spikes/scheduling/metal_contraction_vertical/README.md) at those cells could not be used as the cross-check they were retained to be. **Measurement** — all six cells (`w_decode_kv` 1x1024x1024, `w_vocab_slice` 1x8192x1024, `w_prefill_q` 10x2048x1024, `w_prefill_mlp_in` 128x3072x1024, `w_prefill_mlp_out` 128x1024x3072, `w_prefill_o` 128x1024x2048) now reach a *selected* physical plan through the ordinary compiler entry point against this declaration, and so does the `2x3x3` shape whose `required: Threads(6)` refusal the owning ticket recorded. `crates/tiler-build`'s `the_measured_grid_axis_admits_every_l3_contraction_cell` is the gate-reachable check, and it carries the refusal half at the boundary in both directions: `16,384 x 16,384` is exactly 268,435,456 output elements and composes, `16,384 x 16,385` refuses on `grid-axis` by name.
+
+**And what it does not establish.** That is *reachability at the compile phase and nothing further*: it dispatches nothing, so it says nothing about executed bits and does not touch a single retained `result_sha256`. A bound admitting an extent, a plan composing at that extent, and a device returning the expected bytes are three different claims, and only the first two are made here. The device comparison at one cell is `publish-an-l3-contraction-cell-through-the-accepted-route`, which needs the two prototype crates `tiler-build` cannot reach.
+
 ### Workgroup threads — absent as a fact, declared as a prepared-kernel query
 
 - **Owner:** compiler `CapabilityAxis::WorkgroupThreads`.
@@ -381,6 +385,11 @@ pdftotext -layout docs/research/apple-targets/sources/apple-metal-feature-set-ta
 # The measured grid-axis row itself.
 cd spikes/target-profiles/metal-grid-axis-extent
 DEVELOPER_DIR=/Applications/Xcode.app cargo run --release
+
+# What that row admits: the six L3 contraction cells reach a selected plan, and
+# one output element past the bound still refuses on `grid-axis` by name.
+cargo nextest run -p tiler-build \
+  -E 'test(the_measured_grid_axis_admits_every_l3_contraction_cell)'
 
 # The two environments and the measured numerical rows.
 cd spikes/apple-targets/results/2026-08-02-numerics-covering-apple9-f32-bf16-unified-msl4-macos26-xcode26.6-metal32023.883
