@@ -1,7 +1,7 @@
 ---
 id: bound-the-certified-exponential-s-cost-in-its-admitted-argument-region
 title: Bound the certified exponential's cost in its admitted argument region
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [cut-the-decoder-layer-reference-evaluation-s-suite-wall-clock]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: []
 paths: []
 tags: [numerics, performance]
+claimed_from: todo
+assignee: agent-exp-bound
+lease_expires_at: 1785960717
 ---
 ## The finding
 
