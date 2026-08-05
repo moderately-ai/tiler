@@ -238,8 +238,8 @@ fn the_argument_bound_is_the_result_budget_in_argument_units() {
 fn a_grid_too_coarse_to_bracket_is_refused() {
     let tiny = ExactRational::power_of_two(-20);
     assert!(rsqrt_enclosure(&tiny, corpus_precision()).is_ok());
-    let error =
-        rsqrt_enclosure(&tiny, EnclosurePrecision::new(4)).expect_err("the grid cannot bracket");
+    let error = rsqrt_enclosure(&tiny, EnclosurePrecision::new(4).expect("a stateable grid"))
+        .expect_err("the grid cannot bracket");
     assert_eq!(
         error.diagnostic_code(),
         "reference.enclosure.precision-too-coarse"
@@ -261,8 +261,11 @@ fn a_grid_too_coarse_to_bracket_is_refused() {
 /// derivation instead of as a constant that once worked.
 #[test]
 fn a_precision_the_series_cannot_reach_is_refused() {
-    let error = exp_enclosure(&ExactRational::one(), EnclosurePrecision::new(12_000))
-        .expect_err("512 terms cannot reach a 12000-bit grid");
+    let error = exp_enclosure(
+        &ExactRational::one(),
+        EnclosurePrecision::new(12_000).expect("a stateable grid"),
+    )
+    .expect_err("512 terms cannot reach a 12000-bit grid");
     assert_eq!(
         error.diagnostic_code(),
         "reference.enclosure.precision-unreachable"
@@ -270,7 +273,100 @@ fn a_precision_the_series_cannot_reach_is_refused() {
 
     // The reachable neighbour, so the refusal is attributable to the grid rather
     // than to the argument: the same argument at a grid the series does reach.
-    assert!(exp_enclosure(&ExactRational::one(), EnclosurePrecision::new(4_000)).is_ok());
+    assert!(
+        exp_enclosure(
+            &ExactRational::one(),
+            EnclosurePrecision::new(4_000).expect("a stateable grid"),
+        )
+        .is_ok()
+    );
+}
+
+/// A grid width the exponent arithmetic cannot express cannot be stated at all.
+///
+/// The first of the two layers, and the one that makes the second unreachable: a
+/// width past the bound is refused where it is written, so no enclosure function
+/// can be handed one. `u32::MAX` and `2_147_483_646` are the two widths that
+/// aborted the process before this bound existed.
+///
+/// The admitted neighbour is checked here at construction — the stated width and
+/// the finer grid derived from it are both exponents `i32` can carry, which is
+/// exactly what the bound claims — and separately through a whole call, in
+/// [`the_widest_admitted_grid_refuses_rather_than_aborting`].
+#[test]
+fn a_grid_width_the_arithmetic_cannot_express_is_refused() {
+    let refused = [
+        u32::MAX,
+        2_147_483_646,
+        MAX_GRID_FRACTION_BITS.saturating_add(1),
+    ];
+    let mut checked = 0_usize;
+    for width in refused {
+        assert_eq!(
+            EnclosurePrecision::new(width)
+                .as_ref()
+                .err()
+                .map(EnclosureError::diagnostic_code),
+            Some("reference.enclosure.grid-width-unrepresentable"),
+            "a {width}-bit grid is past what the exponent arithmetic can express"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, refused.len(), "every rejected width was checked");
+
+    let widest =
+        EnclosurePrecision::new(MAX_GRID_FRACTION_BITS).expect("the widest stateable grid");
+    assert_eq!(widest.fraction_bits(), MAX_GRID_FRACTION_BITS);
+    assert!(
+        i32::try_from(widest.squaring_grid().fraction_bits()).is_ok(),
+        "the grid derived from the widest admitted one must still be an exponent"
+    );
+}
+
+/// The widest grid the type admits is refused end to end, not aborted.
+///
+/// The closing criterion as a call rather than as an argument. Every conversion
+/// the old code asserted on is exercised at this width — the tail threshold's
+/// negated exponent, and the squaring grid derived from it — and what comes back
+/// is the series' own refusal, because `MAX_SERIES_TERMS` stops long before a
+/// two-billion-bit grid. It is the one place the module's totality claim is
+/// observed at its extreme instead of derived, which is worth the two seconds and
+/// the quarter-gigabyte threshold it allocates to get there.
+#[test]
+fn the_widest_admitted_grid_refuses_rather_than_aborting() {
+    let widest =
+        EnclosurePrecision::new(MAX_GRID_FRACTION_BITS).expect("the widest stateable grid");
+    assert_eq!(
+        exp_enclosure(&ExactRational::one(), widest)
+            .as_ref()
+            .err()
+            .map(EnclosureError::diagnostic_code),
+        Some("reference.enclosure.precision-unreachable"),
+        "the term bound is what stops the widest admitted grid, not an abort"
+    );
+}
+
+/// The stated bound is `i32`'s limit less the margin the squaring chain needs.
+///
+/// Two constants that must move together, on the pattern
+/// [`the_argument_bound_is_the_result_budget_in_argument_units`] uses for the
+/// argument axis. Raising `MAX_GRID_FRACTION_BITS` alone admits a precision whose
+/// squaring grid the arithmetic cannot express; raising `SQUARING_GRID_MARGIN`
+/// alone leaves a bound that is no longer the widest such precision. The equality
+/// is what makes the refusal a property of the arithmetic rather than a number
+/// someone chose.
+#[test]
+fn the_grid_bound_is_the_exponent_limit_less_the_squaring_margin() {
+    assert_eq!(
+        MAX_GRID_FRACTION_BITS + SQUARING_GRID_MARGIN,
+        i32::MAX.unsigned_abs(),
+        "the bound must leave exactly the squaring margin below the exponent limit"
+    );
+    assert_eq!(
+        SQUARING_GRID_MARGIN,
+        REDUCED_ARGUMENT_BITS + 2,
+        "the margin is the reduction depth plus the threshold's two bits"
+    );
 }
 
 // --- the conformance decision --------------------------------------------
@@ -355,8 +451,11 @@ fn a_degraded_enclosure_yields_undecided_rather_than_a_silent_pass() {
         "the corpus precision must decide this case"
     );
 
-    let coarse = exp_enclosure(&ExactRational::one(), EnclosurePrecision::new(2))
-        .expect("still in range at a coarse grid");
+    let coarse = exp_enclosure(
+        &ExactRational::one(),
+        EnclosurePrecision::new(2).expect("a stateable grid"),
+    )
+    .expect("still in range at a coarse grid");
     assert!(
         coarse.width() > precise.width(),
         "a coarser grid must widen the bracket"
