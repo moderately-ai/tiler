@@ -68,117 +68,172 @@
 //!
 //! A variant's live-device route requirements arrive through [`ArtifactProgramBuilder::require_route`](crate::program::ArtifactProgramBuilder::require_route) rather than through `VariantSpec`, because they state what the *emitted payload* consumes and are known only after backend emission — to a different producer stage from the one that assembles a variant. See [`RouteRequirement`](crate::program::RouteRequirement) for the derivability test that decides what may be declared there and what stays a derived requirement.
 //!
-//! The walk-through below is `ignore`d, and the omission is worth stating
-//! because it used to compile. Its hidden preamble assembles a real kernel
-//! program, and a stage's coverage is now proof-derived: each record needs a
-//! completed [`tiler_ir::index::IndexRefinementReceipt`], which this crate
-//! cannot mint and which a documentation example cannot fake. The two ways to
-//! obtain one are compiling the graph — a `tiler-compiler` dev-dependency,
-//! which `tiler-runtime`'s consumer-closure test refuses through this crate —
-//! or building a candidate index region per operation, which is a page of
-//! setup per operation. The executable form of this assembly is
-//! `crate::program::tests`, whose coverage comes from the real verifier;
-//! `restore-an-executable-artifact-assembly-example` owns closing the gap.
+//! The walk-through below packages a real verified kernel program, and its
+//! hidden preamble assembles one. Stage coverage is proof-derived — each record
+//! needs a completed [`tiler_ir::index::IndexRefinementReceipt`], which only the
+//! refinement verifier mints — so the preamble derives the occurrence's subject,
+//! builds a candidate index region, and submits the pair through
+//! `tiler_ir::index`. It reaches the verifier by that door rather than by
+//! compiling the graph: a `tiler-compiler` dev-dependency would make the
+//! preamble four lines, but `tiler-runtime`'s
+//! `the_consumer_links_no_compiler_emitter_or_build_provider` refuses it,
+//! because `Cargo.lock` merges normal and development edges per package and
+//! ADR 0081 item 2 fixes the consumer closure at `[tiler-artifact]`. The graph is
+//! one elementwise operation for the same reason `tiler_ir::program`'s own
+//! walk-through is: the receipt path is per occurrence, and this module's
+//! subject is what happens *after* a program is verified.
 //!
-//! ```ignore
+//! ```
 //! use tiler_artifact::program::{
-//!     AbiBinaryOp, AbiRoot, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
-//!     BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec,
-//!     CapabilityKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
-//!     FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, RepresentationKey, SchemaVersion,
-//!     SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-//!     VariantSpec,
+//!     ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef,
+//!     BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
+//!     CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
+//!     PayloadDigest, RepresentationKey, SchemaVersion, SelectedProvider,
+//!     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
 //! };
-//! use tiler_ir::kernel::{KernelType, lower_scheduled_region};
-//! use tiler_ir::program::{
-//!     AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
-//!     MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
-//!     RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
-//!     StorageScalar, ValueRole,
-//! };
-//! use tiler_ir::schedule::{
-//!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-//!     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-//!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-//!     OwnershipWitnessId, RegionId, ReductionTopology, ScalarProgram, ScheduledRegionBuilder,
-//!     InputOrdinal, SubnormalMode, TailPolicy, TensorRole,
-//! };
-//! use tiler_ir::semantic::{
-//!     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity,
-//!     SemanticProgramBuilder, StrictSerialF32Sum,
-//! };
-//! use tiler_ir::shape::{Axis, Shape};
-//!
+//! use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
+//! # use tiler_ir::index::{
+//! #     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry,
+//! #     IndexRealizationAuthority, IndexRefinementSubject, IndexRefinementVerificationOutcome,
+//! #     IndexRegionBuilder, ScalarAttributes, TensorRole as IndexTensorRole, multiply_f32_scalar_op,
+//! # };
+//! # use tiler_ir::kernel::{KernelType, lower_scheduled_region};
+//! # use tiler_ir::program::abi::AbiRoot;
+//! # use tiler_ir::program::{
+//! #     AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
+//! #     MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
+//! #     RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
+//! #     StorageScalar, ValueRole,
+//! # };
+//! # use tiler_ir::schedule::{
+//! #     Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
+//! #     ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey, InputOrdinal,
+//! #     KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding, NumericalPermission,
+//! #     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+//! #     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+//! #     ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+//! # };
+//! # use tiler_ir::semantic::{F32, F32Multiply, SemanticProgramBuilder};
+//! # use tiler_ir::shape::{Extent, Shape};
+//! #
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! # // One fused serial-sum plan over a 2x3 input: the shared IR fixture.
+//! # // One elementwise product over a 2x3 pair: `tiler_ir::program`'s own
+//! # // documented assembly, verbatim.
 //! # let mut draft = SemanticProgramBuilder::try_standard()?;
-//! # let input = draft.input::<F32>(InputKey::new("input")?, Shape::from_dims([2, 3]))?;
-//! # let scale = F32Constant::apply(&mut draft, 2.0_f32.to_bits())?;
-//! # let bias = F32Constant::apply(&mut draft, 1.0_f32.to_bits())?;
-//! # let product = F32Multiply::apply(&mut draft, input, scale)?;
-//! # let mapped = F32Add::apply(&mut draft, product, bias)?;
-//! # let sum = StrictSerialF32Sum::apply(&mut draft, mapped, [Axis::new(1)])?;
-//! # draft.output(OutputKey::new("result")?, sum)?;
+//! # let left = draft.input::<F32>(InputKey::new("left")?, Shape::from_dims([2, 3]))?;
+//! # let right = draft.input::<F32>(InputKey::new("right")?, Shape::from_dims([2, 3]))?;
+//! # let product = F32Multiply::apply(&mut draft, left, right)?;
+//! # draft.output(OutputKey::new("result")?, product)?;
 //! # let semantic = draft.build()?;
-//! # // One `CoveredOccurrence` per operation, each minted from the completed
-//! # // refinement receipt the consumer's lowering produced for it.
-//! # let coverage: Vec<CoveredOccurrence> = proof_derived_coverage(&semantic);
-//! # let axes = vec![Axis::new(1)];
-//! # let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
-//! # region.iteration_shape(Shape::from_dims([2]))?;
-//! # region.push_access(Access {
-//! #     tensor: TensorRole::Input { ordinal: InputOrdinal::FIRST },
-//! #     component_role: None,
-//! #     mode: AccessMode::Read,
-//! #     map: LogicalAccess::ReductionContributor {
-//! #         input_shape: Shape::from_dims([2, 3]),
-//! #         output_shape: Shape::from_dims([2]),
-//! #         axes: axes.clone(),
-//! #         order: ContributorOrder::OriginalAxisLexicographic,
-//! #     },
-//! #     bounds: BoundsWitnessId::new(0),
-//! #     ownership: None,
-//! # })?;
-//! # region.push_access(Access {
+//! # let contract = F32NumericalContractKey::new(
+//! #     SubnormalMode::Preserve,
+//! #     SubnormalMode::Preserve,
+//! #     NumericalPermission::Forbidden,
+//! #     NumericalPermission::Forbidden,
+//! #     NumericalPermission::Forbidden,
+//! #     NumericalPermission::Forbidden,
+//! #     NumericalPermission::Forbidden,
+//! #     ApproximationEnvelope::Forbidden,
+//! #     ExceptionalValueAssumption::MakeNoAssumption,
+//! #     ExceptionalValueAssumption::MakeNoAssumption,
+//! #     MaterializationRounding::NearestTiesToEven,
+//! # )?
+//! # .into();
+//! # let scalars = FrozenScalarRegistry::standard()?;
+//! # let laws = FrozenIndexRealizationLawRegistry::from_semantic(
+//! #     semantic.semantic_registry().clone(),
+//! #     scalars.clone(),
+//! # )?;
+//! # let operation = semantic.operations().next().expect("one operation").id();
+//! # let subject = IndexRefinementSubject::derive(&semantic, operation, contract)?;
+//! # let mut region = IndexRegionBuilder::new(scalars.clone())?;
+//! # let rows = region.dimension(DomainRole::Parallel, Extent::new(2))?;
+//! # let columns = region.dimension(DomainRole::Parallel, Extent::new(3))?;
+//! # let point = [rows, columns];
+//! # let coordinate = [region.dimension_expr(rows)?, region.dimension_expr(columns)?];
+//! # let mut operands = Vec::new();
+//! # for boundary in subject.inputs() {
+//! #     operands.push(region.tensor(
+//! #         IndexTensorRole::Input,
+//! #         boundary.value_type().clone(),
+//! #         boundary.shape().clone(),
+//! #     )?);
+//! # }
+//! # let mut reads = Vec::new();
+//! # for position in subject.operands() {
+//! #     reads.push(region.read(operands[*position], &point, &coordinate)?);
+//! # }
+//! # let value = region
+//! #     .apply(multiply_f32_scalar_op(), ScalarAttributes::empty(), &reads)?
+//! #     .get(0)
+//! #     .expect("one product");
+//! # let destination = region.tensor(
+//! #     IndexTensorRole::Output,
+//! #     subject.results()[0].value_type().clone(),
+//! #     subject.results()[0].shape().clone(),
+//! # )?;
+//! # let write = region.write(destination, &point, &coordinate)?;
+//! # region.output(write, value)?;
+//! # let region = region.build()?;
+//! # let authority = IndexRealizationAuthority::admit(
+//! #     semantic.semantic_registry(),
+//! #     &scalars,
+//! #     subject.operation().clone(),
+//! #     subject.signature().clone(),
+//! #     &[multiply_f32_scalar_op()],
+//! # )?;
+//! # let coverage: Vec<CoveredOccurrence> =
+//! #     match laws.resolve(&subject)?.verify(&authority, &region)? {
+//! #         IndexRefinementVerificationOutcome::Verified(receipt) => {
+//! #             vec![CoveredOccurrence::from_receipt(&receipt)]
+//! #         }
+//! #         IndexRefinementVerificationOutcome::Pending(_) => {
+//! #             panic!("a static elementwise region retains no residual obligation")
+//! #         }
+//! #     };
+//! # let mut schedule = ScheduledRegionBuilder::new(RegionId::new(0));
+//! # schedule.iteration_shape(Shape::from_dims([2, 3]))?;
+//! # for ordinal in [0, 1] {
+//! #     schedule.push_access(Access {
+//! #         tensor: TensorRole::Input { ordinal: InputOrdinal::new(ordinal) },
+//! #         component_role: None,
+//! #         mode: AccessMode::Read,
+//! #         map: LogicalAccess::LinearIdentity,
+//! #         bounds: BoundsWitnessId::new(ordinal),
+//! #         ownership: None,
+//! #     })?;
+//! #     schedule.push_bounds_proof(BoundsProof {
+//! #         id: BoundsWitnessId::new(ordinal),
+//! #         tensor: TensorRole::Input { ordinal: InputOrdinal::new(ordinal) },
+//! #         component_role: None,
+//! #         kind: BoundsProofKind::LinearRange { element_count: 6 },
+//! #     })?;
+//! # }
+//! # schedule.push_access(Access {
 //! #     tensor: TensorRole::Output,
 //! #     component_role: None,
 //! #     mode: AccessMode::Write,
 //! #     map: LogicalAccess::LinearIdentity,
-//! #     bounds: BoundsWitnessId::new(1),
+//! #     bounds: BoundsWitnessId::new(2),
 //! #     ownership: Some(OwnershipWitnessId::new(0)),
 //! # })?;
-//! # region.push_bounds_proof(BoundsProof {
-//! #     id: BoundsWitnessId::new(0),
-//! #     tensor: TensorRole::Input { ordinal: InputOrdinal::FIRST },
-//! #     component_role: None,
-//! #     kind: BoundsProofKind::ReductionDomain {
-//! #         input_shape: Shape::from_dims([2, 3]),
-//! #         output_shape: Shape::from_dims([2]),
-//! #         axes: axes.clone(),
-//! #         order: ContributorOrder::OriginalAxisLexicographic,
-//! #     },
-//! # })?;
-//! # region.push_bounds_proof(BoundsProof {
-//! #     id: BoundsWitnessId::new(1),
+//! # schedule.push_bounds_proof(BoundsProof {
+//! #     id: BoundsWitnessId::new(2),
 //! #     tensor: TensorRole::Output,
 //! #     component_role: None,
-//! #     kind: BoundsProofKind::LinearRange { element_count: 2 },
+//! #     kind: BoundsProofKind::LinearRange { element_count: 6 },
 //! # })?;
-//! # region.ownership_proof(OwnershipProof {
+//! # schedule.ownership_proof(OwnershipProof {
 //! #     id: OwnershipWitnessId::new(0),
 //! #     tensor: TensorRole::Output,
-//! #     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+//! #     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 6 },
 //! # })?;
-//! # region.scalar_program(ScalarProgram::FusedMultiplyAddSerialSum {
-//! #     scale_bits: 2.0_f32.to_bits(),
-//! #     bias_bits: 1.0_f32.to_bits(),
-//! #     axes: axes.clone(),
-//! #     order: ContributorOrder::OriginalAxisLexicographic,
-//! #     canonical_nan_bits: 0x7fc0_0000,
-//! #     empty_identity_bits: 0.0_f32.to_bits(),
-//! #     contraction: false,
-//! # })?;
-//! # region.numerical(NumericalRealization::new(
+//! # let mut expression = PointwiseF32ExpressionBuilder::new();
+//! # let first = expression.input(InputOrdinal::new(0))?;
+//! # let second = expression.input(InputOrdinal::new(1))?;
+//! # let root = expression.multiply(first, second)?;
+//! # schedule.scalar_program(ScalarProgram::PointwiseF32(expression.build(root)?))?;
+//! # schedule.numerical(NumericalRealization::new(
 //! #     "tiler.doc.strict-f32",
 //! #     0x7fc0_0000,
 //! #     SubnormalMode::Preserve,
@@ -190,52 +245,51 @@
 //! #     ExceptionalValueAssumption::MakeNoAssumption,
 //! #     ExceptionalValueAssumption::MakeNoAssumption,
 //! # ))?;
-//! # region.schedule(KernelSchedule {
+//! # schedule.schedule(KernelSchedule {
 //! #     binding: ExecutionBinding::GlobalLinearInvocation,
-//! #     work_items: 2,
+//! #     work_items: 6,
 //! #     threads_per_workgroup: 1,
 //! #     tail: TailPolicy::Exact,
 //! #     output_owner: OwnershipWitnessId::new(0),
-//! #     reduction: ReductionTopology::Serial {
-//! #         axes,
-//! #         order: ContributorOrder::OriginalAxisLexicographic,
-//! #         permits_reassociation: false,
-//! #         permits_permutation: false,
-//! #     },
-//! #     launch: LaunchPlan { grid_threads: 2, threads_per_workgroup: 1, zero_work_skips_dispatch: true },
+//! #     reduction: ReductionTopology::None,
+//! #     launch: LaunchPlan { grid_threads: 6, threads_per_workgroup: 1, zero_work_skips_dispatch: true },
 //! # })?;
-//! # let kernel = lower_scheduled_region(&region.build()?)?;
+//! # let kernel = lower_scheduled_region(&schedule.build()?)?;
 //! # let mut plan = KernelProgramBuilder::new(&semantic)?;
-//! # let external = plan.push_allocation(AllocationSpec {
-//! #     capacity_bytes: 24,
-//! #     alignment: 4,
-//! #     memory_space: MemorySpace::Device,
-//! #     ownership: AllocationOwnership::External,
-//! # })?;
+//! # let mut bound = Vec::new();
+//! # for key in ["left", "right"] {
+//! #     let allocation = plan.push_allocation(AllocationSpec {
+//! #         capacity_bytes: 24,
+//! #         alignment: 4,
+//! #         memory_space: MemorySpace::Device,
+//! #         ownership: AllocationOwnership::External,
+//! #     })?;
+//! #     let value = plan.push_value(
+//! #         MaterializedValueSpec {
+//! #             origin: MaterializedOrigin::ProgramInput { key: InputKey::new(key)? },
+//! #             role: ValueRole::Input,
+//! #             shape: Shape::from_dims([2, 3]),
+//! #             storage_scalar: StorageScalar::F32,
+//! #             element_type: KernelType::F32,
+//! #             encoding: StorageEncoding::Unpacked,
+//! #             alignment: 4,
+//! #             memory_space: MemorySpace::Device,
+//! #         },
+//! #         allocation,
+//! #     )?;
+//! #     bound.push(plan.push_whole_view(value)?);
+//! # }
 //! # let owned = plan.push_allocation(AllocationSpec {
-//! #     capacity_bytes: 8,
+//! #     capacity_bytes: 24,
 //! #     alignment: 4,
 //! #     memory_space: MemorySpace::Device,
 //! #     ownership: AllocationOwnership::Program,
 //! # })?;
-//! # let source = plan.push_value(
-//! #     MaterializedValueSpec {
-//! #         origin: MaterializedOrigin::ProgramInput { key: InputKey::new("input")? },
-//! #         role: ValueRole::Input,
-//! #         shape: Shape::from_dims([2, 3]),
-//! #         storage_scalar: StorageScalar::F32,
-//! #         element_type: KernelType::F32,
-//! #         encoding: StorageEncoding::Unpacked,
-//! #         alignment: 4,
-//! #         memory_space: MemorySpace::Device,
-//! #     },
-//! #     external,
-//! # )?;
 //! # let result = plan.push_value(
 //! #     MaterializedValueSpec {
 //! #         origin: MaterializedOrigin::Internal,
 //! #         role: ValueRole::Output,
-//! #         shape: Shape::from_dims([2]),
+//! #         shape: Shape::from_dims([2, 3]),
 //! #         storage_scalar: StorageScalar::F32,
 //! #         element_type: KernelType::F32,
 //! #         encoding: StorageEncoding::Unpacked,
@@ -244,11 +298,9 @@
 //! #     },
 //! #     owned,
 //! # )?;
-//! # let read = plan.push_whole_view(source)?;
-//! # let write = plan.push_whole_view(result)?;
-//! # let read_bytes = plan.push_abi_root(AbiRoot::UnsignedLiteral(24))?;
-//! # let write_bytes = plan.push_abi_root(AbiRoot::UnsignedLiteral(8))?;
-//! # let grid_threads = plan.push_abi_root(AbiRoot::UnsignedLiteral(2))?;
+//! # let result_view = plan.push_whole_view(result)?;
+//! # let bytes = plan.push_abi_root(AbiRoot::UnsignedLiteral(24))?;
+//! # let grid_threads = plan.push_abi_root(AbiRoot::UnsignedLiteral(6))?;
 //! # let threads_per_workgroup = plan.push_abi_root(AbiRoot::UnsignedLiteral(1))?;
 //! # let program_guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true))?;
 //! # plan.applicability_guard(program_guard)?;
@@ -256,8 +308,9 @@
 //! #     &kernel,
 //! #     &coverage,
 //! #     &[
-//! #         StageAccess { view: read, mode: StageAccessMode::Read, accessible_bytes: read_bytes },
-//! #         StageAccess { view: write, mode: StageAccessMode::Write, accessible_bytes: write_bytes },
+//! #         StageAccess { view: bound[0], mode: StageAccessMode::Read, accessible_bytes: bytes },
+//! #         StageAccess { view: bound[1], mode: StageAccessMode::Read, accessible_bytes: bytes },
+//! #         StageAccess { view: result_view, mode: StageAccessMode::Write, accessible_bytes: bytes },
 //! #     ],
 //! #     StageLaunch { grid_threads, threads_per_workgroup },
 //! # )?;
@@ -273,12 +326,12 @@
 //! # }
 //! # let program = plan.build()?;
 //! // Package that verified program as a one-variant artifact portfolio.
-//! let provider = ProviderIdentity::new("tiler", "fused-serial-sum", 1)?;
+//! let provider = ProviderIdentity::new("tiler", "elementwise-multiply", 1)?;
 //! let environment = CompilationEnvironment::new([provider.clone()])?;
 //! let mut artifact = ArtifactProgramBuilder::new(&semantic, environment)?;
 //! artifact.select_provider(SelectedProvider {
 //!     provider,
-//!     capability: CapabilityKey::new("tiler.capability.fused-serial-sum")?,
+//!     capability: CapabilityKey::new("tiler.capability.elementwise-multiply")?,
 //!     capability_revision: 1,
 //! })?;
 //! let payload = artifact.push_payload(BackendPayloadDescriptor {
@@ -296,12 +349,10 @@
 //!     execution_policy: ArtifactExecutionPolicy::NativeImage,
 //! })?;
 //!
-//! // The ABI's accessible ranges are formulas over the bound interface, not
-//! // constants: `rows * columns * 4` input bytes and `rows * 4` output bytes.
-//! // Both slots address their value from its first byte, so both offsets are
-//! // the literal zero this plan's byte windows actually state.
-//! let key = InputKey::new("input")?;
-//!
+//! // The variant declares only artifact-owned facts. Every ABI binding below —
+//! // its target, accessible offset and extent, storage scalar, access mode, and
+//! // alignment — is replayed from the verified program rather than restated
+//! // here, which is why one buffer slot per program access is all this spells.
 //! artifact.push_variant(
 //!     &program,
 //!     VariantSpec {
@@ -318,6 +369,7 @@
 //!             bindings: vec![
 //!                 BindingSpec { kind: BindingKind::Buffer },
 //!                 BindingSpec { kind: BindingKind::Buffer },
+//!                 BindingSpec { kind: BindingKind::Buffer },
 //!             ],
 //!             launch: LaunchSpec {
 //!                 zero_work_skips_dispatch: true,
@@ -328,7 +380,7 @@
 //!             // compiled object realizing this same entry.
 //!             implementation: BackendEntryRef {
 //!                 payloads: vec![payload],
-//!                 entry_key: BackendEntryKey::from_bytes(b"fused")?,
+//!                 entry_key: BackendEntryKey::from_bytes(b"multiply")?,
 //!             },
 //!         }],
 //!     },
@@ -338,7 +390,12 @@
 //! assert_eq!(artifact.variants().len(), 1);
 //! assert_eq!(artifact.delivery_positions(), 1);
 //! assert_eq!(artifact.selected_providers().len(), 1);
-//! assert_eq!(artifact.inputs().next().expect("one input").key().as_str(), "input");
+//! // The published interface is the semantic subject's, in its declared order.
+//! let keys: Vec<String> = artifact
+//!     .inputs()
+//!     .map(|input| input.key().as_str().to_owned())
+//!     .collect();
+//! assert_eq!(keys, ["left", "right"]);
 //! // The artifact retains the exact verified program it packages.
 //! assert_eq!(
 //!     artifact.variants().next().expect("one variant").program().canonical_identity(),
