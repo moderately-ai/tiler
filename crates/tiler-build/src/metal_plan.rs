@@ -429,8 +429,9 @@ mod tests {
     use tiler_compiler::target::TargetRequest;
     use tiler_ir::program::abi::{AbiRoot, ExprNode};
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
-        SemanticProgramBuilder, StrictSerialF32Sum,
+        ContractionIndex, ContractionIndexStructure, F32, F32Add, F32Constant, F32Multiply,
+        F32TensorContraction, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
+        StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
     use tiler_metal::emit::emit_translation_unit;
@@ -1228,6 +1229,175 @@ mod tests {
         assert!(
             rendered.contains("grid-axis:rejected"),
             "a shape above the declared bound was refused, but not on the grid axis: {rendered}",
+        );
+    }
+
+    /// The L3 correctness profile's six cells, as `(id, m, n, k)`.
+    ///
+    /// Transcribed from the retained realization probe's `workload.tsv`
+    /// (`spikes/scheduling/metal_contraction_vertical/results/`
+    /// `2026-07-31-correctness-apple9-f32-msl4-macos26-m4max-metal32023.883/`),
+    /// which is where the `result_sha256` values a device comparison checks
+    /// against also live. All six rather than the smallest, because the row that
+    /// gates them is a single bound and a test that checked one cell would not
+    /// notice a bound that admitted `w_decode_kv`'s 1,024 output elements and
+    /// refused `w_prefill_mlp_in`'s 393,216.
+    const L3_CORRECTNESS_CELLS: [(&str, u64, u64, u64); 6] = [
+        ("w_decode_kv", 1, 1024, 1024),
+        ("w_vocab_slice", 1, 8192, 1024),
+        ("w_prefill_q", 10, 2048, 1024),
+        ("w_prefill_mlp_in", 128, 3072, 1024),
+        ("w_prefill_mlp_out", 128, 1024, 3072),
+        ("w_prefill_o", 128, 1024, 2048),
+    ];
+
+    /// The L3 profile's index structure, `td,od->to`.
+    ///
+    /// Spelled with the same arbitrary frontend index labels
+    /// `prototypes/serial-sum-compile` and `prototypes/serial-sum-run` use, so
+    /// all three reach one canonical encoding through the renaming-invariant
+    /// rule ADR 0087 requires rather than by each happening to write the
+    /// canonical labels.
+    fn contraction_structure() -> ContractionIndexStructure {
+        ContractionIndexStructure::new(
+            [
+                [ContractionIndex::new(19), ContractionIndex::new(3)],
+                [ContractionIndex::new(14), ContractionIndex::new(3)],
+            ],
+            [ContractionIndex::new(19), ContractionIndex::new(14)],
+        )
+        .expect("the profile's index structure passes every structural admission rule")
+    }
+
+    /// Builds `activations[m, k] x weights[n, k] -> projected[m, n]`.
+    fn contraction_program(m: u64, n: u64, k: u64) -> SemanticProgram {
+        let mut builder =
+            SemanticProgramBuilder::try_standard().expect("the semantic profile composes");
+        let activations = builder
+            .input::<F32>(
+                InputKey::new("activations").expect("the activations key is valid"),
+                Shape::from_dims([m, k]),
+            )
+            .expect("the activations operand binds");
+        let weights = builder
+            .input::<F32>(
+                InputKey::new("weights").expect("the weights key is valid"),
+                Shape::from_dims([n, k]),
+            )
+            .expect("the weights operand binds");
+        let projected = F32TensorContraction::apply(
+            &mut builder,
+            &contraction_structure(),
+            activations,
+            weights,
+        )
+        .expect("the contraction applies");
+        builder
+            .output(
+                OutputKey::new("projected").expect("the output key is valid"),
+                projected,
+            )
+            .expect("the output binds");
+        builder.build().expect("the program verifies")
+    }
+
+    /// **The L3 profile's own contraction cells compose a selected plan.**
+    ///
+    /// This is the reachability half of
+    /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells`, and it
+    /// exists because that reachability was an *inference* from one number
+    /// against another until something compiled the cells. The measured
+    /// grid-axis row is 268,435,456 and `w_decode_kv` needs 1,024 threads, so
+    /// the arithmetic is obvious — and the arithmetic is exactly what
+    /// [`integrate-the-contraction-vertical-into-the-runtime`] could not run,
+    /// because a bound admitting an extent and a *plan composing* at that extent
+    /// are different claims and only the second is what a cell needs.
+    ///
+    /// **What this does and does not establish.** It establishes that each cell
+    /// reaches a selected physical plan through the ordinary compiler entry
+    /// point against the authoritative declaration. It dispatches nothing, so it
+    /// says nothing about the executed bits and does not touch the retained
+    /// `result_sha256` values; a device comparison at one cell is
+    /// [`publish-an-l3-contraction-cell-through-the-accepted-route`], which
+    /// needs the two prototype crates this crate cannot reach.
+    ///
+    /// **The refusal half is what stops this from passing whatever the row
+    /// says.** `2 x 3 x 3` is named because the ticket recorded it refusing at
+    /// `required: Threads(6)` under the superseded four-thread row, so it is the
+    /// smallest witness that the old refusal is gone rather than merely
+    /// out-scaled. The boundary pair at the end is mutation-proof in both
+    /// directions: `16,384 x 16,384` is exactly 268,435,456 output elements and
+    /// composes, and one column more refuses on `grid-axis` by name — so a
+    /// refusal here is the bound doing its job rather than a shape that failed
+    /// for some unrelated reason.
+    ///
+    /// Shapes are symbolic, so all six cells cost no more to compile than one.
+    ///
+    /// [`integrate-the-contraction-vertical-into-the-runtime`]:
+    ///     ../../../tickets/integrate-the-contraction-vertical-into-the-runtime.md
+    /// [`publish-an-l3-contraction-cell-through-the-accepted-route`]:
+    ///     ../../../tickets/publish-an-l3-contraction-cell-through-the-accepted-route.md
+    #[test]
+    fn the_measured_grid_axis_admits_every_l3_contraction_cell() {
+        let declaration = declaration();
+        let targets =
+            || TargetRequest::new([declaration.profile().clone()]).expect("a singleton request");
+
+        for (id, m, n, k) in L3_CORRECTNESS_CELLS {
+            let compilation = compiled(
+                NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+                &contraction_program(m, n, k),
+                targets(),
+            );
+            assert!(
+                compilation.selected().is_some(),
+                "the L3 cell {id} ({m}x{n}x{k}) compiled without reaching a selected plan",
+            );
+        }
+
+        // The cell whose superseded refusal the owning ticket recorded verbatim.
+        let small = compiled(
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+            &contraction_program(2, 3, 3),
+            targets(),
+        );
+        assert!(
+            small.selected().is_some(),
+            "2x3x3 published six output elements and was refused at `required: Threads(6)` under \
+             the superseded four-thread row; it must compose now",
+        );
+
+        // The boundary, both sides. Exactly the declared bound composes...
+        let at_bound = compiled(
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+            &contraction_program(16_384, 16_384, 2),
+            targets(),
+        );
+        assert!(
+            at_bound.selected().is_some(),
+            "268,435,456 output elements is exactly the declared grid-axis bound and must compose, \
+             or the refusal below would not be attributable to the bound",
+        );
+        // ...and one element past it is refused, on the grid axis, by name.
+        let refusal = compile(CompileRequest::new(
+            &contraction_program(16_384, 16_385, 2),
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+            targets(),
+        ))
+        .expect("the batch resolves")
+        .into_targets()
+        .pop()
+        .expect("one target outcome")
+        .into_parts()
+        .1
+        .expect_err("268,451,840 output elements exceed the declared grid-axis bound");
+        let rendered = refusal
+            .explain()
+            .map_or_else(|| format!("{refusal:?}"), |report| report.render());
+        assert!(
+            rendered.contains("grid-axis:rejected"),
+            "a contraction above the declared bound was refused, but not on the grid axis: \
+             {rendered}",
         );
     }
 
