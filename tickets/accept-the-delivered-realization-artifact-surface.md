@@ -68,3 +68,7 @@ The redesign dependency is done; its exact tested public diff and call site are 
 ## Decided — ratified
 
 Ratified by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator: the design packet at spikes/numerics/delivered-realization-record/ (commit `471f26ac`), including its fork resolution siting the means/dimension/provenance vocabulary in tiler-ir on the superseded record's own reopening trigger. `wire-the-delivered-realization-record-into-the-artifact` is released and owns all production integration, the proposed ADR 0076 and contract corrections applying operatively as part of that wiring.
+
+## Landed-surface delta — 2026-08-06, for Tom's next round
+
+The wiring landed the ratified packet with the exact surface enumerated in `wire-the-delivered-realization-record-into-the-artifact`'s final report. Three changes to already-ratified shapes need Tom's eye as the delta: `overlapping_behaviour`'s second parameter and `ArtifactCrossCheck.entries` moved from `NumericalRealization` to the new `EntryRealization` (a decoder cannot hold the former — the eight behaviours both sides hold are the honest comparand), and `ArtifactDiagnostic` lost `Copy` (its realization variant boxes the codec's typed cause rather than erasing it). The additive surface follows the packet; the three moves are where ratification and landing differ.

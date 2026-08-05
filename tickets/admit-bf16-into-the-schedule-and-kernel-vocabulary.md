@@ -1,7 +1,7 @@
 ---
 id: admit-bf16-into-the-schedule-and-kernel-vocabulary
 title: Admit BF16 into the schedule, kernel, and physical-carrier vocabularies
-status: todo
+status: in-progress
 priority: p1
 dependencies: [register-the-bf16-semantic-operation-signatures, evaluate-bf16-reference-semantics, derive-boundary-alignment-from-the-element-type, admit-the-bf16-type-and-carrier-into-every-total-map]
 related: [spike-bf16-through-the-second-dtype-seams]
@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, dtype, bf16, kernel-ir, schedule, physical]
 claimed_from: todo
 assignee: agent-bf16-vocab
-lease_expires_at: 1785691167
+lease_expires_at: 1785975633
 ---
 ## User-visible outcome
 

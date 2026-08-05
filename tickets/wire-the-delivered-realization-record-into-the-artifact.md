@@ -1,7 +1,7 @@
 ---
 id: wire-the-delivered-realization-record-into-the-artifact
 title: Wire the delivered-realization record into the artifact
-status: review
+status: done
 priority: p1
 dependencies: [accept-the-delivered-realization-artifact-surface, construct-and-bind-the-first-authoritative-metal-compile-profile]
 related: [record-delivered-numerical-realization, redesign-the-delivered-realization-record-from-typed-evidence]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, numerics]
-claimed_from: todo
-assignee: agent-wire-realization
-lease_expires_at: 1785971429
 ---
 `record-delivered-numerical-realization` built the first delivered-realization record and staged it crate-private in `crates/tiler-artifact/src/program/realization.rs`. That four-dimension, dtype-free draft was later disproved and is historical evidence rather than the shape to wire. `redesign-the-delivered-realization-record-from-typed-evidence` owns its replacement. This ticket makes a produced artifact carry the replacement boundary Tom accepts, which is what ADR 0076 item 4 asks for and what a staged draft alone does not supply.
 
