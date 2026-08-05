@@ -1,7 +1,7 @@
 ---
 id: land-the-elementary-family-projection-adr
 title: Land the elementary-family projection ADR
-status: blocked
+status: todo
 priority: p1
 dependencies: [admit-the-registered-unary-families-at-the-compiler-request-boundary, complete-the-elementary-projection-adr-frontmatter]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, decisions, carrier]
-claimed_from: todo
-assignee: agent-adr-carrier
-lease_expires_at: 1785903117
 ---
 ## User-visible outcome
 
@@ -25,7 +22,9 @@ The route the compiler took to make a registered elementary family reachable is 
 
 ## Required delivery
 
-- The drafted body landed byte-identically at the next free `docs/decisions/NNNN-project-an-elementary-family-s-per-point-body-from-one-shared-statement.md`, with only the numeric prefix, the `id` frontmatter field, and the H1's number prefix adjusted to the allocated number if the catalog's convention requires it — and if any adjustment is needed, it is recorded here as a stated exception rather than made silently. **The H1 was added to that list on 2026-08-04**, because every one of the ninety-eight records spells its heading `# NNNN: <title>` and the draft's heading carries no number, so an allocation that moved the filename and the `id` but not the heading would leave the record spelling two different identities.
+- The drafted body landed byte-identically at the next free `docs/decisions/NNNN-…md`, with only the numeric prefix, the `id` frontmatter field, and the H1's number prefix adjusted to the allocated number if the catalog's convention requires it — and if any adjustment is needed, it is recorded here as a stated exception rather than made silently. **The H1 was added to that list on 2026-08-04**, because every one of the ninety-eight records spells its heading `# NNNN: <title>` and the draft's heading carries no number, so an allocation that moved the filename and the `id` but not the heading would leave the record spelling two different identities. **Both now carry `0099` already** — see the resolution section below — so at the time of writing this bullet authorizes an adjustment that is not needed.
+
+  **Correction 2026-08-04 — the filename this bullet stated does not follow the corpus's own handling of a possessive.** It read `NNNN-project-an-elementary-family-s-per-point-body-from-one-shared-statement.md`, spelling the apostrophe as `-s-`. The corpus drops the apostrophe and keeps the `s`: [0092](../docs/decisions/0092-answer-backend-scoped-route-requirements-in-the-owning-backends-vocabulary.md) renders "the owning backend's vocabulary" as `the-owning-backends-vocabulary`, and [0098](../docs/decisions/0098-state-an-inline-regions-delivery-policy-with-a-named-profile-or-a-family-list.md) renders "an inline region's delivery policy" as `an-inline-regions-delivery-policy`. The mechanical slug is therefore `0099-project-an-elementary-familys-per-point-body-from-one-shared-statement.md`. **The slug is not a strict transform of the title and the carrier may shorten it** — [0088](../docs/decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) drops "consumer" from its own title — so this correction fixes the apostrophe convention rather than fixing the name.
 - The catalog block in `docs/decisions/README.md` updated in the same commit as the metadata behind it. That file maps to `contracts/navigation`, so this ticket declares both scopes.
 - `decision_status` left at `proposed`. **Acceptance is Tom's and nothing in the deriving work relayed one.** Moving it to accepted, updating the catalog views, and correcting every contract sentence whose truth depended on the old status is a separate step with its own acceptance provenance — who accepted, the date, and the venue.
 
@@ -36,6 +35,15 @@ Re-deriving the decision. The elimination is recorded in the deriving ticket and
 ## Closes when
 
 The ADR file exists at an allocated number with the drafted body byte-identical, the catalog names it, and `decision_status` is `proposed` with no acceptance claimed.
+
+## Unblocked 2026-08-04 — the draft is schema-valid and the transfer is mechanical again
+
+**The block below is preserved because its facts were true when written and its stop was correct; every one of them is now discharged.** [`complete-the-elementary-projection-adr-frontmatter`](complete-the-elementary-projection-adr-frontmatter.md) amended the fenced draft in place at `116f11ad`, and the amendment note beside the draft records each value's ground. This ticket returns to `todo`; the dependency edge on that ticket is what holds it until the amendment lands, so nothing here shortens the graph.
+
+- **The five absent or malformed fields are present and well-formed.** The block now carries `schema`, `id`, `kind`, `title`, `topics`, `catalog_group`, `decision_status`, `implementation_status`, `applies_to`, `evidence`, and `ticket` — the corpus's ten plus the optional `ticket` — with `id: "ADR-0099"` and the heading `# 0099: …`. Reproduce over the extracted block exactly as the block below does over the corpus; the amendment note carries the extraction one-liner and each check's failing control.
+- **`applies_to` is `["tiler.contract.optimizer", "tiler.contract.ir"]`** and `evidence` is `["tiler.research.numerics.transformer-nonlinear-normalization-and-reductions"]`, so the catalog entry this ticket owes — title, status, `contracts:`, `evidence:` — is writable in the shape its ninety-eight neighbours have.
+- **The number question is settled, not deferred.** `0099` was free at `116f11ad` (`ls docs/decisions/0*.md | tail -1` reports 0098, and `grep -rn 'id: "ADR-0' tickets/` reports no other drafted body claiming a number). The licence in Required delivery to adjust a number found taken is unspent and still stands: if `0099` is allocated before the transfer, move the filename, the `id`, and the H1 together and record it as a stated exception.
+- **One of this ticket's own facts is refuted rather than discharged, and only one.** The block below states, correctly, that no research record reasons about projecting an elementary body from one shared statement — **that Fact stands and the amendment does not contradict it**. What the amendment refutes is the inference drawn from it, that naming a record would therefore be a false authority edge: `evidence` does not require the record to derive the decision, and [the metadata contract](../docs/document-metadata.md#typed-relationships) states the three predicates are independent, with ADRs 0055, 0080, and 0095 citing a record whose `adopted_by` names none of them. The L3′ record is named because the Decision's rejection of a per-family node rests on a measurement it carries; the Metal record is **not** named, exactly as the carrier's elimination concluded. The full derivation, including the boundary the edge does not cover, is in the amendment note.
 
 ## Blocked 2026-08-04 — the draft is not schema-valid, and conforming it is a fork
 
