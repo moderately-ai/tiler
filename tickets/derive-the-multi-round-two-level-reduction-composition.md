@@ -1,7 +1,7 @@
 ---
 id: derive-the-multi-round-two-level-reduction-composition
 title: Derive the multi-round two-level reduction composition
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [admit-loop-carried-cooperative-staging, admit-a-round-dependent-cooperative-staging-span, compose-the-two-level-subgroup-and-workgroup-reduction]
@@ -9,9 +9,6 @@ scopes: [research/scheduling, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, scheduling, reductions, numerics, graph-repair]
-claimed_from: todo
-assignee: agent-multi-round
-lease_expires_at: 1785957552
 ---
 ## User-visible outcome
 
