@@ -1133,6 +1133,66 @@ fn a_retention_refuses_a_label_or_a_run_it_cannot_frame() {
     ));
 }
 
+/// A stated total below the bytes beside it is refused rather than corrected.
+///
+/// Either number could be the wrong one, so clamping would publish a run whose
+/// truncation flag was this crate's guess about a producer's arithmetic.
+#[test]
+fn a_stated_total_below_the_supplied_length_is_refused() {
+    let refusal = DebugRetention::none().retaining_with_stated_total("tool.stderr", b"four", 3);
+    assert_eq!(
+        refusal,
+        Err(RetentionRefusal::RetainedAboveTotal {
+            retained: 4,
+            total: 3,
+        }),
+    );
+    assert!(
+        refusal
+            .expect_err("the pair is incoherent")
+            .to_string()
+            .contains("states 3 in total"),
+        "the refusal must name both numbers a caller has to reconcile",
+    );
+
+    // Checked against the length supplied rather than the length that survives
+    // the bound: this pair would store a 16 KiB prefix under a larger total and
+    // pass the stored-form check, and it is still a producer whose two numbers
+    // disagree about bytes it handed over.
+    let oversize = vec![b'x'; MAX_RETAINED_RUN_BYTES + 10];
+    assert!(matches!(
+        DebugRetention::none().retaining_with_stated_total(
+            "tool.stderr",
+            &oversize,
+            MAX_RETAINED_RUN_BYTES + 5,
+        ),
+        Err(RetentionRefusal::RetainedAboveTotal { .. }),
+    ));
+
+    // The two coherent neighbours: an equal total is the whole output, and a
+    // larger one is a producer that had already dropped bytes of its own.
+    let whole = DebugRetention::none()
+        .retaining_with_stated_total("tool.stderr", b"four", 4)
+        .expect("an equal total is coherent");
+    assert!(!whole.run("tool.stderr").expect("the run").is_truncated());
+    let short_prefix = DebugRetention::none()
+        .retaining_with_stated_total("tool.stderr", b"four", 5)
+        .expect("a larger total is coherent");
+    let run = short_prefix.run("tool.stderr").expect("the run");
+    assert!(run.is_truncated());
+    assert_eq!(run.total_bytes(), 5);
+
+    // A stated total does not raise the bound; it only describes what the bound
+    // and the producer together left out.
+    let long = DebugRetention::none()
+        .retaining_with_stated_total("tool.stderr", &oversize, 5 * 1024 * 1024)
+        .expect("a total above the supplied length is coherent");
+    let run = long.run("tool.stderr").expect("the run");
+    assert_eq!(run.as_bytes().len(), MAX_RETAINED_RUN_BYTES);
+    assert_eq!(run.total_bytes(), 5 * 1024 * 1024);
+    assert!(run.is_truncated());
+}
+
 /// A published retention is read back through the ordinary validated hit, and a
 /// damaged one makes that hit a miss.
 ///
@@ -1192,6 +1252,65 @@ fn a_published_retention_survives_the_hit_path_and_a_damaged_one_does_not() {
         ),
         "a damaged retention must refuse validation",
     );
+}
+
+/// A producer's own total reaches a validated hit, so a bounded prefix is never
+/// served as a whole diagnostic.
+///
+/// The control above the publication is what keeps this from passing for the
+/// wrong reason: a producer bounded at the same 16 KiB hands over exactly
+/// [`MAX_RETAINED_RUN_BYTES`], and a total derived from *that* length answers
+/// `false` to the only truncation question a reader of the entry can ask. So the
+/// assertion on the hit is about the total the producer stated rather than about
+/// a run that happens to be long.
+#[test]
+fn a_producer_stated_total_survives_to_a_validated_hit() {
+    let scratch = Scratch::new("retention-stated-total");
+    let cache = cache(&scratch);
+    // What a producer bounded at an equal limit hands over for a stage that
+    // wrote megabytes.
+    let prefix = vec![b'x'; MAX_RETAINED_RUN_BYTES];
+    let wrote = 5 * 1024 * 1024;
+
+    let derived = retaining("tool.stderr", &prefix);
+    assert!(
+        !derived.run("tool.stderr").expect("the run").is_truncated(),
+        "deriving the total from a producer's prefix is what loses the truncation",
+    );
+
+    let stated = DebugRetention::none()
+        .retaining_with_stated_total("tool.stderr", &prefix, wrote)
+        .expect("a governed label and a total above the prefix");
+    let outcome = cache
+        .resolve_retaining(
+            b"subject",
+            || Ok::<_, String>((b"envelope".to_vec(), stated.clone())),
+            &any_payload,
+        )
+        .expect("a build that succeeds resolves");
+    let ProtocolOutcome::Hit {
+        entry, published, ..
+    } = outcome
+    else {
+        panic!("an empty cache publishes rather than hits");
+    };
+    assert!(published);
+    let key = entry.key;
+
+    let read = cache
+        .read_entry(&key, &any_payload)
+        .expect("a published entry validates");
+    let run = read
+        .retained
+        .run("tool.stderr")
+        .expect("the run survives publication");
+    assert_eq!(run.as_bytes(), prefix, "the prefix is stored exactly");
+    assert!(
+        run.is_truncated(),
+        "a reader of the hit must be able to tell a prefix from the whole",
+    );
+    assert_eq!(run.total_bytes(), wrote as u64);
+    assert!(run.to_string().contains("truncated"));
 }
 
 /// A hit shows what the publishing build retained, and never republishes to add

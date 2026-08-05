@@ -125,8 +125,14 @@ impl RetainedText {
         self.total
     }
 
-    /// Returns whether bytes were dropped to stay within
-    /// [`MAX_RETAINED_RUN_BYTES`].
+    /// Returns whether any byte the producer had is missing from this run.
+    ///
+    /// True whether this crate dropped it to stay within
+    /// [`MAX_RETAINED_RUN_BYTES`] or the producer had already dropped it under a
+    /// bound of its own and said so through
+    /// [`DebugRetention::retaining_with_stated_total`]. A reader asking whether
+    /// it is looking at the whole diagnostic wants one answer, not one per
+    /// bound that could have cut it.
     #[must_use]
     pub fn is_truncated(&self) -> bool {
         self.total > self.retained.len() as u64
@@ -180,8 +186,10 @@ impl fmt::Display for RetainedText {
 /// that has one — the ADR 0089 root policy applied to a second decision.
 ///
 /// A *derived* value in the sense of ADR 0074 convention 2: the runs are private,
-/// [`Self::retaining`] is the only way to add one, and every bound is enforced
-/// there and again when a stored section is decoded.
+/// [`Self::retaining`] and [`Self::retaining_with_stated_total`] are the only
+/// ways to add one — the first delegating to the second, so a bound is enforced
+/// in one place rather than in two that could drift apart — and every bound is
+/// enforced again when a stored section is decoded.
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DebugRetention {
     runs: Vec<RetainedText>,
@@ -194,11 +202,16 @@ impl DebugRetention {
         Self { runs: Vec::new() }
     }
 
-    /// Retains up to [`MAX_RETAINED_RUN_BYTES`] of one labelled run.
+    /// Retains up to [`MAX_RETAINED_RUN_BYTES`] of one labelled run, taking the
+    /// bytes supplied as everything the producer had.
     ///
     /// The bytes are truncated rather than refused, because a caller that had to
     /// pre-truncate would either duplicate this bound or lose the total; the
     /// total is recorded here so the truncation is reported rather than hidden.
+    /// A producer that *already* truncated under a bound of its own states what
+    /// it had through [`Self::retaining_with_stated_total`] instead — the total
+    /// this derives is the length it was handed, which for such a producer is
+    /// the prefix rather than the whole.
     ///
     /// # Errors
     ///
@@ -206,8 +219,55 @@ impl DebugRetention {
     /// label already retained, or a run past [`MAX_RETAINED_RUNS`]. A duplicate
     /// label is refused rather than appended so [`Self::run`] answers about the
     /// whole retention rather than about whichever run was found first.
-    pub fn retaining(mut self, label: &str, bytes: &[u8]) -> Result<Self, RetentionRefusal> {
+    /// [`RetentionRefusal::RetainedAboveTotal`] is unreachable through here,
+    /// because the total is the supplied length.
+    pub fn retaining(self, label: &str, bytes: &[u8]) -> Result<Self, RetentionRefusal> {
+        self.retaining_with_stated_total(label, bytes, bytes.len())
+    }
+
+    /// Retains up to [`MAX_RETAINED_RUN_BYTES`] of one labelled run whose
+    /// producer states its own total.
+    ///
+    /// `bytes` is what reached this call and `total` is what the producer had
+    /// before any bound of its own applied. The two differ whenever a producer
+    /// captures under a bound equal to this one:
+    /// `tiler_metal_aot::diagnostic::MAX_RETAINED_OUTPUT_BYTES` and
+    /// [`MAX_RETAINED_RUN_BYTES`] are both 16 KiB, so a stage that wrote
+    /// megabytes arrives here as exactly the bound, and a total derived from
+    /// that length would make [`RetainedText::is_truncated`] answer `false` for
+    /// a run that is a prefix. Stating the total is what keeps the fact the
+    /// producer already knew from stopping at the producer.
+    ///
+    /// Bytes past [`MAX_RETAINED_RUN_BYTES`] are still truncated here, so a
+    /// stated total does not raise the bound — it only describes what the bound
+    /// and the producer together left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns every [`RetentionRefusal`] [`Self::retaining`] does, and
+    /// [`RetentionRefusal::RetainedAboveTotal`] when `total` is below the
+    /// supplied length: a producer claiming a prefix is longer than the whole,
+    /// which is the caller-side spelling of
+    /// [`RetentionRejection::RetainedAboveTotal`]. It is refused rather than
+    /// clamped to either number, because this crate reads neither the bytes nor
+    /// the count and so cannot tell which of the two the producer got wrong.
+    pub fn retaining_with_stated_total(
+        mut self,
+        label: &str,
+        bytes: &[u8],
+        total: usize,
+    ) -> Result<Self, RetentionRefusal> {
         check_label(label)?;
+        // Checked against the length supplied rather than the length that
+        // survives the bound below, so an incoherent pair is refused at the site
+        // that can fix it instead of being hidden by this crate's own
+        // truncation whenever the prefix happens to fit under the stated total.
+        if total < bytes.len() {
+            return Err(RetentionRefusal::RetainedAboveTotal {
+                retained: bytes.len(),
+                total,
+            });
+        }
         if self.runs.iter().any(|run| run.label == label) {
             return Err(RetentionRefusal::DuplicateLabel {
                 label: label.to_owned(),
@@ -221,7 +281,7 @@ impl DebugRetention {
         self.runs.push(RetainedText {
             label: label.to_owned(),
             retained: bytes.iter().take(MAX_RETAINED_RUN_BYTES).copied().collect(),
-            total: bytes.len() as u64,
+            total: total as u64,
         });
         Ok(self)
     }
@@ -269,7 +329,7 @@ impl DebugRetention {
 
     /// Decodes and completely validates one stored retention section.
     ///
-    /// Every bound [`Self::retaining`] enforces is enforced again here, because
+    /// Every bound the constructors enforce is enforced again here, because
     /// these bytes came off a disk any process on the host may write to and the
     /// producer's checks prove nothing about them.
     pub(super) fn decode(bytes: &[u8]) -> Result<Self, RetentionRejection> {
@@ -468,6 +528,20 @@ pub enum RetentionRefusal {
         /// Configured maximum.
         limit: usize,
     },
+    /// A caller stated a total below the length of the bytes beside it.
+    ///
+    /// The total is what makes truncation reportable, so a total under the
+    /// supplied length is a caller claiming a prefix is longer than the whole.
+    /// [`RetentionRejection::RetainedAboveTotal`] is the same disagreement found
+    /// in stored bytes; both exist because the producer's arithmetic and a
+    /// hostile section are different faults with different remedies, and neither
+    /// is evidence about the other.
+    RetainedAboveTotal {
+        /// Length the caller supplied, in bytes.
+        retained: usize,
+        /// Total the caller stated.
+        total: usize,
+    },
 }
 
 impl fmt::Display for RetentionRefusal {
@@ -492,6 +566,10 @@ impl fmt::Display for RetentionRefusal {
             Self::TooManyRuns { limit } => {
                 write!(formatter, "a retention carries at most {limit} runs")
             }
+            Self::RetainedAboveTotal { retained, total } => write!(
+                formatter,
+                "a retained run supplies {retained} bytes and states {total} in total",
+            ),
         }
     }
 }
@@ -539,6 +617,7 @@ pub enum RetentionRejection {
     ///
     /// The total is what makes truncation reportable, so a total below the
     /// retained length is a section claiming a prefix is longer than the whole.
+    /// [`RetentionRefusal::RetainedAboveTotal`] is the caller-side spelling.
     RetainedAboveTotal {
         /// Zero-based run index.
         index: usize,

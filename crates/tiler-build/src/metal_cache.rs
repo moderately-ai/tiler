@@ -423,7 +423,8 @@ pub fn accept_or_publish_delivered_metal_artifact<E>(
 /// label. The position is included because one entry covers the whole selection
 /// — several artifact families are several compilations under one key — so a
 /// label naming only the stage would be two runs fighting over one name, which
-/// [`DebugRetention::retaining`] refuses rather than silently merges.
+/// [`DebugRetention::retaining_with_stated_total`] refuses rather than silently
+/// merges.
 fn stage_label(delivery: usize, stage: CompileStage) -> String {
     format!("{BACKEND}.{delivery}.{}", stage.tool())
 }
@@ -451,19 +452,17 @@ fn stage_label(delivery: usize, stage: CompileStage) -> String {
 /// alone; an implementation that folded this text into a subject would have given
 /// them two.
 ///
-/// # Where a truncation stops being visible
-///
+/// **The stage's own total is stated, not re-derived.**
 /// `tiler_metal_aot::diagnostic::ToolOutput` and
 /// `tiler_cache::expansion::MAX_RETAINED_RUN_BYTES` bound one run identically, at
-/// 16 KiB. A stage that wrote more therefore arrives here already truncated and
-/// exactly at the bound, and the retention records its total as the length it was
-/// handed — so `RetainedText::is_truncated` reads false on the entry while
-/// `ToolOutput::is_truncated` read true at the run that produced it. The fact is
-/// not lost where the compilation happened; it is not carried to a later hit,
-/// because the retention API takes bytes and derives the total from them.
-/// `carry-a-producer-stated-total-into-a-retained-run` owns closing that, and
-/// doing it here instead would mean either a second bound or editing the tool's
-/// own bytes to describe them.
+/// 16 KiB, so a stage that wrote megabytes arrives here already truncated and
+/// exactly at the bound. `ToolOutput::total_bytes` is what the tool actually
+/// wrote, and passing it through
+/// [`DebugRetention::retaining_with_stated_total`] is what lets a later hit tell
+/// that bounded prefix from a whole diagnostic. Pre-truncating below the cache's
+/// bound, or editing the tool's bytes to describe themselves, were the two
+/// producer-side alternatives; both give up something byte-preserving capture
+/// exists to keep.
 ///
 /// # A refusal is not a build failure
 ///
@@ -476,9 +475,11 @@ fn stage_retention(outputs: &[StageOutputs]) -> DebugRetention {
     let mut retention = DebugRetention::none();
     for (delivery, stage_outputs) in outputs.iter().enumerate() {
         for stage in CompileStage::ALL {
-            match retention.retaining(
+            let output = stage_outputs.stage(stage);
+            match retention.retaining_with_stated_total(
                 &stage_label(delivery, stage),
-                stage_outputs.stage(stage).as_bytes(),
+                output.as_bytes(),
+                output.total_bytes(),
             ) {
                 Ok(extended) => retention = extended,
                 // All or nothing: a partial run set reads as a selection with
