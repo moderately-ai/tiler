@@ -1,7 +1,7 @@
 ---
 id: correct-the-deliberately-absent-storage-claim-in-the-frontends-contract
 title: Correct the "Deliberately absent" storage claim in the frontends contract
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-two-stale-delivery-spans-in-the-frontends-contract, route-an-embedded-artifact-through-a-consumer-storage-seam]
@@ -9,6 +9,9 @@ scopes: [contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contracts, frontend, inline-dx, staleness]
+claimed_from: todo
+assignee: agent-storage-claim
+lease_expires_at: 1785935265
 ---
 ## Why this exists
 
