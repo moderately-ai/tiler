@@ -18,10 +18,10 @@ manifest="$here/expected-sources.tsv"
 
 # The expected population, declared here rather than derived from the manifest, so that a manifest
 # that lost rows fails instead of agreeing with itself.
-expect_total=29
-expect_vendored=7
-expect_metadata_only=16
-expect_pending=6
+expect_total=30
+expect_vendored=9
+expect_metadata_only=20
+expect_pending=1
 
 # Files that are the record itself rather than preserved upstream bytes.
 self_files=("README.md" "expected-sources.tsv" "verify-sources.sh" ".gitattributes")

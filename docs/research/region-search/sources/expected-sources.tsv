@@ -15,6 +15,8 @@ egraph-circuits-arxiv-2408.17042v2	vendored	egraph-circuits-arxiv-2408.17042v2/e
 guided-eqsat-popl-2024	vendored	guided-eqsat-popl-2024/guided-equality-saturation.pdf	e1e3f161de3c3b715d49b2d4055aafc1e45c0f1b1f45dda4f7a7ce3791106c64
 sketch-guided-eqsat-arxiv-2111.13040v2	vendored	sketch-guided-eqsat-arxiv-2111.13040v2/sketch-guided-equality-saturation.pdf	8725d46dd70a819de62aeea6632d6bd0f159685eb1062f01b6485a59abd280d0
 colored-egraphs-arxiv-2305.19203v1	vendored	colored-egraphs-arxiv-2305.19203v1/colored-e-graph.pdf	e4ed555bceda9e019f84b7b0dc8f676e742740104427b6e160160f8f628af842
+elevate-icfp-2020	vendored	elevate-icfp-2020/achieving-high-performance-the-functional-way.pdf	64da6e4f30c2c6e92c43885d6eb9989cb6cc1aea30f77ef4b2e1b5f32eb6b790
+relational-contextual-eqsat-arxiv-2507.11897v1	vendored	relational-contextual-eqsat-arxiv-2507.11897v1/towards-relational-contextual-equality-saturation.pdf	fd14b43fc679deff6a970716d932113dcd7212066ed6093717bc892430935470
 selinger-sigmod-1979	metadata-only	-	d8c02d475b49fc90b9ee2b9e15a686a320b4b537272b8a5a661642db6c800d13
 volcano-icde-1993	metadata-only	-	77a4930474ee3caf2e774c72d1b842190e299fd4f492ea3577f8307972cc3f5f
 cascades-debull-18-3-1995	metadata-only	-	65ba4757f16d09e35324c5381d4b5d404b0e5051eb47be2bf89adc8aaf3712c7
@@ -31,9 +33,8 @@ tvm-arxiv-1802.04799v3	metadata-only	-	6032d5a54db0ec552168a5f5295a954edea6a24d9
 click-cooper-toplas-1995	metadata-only	-	de3650937cb42de5ae40dbed362f4ce69e5813a5116ee447ad50ad8c9a1d86c1
 whitfield-soffa-toplas-1997	metadata-only	-	4021ada2dbe830e67318440b6787b5b20c82b796203a40ea6a282dd3503924c2
 touati-barthou-cf-2006	metadata-only	-	8756e64618a9880d4fec7187d83cb0279724024ac7a13ce3fa503878287793e0
-sparse-extraction-oopsla-2024	pending-acquisition	-	-
-columbia-optimizer-thesis-1998	pending-acquisition	-	-
+sparse-extraction-oopsla-2024	metadata-only	-	add813f013cb01057b736be116ec9abe9b3ad7ed4ab43535a448dc59ed19b368
+columbia-optimizer-thesis-1998	metadata-only	-	b5caab8504924545a2ea2a5fc7dd20e564dbfe7a2526b3a40d35133a6fb91189
+denali-pldi-2002	metadata-only	-	e019681ba57504b71644006d6e0d1a9997ad1cec85f4c58a644ac181da89caaf
+metaflow-mlsys-2019	metadata-only	-	6786df417a133851d6c8dc768208cc992ea4bca01f2fda6f252b2610aed4ef6c
 conditional-eqsat-successor-unlocated	pending-acquisition	-	-
-denali-pldi-2002	pending-acquisition	-	-
-metaflow-mlsys-2019	pending-acquisition	-	-
-elevate-icfp-2020	pending-acquisition	-	-

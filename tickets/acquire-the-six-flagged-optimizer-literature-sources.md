@@ -1,7 +1,7 @@
 ---
 id: acquire-the-six-flagged-optimizer-literature-sources
 title: Acquire the six flagged optimizer-literature sources
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature]
