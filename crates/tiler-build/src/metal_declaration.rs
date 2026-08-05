@@ -1071,30 +1071,43 @@ impl Error for BoundMetalDeclarationError {
 mod tests {
     use super::{
         BoundMetalCompileDeclaration, BoundMetalDeclarationError, FIRST_MACOS_APPLE9, LedgerRows,
-        MetalPlanProfileMismatch,
+        MEASURED_PRODUCER, MetalPlanProfileMismatch,
     };
-    use tiler_compiler::session::{CompileRequest, NumericalContract, compile};
+    use tiler_compiler::session::{
+        CompileRequest, NumericalContract, TargetCompileRefusal, TargetNumericalContractRefusal,
+        TargetNumericalDeclaredMeans, TargetNumericalHonouredBehaviour,
+        TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
+    };
     use tiler_compiler::target::{
         DTypeDispatchability, DTypeDispatchabilityResolution, IndexArithmeticSupport,
-        ScalarArithmetic, ScalarSupport, SynchronizationSupport, TargetFactProducerIdentity,
-        TargetFactSource, TargetNormativeReferenceIdentity, TargetProfileBuildError,
+        ScalarArithmetic, ScalarSupport, SynchronizationSupport, TargetCompilerRoleReference,
+        TargetFactAuthority, TargetFactProducerIdentity, TargetFactSource, TargetFactValidityScope,
+        TargetNormativeReferenceIdentity, TargetNumericalEvidenceBasis, TargetProfileBuildError,
         TargetProfileBuilder, TargetProfileKey, TargetRequest,
     };
     use tiler_ir::program::abi::{
         AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
     };
     use tiler_ir::schedule::{
-        FlushedZeroSign, MemoryOrdering, SubnormalMode, SynchronizationKind, SynchronizationScope,
+        ArithmeticType, FlushedZeroSign, MemoryOrdering, NumericalPermission, SubnormalMode,
+        SynchronizationKind, SynchronizationScope,
     };
     use tiler_ir::semantic::{
-        Bf16, F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ResolvedValueType,
-        SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum, TypeKey,
+        Bf16, Bf16Add, Bf16Constant, Bf16Multiply, F32, F32Add, F32Constant, F32Multiply, InputKey,
+        OutputKey, ResolvedValueType, SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
+        TypeKey,
     };
     use tiler_ir::shape::{Axis, Shape};
     use tiler_metal::target::{
         MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform,
         MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
         MslLanguageVersion,
+    };
+
+    /// The subnormal behaviour the ledger's measured Apple row delivers, for
+    /// `f32` and `bf16` alike.
+    const SIGN_PRESERVING_FLUSH: SubnormalMode = SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
     };
 
     /// One named single-row mutation of the ledger transcription.
@@ -1139,6 +1152,57 @@ mod tests {
             )
             .expect("the output binds");
         builder.build().expect("the program verifies")
+    }
+
+    /// A pure-BF16 constant/multiply/add program.
+    ///
+    /// Deliberately not the `f32` program above in another width: no reduction,
+    /// because the claim under test is which *numerical rows* answer for `bf16`,
+    /// and a program is the smallest thing that can consume them. Every value in
+    /// it is `bf16`, so nothing here can be answered by the profile's complete
+    /// neighbouring `f32` table.
+    fn bf16_program() -> SemanticProgram {
+        let mut builder =
+            SemanticProgramBuilder::try_standard().expect("the semantic profile composes");
+        let input = builder
+            .input::<Bf16>(
+                InputKey::new("input").expect("the input key is valid"),
+                Shape::from_dims([2, 2]),
+            )
+            .expect("the input binds");
+        // 1.0 and 2.0 in bf16.
+        let scale = Bf16Constant::apply(&mut builder, 0x3f80).expect("the scale applies");
+        let bias = Bf16Constant::apply(&mut builder, 0x4000).expect("the bias applies");
+        let product = Bf16Multiply::apply(&mut builder, input, scale).expect("the product applies");
+        let mapped = Bf16Add::apply(&mut builder, product, bias).expect("the bias applies");
+        builder
+            .output(
+                OutputKey::new("result").expect("the output key is valid"),
+                mapped,
+            )
+            .expect("the output binds");
+        builder.build().expect("the program verifies")
+    }
+
+    /// Returns the numerical refusal the *authoritative* profile answers
+    /// `contract` with, or panics naming what came back instead.
+    fn bf16_numerical_refusal(contract: NumericalContract) -> TargetNumericalContractRefusal {
+        let batch = compile(CompileRequest::new(
+            &bf16_program(),
+            contract,
+            TargetRequest::new([declared().profile().clone()]).expect("a singleton target request"),
+        ))
+        .expect("a target-local numerical refusal is a batch outcome, not a request error");
+        let result = batch.targets().next().expect("one target outcome");
+        let failure = result
+            .outcome()
+            .expect_err("the authoritative target refused")
+            .refusal()
+            .expect("a pre-trace contract refusal retains typed detail");
+        match failure {
+            TargetCompileRefusal::NumericalContract(refusal) => refusal.clone(),
+            other => panic!("expected a numerical-contract refusal, got {other:?}"),
+        }
     }
 
     /// The declaration carries the ledger's rows, in both vocabularies.
@@ -1421,11 +1485,8 @@ mod tests {
             source.clone(),
         )
         .expect("the first complete BF16 projection lands");
-        let subject = ScalarArithmetic::new(
-            tiler_ir::schedule::ArithmeticType::Bf16,
-            Bf16::resolved_type(),
-        )
-        .expect("the governed BF16 arithmetic subject");
+        let subject = ScalarArithmetic::new(ArithmeticType::Bf16, Bf16::resolved_type())
+            .expect("the governed BF16 arithmetic subject");
         let mut input_probe = builder.clone();
         assert!(matches!(
             input_probe.declare_measured_input_subnormal_behaviour(
@@ -1881,6 +1942,228 @@ mod tests {
             .expect_err("a measured flushing target cannot honour preserved subnormals");
     }
 
+    /// Renders one measured build's role, producer-defined identity included.
+    ///
+    /// The wildcard arm panics naming the role rather than comparing unequal to a
+    /// string, so a widened role vocabulary reports what arrived instead of
+    /// reading as a moved toolchain row.
+    fn role_label(role: TargetCompilerRoleReference<'_>) -> String {
+        match role {
+            TargetCompilerRoleReference::CodeGenerator => "code-generator".to_owned(),
+            TargetCompilerRoleReference::Linker => "linker".to_owned(),
+            TargetCompilerRoleReference::ProducerDefined(identity) => {
+                format!(
+                    "producer-defined:{}@{}",
+                    identity.key(),
+                    identity.revision()
+                )
+            }
+            other => panic!("the ledger declares no {other:?} build"),
+        }
+    }
+
+    /// The ledger's own rows refuse a strict `bf16` contract, and the refusal
+    /// cites the ledger's own measurement.
+    ///
+    /// **This is the half `crates/tiler-compiler/tests/bf16_numerical_contract.rs`
+    /// structurally cannot prove.** `tiler-build` depends on `tiler-compiler`, so
+    /// that file cannot reach `FIRST_MACOS_APPLE9` and instead restates the same
+    /// measured behaviour under its own test provenance — which shows the
+    /// compiler boundary answers correctly for that behaviour, not that these
+    /// rows produce that answer. Asserted here: the transcribed ledger rows yield
+    /// the identical typed refusal, and its evidence names the ledger's measured
+    /// producer, its four offline toolchain components, and the host they ran on.
+    ///
+    /// Every expected value is read from `FIRST_MACOS_APPLE9` rather than
+    /// transcribed a second time, so what this pins is that each row *reaches*
+    /// the refusal. A row's value is pinned separately, by
+    /// `the_declaration_states_exactly_the_ledger_rows` and the descriptor
+    /// perturbation sweeps.
+    #[test]
+    fn the_ledger_rows_refuse_a_strict_bf16_contract_with_their_own_measured_evidence() {
+        let declaration = declared();
+        let refusal = bf16_numerical_refusal(NumericalContract::STRICT_BF16);
+        assert_eq!(
+            refusal.target_profile(),
+            declaration.profile().profile_key(),
+            "the refusal is attributed to the authoritative profile itself",
+        );
+        let [rejection] = refusal.rejections() else {
+            panic!("one stated contract, one rejection");
+        };
+        assert_eq!(
+            rejection.contract_key(),
+            NumericalContract::STRICT_BF16.key(),
+        );
+
+        let TargetNumericalRequirement::InputSubnormals { subject, required } =
+            rejection.requirement()
+        else {
+            panic!(
+                "the canonical-first unhonourable dimension is input subnormals, got {:?}",
+                rejection.requirement(),
+            );
+        };
+        assert_eq!(subject.arithmetic(), ArithmeticType::Bf16);
+        assert_eq!(subject.resolved_type(), &Bf16::resolved_type());
+        assert_eq!(*required, SubnormalMode::Preserve);
+
+        let TargetNumericalRefusalDisposition::DeclaredUnhonourable(declared_row) =
+            rejection.disposition()
+        else {
+            panic!(
+                "the ledger declares this row, so it must refuse by name rather than \
+                 degrade to Unknown: {:?}",
+                rejection.disposition(),
+            );
+        };
+        assert_eq!(declared_row.subject().arithmetic(), ArithmeticType::Bf16);
+        assert_eq!(
+            declared_row.subject().resolved_type(),
+            &Bf16::resolved_type(),
+        );
+        assert_eq!(
+            *declared_row.means(),
+            TargetNumericalDeclaredMeans::Unsupported,
+        );
+        assert_eq!(
+            declared_row.honoured(),
+            Some(&TargetNumericalHonouredBehaviour::InputSubnormals(
+                SIGN_PRESERVING_FLUSH
+            )),
+            "the refusal reports the flush the ledger's Metal record states",
+        );
+        assert_eq!(
+            declared_row.target_profile(),
+            declaration.profile().profile_key(),
+        );
+
+        // ---- the evidence is the ledger's measurement, not a fixture's ------
+        // A caller cannot act on "this target refuses preserved bf16 subnormals"
+        // — every flushing target says that. It can act on the exact offline
+        // toolchain and host below, because it can compare them against its own
+        // deployment, which is why the whole context is walked here.
+        let evidence = declared_row.evidence();
+        assert_eq!(evidence.available_at(), AvailabilityPhase::CompileProfile);
+        assert_eq!(evidence.authority(), TargetFactAuthority::MeasuredProfile);
+        assert_eq!(
+            evidence.validity(),
+            TargetFactValidityScope::MeasuredEnvironment,
+            "a measured row may not widen into a portable claim",
+        );
+        assert_eq!(evidence.authority_identity().key(), MEASURED_PRODUCER);
+        assert_eq!(evidence.authority_identity().revision(), 1);
+        assert_eq!(
+            evidence.target_profile(),
+            declaration.profile().profile_key(),
+        );
+
+        let TargetNumericalEvidenceBasis::Measurement { contexts } = evidence.basis() else {
+            panic!("a measured ledger row rests on measurement contexts");
+        };
+        assert_eq!(
+            contexts.len(),
+            1,
+            "the ledger pairs one offline toolchain with one execution environment",
+        );
+        let context = contexts.get(0).expect("the one measurement context");
+        let builds = context.compiler_builds();
+        let mut observed = builds
+            .iter()
+            .map(|build| {
+                (
+                    build.implementation(),
+                    role_label(build.role()),
+                    build.version(),
+                    build.build(),
+                )
+            })
+            .collect::<Vec<_>>();
+        observed.sort_unstable();
+        let offline = &FIRST_MACOS_APPLE9.offline;
+        let mut expected = vec![
+            (
+                "apple.metal-offline-compiler",
+                "code-generator".to_owned(),
+                offline.compiler_version,
+                Some(offline.compiler_build),
+            ),
+            (
+                "apple.air-lld",
+                "linker".to_owned(),
+                offline.linker_version,
+                Some(offline.linker_build),
+            ),
+            (
+                "apple.xcode",
+                "producer-defined:tiler.metal.offline-toolchain-distribution@1".to_owned(),
+                offline.xcode_version,
+                Some(offline.xcode_build),
+            ),
+            (
+                "apple.macos-sdk",
+                "producer-defined:tiler.metal.offline-platform-sdk@1".to_owned(),
+                offline.sdk_version,
+                Some(offline.sdk_build),
+            ),
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            observed, expected,
+            "the refusal does not cite the ledger's four offline components",
+        );
+
+        let environment = context.environment();
+        let execution = &FIRST_MACOS_APPLE9.execution;
+        assert_eq!(environment.platform(), execution.platform);
+        assert_eq!(environment.platform_version(), execution.platform_version);
+        assert_eq!(environment.platform_build(), execution.platform_build);
+        assert_eq!(environment.architecture(), execution.architecture);
+        assert_eq!(environment.hardware(), execution.hardware);
+    }
+
+    /// A flush-accepting `bf16` contract clears the subnormal dimensions and
+    /// meets the first the ledger does not declare.
+    ///
+    /// **The ledger's current boundary, asserted rather than described.** The
+    /// macOS Apple9 declaration states BF16 dispatchability and the two subnormal
+    /// tables and nothing else, so the next dimension an admitted operation
+    /// consumes — contraction — has no BF16 row and resolves `Unknown`. That is
+    /// the correct answer: the measurement covers subnormals, and the complete
+    /// neighbouring `f32` table must not answer a `bf16` question. Asserting it
+    /// here means widening the ledger's BF16 rows changes this test rather than
+    /// passing silently.
+    #[test]
+    fn the_ledger_bf16_rows_leave_the_remaining_dimensions_unknown() {
+        let refusal = bf16_numerical_refusal(NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16);
+        let [rejection] = refusal.rejections() else {
+            panic!("one stated contract, one rejection");
+        };
+        assert_eq!(
+            rejection.contract_key(),
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16.key(),
+        );
+        assert_eq!(
+            *rejection.disposition(),
+            TargetNumericalRefusalDisposition::Unknown,
+            "an undeclared bf16 dimension is Unknown, never the f32 row's answer",
+        );
+        let TargetNumericalRequirement::Contraction { subject, required } = rejection.requirement()
+        else {
+            panic!(
+                "the first undeclared consumable dimension is contraction, got {:?}",
+                rejection.requirement(),
+            );
+        };
+        assert_eq!(subject.arithmetic(), ArithmeticType::Bf16);
+        assert_eq!(
+            subject.resolved_type(),
+            &Bf16::resolved_type(),
+            "the unanswered question names the bf16 subject, not a substituted f32 one",
+        );
+        assert_eq!(*required, NumericalPermission::Forbidden);
+    }
+
     /// The projection carries the Metal record's own mode, not a restated one.
     ///
     /// The seam reads `MetalSubnormalArithmetic::subnormal_mode`, so a change to
@@ -1894,11 +2177,6 @@ mod tests {
             .subnormal_arithmetic
             .behaviour(MetalFloatArithmeticType::F32)
             .expect("the ledger states the f32 row");
-        assert_eq!(
-            stated.subnormal_mode(),
-            SubnormalMode::FlushToZero {
-                zero_sign: FlushedZeroSign::PreservesSign,
-            },
-        );
+        assert_eq!(stated.subnormal_mode(), SIGN_PRESERVING_FLUSH);
     }
 }
