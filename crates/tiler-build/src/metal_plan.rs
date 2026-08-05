@@ -875,9 +875,15 @@ mod tests {
     /// the step lands into, never taken from either side.
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
     /// sibling that depends on this row for exactly that reason. The constants
-    /// below were recomputed on the 2026-08-04 merged tree carrying both the
-    /// kernel-program v8 step and the measured grid-axis row. Superseded
-    /// branch-local values, for a reader reconciling an older record: v8-only
+    /// below were recomputed on 2026-08-05, on the tree carrying the
+    /// kernel-program v9 step described above over the 2026-08-04 merged base
+    /// that already held the kernel-program v8 step and the measured grid-axis
+    /// row. Superseded values, for a reader reconciling an older record:
+    /// v8-and-grid-row, which is what these constants held immediately before
+    /// the v9 step,
+    /// `886ed671cb98364ed0e020e7e2d51d69db1cd210d11f11d8ed7ee2c82f403892` /
+    /// `f23ac9ddf349011f751e3128a8d89d7c423d4f155a37d9a03d1d8838deb64ba1`,
+    /// and, from the two sibling branches that composed into it, v8-only
     /// `2b15415053d8f688de094d7f4490b90fa001463717affc686ee1fe3692786a81` /
     /// `b0803f2a48f41aa03baed4a136f7e44ddb3dbafac39bc560673c2bb7f8801ae9`,
     /// grid-row-only

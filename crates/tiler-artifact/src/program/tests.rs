@@ -56,7 +56,7 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Extent, Shape};
 
 use super::BackendFeatureRequirement;
-use super::model::{ARTIFACT_DOMAIN_LABEL, STAGE_KEY_DOMAIN, stage_key};
+use super::model::{ARTIFACT_DOMAIN_LABEL, LENGTH_BYTES, STAGE_KEY_DOMAIN, framed, stage_key};
 use super::{
     AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiFactBinder, AbiFacts, AbiRoot, AbiType,
     AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
@@ -1980,6 +1980,59 @@ fn each_artifact_stage_key_generation_is_separated_from_the_last() {
     assert!(current.len() > v2.len());
     assert_ne!(current, v2);
     assert_ne!(current, v1);
+}
+
+/// The two independent stage encoders agree on what a coverage record is.
+///
+/// `tiler-ir`'s two encoder sites destructure `CoveredOccurrence`, so a field
+/// added to that record stops their build until it is folded. This encoder
+/// cannot do that: the fields are private and this is another crate, which is
+/// the sealed-construction design working as intended — the same privacy that
+/// stops a caller assembling a record stops this crate reading it apart. So the
+/// artifact side is held here instead, and this is the check that fails.
+///
+/// Both encoders write the same per-record run — the occurrence's four bytes
+/// then its length-framed evidence — and differ only in what precedes it: this
+/// key opens with its own separator, the program encoding does not. The run
+/// this key writes is therefore a contiguous subsequence of the program
+/// identity, and stays one exactly while the two agree. If `tiler-ir` folds a
+/// new field and this encoder does not, its run stops matching and this test
+/// says so; the reverse fails the same way.
+///
+/// What this does *not* hold is the framing around the run, which the two
+/// deliberately spell differently. That is why the assertion is containment
+/// rather than equality.
+#[test]
+fn the_artifact_stage_key_encodes_the_same_coverage_record_as_the_kernel_program() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let identity = program.canonical_identity().as_bytes();
+
+    let mut stages = 0_usize;
+    for stage in program.stages() {
+        stages += 1;
+        assert!(
+            !stage.coverage().is_empty(),
+            "a stage covering nothing would make the run below empty, and an \
+             empty needle occurs everywhere",
+        );
+        let key = stage_key(stage);
+        // Everything this key writes after its count: the coverage run itself.
+        let prefix = STAGE_KEY_DOMAIN.len()
+            + framed(stage.kernel().canonical_identity().as_bytes().len())
+            + LENGTH_BYTES;
+        let run = &key[prefix..];
+        assert_eq!(
+            identity
+                .windows(run.len())
+                .filter(|window| *window == run)
+                .count(),
+            1,
+            "the coverage run this stage key writes must appear exactly once in \
+             the kernel-program identity; the two encoders have drifted",
+        );
+    }
+    assert_eq!(stages, 1, "the fused fixture packages one stage");
 }
 
 // -------------------------------------------------------------------------

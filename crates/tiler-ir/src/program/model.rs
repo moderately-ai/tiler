@@ -90,6 +90,19 @@ impl SemanticOccurrence {
 /// [`crate::index::ResolvedIndexRealization::complete`] mint the receipt it
 /// requires. A refinement that is pending, disproved, or unsupported yields no
 /// receipt, so a proof gap has no spelling here rather than a placeholder one.
+///
+/// # Adding a field here has two consequences, and only one is a build error
+///
+/// This module's two encoders — `stage_key` and `encode_identity` — destructure
+/// this record rather than reading it through accessors, so a new field stops
+/// their build until it is folded or explicitly discarded. `tiler-artifact`'s
+/// independent stage encoder cannot do the same: the fields are private and it
+/// is another crate, which is this type's sealed construction working as
+/// designed rather than an oversight — the privacy that stops a caller
+/// assembling a record also stops a sibling crate reading one apart. What holds
+/// that side is `the_artifact_stage_key_encodes_the_same_coverage_record_as_the_kernel_program`
+/// in `crates/tiler-artifact/src/program/tests.rs`, which fails when the two
+/// encoders stop writing the same per-record run.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CoveredOccurrence {
     /// Retained so the program builder can refuse a receipt minted against
@@ -1628,8 +1641,17 @@ fn stage_key(stage: &StageData) -> Vec<u8> {
     push_slice(&mut bytes, stage.kernel.canonical_identity().as_bytes());
     push_len(&mut bytes, stage.coverage.len());
     for covered in &stage.coverage {
-        bytes.extend_from_slice(&covered.occurrence().get().to_be_bytes());
-        push_slice(&mut bytes, covered.refinement().as_bytes());
+        // Destructured rather than read through accessors so that a field added
+        // to `CoveredOccurrence` is a compile error here instead of silently
+        // going unfolded. `graph` is bound and discarded deliberately: the
+        // program encoding writes its one bound graph identity once, above.
+        let CoveredOccurrence {
+            graph: _,
+            occurrence,
+            refinement,
+        } = covered;
+        bytes.extend_from_slice(&occurrence.get().to_be_bytes());
+        push_slice(&mut bytes, refinement.as_bytes());
     }
     bytes
 }
@@ -1828,8 +1850,16 @@ pub(super) fn encode_identity(
         push_slice(&mut bytes, stage.kernel.canonical_identity().as_bytes());
         push_len(&mut bytes, stage.coverage.len());
         for covered in &stage.coverage {
-            bytes.extend_from_slice(&covered.occurrence().get().to_be_bytes());
-            push_slice(&mut bytes, covered.refinement().as_bytes());
+            // Destructured for the reason `stage_key` is: a widened
+            // `CoveredOccurrence` must stop this build rather than encode less
+            // than the record holds.
+            let CoveredOccurrence {
+                graph: _,
+                occurrence,
+                refinement,
+            } = covered;
+            bytes.extend_from_slice(&occurrence.get().to_be_bytes());
+            push_slice(&mut bytes, refinement.as_bytes());
         }
     }
 
