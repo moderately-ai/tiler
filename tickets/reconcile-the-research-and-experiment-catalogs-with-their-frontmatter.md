@@ -1,11 +1,11 @@
 ---
 id: reconcile-the-research-and-experiment-catalogs-with-their-frontmatter
 title: Reconcile the research and experiment catalogs with their frontmatter
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [design-model-level-qualification-and-optimization, land-the-model-level-qualification-record]
-scopes: [contracts/navigation]
+scopes: [contracts/navigation, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, navigation, catalog]
@@ -34,6 +34,10 @@ Every row of the two hand-maintained catalogs says what the frontmatter behind i
 | `spikes/README.md`, the `BF16 through the second-dtype seams` row | missing `BF16 computation, accumulator, and conversion` from its `supports` list |
 
 **Inference — six of the seven are mechanical and one is not.** The authority-ledger row is the only one where the fix is a judgement rather than a rendering: either the row's link is stale and is removed, or the spike genuinely supports the ledger and the missing `supports` edge is added to `spikes/apple-targets/README.md`. Decide it by reading what the ledger cites, not by picking the cheaper edit — and if the edge is added, that is a `research/apple-targets` change and needs the scope.
+
+**Measurement — re-run at this branch's base `5f810e9a`, the population had grown to 83 research records against 83 rows and 33 experiment records against 36 rows, and the table above had drifted in three ways.** One row it named had been retitled: the runtime-execution-contract row is short of `Inline regions dispatched on Metal hardware`, not `One inline region dispatched on Metal hardware`. One row it did not name had appeared: `docs/research/runtime/dynamic-kv-physical-layout.md` carries no `experiments:` clause while `Dynamic KV physical-layout comparison` `supports` it. And the check **aborted** on the experiment catalog with a `KeyError: None` at `spikes/target-profiles/metal-grid-axis-extent/README.md`, so every experiment row after it went unexamined — including the one the ledger judgement lands on. Three rows point at READMEs carrying no governed experiment frontmatter; the check now reports and counts them as `UNGOVERNED` instead of aborting, and [`govern-the-three-ungoverned-spike-records`](govern-the-three-ungoverned-spike-records.md) owns repairing them. Two further gaps were symmetric to checks the run already performed and were repaired here: the experiment catalog was missing rows for three records it renders nowhere (`metal_transcendental_emission`, `transformer_reference_semantics`, `inline-dispatch`), and the check now asserts that direction as `MISSING experiment rows` exactly as it already did for the research catalog.
+
+**Fact — the authority-ledger judgement resolved toward adding the edge, on what the ledger reads rather than on what it links.** The ledger's own evidence boundary states that "the grid axis, every numerical row, and every dispatchability row come from retained measurement directories", and the directory it then reads is `spikes/apple-targets/results/2026-08-02-numerics-covering-apple9-f32-bf16-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv`: it transcribes that record's `environment.*` and `probe.*` keys, pins its `probe.harness_sha256 17b8b8dd…` and repository base revision, sources both dispatchability rows and all four subnormal rows from its `case.macos.*` keys, and its "Reproducible checks" section instructs the reader to `cd` into that same results directory. That is a direct reading of the spike's retained record, not a transitive route through the `apple-targets` research records the ledger also cites, so the rendered link was right and the missing `supports` edge was the defect. Removing the link would have been the cheaper edit and would have left the catalog asserting that a ledger built out of a retained measurement directory has no experiment reproducing it.
 
 ## The check, so the table above can be refuted rather than only believed
 
@@ -81,15 +85,23 @@ if set(research) - seen:
 erows = [l for l in (root / "spikes/README.md").read_text(encoding="utf-8").split("\n")
          if l.startswith("- [") and "supports:" in l]
 print(f"population: {len(erows)} experiment rows")
+ungoverned, eseen = 0, set()
 for row in erows:
     title, rel = re.match(r"- \[([^\]]*)\]\(([^)]+)\)", row).groups()
-    stitle, sup = spikes[one(fm(root / "spikes" / rel), "id")]
+    sid = one(fm(root / "spikes" / rel), "id")
+    if sid not in spikes:
+        print(f"UNGOVERNED spikes/{rel}: row target carries no experiment frontmatter")
+        bad += 1; ungoverned += 1; continue
+    stitle, sup = spikes[sid]; eseen.add(sid)
     want = [research[r][0] for r in sup if r in research]
     got = re.findall(r"\[([^\]]+)\]\(", row.split("supports:")[1])
     if title != stitle:
         print(f"TITLE    spikes/{rel}: {title!r} != {stitle!r}"); bad += 1
     if [x for x in want if x not in got]:
         print(f"SUPPORTS spikes/{rel}: row {got} misses {[x for x in want if x not in got]}"); bad += 1
+if set(spikes) - eseen:
+    print(f"MISSING experiment rows for {sorted(set(spikes) - eseen)}"); bad += 1
+print(f"evaluated: {len(erows) - ungoverned} experiment rows against {len(spikes)} records; {ungoverned} ungoverned")
 print("DISCREPANCIES:", bad)
 ```
 
@@ -106,4 +118,4 @@ No generator, no gate, and no schema change. The corpus deliberately keeps these
 
 ## Closes when
 
-The check reports zero discrepancies over a named population, its failing perturbation has been watched (remove a row, drop a clause, mistype a title), and the authority-ledger row's resolution is recorded with the evidence that decided it.
+The check reports zero discrepancies over a named population apart from the three `UNGOVERNED` rows [`govern-the-three-ungoverned-spike-records`](govern-the-three-ungoverned-spike-records.md) owns, its failing perturbation has been watched (remove a row, drop a clause, mistype a title), and the authority-ledger row's resolution is recorded with the evidence that decided it.
