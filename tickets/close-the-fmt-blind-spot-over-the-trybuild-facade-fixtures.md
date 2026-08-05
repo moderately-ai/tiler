@@ -1,7 +1,7 @@
 ---
 id: close-the-fmt-blind-spot-over-the-trybuild-facade-fixtures
 title: Close the fmt blind spot over the trybuild facade fixtures
-status: review
+status: done
 priority: p3
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-fmt-fixtures
-lease_expires_at: 1785960717
 ---
 ## Why this exists
 

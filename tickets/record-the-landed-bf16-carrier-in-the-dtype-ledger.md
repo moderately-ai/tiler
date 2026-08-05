@@ -1,7 +1,7 @@
 ---
 id: record-the-landed-bf16-carrier-in-the-dtype-ledger
 title: Move the BF16 carrier and kernel-vocabulary cells onto the landed total maps
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [admit-the-bf16-type-and-carrier-into-every-total-map, move-the-navigation-docs-onto-the-two-contract-key-domains]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, bf16, dtypes]
-claimed_from: todo
-assignee: agent-bf16-ledger
-lease_expires_at: 1785960717
 ---
 ## User-visible outcome
 
