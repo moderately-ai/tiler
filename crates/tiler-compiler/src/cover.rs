@@ -488,15 +488,35 @@ impl MaterializationEdge {
 /// One region occurrence placed in a cover.
 ///
 /// It retains the region's exact members (its coverage), its site-independent
-/// content identity, its graph-occurrence identity, and the bounded occurrence
-/// label. The occurrence identity is what a cover binds and re-derives, so a
-/// placed region cannot silently drift from the candidate region formation
-/// admitted.
+/// content identity, its graph-occurrence identity, the ordered named program
+/// outputs it retains, and the bounded occurrence label. The occurrence identity
+/// is what a cover binds and re-derives, so a placed region cannot silently
+/// drift from the candidate region formation admitted.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CoverRegion {
     members: Vec<SemanticMemberId>,
     content: RegionContentIdentity,
     occurrence: RegionOccurrenceIdentity,
+    /// Graph-local ordinals of the ordered named program outputs this region
+    /// retains, ascending.
+    ///
+    /// **Which named result a region publishes, not merely that it publishes
+    /// one.** Program assembly pairs the program's declared outputs with the
+    /// regions that write them, and the rest of this record says only that a
+    /// region exports *an* output — a region no materialization edge names as a
+    /// producer. With one declared output that pairing is forced; with two it is
+    /// a guess, and pairing by execution order is exactly the interchangeable-
+    /// outputs interface the architectural contract forbids. This is the fact
+    /// that makes it a derivation.
+    ///
+    /// Deliberately **not** folded into [`encode_cover_identity`]. The candidate's
+    /// [`RegionOccurrenceIdentity`] already encodes its retained output sites and
+    /// the [`RegionContentIdentity`] inside it already encodes their
+    /// `named_result` flags, so this is a projection of bytes cover identity
+    /// already folds — and [`verify_cover`] proves the projection against the
+    /// authoritative candidate. Folding it again would move every cover identity
+    /// for no information.
+    named_results: Vec<SemanticValueId>,
     /// Shared with the candidate it was placed from: a program's covers place
     /// the same regions repeatedly, and the label is immutable once formed.
     label: Arc<str>,
@@ -520,6 +540,11 @@ impl CoverRegion {
     /// Returns the graph-occurrence identity of the region.
     pub(crate) const fn occurrence(&self) -> &RegionOccurrenceIdentity {
         &self.occurrence
+    }
+
+    /// Returns the ordered named program outputs this region retains, ascending.
+    pub(crate) fn named_results(&self) -> &[SemanticValueId] {
+        &self.named_results
     }
 
     /// Returns the bounded explain label of the region occurrence.
@@ -1107,8 +1132,15 @@ pub(crate) fn verify_cover(
                     region: region.label.to_string(),
                     rule: "unknown-region-occurrence",
                 }))?;
+        // The retained named results are checked here rather than folded into
+        // cover identity, for the reason `CoverRegion::named_results` records:
+        // the occurrence identity already encodes the retained output sites and
+        // their `named_result` flags, so this proves the projection agrees with
+        // the bytes rather than encoding the same fact twice. Program assembly
+        // then attributes each declared output by value on a checked field.
         if region.members.as_slice() != candidate.members()
             || &region.content != candidate.content()
+            || region.named_results != retained_named_results(candidate)
             || &*region.label != candidate.label()
         {
             return Err(CoverError::Structure {
@@ -1897,6 +1929,26 @@ fn assemble_cover(
     assemble_resolved_cover(graph, &resolved, graph_identity, materializations)
 }
 
+/// Returns the ordered named program outputs one candidate retains, ascending.
+///
+/// The single derivation of the field [`CoverRegion::named_results`] carries, so
+/// that populating a cover and verifying one ask the same question of the same
+/// authority rather than two descriptions of it. Ascending and deduplicated
+/// because a retained output list is keyed by value: two entries for one value
+/// would be one export recorded twice, and the order must not depend on the
+/// candidate's own authoring order.
+fn retained_named_results(candidate: &RegionCandidate) -> Vec<SemanticValueId> {
+    let mut values: Vec<SemanticValueId> = candidate
+        .retained_outputs()
+        .iter()
+        .filter(|output| output.named_result)
+        .map(|output| output.value)
+        .collect();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
 /// Assembles one cover from already-resolved candidates and their derived edges.
 ///
 /// The edges are taken rather than re-derived because the search decides a
@@ -1916,6 +1968,7 @@ fn assemble_resolved_cover(
             members: candidate.members().to_vec(),
             content: candidate.content().clone(),
             occurrence: candidate.occurrence().clone(),
+            named_results: retained_named_results(candidate),
             label: candidate.label_handle(),
         })
         .collect();
@@ -2217,8 +2270,16 @@ fn detect_infeasibilities(program: &SemanticProgram) -> Vec<CoverInfeasibility> 
 /// Derived from the candidates rather than the program handles, because the
 /// candidates are the authority this stage already trusts for what a region
 /// exports, and their `named_result` flag is the same fact every coverage check
-/// here reads. The ordered position is the ascending value ordinal, which is the
-/// program's own declaration order for the values its interface exports.
+/// here reads.
+///
+/// **`position` is the rank in ascending value ordinal, which is a stable
+/// reporting coordinate and not the output's declared position.** A program may
+/// declare a later-produced value first — `pipeline::conformance`'s
+/// reduction-epilogue fixture publishes `reduced` before `scaled` — so the two
+/// disagree. Nothing here decides anything by declared position: this coordinate
+/// reaches only [`CoverRefusal::AmbiguousNamedOutput`]'s explain text. Program
+/// assembly, which does need the declared order, attributes by value ordinal
+/// against [`CoverRegion::named_results`] instead.
 fn named_output_positions(candidates: &[RegionCandidate]) -> Vec<NamedOutput> {
     let mut values: BTreeSet<u32> = BTreeSet::new();
     for candidate in candidates {
@@ -2872,6 +2933,52 @@ mod tests {
             .map(|output| output.value.0)
             .collect();
         assert_eq!(named.len(), 2, "both outputs are producer-backed");
+
+        // Each cover states *which* named result each region retains, which is
+        // what program assembly attributes the declared outputs by. Across a
+        // cover the retained sets are disjoint and their union is exactly the
+        // program's declared outputs — the projection of the same fact
+        // `check_named_outputs` proves over the candidates.
+        for cover in enumeration.covers() {
+            let mut retained: Vec<u32> = cover
+                .regions()
+                .iter()
+                .flat_map(|region| region.named_results().iter().map(|value| value.0))
+                .collect();
+            let distinct = retained.len();
+            retained.sort_unstable();
+            retained.dedup();
+            assert_eq!(
+                retained.len(),
+                distinct,
+                "a named output was retained twice"
+            );
+            assert_eq!(
+                retained.into_iter().collect::<BTreeSet<u32>>(),
+                named,
+                "the cover's retained named results are not the program's outputs",
+            );
+        }
+
+        // The projection is *checked* rather than trusted: a cover claiming a
+        // region retains a named result its candidate does not fails closed at
+        // the same step that binds members, content, and label.
+        let mut forged = enumeration.fully_materialized_cover().unwrap().clone();
+        let publishing = forged
+            .regions
+            .iter()
+            .position(|region| !region.named_results.is_empty())
+            .expect("some region retains a named output");
+        forged.regions[publishing].named_results.clear();
+        let error = verify_cover(
+            &program,
+            &formation_of(&program),
+            exact_partition(),
+            &forged,
+        )
+        .unwrap_err();
+        assert_eq!(error.class(), "structure");
+        assert_eq!(error.reason(), "region-occurrence-mismatch");
     }
 
     #[test]

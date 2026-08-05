@@ -405,16 +405,19 @@ fn perturbing_one_occurrence_out_of_the_vocabulary_refuses_by_name() {
     }
 }
 
-/// A second named output refuses under its own rule, not the operation set's.
+/// A second named output *inside the first's walk* refuses under its own rule.
 ///
 /// The accepted neighbour is [`composed_region`] itself: the same three
 /// occurrences over the same three inputs, with one further value named as an
-/// output. Every region builder writes exactly one owning tensor, so multi-output
-/// admission is `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`'s
-/// to land, and refusing it here is what keeps a program the physical layer
-/// cannot assemble from reaching the pipeline.
+/// output. What refuses is the sharing rather than the second output — the
+/// declared arity guard is gone and independent ordered outputs compile, which
+/// `pipeline::conformance` discharges. Here `biased` is consumed by the fold
+/// that produces `out`, so the two outputs' recognition walks claim one
+/// occurrence twice: whichever region owns that write would have to serve both
+/// the materialization edge the fold reads across and the publication, and a
+/// region writes one owning tensor.
 #[test]
-fn a_second_named_output_refuses_under_the_output_arity_rule() {
+fn a_second_named_output_inside_the_first_s_walk_refuses() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let inputs: Vec<_> = ["a", "b", "c"]
         .into_iter()
@@ -438,9 +441,9 @@ fn a_second_named_output_refuses_under_the_output_arity_rule() {
         assert_eq!(
             compile_under(&two_outputs, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "output-arity"
+                rule: "output-partition-overlap"
             }),
-            "{contract:?} admitted a second named output",
+            "{contract:?} admitted two outputs one walk would have to publish",
         );
     }
 }
