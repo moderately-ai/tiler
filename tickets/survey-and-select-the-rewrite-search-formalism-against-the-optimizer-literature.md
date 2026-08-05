@@ -1,7 +1,7 @@
 ---
 id: survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature
 title: Survey and select the rewrite-search formalism against the optimizer literature
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [derive-the-capability-set-for-search-discovered-flash-class-attention-kernels, land-the-rewrite-search-formalism-conclusion-in-the-optimizer-contract, probe-e-graph-tractability-over-tilers-semantic-rewrite-vocabulary, decide-whether-stage-one-semantic-exploration-adopts-an-e-graph, close-the-enforcer-input-property-exclusion-gap, acquire-the-six-flagged-optimizer-literature-sources]
@@ -9,9 +9,6 @@ scopes: [research/region-search, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-search-formalism
-lease_expires_at: 1785961721
 ---
 ## User-visible outcome
 

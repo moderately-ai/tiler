@@ -1,7 +1,7 @@
 ---
 id: land-the-rewrite-search-formalism-conclusion-in-the-optimizer-contract
 title: Land the rewrite-search formalism conclusion in the optimizer contract
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contract, optimizer, search, carrier]
+claimed_from: todo
+assignee: agent-formalism-carrier
+lease_expires_at: 1785964902
 ---
 ## User-visible outcome
 
