@@ -1,7 +1,7 @@
 ---
 id: catalog-the-cache-envelope-digest-coverage-spike
 title: Catalog the cache envelope-digest coverage spike
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [decide-whether-the-bundle-envelope-section-digest-is-redundant, catalog-the-cache-hot-path-efficiency-records]
