@@ -153,15 +153,27 @@
 //! }
 //! ```
 //!
-//! The assembly example below is `ignore`d for exactly this reason, and the
-//! omission is the point rather than an oversight. Minting the receipts its
-//! `push_stage` call needs means resolving a realization law and building the
-//! candidate index region for every operation of the graph — work a lowering
-//! consumer does and a documentation example cannot fake. The executable
-//! version of this walk-through lives in this module's test suite, where the
-//! coverage comes from the real verifier.
+//! The assembly example below therefore mints its coverage the only way
+//! anything can. It builds a *candidate* index region — its own claim about
+//! what the occurrence computes — and submits it to the refinement verifier,
+//! which mints a receipt only when that candidate's canonical identity equals
+//! the registered realization law's. The law's own realization is deliberately
+//! not public, so an example cannot ask for the expected answer and hand it
+//! straight back; the region below is written out, and it is checked against an
+//! authority the example does not influence.
 //!
-//! ```ignore
+//! That path is per occurrence, which is why the graph here is a single
+//! elementwise operation rather than the fused five-operation reduction
+//! `crate::program::tests` uses: the three steps would repeat verbatim four more
+//! times without demonstrating anything this module owns. The suite covers the
+//! multi-stage, multi-occurrence, partitioned-coverage case.
+//!
+//! ```
+//! use tiler_ir::index::{
+//!     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry,
+//!     IndexRealizationAuthority, IndexRefinementSubject, IndexRefinementVerificationOutcome,
+//!     IndexRegionBuilder, ScalarAttributes, TensorRole as IndexTensorRole, multiply_f32_scalar_op,
+//! };
 //! use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 //! use tiler_ir::program::abi::AbiRoot;
 //! use tiler_ir::program::{
@@ -171,92 +183,148 @@
 //!     StorageScalar, ValueRole,
 //! };
 //! use tiler_ir::schedule::{
-//!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-//!     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-//!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-//!     OwnershipWitnessId, RegionId, ReductionTopology, ScalarProgram, ScheduledRegionBuilder,
-//!     InputOrdinal, SubnormalMode, TailPolicy, TensorRole,
+//!     Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
+//!     ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey, InputOrdinal,
+//!     KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding, NumericalPermission,
+//!     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+//!     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+//!     ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
 //! };
-//! use tiler_ir::semantic::{
-//!     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
-//!     StrictSerialF32Sum,
-//! };
-//! use tiler_ir::shape::{Axis, Shape};
+//! use tiler_ir::semantic::{F32, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder};
+//! use tiler_ir::shape::{Extent, Shape};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // result = strict_serial_sum(input * 2.0 + 1.0, axis 1): five graph operations.
+//! // result = left * right, elementwise over a 2x3 pair: one graph operation.
 //! let mut draft = SemanticProgramBuilder::try_standard()?;
-//! let input = draft.input::<F32>(InputKey::new("input")?, Shape::from_dims([2, 3]))?;
-//! let scale = F32Constant::apply(&mut draft, 2.0_f32.to_bits())?;
-//! let bias = F32Constant::apply(&mut draft, 1.0_f32.to_bits())?;
-//! let product = F32Multiply::apply(&mut draft, input, scale)?;
-//! let mapped = F32Add::apply(&mut draft, product, bias)?;
-//! let sum = StrictSerialF32Sum::apply(&mut draft, mapped, [Axis::new(1)])?;
-//! draft.output(OutputKey::new("result")?, sum)?;
+//! let left = draft.input::<F32>(InputKey::new("left")?, Shape::from_dims([2, 3]))?;
+//! let right = draft.input::<F32>(InputKey::new("right")?, Shape::from_dims([2, 3]))?;
+//! let product = F32Multiply::apply(&mut draft, left, right)?;
+//! draft.output(OutputKey::new("result")?, product)?;
 //! let semantic = draft.build()?;
 //!
-//! // One fused scheduled region, lowered to its verified structured kernel.
-//! let axes = vec![Axis::new(1)];
-//! let contributor = LogicalAccess::ReductionContributor {
-//!     input_shape: Shape::from_dims([2, 3]),
-//!     output_shape: Shape::from_dims([2]),
-//!     axes: axes.clone(),
-//!     order: ContributorOrder::OriginalAxisLexicographic,
-//! };
-//! let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
-//! region.iteration_shape(Shape::from_dims([2]))?;
-//! region.push_access(Access {
-//!     tensor: TensorRole::Input {
-//!         ordinal: InputOrdinal::FIRST,
-//!     },
-//!     component_role: None,
-//!     mode: AccessMode::Read,
-//!     map: contributor,
-//!     bounds: BoundsWitnessId::new(0),
-//!     ownership: None,
-//! })?;
-//! region.push_access(Access {
+//! // The occurrence's refinement subject, under the strict binary32 contract
+//! // the kernel below realizes. The contract reaches the receipt's executable
+//! // coverage, so it is part of what the evidence is about rather than a
+//! // detail of how it was obtained.
+//! let contract = F32NumericalContractKey::new(
+//!     SubnormalMode::Preserve,
+//!     SubnormalMode::Preserve,
+//!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     ApproximationEnvelope::Forbidden,
+//!     ExceptionalValueAssumption::MakeNoAssumption,
+//!     ExceptionalValueAssumption::MakeNoAssumption,
+//!     MaterializationRounding::NearestTiesToEven,
+//! )?
+//! .into();
+//! let scalars = FrozenScalarRegistry::standard()?;
+//! let laws = FrozenIndexRealizationLawRegistry::from_semantic(
+//!     semantic.semantic_registry().clone(),
+//!     scalars.clone(),
+//! )?;
+//! let operation = semantic.operations().next().expect("one operation").id();
+//! let subject = IndexRefinementSubject::derive(&semantic, operation, contract)?;
+//!
+//! // The candidate region, in canonical logical index form.
+//! let mut region = IndexRegionBuilder::new(scalars.clone())?;
+//! let rows = region.dimension(DomainRole::Parallel, Extent::new(2))?;
+//! let columns = region.dimension(DomainRole::Parallel, Extent::new(3))?;
+//! let point = [rows, columns];
+//! let coordinate = [region.dimension_expr(rows)?, region.dimension_expr(columns)?];
+//! let mut operands = Vec::new();
+//! for boundary in subject.inputs() {
+//!     operands.push(region.tensor(
+//!         IndexTensorRole::Input,
+//!         boundary.value_type().clone(),
+//!         boundary.shape().clone(),
+//!     )?);
+//! }
+//! let mut reads = Vec::new();
+//! for position in subject.operands() {
+//!     reads.push(region.read(operands[*position], &point, &coordinate)?);
+//! }
+//! let value = region
+//!     .apply(multiply_f32_scalar_op(), ScalarAttributes::empty(), &reads)?
+//!     .get(0)
+//!     .expect("one product");
+//! let destination = region.tensor(
+//!     IndexTensorRole::Output,
+//!     subject.results()[0].value_type().clone(),
+//!     subject.results()[0].shape().clone(),
+//! )?;
+//! let write = region.write(destination, &point, &coordinate)?;
+//! region.output(write, value)?;
+//! let region = region.build()?;
+//!
+//! // The verifier is the only mint. The admitted authority bounds what scalar
+//! // operations the realization may emit, and it is stated here rather than
+//! // read off the candidate.
+//! let authority = IndexRealizationAuthority::admit(
+//!     semantic.semantic_registry(),
+//!     &scalars,
+//!     subject.operation().clone(),
+//!     subject.signature().clone(),
+//!     &[multiply_f32_scalar_op()],
+//! )?;
+//! let coverage: Vec<CoveredOccurrence> =
+//!     match laws.resolve(&subject)?.verify(&authority, &region)? {
+//!         IndexRefinementVerificationOutcome::Verified(receipt) => {
+//!             vec![CoveredOccurrence::from_receipt(&receipt)]
+//!         }
+//!         IndexRefinementVerificationOutcome::Pending(_) => {
+//!             panic!("a static elementwise region retains no residual index-domain obligation")
+//!         }
+//!     };
+//!
+//! // The physical schedule, lowered to its verified structured kernel. Read
+//! // access `i` binds input ordinal `i`, which is what lets a consumer bind
+//! // buffers positionally.
+//! let mut schedule = ScheduledRegionBuilder::new(RegionId::new(0));
+//! schedule.iteration_shape(Shape::from_dims([2, 3]))?;
+//! for ordinal in [0, 1] {
+//!     schedule.push_access(Access {
+//!         tensor: TensorRole::Input { ordinal: InputOrdinal::new(ordinal) },
+//!         component_role: None,
+//!         mode: AccessMode::Read,
+//!         map: LogicalAccess::LinearIdentity,
+//!         bounds: BoundsWitnessId::new(ordinal),
+//!         ownership: None,
+//!     })?;
+//!     schedule.push_bounds_proof(BoundsProof {
+//!         id: BoundsWitnessId::new(ordinal),
+//!         tensor: TensorRole::Input { ordinal: InputOrdinal::new(ordinal) },
+//!         component_role: None,
+//!         kind: BoundsProofKind::LinearRange { element_count: 6 },
+//!     })?;
+//! }
+//! schedule.push_access(Access {
 //!     tensor: TensorRole::Output,
 //!     component_role: None,
 //!     mode: AccessMode::Write,
 //!     map: LogicalAccess::LinearIdentity,
-//!     bounds: BoundsWitnessId::new(1),
+//!     bounds: BoundsWitnessId::new(2),
 //!     ownership: Some(OwnershipWitnessId::new(0)),
 //! })?;
-//! region.push_bounds_proof(BoundsProof {
-//!     id: BoundsWitnessId::new(0),
-//!     tensor: TensorRole::Input {
-//!         ordinal: InputOrdinal::FIRST,
-//!     },
-//!     component_role: None,
-//!     kind: BoundsProofKind::ReductionDomain {
-//!         input_shape: Shape::from_dims([2, 3]),
-//!         output_shape: Shape::from_dims([2]),
-//!         axes: axes.clone(),
-//!         order: ContributorOrder::OriginalAxisLexicographic,
-//!     },
-//! })?;
-//! region.push_bounds_proof(BoundsProof {
-//!     id: BoundsWitnessId::new(1),
+//! schedule.push_bounds_proof(BoundsProof {
+//!     id: BoundsWitnessId::new(2),
 //!     tensor: TensorRole::Output,
 //!     component_role: None,
-//!     kind: BoundsProofKind::LinearRange { element_count: 2 },
+//!     kind: BoundsProofKind::LinearRange { element_count: 6 },
 //! })?;
-//! region.ownership_proof(OwnershipProof {
+//! schedule.ownership_proof(OwnershipProof {
 //!     id: OwnershipWitnessId::new(0),
 //!     tensor: TensorRole::Output,
-//!     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+//!     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 6 },
 //! })?;
-//! region.scalar_program(ScalarProgram::FusedMultiplyAddSerialSum {
-//!     scale_bits: 2.0_f32.to_bits(),
-//!     bias_bits: 1.0_f32.to_bits(),
-//!     axes: axes.clone(),
-//!     order: ContributorOrder::OriginalAxisLexicographic,
-//!     canonical_nan_bits: 0x7fc0_0000,
-//!     empty_identity_bits: 0.0_f32.to_bits(),
-//!     contraction: false,
-//! })?;
-//! region.numerical(NumericalRealization::new(
+//! let mut expression = PointwiseF32ExpressionBuilder::new();
+//! let first = expression.input(InputOrdinal::new(0))?;
+//! let second = expression.input(InputOrdinal::new(1))?;
+//! let root = expression.multiply(first, second)?;
+//! schedule.scalar_program(ScalarProgram::PointwiseF32(expression.build(root)?))?;
+//! schedule.numerical(NumericalRealization::new(
 //!     "tiler.doc.strict-f32",
 //!     0x7fc0_0000,
 //!     SubnormalMode::Preserve,
@@ -268,54 +336,53 @@
 //!     ExceptionalValueAssumption::MakeNoAssumption,
 //!     ExceptionalValueAssumption::MakeNoAssumption,
 //! ))?;
-//! region.schedule(KernelSchedule {
+//! schedule.schedule(KernelSchedule {
 //!     binding: ExecutionBinding::GlobalLinearInvocation,
-//!     work_items: 2,
+//!     work_items: 6,
 //!     threads_per_workgroup: 1,
 //!     tail: TailPolicy::Exact,
 //!     output_owner: OwnershipWitnessId::new(0),
-//!     reduction: ReductionTopology::Serial {
-//!         axes,
-//!         order: ContributorOrder::OriginalAxisLexicographic,
-//!         permits_reassociation: false,
-//!         permits_permutation: false,
-//!     },
-//!     launch: LaunchPlan { grid_threads: 2, threads_per_workgroup: 1, zero_work_skips_dispatch: true },
+//!     reduction: ReductionTopology::None,
+//!     launch: LaunchPlan { grid_threads: 6, threads_per_workgroup: 1, zero_work_skips_dispatch: true },
 //! })?;
-//! let kernel = lower_scheduled_region(&region.build()?)?;
+//! let kernel = lower_scheduled_region(&schedule.build()?)?;
 //!
 //! // One stage covering every operation of that exact graph.
-//! let mut program = KernelProgramBuilder::new(&semantic)?;
-//! let external = program.push_allocation(AllocationSpec {
+//! let mut plan = KernelProgramBuilder::new(&semantic)?;
+//! let mut bound = Vec::new();
+//! for key in ["left", "right"] {
+//!     let allocation = plan.push_allocation(AllocationSpec {
+//!         capacity_bytes: 24,
+//!         alignment: 4,
+//!         memory_space: MemorySpace::Device,
+//!         ownership: AllocationOwnership::External,
+//!     })?;
+//!     let value = plan.push_value(
+//!         MaterializedValueSpec {
+//!             origin: MaterializedOrigin::ProgramInput { key: InputKey::new(key)? },
+//!             role: ValueRole::Input,
+//!             shape: Shape::from_dims([2, 3]),
+//!             storage_scalar: StorageScalar::F32,
+//!             encoding: StorageEncoding::Unpacked,
+//!             element_type: KernelType::F32,
+//!             alignment: 4,
+//!             memory_space: MemorySpace::Device,
+//!         },
+//!         allocation,
+//!     )?;
+//!     bound.push(plan.push_whole_view(value)?);
+//! }
+//! let owned = plan.push_allocation(AllocationSpec {
 //!     capacity_bytes: 24,
-//!     alignment: 4,
-//!     memory_space: MemorySpace::Device,
-//!     ownership: AllocationOwnership::External,
-//! })?;
-//! let owned = program.push_allocation(AllocationSpec {
-//!     capacity_bytes: 8,
 //!     alignment: 4,
 //!     memory_space: MemorySpace::Device,
 //!     ownership: AllocationOwnership::Program,
 //! })?;
-//! let source = program.push_value(
-//!     MaterializedValueSpec {
-//!         origin: MaterializedOrigin::ProgramInput { key: InputKey::new("input")? },
-//!         role: ValueRole::Input,
-//!         shape: Shape::from_dims([2, 3]),
-//!         storage_scalar: StorageScalar::F32,
-//!         encoding: StorageEncoding::Unpacked,
-//!         element_type: KernelType::F32,
-//!         alignment: 4,
-//!         memory_space: MemorySpace::Device,
-//!     },
-//!     external,
-//! )?;
-//! let result = program.push_value(
+//! let result = plan.push_value(
 //!     MaterializedValueSpec {
 //!         origin: MaterializedOrigin::Internal,
 //!         role: ValueRole::Output,
-//!         shape: Shape::from_dims([2]),
+//!         shape: Shape::from_dims([2, 3]),
 //!         storage_scalar: StorageScalar::F32,
 //!         encoding: StorageEncoding::Unpacked,
 //!         element_type: KernelType::F32,
@@ -324,34 +391,30 @@
 //!     },
 //!     owned,
 //! )?;
-//! let read = program.push_whole_view(source)?;
-//! let write = program.push_whole_view(result)?;
+//! let result_view = plan.push_whole_view(result)?;
 //!
 //! // The entry ABI: what each access may address, and how the stage launches.
 //! // The bounded profile's shapes are static, so each is a literal; a dynamic
 //! // subject would name `AbiRoot::InputExtent` here instead, with no change to
-//! // the shape of this contract.
-//! let read_bytes = program.push_abi_root(AbiRoot::UnsignedLiteral(24))?;
-//! let write_bytes = program.push_abi_root(AbiRoot::UnsignedLiteral(8))?;
-//! let grid_threads = program.push_abi_root(AbiRoot::UnsignedLiteral(2))?;
-//! let threads_per_workgroup = program.push_abi_root(AbiRoot::UnsignedLiteral(1))?;
-//! let guard = program.push_abi_root(AbiRoot::BooleanLiteral(true))?;
-//! program.applicability_guard(guard)?;
+//! // the shape of this contract. All three slots address 24 bytes, and the
+//! // arena stores that literal once.
+//! let bytes = plan.push_abi_root(AbiRoot::UnsignedLiteral(24))?;
+//! let grid_threads = plan.push_abi_root(AbiRoot::UnsignedLiteral(6))?;
+//! let threads_per_workgroup = plan.push_abi_root(AbiRoot::UnsignedLiteral(1))?;
+//! let guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true))?;
+//! plan.applicability_guard(guard)?;
 //!
-//! // One record per operation of the bound graph, each minted by
-//! // `CoveredOccurrence::from_receipt` from the completed refinement receipt
-//! // the consumer's lowering produced for that occurrence.
-//! let coverage: Vec<CoveredOccurrence> = refined_coverage();
-//! program.push_stage(
+//! plan.push_stage(
 //!     &kernel,
 //!     &coverage,
 //!     &[
-//!         StageAccess { view: read, mode: StageAccessMode::Read, accessible_bytes: read_bytes },
-//!         StageAccess { view: write, mode: StageAccessMode::Write, accessible_bytes: write_bytes },
+//!         StageAccess { view: bound[0], mode: StageAccessMode::Read, accessible_bytes: bytes },
+//!         StageAccess { view: bound[1], mode: StageAccessMode::Read, accessible_bytes: bytes },
+//!         StageAccess { view: result_view, mode: StageAccessMode::Write, accessible_bytes: bytes },
 //!     ],
 //!     StageLaunch { grid_threads, threads_per_workgroup },
 //! )?;
-//! program.push_output(OutputKey::new("result")?, result)?;
+//! plan.push_output(OutputKey::new("result")?, result)?;
 //!
 //! // Fallback is still legal while nothing is committed, and never after.
 //! for (from, to, fallback_permitted) in [
@@ -359,17 +422,17 @@
 //!     (RoutingCommitState::Committed, RoutingCommitState::Executing, false),
 //!     (RoutingCommitState::Executing, RoutingCommitState::Published, false),
 //! ] {
-//!     program.push_routing_commit_transition(
+//!     plan.push_routing_commit_transition(
 //!         RoutingCommitTransition { from, to, fallback_permitted },
 //!     )?;
 //! }
-//! let program = program.build()?;
+//! let program = plan.build()?;
 //!
 //! assert_eq!(program.stages().len(), 1);
 //! assert_eq!(program.execution_order().len(), 1);
 //! assert_eq!(program.outputs().len(), 1);
-//! // Four distinct unsigned literals — 24, 8, 2, 1 — and the guard predicate.
-//! assert_eq!(program.abi_expressions().len(), 5);
+//! // Three distinct unsigned literals — 24, 6, 1 — and the guard predicate.
+//! assert_eq!(program.abi_expressions().len(), 4);
 //! assert_eq!(program.routing_commit_contract().len(), 3);
 //! // The program retains the exact bound implementation it was verified against.
 //! assert_eq!(
