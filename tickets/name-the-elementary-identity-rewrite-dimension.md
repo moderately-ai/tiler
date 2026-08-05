@@ -1,7 +1,7 @@
 ---
 id: name-the-elementary-identity-rewrite-dimension
 title: Name the elementary-identity rewrite dimension
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [connect-certified-rounding-error-bounds-to-rewrite-permissions, reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller, carry-the-elementary-identity-dimension-adr, decide-whether-to-admit-an-elementary-identity-permission, correct-the-online-single-pass-softmax-fold-legality-fact, measure-whether-the-metal-runtime-compiler-folds-an-elementary-identity]
@@ -9,9 +9,6 @@ scopes: [research/numerics, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, optimizer]
-claimed_from: todo
-assignee: agent-identity-dimension
-lease_expires_at: 1785974497
 ---
 ## User-visible outcome
 
