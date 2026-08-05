@@ -58,12 +58,20 @@
 //! three whole-program templates were replaced by a general walk over the
 //! occurrences an expression contains, so depth, arity, family mixing, and
 //! shared reads are now properties of the caller's program rather than of a
-//! shape the recognizer was taught. That program is asserted below as a
-//! *compilation*, and the refusal it used to provide is now carried by
-//! `tiler::silu-f32@1` — a registered semantic family with a registered
-//! lowering capability and no `PointwiseF32Node` to spell it, which is a
-//! physical-vocabulary wall in exactly the sense the second input tensor once
-//! was.
+//! shape the recognizer was taught.
+//!
+//! The refusal then passed to `tiler::silu-f32@1`, and it has now passed on
+//! again — which is the second transition this file records rather than
+//! asserts. The activation compiles: no `PointwiseF32Node` spells a
+//! sigmoid-weighted linear unit, but its *per-point body* is expressible in that
+//! vocabulary, and the boundary projects it by driving the one function that
+//! states the composition — the same one the governed index-access lowering
+//! drives — rather than re-deriving a provider's arithmetic. What still refuses
+//! is `tiler::reindex-f32@1`, whose *access relation* `LogicalAccess` cannot
+//! spell at all, so there is no projection to make. The pair is the assertion:
+//! two registered unary families with registered lowering capabilities, one
+//! admitted and one refused, so `operation-set` reads which vocabulary is
+//! missing rather than the family's arity.
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
@@ -73,10 +81,10 @@ use tiler_ir::schedule::{
     InputOrdinal, PointwiseF32ExpressionBuilder, PointwiseF32ExpressionDiagnostic, PointwiseF32Node,
 };
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder,
+    F32, F32Add, F32Constant, F32Multiply, F32Reindex, F32Silu, InputKey, OutputKey, ReindexForm,
+    SemanticProgram, SemanticProgramBuilder,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Axis, Shape};
 
 /// Every numerical contract a caller can state.
 ///
@@ -308,15 +316,19 @@ fn the_deeper_three_input_region_compiles_wherever_a_mixed_body_is_admitted() {
     }
 }
 
-/// A family the region vocabulary cannot spell still refuses, with a named rule.
+/// The activation compiles; the family whose *access relation* has no spelling
+/// still refuses, with a named rule.
 ///
-/// `tiler::silu-f32@1` is registered semantics *and* a registered index-access
-/// lowering capability, and it is still refused at the request boundary — which
-/// is the whole point of the pair. Recognition generalized over the expression
-/// vocabulary, not over everything the compiler can lower: no
-/// `PointwiseF32Node` spells a sigmoid-weighted linear unit, and decomposing one
-/// here into multiply, exp, add, and divide nodes would be this boundary
-/// re-deriving a provider's lowering rather than resolving it.
+/// **This is the assertion that changed direction, and the pair is what makes it
+/// evidence.** Both programs state one registered unary family over one declared
+/// input, and both families carry a registered index-access lowering capability.
+/// `tiler::silu-f32@1` now compiles to a complete verified plan: its per-point
+/// body is expressible in the physical expression vocabulary, and the boundary
+/// projects it by driving the *same* function the governed index-access lowering
+/// drives, so the composition is stated once rather than re-derived here.
+/// `tiler::reindex-f32@1` still refuses: `LogicalAccess` has no reindex map, so
+/// there is no projection to make, and admitting it would produce a program the
+/// physical layer cannot express.
 ///
 /// The refusal names `operation-set` — the property that was not recognized —
 /// and precedes any target-qualified trace, which `compile_under` asserts.
@@ -330,17 +342,40 @@ fn a_family_outside_the_expression_vocabulary_refuses_with_a_typed_reason() {
     builder
         .output(OutputKey::new("out").unwrap(), activated)
         .unwrap();
-    let region = builder.build().unwrap();
-    assert_eq!(region.input_count(), 1);
-    assert_eq!(region.operation_count(), 1);
+    let activation = builder.build().unwrap();
+    assert_eq!(activation.input_count(), 1);
+    assert_eq!(activation.operation_count(), 1);
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
+        .unwrap();
+    let reversed = F32Reindex::apply(
+        &mut builder,
+        &ReindexForm::reverse_axis(Axis::new(0)).unwrap(),
+        a,
+    )
+    .unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), reversed)
+        .unwrap();
+    let structural = builder.build().unwrap();
+    assert_eq!(structural.input_count(), 1);
+    assert_eq!(structural.operation_count(), 1);
 
     for contract in CONTRACTS {
         assert_eq!(
-            compile_under(&region, contract),
+            compile_under(&activation, contract),
+            Ok(()),
+            "{contract:?} refused a family whose per-point body the expression \
+             vocabulary spells",
+        );
+        assert_eq!(
+            compile_under(&structural, contract),
             Err(CompileFailureClass::UnsupportedCapability {
                 rule: "operation-set"
             }),
-            "{contract:?} admitted a family no scalar program spells",
+            "{contract:?} admitted a family no logical access spells",
         );
     }
 }

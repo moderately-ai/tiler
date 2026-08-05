@@ -1254,6 +1254,10 @@ const fn rule_of(error: &RequestError) -> &'static str {
         }
         RequestError::BudgetExceeded { resource, .. } => resource,
         RequestError::UnsupportedCapability { rule, .. } => rule,
+        // The refusing authority's own stable code, so the two findings it
+        // distinguishes — no installed realization, and an installed one that
+        // could not be proved to refine — reach a caller as different keys.
+        RequestError::UnrealizedElementaryAccuracy { reason, .. } => reason,
         RequestError::ShapeProductOverflow { role } => role,
     }
 }
@@ -2072,6 +2076,15 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
             | RequestError::UnrepresentableNumericalDimension { .. }
             | RequestError::BudgetExceeded { .. }
             | RequestError::UnsupportedCapability { .. }
+            // Reaches a caller as [`CompileFailureClass::UnsupportedCapability`]
+            // carrying the refusing authority's own stable key, rather than as a
+            // structured refusal. A structured one would name the operation as
+            // well, and it is deliberately not added here: no public boundary
+            // lets a caller-built profile declare an elementary realization yet,
+            // so the only refusal this build can produce says "this profile
+            // declares none", which the key already says. The richer refusal
+            // belongs with the declaration it would explain.
+            | RequestError::UnrealizedElementaryAccuracy { .. }
             | RequestError::ShapeProductOverflow { .. },
         )
         | None => None,

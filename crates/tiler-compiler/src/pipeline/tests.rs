@@ -36,7 +36,7 @@ use crate::request::{
     TargetProfile,
 };
 use std::collections::BTreeMap;
-use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView};
+use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView, UnaryOp};
 use tiler_ir::program::abi::{AvailabilityPhase, TargetPropertyRequirementRelation};
 use tiler_ir::program::{DependencyReasonView, ValueRole};
 use tiler_ir::semantic::{
@@ -323,9 +323,34 @@ impl<'a> KirMachine<'a> {
                         BinaryOp::F32Multiply => {
                             KirValue::F32(self.get(lhs).float() * self.get(rhs).float())
                         }
+                        // The operator division, deliberately, and not a
+                        // reciprocal followed by a multiply: the two round a
+                        // different number of times, so a machine that took the
+                        // second spelling would agree with the reference only
+                        // where the difference happens not to be observable.
+                        BinaryOp::F32Divide => {
+                            KirValue::F32(self.get(lhs).float() / self.get(rhs).float())
+                        }
                         other => panic!("unsupported binary operation {other:?}"),
                     };
                     self.define(&mut results, value);
+                }
+                OperationView::Unary { op, source } => {
+                    let argument = self.get(source).float();
+                    let value = match op {
+                        // The *certified* exponential rather than the host
+                        // library's. `UnaryOp::F32Exp` names the precise
+                        // function, whose admitted result set is the registered
+                        // accuracy contract; modelling it with `f32::exp` would
+                        // make this machine agree with the reference only where
+                        // the host happened to round the same way, which is a
+                        // property of the host and not of the kernel.
+                        UnaryOp::F32Exp => tiler_reference::certified_exp_f32(argument)
+                            .expect("the certified exponential decides every reachable argument"),
+                        UnaryOp::F32Rsqrt => tiler_reference::certified_rsqrt_f32(argument)
+                            .expect("the certified reciprocal square root decides its arguments"),
+                    };
+                    self.define(&mut results, KirValue::F32(value));
                 }
                 OperationView::Compare { op, lhs, rhs } => {
                     let value = match op {

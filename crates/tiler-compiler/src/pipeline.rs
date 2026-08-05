@@ -493,6 +493,16 @@ impl From<RequestError> for CompileError {
             | RequestError::DTypeNotDispatchable { .. } => {
                 Self::NoFeasiblePlan(NoFeasiblePlanError::Request(value))
             }
+            // An unrealized elementary accuracy contract is a *capability*
+            // statement, not an infeasible plan: the program is valid, the
+            // target was asked, and what is missing is an installed realization
+            // that provably refines the registered contract. A caller's action
+            // is to install or declare one, which is the action
+            // `UnsupportedCapability` names and not the one `NoFeasiblePlan`
+            // does.
+            RequestError::UnrealizedElementaryAccuracy { .. } => {
+                Self::UnsupportedCapability(value)
+            }
             RequestError::BudgetExceeded { .. } => Self::BudgetExhausted(value),
             RequestError::UnsupportedRequestVersion
             | RequestError::EmptyTargetSet
@@ -1952,6 +1962,16 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
             format!("unsupported-{phase}-{rule}")
         }
         RequestError::ShapeProductOverflow { role } => format!("shape-product-overflow-{role}"),
+        // The operation is in the reason because the refusal is about *that
+        // family's* contract: a program carrying two elementary families and a
+        // target realizing one of them must not report the same token twice.
+        RequestError::UnrealizedElementaryAccuracy {
+            operation, reason, ..
+        } => format!(
+            "{}-{}",
+            reason.replace('.', "-"),
+            operation.to_string().replace("::", "-").replace('@', "-"),
+        ),
     };
     (
         reason,

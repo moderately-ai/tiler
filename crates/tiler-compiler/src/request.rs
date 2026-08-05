@@ -14,7 +14,7 @@ use tiler_ir::semantic::{
     CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalIntegerWidth, CanonicalValueView,
     ContractionIndex, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
     OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, SemanticIdentity,
-    SemanticProgram, TypeKey, ValueId, add_f32_op, constant_f32_op, multiply_f32_op,
+    SemanticProgram, TypeKey, ValueId, add_f32_op, constant_f32_op, multiply_f32_op, silu_f32_op,
     strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
@@ -30,6 +30,7 @@ use tiler_ir::schedule::{F32NumericalContractKey, NumericalContractKeyError};
 use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
 };
+use crate::elementary::{PointwiseExpressionSink, silu_point_body};
 use crate::governed::{governed_lowering_capabilities, governed_scalars};
 use crate::policy::UnrepresentableDimension;
 use crate::region::SemanticMemberId;
@@ -1851,6 +1852,15 @@ impl VerifiedCompilationRequest {
             else {
                 return Err(RequestError::UnverifiedTargetSelection);
             };
+            // Rechecked rather than inherited from the resolved slot. The
+            // obligation is a property of the candidate's operation multiset,
+            // and a rewrite that introduced a family this target cannot realize
+            // would otherwise inherit an admission granted to a program that did
+            // not contain it. Today's algebraic rules preserve the multiset, so
+            // this cannot fire — which is exactly why it is a check rather than
+            // a comment, and why its failure is invalid compiler output rather
+            // than a candidate silently dropped.
+            require_elementary_accuracy(program, &slot.target_profile)?;
             let authority = request_subject(
                 &normalized,
                 &semantic_identity,
@@ -2165,6 +2175,28 @@ pub(crate) enum RequestError {
         phase: &'static str,
         rule: &'static str,
     },
+    /// The target declares no realization refining a registered elementary
+    /// accuracy contract this program's operations carry.
+    ///
+    /// Distinct from every dimension rejection above. Those resolve a *generic*
+    /// numerical freedom the caller stated; this one is an ADR 0042 accuracy
+    /// contract the registered operation itself carries, which no contract a
+    /// caller can state weakens or waives. It is a target-local hard rejection,
+    /// so a companion profile that does declare a refining realization still
+    /// compiles.
+    UnrealizedElementaryAccuracy {
+        /// The elementary family whose registered contract went unsatisfied.
+        operation: OpKey,
+        /// The profile that was asked.
+        target_profile: TargetProfileKey,
+        /// Stable diagnostic code of the refusing reason.
+        ///
+        /// Carried rather than re-derived so the public failure key and the
+        /// refusal that produced it cannot disagree; the two reasons — no
+        /// installed realization at all, and an installed one that could not be
+        /// proved to refine — are different findings and keep different keys.
+        reason: &'static str,
+    },
     ShapeProductOverflow {
         role: &'static str,
     },
@@ -2238,6 +2270,14 @@ impl fmt::Display for RequestError {
                     "compile.unsupported.{phase}.{rule}: no installed capability can compile this valid semantic program"
                 )
             }
+            Self::UnrealizedElementaryAccuracy {
+                operation,
+                target_profile,
+                reason,
+            } => write!(
+                formatter,
+                "{reason}: target {target_profile} declares no realization refining the registered accuracy contract of {operation}"
+            ),
             Self::ShapeProductOverflow { role } => write!(
                 formatter,
                 "compile.shape.{role}.element-count: static element count exceeds u64"
@@ -2331,7 +2371,9 @@ pub(crate) fn verify_request(
         .target_profiles
         .iter()
         .map(|target| {
-            let resolution = match require_compile_profile_dispatch(target, &dispatch_types) {
+            let structural = require_compile_profile_dispatch(target, &dispatch_types)
+                .and_then(|()| require_elementary_accuracy(request.program, target));
+            let resolution = match structural {
                 Ok(()) => match resolve_numerical_contract(&request.numerical_contracts, target) {
                     Ok(numerical_contract) => {
                         let authority = request_subject(
@@ -2356,9 +2398,13 @@ pub(crate) fn verify_request(
                     }
                     Err(error) => return Err(error),
                 },
-                Err(error @ RequestError::DTypeNotDispatchable { .. }) => {
-                    VerifiedTargetResolution::Rejected(error)
-                }
+                // Both structural refusals are target-local: another requested
+                // profile may dispatch the dtype, or declare the elementary
+                // realization, that this one does not.
+                Err(
+                    error @ (RequestError::DTypeNotDispatchable { .. }
+                    | RequestError::UnrealizedElementaryAccuracy { .. }),
+                ) => VerifiedTargetResolution::Rejected(error),
                 Err(error) => return Err(error),
             };
             Ok(VerifiedTargetSlot {
@@ -2391,6 +2437,37 @@ fn canonical_program_value_types(program: &SemanticProgram) -> Vec<ResolvedValue
     });
     resolved_types.dedup();
     resolved_types
+}
+
+/// Requires the target to realize every registered elementary accuracy contract
+/// this program's operations carry.
+///
+/// **Asked of the whole program rather than of the recognized members, and the
+/// two are the same set here.** Recognition already requires the members it
+/// matched to cover the program exactly — that is what `operation-set` refuses —
+/// so walking the program's operations reaches every recognized occurrence and
+/// nothing else, without threading the recognizer's member vector through a
+/// question that is about operations rather than about regions.
+///
+/// **Asked per target, before any numerical contract is resolved.** The
+/// obligation is the registered operation's and is fixed; no contract a caller
+/// can state widens or waives it, so resolving one first would order two
+/// independent rejections without making either more specific.
+fn require_elementary_accuracy(
+    program: &SemanticProgram,
+    target: &TargetProfile,
+) -> Result<(), RequestError> {
+    let operations: Vec<OpKey> = program
+        .operations()
+        .map(|operation| operation.key().clone())
+        .collect();
+    crate::target::accuracy::assess_program_elementary_accuracy(operations.iter(), target).map_err(
+        |refusal| RequestError::UnrealizedElementaryAccuracy {
+            operation: refusal.operation().clone(),
+            target_profile: target.profile_key().clone(),
+            reason: refusal.diagnostic_code(),
+        },
+    )
 }
 
 /// Requires an exact compile-profile dispatch fact for every program value type.
@@ -2567,14 +2644,26 @@ fn resolve_numerical_contract(
 /// walls below this boundary are refused *at* it, each under its own rule:
 ///
 /// - **An operation the region vocabulary cannot spell** (`operation-set`).
-///   `tiler::silu-f32@1`, `tiler::reindex-f32@1`, and `tiler::broadcast-f32@1`
-///   each have a registered *lowering* capability, but no
-///   [`tiler_ir::schedule::ScalarProgram`] or
-///   [`tiler_ir::schedule::LogicalAccess`] spells them, and decomposing one here
-///   into expression nodes would be this boundary re-deriving a provider's
-///   lowering — exactly what occurrence refinement exists to prevent.
-///   `admit-the-registered-unary-families-at-the-compiler-request-boundary`
-///   owns it.
+///   `tiler::reindex-f32@1` and `tiler::broadcast-f32@1` each have a registered
+///   *lowering* capability, but no [`tiler_ir::schedule::LogicalAccess`] spells
+///   the access relation either denotes: there is no reindex map, and the only
+///   broadcast is `ScalarBroadcast`, a rank-zero operand read once. A region for
+///   one is a `tiler-ir` widening rather than a projection this boundary could
+///   make, and
+///   `admit-the-structural-families-into-the-scheduled-region-vocabulary` owns
+///   it.
+///
+///   **`tiler::silu-f32@1` used to be in this list and no longer is, and the
+///   distinction that moved it is worth stating.** No `PointwiseF32Node` spells
+///   a sigmoid-weighted linear unit either — but the family's *per-point body*
+///   is expressible in that vocabulary, so the boundary projects it instead of
+///   refusing. What makes the projection admissible is that it is not written
+///   here: [`crate::elementary::silu_point_body`] is the one statement of the
+///   composition, and the governed index-access lowering drives the same
+///   function, so occurrence refinement's proof that the emitted region realizes
+///   the occurrence covers the projection the boundary made. A family whose
+///   *access relation* has no spelling has no such projection available, which
+///   is why the two structural families remain refused.
 /// - **An elementwise stage reading a materialized intermediate**
 ///   (`operation-set` from the contraction cover, `elementwise-shape` or
 ///   `operation-set` from the elementwise walk). Every elementwise region this
@@ -2669,16 +2758,44 @@ struct RecognizedElementwise {
     members: Vec<SemanticMemberId>,
 }
 
-/// The elementwise operation families this recognizer spells directly.
+/// The elementwise operation families this recognizer projects.
 ///
-/// Exactly the families that are both a registered lowering capability *and* a
-/// node of the physical expression vocabulary. `tiler::silu-f32@1` fails the
-/// second half — it lowers to a subtree rather than a node — and is refused
-/// under `operation-set` rather than expanded here.
+/// Exactly the families whose per-point body the physical expression vocabulary
+/// can express. Two are single nodes of that vocabulary; the third is a
+/// composition, and the distinction between "one node" and "expressible" is
+/// where this set used to stop.
+///
+/// **`tiler::silu-f32@1` is projected rather than restated, and the difference
+/// is the whole reason it is admissible here.** No `PointwiseF32Node` spells a
+/// sigmoid-weighted linear unit, so the projection is a subtree — but the
+/// subtree is not written in this module. [`crate::elementary::silu_point_body`]
+/// is the one statement of the composition in this crate, and the governed
+/// index-access lowering emits the *same* function into the scalar vocabulary
+/// its regions are built from. So the boundary is not re-deriving a provider's
+/// lowering; both realizations are driven from one authority, and occurrence
+/// refinement independently proves that the resolved provider's emitted region
+/// realizes the occurrence.
 #[derive(Clone, Copy)]
 enum ElementwiseFamily {
     Add,
     Multiply,
+    /// The activation, projected through [`crate::elementary::silu_point_body`].
+    Silu,
+}
+
+impl ElementwiseFamily {
+    /// The operand count this family's occurrences declare.
+    ///
+    /// Read from the family rather than from the occurrence, so an occurrence
+    /// whose arity disagrees with its registered family is refused under
+    /// `elementwise-arity` instead of being projected against whichever operands
+    /// happened to be present.
+    const fn operand_count(self) -> usize {
+        match self {
+            Self::Add | Self::Multiply => 2,
+            Self::Silu => 1,
+        }
+    }
 }
 
 /// Classifies one operation as a recognized elementwise family, or declines.
@@ -2689,6 +2806,8 @@ fn elementwise_family(
         Some(ElementwiseFamily::Add)
     } else if operation.key() == &multiply_f32_op() {
         Some(ElementwiseFamily::Multiply)
+    } else if operation.key() == &silu_f32_op() {
+        Some(ElementwiseFamily::Silu)
     } else {
         None
     }
@@ -2789,22 +2908,41 @@ fn recognize_elementwise(
             return mismatch("elementwise-shape");
         }
         let operands: Vec<ValueId> = operation.operands().collect();
-        let [lhs, rhs] = operands.as_slice() else {
+        if operands.len() != family.operand_count() {
             return mismatch("elementwise-arity");
-        };
+        }
         if !operands_visited {
             pending.push((value, true));
-            pending.push((*rhs, false));
-            pending.push((*lhs, false));
+            // Pushed in reverse so the first operand is popped first, which is
+            // what keeps a deterministic walk order across arities.
+            for operand in operands.iter().rev() {
+                pending.push((*operand, false));
+            }
             continue;
         }
-        let lhs = minted_value(&minted, *lhs)?;
-        let rhs = minted_value(&minted, *rhs)?;
-        let node = match family {
-            ElementwiseFamily::Add => builder.add(lhs, rhs),
-            ElementwiseFamily::Multiply => builder.multiply(lhs, rhs),
+        let projected: Vec<PointwiseF32Value> = operands
+            .iter()
+            .map(|operand| minted_value(&minted, *operand))
+            .collect::<Result<_, _>>()?;
+        let node = match (family, projected.as_slice()) {
+            (ElementwiseFamily::Add, [lhs, rhs]) => {
+                builder.add(lhs.clone(), rhs.clone()).map_err(|_| ())
+            }
+            (ElementwiseFamily::Multiply, [lhs, rhs]) => {
+                builder.multiply(lhs.clone(), rhs.clone()).map_err(|_| ())
+            }
+            // The composition is emitted by the shared authority rather than
+            // spelled here; see [`ElementwiseFamily::Silu`].
+            (ElementwiseFamily::Silu, [argument]) => {
+                let mut sink = PointwiseExpressionSink::new(&mut builder);
+                silu_point_body(&mut sink, argument).map_err(|_| ())
+            }
+            // Unreachable through the arity check above, and refused rather than
+            // assumed away: an arity this projection has no case for is a
+            // vocabulary gap, not a node to invent.
+            _ => return mismatch("elementwise-arity"),
         }
-        .map_err(|_| expression_bound())?;
+        .map_err(|()| expression_bound())?;
         members.push(SemanticMemberId(member));
         minted.push((value, node));
     }
@@ -4247,8 +4385,32 @@ mod tests {
         assert_eq!(two_outputs.output_count(), 2);
         assert_eq!(recognize(&two_outputs).unwrap_err(), "output-arity");
 
-        // `operation-set`: a registered family the expression vocabulary cannot
-        // spell. `tiler::silu-f32@1` has a lowering capability, and no node.
+        // `operation-set`: a registered family whose *access relation* the
+        // region vocabulary cannot spell. `tiler::reindex-f32@1` has a
+        // registered lowering capability, and `LogicalAccess` has no reindex
+        // map — so unlike the activation below, there is no projection to make.
+        //
+        // Its accepted neighbour is the activation, which is the row that
+        // changed: a registered family whose per-point body *is* expressible is
+        // projected rather than refused, so this row now proves the refusal
+        // reads the missing vocabulary and not the mere fact of being unary.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), shape())
+            .unwrap();
+        let permuted = tiler_ir::semantic::F32Reindex::apply(
+            &mut builder,
+            &tiler_ir::semantic::ReindexForm::permute_axes([Axis::new(1), Axis::new(0)])
+                .expect("a two-axis transposition is an admitted form"),
+            input,
+        )
+        .expect("the standard registry admits the reindex family");
+        builder
+            .output(OutputKey::new("result").unwrap(), permuted)
+            .unwrap();
+        let structural = builder.build().unwrap();
+        assert_eq!(recognize(&structural).unwrap_err(), "operation-set");
+
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), shape())
@@ -4259,7 +4421,16 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), activated)
             .unwrap();
         let unary = builder.build().unwrap();
-        assert_eq!(recognize(&unary).unwrap_err(), "operation-set");
+        let NormalizedProgram::Pointwise(recognized) =
+            recognize(&unary).expect("the activation projects into the expression vocabulary")
+        else {
+            panic!("an elementwise output recognizes as an elementwise program");
+        };
+        // One occurrence, one declared input read once, and the composition's
+        // seven nodes: the projection is the shared body's, not a per-shape one.
+        assert_eq!(recognized.members, vec![SemanticMemberId(0)]);
+        assert_eq!(recognized.expression.input_count(), 1);
+        assert_eq!(recognized.expression.nodes().len(), 7);
 
         // `operation-set` again, from the other side: a contraction with a
         // reachable elementwise epilogue. Its accepted neighbour is the bare

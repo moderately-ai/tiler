@@ -43,6 +43,7 @@ use crate::capability::{
     LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
     LoweringRegistryError, LoweringSignature,
 };
+use crate::elementary::{ElementaryPointSink, silu_point_body};
 
 /// Output-affecting revision of every governed lowering capability.
 const GOVERNED_CAPABILITY_REVISION: u32 = 1;
@@ -517,26 +518,95 @@ impl IndexAccessLoweringProvider for GovernedStrictAffineU4Dequantize {
 
 /// Emits the region realizing one `tiler::silu-f32@1` occurrence.
 ///
-/// The emitted chain is the pinned reference read left to right:
-/// `x * -1.0`, then the precise exponential, then `1.0 + e`, then `x / d`. Three
-/// properties of that chain are load-bearing rather than incidental.
-///
-/// **The negation is a multiplication by `-1.0`, and it is exact.** IEEE-754
-/// multiplication by negative one flips the sign of every operand — both zeros
-/// and both infinities included — with no rounding, so it delivers exactly what
-/// the reference's "exact sign manipulation" means. There is no negate scalar to
-/// reach for and this does not need one.
-///
-/// **The divisor is `1.0 + e`, in that order.** Binary32 addition is commutative,
-/// so the order is not observable here; it is written this way because the
-/// reference is, and a reader comparing the two should not have to reconcile a
-/// difference that has no consequence.
-///
-/// **The result is a division.** `x * (1.0 / d)` rounds twice and would be a
-/// different binary32 function — measurably so at `0xc2b00000`, where the two
-/// spellings differ by one ULP. The scalar vocabulary has no reciprocal key, so
-/// the substitution is unstatable here rather than merely forbidden.
+/// The per-point chain is not written here. [`crate::elementary::silu_point_body`]
+/// is the one statement of the composition in this crate, and this provider
+/// supplies the index-region half of its realization — the parallel domain, the
+/// read, the write, and the scalar vocabulary the body is emitted into. The
+/// request boundary drives the *same* function into the physical expression
+/// vocabulary, so the two realizations cannot state different compositions; that
+/// module's own documentation states which properties of the chain are
+/// load-bearing.
 struct GovernedSiluF32;
+
+/// Emits an elementary body as governed index-region scalar applications.
+struct GovernedElementarySink<'a, 'b> {
+    context: &'a mut IndexAccessLoweringContext<'b>,
+}
+
+impl ElementaryPointSink for GovernedElementarySink<'_, '_> {
+    type Value = ScalarValueId;
+    type Error = LoweringEmitError;
+
+    fn constant(&mut self, bits: u32, rule: &'static str) -> Result<Self::Value, Self::Error> {
+        let attributes = f32_constant_attributes(bits)?;
+        apply_one(
+            self.context,
+            constant_f32_scalar_op(),
+            attributes,
+            &[],
+            rule,
+        )
+    }
+
+    fn add(
+        &mut self,
+        lhs: Self::Value,
+        rhs: Self::Value,
+        rule: &'static str,
+    ) -> Result<Self::Value, Self::Error> {
+        apply_one(
+            self.context,
+            add_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[lhs, rhs],
+            rule,
+        )
+    }
+
+    fn multiply(
+        &mut self,
+        lhs: Self::Value,
+        rhs: Self::Value,
+        rule: &'static str,
+    ) -> Result<Self::Value, Self::Error> {
+        apply_one(
+            self.context,
+            multiply_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[lhs, rhs],
+            rule,
+        )
+    }
+
+    fn divide(
+        &mut self,
+        lhs: Self::Value,
+        rhs: Self::Value,
+        rule: &'static str,
+    ) -> Result<Self::Value, Self::Error> {
+        apply_one(
+            self.context,
+            divide_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[lhs, rhs],
+            rule,
+        )
+    }
+
+    fn exp(
+        &mut self,
+        argument: Self::Value,
+        rule: &'static str,
+    ) -> Result<Self::Value, Self::Error> {
+        apply_one(
+            self.context,
+            exp_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[argument],
+            rule,
+        )
+    }
+}
 
 impl IndexAccessLoweringProvider for GovernedSiluF32 {
     fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
@@ -559,48 +629,10 @@ impl IndexAccessLoweringProvider for GovernedSiluF32 {
         let tensor = context.input_tensor(boundary.value_type().clone(), shape.clone())?;
         let argument = context.read(tensor, &dimensions, &coordinates)?;
 
-        let negative_one = apply_one(
-            context,
-            constant_f32_scalar_op(),
-            f32_constant_attributes(0xbf80_0000)?,
-            &[],
-            "silu-negative-one",
-        )?;
-        let negated = apply_one(
-            context,
-            multiply_f32_scalar_op(),
-            ScalarAttributes::empty(),
-            &[argument, negative_one],
-            "silu-negation",
-        )?;
-        let exponential = apply_one(
-            context,
-            exp_f32_scalar_op(),
-            ScalarAttributes::empty(),
-            &[negated],
-            "silu-exponential",
-        )?;
-        let one = apply_one(
-            context,
-            constant_f32_scalar_op(),
-            f32_constant_attributes(0x3f80_0000)?,
-            &[],
-            "silu-one",
-        )?;
-        let divisor = apply_one(
-            context,
-            add_f32_scalar_op(),
-            ScalarAttributes::empty(),
-            &[one, exponential],
-            "silu-divisor",
-        )?;
-        let value = apply_one(
-            context,
-            divide_f32_scalar_op(),
-            ScalarAttributes::empty(),
-            &[argument, divisor],
-            "silu-division",
-        )?;
+        let value = {
+            let mut sink = GovernedElementarySink { context };
+            silu_point_body(&mut sink, &argument)?
+        };
 
         let output = context.output_tensor(result_type, shape)?;
         let write = context.write(output, &dimensions, &coordinates)?;

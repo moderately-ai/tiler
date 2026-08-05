@@ -17,6 +17,7 @@ pub mod capability;
 mod component_cost;
 mod cover;
 mod effects;
+mod elementary;
 mod estimate;
 mod explain;
 mod failure_stage;
