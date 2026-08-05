@@ -20,6 +20,7 @@ use super::report::{
     CacheOperation, CacheReport, CacheUnavailable, EntryRejection, MissReason, PublicationRefusal,
     QuarantineOutcome,
 };
+use super::retention::DebugRetention;
 use super::subject::ComposedSubject;
 
 /// Attempts to find an unused temporary path before giving up.
@@ -76,6 +77,7 @@ pub enum Durability {
 pub struct CachedEntry {
     key: CacheKey,
     bytes: EntryBytes,
+    retained: DebugRetention,
     artifact: DecodedArtifact,
 }
 
@@ -112,6 +114,24 @@ impl CachedEntry {
     #[must_use]
     pub const fn artifact(&self) -> &DecodedArtifact {
         &self.artifact
+    }
+
+    /// Returns the debug text the publishing build retained beside this entry.
+    ///
+    /// [`DebugRetention::is_empty`] is true when the entry carries none, which is
+    /// an ordinary complete entry and not a degraded one: the retention is
+    /// stated by whoever published, so an entry written by a build that did not
+    /// ask for it has nothing to show and is a hit all the same.
+    ///
+    /// **This is not where a payload's canonical source lives.** That travels
+    /// inside the artifact envelope, under the digest that names it —
+    /// [`Self::artifact`] reaches it through the payload metadata on every hit,
+    /// retention or no retention. What a retention carries is what the envelope
+    /// cannot: the output of the tool run that produced the payload, which is not
+    /// a compilation input and must not enter an identity.
+    #[must_use]
+    pub const fn retained_debug(&self) -> &DebugRetention {
+        &self.retained
     }
 }
 
@@ -158,6 +178,12 @@ pub enum Resolution {
         envelope: Vec<u8>,
         /// The decoded artifact.
         artifact: DecodedArtifact,
+        /// The debug text the caller retained, handed back rather than dropped.
+        ///
+        /// A cache that stored nothing must not also lose the diagnostics of the
+        /// compilation it just ran: the caller asked for retention and the
+        /// compilation happened, so the text exists and only the storage did not.
+        retained: DebugRetention,
         /// Why it was not published, among everything else the cache decided.
         report: CacheReport,
     },
@@ -339,6 +365,7 @@ impl ExpansionCache {
             Ok(entry) => Lookup::Hit(Box::new(CachedEntry {
                 key: entry.key,
                 bytes: entry.bytes,
+                retained: entry.retained,
                 artifact: entry.payload,
             })),
             Err(reason) => Lookup::Miss(reason),
@@ -366,8 +393,46 @@ impl ExpansionCache {
         subject: &ComposedSubject,
         build: impl FnOnce() -> Result<Vec<u8>, E>,
     ) -> Result<Resolution, PublishFailure<E>> {
+        self.get_or_publish_retaining(subject, || {
+            build().map(|envelope| (envelope, DebugRetention::none()))
+        })
+    }
+
+    /// Returns a validated artifact for `subject`, retaining the debug text the
+    /// build step states beside a published entry.
+    ///
+    /// The retention is an input the *caller* states, and this crate reads no
+    /// environment and consults no build profile to second-guess it. It comes
+    /// out of the build closure because that is when it exists: a compiler's
+    /// diagnostics are produced by the run, and an entry is framed once and
+    /// published by one rename, so there is no later point at which text could
+    /// be added to it.
+    ///
+    /// **Retention changes nothing about which entry this resolves to.** The key
+    /// is a function of the composed subject alone, so the same compilation
+    /// resolves to one entry whether or not anything is retained — a caller that
+    /// turns retention on hits the entries it already had, and finds nothing to
+    /// show on the ones published without it. Publication is not repeated to add
+    /// a retention to an entry that validated, because a valid entry is a hit and
+    /// a hit compiles nothing.
+    ///
+    /// [`Self::get_or_publish`] is this call with a retention of
+    /// [`DebugRetention::none`] and shares its whole path, so there is one
+    /// publication route rather than two that must stay in step.
+    ///
+    /// # Errors
+    ///
+    /// The same failures [`Self::get_or_publish`] returns: nothing about a
+    /// retention can fail a resolution, because a retention that could not be
+    /// framed is a bundle this cache refuses to publish and therefore an
+    /// [`Resolution::Uncached`] carrying the reason.
+    pub fn get_or_publish_retaining<E>(
+        &self,
+        subject: &ComposedSubject,
+        build: impl FnOnce() -> Result<(Vec<u8>, DebugRetention), E>,
+    ) -> Result<Resolution, PublishFailure<E>> {
         Ok(
-            match self.resolve(subject.as_bytes(), build, &artifact_validator)? {
+            match self.resolve_retaining(subject.as_bytes(), build, &artifact_validator)? {
                 ProtocolOutcome::Hit {
                     entry,
                     report,
@@ -376,6 +441,7 @@ impl ExpansionCache {
                     let entry = CachedEntry {
                         key: entry.key,
                         bytes: entry.bytes,
+                        retained: entry.retained,
                         artifact: entry.payload,
                     };
                     if published {
@@ -387,6 +453,7 @@ impl ExpansionCache {
                 ProtocolOutcome::Uncached { entry, report } => Resolution::Uncached {
                     envelope: entry.bytes.into_envelope(),
                     artifact: entry.payload,
+                    retained: entry.retained,
                     report,
                 },
             },
@@ -508,10 +575,32 @@ impl ExpansionCache {
     // semantic program and therefore a crate this one deliberately does not
     // depend on.
 
+    /// The protocol over a build step that retains nothing.
+    ///
+    /// Reached only by this crate's own tests and harnesses, which is why it is
+    /// compiled out otherwise: the production non-retaining path is
+    /// [`Self::get_or_publish`], which wraps its caller's closure in exactly the
+    /// same empty retention. Keeping it means the tests below state a build step
+    /// as the byte string it is, without every one of them naming a debug
+    /// configuration it is not about.
+    #[cfg(test)]
     pub(crate) fn resolve<T, E>(
         &self,
         subject: &[u8],
         build: impl FnOnce() -> Result<Vec<u8>, E>,
+        validate: &dyn Fn(&[u8]) -> Result<T, ArtifactCodecFailure>,
+    ) -> Result<ProtocolOutcome<T>, PublishFailure<E>> {
+        self.resolve_retaining(
+            subject,
+            || build().map(|envelope| (envelope, DebugRetention::none())),
+            validate,
+        )
+    }
+
+    pub(crate) fn resolve_retaining<T, E>(
+        &self,
+        subject: &[u8],
+        build: impl FnOnce() -> Result<(Vec<u8>, DebugRetention), E>,
         validate: &dyn Fn(&[u8]) -> Result<T, ArtifactCodecFailure>,
     ) -> Result<ProtocolOutcome<T>, PublishFailure<E>> {
         let key = CacheKey::derive_bytes(subject);
@@ -579,7 +668,7 @@ impl ExpansionCache {
         #[cfg(test)]
         fault::reach(fault::Phase::AfterRecheck);
 
-        let envelope = build().map_err(PublishFailure::Build)?;
+        let (envelope, retained) = build().map_err(PublishFailure::Build)?;
         // A build failure and an invalid generated artifact are hard errors that
         // the cache's fall-open rule does not cover.
         let payload = validate(&envelope).map_err(PublishFailure::Artifact)?;
@@ -589,6 +678,7 @@ impl ExpansionCache {
                 subject: subject.to_vec(),
                 envelope,
             },
+            retained,
             payload,
         };
 
@@ -596,14 +686,7 @@ impl ExpansionCache {
             return Ok(ProtocolOutcome::Uncached { entry, report });
         };
 
-        match self.publish(
-            layout,
-            &entry.key,
-            subject,
-            entry.envelope(),
-            validate,
-            replacing_rejected_entry,
-        ) {
+        match self.publish(layout, &entry, validate, replacing_rejected_entry) {
             Ok(published) => {
                 if let Some(outcome) = published.quarantine {
                     report.set_quarantine(outcome);
@@ -689,6 +772,10 @@ impl ExpansionCache {
             .map_err(|rejection| MissReason::Rejected(EntryRejection::Bundle(rejection)))?;
         let payload = validate(&bytes[view.envelope.clone()])
             .map_err(|failure| MissReason::Rejected(EntryRejection::Payload(failure)))?;
+        // Empty when the entry framed no retention, which is a hit with nothing
+        // to show rather than a miss: `bundle::decode` already refused every
+        // *damaged* retention above, so an empty one here means the publishing
+        // build stated none.
         // The frame lays the two sections out contiguously inside the buffer this
         // read already allocated, so the entry keeps that buffer and the spans
         // rather than copying both sections back out of it. Nothing is validated
@@ -701,6 +788,7 @@ impl ExpansionCache {
                 subject: view.subject,
                 envelope: view.envelope,
             },
+            retained: view.retained,
             payload,
         })
     }
@@ -756,18 +844,24 @@ impl ExpansionCache {
     ///
     /// Takes the namespace rather than reading it off `self`, which is what
     /// makes publication unreachable for a cache that has none: there is no
-    /// `Layout` to pass.
+    /// `Layout` to pass. It takes the whole validated entry rather than its
+    /// sections one by one, so the subject, the envelope, and the retention that
+    /// are framed together are the ones one value already holds together.
     fn publish<T>(
         &self,
         layout: &Layout,
-        key: &CacheKey,
-        subject: &[u8],
-        envelope: &[u8],
+        entry: &ValidatedEntry<T>,
         validate: &dyn Fn(&[u8]) -> Result<T, ArtifactCodecFailure>,
         replacing_rejected_entry: bool,
     ) -> Result<Published, PublicationRefusal> {
-        let (encoded_key, encoded) = bundle::encode(subject, envelope, &self.limits)
-            .map_err(PublicationRefusal::Oversize)?;
+        let key = &entry.key;
+        let (encoded_key, encoded) = bundle::encode(
+            entry.bytes.subject(),
+            entry.envelope(),
+            &entry.retained,
+            &self.limits,
+        )
+        .map_err(PublicationRefusal::Oversize)?;
         debug_assert_eq!(
             encoded_key, *key,
             "the bundle encoder derives the key from the same subject this call did",
@@ -1164,17 +1258,23 @@ impl EntryBytes {
 pub(crate) struct ValidatedEntry<T> {
     pub(crate) key: CacheKey,
     pub(crate) bytes: EntryBytes,
+    /// The debug text this entry carries, empty when it carries none.
+    ///
+    /// Owned on both paths rather than shaped like [`EntryBytes`]: a stored
+    /// retention is parsed out of the bundle buffer during validation, so there
+    /// is no span of that buffer a caller could be handed instead.
+    pub(crate) retained: DebugRetention,
     pub(crate) payload: T,
 }
 
 impl<T> ValidatedEntry<T> {
     /// Returns the exact artifact envelope bytes.
     ///
-    /// There is deliberately no `subject` accessor beside this one. Nothing
-    /// between the protocol and the public [`CachedEntry`] reads the subject —
-    /// the bundle decoder already re-derived the key from it, which is the only
-    /// use this layer has — and an accessor no call site reaches would be a
-    /// claim about the type that the code does not support.
+    /// The subject is reached through [`EntryBytes`] rather than through a second
+    /// accessor here: publication frames it and the bundle decoder re-derives the
+    /// key from it, and both already hold the whole entry. An accessor that only
+    /// forwarded would be a claim about this type that its call sites do not
+    /// support.
     pub(crate) fn envelope(&self) -> &[u8] {
         self.bytes.envelope()
     }

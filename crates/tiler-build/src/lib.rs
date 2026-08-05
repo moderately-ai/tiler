@@ -30,6 +30,14 @@
 //! there, as one closure. Its own module documentation states why that split is
 //! the shape and what the alternatives lose.
 //!
+//! A third thing a backend *may* state is debug text to retain beside a published
+//! entry, in [`CompiledPayloads::retained`]. It is optional in the exact sense
+//! that costs nothing: `From<Vec<PayloadContent>>` is the whole of the
+//! non-retaining case, and a retention reaches neither the cache subject nor the
+//! key, so one compilation resolves to one entry either way. The Metal path
+//! retains nothing today because the AOT driver keeps a stage's output only when
+//! the stage fails.
+//!
 //! The Metal path above is one caller of both, and
 //! `crates/tiler-build/tests/custom_backend` is another that shares no code with
 //! it. What remains bounded rather than neutral is stated rather than implied:
@@ -70,7 +78,7 @@ pub use metal_plan::{
 };
 pub use metal_profile::{MetalF32TargetProfileError, declare_metal_f32_subnormal_behaviour};
 pub use payload_cache::{
-    AcceptedArtifact, DeclaredPayload, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
-    accept_or_publish_delivered_payload_artifact,
+    AcceptedArtifact, CompiledPayloads, DeclaredPayload, DeliveredPayloadCacheError,
+    DeliveredPayloadProtocolError, accept_or_publish_delivered_payload_artifact,
 };
 pub use plan_artifact::{BackendEntryDeclaration, PlanArtifactError, assemble_plan_artifact};

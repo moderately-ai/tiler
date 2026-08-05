@@ -29,6 +29,7 @@
 use super::bundle::{self, BundleRejection};
 use super::key::CacheKey;
 use super::limits::Limits;
+use super::retention::DebugRetention;
 
 /// A `splitmix64` state, inlined rather than taken as a dependency.
 ///
@@ -67,12 +68,25 @@ impl Gen {
 }
 
 /// One valid bundle, and the key it is filed under.
+///
+/// Half of them frame a debug retention, so the mutating generators below reach
+/// the optional third section — its descriptor, its digest, and the run framing
+/// inside it — rather than only the two required ones.
 fn valid_bundle(generator: &mut Gen) -> (CacheKey, Vec<u8>) {
     let subject_len = 1 + generator.below(64);
     let subject = generator.bytes(subject_len);
     let envelope_len = 1 + generator.below(96);
     let envelope = generator.bytes(envelope_len);
-    bundle::encode(&subject, &envelope, &Limits::default()).expect("a small bundle encodes")
+    let retained = if generator.next_u64().is_multiple_of(2) {
+        let text_len = generator.below(48);
+        DebugRetention::none()
+            .retaining("fuzz.stage", &generator.bytes(text_len))
+            .expect("a governed label and one run")
+    } else {
+        DebugRetention::none()
+    };
+    bundle::encode(&subject, &envelope, &retained, &Limits::default())
+        .expect("a small bundle encodes")
 }
 
 /// Whatever a decode returns, it must be one of two things and both must be
@@ -194,7 +208,8 @@ fn a_resealed_forgery_is_refused_by_the_key_derivation() {
         let envelope_len = 1 + generator.below(64);
         let envelope = generator.bytes(envelope_len);
         let (original_key, _) =
-            bundle::encode(&subject, &envelope, &limits).expect("a small bundle encodes");
+            bundle::encode(&subject, &envelope, &DebugRetention::none(), &limits)
+                .expect("a small bundle encodes");
 
         // Change the subject and re-seal: the new bundle is wholly consistent,
         // carrying its own correct digests and its own correct embedded key.
@@ -205,7 +220,8 @@ fn a_resealed_forgery_is_refused_by_the_key_derivation() {
             continue;
         }
         let (_, resealed) =
-            bundle::encode(&forged_subject, &envelope, &limits).expect("the forgery encodes");
+            bundle::encode(&forged_subject, &envelope, &DebugRetention::none(), &limits)
+                .expect("the forgery encodes");
 
         // Requested under the *original* key, which is where it is filed.
         match bundle::decode(&resealed, &original_key, &limits) {

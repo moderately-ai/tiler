@@ -46,6 +46,10 @@ use super::preflight::{PreflightReport, PreflightVerdict};
 use super::report::{
     CacheOperation, EntryRejection, MissReason, PublicationRefusal, QuarantineOutcome,
 };
+use super::retention::{
+    DebugRetention, MAX_RETAINED_RUN_BYTES, MAX_RETAINED_RUNS, MAX_RETENTION_LABEL_BYTES,
+    RETENTION_DOMAIN, RetentionRefusal, RetentionRejection,
+};
 use super::store::{
     Durability, Eviction, ExpansionCache, Lookup, ProtocolOutcome, PublishFailure, SweepReport,
 };
@@ -552,7 +556,22 @@ fn a_non_bundle_file_name_is_refused() {
 // -------------------------------------------------------------------------
 
 fn encoded(subject: &[u8], envelope: &[u8]) -> (CacheKey, Vec<u8>) {
-    bundle::encode(subject, envelope, &Limits::default()).expect("a small bundle encodes")
+    encoded_retaining(subject, envelope, &DebugRetention::none())
+}
+
+fn encoded_retaining(
+    subject: &[u8],
+    envelope: &[u8],
+    retained: &DebugRetention,
+) -> (CacheKey, Vec<u8>) {
+    bundle::encode(subject, envelope, retained, &Limits::default()).expect("a small bundle encodes")
+}
+
+/// One retention carrying a single labelled run.
+fn retaining(label: &str, bytes: &[u8]) -> DebugRetention {
+    DebugRetention::none()
+        .retaining(label, bytes)
+        .expect("the fixture's label is governed and unique")
 }
 
 fn decode_default(bytes: &[u8], key: &CacheKey) -> Result<(), BundleRejection> {
@@ -723,9 +742,448 @@ fn an_oversize_bundle_is_refused_against_the_bound() {
         max_bundle_bytes: 64,
         ..Limits::default()
     };
-    let rejection = bundle::encode(b"subject", b"envelope", &limits)
+    let rejection = bundle::encode(b"subject", b"envelope", &DebugRetention::none(), &limits)
         .expect_err("a bundle above the bound does not encode");
     assert!(matches!(rejection, BundleRejection::BundleTooLarge { .. }));
+}
+
+// -------------------------------------------------------------------------
+// The retained debug section
+// -------------------------------------------------------------------------
+
+/// Offset of the descriptor table, as the frame in `bundle.rs` documents it.
+const DESCRIPTOR_TABLE_AT: usize = 64;
+/// Width of one descriptor: purpose, offset, length, digest.
+const DESCRIPTOR_BYTES: usize = 4 + 8 + 8 + DIGEST_BYTES;
+
+/// Reads one descriptor's framed span.
+fn section_span(bytes: &[u8], index: usize) -> (usize, usize) {
+    let at = DESCRIPTOR_TABLE_AT + DESCRIPTOR_BYTES * index;
+    let read = |from: usize| {
+        let framed = u64::from_be_bytes(
+            bytes[from..from + 8]
+                .try_into()
+                .expect("a fixed-width field"),
+        );
+        usize::try_from(framed).expect("a fixture bundle fits this host's address space")
+    };
+    let offset = read(at + 4);
+    (offset, offset + read(at + 12))
+}
+
+/// Recomputes one section's descriptor digest over whatever now sits in its span.
+///
+/// This is the forger's move, and it is what separates "a digest catches a
+/// corruption" from "the retention's own parser catches bytes no build wrote".
+fn reseal_section(bytes: &mut [u8], index: usize) {
+    let (start, end) = section_span(bytes, index);
+    let digest =
+        DigestAlgorithm::GOVERNED.digest(bundle::SECTION_DIGEST_DOMAIN, &bytes[start..end]);
+    let at = DESCRIPTOR_TABLE_AT + DESCRIPTOR_BYTES * index + 20;
+    bytes[at..at + DIGEST_BYTES].copy_from_slice(digest.as_bytes());
+}
+
+/// Frames one retention section body by hand, so a rule can be broken one at a
+/// time.
+///
+/// The declared count is separate from the runs supplied, because a section that
+/// lies about how many runs follow is exactly the input a reader must not index
+/// past.
+fn framed_retention(declared: u64, runs: &[(&[u8], u64, &[u8])]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(RETENTION_DOMAIN);
+    bytes.extend_from_slice(&declared.to_be_bytes());
+    for (label, total, retained) in runs {
+        bytes.extend_from_slice(&(label.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(label);
+        bytes.extend_from_slice(&total.to_be_bytes());
+        bytes.extend_from_slice(&(retained.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(retained);
+    }
+    bytes
+}
+
+/// Retaining debug text does not move the key, so one compilation is one entry.
+///
+/// This is the first of the three identity answers, and the assertions after the
+/// equality are what keep it from passing for the wrong reason: the two bundles
+/// really do differ, and a key taken over the framed bundle — the shape a
+/// key-participation defect would have — separates them. So the equality above
+/// is a statement about the derivation rather than about two identical inputs.
+#[test]
+fn a_retention_does_not_reach_the_key() {
+    let retained = retaining("tool.stderr", b"warning: unused variable `x`");
+    let (bare_key, bare) = encoded(b"subject", b"envelope");
+    let (retaining_key, framed) = encoded_retaining(b"subject", b"envelope", &retained);
+
+    assert_eq!(
+        bare_key, retaining_key,
+        "the same compilation must key identically with and without retention",
+    );
+    let scratch = Scratch::new("retention-key");
+    let cache = cache(&scratch);
+    assert_eq!(
+        cache.entry_path(&bare_key),
+        cache.entry_path(&retaining_key)
+    );
+
+    assert_ne!(bare, framed, "the fixture must frame different bytes");
+    assert!(framed.len() > bare.len(), "the retention must be framed");
+    assert_ne!(
+        CacheKey::derive_bytes(&bare),
+        CacheKey::derive_bytes(&framed),
+        "a key derived over the framed bundle would separate these two, which is \
+         what makes the equality above a property of the derivation",
+    );
+}
+
+/// A bundle round-trips the retention it framed.
+#[test]
+fn a_bundle_round_trips_its_retained_debug_text() {
+    let retained = retaining("tool.stderr", b"warning: unused variable `x`")
+        .retaining("tool.stdout", b"")
+        .expect("a second governed label");
+    let (key, bytes) = encoded_retaining(b"subject", b"envelope", &retained);
+    let view = bundle::decode(&bytes, &key, &Limits::default()).expect("a fresh bundle validates");
+
+    assert_eq!(view.retained, retained);
+    let run = view
+        .retained
+        .run("tool.stderr")
+        .expect("the labelled run is readable");
+    assert_eq!(run.as_bytes(), b"warning: unused variable `x`");
+    assert_eq!(run.total_bytes(), 28);
+    assert!(!run.is_truncated());
+    assert!(run.is_valid_utf8());
+    let empty = view
+        .retained
+        .run("tool.stdout")
+        .expect("a run the tool wrote nothing for is still a run");
+    assert!(empty.is_empty());
+    assert_eq!(view.retained.runs().len(), 2);
+    assert!(view.retained.run("tool.absent").is_none());
+}
+
+/// A bundle framing no retention is complete, and shows nothing.
+///
+/// The third identity answer, at the frame: absence is not a missing section, so
+/// every entry a build published before retention existed still validates.
+#[test]
+fn a_bundle_without_a_retention_validates_and_shows_nothing() {
+    let (key, bytes) = encoded(b"subject", b"envelope");
+    let view = bundle::decode(&bytes, &key, &Limits::default()).expect("a fresh bundle validates");
+    assert!(view.retained.is_empty());
+    assert!(view.retained.runs().is_empty());
+}
+
+/// A damaged retention is refused, whether or not the forger reseals the digest.
+///
+/// The second identity answer: the section is inside the digest set, so an entry
+/// edited to alter retained text is not a valid entry. The resealed case is the
+/// one that matters — every framing field is consistent, and what refuses it is
+/// the retention's own parser, which is why the section is parsed on the hit path
+/// rather than handed back as bytes.
+#[test]
+fn a_damaged_retention_is_refused_rather_than_dropped() {
+    let retained = retaining("tool.stderr", b"warning: unused variable `x`");
+    let (key, original) = encoded_retaining(b"subject", b"envelope", &retained);
+
+    let mut flipped = original.clone();
+    let last = flipped.len() - 1;
+    flipped[last] ^= 1;
+    assert_eq!(
+        decode_default(&flipped, &key),
+        Err(BundleRejection::SectionDigest {
+            purpose: BundleSection::DebugRetention,
+        }),
+    );
+
+    let mut resealed = original.clone();
+    let (start, end) = section_span(&resealed, 2);
+    resealed[start..end].fill(0);
+    reseal_section(&mut resealed, 2);
+    assert_eq!(
+        decode_default(&resealed, &key),
+        Err(BundleRejection::RetainedDebug {
+            rejection: RetentionRejection::Domain,
+        }),
+        "a retention whose digest was recomputed is still refused by its own parser",
+    );
+
+    // The same forgery with the digest left alone is caught one step earlier,
+    // which is what shows the resealing above was the reason the parser was
+    // reached at all.
+    let mut unsealed = original;
+    let (start, end) = section_span(&unsealed, 2);
+    unsealed[start..end].fill(0);
+    assert_eq!(
+        decode_default(&unsealed, &key),
+        Err(BundleRejection::SectionDigest {
+            purpose: BundleSection::DebugRetention,
+        }),
+    );
+}
+
+/// Every stored-retention rule refuses bytes this build would not have written.
+///
+/// One table because the property is uniform, and each row is a distinct way a
+/// section can be internally consistent bytes and still not be a retention.
+#[test]
+fn a_stored_retention_refuses_what_this_build_would_not_write() {
+    let valid = framed_retention(1, &[(b"tool.stderr", 4, b"text")]);
+    let decoded = DebugRetention::decode(&valid).expect("a hand-framed retention decodes");
+    assert_eq!(decoded.runs().len(), 1);
+    assert_eq!(decoded.runs()[0].label(), "tool.stderr");
+
+    let mut foreign = valid.clone();
+    foreign[0] ^= 0xff;
+    assert_eq!(
+        DebugRetention::decode(&foreign),
+        Err(RetentionRejection::Domain),
+    );
+
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(0, &[])),
+        Err(RetentionRejection::RunCount { declared: 0, .. }),
+    ));
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(MAX_RETAINED_RUNS as u64 + 1, &[])),
+        Err(RetentionRejection::RunCount { .. }),
+    ));
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(2, &[(b"tool.stderr", 4, b"text")])),
+        Err(RetentionRejection::Truncated { .. }),
+    ));
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(1, &[(b"tool.stderr", 1, b"text")])),
+        Err(RetentionRejection::RetainedAboveTotal {
+            index: 0,
+            retained: 4,
+            total: 1,
+        }),
+    ));
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(1, &[(b"Tool", 4, b"text")])),
+        Err(RetentionRejection::Label {
+            index: 0,
+            refusal: RetentionRefusal::NoncanonicalLabelByte { position: 0, .. },
+        }),
+    ));
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(1, &[(b"", 4, b"text")])),
+        Err(RetentionRejection::Label {
+            index: 0,
+            refusal: RetentionRefusal::EmptyLabel,
+        }),
+    ));
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(1, &[(&[0xff], 4, b"text")])),
+        Err(RetentionRejection::LabelNotUtf8 { index: 0 }),
+    ));
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(
+            2,
+            &[(b"tool.stderr", 4, b"text"), (b"tool.stderr", 4, b"more")],
+        )),
+        Err(RetentionRejection::Label {
+            index: 1,
+            refusal: RetentionRefusal::DuplicateLabel { .. },
+        }),
+    ));
+    let oversize = vec![b'x'; MAX_RETAINED_RUN_BYTES + 1];
+    assert!(matches!(
+        DebugRetention::decode(&framed_retention(
+            1,
+            &[(b"tool.stderr", oversize.len() as u64, &oversize)],
+        )),
+        Err(RetentionRejection::RunTooLarge { index: 0, .. }),
+    ));
+    let mut trailing = valid;
+    trailing.push(0);
+    assert!(matches!(
+        DebugRetention::decode(&trailing),
+        Err(RetentionRejection::TrailingBytes { .. }),
+    ));
+}
+
+/// A retained run is bounded, and what it dropped is recorded rather than hidden.
+#[test]
+fn a_retained_run_is_bounded_and_records_its_truncation() {
+    let written = vec![b'x'; MAX_RETAINED_RUN_BYTES + 10];
+    let retained = retaining("tool.stderr", &written);
+    let run = retained.run("tool.stderr").expect("the run is retained");
+
+    assert_eq!(run.as_bytes().len(), MAX_RETAINED_RUN_BYTES);
+    assert_eq!(run.total_bytes(), written.len() as u64);
+    assert!(run.is_truncated());
+    assert!(
+        run.to_string().contains("truncated"),
+        "a truncated run must say so when it is rendered",
+    );
+
+    // A run that fits exactly is not reported as truncated, so the flag is a
+    // statement about dropped bytes rather than about reaching the bound.
+    let exact = retaining("tool.stderr", &vec![b'x'; MAX_RETAINED_RUN_BYTES]);
+    assert!(!exact.run("tool.stderr").expect("the run").is_truncated());
+
+    // Invalid UTF-8 is kept as written and reported, never rendered lossily and
+    // presented as what the tool said.
+    let raw = retaining("tool.stderr", &[0xff, 0xfe]);
+    let run = raw.run("tool.stderr").expect("the run");
+    assert_eq!(run.as_bytes(), &[0xff, 0xfe]);
+    assert!(!run.is_valid_utf8());
+    assert!(run.to_string().contains("not valid UTF-8"));
+}
+
+/// Every caller-side retention rule refuses by name.
+#[test]
+fn a_retention_refuses_a_label_or_a_run_it_cannot_frame() {
+    assert_eq!(
+        DebugRetention::none().retaining("", b"text"),
+        Err(RetentionRefusal::EmptyLabel),
+    );
+    let long = "x".repeat(MAX_RETENTION_LABEL_BYTES + 1);
+    assert!(matches!(
+        DebugRetention::none().retaining(&long, b"text"),
+        Err(RetentionRefusal::LabelTooLong { .. }),
+    ));
+    assert!(matches!(
+        DebugRetention::none().retaining("tool stderr", b"text"),
+        Err(RetentionRefusal::NoncanonicalLabelByte { position: 4, .. }),
+    ));
+    assert!(matches!(
+        retaining("tool.stderr", b"one").retaining("tool.stderr", b"two"),
+        Err(RetentionRefusal::DuplicateLabel { .. }),
+    ));
+
+    let mut full = DebugRetention::none();
+    for index in 0..MAX_RETAINED_RUNS {
+        full = full
+            .retaining(&format!("tool.{index}"), b"text")
+            .expect("a run inside the bound");
+    }
+    assert!(matches!(
+        full.retaining("tool.overflow", b"text"),
+        Err(RetentionRefusal::TooManyRuns { .. }),
+    ));
+}
+
+/// A published retention is read back through the ordinary validated hit, and a
+/// damaged one makes that hit a miss.
+///
+/// The three states the entry can be in, exercised through the protocol rather
+/// than through the frame: present, absent, and damaged.
+#[test]
+fn a_published_retention_survives_the_hit_path_and_a_damaged_one_does_not() {
+    let scratch = Scratch::new("retention-hit");
+    let cache = cache(&scratch);
+    let retained = retaining("tool.stderr", b"warning: unused variable `x`");
+
+    let outcome = cache
+        .resolve_retaining(
+            b"subject",
+            || Ok::<_, String>((b"envelope".to_vec(), retained.clone())),
+            &any_payload,
+        )
+        .expect("a build that succeeds resolves");
+    let ProtocolOutcome::Hit {
+        entry, published, ..
+    } = outcome
+    else {
+        panic!("an empty cache publishes rather than hits");
+    };
+    assert!(published);
+    assert_eq!(entry.retained, retained);
+    let key = entry.key;
+
+    // Present: a second reader validates the whole entry and sees the text.
+    let read = cache
+        .read_entry(&key, &any_payload)
+        .expect("a published entry validates");
+    assert_eq!(
+        read.retained
+            .run("tool.stderr")
+            .expect("the run survives publication")
+            .as_bytes(),
+        b"warning: unused variable `x`",
+    );
+
+    // Damaged: one flipped byte inside the retained text, which the section
+    // digest refuses. The entry is a miss with the boundary that refused it, not
+    // a hit with the retention quietly dropped.
+    let path = cache.entry_path(&key);
+    let mut bytes = fs::read(&path).expect("the entry is readable");
+    let last = bytes.len() - 1;
+    bytes[last] ^= 1;
+    fs::write(&path, &bytes).expect("the entry is writable");
+    assert!(
+        matches!(
+            cache.read_entry(&key, &any_payload),
+            Err(MissReason::Rejected(EntryRejection::Bundle(
+                BundleRejection::SectionDigest {
+                    purpose: BundleSection::DebugRetention,
+                }
+            ))),
+        ),
+        "a damaged retention must refuse validation",
+    );
+}
+
+/// A hit shows what the publishing build retained, and never republishes to add
+/// what this one asked for.
+///
+/// The absent case at the protocol level. An entry published without retention
+/// stays a hit for a caller that states one — the build closure does not run, so
+/// there is nothing to retain, and the entry is not rewritten to hold text a
+/// later reader would find under an unchanged key.
+#[test]
+fn a_hit_on_an_entry_published_without_retention_shows_nothing() {
+    let scratch = Scratch::new("retention-absent");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+
+    let outcome = cache
+        .resolve_retaining(
+            b"subject",
+            || -> Result<(Vec<u8>, DebugRetention), String> {
+                panic!("a validated entry must not be recompiled to add a retention")
+            },
+            &any_payload,
+        )
+        .expect("the stored entry resolves");
+    let ProtocolOutcome::Hit {
+        entry, published, ..
+    } = outcome
+    else {
+        panic!("a stored entry hits");
+    };
+    assert!(!published, "a hit publishes nothing");
+    assert_eq!(entry.key, key);
+    assert!(
+        entry.retained.is_empty(),
+        "a hit on an entry published without retention shows nothing",
+    );
+}
+
+/// A cache that stores nothing hands the retention back rather than losing it.
+#[test]
+fn an_uncached_resolution_returns_the_retention_it_could_not_store() {
+    let retained = retaining("tool.stderr", b"warning: unused variable `x`");
+    let outcome = ExpansionCache::disabled()
+        .resolve_retaining(
+            b"subject",
+            || Ok::<_, String>((b"envelope".to_vec(), retained.clone())),
+            &any_payload,
+        )
+        .expect("a disabled cache still builds");
+    let ProtocolOutcome::Uncached { entry, report } = outcome else {
+        panic!("a disabled cache stores nothing");
+    };
+    assert_eq!(entry.retained, retained);
+    assert!(matches!(
+        report.publication_refusal(),
+        Some(PublicationRefusal::Disabled),
+    ));
 }
 
 // -------------------------------------------------------------------------
