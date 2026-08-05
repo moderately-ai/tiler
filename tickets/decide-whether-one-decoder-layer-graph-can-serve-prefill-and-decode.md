@@ -1,14 +1,17 @@
 ---
 id: decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode
 title: Decide whether one decoder-layer graph can serve prefill and decode
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [assemble-the-decoder-layer-program, design-autoregressive-state-and-kv-cache, design-model-ingestion-and-complete-execution]
 scopes: [research/program-planning]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [research, semantics, language-model, identity]
+claimed_from: todo
+assignee: agent-decoder-fork
+lease_expires_at: 1785950113
 ---
 ## What was found, and where
 

@@ -1,7 +1,7 @@
 ---
 id: admit-a-parallel-topology-for-the-identity-less-extrema-fold
 title: Admit a parallel topology for the identity-less extrema fold
-status: todo
+status: in-progress
 priority: p2
 dependencies: [admit-the-softmax-family]
 related: [implement-parallel-reduction-strategies, realize-parallel-reduction-strategies-on-metal, admit-the-softmax-family, design-attention-program-vertical]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reductions, extrema, softmax, scheduling]
+claimed_from: todo
+assignee: agent-extrema-fold
+lease_expires_at: 1785950113
 ---
 ## User-visible outcome
 

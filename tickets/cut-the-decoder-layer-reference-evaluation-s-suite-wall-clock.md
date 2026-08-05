@@ -1,14 +1,17 @@
 ---
 id: cut-the-decoder-layer-reference-evaluation-s-suite-wall-clock
 title: Cut the decoder-layer reference evaluation's suite wall clock
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [assemble-the-decoder-layer-program, audit-the-suite-s-slowest-tests]
 scopes: [implementation/reference]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [testing, performance]
+claimed_from: todo
+assignee: agent-suite-clock
+lease_expires_at: 1785950113
 ---
 ## The measurement, and why it is a ticket rather than a footnote
 
