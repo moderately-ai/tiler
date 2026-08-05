@@ -1,7 +1,7 @@
 ---
 id: audit-backend-authoring-against-all-thirteen-responsibilities
 title: Audit backend authoring against all thirteen responsibilities
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [specify-the-consumer-neutral-backend-provider-composition-contract, publish-the-backend-provider-conformance-suite, expose-explicit-backend-provider-and-selection-policy-composition]
@@ -9,6 +9,9 @@ scopes: [research/extensions, research/program-planning, research/artifacts, res
 shared_scopes: [project/tickets]
 paths: []
 tags: [architecture, backend-providers, audit, conformance]
+claimed_from: todo
+assignee: agent-backend-audit
+lease_expires_at: 1785951341
 ---
 ## User-visible outcome
 
