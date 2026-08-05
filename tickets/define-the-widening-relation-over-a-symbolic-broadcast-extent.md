@@ -1,0 +1,58 @@
+---
+id: define-the-widening-relation-over-a-symbolic-broadcast-extent
+title: Define the widening relation when a broadcast result extent is a symbol
+status: deferred
+priority: p2
+dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module, carry-a-sourced-shape-on-semantic-values]
+related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode, resolve-semantic-shape-inference-over-symbolic-extents, assemble-the-decoder-layer-program, assemble-the-causal-self-attention-block-program, design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, deliver-an-artifact-family-from-a-symbolic-region]
+scopes: [research/shapes, implementation/ir]
+shared_scopes: [project/tickets]
+paths: []
+tags: [research, shapes, semantics, broadcast, identity, language-model]
+---
+## User-visible outcome
+
+One decoder-layer program serves every admissible new-position count, including one, so a prefill row and a decode row are one artifact identity rather than two — or the impossibility is recorded as a durable refusal with the count corrected everywhere it is asserted.
+
+## Why this exists
+
+**Fact — the family refuses a degenerate widening, and the refusal has no escape.** `BroadcastAxisMapping::new` rejects any `Replicate` or `StretchUnit` entry whose declared result extent is below two, under `broadcast.mapping.relation-does-not-widen` (`crates/tiler-ir/src/semantic/broadcast.rs:483`), and rejects a mapping stating only one-to-one correspondences, under `broadcast.mapping.no-many-to-one-relation` (`:492`). A mapping must state one source per declared result axis and consume every operand axis exactly once in ascending order (`:462`, `:468`), so a rank-one operand widened onto a rank-two result must spell exactly one axis as `Replicate` — and at a result extent of one that spelling is refused. `[1024] -> [1, 1024]` therefore has **no broadcast spelling at all**.
+
+**Measurement, 2026-08-05, at `crates/tiler-reference/tests/decoder_layer.rs`.** The assembled decoder layer carries fifty-eight occurrences and seventy-six values at the C1 prefill row (`T = 10`) and sixty-two and eighty at the C1 decode row (`T = 1`): six position-axis widenings change spelling, two losing their broadcast entirely and four becoming a narrower broadcast plus a unit-axis insertion, so broadcasts fall from eleven to nine and reindexes rise from sixteen to twenty-two with every other key unmoved (`a_single_new_position_changes_six_widenings`). At a fixed `T` a deeper cache moves no occurrence at all (`a_nonempty_cache_changes_no_occurrence`), so the divergence is the new-position count and not the cache.
+
+**Inference — relocating the existing check does not repair it, and both alternatives are worse than the divergence.** The layer declares `T` over `[1, 32768]`. Deciding the widening at construction against the environment's proved lower bound refuses the mapping outright, because `T >= 2` is not proved — the layer becomes unbuildable at *both* rows. Deciding it where the extent is bound refuses at `LiveDevicePreflight` on the decode binding, which turns a construction-time graph divergence into a run-time refusal at exactly the row that needed it. What is left is to *define* the degenerate binding rather than refuse it.
+
+**Inference — the family's own ground for the refusal inverts under a symbol rather than merely weakening, which is why this is a new question and not a relaxation request.** The stated reason is that one relation must have one spelling. At a **literal** extent of one, a `Replicate` and a `Reindex::insert_unit_axis` denote the same function, so two spellings genuinely exist for one relation and refusing one of them keeps canonical identity injective over meanings. At a **symbol**, the two denote different functions over the interval and coincide at exactly one point of it — so the rule that protects injectivity over literal mappings is the rule that makes a symbolic mapping unspellable. The two domains need different rules, and a blanket relaxation of the literal case is separately wrong: it would mint two artifact identities for one program while leaving the row-dependent declared extents in place, costing injectivity to buy an occurrence-count cosmetic.
+
+**Fact — the second, weaker prerequisite is unrecorded anywhere.** A mapping holds `result_extents: Vec<Extent>` and folds them into the occurrence's canonical attribute bytes, which [`assemble-the-causal-self-attention-block-program`](assemble-the-causal-self-attention-block-program.md) already pinned as checks for the attention half; so a mapping stays a per-row constant even after every value shape becomes symbolic. [Symbolic semantic extents](../docs/research/shapes/symbolic-semantic-extents.md) does not reach shape-declaring attributes: `grep -cin "broadcast" docs/research/shapes/symbolic-semantic-extents.md` and the same over `mapping` each return `0`, against a control `grep -cin "extent"` of `55`.
+
+**What this bears on.** [L6's complete-model record](../docs/research/program-planning/complete-model-ingestion-and-execution.md) states "270 executions over exactly three artifact identities" and now carries its condition and D-19; [L5's autoregressive-state record](../docs/research/runtime/autoregressive-state-and-kv-cache.md) states that the decode step is not a second program design and now carries the half of that which the measurement refutes; [L8's qualification record](../docs/research/program-planning/model-level-qualification.md) pins the identity count and the cold pipeline-creation count of three, both now conditional.
+
+## What this must decide
+
+- Whether `BroadcastAxisMapping`'s declared result extents become sourced (constant-or-symbol) alongside value shapes, and what that does to the mapping's canonical encoding, its domain separator, and the `tiler::broadcast-f32@1` key's version.
+- What a many-to-one relation **means** when its result extent binds to one: an identity that is defined rather than refused, or a typed refusal that stands and makes one graph over both rows impossible.
+- Whether the literal-extent refusals `relation-does-not-widen` and `no-many-to-one-relation` stay exactly as they are for a literal extent — the position this ticket recommends, because their injectivity ground is sound over literals and only over literals.
+- What the index-access lowering derives for a degenerate widening, since `BroadcastAxisSource` is deliberately not `#[non_exhaustive]` precisely so that a relation the lowering has not seen is a build error.
+
+## Do not
+
+- Do not relax the literal-extent refusals as a shortcut to equal occurrence counts. It leaves the declared extents row-dependent, so it does not deliver one identity, and it costs the injectivity the refusals exist for.
+- Do not close this by asserting a count of four artifact identities for the C1 row. Four is the count under a vocabulary that supplies symbolic value shapes and symbolic mapping extents but not this decision, and nothing proposes that vocabulary; under today's fixed extents the row is thirteen and under a sufficient one it is three.
+- Do not admit chunked decode (`T >= 2` always, one-token chunk padded) as an answer. It equalizes the occurrence count and delivers no identity, because the mapping still declares a literal `[2, 1024]` against `[10, 1024]`; it appends a position to the retained `K` and `V` that no admitted family can remove; and truncating a `[8, C+2, 128]` row-major payload is a copy rather than a re-declared extent.
+- Do not repair this by widening a consuming family's signature — for instance `tiler::rms-norm-f32@1` accepting a weight of the reduced axis's extent. It removes four of the six widenings and leaves fifty-four against fifty-six, and it reintroduces the implicit broadcasting the broadcast family's own definition forecloses.
+
+## Closes when
+
+Tom has decided the meaning of a many-to-one relation at a symbolic result extent that may bind to one, the decision is recorded as an accepted decision rather than a proposal, and either the decoder layer verifies at both C1 rows as one graph with one occurrence signature — with `decoder_layer.rs`'s two count assertions collapsed to one and the perturbation that made them differ retained as the check that can still fail — or the impossibility is durable and L6, L5 and L8 carry the corrected count unconditionally.
+
+## Graph maintenance
+
+- Filed 2026-08-05 by [`decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode`](decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode.md), which ran the elimination and corrected the three records rather than taking the vocabulary change.
+- Depends on [`relocate-the-sourced-extent-vocabulary-to-the-shape-module`](relocate-the-sourced-extent-vocabulary-to-the-shape-module.md) and [`carry-a-sourced-shape-on-semantic-values`](carry-a-sourced-shape-on-semantic-values.md): a predicate over a sourced extent on a mapping is not designable before the sourced vocabulary lives in `tiler_ir::shape` and a semantic value can carry one. Both are `todo`, and the seven decisions of [symbolic semantic extents](../docs/research/shapes/symbolic-semantic-extents.md) are all still Tom's.
+- Related to [`resolve-semantic-shape-inference-over-symbolic-extents`](resolve-semantic-shape-inference-over-symbolic-extents.md) rather than dependent on it: that ticket routes the *elementwise* rule through `proves_equal`, and this one is the same question for a shape-declaring attribute, which its record does not reach.
+- Declared `research/shapes` because the addendum belongs beside the symbolic-extent record, and `implementation/ir` because `crates/tiler-ir/src/semantic/broadcast.rs` is where the predicate and the normative definition live.
+
+## Trigger check log
+
+- 2026-08-05 — **not fired.** The mapping's declared extents are still literal, so no symbolic widening predicate has a subject: `BroadcastAxisMapping` holds `result_extents: Vec<Extent>` with `Extent(u64)`, and both dependency tickets are `todo`. Recheck: `grep -n 'result_extents: Vec<Extent>' crates/tiler-ir/src/semantic/broadcast.rs` — while that line exists, the trigger has not fired.
