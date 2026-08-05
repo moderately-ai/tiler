@@ -1,7 +1,7 @@
 ---
 id: refresh-the-reduced-precision-float-matrix-row-after-the-bf16-gate-landings
 title: Refresh the reduced-precision float matrix row after the BF16 gate landings
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [own-operation-family-support-matrix, admit-a-bf16-scalar-arithmetic-subject, declare-the-bf16-rows-on-the-authoritative-metal-profile, derive-dtype-family-research-tracks-from-the-mature-taxonomy]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, roadmap, bf16, matrix]
+claimed_from: todo
+assignee: agent-bf16-matrix
+lease_expires_at: 1785941396
 ---
 ## User-visible outcome
 
