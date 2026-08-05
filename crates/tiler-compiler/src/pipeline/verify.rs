@@ -138,14 +138,12 @@ pub(super) fn verify_alternative(
             cause,
         ));
     }
-    // The schedule is re-derived and compared exactly as before; only the copy
-    // is gone. Once the stored regions are proven equal to the re-derivation,
-    // they *are* the re-derivation, so the layers below verify against the
-    // borrowed slice instead of against a duplicate of it.
-    // `None` means the plan contains a body with no scheduled region, which the
-    // alternative could not have been built from — so it is a binding failure
-    // like any other mismatch, not a separate outcome.
-    let Some(ordered) = plan_region_order(&alternative.plan) else {
+    // The whole assembly description is re-derived from the alternative's own
+    // plan and its stage order compared against the stored regions. A refusal
+    // means the plan describes a program this assembler has no expression for,
+    // which the alternative could not have been built from — so it is a binding
+    // failure like any other mismatch, not a separate outcome.
+    let Ok(assembly) = CoverAssembly::from_plan(semantic, &alternative.plan) else {
         return Err(failure_at_source(
             ProgramError::Structure {
                 rule: "portfolio-schedule-binding",
@@ -155,13 +153,7 @@ pub(super) fn verify_alternative(
             cause,
         ));
     };
-    if alternative.scheduled_regions.len() != ordered.len()
-        || alternative
-            .scheduled_regions
-            .iter()
-            .zip(&ordered)
-            .any(|(stored, derived)| stored != *derived)
-    {
+    if alternative.scheduled_regions.as_slice() != assembly.regions() {
         return Err(failure_at_source(
             ProgramError::Structure {
                 rule: "portfolio-schedule-binding",
@@ -190,7 +182,7 @@ pub(super) fn verify_alternative(
             cause,
         ));
     }
-    let program = build_plan_program(semantic, request, alternative.kind, scheduled, lowering)
+    let program = build_plan_program(semantic, request, &assembly, lowering)
         .map_err(|error| failure_at_source(error, ExplainStage::ProgramVerification, cause))?;
     if alternative.program != program {
         return Err(failure_at_source(
@@ -209,7 +201,7 @@ pub(super) fn verify_alternative(
         &alternative.artifact_plan,
         semantic,
         request,
-        scheduled,
+        &assembly,
         &kernels,
         &program,
         lowering,

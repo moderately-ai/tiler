@@ -69,13 +69,11 @@ use crate::normalize::{
 use crate::physical::{
     PhysicalError, VerifiedKernel, VerifiedScheduledRegion, lower_structured_kernel,
 };
-#[cfg(test)]
-use crate::program::build_split_kernel_program;
 use crate::program::{
-    ArtifactConstructionPlan, KernelProgram, ProgramError, assert_kernels_match_program,
-    build_artifact_plan_with_lowering, build_fused_kernel_program_with_lowering,
-    build_kernel_program_with_lowering, build_split_kernel_program_with_lowering,
-    verify_artifact_plan_with_lowering, verify_semantic_output_type,
+    ArtifactConstructionPlan, AssemblyRefusal, AssemblyRefusalClass, CoverAssembly, KernelProgram,
+    ProgramError, assert_kernels_match_program, build_artifact_plan_with_lowering,
+    build_cover_kernel_program_with_lowering, verify_artifact_plan_with_lowering,
+    verify_semantic_output_type,
 };
 use crate::region::{
     REGION_FORMATION_SUBJECT, RegionCandidate, RegionError, RegionFormationOutcome,
@@ -2116,7 +2114,7 @@ mod verify;
 #[cfg(test)]
 use planning::build_alternative;
 use planning::{
-    build_alternative_for_origin, build_plan_program, enumerate_complete_plans, plan_region_order,
+    build_alternative_for_origin, build_plan_program, enumerate_complete_plans,
     select_non_dominated,
 };
 use trace::{

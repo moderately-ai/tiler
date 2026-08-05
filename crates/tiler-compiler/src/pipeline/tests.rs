@@ -2667,7 +2667,7 @@ fn lowering_refuses_an_opaque_plan_before_program_assembly() {
     let plan = opaque
         .plans()
         .iter()
-        .find(|plan| plan_region_order(plan).is_none())
+        .find(|plan| crate::program::CoverAssembly::from_plan(&semantic, plan).is_err())
         .expect("one opaque plan");
 
     let error = build_alternative(
@@ -2700,7 +2700,7 @@ fn verification_refuses_an_alternative_with_an_opaque_plan() {
     let plan = opaque
         .plans()
         .iter()
-        .find(|plan| plan_region_order(plan).is_none())
+        .find(|plan| crate::program::CoverAssembly::from_plan(&semantic, plan).is_err())
         .expect("one opaque plan")
         .clone();
     forged.structural_cost = plan.cost();
@@ -3959,8 +3959,12 @@ fn a_cooperative_region_declares_its_own_launch() {
         panic!("the materialized strategy is a pointwise stage and a reduction");
     };
     let scheduled = vec![pointwise.clone(), tree];
-    let program = crate::program::build_kernel_program(&semantic, &request, &scheduled)
-        .expect("the tree's program assembles");
+    let program = crate::program::build_kernel_program(
+        &semantic,
+        &request,
+        &materialized_assembly(&request, &scheduled),
+    )
+    .expect("the tree's program assembles");
     let expressions = program.core().abi_expressions();
     let literal = |position: u32| match expressions
         .get(usize::try_from(position).expect("an arena position fits a usize"))
@@ -4340,6 +4344,103 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
 }
 
 /// Assembles the three verified regions of one request's split program.
+/// The materialized two-stage assembly a two-region cover states: the prologue
+/// writes one value across the boundary, and the region after it publishes the
+/// program's named output.
+///
+/// Stated rather than derived from a plan for the reason
+/// `program::tests::materialized_assembly` gives: these tests drive the
+/// assembler with a description, and `CoverAssembly::from_plan` is exercised by
+/// every compiled program in this module and in `conformance`.
+fn materialized_assembly(
+    request: &crate::request::VerifiedTargetRequest,
+    scheduled: &[crate::physical::VerifiedScheduledRegion],
+) -> crate::program::CoverAssembly {
+    let subject = request.serial_sum();
+    crate::program::CoverAssembly::stated(
+        scheduled.to_vec(),
+        vec![
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (subject.output_shape.clone(), ValueRole::Output),
+        ],
+        vec![
+            crate::program::AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![
+                    crate::program::AssemblyBinding::Input(0),
+                    crate::program::AssemblyBinding::Internal(0),
+                ],
+            },
+            crate::program::AssemblyStage {
+                coverage: subject.members.reduction().to_vec(),
+                bindings: vec![
+                    crate::program::AssemblyBinding::Internal(0),
+                    crate::program::AssemblyBinding::Internal(1),
+                ],
+            },
+        ],
+        Vec::new(),
+        vec![(subject.output_key.clone(), 1)],
+    )
+    .expect("the two-region assembly is well formed")
+}
+
+/// The split's three-stage assembly: the same two-region cover, with its
+/// reduction realized by a partial pass and a combining pass.
+///
+/// The combining pass covers **no** occurrence — the partial pass already claims
+/// the reduction the two of them realize — which whole-program verification
+/// admits only because the split contract below is declared.
+fn split_assembly(
+    request: &crate::request::VerifiedTargetRequest,
+    scheduled: &[crate::physical::VerifiedScheduledRegion],
+) -> crate::program::CoverAssembly {
+    let subject = request.serial_sum();
+    let partial = scheduled[1].region().index.iteration_shape.clone();
+    let partition = crate::physical::declared_partial_partition(scheduled[1].region())
+        .expect("the partial pass declares its split");
+    crate::program::CoverAssembly::stated(
+        scheduled.to_vec(),
+        vec![
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (partial, ValueRole::Temporary),
+            (subject.output_shape.clone(), ValueRole::Output),
+        ],
+        vec![
+            crate::program::AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![
+                    crate::program::AssemblyBinding::Input(0),
+                    crate::program::AssemblyBinding::Internal(0),
+                ],
+            },
+            crate::program::AssemblyStage {
+                coverage: subject.members.reduction().to_vec(),
+                bindings: vec![
+                    crate::program::AssemblyBinding::Internal(0),
+                    crate::program::AssemblyBinding::Internal(1),
+                ],
+            },
+            crate::program::AssemblyStage {
+                coverage: Vec::new(),
+                bindings: vec![
+                    crate::program::AssemblyBinding::Internal(1),
+                    crate::program::AssemblyBinding::Internal(2),
+                ],
+            },
+        ],
+        vec![crate::program::AssemblySplit {
+            producer: 1,
+            combiner: 2,
+            partial: 1,
+            result: 2,
+            partition,
+        }],
+        vec![(subject.output_key.clone(), 2)],
+    )
+    .expect("the split assembly is well formed")
+}
+
 fn split_regions(
     request: &crate::request::VerifiedTargetRequest,
 ) -> Vec<crate::physical::VerifiedScheduledRegion> {
@@ -4414,8 +4515,12 @@ fn the_assembled_split_program_matches_the_partitioned_sum_oracle() {
     let values: Vec<f32> = vec![1.0e20_f32, 1.0, -1.0e20, 1.0];
     let (semantic, request) = split_request(shape.clone());
     let scheduled = split_regions(&request);
-    let program = build_split_kernel_program(&semantic, &request, &scheduled)
-        .expect("the split program verifies");
+    let program = crate::program::build_kernel_program(
+        &semantic,
+        &request,
+        &split_assembly(&request, &scheduled),
+    )
+    .expect("the split program verifies");
     assert_eq!(program.stage_count(), 3);
 
     let kernels: Vec<_> = scheduled
@@ -4462,7 +4567,12 @@ fn the_assembled_split_program_matches_the_partitioned_sum_oracle() {
 fn the_split_program_declares_its_partial_reduction_and_dispatch_order() {
     let (semantic, request) = split_request(Shape::from_dims([1, 4]));
     let scheduled = split_regions(&request);
-    let program = build_split_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let program = crate::program::build_kernel_program(
+        &semantic,
+        &request,
+        &split_assembly(&request, &scheduled),
+    )
+    .unwrap();
     let core = program.core();
     assert_eq!(core.stages().len(), 3);
     assert_eq!(core.values().len(), 4);
@@ -4554,7 +4664,14 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
     // the declared arity, which is what the `buffers: 3` refusal above drives.
     let (semantic, request) = split_request(Shape::from_dims([1, 4]));
     let scheduled = split_regions(&request);
-    assert!(build_split_kernel_program(&semantic, &request, &scheduled).is_ok());
+    assert!(
+        crate::program::build_kernel_program(
+            &semantic,
+            &request,
+            &split_assembly(&request, &scheduled)
+        )
+        .is_ok()
+    );
     assert_eq!(request.budgets().buffers, 6);
     assert_eq!(request.budgets().regions, 3);
 }
