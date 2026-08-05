@@ -72,3 +72,7 @@ After a trigger fires, the concrete multi-backend evidence eliminates all but
 one ownership model, the result is recorded in a durable contract or accepted
 ADR, every identity and validation consequence is enumerated, and any public
 boundary has Tom's explicit acceptance.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Trigger 1 is unmet: no independently authored target profile exists at all, let alone one blocked by an unnamed quantitative fact. Trigger 2 is unmet: [`declare-cpu-vector-realization-facts-in-the-target-profile`](declare-cpu-vector-realization-facts-in-the-target-profile.md) is `todo`, so there is no second backend's quantitative row to compare — and the ticket already records that a vector-width request would not fire either trigger under ADR 0093.

@@ -36,3 +36,7 @@ Any one of these makes this actionable, and each needs re-checking at the revisi
 - No path reads device memory, compares a value, or returns a tensor before terminal success is observed for the exact command buffer the dispatch was encoded into.
 - The flush `plan_dispatch` performs against Candle's pending work is removed or re-justified: it exists only because the two streams were separate, and a single stream orders the input's producer against this dispatch without it.
 - Overlap is measured rather than asserted — a workload with Candle work on both sides of the custom op, timed before and after, with the procedure and environment recorded.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** All three conditions are conditions on Candle, and the workspace still resolves `candle-core = "0.11.0"` and `candle-metal-kernels = "0.11.0"` with no `git`/`rev` fork pinned (`prototypes/candle-metal-adapter/Cargo.toml`), so `ensure_completed` is unchanged and no in-flight `CommandBuffer` is public. Recheck: `grep -n 'candle-core\|candle-metal-kernels' prototypes/candle-metal-adapter/Cargo.toml`.

@@ -42,3 +42,7 @@ The trigger has fired, an integer honourability subject exists with a validated 
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-2 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
 - `contracts/numerics` is declared because the subject vocabulary sentence quoted above lives in `docs/numerical-semantics.md` and must move in the same change as the mechanism.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-2's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):143 and remains unmet: no named tensor workload selects an exact integer width with an operation family, overflow/division/conversion behaviour, storage, target, and corpus, and the ledger excludes quantized codes from firing it by name.

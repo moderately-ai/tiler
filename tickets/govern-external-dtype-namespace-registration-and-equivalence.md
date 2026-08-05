@@ -42,3 +42,7 @@ The trigger has fired, the registration and collision boundary is accepted by To
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-13 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
 - [`route-the-reserved-numeric-families-through-the-extension-boundary`](route-the-reserved-numeric-families-through-the-extension-boundary.md) depends on this, because the extension boundary is the only route those families have.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-13's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):233: no real consumer has published an owner-namespaced identity with the full evidence set, and no proposal has arrived to mint a built-in key for a format an external owner already publishes. The second deferral ground — an owner check that is vacuous while nothing can collide — is unchanged.

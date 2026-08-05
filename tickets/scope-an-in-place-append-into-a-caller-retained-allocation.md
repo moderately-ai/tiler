@@ -97,3 +97,7 @@ After the activation trigger actually fires, either a plan is delivered with its
 address/layout negative oracle, recovery contract, and measured saving at a named
 row, or it is refused with a durable reason and a restated trigger. Until then
 the ticket remains `deferred`.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Condition 1 is recorded fired above; conditions 2 and 3 remain unmet on the same day — no reproducible measurement shows the survivor's replacement traffic, allocation behaviour, or peak residency is a binding cost, and no recovery contract makes a post-commit partial write safely recoverable. All three must hold. Recheck: the three numbered conditions above.

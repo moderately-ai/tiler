@@ -39,3 +39,7 @@ The trigger has fired and the seven packing parameters are contract text with a 
 ## Graph maintenance
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-10 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-10's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):211. Verified independently against the tree: `StorageScalar` still has exactly two variants, `U8` and `F32` (`crates/tiler-ir/src/program/model.rs:264-269`), so no selected profile has chosen a packed code width and no sub-byte element has acquired a carrier. Recheck: `grep -n 'enum StorageScalar' -A 6 crates/tiler-ir/src/program/model.rs`.

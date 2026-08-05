@@ -39,3 +39,7 @@ unsupported routes. Marking the ticket done requires results from at least two r
 independently addressable Metal devices with complete OS/SDK/device/storage-mode
 provenance; all unavailable platform families remain `Unknown` rather than
 being inferred from one configuration.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** No host in this project has more than one independently addressable Metal device — every retained measurement is a single Apple-silicon unified-memory GPU — and the multi-device scope gate has not activated. Recheck: the gate's own two conditions.

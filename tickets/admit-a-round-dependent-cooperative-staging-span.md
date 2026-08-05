@@ -45,3 +45,7 @@ Deferred rather than dispatchable. It becomes work when **either** fires:
 ## Closes when
 
 A round-dependent staged access is statable, coverage is decided as a union over rounds while disjointness stays per round under the governed enumeration bounds, every new rule has been watched refusing its own defect, and any identity step it forces is complete with every moved pin recomputed on the merged tree and enumerated in the report.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Trigger 1 names the log-depth tree reaching its depth limit under [`implement-the-single-workgroup-synchronized-reduction-strategy`](implement-the-single-workgroup-synchronized-reduction-strategy.md), which is now `done` — but it landed a **depth-two** tree, not a log-depth one: `workgroup_tree_tile` fixes `rounds: 1` (`crates/tiler-ir/src/schedule/cooperative.rs:887`), and the only occurrence of "log-depth" in the crate is the absent-capability note at `cooperative.rs:79`. A dependency reaching `done` is therefore not this trigger; the depth limit is. Trigger 2 is unmet too — no double-buffered cooperative tile is proposed anywhere in the graph. Recheck: `grep -n 'rounds: 1' crates/tiler-ir/src/schedule/cooperative.rs`.

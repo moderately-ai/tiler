@@ -33,3 +33,7 @@ The trigger has fired and the vertical is stated including which storage encodin
 ## Graph maintenance
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-7 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-7's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):187: no named frontend or accelerator consumer requires a decimal tensor element, and backend availability is explicitly not a trigger.

@@ -4,7 +4,7 @@ title: Activate shared-work duplication on the compile path
 status: deferred
 priority: p2
 dependencies: []
-related: [implement-general-dag-partitioning, implement-boundary-property-enforcers]
+related: [implement-general-dag-partitioning, implement-boundary-property-enforcers, drive-an-external-physical-implementation-provider-through-compilation]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -47,3 +47,7 @@ Turning this on is a one-line change at the single call site in `enumerate_compl
 
 - When this lands, `component_cost`'s `RedundantWork` arm stops reporting `Exact(0)` — check the value moves, as its note asks.
 - A duplicating plan makes one region's guarantee differ from another's requirement, which is the first case `implement-boundary-property-enforcers` restarts on. Re-read that ticket's restart condition rather than assuming this fires it.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** The compile path still enumerates under `CoverPolicy::governed` (`crates/tiler-compiler/src/pipeline/planning.rs:77`, `crates/tiler-compiler/src/pipeline/verify.rs:58`), and `build_plan_program` still matches exactly three shapes and rejects any other as `unsupported-plan-shape` (`crates/tiler-compiler/src/pipeline/planning.rs:897-913`), so triggers 1 and 2 are both unmet; `drive-an-external-physical-implementation-provider-through-compilation` is `todo`. The general DAG partition search that landed 2026-08-04 widened the *cover search*, not the provider or the assembly, so it does not fire this. Recheck: `grep -n 'unsupported-plan-shape' crates/tiler-compiler/src/pipeline/planning.rs && grep -rn 'CoverPolicy::governed' crates/tiler-compiler/src/pipeline/`.

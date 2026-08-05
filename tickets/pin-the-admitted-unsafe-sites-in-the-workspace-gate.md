@@ -57,3 +57,7 @@ If mechanical enforcement is selected, a **negative mutation test must prove the
 ## Activation trigger
 
 Reactivate before admitting the first production unsafe site, or when the admitted population grows beyond the two current prototype functions. At activation, derive the inventory mechanism from Rust syntax rather than a zero-observation grep, name and count the expected population, and demonstrate failure for addition, move, removal, and reason change. Tom reviews any resulting workspace-gate or unsafe-policy boundary.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** The admitted population is still exactly two, both in `prototypes/serial-sum-run/src/buffer.rs`, and there is still no admitted unsafe site under `crates/` — so neither "before the first production site" nor "the population grows beyond two" has arrived. [`prototype-metal-runtime-execution`](prototype-metal-runtime-execution.md) is `done` and added none. Recheck: `grep -rn --include='*.rs' -B1 '^    unsafe_code,' crates prototypes` returns exactly two matches.

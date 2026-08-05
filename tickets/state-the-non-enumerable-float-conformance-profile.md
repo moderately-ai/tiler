@@ -38,3 +38,7 @@ The trigger has fired and a bounded conformance profile exists that names its un
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-3 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
 - Depends on [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) because "reuses the BF16 pattern" is a claim about a vertical that has not yet run end to end; deriving from an unconformed pattern would propagate whatever it gets wrong.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-3's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):155: no named workload selects `f16`, `f64`, or `f128`, and a second target measurement alone does not fire it. The dependency [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) is also `todo`, so the pattern this would derive from has not run end to end.

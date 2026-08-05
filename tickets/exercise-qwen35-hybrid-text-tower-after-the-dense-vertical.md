@@ -4,7 +4,7 @@ title: Exercise the Qwen3.5 hybrid text tower after the dense model vertical
 status: deferred
 priority: p2
 dependencies: [design-model-level-qualification-and-optimization, reclassify-language-model-work-as-a-conformance-track]
-related: [define-first-metal-lm-workload, derive-transformer-operation-and-shape-surface]
+related: [define-first-metal-lm-workload, derive-transformer-operation-and-shape-surface, prove-the-c1-complete-model-execution]
 scopes: [research/program-planning, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
@@ -38,3 +38,7 @@ Connect every newly required semantic operation, physical carrier for a retained
 ## Closes when
 
 The exact hybrid text tower has a dependency-ordered delivery graph grounded in the retained local implementation and official model artifacts; its two state families and recurrent transitions are explicit and identity-bearing; unrelated multimodal, quantized and speculative surfaces remain separately gated; and its model-level correctness and performance qualification is reproducible.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** The trigger is the selected dense decoder workload reaching model-boundary correctness and performance qualification. [`prove-the-c1-complete-model-execution`](prove-the-c1-complete-model-execution.md) and [`prove-the-c1-stateful-attention-vertical`](prove-the-c1-stateful-attention-vertical.md) are both `todo`, so no dense vertical has been qualified. Recheck: those two statuses.

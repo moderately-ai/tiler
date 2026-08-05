@@ -39,3 +39,7 @@ cut -f1 "$R" | grep -c ios                                    # -> 0
 An MSL 4.0 measurement exists for the iOS families under their own SDK and target triples, a second `BoundMetalCompileDeclaration` constructor is assembled from exactly those rows and no others, and the ledger gains — or is joined by — a record that names each new row's authority and validity scope with the same discipline as the macOS one. The `IOsDevice` device side is the hard part and is owned by `measure-apple-numerics-on-physical-ios-device` (deferred, hardware-blocked); an `IOsSimulator`-only declaration is a coherent narrower outcome, but it does not unblock `deliver ios;`, which requires both families.
 
 **Do not** widen the declaration by adding an argument, by reusing the macOS measurement source under an iOS platform, or by treating compile-side byte-identity across families as a numerical measurement. `crates/tiler-build/src/metal_plan.rs`'s `second_artifact_family_fixture` is `#[cfg(test)]` precisely so that the shape of such a declaration can be exercised without any of those three becoming reachable.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** The reactivation trigger is the first consumer asking for an iOS artifact; none has, and the hardware half remains blocked ([`measure-apple-numerics-on-physical-ios-device`](measure-apple-numerics-on-physical-ios-device.md), also unfired this sweep). `BoundMetalCompileDeclaration` still publishes one constructor. Recheck: `grep -n 'pub fn first_macos_apple9' crates/tiler-build/src/metal_declaration.rs`.

@@ -33,3 +33,7 @@ Nothing in the tree presses it. The contraction reached R6 through `normalize_co
 ## Closes when
 
 The trigger fires and this becomes one atomic question to Tom with the workload attached; or an accepted ADR settles it and the three reservation sites above are updated to point at that record; or the trigger is confirmed unfireable with the derivation recorded. Closing this needs an ADR in `docs/decisions/`, which is why this ticket claims `contracts/decisions` alongside `contracts/numerics`.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** No workload's natural spelling is refused by `contraction.rule.index-in-more-than-two-operands`; the pinned workload's three index structures remain binary, and nothing added since states a three-operand shared index. Recheck: `grep -rn 'index-in-more-than-two-operands' crates/tiler-ir/src/semantic/contraction.rs`.

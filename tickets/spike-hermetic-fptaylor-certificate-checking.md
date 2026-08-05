@@ -42,3 +42,7 @@ and timing/size measurements. Mark the experiment done with a positive adoption
 recommendation only if the independent checker covers every admitted numerical
 construct; otherwise mark it done with a documented `Unknown`/negative result
 and leave empirical agreement explicitly non-authoritative.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired**, and the gate is a conjunction whose halves now disagree. [`spike-sound-region-accuracy-analyzer-integration`](spike-sound-region-accuracy-analyzer-integration.md) is `done`, so the first half — the bounded analyzer integration being complete — **is** met. The second half is not: no milestone requires independently checkable accuracy evidence rather than the accepted trusted-analyzer result, and no pinned hermetic toolchain plan or host-installation approval exists. A future sweep evaluates the second half only.

@@ -30,12 +30,17 @@ Nothing is broken now: the bounded profile emits no subgroup barriers, so the
 rejection path is unreachable end to end. This is a reservation whose absence
 would only bite when the capability is actually needed.
 
-**Trigger:** when subgroup collectives (shuffles, reductions, ballots) enter the
-supported profile. At that point add `MemoryScope::Subgroup`, map it to
-`simdgroup_barrier` in `tiler-metal`, and decide explicitly what
-`MemoryScope::Device` means for a barrier that cannot provide it — either remove
-it from the barrier vocabulary, or document that it is only meaningful outside a
-kernel body.
+**Trigger** (rewritten 2026-08-04 by the deferred sweep; the superseded wording
+was "when subgroup collectives (shuffles, reductions, ballots) enter the
+supported profile", refuted twice below): **the first schedule declaring a
+staged allocation through threadgroup memory whose writer *and every reader* lie
+in one subgroup** — a subgroup-private scratch tile. That is the only case in
+which a publication narrower than the threadgroup is both sufficient and cheaper
+than the one `required_subject` already derives. At that point add
+`MemoryScope::Subgroup`, map it to `simdgroup_barrier` in `tiler-metal`, and
+decide explicitly what `MemoryScope::Device` means for a barrier that cannot
+provide it — either remove it from the barrier vocabulary, or document that it is
+only meaningful outside a kernel body.
 
 Until then, do **not** relax the rejection. A barrier that claims broader
 visibility than the hardware primitive provides is a data race the verifier would
@@ -76,3 +81,7 @@ have blessed.
 **What would fire it, stated so it can be recognized:** the first schedule declaring a staged allocation through threadgroup memory whose writer *and every reader* lie in one subgroup — a subgroup-private scratch tile — because that is the only case in which a publication narrower than the threadgroup is both sufficient and cheaper than the one already derived. Nothing in the work graph currently proposes such a schedule.
 
 **Consequence for this ticket.** It stays `deferred`, and its trigger has now been refuted twice, each time by the construct that was expected to fire it. The trigger line in the body above should be rewritten to the sentence in the previous paragraph; that rewrite is deliberately *not* made here, because changing a deferral's activation condition is a graph decision and this addendum is the evidence for it rather than the decision itself. The 2026-07-28 addendum's tripwire proposal is unaffected and remains the right mechanism whenever the trigger does fire.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired**, and the edge question the second addendum left open is decided here. **The trigger is rewritten** to the sentence the two-level reduction record derived — the superseded wording is preserved inline above so a reader can see what was refuted rather than only that something was. **No frontmatter edge to [`compose-the-two-level-subgroup-and-workgroup-reduction`](compose-the-two-level-subgroup-and-workgroup-reduction.md) is added, and the ground is that the edge would encode a refuted claim.** The 2026-08-01 first addendum proposed narrowing the trigger to that ticket; the second addendum refuted it from MSL 4.1 §6.16.2 and §6.10.1 — a handoff *between* SIMD-groups needs threadgroup-scoped visibility, which `required_subject` already derives — and that ticket is now `done` without this capability, which is the outcome the refutation predicts. An edge is a scheduling claim that one ticket's completion bears on another's readiness; adding one whose premise is disproved would make unreachable work look reachable, which is exactly the failure the addendum was written to prevent. **Nothing in the graph currently proposes a subgroup-private scratch tile**, so there is no ticket to point at and the rewritten trigger stays a corpus-state condition rather than an edge. The 2026-07-28 tripwire proposal — an exhaustive test-only match over `MemoryScope` and `ExecutionScope` naming this ticket, in the style of `body_shaping_vocabulary_is_closed` — remains the right announcement mechanism and is still unbuilt; it is what would make the vocabulary widening a build error rather than a silent run-time rejection. Recheck: the premise, unchanged — `ExecutionScope` is `Subgroup | Workgroup` and `MemoryScope` is `Workgroup | Device` in `crates/tiler-ir/src/kernel/model.rs`.
