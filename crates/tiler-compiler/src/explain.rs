@@ -4034,7 +4034,24 @@ mod tests {
                 // must miss an authority snapshot that predates the new row.
                 // Recomputed from this complete branch tree by first observing
                 // the exact failing value, never copied from another branch.
-                "tiler-explain-v7 request=c91fc7c907eed554\n",
+                // Moved from `c91fc7c907eed554` when the recognized program
+                // became one implementable region partition *per ordered named
+                // output* and the request subject stepped from
+                // `request-subject.v4` to `v5` to length-frame that list. Only
+                // the *request* half of the subject moves — no semantic
+                // definition, capability, target declaration, or budget changed,
+                // and this fixture's program still declares one output whose
+                // recognized arm encodes exactly the bytes it did. What moved is
+                // that the arm is now preceded by a count, which is the whole
+                // content of the domain step: a subject minted under `v4`
+                // described a recognition that could name only one output, so a
+                // cache or a trace holding one must miss rather than match.
+                // Recomputed on this branch tree from the observed failing
+                // value; it is the only pinned identity the request subject
+                // reaches, every other request-subject assertion in the corpus
+                // being relational. The trace's own two record lines are
+                // unchanged; nothing about explain's content moved.
+                "tiler-explain-v7 request=45467875b9574962\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

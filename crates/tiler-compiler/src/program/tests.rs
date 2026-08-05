@@ -852,7 +852,8 @@ fn a_split_under_a_reassociation_forbidding_contract_is_refused() {
         contributors_per_partition: 1,
     };
     let (partial, members) =
-        crate::physical::partial_reduction_region(&request, partition).expect("a partial pass");
+        crate::physical::partial_reduction_region(&request, request.sole_output(), partition)
+            .expect("a partial pass");
     // The governed strict contract forbids reassociation, so the region the
     // constructor produces carries `permits_reassociation: false` and the
     // schedule verifier refuses it rather than costing it.

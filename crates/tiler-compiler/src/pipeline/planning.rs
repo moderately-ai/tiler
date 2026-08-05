@@ -177,8 +177,15 @@ pub(super) fn enumerate_complete_plans(
     // sound-proof label on a statement about nothing.
     let mut numerical = None;
     let mut numerical_cause = legality_cause;
-    if crate::physical::fused_prologue_constants(verified).is_some()
-        && let Some(candidate) = formation.whole_program_candidate()
+    // The fused spelling is asked of the output the whole-program candidate
+    // implements rather than of the request, for the reason `spell_region` asks
+    // per region: a program declaring several outputs carries one recognized
+    // partition per output, and only the one this candidate covers has a
+    // prologue to fuse.
+    if let Some(candidate) = formation.whole_program_candidate()
+        && verified
+            .output_for_region(candidate.members())
+            .is_some_and(|(_, output)| crate::physical::fused_prologue_constants(output).is_some())
         && !illegal.contains(candidate.occurrence())
     {
         let proof =

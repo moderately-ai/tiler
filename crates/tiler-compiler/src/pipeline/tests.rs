@@ -3978,7 +3978,8 @@ fn the_frontier_retains_the_workgroup_tree_beside_serial_and_the_split() {
 fn a_cooperative_region_declares_its_own_launch() {
     let (semantic, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
     let (tree, members) =
-        crate::physical::single_workgroup_tree_region(&request).expect("the tree is available");
+        crate::physical::single_workgroup_tree_region(&request, request.sole_output())
+            .expect("the tree is available");
     let tree =
         crate::physical::verify_schedule(tree, members, &request).expect("the tree verifies");
     // The tree replaces the reduction of the materialized pair; its prologue is
@@ -4151,8 +4152,9 @@ fn each_way_the_tree_can_fail_rejects_before_admission_with_its_own_reason() {
 #[test]
 fn a_divergent_tile_is_refused_by_the_schedule_before_any_target_is_consulted() {
     let (_, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
-    let (region, members) = crate::physical::single_workgroup_tree_region(&request)
-        .expect("a reassociating eight-contributor request admits the tree");
+    let (region, members) =
+        crate::physical::single_workgroup_tree_region(&request, request.sole_output())
+            .expect("a reassociating eight-contributor request admits the tree");
     // The control: the tile the strategy actually emits verifies.
     assert!(crate::physical::verify_schedule(region.clone(), members.clone(), &request).is_ok());
 
@@ -4185,8 +4187,9 @@ fn a_divergent_tile_is_refused_by_the_schedule_before_any_target_is_consulted() 
 #[test]
 fn the_tree_subject_binding_refuses_a_region_that_does_not_realize_the_request() {
     let (_, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
-    let (region, members) = crate::physical::single_workgroup_tree_region(&request)
-        .expect("a reassociating eight-contributor request admits the tree");
+    let (region, members) =
+        crate::physical::single_workgroup_tree_region(&request, request.sole_output())
+            .expect("a reassociating eight-contributor request admits the tree");
     // The control: unperturbed, it binds.
     assert!(crate::physical::verify_schedule(region.clone(), members.clone(), &request).is_ok());
 
@@ -4277,8 +4280,9 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
         let values = REGROUPING_SENSITIVE_INPUT;
         let extent_usize = usize::try_from(extent).unwrap();
         let (_, request) = tree_request(Shape::from_dims([1, extent]), tree_target());
-        let (region, members) = crate::physical::single_workgroup_tree_region(&request)
-            .expect("a reassociating request admits the tree at this extent");
+        let (region, members) =
+            crate::physical::single_workgroup_tree_region(&request, request.sole_output())
+                .expect("a reassociating request admits the tree at this extent");
         let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { partition, .. } =
             &region.schedule.reduction
         else {
@@ -4327,7 +4331,7 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
     for extent in [1_u64, 0] {
         let (_, request) = tree_request(Shape::from_dims([1, extent]), tree_target());
         assert_eq!(
-            crate::physical::single_workgroup_tree_region(&request).err(),
+            crate::physical::single_workgroup_tree_region(&request, request.sole_output()).err(),
             Some(
                 crate::physical::WorkgroupTreeUnavailable::NoAdmissibleParticipantCount {
                     contributors: extent,
@@ -4364,7 +4368,7 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
     // than padded with identity elements or given a masked lane.
     let (_, prime) = tree_request(Shape::from_dims([1, 7]), tree_target());
     assert_eq!(
-        crate::physical::single_workgroup_tree_region(&prime).err(),
+        crate::physical::single_workgroup_tree_region(&prime, prime.sole_output()).err(),
         Some(
             crate::physical::WorkgroupTreeUnavailable::NoAdmissibleParticipantCount {
                 contributors: 7,
@@ -4474,12 +4478,15 @@ fn split_assembly(
 fn split_regions(
     request: &crate::request::VerifiedTargetRequest,
 ) -> Vec<crate::physical::VerifiedScheduledRegion> {
-    let (raw, members) =
-        crate::physical::pointwise_region(request, crate::physical::RegionWrite::Materialized);
+    let (raw, members) = crate::physical::pointwise_region(
+        request,
+        request.sole_output(),
+        crate::physical::RegionWrite::Materialized,
+    );
     let mut regions = vec![
         crate::physical::verify_schedule(raw, members, request).expect("the prologue verifies"),
     ];
-    let split = crate::physical::split_reduction_regions(request)
+    let split = crate::physical::split_reduction_regions(request, request.sole_output())
         .expect("a four-contributor relaxed request admits the split");
     assert_eq!(split.partition.partitions, 2);
     assert_eq!(split.partition.contributors_per_partition, 2);

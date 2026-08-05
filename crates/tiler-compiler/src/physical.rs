@@ -27,7 +27,7 @@ use tiler_ir::schedule::{
 
 use crate::region::SemanticMemberId;
 use crate::request::{
-    NormalizedContraction, NormalizedProgramSubject, NumericalPermission,
+    NormalizedContraction, NormalizedOutput, NormalizedOutputSubject, NumericalPermission,
     StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
@@ -67,8 +67,8 @@ const FIRST_INPUT: TensorRole = TensorRole::Input {
 /// the request-subject binding, and the whole-program numerical proof all reach
 /// it, so "a fused alternative exists" and "the fused equivalence proof is
 /// claimed" cannot disagree.
-pub(crate) fn fused_prologue_constants(request: &VerifiedTargetRequest) -> Option<(u32, u32)> {
-    affine_prologue(&request.try_serial_sum()?.prologue)
+pub(crate) fn fused_prologue_constants(output: &NormalizedOutput) -> Option<(u32, u32)> {
+    affine_prologue(&output.try_serial_sum()?.prologue)
 }
 
 /// Recovers the scale and bias one recognized expression spells, or declines.
@@ -142,7 +142,7 @@ impl RegionWrite {
 /// program is covered many ways, and only the placed occurrences say which
 /// region — if any — the vocabulary has for each part.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RegionSpelling {
+pub(crate) enum RegionSpellingKind {
     /// An elementwise pass over the declared inputs, writing the tensor the
     /// cover assigned it.
     Pointwise(RegionWrite),
@@ -152,6 +152,38 @@ pub(crate) enum RegionSpelling {
     Contraction,
     /// The fold and its affine prologue realized as one region.
     FusedSerialSum,
+}
+
+/// One cover region's spelling, together with the ordered named output whose
+/// recognized partition it belongs to.
+///
+/// **The output travels with the kind because the kind alone no longer says
+/// which shapes to build from.** A program declaring several outputs carries one
+/// recognized partition per output, so "this region is an elementwise pass" is
+/// only half an answer — which expression, over which domain, publishing which
+/// key, is the other half, and it is the resolved output that holds it. With one
+/// declared output the position is always zero and nothing about the built
+/// region moves.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RegionSpelling {
+    output: usize,
+    kind: RegionSpellingKind,
+}
+
+impl RegionSpelling {
+    const fn new(output: usize, kind: RegionSpellingKind) -> Self {
+        Self { output, kind }
+    }
+
+    /// Returns the declaration position of the output this region implements.
+    pub(crate) const fn output(self) -> usize {
+        self.output
+    }
+
+    /// Returns which region of the bounded vocabulary spells it.
+    pub(crate) const fn kind(self) -> RegionSpellingKind {
+        self.kind
+    }
 }
 
 /// Why the bounded schedule vocabulary cannot spell one cover region.
@@ -224,41 +256,67 @@ impl RegionVocabularyWall {
 /// builds or a wall it hit, and there is no third state. That totality is the
 /// whole point — the caller converts an `Err` into a typed decline, so silence
 /// stops being an admissible answer for a region a legal cover placed.
+///
+/// **The search is over every recognized output, not over one whole-program
+/// partition.** The recognizer produces one partition per ordered named output
+/// and the walks are proved disjoint, so at most one output owns any member set
+/// and the first match is the only match. A region straddling two outputs' walks
+/// matches none of them and is refused as partial coverage, which is the right
+/// answer: no scheduled region computes two published results.
 pub(crate) fn spell_region(
     request: &VerifiedTargetRequest,
     members: &[SemanticMemberId],
     write: RegionWrite,
 ) -> Result<RegionSpelling, RegionVocabularyWall> {
-    if let Some(pointwise) = request.pointwise() {
-        if members == pointwise.members {
-            return Ok(RegionSpelling::Pointwise(write));
-        }
-    } else if let Some(contraction) = request.contraction() {
-        // Before the serial-sum accessor, which panics for any other strategy.
-        if members == contraction.members {
-            return Ok(RegionSpelling::Contraction);
-        }
-    } else {
-        let recognized = &request.serial_sum().members;
-        if members == recognized.pointwise() {
-            return Ok(RegionSpelling::Pointwise(write));
-        }
-        if members == recognized.reduction() {
-            return Ok(RegionSpelling::SerialSum);
-        }
-        if members == recognized.all() {
-            return fused_prologue_constants(request)
-                .map(|_| RegionSpelling::FusedSerialSum)
-                .ok_or(RegionVocabularyWall::FusedPrologueUnspellable);
-        }
-        if members
-            .iter()
-            .any(|member| recognized.reduction().contains(member))
-        {
-            return Err(RegionVocabularyWall::PartialFusedProgram);
+    // Retained across the walk rather than returned immediately, so a region
+    // that partially fuses one output's reduction still reports that wall even
+    // when a later output is examined after it. Only a reduction can raise it,
+    // and the walks are disjoint, so at most one output can set it.
+    let mut partial_fused = None;
+    for (position, output) in request.normalized().outputs().iter().enumerate() {
+        match output {
+            NormalizedOutput::Pointwise(normalized) => {
+                if members == normalized.members {
+                    return Ok(RegionSpelling::new(
+                        position,
+                        RegionSpellingKind::Pointwise(write),
+                    ));
+                }
+            }
+            NormalizedOutput::Contraction(normalized) => {
+                if members == normalized.members {
+                    return Ok(RegionSpelling::new(
+                        position,
+                        RegionSpellingKind::Contraction,
+                    ));
+                }
+            }
+            NormalizedOutput::SerialSum(normalized) => {
+                let recognized = &normalized.members;
+                if members == recognized.pointwise() {
+                    return Ok(RegionSpelling::new(
+                        position,
+                        RegionSpellingKind::Pointwise(write),
+                    ));
+                }
+                if members == recognized.reduction() {
+                    return Ok(RegionSpelling::new(position, RegionSpellingKind::SerialSum));
+                }
+                if members == recognized.all() {
+                    return fused_prologue_constants(output)
+                        .map(|_| RegionSpelling::new(position, RegionSpellingKind::FusedSerialSum))
+                        .ok_or(RegionVocabularyWall::FusedPrologueUnspellable);
+                }
+                if members
+                    .iter()
+                    .any(|member| recognized.reduction().contains(member))
+                {
+                    partial_fused = Some(RegionVocabularyWall::PartialFusedProgram);
+                }
+            }
         }
     }
-    Err(RegionVocabularyWall::PartialCoverage)
+    Err(partial_fused.unwrap_or(RegionVocabularyWall::PartialCoverage))
 }
 
 /// Stable candidate identity used when assessing one scheduled region.
@@ -488,8 +546,10 @@ pub(crate) fn build_scheduled_regions(
 ) -> Result<Vec<VerifiedScheduledRegion>, PhysicalError> {
     // The prologue of a materialized serial sum, which every cover placing it
     // materializes for the fold that reads it.
-    let (pointwise, pointwise_members) = pointwise_region(request, RegionWrite::Materialized);
-    let (reduction, reduction_members) = reduction_region(request);
+    let output = request.sole_output();
+    let (pointwise, pointwise_members) =
+        pointwise_region(request, output, RegionWrite::Materialized);
+    let (reduction, reduction_members) = reduction_region(request, output);
     Ok(vec![
         verify_schedule(pointwise, pointwise_members, request)?,
         verify_schedule(reduction, reduction_members, request)?,
@@ -503,10 +563,11 @@ pub(crate) fn build_scheduled_regions(
 pub(crate) fn build_fused_scheduled_region(
     request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
-    let (fused, members) = fused_region(request).ok_or(PhysicalError::Intrinsic {
-        rule: "fused-prologue-unspellable",
-        region: RegionId::new(0),
-    })?;
+    let (fused, members) =
+        fused_region(request, request.sole_output()).ok_or(PhysicalError::Intrinsic {
+            rule: "fused-prologue-unspellable",
+            region: RegionId::new(0),
+        })?;
     verify_schedule(fused, members, request)
 }
 
@@ -525,9 +586,14 @@ pub(crate) fn build_fused_scheduled_region(
 /// built — it simply used to decide between them by asking which whole-program
 /// recognizer had matched, which is a question about the program.
 ///
+/// **`output` comes from the spelling, not from the request.** A program
+/// declaring several ordered outputs carries one recognized partition per
+/// output, so the expression, domain, and member set this region is built from
+/// are the resolved output's rather than the request's.
+///
 /// # Panics
 ///
-/// Panics when asked for a request whose recognized program is a contraction,
+/// Panics when asked for an output whose recognized shape is a contraction,
 /// which is invalid compiler output rather than a caller error: the frontier
 /// offers this region only for an elementwise or reduced-elementwise subject. It applies no
 /// intrinsic, subject-binding, or feasibility gate. The implementation frontier
@@ -536,28 +602,29 @@ pub(crate) fn build_fused_scheduled_region(
 /// governed profile cannot dispatch.
 pub(crate) fn pointwise_region(
     request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
     write: RegionWrite,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
     let write_tensor = write.tensor();
-    let (shape, elements, inputs, expression, members) =
-        if let Some(pointwise) = request.pointwise() {
-            (
-                pointwise.shape.clone(),
-                pointwise.elements,
-                pointwise.input_keys.len(),
-                pointwise.expression.clone(),
-                pointwise.members.clone(),
-            )
-        } else {
-            let serial = request.serial_sum();
-            (
-                serial.input_shape.clone(),
-                serial.input_elements,
-                serial.input_keys.len(),
-                serial.prologue.clone(),
-                serial.members.pointwise().to_vec(),
-            )
-        };
+    let (shape, elements, inputs, expression, members) = if let Some(pointwise) = output.pointwise()
+    {
+        (
+            pointwise.shape.clone(),
+            pointwise.elements,
+            pointwise.input_keys.len(),
+            pointwise.expression.clone(),
+            pointwise.members.clone(),
+        )
+    } else {
+        let serial = output.serial_sum();
+        (
+            serial.input_shape.clone(),
+            serial.input_elements,
+            serial.input_keys.len(),
+            serial.prologue.clone(),
+            serial.members.pointwise().to_vec(),
+        )
+    };
     // One read per input tensor, its ordinal fixed by its position, then the
     // owning write. The write's bounds witness follows the reads rather than
     // sitting at a constant, so witness numbering is access numbering and two
@@ -682,10 +749,11 @@ fn contraction_operand_sources(
 /// checked verification path.
 pub(crate) fn contraction_region(
     request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
-    let normalized = request
+    let normalized = output
         .contraction()
-        .expect("a contraction region is built only for a contraction request");
+        .expect("a contraction region is built only for a contraction output");
     // Two reads then the owning write, with witness numbering equal to access
     // numbering so two accesses cannot prove against one witness.
     let mut accesses = Vec::with_capacity(3);
@@ -783,20 +851,22 @@ pub(crate) fn contraction_region(
 /// checked verification path.
 pub(crate) fn reduction_region(
     request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+    let serial = output.serial_sum();
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(1),
-            iteration_shape: request.serial_sum().output_shape.clone(),
+            iteration_shape: serial.output_shape.clone(),
             accesses: vec![
                 Access {
                     tensor: TensorRole::Intermediate,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
-                        input_shape: request.serial_sum().input_shape.clone(),
-                        output_shape: request.serial_sum().output_shape.clone(),
-                        axes: request.serial_sum().reduction_axes.clone(),
+                        input_shape: serial.input_shape.clone(),
+                        output_shape: serial.output_shape.clone(),
+                        axes: serial.reduction_axes.clone(),
                         order: ContributorOrder::OriginalAxisLexicographic,
                     },
                     bounds: BoundsWitnessId::new(2),
@@ -817,9 +887,9 @@ pub(crate) fn reduction_region(
                     tensor: TensorRole::Intermediate,
                     component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
-                        input_shape: request.serial_sum().input_shape.clone(),
-                        output_shape: request.serial_sum().output_shape.clone(),
-                        axes: request.serial_sum().reduction_axes.clone(),
+                        input_shape: serial.input_shape.clone(),
+                        output_shape: serial.output_shape.clone(),
+                        axes: serial.reduction_axes.clone(),
                         order: ContributorOrder::OriginalAxisLexicographic,
                     },
                 },
@@ -828,7 +898,7 @@ pub(crate) fn reduction_region(
                     tensor: TensorRole::Output,
                     component_role: None,
                     kind: BoundsProofKind::LinearRange {
-                        element_count: request.serial_sum().output_elements,
+                        element_count: serial.output_elements,
                     },
                 },
             ],
@@ -836,11 +906,11 @@ pub(crate) fn reduction_region(
                 id: OwnershipWitnessId::new(1),
                 tensor: TensorRole::Output,
                 kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
-                    output_count: request.serial_sum().output_elements,
+                    output_count: serial.output_elements,
                 },
             },
             scalar_program: ScalarProgram::StrictSerialSum {
-                axes: request.serial_sum().reduction_axes.clone(),
+                axes: serial.reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
                 empty_identity_bits: 0.0_f32.to_bits(),
@@ -849,19 +919,16 @@ pub(crate) fn reduction_region(
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
-                axes: request.serial_sum().reduction_axes.clone(),
+                axes: serial.reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 permits_reassociation: request.numerical_contract().reassociation
                     != NumericalPermission::Forbidden,
                 permits_permutation: false,
             },
-            ..linear_schedule(
-                request.serial_sum().output_elements,
-                OwnershipWitnessId::new(1),
-            )
+            ..linear_schedule(serial.output_elements, OwnershipWitnessId::new(1))
         },
     };
-    (region, request.serial_sum().members.reduction().to_vec())
+    (region, serial.members.reduction().to_vec())
 }
 
 /// Builds the canonical fused whole-program scheduled region for one request,
@@ -881,21 +948,23 @@ pub(crate) fn reduction_region(
 /// checked verification path.
 pub(crate) fn fused_region(
     request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
 ) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
-    let (scale_bits, bias_bits) = fused_prologue_constants(request)?;
+    let (scale_bits, bias_bits) = fused_prologue_constants(output)?;
+    let serial = output.serial_sum();
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(0),
-            iteration_shape: request.serial_sum().output_shape.clone(),
+            iteration_shape: serial.output_shape.clone(),
             accesses: vec![
                 Access {
                     tensor: FIRST_INPUT,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
-                        input_shape: request.serial_sum().input_shape.clone(),
-                        output_shape: request.serial_sum().output_shape.clone(),
-                        axes: request.serial_sum().reduction_axes.clone(),
+                        input_shape: serial.input_shape.clone(),
+                        output_shape: serial.output_shape.clone(),
+                        axes: serial.reduction_axes.clone(),
                         order: ContributorOrder::OriginalAxisLexicographic,
                     },
                     bounds: BoundsWitnessId::new(0),
@@ -916,9 +985,9 @@ pub(crate) fn fused_region(
                     tensor: FIRST_INPUT,
                     component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
-                        input_shape: request.serial_sum().input_shape.clone(),
-                        output_shape: request.serial_sum().output_shape.clone(),
-                        axes: request.serial_sum().reduction_axes.clone(),
+                        input_shape: serial.input_shape.clone(),
+                        output_shape: serial.output_shape.clone(),
+                        axes: serial.reduction_axes.clone(),
                         order: ContributorOrder::OriginalAxisLexicographic,
                     },
                 },
@@ -927,7 +996,7 @@ pub(crate) fn fused_region(
                     tensor: TensorRole::Output,
                     component_role: None,
                     kind: BoundsProofKind::LinearRange {
-                        element_count: request.serial_sum().output_elements,
+                        element_count: serial.output_elements,
                     },
                 },
             ],
@@ -935,13 +1004,13 @@ pub(crate) fn fused_region(
                 id: OwnershipWitnessId::new(0),
                 tensor: TensorRole::Output,
                 kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
-                    output_count: request.serial_sum().output_elements,
+                    output_count: serial.output_elements,
                 },
             },
             scalar_program: ScalarProgram::FusedMultiplyAddSerialSum {
                 scale_bits,
                 bias_bits,
-                axes: request.serial_sum().reduction_axes.clone(),
+                axes: serial.reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
                 empty_identity_bits: 0.0_f32.to_bits(),
@@ -959,7 +1028,7 @@ pub(crate) fn fused_region(
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
-                axes: request.serial_sum().reduction_axes.clone(),
+                axes: serial.reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 permits_reassociation: request.numerical_contract().reassociation
                     != NumericalPermission::Forbidden,
@@ -969,13 +1038,10 @@ pub(crate) fn fused_region(
                 // which resolution was chosen.
                 permits_permutation: false,
             },
-            ..linear_schedule(
-                request.serial_sum().output_elements,
-                OwnershipWitnessId::new(0),
-            )
+            ..linear_schedule(serial.output_elements, OwnershipWitnessId::new(0))
         },
     };
-    Some((region, request.serial_sum().members.all()))
+    Some((region, serial.members.all()))
 }
 
 /// Chooses the split a multi-pass reduction proposal offers for one extent.
@@ -1058,9 +1124,10 @@ pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartiti
 /// different question from splitting a contributor sequence.
 pub(crate) fn partial_reduction_region(
     request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
     partition: ContributorPartition,
 ) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
-    let subject = request.serial_sum();
+    let subject = output.serial_sum();
     let partial_shape =
         tiler_ir::schedule::partial_reduction_shape(&subject.output_shape, partition)?;
     let partial_elements = subject.output_elements.checked_mul(partition.partitions)?;
@@ -1147,9 +1214,10 @@ pub(crate) fn partial_reduction_region(
 /// consumed by the partial pass.
 pub(crate) fn final_reduction_region(
     request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
     partition: ContributorPartition,
 ) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
-    let subject = request.serial_sum();
+    let subject = output.serial_sum();
     let partial_shape =
         tiler_ir::schedule::partial_reduction_shape(&subject.output_shape, partition)?;
     let axes = vec![tiler_ir::schedule::partial_reduction_axis(
@@ -1319,13 +1387,14 @@ impl WorkgroupTreeUnavailable {
 /// target decision.
 pub(crate) fn single_workgroup_tree_region(
     request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
 ) -> Result<(ScheduledRegion, Vec<SemanticMemberId>), WorkgroupTreeUnavailable> {
     if request.numerical_contract().reassociation == NumericalPermission::Forbidden {
         return Err(WorkgroupTreeUnavailable::ReassociationForbidden);
     }
-    let subject = request.serial_sum();
+    let subject = output.serial_sum();
     let contributors =
-        reduction_contributors(request).ok_or(WorkgroupTreeUnavailable::Unrepresentable)?;
+        reduction_contributors(output).ok_or(WorkgroupTreeUnavailable::Unrepresentable)?;
     let partition = governed_partition(contributors)
         .ok_or(WorkgroupTreeUnavailable::NoAdmissibleParticipantCount { contributors })?;
     let participants = partition.partitions;
@@ -1505,17 +1574,18 @@ pub(crate) struct GovernedSplit {
 /// strategy. None of them is a compiler fault.
 pub(crate) fn split_reduction_regions(
     request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
 ) -> Result<GovernedSplit, SplitUnavailable> {
     if request.numerical_contract().reassociation == NumericalPermission::Forbidden {
         return Err(SplitUnavailable::ReassociationForbidden);
     }
-    let contributors = reduction_contributors(request).ok_or(SplitUnavailable::Unrepresentable)?;
+    let contributors = reduction_contributors(output).ok_or(SplitUnavailable::Unrepresentable)?;
     let partition = governed_partition(contributors)
         .ok_or(SplitUnavailable::NoAdmissiblePartition { contributors })?;
-    let partial =
-        partial_reduction_region(request, partition).ok_or(SplitUnavailable::Unrepresentable)?;
-    let combine =
-        final_reduction_region(request, partition).ok_or(SplitUnavailable::Unrepresentable)?;
+    let partial = partial_reduction_region(request, output, partition)
+        .ok_or(SplitUnavailable::Unrepresentable)?;
+    let combine = final_reduction_region(request, output, partition)
+        .ok_or(SplitUnavailable::Unrepresentable)?;
     Ok(GovernedSplit {
         partition,
         stages: vec![partial, combine],
@@ -1532,8 +1602,8 @@ pub(crate) fn split_reduction_regions(
 /// Returns `None` only when an axis is out of range or the product overflows,
 /// neither of which a verified request can produce; the fail-closed answer is
 /// still stated rather than assumed.
-fn reduction_contributors(request: &VerifiedTargetRequest) -> Option<u64> {
-    let subject = request.serial_sum();
+fn reduction_contributors(output: &NormalizedOutput) -> Option<u64> {
+    let subject = output.serial_sum();
     subject
         .reduction_axes
         .iter()
@@ -1696,14 +1766,42 @@ fn map_schedule_build_error(error: &ScheduledRegionBuildError, region: RegionId)
     }
 }
 
+/// Binds one region to the recognized output whose partition it belongs to.
+///
+/// **The subject is a list, so the binding is a search with no fallback.** A
+/// region binds when it binds against *some* declared output's recognized
+/// partition; a region that binds against none is rejected, and the reported
+/// cause is the first output's, which is the only one there is for a program the
+/// request boundary admits. Nothing here weakens what a binding proves: each
+/// candidate is checked whole, so admitting a region still requires it to be the
+/// exact realization of one recognized partition rather than a plausible one.
 fn verify_region_subject_binding(
     region: &ScheduledRegion,
     semantic_members: &[SemanticMemberId],
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
-    let expected = match (subject.normalized(), &region.index.scalar_program) {
+    let mut first = None;
+    for normalized in subject.normalized().outputs() {
+        match verify_region_output_binding(region, semantic_members, normalized, subject) {
+            Ok(()) => return Ok(()),
+            Err(error) => first.get_or_insert(error),
+        };
+    }
+    Err(first.unwrap_or(PhysicalError::Intrinsic {
+        rule: "request-binding",
+        region: region.index.id,
+    }))
+}
+
+fn verify_region_output_binding(
+    region: &ScheduledRegion,
+    semantic_members: &[SemanticMemberId],
+    normalized: &NormalizedOutputSubject,
+    subject: &VerifiedRequestSubject,
+) -> Result<(), PhysicalError> {
+    let expected = match (normalized, &region.index.scalar_program) {
         (
-            NormalizedProgramSubject::Pointwise(normalized),
+            NormalizedOutputSubject::Pointwise(normalized),
             ScalarProgram::PointwiseF32(expression),
         ) => {
             element_count(&normalized.shape, region.index.id)? == normalized.elements
@@ -1717,7 +1815,7 @@ fn verify_region_subject_binding(
                 && expression == &normalized.expression
         }
         (
-            NormalizedProgramSubject::Contraction(normalized),
+            NormalizedOutputSubject::Contraction(normalized),
             ScalarProgram::StrictTensorContraction {
                 contracted_shape,
                 canonical_nan_bits,
@@ -1744,10 +1842,10 @@ fn verify_region_subject_binding(
         // forged pairing: each is bound above against the one program its
         // recognizer produces, so answering `false` here is the fail-closed
         // answer rather than a deferral.
-        (NormalizedProgramSubject::Pointwise(_) | NormalizedProgramSubject::Contraction(_), _) => {
+        (NormalizedOutputSubject::Pointwise(_) | NormalizedOutputSubject::Contraction(_), _) => {
             false
         }
-        (NormalizedProgramSubject::SerialSum(normalized), scalar) => {
+        (NormalizedOutputSubject::SerialSum(normalized), scalar) => {
             if !tiler_ir::schedule::axes_are_canonical(
                 normalized.reduction_axes(),
                 normalized.input_shape().rank(),
@@ -2632,7 +2730,8 @@ mod tests {
         // two node positions, applied the other way round. It is a different
         // binary32 function, and the binding compares the whole expression
         // rather than its constant set, so it must be refused.
-        let (scale, bias) = fused_prologue_constants(&request).expect("the fixture is affine");
+        let (scale, bias) =
+            fused_prologue_constants(request.sole_output()).expect("the fixture is affine");
         let mut wrong_expression = regions[0].region().clone();
         wrong_expression.index.scalar_program =
             ScalarProgram::PointwiseF32(test_affine_expression(bias, scale));
@@ -2652,7 +2751,8 @@ mod tests {
     #[test]
     fn pointwise_schedule_requires_exact_expression_and_complete_ordered_coverage() {
         let request = pointwise_request();
-        let (raw, members) = pointwise_region(&request, RegionWrite::ProgramOutput);
+        let (raw, members) =
+            pointwise_region(&request, request.sole_output(), RegionWrite::ProgramOutput);
         let region = verify_schedule(raw, members, &request).unwrap();
         let expected = [
             SemanticMemberId(0),

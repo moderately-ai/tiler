@@ -1575,34 +1575,33 @@ fn target_axis(error: &PhysicalError) -> &'static str {
 /// occurrences, so it names what the region means rather than where it appeared
 /// in an enumeration. A region the bounded profile does not recognize keeps a
 /// distinct role instead of being silently attributed to one it resembles.
+///
+/// The lookup resolves which ordered named output owns the region before naming
+/// its role, for the reason [`crate::physical::spell_region`] does: with several
+/// declared outputs there is one recognized partition per output, and a role
+/// read off "the" strategy would answer the same for every region of a program.
+/// `"whole-program"` accordingly names a region covering one *output's* whole
+/// partition, which is the whole program exactly when one output is declared.
 fn region_role(
     request: &crate::request::VerifiedTargetRequest,
     members: &[crate::region::SemanticMemberId],
 ) -> &'static str {
-    if let Some(pointwise) = request.pointwise() {
-        return if members == pointwise.members {
-            "whole-program"
-        } else {
-            "unrecognized"
-        };
-    }
-    // Before the serial-sum accessor, which panics for any other strategy.
-    if let Some(contraction) = request.contraction() {
-        return if members == contraction.members {
-            "whole-program"
-        } else {
-            "unrecognized"
-        };
-    }
-    let recognized = &request.serial_sum().members;
-    if members == recognized.pointwise() {
-        "pointwise"
-    } else if members == recognized.reduction() {
-        "reduction"
-    } else if members == recognized.all() {
-        "whole-program"
-    } else {
-        "unrecognized"
+    let Some((_, output)) = request.output_for_region(members) else {
+        return "unrecognized";
+    };
+    match output {
+        crate::request::NormalizedOutput::Pointwise(_)
+        | crate::request::NormalizedOutput::Contraction(_) => "whole-program",
+        crate::request::NormalizedOutput::SerialSum(normalized) => {
+            let recognized = &normalized.members;
+            if members == recognized.pointwise() {
+                "pointwise"
+            } else if members == recognized.reduction() {
+                "reduction"
+            } else {
+                "whole-program"
+            }
+        }
     }
 }
 

@@ -1230,8 +1230,18 @@ pub(crate) struct NormalizedContraction {
     pub(crate) contracted_elements: u64,
 }
 
+/// One recognized ordered named program output, and the region partition that
+/// implements it.
+///
+/// **A property of one output, not of the program.** Each variant carries the
+/// occurrences its own walk claimed, partitioned into the parts a region can be
+/// spelled from — one part for the two single-region shapes, the prologue and
+/// the fold for a reduction. [`NormalizedProgram`] holds one of these per
+/// declared output, in declaration order, so "which strategy implements this
+/// cover region" is answered by the part whose members the region covers rather
+/// than by asking which whole-program template matched.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum NormalizedProgram {
+pub(crate) enum NormalizedOutput {
     SerialSum(NormalizedSerialSum),
     Pointwise(NormalizedPointwise),
     /// Boxed because a contraction carries two operand shapes, an output shape,
@@ -1241,7 +1251,7 @@ pub(crate) enum NormalizedProgram {
     Contraction(Box<NormalizedContraction>),
 }
 
-impl NormalizedProgram {
+impl NormalizedOutput {
     pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
@@ -1294,12 +1304,7 @@ impl NormalizedProgram {
         }
     }
 
-    /// Returns the largest declared input element count.
-    ///
-    /// The size of the widest thing a plan for this request could stage, which
-    /// is what a structural cost estimate and a pre-strategy budget both want.
-    /// It is deliberately not "the input's element count": a contraction has two
-    /// inputs of different extents and no single answer to that question.
+    /// Returns the largest declared input element count this output reads.
     pub(crate) fn max_input_elements(&self) -> u64 {
         match self {
             Self::SerialSum(normalized) => normalized.input_elements,
@@ -1321,11 +1326,31 @@ impl NormalizedProgram {
         }
     }
 
-    pub(crate) fn all_members(&self) -> Vec<SemanticMemberId> {
+    /// Returns every occurrence this output's walk claimed, in ascending order.
+    pub(crate) fn members(&self) -> Vec<SemanticMemberId> {
         match self {
             Self::SerialSum(normalized) => normalized.members.all(),
             Self::Pointwise(normalized) => normalized.members.clone(),
             Self::Contraction(normalized) => normalized.members.clone(),
+        }
+    }
+
+    /// Returns whether one region's exact member set is a part of this output's
+    /// partition, so that a region spelled from it covers this output's work and
+    /// no other's.
+    ///
+    /// The reduction's *whole* partition is a part in its own right: the fused
+    /// spelling realizes the prologue and the fold in one region, which is the
+    /// one case where a part is the union of two others.
+    fn owns_region_members(&self, members: &[SemanticMemberId]) -> bool {
+        match self {
+            Self::SerialSum(normalized) => {
+                members == normalized.members.pointwise()
+                    || members == normalized.members.reduction()
+                    || members == normalized.members.all()
+            }
+            Self::Pointwise(normalized) => members == normalized.members,
+            Self::Contraction(normalized) => members == normalized.members,
         }
     }
 
@@ -1336,6 +1361,150 @@ impl NormalizedProgram {
             Self::Pointwise(_) | Self::Contraction(_) => panic!("the fixture is a serial sum"),
         }
     }
+}
+
+/// The recognized program: one implementable region partition per ordered named
+/// output, in the program's own declaration order.
+///
+/// **A list rather than one whole-program strategy, and the difference is what
+/// makes several ordered outputs statable at all.** Recognition used to read
+/// `outputs().next()`, classify that one occurrence, and require the resulting
+/// walk to cover the program exactly, so a second declared output was either
+/// outside the walk — leaving the program uncovered — or inside it, where one
+/// region's owning write would have had to serve two publications. Each output
+/// now carries its own walk, and the *program*-wide obligation moved to the
+/// relation between them: the walks partition the occurrences, so every
+/// occurrence is claimed exactly once and every published value has one region
+/// that owns its write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedProgram {
+    outputs: Vec<NormalizedOutput>,
+}
+
+impl NormalizedProgram {
+    /// Returns the recognized outputs in the program's declaration order.
+    pub(crate) fn outputs(&self) -> &[NormalizedOutput] {
+        &self.outputs
+    }
+
+    /// Returns the recognized output whose partition contains one region's exact
+    /// member set, with its declaration position.
+    ///
+    /// This is the lookup every per-region authority below the boundary asks:
+    /// the members are the region's own coverage, and the partition they belong
+    /// to is what says which shape, domain, and expression the region realizes.
+    /// A member set belonging to no output's partition is `None` — a region
+    /// covering occurrences from two outputs' walks, or covering part of one
+    /// part, has no recognized implementation and is refused by name rather than
+    /// spelled against whichever partition happened to be first.
+    pub(crate) fn output_for_region(
+        &self,
+        members: &[SemanticMemberId],
+    ) -> Option<(usize, &NormalizedOutput)> {
+        self.outputs
+            .iter()
+            .enumerate()
+            .find(|(_, output)| output.owns_region_members(members))
+    }
+
+    /// Returns the recognized output at one declared position.
+    pub(crate) fn output_at(&self, position: usize) -> Option<&NormalizedOutput> {
+        self.outputs.get(position)
+    }
+
+    /// Returns the element count of one declared input tensor, when every
+    /// recognized output agrees on it.
+    ///
+    /// **Agreement or nothing, because the caller is sizing work.** The count
+    /// scales a call over the tensor bound to that ordinal, and two outputs may
+    /// read one declared input at different domains — a reduction reads it at
+    /// its contributor shape while an elementwise sibling reads it at its own.
+    /// Answering with either one would size a call against a tensor the region
+    /// does not iterate, which is the confidently-wrong verdict a work-scaling
+    /// resolution exists to prevent. A disagreement therefore yields `None` and
+    /// the caller refuses, exactly as it does for an ordinal no input occupies.
+    ///
+    /// The two `None`s are flattened deliberately: "the outputs disagree" and
+    /// "no output declares that ordinal" are different findings, and this
+    /// accessor's caller acts identically on both — it refuses.
+    pub(crate) fn agreed_input_elements_at(&self, ordinal: InputOrdinal) -> Option<u64> {
+        agreed(
+            self.outputs
+                .iter()
+                .map(|output| output.input_elements_at(ordinal)),
+        )
+        .flatten()
+    }
+
+    /// Returns the published element count, when every recognized output agrees.
+    ///
+    /// Agreement for the reason [`Self::agreed_input_elements_at`] states: this
+    /// count sizes work, and two outputs of different extents have no single
+    /// answer to give.
+    pub(crate) fn agreed_output_elements(&self) -> Option<u64> {
+        agreed(self.outputs.iter().map(NormalizedOutput::output_elements))
+    }
+
+    /// Returns the largest declared input element count over every output.
+    ///
+    /// The size of the widest thing a plan for this request could stage, which
+    /// is what a structural cost estimate wants. Deliberately a maximum rather
+    /// than an agreement: a cost may be an upper bound over the whole request,
+    /// and a cost that refused would turn an estimate into a feasibility gate.
+    pub(crate) fn max_input_elements(&self) -> u64 {
+        self.outputs
+            .iter()
+            .map(NormalizedOutput::max_input_elements)
+            .max()
+            .unwrap_or_default()
+    }
+
+    /// Returns the largest published element count over every output.
+    ///
+    /// A maximum for the reason [`Self::max_input_elements`] is one: its callers
+    /// are structural cost estimates, never feasibility.
+    pub(crate) fn max_output_elements(&self) -> u64 {
+        self.outputs
+            .iter()
+            .map(NormalizedOutput::output_elements)
+            .max()
+            .unwrap_or_default()
+    }
+
+    /// Returns every occurrence any output's walk claimed, in ascending order.
+    ///
+    /// The walks partition the program's occurrences — [`check_output_cover`]
+    /// proves it — so this is the program's whole operation set and the
+    /// deduplication is the invariant being relied on rather than a repair.
+    pub(crate) fn all_members(&self) -> Vec<SemanticMemberId> {
+        let mut members: Vec<SemanticMemberId> = self
+            .outputs
+            .iter()
+            .flat_map(NormalizedOutput::members)
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        members
+    }
+
+    #[cfg(test)]
+    fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
+        let [output] = self.outputs.as_mut_slice() else {
+            panic!("the fixture declares one output");
+        };
+        output.serial_sum_mut()
+    }
+}
+
+/// Returns the one value every entry carries, or `None` when they disagree.
+///
+/// An empty sequence answers `None` rather than a vacuous value: a program with
+/// no recognized output has nothing to report, and reporting a default would be
+/// an answer nothing derived.
+fn agreed<T: Eq>(values: impl IntoIterator<Item = T>) -> Option<T> {
+    let mut values = values.into_iter();
+    let first = values.next()?;
+    values.all(|value| value == first).then_some(first)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1426,12 +1595,27 @@ pub(crate) struct NormalizedSerialSumSubject {
     output_elements: u64,
 }
 
+/// The subject projection of one recognized ordered named output.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum NormalizedProgramSubject {
+pub(crate) enum NormalizedOutputSubject {
     SerialSum(NormalizedSerialSumSubject),
     Pointwise(NormalizedPointwise),
-    /// Boxed for the reason [`NormalizedProgram::Contraction`] is.
+    /// Boxed for the reason [`NormalizedOutput::Contraction`] is.
     Contraction(Box<NormalizedContraction>),
+}
+
+/// The recognized program as the request subject records it: one per ordered
+/// named output, in declaration order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedProgramSubject {
+    outputs: Vec<NormalizedOutputSubject>,
+}
+
+impl NormalizedProgramSubject {
+    /// Returns the recognized output subjects in declaration order.
+    pub(crate) fn outputs(&self) -> &[NormalizedOutputSubject] {
+        &self.outputs
+    }
 }
 
 impl VerifiedTargetRequest {
@@ -1439,20 +1623,79 @@ impl VerifiedTargetRequest {
         &self.normalized
     }
 
-    pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
-        self.normalized.serial_sum()
+    /// Returns the recognized output implementing one cover region's members.
+    ///
+    /// Every per-region authority below this boundary asks this rather than
+    /// asking the request for "the" strategy: with several declared outputs
+    /// there is no such thing, and a region's members are exactly the fact that
+    /// says which output's partition it belongs to.
+    pub(crate) fn output_for_region(
+        &self,
+        members: &[SemanticMemberId],
+    ) -> Option<(usize, &NormalizedOutput)> {
+        self.normalized.output_for_region(members)
     }
 
-    pub(crate) const fn try_serial_sum(&self) -> Option<&NormalizedSerialSum> {
-        self.normalized.try_serial_sum()
+    /// Returns the recognized output at one declared position.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the position names no declared output, which is invalid
+    /// compiler output rather than a caller error: every position handed to
+    /// this accessor came from [`Self::output_for_region`] resolving a region
+    /// this same request recognized.
+    pub(crate) fn output_at(&self, position: usize) -> &NormalizedOutput {
+        self.normalized
+            .output_at(position)
+            .expect("a resolved output position names a recognized output")
     }
 
-    pub(crate) const fn pointwise(&self) -> Option<&NormalizedPointwise> {
-        self.normalized.pointwise()
+    /// Returns the one recognized output of a program this boundary admitted.
+    ///
+    /// **It exists because `output-arity` still stands, and it is named so that
+    /// its removal is a compile error rather than a silent mis-attribution.**
+    /// Recognition produces one partition per declared output, but
+    /// [`select_supported_strategy`] admits only a program declaring exactly
+    /// one, so a whole-program derivation — the canonical two-region pair, the
+    /// fused whole-program region, and the fixtures that drive them — has
+    /// exactly one output to derive from. Every *per-region* authority uses
+    /// [`Self::output_for_region`] instead;
+    /// `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`
+    /// relaxes the guard, and each caller of this accessor is then a site that
+    /// must say which output it means.
+    ///
+    /// # Panics
+    ///
+    /// Panics for a request whose program declares other than one output, which
+    /// the request boundary does not produce.
+    pub(crate) fn sole_output(&self) -> &NormalizedOutput {
+        let [output] = self.normalized.outputs() else {
+            panic!("the request boundary admits exactly one declared output");
+        };
+        output
     }
 
-    pub(crate) const fn contraction(&self) -> Option<&NormalizedContraction> {
-        self.normalized.contraction()
+    /// The sole recognized output's serial-sum shape, for fixtures.
+    ///
+    /// `#[cfg(test)]`, and the three below with it. Compile-path code resolves
+    /// the output a region belongs to through [`Self::output_for_region`]; these
+    /// exist so a fixture that built a one-output program can name its shape
+    /// without repeating `sole_output()` at every assertion. They carry the
+    /// same panic as [`Self::sole_output`], which is what makes a fixture that
+    /// grew a second output fail loudly rather than assert about the first.
+    #[cfg(test)]
+    pub(crate) fn serial_sum(&self) -> &NormalizedSerialSum {
+        self.sole_output().serial_sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pointwise(&self) -> Option<&NormalizedPointwise> {
+        self.sole_output().pointwise()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contraction(&self) -> Option<&NormalizedContraction> {
+        self.sole_output().contraction()
     }
 
     /// The request subject this target compiles under.
@@ -1546,7 +1789,18 @@ impl VerifiedRequestSubject {
 
     pub(crate) fn canonical_explain_subject_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        // The enclosing domain steps to `v4` because the installed independent
+        // The enclosing domain steps to `v5` because the recognized program
+        // became a *list* — one implementable region partition per ordered named
+        // output — and the list is length-framed ahead of the arms. A `v4`
+        // subject encoded exactly one arm with no count, so its first
+        // post-identity byte is the arm sub-tag's own length frame while a `v5`
+        // subject's is the output count. Nothing rules out a count that happens
+        // to frame like a sub-tag length, so this is a domain step rather than
+        // an appends-only re-tag: the per-tag injectivity argument that would
+        // license the cheaper option does not close, and half a step is worse
+        // than none.
+        //
+        // The earlier step to `v4` because the installed independent
         // semantic-realization authority now participates after lowering
         // authority. A v3 subject did not encode that field at all.
         //
@@ -1558,7 +1812,7 @@ impl VerifiedRequestSubject {
         // input key, and a caller may name an input whatever it likes — and that
         // argument does not close. Stepping the domain makes the separation
         // structural instead.
-        bytes.extend_from_slice(b"tiler.compiler.request-subject.v4\0");
+        bytes.extend_from_slice(b"tiler.compiler.request-subject.v5\0");
         push_slice(&mut bytes, self.semantic_identity.graph().as_bytes());
         push_slice(
             &mut bytes,
@@ -1572,89 +1826,98 @@ impl VerifiedRequestSubject {
             &mut bytes,
             self.semantic_identity.registry_snapshot().as_bytes(),
         );
-        match &self.normalized {
-            NormalizedProgramSubject::SerialSum(normalized) => {
-                push_slice(&mut bytes, b"serial-sum-f32.v2");
-                push_len(&mut bytes, normalized.input_keys.len());
-                for key in &normalized.input_keys {
-                    push_slice(&mut bytes, key.as_str().as_bytes());
+        // The ordered named outputs, counted then written in declaration order.
+        // The count is what keeps a two-output subject from framing like a
+        // one-output subject followed by the contract encoding, and the order is
+        // identity rather than presentation: two programs differing only in
+        // which output is declared first are different programs, and the
+        // semantic graph identity above already says so.
+        push_len(&mut bytes, self.normalized.outputs.len());
+        for normalized in &self.normalized.outputs {
+            match normalized {
+                NormalizedOutputSubject::SerialSum(normalized) => {
+                    push_slice(&mut bytes, b"serial-sum-f32.v2");
+                    push_len(&mut bytes, normalized.input_keys.len());
+                    for key in &normalized.input_keys {
+                        push_slice(&mut bytes, key.as_str().as_bytes());
+                    }
+                    push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
+                    encode_explain_shape(&mut bytes, &normalized.input_shape);
+                    encode_explain_shape(&mut bytes, &normalized.output_shape);
+                    push_len(&mut bytes, normalized.reduction_axes.len());
+                    for axis in &normalized.reduction_axes {
+                        bytes.extend_from_slice(&axis.get().to_be_bytes());
+                    }
+                    encode_pointwise_expression(&mut bytes, &normalized.prologue);
+                    for members in [
+                        normalized.members.pointwise(),
+                        normalized.members.reduction(),
+                    ] {
+                        push_len(&mut bytes, members.len());
+                        for member in members {
+                            bytes.extend_from_slice(&member.0.to_be_bytes());
+                        }
+                    }
+                    bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
+                    bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
                 }
-                push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
-                encode_explain_shape(&mut bytes, &normalized.input_shape);
-                encode_explain_shape(&mut bytes, &normalized.output_shape);
-                push_len(&mut bytes, normalized.reduction_axes.len());
-                for axis in &normalized.reduction_axes {
-                    bytes.extend_from_slice(&axis.get().to_be_bytes());
-                }
-                encode_pointwise_expression(&mut bytes, &normalized.prologue);
-                for members in [
-                    normalized.members.pointwise(),
-                    normalized.members.reduction(),
-                ] {
-                    push_len(&mut bytes, members.len());
-                    for member in members {
+                NormalizedOutputSubject::Pointwise(normalized) => {
+                    // The sub-tag steps to `v3` because this arm's shape changed
+                    // again: a fixed root family, child family, association, and
+                    // three leaves became the general expression the recognizer now
+                    // admits. A `v2` pointwise subject can never be read as a `v3`
+                    // one.
+                    push_slice(&mut bytes, b"pointwise-f32.v3");
+                    push_len(&mut bytes, normalized.input_keys.len());
+                    for key in &normalized.input_keys {
+                        push_slice(&mut bytes, key.as_str().as_bytes());
+                    }
+                    push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
+                    encode_explain_shape(&mut bytes, &normalized.shape);
+                    encode_pointwise_expression(&mut bytes, &normalized.expression);
+                    push_len(&mut bytes, normalized.members.len());
+                    for member in &normalized.members {
                         bytes.extend_from_slice(&member.0.to_be_bytes());
                     }
+                    bytes.extend_from_slice(&normalized.elements.to_be_bytes());
                 }
-                bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
-                bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
-            }
-            NormalizedProgramSubject::Pointwise(normalized) => {
-                // The sub-tag steps to `v3` because this arm's shape changed
-                // again: a fixed root family, child family, association, and
-                // three leaves became the general expression the recognizer now
-                // admits. A `v2` pointwise subject can never be read as a `v3`
-                // one.
-                push_slice(&mut bytes, b"pointwise-f32.v3");
-                push_len(&mut bytes, normalized.input_keys.len());
-                for key in &normalized.input_keys {
-                    push_slice(&mut bytes, key.as_str().as_bytes());
+                // A third sub-tag rather than a step of the enclosing
+                // `request-subject.v2` domain: neither existing arm's bytes move, so
+                // a subject encoded before this variant existed still encodes to
+                // exactly what it did, and a reader that reaches this tag is reading
+                // a subject the earlier vocabulary could not express.
+                NormalizedOutputSubject::Contraction(normalized) => {
+                    push_slice(&mut bytes, b"contraction-f32.v1");
+                    push_len(&mut bytes, normalized.input_keys.len());
+                    for key in &normalized.input_keys {
+                        push_slice(&mut bytes, key.as_str().as_bytes());
+                    }
+                    push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
+                    for shape in &normalized.input_shapes {
+                        encode_explain_shape(&mut bytes, shape);
+                    }
+                    encode_explain_shape(&mut bytes, &normalized.output_shape);
+                    encode_explain_shape(&mut bytes, &normalized.contracted_shape);
+                    // The canonical structure encoding, not a projection of it: the
+                    // index tuples are what ADR 0087 makes the operation's identity,
+                    // and two structures over one set of shapes are two programs.
+                    push_slice(
+                        &mut bytes,
+                        normalized.structure.canonical_encoding().as_bytes(),
+                    );
+                    for position in normalized.operand_positions {
+                        push_len(&mut bytes, position);
+                    }
+                    push_len(&mut bytes, normalized.members.len());
+                    for member in &normalized.members {
+                        bytes.extend_from_slice(&member.0.to_be_bytes());
+                    }
+                    for elements in normalized.input_elements {
+                        bytes.extend_from_slice(&elements.to_be_bytes());
+                    }
+                    bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+                    bytes.extend_from_slice(&normalized.contracted_elements.to_be_bytes());
                 }
-                push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
-                encode_explain_shape(&mut bytes, &normalized.shape);
-                encode_pointwise_expression(&mut bytes, &normalized.expression);
-                push_len(&mut bytes, normalized.members.len());
-                for member in &normalized.members {
-                    bytes.extend_from_slice(&member.0.to_be_bytes());
-                }
-                bytes.extend_from_slice(&normalized.elements.to_be_bytes());
-            }
-            // A third sub-tag rather than a step of the enclosing
-            // `request-subject.v2` domain: neither existing arm's bytes move, so
-            // a subject encoded before this variant existed still encodes to
-            // exactly what it did, and a reader that reaches this tag is reading
-            // a subject the earlier vocabulary could not express.
-            NormalizedProgramSubject::Contraction(normalized) => {
-                push_slice(&mut bytes, b"contraction-f32.v1");
-                push_len(&mut bytes, normalized.input_keys.len());
-                for key in &normalized.input_keys {
-                    push_slice(&mut bytes, key.as_str().as_bytes());
-                }
-                push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
-                for shape in &normalized.input_shapes {
-                    encode_explain_shape(&mut bytes, shape);
-                }
-                encode_explain_shape(&mut bytes, &normalized.output_shape);
-                encode_explain_shape(&mut bytes, &normalized.contracted_shape);
-                // The canonical structure encoding, not a projection of it: the
-                // index tuples are what ADR 0087 makes the operation's identity,
-                // and two structures over one set of shapes are two programs.
-                push_slice(
-                    &mut bytes,
-                    normalized.structure.canonical_encoding().as_bytes(),
-                );
-                for position in normalized.operand_positions {
-                    push_len(&mut bytes, position);
-                }
-                push_len(&mut bytes, normalized.members.len());
-                for member in &normalized.members {
-                    bytes.extend_from_slice(&member.0.to_be_bytes());
-                }
-                for elements in normalized.input_elements {
-                    bytes.extend_from_slice(&elements.to_be_bytes());
-                }
-                bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
-                bytes.extend_from_slice(&normalized.contracted_elements.to_be_bytes());
             }
         }
         encode_contract(&mut bytes, self.numerical_contract);
@@ -1997,26 +2260,32 @@ fn request_subject(
 ) -> VerifiedRequestSubject {
     #[cfg(test)]
     crate::workcount::REQUEST_SUBJECT_REBUILDS.record();
-    let normalized = match normalized {
-        NormalizedProgram::SerialSum(normalized) => {
-            NormalizedProgramSubject::SerialSum(NormalizedSerialSumSubject {
-                input_keys: normalized.input_keys.clone(),
-                output_key: normalized.output_key.clone(),
-                input_shape: normalized.input_shape.clone(),
-                output_shape: normalized.output_shape.clone(),
-                reduction_axes: normalized.reduction_axes.clone(),
-                prologue: normalized.prologue.clone(),
-                members: normalized.members.clone(),
-                input_elements: normalized.input_elements,
-                output_elements: normalized.output_elements,
+    let normalized = NormalizedProgramSubject {
+        outputs: normalized
+            .outputs()
+            .iter()
+            .map(|normalized| match normalized {
+                NormalizedOutput::SerialSum(normalized) => {
+                    NormalizedOutputSubject::SerialSum(NormalizedSerialSumSubject {
+                        input_keys: normalized.input_keys.clone(),
+                        output_key: normalized.output_key.clone(),
+                        input_shape: normalized.input_shape.clone(),
+                        output_shape: normalized.output_shape.clone(),
+                        reduction_axes: normalized.reduction_axes.clone(),
+                        prologue: normalized.prologue.clone(),
+                        members: normalized.members.clone(),
+                        input_elements: normalized.input_elements,
+                        output_elements: normalized.output_elements,
+                    })
+                }
+                NormalizedOutput::Pointwise(normalized) => {
+                    NormalizedOutputSubject::Pointwise(normalized.clone())
+                }
+                NormalizedOutput::Contraction(normalized) => {
+                    NormalizedOutputSubject::Contraction(normalized.clone())
+                }
             })
-        }
-        NormalizedProgram::Pointwise(normalized) => {
-            NormalizedProgramSubject::Pointwise(normalized.clone())
-        }
-        NormalizedProgram::Contraction(normalized) => {
-            NormalizedProgramSubject::Contraction(normalized.clone())
-        }
+            .collect(),
     };
     VerifiedRequestSubject {
         normalized,
@@ -2854,46 +3123,40 @@ fn resolve_numerical_contract(
 /// regions write several, and the program layer binds each stage's buffers to
 /// values positionally, which [`tiler_ir::program::ValueRole::fills`] states.
 ///
-/// What is missing is *this function's own shape*, and the paragraph that used
-/// to stand here named the wrong owner. It said the planner matched three fixed
-/// single-output plan shapes and that nothing produced a cover assigning regions
-/// to several ordered outputs, with `implement-general-dag-partitioning` owning
-/// the widening. Both dependencies landed: [`crate::cover`] collects the ordered
-/// named outputs a cover must produce and `verify_cover` checks each is produced
-/// by exactly one region, and
-/// `assemble-a-kernel-program-from-an-arbitrary-cover` replaced the three plan
-/// shapes with a derivation over a cover of any region count. Neither is the
-/// wall any more.
+/// **Recognition is no longer the wall, and the guard below is now the only
+/// thing standing between a two-output program and a plan.** It used to be:
+/// this function read `outputs().next()`, classified that one occurrence, and
+/// each recognizer below required *its* walk to cover the program exactly, so a
+/// second declared output was either outside the walk — leaving the program
+/// uncovered, refused under `operation-set` — or inside it, where one region's
+/// owning write would have had to serve both a materialization edge and a
+/// publication. [`recognize_program_outputs`] replaced that with one walk per
+/// declared output and moved the whole-program obligation onto the relation
+/// between the walks: [`check_output_cover`] requires them to *partition* the
+/// occurrences, so every occurrence is claimed exactly once and every published
+/// value has one region that owns its write.
 ///
-/// The wall is that a recognized program is **one whole-program strategy reached
-/// from one output**. This function reads `outputs().next()`, classifies that
-/// occurrence, and each recognizer below then requires its walk to cover the
-/// program exactly — [`recognize_pointwise`] under `operation-set`,
-/// [`recognize_reduction`] through [`check_recognized_operation_cover`].
-/// [`NormalizedProgram`] holds one expression, one output shape, and one member
-/// partition to match, and [`crate::physical::spell_region`] can spell only a
-/// cover region whose members equal one of that partition's parts.
+/// The guard therefore stays for one remaining reason, and it is downstream
+/// rather than here. `CoverAssembly::from_plan` pairs the ordered named outputs
+/// with the regions that publish them, and the cover states which regions
+/// publish *an* output but not which named result each retains, so with two of
+/// either it refuses under `cover-named-output-attribution`
+/// (`crates/tiler-compiler/src/program.rs`), and
+/// `verify_artifact_refinements` carries its own `semantic-output-coverage`
+/// arity check. Relaxing `output-arity` before those two are supplied would
+/// trade a boundary refusal for a mid-pipeline one, which is what the multi-input
+/// precedent calls strictly worse than refusing.
+/// `admit-ordered-multi-output-programs-at-the-compiler-request-boundary` owns
+/// relaxing it together with that attribution;
+/// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence for
+/// where the boundary is, and this module's own
+/// `recognizing_several_ordered_named_outputs_*` tests hold the evidence that
+/// recognition is no longer what holds it.
 ///
-/// That makes the admissible multi-output set empty, and the argument is
-/// structural rather than a list of cases. A second declared output either has
-/// its producing occurrence inside the first output's walk or it does not. If it
-/// does not, the walk covers less than the program and `operation-set` refuses.
-/// If it does, that value is consumed by another occurrence of the same walk, so
-/// its producing region either materializes for a consumer in another region —
-/// leaving its one owning write to serve both the edge and the publication — or
-/// contains that consumer and must publish two named outputs from one write.
-/// A region writes one owning tensor and [`tiler_ir::program::ValueRole`] is
-/// exclusive, so both are refused a layer down.
-///
-/// Relaxing this guard would therefore trade a boundary refusal for a
-/// mid-pipeline one and admit nothing. Measured at `3adc0689` by relaxing this
-/// guard and the `semantic-output-coverage` arity check together: an independent
-/// two-output program reached `strategy`/`operation-set`, and the
-/// reduction-epilogue fixture reached
-/// `program-assembly`/`cover-named-output-attribution`.
-/// `recognize-several-ordered-named-outputs-at-the-compiler-request-boundary`
-/// owns the widening, and
-/// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence.
+/// The guard runs **before** recognition rather than after, so which refusal a
+/// multi-output program reports has not moved: a program whose second output is
+/// inside the first's walk still reports `output-arity` rather than the
+/// partition rule it would now also fail.
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
     // Program-wide properties first, each under the rule that names it. A
     // program failing one of these fails it for every shape below, so reporting
@@ -2911,14 +3174,49 @@ fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProg
     {
         return mismatch("dtype-f32");
     }
-    let output = program
-        .outputs()
-        .next()
-        .ok_or(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "missing-output",
-        })?;
-    // A program whose output *is* a declared input computes nothing: it names no
+    recognize_program_outputs(program)
+}
+
+/// Recognizes every ordered named output of one verified program.
+///
+/// **One walk per declared output, and the outputs are recognized in declaration
+/// order** — the order is identity rather than presentation, and the recognized
+/// list preserves it so that the request subject, the cover's named-output
+/// attribution, and the assembled program's interface all speak about the same
+/// ordering the caller declared.
+///
+/// The per-output walk is exactly the one a single-output program has always
+/// taken: the occurrence producing the output decides the shape, and the
+/// occurrences feeding it are walked outward. What changed is where the
+/// whole-program obligation lives. Each recognizer used to end by demanding that
+/// its own walk cover the program exactly; that demand is now
+/// [`check_output_cover`]'s, stated over the walks together, and it is strictly
+/// the same requirement when there is one output.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] under `missing-output` for a
+/// program declaring none, every rule the per-output recognizers report, and the
+/// two [`check_output_cover`] states: `operation-set` for an occurrence no
+/// walk claimed, and `output-partition-overlap` for one claimed twice.
+fn recognize_program_outputs(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
+    if program.output_count() == 0 {
+        return unsupported("strategy", "missing-output");
+    }
+    let mut outputs = Vec::with_capacity(program.output_count());
+    for output in program.outputs() {
+        outputs.push(recognize_output(program, &output)?);
+    }
+    check_output_cover(program, &outputs)?;
+    Ok(NormalizedProgram { outputs })
+}
+
+/// Recognizes the region partition implementing one ordered named output.
+fn recognize_output(
+    program: &SemanticProgram,
+    output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+) -> Result<NormalizedOutput, RequestError> {
+    // An output that *is* a declared input computes nothing: it names no
     // operation for any region to realize. The property that was not recognized
     // is its operation set, so it is reported under that rule rather than as the
     // missing producer a bare graph walk would report.
@@ -2930,13 +3228,58 @@ fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProg
     }
     let (member, root) = producer_for_value(program, output.value())?;
     if root.key() == &strict_serial_sum_f32_op() {
-        recognize_reduction(program, &output, member, &root).map(NormalizedProgram::SerialSum)
+        recognize_reduction(program, output, member, &root).map(NormalizedOutput::SerialSum)
     } else if root.key() == &strict_tensor_contraction_f32_op() {
-        normalize_contraction(program)
-            .map(|normalized| NormalizedProgram::Contraction(Box::new(normalized)))
+        normalize_contraction(program, output)
+            .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
     } else {
-        recognize_pointwise(program, &output).map(NormalizedProgram::Pointwise)
+        recognize_pointwise(program, output).map(NormalizedOutput::Pointwise)
     }
+}
+
+/// Requires the recognized walks to partition the program's occurrences.
+///
+/// **Two obligations, and they are separate claims about different failures.**
+///
+/// *Every occurrence is claimed by some walk* (`operation-set`). A built program
+/// retains only output-reachable operations, so an unclaimed one is work no
+/// region would compute and the assembled program would silently drop. This is
+/// the widened form of the check each recognizer used to make alone — with one
+/// declared output the union is that output's own member set and the rule is
+/// unchanged, which is why widening it rather than removing it is what keeps the
+/// uncovered case refused.
+///
+/// *No occurrence is claimed by two walks* (`output-partition-overlap`). Two
+/// outputs whose walks share an occurrence are the shape where one value is both
+/// published and consumed: the region owning that occurrence's write would have
+/// to serve a materialization edge and a publication at once, or contain the
+/// consumer and publish two named results from one write.
+/// [`tiler_ir::program::ValueRole`] is exclusive and a region writes one owning
+/// tensor, so both are refused a layer down — and refusing here instead is what
+/// keeps the boundary from admitting a program that dies mid-pipeline.
+/// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
+/// stage that lifts it.
+///
+/// Claimed counts are taken over the deduplicated per-output member sets, so one
+/// constant shared by two operands of the *same* walk contributes one member
+/// rather than two — the normalized spelling of one program, not a duplicate.
+fn check_output_cover(
+    program: &SemanticProgram,
+    outputs: &[NormalizedOutput],
+) -> Result<(), RequestError> {
+    let claimed: Vec<Vec<SemanticMemberId>> =
+        outputs.iter().map(NormalizedOutput::members).collect();
+    let total: usize = claimed.iter().map(Vec::len).sum();
+    let mut distinct: Vec<SemanticMemberId> = claimed.into_iter().flatten().collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    if total != distinct.len() {
+        return mismatch("output-partition-overlap");
+    }
+    if program.operation_count() != distinct.len() {
+        return mismatch("operation-set");
+    }
+    Ok(())
 }
 
 /// One recognized elementwise expression and the occurrences it covers.
@@ -3207,12 +3550,6 @@ fn recognize_pointwise(
         return mismatch("elementwise-rank");
     }
     let recognized = recognize_elementwise(program, output.value(), &declared, &shape)?;
-    // The recognized occurrences must cover the program exactly. A built program
-    // retains only output-reachable operations, so an uncovered one is work this
-    // region would silently drop.
-    if recognized.members.len() != program.operation_count() {
-        return mismatch("operation-set");
-    }
     let elements = element_count_u64(&shape, "input")?;
     Ok(NormalizedPointwise {
         input_keys: program.inputs().map(|input| input.key().clone()).collect(),
@@ -3291,7 +3628,6 @@ fn recognize_reduction(
     }
     let prologue = recognize_elementwise(program, *contributor, &declared, &input_shape)?;
     let members = RecognizedSerialSumMembers::new(prologue.members, sum_member);
-    check_recognized_operation_cover(program, &members)?;
 
     let input_elements = element_count_u64(&input_shape, "input")?;
     let output_elements = element_count_u64(&output_shape, "output")?;
@@ -3311,14 +3647,6 @@ fn recognize_reduction(
     })
 }
 
-/// Recognized operation count of the bounded contraction strategy.
-///
-/// Exactly the contraction itself. Its operands are tensors rather than
-/// constants, so — unlike the two elementwise strategies — no constant operation
-/// belongs to this shape, and an extra reachable operation is work this region
-/// would silently drop.
-const CONTRACTION_OPERATIONS: usize = 1;
-
 /// Recognizes a two-input binary tensor contraction over `f32`.
 ///
 /// The admitted set is *every* well-formed binary index structure the semantic
@@ -3330,26 +3658,24 @@ const CONTRACTION_OPERATIONS: usize = 1;
 /// with no correctness content behind it. What stays narrow is everything else —
 /// exactly two operands, exactly one contraction operation reachable, `f32`
 /// throughout, and no attribute beyond the index structure.
-fn normalize_contraction(program: &SemanticProgram) -> Result<NormalizedContraction, RequestError> {
+fn normalize_contraction(
+    program: &SemanticProgram,
+    output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+) -> Result<NormalizedContraction, RequestError> {
+    // Both declared inputs are this contraction's operands, checked below, and
+    // the region binds them by *declaration* ordinal — so a program declaring a
+    // third input has no ordinal for this strategy's two reads to occupy.
     if program.input_count() != 2 {
         return mismatch("input-arity");
     }
-    // Exactly the contraction occurrence and nothing else. An elementwise
-    // epilogue over a contraction result is a two-region chain this profile
-    // cannot assemble: every elementwise region it builds reads declared input
-    // tensors, and none reads a materialized intermediate. Refusing here is
-    // what keeps the boundary from admitting a program that dies mid-pipeline;
-    // `admit-elementwise-epilogues-over-a-materialized-intermediate` owns it.
-    if program.operation_count() != CONTRACTION_OPERATIONS {
-        return mismatch("operation-set");
-    }
-    let output = program
-        .outputs()
-        .next()
-        .ok_or(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "missing-output",
-        })?;
+    // An elementwise epilogue over a contraction result is a two-region chain
+    // this profile cannot assemble: every elementwise region it builds reads
+    // declared input tensors, and none reads a materialized intermediate. It is
+    // refused rather than admitted-then-dropped, by `check_output_cover` when
+    // the epilogue's occurrences belong to no walk and by the elementwise walk's
+    // own `operation-set` when the epilogue produces the output;
+    // `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the
+    // widening.
     let (ordinal, operation) =
         producer(program, output.value(), &strict_tensor_contraction_f32_op())?;
     if operation.results().collect::<Vec<_>>() != [output.value()] {
@@ -3536,24 +3862,6 @@ fn check_canonical_reduction_axes(axes: &[Axis], rank: usize) -> Result<(), Requ
             return mismatch("sum-axes-canonical");
         }
         previous = Some(axis.get());
-    }
-    Ok(())
-}
-
-/// Requires the recognized occurrences to cover the whole program exactly.
-///
-/// A built program retains only output-reachable operations, so demanding that
-/// the reachable count equal the distinct recognized set rejects any operation
-/// the recognized prologue and reduction do not claim. One constant shared by
-/// two operands is the normalized spelling of the same program and contributes
-/// one member rather than two, which is why this compares against the
-/// deduplicated set rather than against a spelled-out count.
-fn check_recognized_operation_cover(
-    program: &SemanticProgram,
-    recognized: &RecognizedSerialSumMembers,
-) -> Result<(), RequestError> {
-    if program.operation_count() != recognized.all().len() {
-        return mismatch("operation-set");
     }
     Ok(())
 }
@@ -4099,8 +4407,47 @@ mod tests {
     }
 
     /// Recognizes one program through the whole boundary, or reports the rule.
-    fn recognize(program: &SemanticProgram) -> Result<NormalizedProgram, &'static str> {
-        select_supported_strategy(program).map_err(|error| match error {
+    ///
+    /// Answers with the sole recognized output, because every fixture reaching
+    /// it declares one; [`recognize_outputs`] is the multi-output form.
+    fn recognize(program: &SemanticProgram) -> Result<NormalizedOutput, &'static str> {
+        strategy_rule(select_supported_strategy(program)).map(|recognized| {
+            let [output] = recognized.outputs() else {
+                panic!("the fixture declares one output");
+            };
+            output.clone()
+        })
+    }
+
+    /// Recognizes one program's ordered named outputs, or reports the rule.
+    ///
+    /// Drives [`recognize_program_outputs`] directly, below the standing
+    /// `output-arity` guard, which is what makes every refusal the widened walk
+    /// introduces reachable and watchable. The guard itself belongs to
+    /// `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`,
+    /// so a program declaring several outputs is refused by
+    /// [`select_supported_strategy`] and recognized by this.
+    ///
+    /// The two program-wide properties the boundary checks *besides* arity are
+    /// asserted rather than reported, so a fixture reaching the walk has cleared
+    /// exactly what a one-output program clears and a refusal this helper does
+    /// return is one the walk itself produced.
+    fn recognize_outputs(program: &SemanticProgram) -> Result<NormalizedProgram, &'static str> {
+        assert_ne!(program.input_count(), 0, "the fixture declares an input");
+        assert!(
+            program
+                .values()
+                .all(|value| value.resolved_type() == &F32::resolved_type()),
+            "the fixture is f32 throughout",
+        );
+        strategy_rule(recognize_program_outputs(program))
+    }
+
+    /// Reduces one recognition outcome to the strategy rule it refused under.
+    fn strategy_rule(
+        outcome: Result<NormalizedProgram, RequestError>,
+    ) -> Result<NormalizedProgram, &'static str> {
+        outcome.map_err(|error| match error {
             RequestError::UnsupportedCapability {
                 phase: "strategy",
                 rule,
@@ -4315,7 +4662,10 @@ mod tests {
     fn governed_request_selects_the_supported_serial_sum_strategy() {
         let program = program();
         let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
-        let normalized = verified.normalized.serial_sum();
+        let [recognized] = verified.normalized.outputs() else {
+            panic!("the fixture declares one output");
+        };
+        let normalized = recognized.serial_sum();
         assert_eq!(normalized.input_shape, Shape::from_dims([2, 3]));
         assert_eq!(normalized.output_shape, Shape::from_dims([2]));
         assert_eq!(normalized.reduction_axes, [Axis::new(1)]);
@@ -4377,7 +4727,7 @@ mod tests {
             .unwrap();
         let program = builder.build().unwrap();
 
-        let NormalizedProgram::SerialSum(recognized) =
+        let NormalizedOutput::SerialSum(recognized) =
             recognize(&program).expect("the composed program is recognized")
         else {
             panic!("a program whose output is a reduction recognizes as one");
@@ -4401,7 +4751,10 @@ mod tests {
             .unwrap()
             .for_target(0)
             .unwrap();
-        assert_eq!(crate::physical::fused_prologue_constants(&verified), None);
+        assert_eq!(
+            crate::physical::fused_prologue_constants(verified.sole_output()),
+            None
+        );
     }
 
     /// A reduction over a declared input refuses, because no region reads one.
@@ -4444,7 +4797,7 @@ mod tests {
         let neighbour = fold(true);
         assert!(matches!(
             recognize(&neighbour),
-            Ok(NormalizedProgram::SerialSum(_))
+            Ok(NormalizedOutput::SerialSum(_))
         ));
     }
 
@@ -4458,7 +4811,7 @@ mod tests {
     fn elementwise_recognition_admits_depth_sharing_and_multiple_inputs() {
         // Three declared inputs and a mixed multiply-then-add chain.
         let three = three_input_elementwise();
-        let NormalizedProgram::Pointwise(recognized) =
+        let NormalizedOutput::Pointwise(recognized) =
             recognize(&three).expect("a three-input expression is recognized")
         else {
             panic!("an elementwise output recognizes as an elementwise program");
@@ -4492,7 +4845,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         let deep = builder.build().unwrap();
-        let NormalizedProgram::Pointwise(recognized) =
+        let NormalizedOutput::Pointwise(recognized) =
             recognize(&deep).expect("a deep shared expression is recognized")
         else {
             panic!("an elementwise output recognizes as an elementwise program");
@@ -4517,7 +4870,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         let repeated = builder.build().unwrap();
-        let NormalizedProgram::Pointwise(recognized) =
+        let NormalizedOutput::Pointwise(recognized) =
             recognize(&repeated).expect("a repeated read is recognized")
         else {
             panic!("an elementwise output recognizes as an elementwise program");
@@ -4608,7 +4961,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), activated)
             .unwrap();
         let unary = builder.build().unwrap();
-        let NormalizedProgram::Pointwise(recognized) =
+        let NormalizedOutput::Pointwise(recognized) =
             recognize(&unary).expect("the activation projects into the expression vocabulary")
         else {
             panic!("an elementwise output recognizes as an elementwise program");
@@ -4626,10 +4979,309 @@ mod tests {
         let contraction = contraction_program(false);
         assert!(matches!(
             recognize(&contraction),
-            Ok(NormalizedProgram::Contraction(_))
+            Ok(NormalizedOutput::Contraction(_))
         ));
         let with_epilogue = contraction_program(true);
         assert_eq!(recognize(&with_epilogue).unwrap_err(), "operation-set");
+    }
+
+    /// Two ordered named outputs whose producers share no occurrence.
+    ///
+    /// `product = a * b` and `sum = a + b` over the same two declared inputs.
+    /// The independence is the point: neither output's walk reaches the other's
+    /// producer, which is exactly the branch the superseded single-output
+    /// recognition refused under `operation-set` — one walk covered one of the
+    /// two operations and the program had two.
+    fn independent_two_output_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let first = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let second = builder
+            .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let product = F32Multiply::apply(&mut builder, first, second).unwrap();
+        let sum = F32Add::apply(&mut builder, first, second).unwrap();
+        builder
+            .output(OutputKey::new("product").unwrap(), product)
+            .unwrap();
+        builder.output(OutputKey::new("sum").unwrap(), sum).unwrap();
+        builder.build().unwrap()
+    }
+
+    /// Recognition names one implementable region partition per ordered output.
+    ///
+    /// **The wall this ticket was filed for, observed gone.** The recognition
+    /// used to read one output, classify it, and require that one walk to cover
+    /// the program; a second declared output outside the walk therefore refused
+    /// under `operation-set`, which is what the measurement at `3adc0689`
+    /// recorded when both arity guards were relaxed. The same program now
+    /// recognizes into two partitions, each naming its own output key,
+    /// expression, and members — and the members are disjoint, which is what
+    /// makes each one a region a cover can place without two regions claiming
+    /// one occurrence.
+    ///
+    /// The standing refusal is asserted beside it, because the two facts
+    /// together are the ticket's boundary: recognition admits the program and
+    /// `output-arity` still refuses it, so the wall that remains is the guard
+    /// `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`
+    /// owns rather than anything about recognizing several outputs.
+    #[test]
+    fn recognizing_several_ordered_named_outputs_names_one_partition_each() {
+        let program = independent_two_output_program();
+        assert_eq!(program.output_count(), 2);
+        assert_eq!(program.operation_count(), 2);
+
+        let recognized = recognize_outputs(&program).expect("both outputs are recognized");
+        let [product, sum] = recognized.outputs() else {
+            panic!("one recognized partition per declared output, in declaration order");
+        };
+        let product = product
+            .pointwise()
+            .expect("a multiply is an elementwise output");
+        let sum = sum.pointwise().expect("an add is an elementwise output");
+        assert_eq!(product.output_key, OutputKey::new("product").unwrap());
+        assert_eq!(sum.output_key, OutputKey::new("sum").unwrap());
+        // Each walk claims exactly its own producer, and the two sets are
+        // disjoint: together they partition the program's occurrences.
+        assert_eq!(product.members.len(), 1);
+        assert_eq!(sum.members.len(), 1);
+        assert_ne!(product.members, sum.members);
+        assert_eq!(recognized.all_members().len(), program.operation_count());
+        // Two different binary32 functions over the same two reads, so the
+        // partitions are distinguished by what they compute and not only by
+        // which occurrence they name.
+        assert_ne!(product.expression, sum.expression);
+
+        // The accepted neighbour: the same recognition reached through the
+        // ordinary boundary still refuses, and under the guard's own rule.
+        assert_eq!(
+            select_supported_strategy(&program),
+            Err(RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "output-arity",
+            }),
+        );
+    }
+
+    /// A cover region resolves to the output whose partition owns it.
+    ///
+    /// This is the lookup `crate::physical::spell_region` performs, exercised
+    /// on the one shape that can distinguish it from the whole-program question
+    /// it replaced: with two declared outputs, "which expression does this
+    /// region compute" has two answers and the members are what choose between
+    /// them. The straddling case is the one that must say no — a region covering
+    /// both outputs' occurrences computes two published results from one owning
+    /// write, and no scheduled region does that.
+    #[test]
+    fn a_region_resolves_to_the_output_whose_partition_owns_it() {
+        let program = independent_two_output_program();
+        let recognized = recognize_outputs(&program).expect("both outputs are recognized");
+        let [first, second] = recognized.outputs() else {
+            panic!("one recognized partition per declared output");
+        };
+        let first_members = first.members();
+        let second_members = second.members();
+
+        assert_eq!(
+            recognized
+                .output_for_region(&first_members)
+                .map(|(at, _)| at),
+            Some(0),
+        );
+        assert_eq!(
+            recognized
+                .output_for_region(&second_members)
+                .map(|(at, _)| at),
+            Some(1),
+        );
+        // The check can say no, in both of the ways a cover can get it wrong: a
+        // region straddling the two partitions, and a region covering neither.
+        let straddling = recognized.all_members();
+        assert_eq!(straddling.len(), 2);
+        assert!(recognized.output_for_region(&straddling).is_none());
+        assert!(recognized.output_for_region(&[]).is_none());
+    }
+
+    /// The whole-program cover check was widened, not removed, and says no.
+    ///
+    /// **Both arms are driven against a case that must fail.** The accepted
+    /// neighbour is the recognized two-output partition itself; each perturbation
+    /// takes exactly one property away from it.
+    ///
+    /// *Removal-shaped.* Dropping one occurrence from a walk leaves an
+    /// occurrence no output claims, which is work the assembled program would
+    /// silently not compute. Removing the check rather than widening it is
+    /// exactly what would admit this, so the perturbation is the removal.
+    ///
+    /// *Overlap-shaped.* Adding one walk's occurrence to another's makes the two
+    /// partitions claim it twice, which is the shape where one region's owning
+    /// write would have to serve both a materialization edge and a publication.
+    #[test]
+    fn the_output_partition_check_can_say_no_in_both_directions() {
+        let program = independent_two_output_program();
+        let recognized = recognize_outputs(&program).expect("both outputs are recognized");
+        let outputs = recognized.outputs().to_vec();
+        // The control: unperturbed, the walks partition the occurrences.
+        assert_eq!(check_output_cover(&program, &outputs), Ok(()));
+
+        let mut uncovered = outputs.clone();
+        let NormalizedOutput::Pointwise(dropped) = &mut uncovered[1] else {
+            panic!("the fixture's second output is elementwise");
+        };
+        dropped.members.clear();
+        assert_eq!(
+            check_output_cover(&program, &uncovered),
+            mismatch("operation-set"),
+            "an occurrence covered by no walk was admitted",
+        );
+
+        let mut overlapping = outputs.clone();
+        let claimed = outputs[0].members();
+        let NormalizedOutput::Pointwise(widened) = &mut overlapping[1] else {
+            panic!("the fixture's second output is elementwise");
+        };
+        widened.members.extend_from_slice(&claimed);
+        widened.members.sort_unstable();
+        assert_eq!(
+            check_output_cover(&program, &overlapping),
+            mismatch("output-partition-overlap"),
+            "one occurrence claimed by two walks was admitted",
+        );
+    }
+
+    /// Two ordered outputs the same region would have to publish are refused.
+    ///
+    /// Both shapes of the "inside the walk" branch, each observed refusing under
+    /// the partition rule rather than being admitted and dropped a layer down:
+    ///
+    /// - Two output keys naming *one* value. Whichever region owns that value's
+    ///   write publishes once, and `tiler_ir::program::KernelProgramBuilder`
+    ///   refuses a second publication of one buffer.
+    /// - A published intermediate that is also consumed — the epilogue shape the
+    ///   conformance fixture has. Its publication and the materialization edge
+    ///   its consumer reads across would be the same owning write, and
+    ///   `ValueRole` is exclusive.
+    ///
+    /// Their accepted neighbour is the independent two-output program above,
+    /// which differs from both by exactly the sharing.
+    /// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the
+    /// copy stage that lifts the second.
+    #[test]
+    fn two_outputs_sharing_one_walk_refuse_rather_than_publish_twice() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let first = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let second = builder
+            .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let product = F32Multiply::apply(&mut builder, first, second).unwrap();
+        builder
+            .output(OutputKey::new("product").unwrap(), product)
+            .unwrap();
+        builder
+            .output(OutputKey::new("alias").unwrap(), product)
+            .unwrap();
+        let colliding = builder.build().unwrap();
+        assert_eq!(colliding.output_count(), 2);
+        assert_eq!(colliding.operation_count(), 1);
+        assert_eq!(
+            recognize_outputs(&colliding).unwrap_err(),
+            "output-partition-overlap",
+        );
+
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let scaled = F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let reduced = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("reduced").unwrap(), reduced)
+            .unwrap();
+        builder
+            .output(OutputKey::new("scaled").unwrap(), scaled)
+            .unwrap();
+        let epilogue = builder.build().unwrap();
+        assert_eq!(epilogue.output_count(), 2);
+        assert_eq!(
+            recognize_outputs(&epilogue).unwrap_err(),
+            "output-partition-overlap",
+        );
+    }
+
+    /// Output order reaches the recognized program, not only the semantic graph.
+    ///
+    /// Two programs holding the same operations and the same two output keys,
+    /// differing only in which `output()` call came first, recognize into lists
+    /// that are unequal *and* unequal in order — the first entry of one is the
+    /// second entry of the other. The request subject encodes that list
+    /// length-framed in this order, so a permuted declaration cannot reach one
+    /// subject; the semantic half of the same claim is pinned in
+    /// `crates/tiler-compiler/tests/multi_output_boundary.rs`.
+    ///
+    /// **Measurement boundary, twice over.** This checks the recognized list,
+    /// not the encoded subject bytes: a subject is minted only for a request the
+    /// boundary admitted, and `output-arity` admits no two-output program, so
+    /// the encoded form of this claim becomes checkable in the same change that
+    /// relaxes the guard. And it compares each entry by the fields the subject
+    /// encodes rather than by the whole recognized value, because a
+    /// [`ValueId`] carries the graph it was built in: two separately built
+    /// programs never share one, so whole-value equality would report a
+    /// difference this test is not about and would hold whatever the order.
+    #[test]
+    fn two_programs_differing_only_in_output_order_recognize_differently() {
+        fn ordered(product_first: bool) -> SemanticProgram {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let first = builder
+                .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
+                .unwrap();
+            let second = builder
+                .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([4]))
+                .unwrap();
+            let product = F32Multiply::apply(&mut builder, first, second).unwrap();
+            let sum = F32Add::apply(&mut builder, first, second).unwrap();
+            let product_key = OutputKey::new("product").unwrap();
+            let sum_key = OutputKey::new("sum").unwrap();
+            if product_first {
+                builder.output(product_key, product).unwrap();
+                builder.output(sum_key, sum).unwrap();
+            } else {
+                builder.output(sum_key, sum).unwrap();
+                builder.output(product_key, product).unwrap();
+            }
+            builder.build().unwrap()
+        }
+
+        /// The per-output facts the request subject encodes, in list order.
+        fn encoded(recognized: &NormalizedProgram) -> Vec<(OutputKey, Vec<SemanticMemberId>)> {
+            recognized
+                .outputs()
+                .iter()
+                .map(|output| {
+                    let pointwise = output.pointwise().expect("an elementwise output");
+                    (pointwise.output_key.clone(), pointwise.members.clone())
+                })
+                .collect()
+        }
+
+        let product_first = encoded(&recognize_outputs(&ordered(true)).expect("recognized"));
+        let sum_first = encoded(&recognize_outputs(&ordered(false)).expect("recognized"));
+        assert_ne!(
+            product_first, sum_first,
+            "output order must reach the recognized program, not only presentation",
+        );
+        assert_eq!(product_first[0], sum_first[1]);
+        assert_eq!(product_first[1], sum_first[0]);
+        // The check can say no: re-declaring the same order reproduces the
+        // recognition, so the inequality above is about the order and not about
+        // rebuilding the program.
+        assert_eq!(
+            product_first,
+            encoded(&recognize_outputs(&ordered(true)).expect("recognized")),
+        );
     }
 
     /// Builds a binary contraction, optionally with an elementwise epilogue.
