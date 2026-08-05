@@ -35,11 +35,12 @@
 //! | Live-device requirement | [`RuntimeAdapter::observe_live_device`] | [`LiveDeviceQualification::resolve_live_device_requirements`] |
 //! | Prepared-entry property | [`RuntimeAdapter::observe_prepared_entry`] | [`RoutePreparation::resolve_target_properties`] |
 //!
-//! An adapter that could reverse a capacity comparison on its way to an answer
-//! would make `Unrecognized`, a wrong-shaped answer, and an unmet floor one
-//! outcome instead of three. The pair comparison and the profile classification
-//! stay separate for the same reason: "this host cannot execute these bytes" and
-//! "this artifact is for another target" are two refusals with two remedies.
+//! An adapter that could decide a row's own comparison on its way to an answer
+//! would make `Unrecognized`, a wrong-shaped answer, and an unsatisfied
+//! requirement one outcome instead of three. The pair comparison and the
+//! profile classification stay separate for the same reason: "this host cannot
+//! execute these bytes" and "this artifact is for another target" are two
+//! refusals with two remedies.
 //!
 //! # A caller-stated tuple is not discovered device truth
 //!
@@ -325,8 +326,9 @@ pub trait RuntimeAdapter {
     /// loader refuses it from the host's own declaration first.
     ///
     /// Answering in the wrong shape — a quantity for a qualitative row, a verdict
-    /// for a floor — is refused rather than coerced, because either coercion
-    /// would invent a comparison the producer did not state.
+    /// for a quantitative one — is refused rather than coerced, because either
+    /// coercion would substitute a comparison for the one the row's own kind
+    /// fixes.
     fn observe_live_device(
         &mut self,
         context: &LiveExecutionContext,

@@ -338,8 +338,9 @@ impl<'a> LiveDeviceRequest<'a> {
 /// requirement nothing evaluated.
 ///
 /// The comparison for a quantitative row stays in this crate: a host reports
-/// what it measured and the loader decides, so an adapter cannot reverse a
-/// capacity comparison on its way to an answer.
+/// what it measured and the loader applies the relation that row's dimension
+/// fixes, so an adapter cannot decide a row's own comparison on its way to an
+/// answer.
 ///
 /// Deliberately **not** `#[non_exhaustive]` (ADR 0074 convention 5b): an answer
 /// added here changes what a host must be able to say, and that must stop each
@@ -348,8 +349,10 @@ impl<'a> LiveDeviceRequest<'a> {
 pub enum LiveDeviceObservation {
     /// The host measured this dimension on the bound device.
     ///
-    /// Valid only for a quantitative floor. Answering it for a backend feature
-    /// row is refused rather than coerced.
+    /// A measurement and not a verdict, and valid only for a
+    /// [`RouteRequirement::Resource`] row: the loader compares it against that
+    /// row's required quantity by the relation the row's dimension fixes.
+    /// Answering it for a backend feature row is refused rather than coerced.
     Quantity(u64),
     /// The owning adapter decided this qualitative row for the bound device.
     ///

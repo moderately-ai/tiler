@@ -1337,8 +1337,9 @@ pub enum LoadRejection {
     /// A host's answer disagreed in shape with the requirement's own kind.
     ///
     /// A measured quantity offered for a qualitative row, or a capability
-    /// verdict offered for a floor. Refused rather than coerced: either coercion
-    /// would invent a comparison the producer did not state.
+    /// verdict offered for a quantitative one. Refused rather than coerced:
+    /// either coercion would substitute a comparison for the one the row's own
+    /// kind fixes.
     MisansweredRouteRequirement {
         /// Zero-based routing rank of the selected variant.
         variant: usize,
@@ -1351,7 +1352,8 @@ pub enum LoadRejection {
     ///
     /// Names the exact unmet requirement, which is the whole point of carrying
     /// the subject: a host that learns only "a requirement failed" cannot tell a
-    /// missing GPU capability from a capacity floor.
+    /// missing GPU capability from a live-device quantity that failed its
+    /// dimension's own relation.
     UnsatisfiedRouteRequirement {
         /// Zero-based routing rank of the selected variant.
         variant: usize,
