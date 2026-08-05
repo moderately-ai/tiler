@@ -1,7 +1,7 @@
 ---
 id: correct-the-four-thread-grid-rationales-the-measured-row-falsified
 title: Correct the four-thread grid rationales the measured row falsified
-status: todo
+status: in-progress
 priority: p2
 dependencies: [establish-an-upper-bound-authority-for-the-metal-grid-axis-row]
 related: [calibrate-and-activate-parallel-reduction-selection, raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, implementation/metal-aot, implementation/runti
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, defect, target-profiles]
+claimed_from: todo
+assignee: agent-grid-rationales
+lease_expires_at: 1785943730
 ---
 ## User-visible outcome
 

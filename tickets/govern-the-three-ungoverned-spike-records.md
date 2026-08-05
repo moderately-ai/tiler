@@ -1,7 +1,7 @@
 ---
 id: govern-the-three-ungoverned-spike-records
 title: Govern the three spike records the experiment catalog renders from nothing
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [reconcile-the-research-and-experiment-catalogs-with-their-frontmatter, list-the-corpus-reachability-spike-in-the-spike-index]
@@ -9,9 +9,6 @@ scopes: [research/target-profiles, research/program-planning, contracts/navigati
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, navigation, catalog, spikes]
-claimed_from: todo
-assignee: agent-govern-spikes
-lease_expires_at: 1785942813
 ---
 ## User-visible outcome
 
