@@ -91,6 +91,9 @@ const MEMBERS: [(&str, &str); 6] = [
     // The empty domain leads, because it is the boundary the other two cannot
     // speak for: a reduction over zero contributors reads its input buffer
     // never, and its result is a reduction's identity element rather than a sum.
+    // It is refused by name at this Candle pin rather than routed, and it stays
+    // in this population for that reason: a member dropped from the matrix would
+    // report the boundary as untested rather than as refused.
     ("empty-domain", "selected"),
     ("empty-domain", "materialized"),
     ("nontrivial", "selected"),
@@ -239,14 +242,16 @@ fn run() -> Result<(), ProofError> {
     probe_device_refusals(metal, &declaration)?;
 
     let mut proved = 0_usize;
-    let mut unsupported = 0_usize;
+    let mut routed = 0_usize;
+    let mut refused: Vec<String> = Vec::new();
     for (class, role) in MEMBERS {
+        let member = format!("{class}.{role}");
         match prove_member(&device, &environment, &base, class, role)? {
-            MemberOutcome::Proved(cases) => proved += cases,
-            MemberOutcome::Unsupported(reason) => {
-                println!("  {class}.{role}: NOT ROUTABLE through Candle Metal storage — {reason}");
-                unsupported += 1;
+            MemberOutcome::Proved(cases) => {
+                proved += cases;
+                routed += 1;
             }
+            MemberOutcome::Refused => refused.push(member),
         }
     }
 
@@ -256,11 +261,22 @@ fn run() -> Result<(), ProofError> {
     // routed moments earlier.
     probe_tensor_refusals(&device, metal, &environment, &base)?;
 
+    // One population, resolved member by member. The refused members are counted
+    // and named here rather than subtracted out: an excluded count reads as a
+    // matrix that is smaller than the one the producer published, and the whole
+    // point of the empty domain is that it is a member with an outcome.
     println!(
-        "candle adapter proof: {proved} case(s) agreed across {} of {} published member(s); \
-         {unsupported} member(s) are outside this profile and named above",
-        MEMBERS.len() - unsupported,
+        "candle adapter proof: {} of {} published member(s) resolved — {routed} routed and agreed \
+         with the producer's recorded reference evaluation across {proved} case(s), {} refused by \
+         a typed preflight refusal naming a zero extent ({})",
+        routed + refused.len(),
         MEMBERS.len(),
+        refused.len(),
+        if refused.is_empty() {
+            "none".to_owned()
+        } else {
+            refused.join(", ")
+        },
     );
     Ok(())
 }
@@ -269,11 +285,17 @@ fn run() -> Result<(), ProofError> {
 enum MemberOutcome {
     /// Every case the sidecar carries agreed with the producer's reference.
     Proved(usize),
-    /// This member cannot be expressed as Candle storage at all, and why.
+    /// This member's declared interface was refused by name, before any storage.
     ///
-    /// A named limitation rather than a skipped member: a run that quietly
-    /// omitted a published member would report success for part of a proof.
-    Unsupported(String),
+    /// A typed refusal rather than a skipped member: a run that quietly omitted
+    /// a published member would report success for part of a proof, and one that
+    /// let Candle's allocator report the limitation would put another project's
+    /// error on a boundary this adapter owns.
+    ///
+    /// Carries nothing, because the refusal is reported by [`prove_member`] where
+    /// it arrives — beside that member's own report lines, exactly as a routed
+    /// member's are. What the caller does with this is count it.
+    Refused,
 }
 
 /// Routes one published member through Candle and compares against the sidecar.
@@ -288,13 +310,40 @@ fn prove_member(
     let (bytes, sidecar) = read_artifact(&path)?;
     let recorded = RecordedArtifactProgramIdentity::from_bytes(sidecar.artifact_identity_bytes())
         .map_err(ProofError::RecordedIdentity)?;
-    let plan = TilerPlan::load(
+    let loaded = TilerPlan::load(
         bytes,
         recorded,
         environment.clone(),
         Realization::TilerFlushSubnormalsToZeroF32StrictOrder,
-    )
-    .map_err(ProofError::Wrapper)?;
+    );
+    // **The empty-domain close path.** A declared empty axis is refused from the
+    // artifact's own interface, before any Candle tensor is asked for, so the
+    // caller reads this adapter's typed refusal instead of an allocator error
+    // from under it. It is the one load refusal this proof reports as a member
+    // outcome; every other one is a defect in the run.
+    let plan = match loaded {
+        Ok(plan) => plan,
+        Err(WrapperError::Tensor(TensorRefusal::ZeroExtentInterface {
+            value,
+            axis,
+            extents,
+        })) => {
+            // Rendered through the refusal's own `Display` rather than restated
+            // here, so a refusal whose wording or fields changed shows up in this
+            // line rather than only in a type.
+            println!(
+                "  {class}.{role}: REFUSED before any Candle storage is asked for — {}",
+                TensorRefusal::ZeroExtentInterface {
+                    value,
+                    axis,
+                    extents: extents.clone(),
+                },
+            );
+            zero_extent_stays_unbuildable(device, &extents)?;
+            return Ok(MemberOutcome::Refused);
+        }
+        Err(other) => return Err(ProofError::Wrapper(other)),
+    };
     let (rows, columns) = plan.declared_shape();
     if class == PROBE_MEMBER.0 && role == PROBE_MEMBER.1 {
         println!(
@@ -302,30 +351,6 @@ fn prove_member(
             plan.realization(),
             plan.realization().fixes_reduction_order(),
         );
-    }
-
-    // **Fact — Candle's Metal allocator refuses a zero-length buffer.** A
-    // declared extent of zero is a legitimate program — a reduction over an
-    // empty domain publishes its identity element — and `Tensor::from_vec` over
-    // an empty slice cannot be built on a Metal device, because
-    // `newBufferWithLength:options:` at length zero returns nil and Candle
-    // reports it as a failed resource creation. The limitation is therefore
-    // upstream of every refusal this adapter owns: there is no tensor to
-    // preflight. It is proved here rather than assumed, so a Candle that later
-    // admits one stops reporting this member as unsupported.
-    if rows.saturating_mul(columns) == 0 {
-        let attempt = tensor_from_bits(&[], rows, columns, device);
-        return match attempt {
-            Err(ProofError::Device(detail)) => Ok(MemberOutcome::Unsupported(format!(
-                "the artifact declares a {rows}x{columns} input and Candle's Metal allocator \
-                 refuses a zero-length buffer ({detail}), so no Candle tensor of this shape \
-                 exists to preflight",
-            ))),
-            Err(other) => Err(other),
-            Ok(_) => Err(ProofError::ProbeAccepted(
-                "a zero-element Metal tensor, which this run recorded as unbuildable",
-            )),
-        };
     }
 
     let mut proved = 0_usize;
@@ -390,6 +415,39 @@ fn prove_member(
     }
     println!("    {proved} case(s) agreed with the producer's recorded reference evaluation");
     Ok(MemberOutcome::Proved(proved))
+}
+
+/// Records that no Candle tensor of a refused shape exists at this pin.
+///
+/// The refusal itself is decided from the artifact alone and would stand whatever
+/// Candle did, so this is what keeps it from being merely conservative: the
+/// measurement that says the refused shape is genuinely unbuildable here, taken
+/// after the refusal rather than instead of it.
+///
+/// **Fact — Candle's Metal allocator refuses a zero-length buffer.** It sizes a
+/// request as `element_count * dtype.size_in_bytes()` and
+/// `newBufferWithLength:options:` returns nil at length zero, which Candle
+/// reports as a failed resource creation.
+///
+/// It is also the ticket's first activation trigger, watched rather than
+/// re-derived by a reader: a Candle whose allocator admits a zero-length
+/// allocation builds this tensor, and this run then fails instead of going on
+/// reporting a member as refused that has become routable.
+fn zero_extent_stays_unbuildable(device: &Device, extents: &[u64]) -> Result<(), ProofError> {
+    let dims: Vec<usize> = extents
+        .iter()
+        .map(|extent| usize::try_from(*extent).unwrap_or(usize::MAX))
+        .collect();
+    let shape = candle_core::Shape::from_dims(&dims);
+    match Tensor::from_vec(Vec::<f32>::new(), shape, device) {
+        Err(cause) => {
+            println!("    and Candle still builds no {dims:?} tensor of its own: {cause}");
+            Ok(())
+        }
+        Ok(_) => Err(ProofError::ProbeAccepted(
+            "a zero-element Metal tensor, which the refusal above records as unbuildable",
+        )),
+    }
 }
 
 /// Proves each device-side refusal arrives under the class it must.

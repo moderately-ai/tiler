@@ -255,6 +255,27 @@ pub enum TensorRefusal {
         /// What disagreed.
         detail: String,
     },
+    /// The artifact declares an empty axis, and no Candle tensor has one.
+    ///
+    /// Decided from the artifact's own declared interface rather than from a
+    /// tensor, because at this Candle pin there is no tensor to decide it from:
+    /// the allocator sizes a request as `element_count * dtype.size_in_bytes()`
+    /// and `newBufferWithLength:options:` returns nil at length zero, so
+    /// `Tensor::from_vec(vec![], (1, 0), &metal)` fails before this adapter is
+    /// reached at all. Refusing from the declaration is what puts this adapter's
+    /// own name on the limitation instead of an allocator error from under it.
+    ///
+    /// A zero extent is a legitimate program — a reduction over an empty domain
+    /// publishes its identity element rather than a sum — so this names a
+    /// boundary of the Candle consumer and not a defect in the artifact.
+    ZeroExtentInterface {
+        /// The interface key of the declared value carrying the empty axis.
+        value: String,
+        /// Zero-based axis of the first empty extent.
+        axis: usize,
+        /// The value's declared extents, outermost first.
+        extents: Vec<u64>,
+    },
     /// The artifact declares a target profile this host does not offer.
     ///
     /// "Target availability", decided before the custom op is entered so a host
@@ -335,6 +356,16 @@ impl fmt::Display for TensorRefusal {
                 formatter,
                 "candle.preflight.interface: the artifact does not declare this wrapper's \
                  interface: {detail}",
+            ),
+            Self::ZeroExtentInterface {
+                value,
+                axis,
+                extents,
+            } => write!(
+                formatter,
+                "candle.preflight.zero-extent: the artifact declares {value:?} with extents \
+                 {extents:?}, whose axis {axis} is empty, and this Candle pin's Metal allocator \
+                 refuses a zero-length buffer, so no Candle tensor of that shape exists to bind",
             ),
             Self::IncompatibleTargetProfile { classification } => write!(
                 formatter,
@@ -930,6 +961,11 @@ mod tests {
             TensorRefusal::AutogradTracked,
             TensorRefusal::ForeignInterface {
                 detail: "two inputs".to_owned(),
+            },
+            TensorRefusal::ZeroExtentInterface {
+                value: "input".to_owned(),
+                axis: 1,
+                extents: vec![1, 0],
             },
             TensorRefusal::IncompatibleTargetProfile {
                 classification: tiler_runtime::load::TargetCompatibility::DescriptorMismatch {

@@ -226,9 +226,10 @@ impl TilerPlan {
     ///
     /// Returns [`WrapperError::Load`] for bytes that are not this artifact, and
     /// [`WrapperError::Tensor`] carrying
-    /// [`TensorRefusal::IncompatibleTargetProfile`] or
-    /// [`TensorRefusal::ForeignInterface`] for an artifact this wrapper cannot
-    /// speak for.
+    /// [`TensorRefusal::IncompatibleTargetProfile`],
+    /// [`TensorRefusal::ForeignInterface`], or
+    /// [`TensorRefusal::ZeroExtentInterface`] for an artifact this wrapper
+    /// cannot speak for.
     pub fn load(
         bytes: Vec<u8>,
         recorded: RecordedArtifactProgramIdentity,
@@ -258,6 +259,10 @@ impl TilerPlan {
     }
 
     /// Returns the input shape the artifact declares, as rows by columns.
+    ///
+    /// Both extents are nonzero. [`Self::load`] refuses an artifact declaring an
+    /// empty axis with [`TensorRefusal::ZeroExtentInterface`], so a plan that
+    /// exists is one whose declared shape a Candle tensor can carry.
     pub const fn declared_shape(&self) -> (u64, u64) {
         (self.rows, self.columns)
     }
@@ -727,6 +732,16 @@ fn bind_interface(
         )));
     }
 
+    // The declared extents, before any device question, because an empty axis is
+    // refusable from the artifact alone and no Candle tensor of that shape can be
+    // built to preflight instead.
+    //
+    // The input's extents are the whole check: the output's element count was
+    // proved equal to `rows` immediately above, so a declared output with no
+    // elements implies an empty axis 0 here and is named by this call first.
+    declared_extents_are_nonzero(input.key().as_str(), &[rows.get(), columns.get()])
+        .map_err(WrapperError::Tensor)?;
+
     // Target availability, decided here so a host that cannot offer the declared
     // profile never reaches Candle's custom-op path. This is the wrapper's own,
     // weaker question — "could any packaged payload run here at all" — and not a
@@ -759,4 +774,69 @@ fn bind_interface(
         .bind_input_shape(input.key(), input.shape())
         .map_err(|cause| foreign(format!("the declared input shape does not bind: {cause}")))?;
     Ok((rows.get(), columns.get(), binder.build()))
+}
+
+/// Refuses a declared value whose shape has an axis of extent zero.
+///
+/// Split from the artifact read for the reason [`crate::adapter::binding_fits`]
+/// is split from the device call: the decision is then one the repository gate
+/// can watch say no, which a comparison written inline against a decoded
+/// artifact is not.
+///
+/// The first empty axis is named rather than all of them. A shape with two empty
+/// axes is refused for the same reason as one with a single empty axis — there
+/// is no tensor either way — and the remedy does not vary with the count.
+///
+/// # Errors
+///
+/// Returns [`TensorRefusal::ZeroExtentInterface`] naming the first empty axis.
+fn declared_extents_are_nonzero(value: &str, extents: &[u64]) -> Result<(), TensorRefusal> {
+    let Some(axis) = extents.iter().position(|extent| *extent == 0) else {
+        return Ok(());
+    };
+    Err(TensorRefusal::ZeroExtentInterface {
+        value: value.to_owned(),
+        axis,
+        extents: extents.to_vec(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::declared_extents_are_nonzero;
+    use crate::refusal::TensorRefusal;
+
+    /// A declared shape is admitted, or the first empty axis is named.
+    ///
+    /// The admitted cases lead, because a check that refused every shape would
+    /// take every route with it — including the four members `crate::proof`
+    /// carries onto hardware — and would still pass a test built only from empty
+    /// axes. The refusing population puts the zero at each axis in turn, so a
+    /// check written against one position is visible here.
+    #[test]
+    fn a_declared_shape_is_admitted_or_names_its_first_empty_axis() {
+        assert!(declared_extents_are_nonzero("input", &[1, 3]).is_ok());
+        assert!(declared_extents_are_nonzero("input", &[1, 1]).is_ok());
+        // No axes is no empty axis. Unreachable from `bind_interface`, which
+        // refuses anything but a rank-2 declaration before asking, and stated
+        // here so the function's own boundary is not left to that caller.
+        assert!(declared_extents_are_nonzero("input", &[]).is_ok());
+
+        for (extents, empty) in [(vec![1, 0], 1_usize), (vec![0, 3], 0), (vec![0, 0], 0)] {
+            let Err(refusal) = declared_extents_are_nonzero("input", &extents) else {
+                panic!("{extents:?} has an empty axis");
+            };
+            assert!(
+                matches!(
+                    &refusal,
+                    TensorRefusal::ZeroExtentInterface {
+                        value,
+                        axis,
+                        extents: named,
+                    } if value == "input" && *axis == empty && *named == extents,
+                ),
+                "{refusal} does not name axis {empty} of {extents:?}",
+            );
+        }
+    }
 }
