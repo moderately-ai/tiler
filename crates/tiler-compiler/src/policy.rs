@@ -768,6 +768,7 @@ mod tests {
         "tiler::concatenate-f32@1",
         "tiler::constant-bf16@1",
         "tiler::multiply-bf16@1",
+        "tiler::slice-f32@1",
     ];
 
     /// The capability table names the operations the registry actually admits.
