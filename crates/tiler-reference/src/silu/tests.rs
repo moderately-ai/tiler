@@ -330,7 +330,7 @@ fn a_coarse_enclosure_decides_nothing_rather_than_guessing() {
     let format = UlpFormat::from_value_type_facts(&facts).expect("f32 carries the metric");
     let coarse = exp_enclosure(
         &ExactRational::from_f32(1.0).expect("finite"),
-        EnclosurePrecision::new(4),
+        EnclosurePrecision::new(4).expect("a stateable grid"),
     )
     .expect("bracketed");
     assert!(

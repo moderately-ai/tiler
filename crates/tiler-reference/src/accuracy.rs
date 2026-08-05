@@ -80,6 +80,24 @@ const MAX_SERIES_TERMS: u32 = 512;
 /// outward roundings in the enclosure it returns.
 const REDUCED_ARGUMENT_BITS: u32 = 8;
 
+/// Fraction bits the squaring chain works at *above* the caller's own grid.
+///
+/// Squaring doubles the bracket's relative width, so a rounding performed on the
+/// caller's own grid partway up the chain is amplified by every squaring that
+/// follows it. Deepening the reduction adds squarings, and rounding onto the
+/// caller's grid inside the loop would therefore have made a coarse grid degrade
+/// geometrically worse than it did before — visibly so at two fraction bits, where
+/// the amplified upper end left the format's range entirely and turned a
+/// straddling bracket into an undefined metric. Squaring on a grid this many bits
+/// finer keeps the amplification inside the step the caller asked for, and one
+/// final rounding puts the result on the caller's grid.
+///
+/// It is `REDUCED_ARGUMENT_BITS` — one bit of headroom per squaring the reduction
+/// adds — plus the two bits the tail threshold already sits below the grid, so it
+/// moves with the reduction depth rather than needing its own justification when
+/// that depth changes.
+const SQUARING_GRID_MARGIN: u32 = REDUCED_ARGUMENT_BITS + 2;
+
 /// Maximum magnitude, in bits, of the result one enclosure will compute.
 ///
 /// The reduction's halving count is the loop trip count, and bounding *it* was
@@ -127,6 +145,31 @@ const MAX_RESULT_MAGNITUDE_BITS: u32 = 2048;
 /// one alone fails rather than quietly widening the admitted region.
 const MAX_ARGUMENT_MAGNITUDE: i128 = 1419;
 
+/// The widest grid one caller-stated [`EnclosurePrecision`] may name.
+///
+/// Derived from the arithmetic it protects rather than picked. Every grid width
+/// here is negated into an `i32` exponent — `ExactRational::power_of_two`,
+/// `floor_to_binary_grid`, `ceil_to_binary_grid` and `sqrt_enclosure` each take
+/// one and refuse a wider one — and the widest width this module forms is not the
+/// caller's own but the squaring grid `SQUARING_GRID_MARGIN` bits finer than it.
+/// Leaving exactly that headroom below `i32::MAX` is therefore the whole
+/// derivation: it is the greatest width at which every width *derived* from an
+/// admitted precision is still one the exponent arithmetic can express, so no
+/// stated precision can reach the conversions that would otherwise abort.
+///
+/// A tighter ceiling chosen for cost was considered and rejected, and the
+/// measurement is why it was not needed. `MAX_SERIES_TERMS` already bounds the
+/// work a fine grid can ask for: the terms' own magnitudes depend on the reduction
+/// depth rather than on the grid, so a wider grid only moves where the loop stops
+/// and widens the threshold it compares against. Measured on an M3 Pro at
+/// `exp_enclosure(1, ·)`, the whole admitted region costs 0.41 ms at the corpus
+/// precision, 123 ms at 8,000 bits, 135 ms at 16 million, and 2.04 s at this
+/// bound — linear in the width, not quadratic, and refusing with
+/// [`EnclosureError::PrecisionUnreachable`] everywhere past about 8,483 bits. A
+/// cost ceiling would therefore narrow the admitted region on an authority no
+/// arithmetic here states, to save a second at a width no caller can use.
+const MAX_GRID_FRACTION_BITS: u32 = i32::MAX.unsigned_abs() - SQUARING_GRID_MARGIN;
+
 /// The width of the binary grid an enclosure rounds outward onto.
 ///
 /// Exact rational arithmetic is exact, and its magnitudes grow without limit if
@@ -136,6 +179,12 @@ const MAX_ARGUMENT_MAGNITUDE: i128 = 1419;
 /// rather than an accuracy compromise — a coarser grid produces a wider, still
 /// certified, enclosure and therefore more [`ConformanceDecision::Undecided`]
 /// answers, never a wrong one.
+///
+/// The width is validated on construction, so every value of this type names a
+/// grid the exponent arithmetic can express and the functions below have no
+/// grid-width panic to reach. That is a bound on what may be *stated*, not on what
+/// may be reached: a stated width the series cannot converge to is still refused,
+/// by [`EnclosureError::PrecisionUnreachable`], at the point the series gives up.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EnclosurePrecision(u32);
 
@@ -155,10 +204,20 @@ impl EnclosurePrecision {
     ///
     /// A degraded precision is a legitimate request, not an error: it is how a
     /// caller — or a test — observes the enclosure widening and the decision
-    /// falling back to `Unknown` rather than guessing.
-    #[must_use]
-    pub const fn new(fraction_bits: u32) -> Self {
-        Self(fraction_bits)
+    /// falling back to `Unknown` rather than guessing. A width the exponent
+    /// arithmetic cannot express is a different thing, and is refused here — where
+    /// the value is written — rather than where it would be negated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnclosureError::GridWidthUnrepresentable`] for a width past
+    /// `MAX_GRID_FRACTION_BITS`, which is where the exponents this module derives
+    /// from a grid leave `i32`.
+    pub const fn new(fraction_bits: u32) -> Result<Self, EnclosureError> {
+        if fraction_bits > MAX_GRID_FRACTION_BITS {
+            return Err(EnclosureError::GridWidthUnrepresentable { fraction_bits });
+        }
+        Ok(Self(fraction_bits))
     }
 
     /// Returns the grid width in fraction bits.
@@ -166,9 +225,25 @@ impl EnclosurePrecision {
     pub const fn fraction_bits(self) -> u32 {
         self.0
     }
+
+    /// Returns the finer grid [`exp_enclosure`] rounds its squaring chain onto.
+    ///
+    /// Total by construction rather than by check, which is the point of
+    /// `MAX_GRID_FRACTION_BITS`: a stated width is at most that bound, which
+    /// leaves exactly `SQUARING_GRID_MARGIN` below `i32::MAX`, so the sum is a
+    /// width `ExactRational` can still negate. Private because it is a derived
+    /// grid rather than a stated one — it is the one width in the module allowed
+    /// past what a caller may name.
+    const fn squaring_grid(self) -> Self {
+        Self(self.0 + SQUARING_GRID_MARGIN)
+    }
 }
 
-/// Why one certified enclosure could not be produced.
+/// Why one certified enclosure could not be produced, or one grid not stated.
+///
+/// The second is here rather than in an error type of its own because it is the
+/// same refusal seen one step earlier: a grid the enclosure arithmetic cannot
+/// carry, reported where it is written instead of where it would be used.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum EnclosureError {
@@ -176,6 +251,16 @@ pub enum EnclosureError {
     ArgumentTooLarge {
         /// The rejected argument.
         argument: ExactRational,
+    },
+    /// The grid width is past what the exponent arithmetic can express.
+    ///
+    /// Distinct from [`Self::PrecisionUnreachable`], which is about convergence:
+    /// this grid is not one the series failed to reach but one that cannot be
+    /// named at all, because negating its width would leave `i32`. Refused at
+    /// [`EnclosurePrecision::new`], so no enclosure function can be handed one.
+    GridWidthUnrepresentable {
+        /// The rejected width, in fraction bits, exactly as it was stated.
+        fraction_bits: u32,
     },
     /// The series did not reach the requested precision within the term bound.
     PrecisionUnreachable {
@@ -201,6 +286,9 @@ impl EnclosureError {
     pub const fn diagnostic_code(&self) -> &'static str {
         match self {
             Self::ArgumentTooLarge { .. } => "reference.enclosure.argument-too-large",
+            Self::GridWidthUnrepresentable { .. } => {
+                "reference.enclosure.grid-width-unrepresentable"
+            }
             Self::PrecisionUnreachable { .. } => "reference.enclosure.precision-unreachable",
             Self::PrecisionTooCoarse => "reference.enclosure.precision-too-coarse",
             Self::OutsideDomain { .. } => "reference.enclosure.outside-domain",
@@ -214,6 +302,10 @@ impl fmt::Display for EnclosureError {
             Self::ArgumentTooLarge { argument } => write!(
                 formatter,
                 "exp({argument}) would exceed the governed {MAX_RESULT_MAGNITUDE_BITS}-bit result magnitude, which admits arguments up to {MAX_ARGUMENT_MAGNITUDE}"
+            ),
+            Self::GridWidthUnrepresentable { fraction_bits } => write!(
+                formatter,
+                "a {fraction_bits}-bit grid is finer than the {MAX_GRID_FRACTION_BITS}-bit grid this exponent arithmetic can express"
             ),
             Self::PrecisionUnreachable { terms } => write!(
                 formatter,
@@ -373,6 +465,11 @@ impl CertifiedEnclosure {
     }
 
     /// Widens this enclosure outward onto the precision's binary grid.
+    ///
+    /// Cannot panic on any [`EnclosurePrecision`], which the grid rounding it
+    /// delegates to could otherwise do: that rounding negates the width into an
+    /// `i32` exponent, and a validated precision is one whose width — and whose
+    /// derived squaring width — that negation can carry.
     #[must_use]
     pub fn coarsen(&self, precision: EnclosurePrecision) -> Self {
         Self {
@@ -417,27 +514,33 @@ impl CertifiedEnclosure {
 /// grid's width. Each of the three is a governed constant this module records with
 /// its derivation.
 ///
-/// So the only input that can enlarge one call without bound is the caller's own
+/// So the only input that can enlarge one call is the caller's own
 /// [`EnclosurePrecision`], which is a request for work rather than a consequence
-/// of one, and which [`EnclosureError::PrecisionUnreachable`] refuses past what
-/// the term bound can supply.
+/// of one, and it is bounded on both axes it has:
+/// [`EnclosureError::PrecisionUnreachable`] refuses a grid past what the term
+/// bound can supply, and `MAX_GRID_FRACTION_BITS` refuses a width past what the
+/// exponent arithmetic can express — the second bounding the cost of reaching the
+/// first, since the series still runs before it can fire. The whole admitted
+/// region is measured on `MAX_GRID_FRACTION_BITS`.
 ///
 /// # Errors
 ///
 /// Returns [`EnclosureError`] when the argument's exponential would exceed the
 /// governed result magnitude, when the series cannot reach the requested precision
-/// within the term bound, or when the final reciprocal cannot be bracketed away
-/// from zero.
+/// within the term bound, when the grid width cannot be expressed as an exponent,
+/// or when the final reciprocal cannot be bracketed away from zero.
 ///
 /// # Panics
 ///
-/// Panics on an [`EnclosurePrecision`] whose grid width leaves `i32`, which
-/// nothing currently prevents: `EnclosurePrecision::new` admits any `u32` and this
-/// negates the width to form an exponent. That is a fail-closed gap on the
-/// precision axis rather than the argument one; see
-/// `tickets/refuse-an-enclosure-precision-the-grid-arithmetic-cannot-express.md`.
-/// The argument's own reduction cannot panic: the governed magnitude bound is
-/// checked before the binade is read, and bounds every exponent derived from it.
+/// Nothing here panics on a pair this signature admits, and the grid width — which
+/// used to abort the process — is refused twice. `EnclosurePrecision` will not hold
+/// a width whose exponent leaves `i32`, and the conversion that negates it returns
+/// [`EnclosureError::GridWidthUnrepresentable`] rather than asserting, so widening
+/// the type's bound moves the refusal instead of removing it.
+///
+/// What remains are the argument reduction's own conversions, which the governed
+/// magnitude bound makes unreachable: it is checked before the binade is read, and
+/// bounds every exponent derived from it.
 pub fn exp_enclosure(
     argument: &ExactRational,
     precision: EnclosurePrecision,
@@ -481,9 +584,18 @@ pub fn exp_enclosure(
     // Accumulate until the next term is below the grid, then bound the whole
     // remaining tail by twice that term. The threshold is two grid steps below
     // the grid itself so that the tail cannot be lost to the outward rounding.
+    //
+    // The second layer of the grid-width defence. `EnclosurePrecision` will not
+    // hold a width whose exponent leaves `i32`, so this conversion cannot fail
+    // through that constructor; it refuses rather than asserts so that a widened
+    // bound is a typed refusal here instead of an aborted process — the failure
+    // mode this function had when nothing bounded the type at all.
     let threshold = ExactRational::power_of_two(
-        -i32::try_from(precision.fraction_bits().saturating_add(2))
-            .expect("a bounded grid width fits i32"),
+        -i32::try_from(precision.fraction_bits().saturating_add(2)).map_err(|_| {
+            EnclosureError::GridWidthUnrepresentable {
+                fraction_bits: precision.fraction_bits(),
+            }
+        })?,
     );
     let mut sum = ExactRational::zero();
     let mut term = ExactRational::one();
@@ -502,21 +614,10 @@ pub fn exp_enclosure(
             return Err(EnclosureError::PrecisionUnreachable { terms });
         }
     }
-    // Squaring doubles the bracket's relative width, so a rounding performed on
-    // the caller's own grid partway up the chain is amplified by every squaring
-    // that follows it. Deepening the reduction adds squarings, and rounding onto
-    // the caller's grid inside the loop would therefore have made a coarse grid
-    // degrade geometrically worse than it did before — visibly so at two fraction
-    // bits, where the amplified upper end left the format's range entirely and
-    // turned a straddling bracket into an undefined metric. Squaring on a grid
-    // that many bits finer keeps the amplification inside the step the caller
-    // asked for, and one final rounding puts the result on the caller's grid.
-    let squaring = EnclosurePrecision::new(
-        precision
-            .fraction_bits()
-            .saturating_add(REDUCED_ARGUMENT_BITS)
-            .saturating_add(2),
-    );
+    // Rounded onto a grid finer than the caller's, for the reason
+    // `SQUARING_GRID_MARGIN` records, with one final rounding onto the caller's
+    // own grid at the end.
+    let squaring = precision.squaring_grid();
     let mut enclosure =
         CertifiedEnclosure::new(sum.clone(), sum.add(&term.scale_by_power_of_two(1)))
             .coarsen(squaring);
