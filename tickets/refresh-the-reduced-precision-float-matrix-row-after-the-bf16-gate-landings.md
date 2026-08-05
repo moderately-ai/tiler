@@ -1,7 +1,7 @@
 ---
 id: refresh-the-reduced-precision-float-matrix-row-after-the-bf16-gate-landings
 title: Refresh the reduced-precision float matrix row after the BF16 gate landings
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [own-operation-family-support-matrix, admit-a-bf16-scalar-arithmetic-subject, declare-the-bf16-rows-on-the-authoritative-metal-profile, derive-dtype-family-research-tracks-from-the-mature-taxonomy]
