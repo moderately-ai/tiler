@@ -371,6 +371,24 @@ impl ArithmeticType {
             Self::F64 => 0x04,
         }
     }
+
+    /// Resolves a governed wire tag, or `None` for an unrecognized type.
+    ///
+    /// The fail-closed decode half of [`Self::tag`], written as its own
+    /// exhaustive match rather than derived from it: a reader handed a tag this
+    /// build has never been taught rejects rather than approximating. It lives
+    /// beside `tag` so the encode/decode pair stays in the crate that defines
+    /// the vocabulary, instead of each consumer minting an inverse of its own.
+    #[must_use]
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::F16),
+            0x02 => Some(Self::Bf16),
+            0x03 => Some(Self::F32),
+            0x04 => Some(Self::F64),
+            _ => None,
+        }
+    }
 }
 
 /// The provenance class of a value-domain fact a contract relies on.
