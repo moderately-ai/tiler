@@ -1,7 +1,7 @@
 ---
 id: redesign-the-delivered-realization-record-from-typed-evidence
 title: Redesign the delivered-realization record from typed evidence
-status: review
+status: done
 priority: p1
 dependencies: [carry-the-honourability-fact-provenance-into-the-artifact-record, express-metal-honourability-in-the-shared-form]
 related: [record-delivered-numerical-realization, drive-the-build-orchestrator-from-a-checked-compiler-plan, widen-the-region-realization-to-consumable-dimensions]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, artifact, numerics, provenance, api]
-claimed_from: todo
-assignee: agent-realization
-lease_expires_at: 1785940859
 ---
 ## User-visible outcome
 

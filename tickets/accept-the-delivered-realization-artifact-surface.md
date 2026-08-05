@@ -1,7 +1,7 @@
 ---
 id: accept-the-delivered-realization-artifact-surface
 title: Accept the delivered-realization artifact surface
-status: todo
+status: awaiting-decision
 priority: p1
 dependencies: [redesign-the-delivered-realization-record-from-typed-evidence]
 related: [record-delivered-numerical-realization, accept-adr-0076-numerical-realizations, carry-the-honourability-fact-provenance-into-the-artifact-record, wire-the-delivered-realization-record-into-the-artifact]
