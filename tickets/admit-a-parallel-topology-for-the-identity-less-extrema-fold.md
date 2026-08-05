@@ -1,7 +1,7 @@
 ---
 id: admit-a-parallel-topology-for-the-identity-less-extrema-fold
 title: Admit a parallel topology for the identity-less extrema fold
-status: in-progress
+status: review
 priority: p2
 dependencies: [admit-the-softmax-family]
 related: [implement-parallel-reduction-strategies, realize-parallel-reduction-strategies-on-metal, admit-the-softmax-family, design-attention-program-vertical]
@@ -57,6 +57,8 @@ Landed on `tkt/admit-a-parallel-topology-for-the-identity-less-extrema-fold`.
 **Identity verdict: no step, and not even a new tag.** No tag was added, no field moved, no field was inserted. A newly admitted region encodes under the existing scalar-program tag `0x28` and the existing topology tags `0x33`/`0x35`, each in its existing position with its existing field layout, so every previously encodable region maps to exactly the same bytes — pinned by `the_strict_f32_region_has_its_recorded_canonical_identity`, whose constant is unchanged. Per-tag injectivity is preserved because the newly reachable byte strings carry a `(0x28, 0x33)` or `(0x28, 0x35)` tag pair that no earlier region could produce: the scalar-program tag separates the family and the topology tag separates the split, and `a_split_extrema_region_has_its_own_canonical_identity` shows the five neighbouring regions pairwise distinct.
 
 **Evidence, and the perturbations watched failing.** `a_split_of_the_extrema_fold_agrees_with_the_serial_fold_bit_for_bit` enumerates every assignment of `{+0.0, -0.0, 1.0, -1.0, +inf, -inf, NaN}` to the six contributor positions of the split a *verified* region declares, and requires the tree and the serial fold to agree bit for bit; its two controls are an absorbing sum sequence that the same split boundaries *do* change, and a corpus pair where the folded family differs from `maxNum`. Watched failing: setting `consumes_reassociation: true` for the extrema breaks all three strict admissions; disabling the `NoIdentity` arm admits an empty split; and replacing each of the three cooperative combiner sites with `F32Add` breaks the corresponding lowering count.
+
+**One test named above no longer exists, deliberately.** `every_topology_but_the_serial_one_is_refused_for_the_extrema_fold`, cited under "Why this is filed", asserted a refusal this ticket removes; it survived the widening green, because it set a parallel topology on the *serial* fixture and so still failed on shape rather than on topology — a test whose name had stopped describing what it proved. It is now `a_topology_that_describes_no_fold_is_refused_for_the_extrema_family`, covering `ReductionTopology::None` and `ReductionTopology::Contraction`, which remain refused and for reasons different in kind from each other.
 
 **Measurement boundary.** The family restated in the schedule tests is a restatement, not the authority — `tiler-ir` cannot call `tiler-reference`'s `maximum_f32`, because the dependency runs the other way — so the bit-for-bit claim is over that restatement, guarded by the `maxNum` control. No device executes any of this; the evidence is the schedule verifier's admissions and the structured-kernel body's operations.
 
