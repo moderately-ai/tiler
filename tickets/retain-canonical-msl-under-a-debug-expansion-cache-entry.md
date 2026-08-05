@@ -1,7 +1,7 @@
 ---
 id: retain-canonical-msl-under-a-debug-expansion-cache-entry
 title: Retain canonical MSL and tool diagnostics under a debug expansion-cache entry
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [retain-and-attribute-a-real-msl-failure-through-an-expansion, retain-succeeding-metal-stage-tool-output, state-a-debug-retention-from-the-inline-frontend]
