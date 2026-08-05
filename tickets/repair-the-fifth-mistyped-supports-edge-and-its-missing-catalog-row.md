@@ -1,7 +1,7 @@
 ---
 id: repair-the-fifth-mistyped-supports-edge-and-its-missing-catalog-row
 title: Repair the fifth mistyped supports edge and its missing experiment-catalog row
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [repair-the-four-mistyped-typed-frontmatter-edges, reconcile-the-research-and-experiment-catalogs-with-their-frontmatter, redesign-the-delivered-realization-record-from-typed-evidence, derive-the-operation-family-and-signature-delivery-graph]
@@ -9,9 +9,6 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, navigation, catalog, metadata]
-claimed_from: todo
-assignee: agent-fifth-edge
-lease_expires_at: 1785976604
 ---
 ## User-visible outcome
 
