@@ -67,7 +67,7 @@ use super::{
     MAX_ARTIFACT_IDENTITY_BYTES, MAX_ROUTE_FEATURE_PAYLOAD_BYTES, PayloadDigest, PayloadId,
     RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
     RouteFeatureKey, RouteRequirement, RouteRequirementError, RouteRequirementSubject,
-    RouteResourceDimension, RouteResourceFloor, SchemaVersion, SelectedProvider,
+    RouteResourceDimension, RouteResourceRequirement, SchemaVersion, SelectedProvider,
     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
     VariantSpec, VerifiedArtifactProgram,
 };
@@ -4269,9 +4269,9 @@ pub(crate) fn route_feature(key: &str, version: u32, payload: &[u8]) -> RouteReq
 }
 
 /// Builds one well-formed quantitative row.
-pub(crate) fn route_floor(required: u64) -> RouteRequirement {
-    RouteRequirement::ResourceFloor(
-        RouteResourceFloor::new(RouteResourceDimension::SubgroupThreads, required)
+pub(crate) fn route_resource(required: u64) -> RouteRequirement {
+    RouteRequirement::Resource(
+        RouteResourceRequirement::new(RouteResourceDimension::SubgroupThreads, required)
             .expect("a nonzero required quantity"),
     )
 }
@@ -4341,7 +4341,7 @@ fn a_route_resource_row_is_satisfied_only_by_an_exactly_equal_observation() {
 
     let mut checked = 0;
     for dimension in RouteResourceDimension::ALL {
-        let row = RouteResourceFloor::new(dimension, REQUIRED).expect("a nonzero quantity");
+        let row = RouteResourceRequirement::new(dimension, REQUIRED).expect("a nonzero quantity");
         assert_eq!(row.required(), REQUIRED);
         assert!(
             row.is_satisfied_by(REQUIRED),
@@ -4494,9 +4494,9 @@ fn an_entry_records_the_absence_of_a_synchronization_requirement() {
 /// constructor that refuses everything.
 #[test]
 fn a_malformed_route_requirement_is_refused_by_its_own_cause() {
-    assert!(RouteResourceFloor::new(RouteResourceDimension::SubgroupThreads, 32).is_ok());
+    assert!(RouteResourceRequirement::new(RouteResourceDimension::SubgroupThreads, 32).is_ok());
     assert_eq!(
-        RouteResourceFloor::new(RouteResourceDimension::SubgroupThreads, 0),
+        RouteResourceRequirement::new(RouteResourceDimension::SubgroupThreads, 0),
         Err(RouteRequirementError::ZeroResourceQuantity {
             dimension: RouteResourceDimension::SubgroupThreads,
         }),
@@ -4547,9 +4547,9 @@ fn two_route_requirements_naming_one_subject_are_refused() {
         .push_variant(&program, variant(&formulas, descriptor, b"fused"))
         .unwrap();
 
-    draft.require_route(id, route_floor(32)).unwrap();
+    draft.require_route(id, route_resource(32)).unwrap();
     assert_eq!(
-        draft.require_route(id, route_floor(64)),
+        draft.require_route(id, route_resource(64)),
         Err(ArtifactBuildError::DuplicateRouteRequirementSubject {
             subject: Box::new(RouteRequirementSubject::Resource {
                 dimension: RouteResourceDimension::SubgroupThreads,
@@ -4606,12 +4606,12 @@ fn a_route_requirement_needs_a_variant_this_builder_minted() {
         .push_variant(&program, variant(&formulas, descriptor, b"fused"))
         .unwrap();
     assert_eq!(
-        second.require_route(foreign, route_floor(32)),
+        second.require_route(foreign, route_resource(32)),
         Err(ArtifactBuildError::ForeignHandle {
             entity: ArtifactEntityKind::Variant,
         }),
     );
     // The handle is good against the builder that minted it, which is what makes
     // the refusal above about ownership rather than about the handle's shape.
-    assert!(first.require_route(foreign, route_floor(32)).is_ok());
+    assert!(first.require_route(foreign, route_resource(32)).is_ok());
 }

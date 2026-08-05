@@ -283,7 +283,7 @@ impl RuntimeAdapter for ScalarHostAdapter {
         // a row this adapter has never been given: reporting anything else would
         // be answering a question it was not asked.
         match request.requirement() {
-            RouteRequirement::ResourceFloor(floor) => match floor.dimension() {
+            RouteRequirement::Resource(resource) => match resource.dimension() {
                 RouteResourceDimension::SubgroupThreads => LiveDeviceObservation::Unrecognized,
             },
             RouteRequirement::BackendFeature(_) => LiveDeviceObservation::Unrecognized,

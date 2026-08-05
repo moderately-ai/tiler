@@ -58,7 +58,7 @@ use super::super::model::{
 };
 use super::super::requirement::{
     BackendFeatureRequirement, RouteRequirement, RouteRequirementError, RouteResourceDimension,
-    RouteResourceFloor,
+    RouteResourceRequirement,
 };
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
@@ -854,8 +854,9 @@ fn parse_route_requirements(
                     },
                 )?;
                 let required = cursor.u64()?;
-                let floor = RouteResourceFloor::new(dimension, required).map_err(invalid_route)?;
-                Ok(RouteRequirement::ResourceFloor(floor))
+                let resource =
+                    RouteResourceRequirement::new(dimension, required).map_err(invalid_route)?;
+                Ok(RouteRequirement::Resource(resource))
             }
             0x02 => {
                 let owner = BackendKey::from_owned(cursor.text()?)

@@ -449,9 +449,9 @@ impl<'a> LiveDeviceQualification<'a> {
             // worse, accepts — for a reason nobody chose.
             let satisfied = match (request.requirement, resolve(request)) {
                 (
-                    RouteRequirement::ResourceFloor(floor),
+                    RouteRequirement::Resource(resource),
                     LiveDeviceObservation::Quantity(observed),
-                ) => floor.is_satisfied_by(observed),
+                ) => resource.is_satisfied_by(observed),
                 (
                     RouteRequirement::BackendFeature(_),
                     LiveDeviceObservation::Feature(supported),
@@ -459,7 +459,7 @@ impl<'a> LiveDeviceQualification<'a> {
                 (_, LiveDeviceObservation::Unrecognized) => {
                     return Err(refusal(RouteRequirementRefusal::Unowned));
                 }
-                (RouteRequirement::ResourceFloor(_), LiveDeviceObservation::Feature(_))
+                (RouteRequirement::Resource(_), LiveDeviceObservation::Feature(_))
                 | (RouteRequirement::BackendFeature(_), LiveDeviceObservation::Quantity(_)) => {
                     return Err(refusal(RouteRequirementRefusal::Misanswered));
                 }

@@ -34,7 +34,7 @@
 //! # The relation belongs to the dimension, not to the producer
 //!
 //! A required quantity and the comparison that decides it are separate facts,
-//! and only the first is on the wire. [`RouteResourceFloor`] carries a dimension
+//! and only the first is on the wire. [`RouteResourceRequirement`] carries a dimension
 //! and a `u64`; which relation satisfies them is [`RouteResourceDimension`]'s and
 //! is written as an exhaustive match, so a dimension added to the vocabulary has
 //! to state its own relation rather than inherit whichever one the first
@@ -193,25 +193,22 @@ impl fmt::Display for RouteResourceDimension {
 ///
 /// A dimension and a required quantity, and deliberately not a relation: which
 /// comparison decides them belongs to [`RouteResourceDimension`] and is fixed by
-/// the vocabulary. That keeps what the original floor-only shape bought — a
-/// producer cannot state an equality where a minimum was meant, or the reverse,
-/// which [`tiler_ir::program::abi::TargetPropertyRequirementRelation`] exists to
-/// make impossible for a prepared-entry requirement — without also forcing every
-/// later dimension to accept the first one's relation.
+/// the vocabulary. A producer therefore cannot state an equality where an
+/// inequality was meant, or the reverse — the confusion
+/// [`tiler_ir::program::abi::TargetPropertyRequirementRelation`] exists to make
+/// impossible for a prepared-entry requirement — and, because the relation is
+/// each dimension's own rather than the family's, a dimension added later is not
+/// forced to accept the first one's.
 ///
-/// **This type's name is stale, and its rename is filed rather than performed.**
-/// The relation correction was made where it decides behaviour; `RouteResourceFloor`
-/// and [`RouteRequirement::ResourceFloor`] are additionally named by the runtime
-/// loader, two prototype adapters, a spike adapter, and accepted ADR 0092's text,
-/// so renaming them crosses four scopes this crate does not hold. Carried by
-/// `rename-the-route-resource-floor-vocabulary-for-its-corrected-relation`.
+/// The name states a required quantity and no relation, for that reason: reading
+/// a relation off this type would be reading it from the wrong authority.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RouteResourceFloor {
+pub struct RouteResourceRequirement {
     dimension: RouteResourceDimension,
     required: u64,
 }
 
-impl RouteResourceFloor {
+impl RouteResourceRequirement {
     /// Creates one validated quantitative requirement.
     ///
     /// # Errors
@@ -353,7 +350,7 @@ impl BackendFeatureRequirement {
 pub enum RouteRequirement {
     /// A neutral quantitative row the runtime compares itself, by the relation
     /// the row's dimension fixes.
-    ResourceFloor(RouteResourceFloor),
+    Resource(RouteResourceRequirement),
     /// A backend-scoped qualitative row the owning adapter decides.
     BackendFeature(BackendFeatureRequirement),
 }
@@ -363,7 +360,7 @@ impl RouteRequirement {
     #[must_use]
     pub const fn tag(&self) -> u8 {
         match self {
-            Self::ResourceFloor(_) => 0x01,
+            Self::Resource(_) => 0x01,
             Self::BackendFeature(_) => 0x02,
         }
     }
@@ -377,8 +374,8 @@ impl RouteRequirement {
     #[must_use]
     pub fn subject(&self) -> RouteRequirementSubject {
         match self {
-            Self::ResourceFloor(floor) => RouteRequirementSubject::Resource {
-                dimension: floor.dimension(),
+            Self::Resource(resource) => RouteRequirementSubject::Resource {
+                dimension: resource.dimension(),
             },
             Self::BackendFeature(feature) => RouteRequirementSubject::BackendFeature {
                 owner: feature.owner().clone(),
@@ -397,9 +394,9 @@ impl RouteRequirement {
         let mut bytes = ROUTE_REQUIREMENT_DOMAIN.to_vec();
         bytes.push(self.tag());
         match self {
-            Self::ResourceFloor(floor) => {
-                bytes.push(floor.dimension().tag());
-                bytes.extend_from_slice(&floor.required().to_be_bytes());
+            Self::Resource(resource) => {
+                bytes.push(resource.dimension().tag());
+                bytes.extend_from_slice(&resource.required().to_be_bytes());
             }
             Self::BackendFeature(feature) => {
                 push_slice(&mut bytes, feature.owner().as_str().as_bytes());

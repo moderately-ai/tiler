@@ -423,9 +423,9 @@ fn encode_route_requirements(bytes: &mut Vec<u8>, requirements: &[RouteRequireme
     for requirement in requirements {
         bytes.push(requirement.tag());
         match requirement {
-            RouteRequirement::ResourceFloor(floor) => {
-                bytes.push(floor.dimension().tag());
-                bytes.extend_from_slice(&floor.required().to_be_bytes());
+            RouteRequirement::Resource(resource) => {
+                bytes.push(resource.dimension().tag());
+                bytes.extend_from_slice(&resource.required().to_be_bytes());
             }
             RouteRequirement::BackendFeature(feature) => {
                 push_slice(bytes, feature.owner().as_str().as_bytes());
