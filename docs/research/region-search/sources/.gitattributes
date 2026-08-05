@@ -1,12 +1,20 @@
 # Preserved upstream bytes. `-text` stops any end-of-line conversion from rewriting a
 # checkout and breaking the recorded digests; `-whitespace` stops `git diff --check` from
-# reporting trailing whitespace that belongs to the upstream document and must stay there.
+# reporting trailing whitespace that belongs to the upstream document and must stay there;
+# `-diff` stops git from rendering a document as a text diff, which its content heuristic
+# otherwise does for PDFs whose streams happen to look textual — one vendored file here
+# rendered as 3 052 added lines in review. That is presentation only and never reached the
+# stored bytes (the blob digests were checked against the manifest), but an unreadable diff
+# is how a reviewer stops reading one.
 # These files are evidence, not source: the only correct edit is replacing a whole document
 # with a newly retrieved edition and updating its record.
-* -text -whitespace
+* -text -whitespace -diff
 
-# The record itself is ordinary repository text and is checked like any other file.
-README.md text whitespace
-expected-sources.tsv text whitespace
-verify-sources.sh text whitespace
-.gitattributes text whitespace
+# The record itself is ordinary repository text and is checked like any other file. Each of
+# the three attributes above is re-enabled by name, `diff` included: the glob's `-diff` is
+# for preserved documents only, and leaving it in force here would make this record's own
+# prose changes unreviewable — which is the opposite of what it was added for.
+README.md text whitespace diff
+expected-sources.tsv text whitespace diff
+verify-sources.sh text whitespace diff
+.gitattributes text whitespace diff
