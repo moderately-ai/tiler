@@ -1,7 +1,7 @@
 ---
 id: raise-the-adopted-research-records-to-their-landed-implementation-status
 title: Raise the adopted research records to their landed implementation status
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [close-remaining-adr-status-drift, re-audit-adr-implementation-status-after-the-runtime-and-metal-landings]
@@ -9,9 +9,6 @@ scopes: [research/kernel-ir, research/scheduling, research/indexing, research/ca
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, status-drift, graph-repair]
-claimed_from: todo
-assignee: agent-research-status
-lease_expires_at: 1785934520
 ---
 ## User-visible outcome
 
