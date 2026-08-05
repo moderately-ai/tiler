@@ -152,3 +152,7 @@ and `crates/tiler-ir/src/schedule/mod.rs` as the files at risk.
   the compiler) and
   `move-the-navigation-docs-onto-the-two-contract-key-domains`
   (`contracts/navigation` — held by a live ticket at the time of this edit).
+
+## Surface accepted — 2026-08-05
+
+The public surface this ticket flagged for Tom's queue — `NumericalContractBuilder::strict_bf16()`, `NumericalContract::STRICT_BF16`, `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16`, `NumericalContract::arithmetic()`, and the IR-owned `Bf16NumericalContractKey` under `tiler.contract.bf16.v1` — was accepted by Tom at the second live decision review in the coordination session, witnessed first-hand by the coordinator, on the elimination's single survivor and the ledger-bound evidence `bind-the-bf16-contract-refusal-to-the-authoritative-apple9-rows` landed. The sibling-domain design is the standing pattern for the next dtype contract.

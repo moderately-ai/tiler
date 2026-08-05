@@ -1,7 +1,7 @@
 ---
 id: accept-the-neutral-build-orchestration-boundary
 title: Accept or revise the neutral build-orchestration boundary
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [promote-the-build-time-cache-and-correspondence-seam, produce-a-custom-backend-payload-through-the-build-orchestrator, carry-one-payload-per-artifact-family-in-one-envelope, audit-backend-authoring-against-all-thirteen-responsibilities, accept-the-public-backend-provider-composition-boundary]
@@ -45,3 +45,7 @@ All at `crates/tiler-build/src/lib.rs:80-84`, from the private modules `payload_
 ## Closes when
 
 Tom accepts, revises, or refuses each named item; the acceptance sentence names who accepted, the date, and the venue; ADR 0090's status paragraph and item 11 record the outcome; and any revision is released to its own implementation ticket rather than landed under this node.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-05 at the second live decision review in the coordination session, witnessed first-hand by the coordinator: the eight named items as they stand at `51e9374a`, with the stated reservations (the singleton `BindingKind` domain, the one-payload-per-delivery-position bound) accepted as honest bounds rather than gaps. The provisional overnight acceptance is superseded by this first-hand one; ADR 0090's status paragraph records the outcome in the same change.
