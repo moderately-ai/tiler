@@ -64,15 +64,26 @@
 //! family; between two families that cost the same here, the one that never
 //! discards an input's NaN-ness is the fail-closed one.
 //!
-//! **Measurement — the reference's own maximum propagates.** In the retained
-//! probe's pinned environment (`torch` 2.6.0, `transformers` 4.51.0, CPU, F32),
-//! `torch.max` over `[1.0, NaN, 3.0]` is `0x7fc00000` and `softmax` of that row is
-//! three canonical NaNs; `torch.max` over `[+0.0, -0.0]` is `+0.0`, which is the
-//! `-0.0 < +0.0` ordering both Tiler families share. The retained `record.tsv`
-//! contains no softmax row with a NaN score, so this was measured rather than
-//! read: the exact check is `grep -i nan
-//! spikes/numerics/transformer_reference_semantics/results/*/record.tsv`, whose
-//! only hits are `silu_inputs` and the `SiLU` result rows.
+//! **Measurement — the reference's own maximum propagates, and it is now readable
+//! from the retained record rather than re-measured.** In the retained probe's
+//! pinned environment (`torch` 2.6.0, `transformers` 4.51.0, CPU, F32), `torch.max`
+//! over `[1.0, NaN, 3.0]` is `0x7fc00000` and `softmax` of that row is three
+//! canonical NaNs. The 2026-08-01 record carries both as
+//! `torch_max_of_row_with_a_nan_score` and `softmax_row_with_a_nan_score` in
+//! `spikes/numerics/transformer_reference_semantics/results/2026-08-01-cpu-f32-torch2.6.0-transformers4.51.0/record.tsv`,
+//! so the NaN half of this measurement is read from the record.
+//!
+//! **Measurement — the reference's maximum does *not* implement the signed-zero
+//! ordering, and the difference is an order dependence rather than a rule.** In
+//! the same record, `torch.max` over `[+0.0, -0.0]` is `-0.0` (`0x80000000`) and
+//! over `[-0.0, +0.0]` is `+0.0`, while `torch.amax` answers the other way on both
+//! — the four `torch_max_of_signed_zeros_*` and `torch_amax_of_signed_zeros_*`
+//! rows. Each spelling returns a fixed *position* rather than a fixed value, so
+//! neither implements the `-0.0 < +0.0` total ordering that both Tiler families
+//! share and that ADR 0023 requires. **Nothing in this decision rests on it**: the
+//! three grounds above are about NaN, and the zero ordering is Tiler's own choice
+//! rather than a reproduction of the reference model's — which is also why the
+//! Metal lowering below needs a fixup for the same reason.
 //!
 //! **Neither family lowers to `air.fmax.f32`.** [Numerical
 //! semantics](../../../../docs/numerical-semantics.md) records that Metal's
