@@ -1,11 +1,11 @@
 //! An out-of-tree consumer states `deliver fallback-only;` and gets the region
 //! it would have got by stating nothing.
 //!
-//! This is the accepted profile production compiled by a real consumer, and it
-//! is the only spelling of the statement that reaches an expansion today: every
-//! other profile and every family list selects an artifact family, and nothing
-//! compiles one yet, so those are refusals rather than pass cases. The
-//! compile-fail fixture beside this file is where they are pinned.
+//! This is the accepted profile production compiled by a real consumer. What it
+//! proves is the equivalence below, not that no other spelling completes: a
+//! selected buildable family delivers — `deliver_compiles_embeds_and_routes.rs`
+//! beside this file compiles, embeds, and routes `deliver macos;` — and the
+//! spellings that still refuse are pinned by the compile-fail fixtures.
 //!
 //! The claim is *equivalence*, not merely acceptance. `fallback-only` is what a
 //! region stating no `deliver` already resolves to, so the two must produce the

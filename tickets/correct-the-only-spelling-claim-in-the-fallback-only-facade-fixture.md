@@ -1,7 +1,7 @@
 ---
 id: correct-the-only-spelling-claim-in-the-fallback-only-facade-fixture
 title: Correct the stale "only spelling" claim in the fallback-only facade fixture
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [correct-two-stale-delivery-spans-in-the-frontends-contract]
