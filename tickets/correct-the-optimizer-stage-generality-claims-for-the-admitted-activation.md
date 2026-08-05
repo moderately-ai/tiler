@@ -1,7 +1,7 @@
 ---
 id: correct-the-optimizer-stage-generality-claims-for-the-admitted-activation
 title: Correct the optimizer stage-generality claims for the admitted activation
-status: review
+status: done
 priority: p2
 dependencies: [admit-the-registered-unary-families-at-the-compiler-request-boundary]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, optimizer, correction]
-claimed_from: todo
-assignee: agent-opt-claims
-lease_expires_at: 1785934519
 ---
 ## User-visible outcome
 
