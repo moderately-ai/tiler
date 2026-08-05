@@ -202,10 +202,7 @@ Primary sources: [IEEE 754-2019](https://standards.ieee.org/ieee/754/6210/),
 [StableHLO element types](https://openxla.org/stablehlo/spec#element-types),
 and [MLIR built-in types](https://mlir.llvm.org/docs/Dialects/Builtin/).
 Preserved as `stablehlo-spec-v1.18.0` and `mlir-builtin-types-llvmorg-22.1.8`.
-IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy and no
-digest; both OCP specifications are `ocp-ofp8-v1.0` and `ocp-mx-v1.0`,
-pending-acquisition after a failed retrieval. Re-deriving those value sets
-today needs the acquisition routes in the [preservation record](sources/README.md).
+IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy and no digest. Both OCP specifications, `ocp-ofp8-v1.0` and `ocp-mx-v1.0`, became metadata-only on 2026-07-31: they were acquired by hand, their own licence sections were reviewed document by document, and their exact bytes were digested and then discarded, because neither carries a self-contained redistribution grant. Re-deriving those value sets today needs the acquisition routes in the [preservation record](sources/README.md), and a re-acquired copy is checkable against the digests recorded there.
 
 Suffixes are naming conventions, not a universally compositional grammar. The
 full nominal format definition is authoritative. In particular, `FN` formats
@@ -448,9 +445,7 @@ and physical packing participate in identity. `MXFP4` is not an alias for a
 tensor of independent `f4E2M1FN` values.
 
 Primary source: [OCP MX specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf).
-Recorded as `ocp-mx-v1.0`, pending-acquisition: retrieval failed, so no local
-copy and no digest exist and the [preservation record](sources/README.md) names
-the acquisition route instead.
+Recorded as `ocp-mx-v1.0`, metadata-only since 2026-07-31: the document was acquired by hand and digested, its own licence section was reviewed, and the bytes were discarded for want of a self-contained redistribution grant, so the [preservation record](sources/README.md) names the acquisition route and the digest a re-acquired copy must match.
 
 ### NVIDIA NVFP4
 
@@ -648,3 +643,5 @@ defines proposed admission gates and a preliminary built-in/external/extension
 classification. Standards-backed formats admitted to the built-in vocabulary
 use Tiler-governed keys with mandatory normative references; published
 project/vendor identities remain external.
+
+Every row of the catalog above is assigned an owner and, where its work has not started, a checkable activation trigger by [Dtype-family research tracks](dtype-family-research-tracks.md). That record is an ownership map over this inventory: it selects nothing, registers nothing, and defers to the [dtype support ledger](../../dtype-support.md) for every claim about delivered state.

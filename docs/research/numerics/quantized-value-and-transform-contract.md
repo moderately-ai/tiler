@@ -194,7 +194,4 @@ types, 32-element block, scale-selection map, and normative numerical rules;
 recognition remains separate from execution capabilities.
 
 Primary source: [OCP Microscaling Formats specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf).
-Recorded as `ocp-mx-v1.0`, pending-acquisition: retrieval failed, so no local
-copy and no digest exist. Re-deriving the block shape, scale format, or
-normative numerical rules above requires acquiring the specification through
-the route in the [preservation record](sources/README.md).
+Recorded as `ocp-mx-v1.0`, metadata-only since 2026-07-31: the document was acquired by hand and digested, its own licence section was reviewed, and the bytes were discarded because it carries no self-contained redistribution grant. Re-deriving the block shape, scale format, or normative numerical rules above requires re-acquiring the specification through the route in the [preservation record](sources/README.md) and checking it against the digest recorded there.

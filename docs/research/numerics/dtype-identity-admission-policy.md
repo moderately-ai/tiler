@@ -104,10 +104,7 @@ change updates provider provenance.
 - OCP MX block-format scheme identities, separately from scalar `TypeKey`s.
 
 The RISC-V BF16 contract is preserved as `riscv-unprivileged-isa-20260120`
-(chapter 25, "BF16 Extensions for BFloat16-precision Floating-Point, Version
-1.0"). IEEE 754-2019 is metadata-only and both OCP specifications are
-pending-acquisition, so those three normative references currently resolve to
-an acquisition route rather than a local copy.
+(chapter 25, "BF16 Extensions for BFloat16-precision Floating-Point, Version 1.0"). IEEE 754-2019 and both OCP specifications are metadata-only, so those three normative references resolve to an acquisition route rather than a local copy. The two OCP records have carried a reviewed identity and an exact digest since 2026-07-31, so a re-acquired copy is checkable; IEEE 754-2019 has neither bytes nor a digest.
 
 ADR 0036 records the scalar-format admissions. Compound OCP MX schemes use
 separate `QuantSchemeKey`s; ADR 0038 admits the OCP version 1.0 MXFP8, MXFP6,
