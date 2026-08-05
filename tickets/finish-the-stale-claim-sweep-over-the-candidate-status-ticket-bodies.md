@@ -1,7 +1,7 @@
 ---
 id: finish-the-stale-claim-sweep-over-the-candidate-status-ticket-bodies
 title: Finish the stale-claim sweep over the candidate-status ticket bodies
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [package-a-multi-entry-bundle-from-one-expansion, decide-the-expansion-cache-collection-schedule, reach-a-verified-kernel-through-the-structural-families]
@@ -9,6 +9,9 @@ scopes: [project/tickets]
 shared_scopes: []
 paths: []
 tags: [documentation, work-graph, hygiene]
+claimed_from: todo
+assignee: agent-stale-sweep
+lease_expires_at: 1785903117
 ---
 ## User-visible outcome
 
