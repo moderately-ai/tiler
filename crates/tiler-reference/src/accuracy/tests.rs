@@ -153,27 +153,78 @@ fn the_reciprocal_square_root_brackets() {
     );
 }
 
-/// An argument beyond the governed halving bound is refused rather than looped over.
+/// An argument whose exponential exceeds the governed magnitude is refused.
 ///
-/// The bound is stated where the *domain* changes rather than only far past it,
-/// because the halving count is the reduction depth plus the binade and the two
-/// have to move together: `2^23` is the first binade the bound refuses, and an
-/// admitted neighbour is asserted below it so that a change which quietly narrowed
-/// the domain would fail here rather than pass by refusing more.
+/// Asserted at the exact boundary rather than only far past it: the greatest
+/// admitted argument must still bracket and its successor must refuse, so a change
+/// that quietly narrowed the domain fails here rather than passing by refusing
+/// more. `2^16` and `2^40` are past it on the same code, and are the reason the
+/// bound moved — the superseded halving bound admitted every binade below 23, and
+/// timed at this precision `2^16` cost 247× the greatest argument the oracle
+/// itself presents while `2^22` did not finish in nine minutes.
+///
+/// Both signs are watched because the negative branch reaches the bound by
+/// recursion rather than by its own check, and a refusal that only fired on the
+/// positive side would leave the expensive half of the domain open.
 #[test]
 fn an_over_large_argument_is_refused() {
-    for binade in [23_i32, 40] {
-        assert_eq!(
-            exp_enclosure(&ExactRational::power_of_two(binade), corpus_precision())
-                .expect_err("too large to reduce")
-                .diagnostic_code(),
-            "reference.enclosure.argument-too-large",
-            "2^{binade} is past the halving bound"
-        );
+    let refused = [
+        ExactRational::from_integer(MAX_ARGUMENT_MAGNITUDE + 1),
+        ExactRational::power_of_two(16),
+        ExactRational::power_of_two(40),
+    ];
+    let mut checked = 0_usize;
+    for argument in &refused {
+        for signed in [argument.clone(), argument.negate()] {
+            // The outcome is read as a code rather than unwrapped, because a
+            // regression here returns an enclosure whose endpoints are thousands
+            // of digits wide and `expect_err` would render the whole of one.
+            assert_eq!(
+                exp_enclosure(&signed, corpus_precision())
+                    .as_ref()
+                    .err()
+                    .map(EnclosureError::diagnostic_code),
+                Some("reference.enclosure.argument-too-large"),
+                "{signed} is past the governed result magnitude"
+            );
+            checked += 1;
+        }
     }
+    assert_eq!(checked, 2 * refused.len(), "both signs of every argument");
+
+    let greatest_admitted = ExactRational::from_integer(MAX_ARGUMENT_MAGNITUDE);
     assert!(
-        exp_enclosure(&ExactRational::power_of_two(10), corpus_precision()).is_ok(),
-        "an argument well inside the bound still brackets"
+        exp_enclosure(&greatest_admitted, corpus_precision()).is_ok(),
+        "the greatest admitted argument must still bracket"
+    );
+    assert!(
+        exp_enclosure(&greatest_admitted.negate(), corpus_precision()).is_ok(),
+        "and so must its negation, which brackets through the reciprocal"
+    );
+}
+
+/// The admitted argument bound is the result budget expressed in argument units.
+///
+/// Two constants that must move together, checked against a bracketing pair for
+/// `log2 e = 1.44269504088896340735992...` rather than by restating the product
+/// this module already asserts in prose. Raising either alone fails here: a wider
+/// [`MAX_ARGUMENT_MAGNITUDE`] admits a result past the budget, and a wider
+/// [`MAX_RESULT_MAGNITUDE_BITS`] leaves an argument bound that is no longer the
+/// greatest the budget allows.
+#[test]
+fn the_argument_bound_is_the_result_budget_in_argument_units() {
+    let lower = ExactRational::from_ratio(1_442_695_040_888_963_407, 1_000_000_000_000_000_000)
+        .expect("valid");
+    let upper = ExactRational::from_ratio(1_442_695_040_888_963_408, 1_000_000_000_000_000_000)
+        .expect("valid");
+    let budget = ExactRational::from_integer(i128::from(MAX_RESULT_MAGNITUDE_BITS));
+    assert!(
+        ExactRational::from_integer(MAX_ARGUMENT_MAGNITUDE).multiply(&upper) <= budget,
+        "the greatest admitted argument's result must fit the budget"
+    );
+    assert!(
+        ExactRational::from_integer(MAX_ARGUMENT_MAGNITUDE + 1).multiply(&lower) > budget,
+        "and it must be the greatest such argument, not merely one of them"
     );
 }
 

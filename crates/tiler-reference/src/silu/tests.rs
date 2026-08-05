@@ -17,8 +17,12 @@ use tiler_ir::semantic::{
     SILU_F32_FACT_EXPONENTIAL_ACCURACY_CONTRACT, builtin_scalar_value_type_facts, silu_f32_op,
 };
 
-use super::{certified_exp_f32, rounds_to, silu_f32};
-use crate::accuracy::{ConformanceDecision, EnclosurePrecision, decide_contract, exp_enclosure};
+use super::{
+    EXPONENTIAL_OVERFLOW_GUARD, EXPONENTIAL_UNDERFLOW_GUARD, certified_exp_f32, rounds_to, silu_f32,
+};
+use crate::accuracy::{
+    ConformanceDecision, EnclosureError, EnclosurePrecision, decide_contract, exp_enclosure,
+};
 use crate::canonicalize_arithmetic_f32;
 use crate::error::ReferenceOperationError;
 
@@ -232,6 +236,62 @@ fn the_sigmoid_product_spelling_differs_at_the_pinned_input() {
     );
 }
 
+/// Every argument the guards hand to the enclosure is inside its magnitude bound.
+///
+/// `certified_exp_f32` refuses nothing of its own: it decides `+inf` at or above
+/// [`EXPONENTIAL_OVERFLOW_GUARD`], `+0.0` at or below
+/// [`EXPONENTIAL_UNDERFLOW_GUARD`], and hands everything strictly between to
+/// [`exp_enclosure`], which refuses an argument whose exponential would exceed its
+/// governed result magnitude. That refusal is a bound on the *magnitude*, so
+/// admitting the greatest magnitude the guards can pass admits every argument they
+/// pass — and the two representable extremes are checked rather than argued about.
+///
+/// Worth a test rather than a sentence because the two sides move independently: a
+/// guard widened outward, or the budget narrowed, turns an argument the format
+/// reaches into
+/// [`ReferenceOperationError::UndecidedTranscendentalReference`], which is a
+/// refusal a caller cannot act on rather than a bound it can.
+#[test]
+fn every_argument_the_guards_admit_is_inside_the_enclosure_bound() {
+    let greatest = f32::from_bits(EXPONENTIAL_OVERFLOW_GUARD.to_bits() - 1);
+    let least = -f32::from_bits((-EXPONENTIAL_UNDERFLOW_GUARD).to_bits() - 1);
+    assert!(
+        greatest < EXPONENTIAL_OVERFLOW_GUARD && least > EXPONENTIAL_UNDERFLOW_GUARD,
+        "both extremes must sit strictly inside the guards that select them"
+    );
+    let mut checked = 0_usize;
+    for argument in [greatest, least] {
+        let exact = ExactRational::from_f32(argument).expect("finite");
+        assert!(
+            exp_enclosure(&exact, EnclosurePrecision::binary32_corpus()).is_ok(),
+            "the enclosure must bracket {:#010x}, which the guards admit",
+            argument.to_bits()
+        );
+        assert!(
+            certified_exp_f32(argument).is_ok(),
+            "and the reference must decide {:#010x} rather than reporting undecided",
+            argument.to_bits()
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 2, "both extremes were checked");
+
+    // The refusal is reachable, and only from outside the guards: the corpus's own
+    // widest argument is past the budget, and the underflow guard decides it before
+    // the enclosure is ever asked.
+    assert_eq!(
+        exp_enclosure(
+            &ExactRational::from_f32(-f32::MAX).expect("finite"),
+            EnclosurePrecision::binary32_corpus(),
+        )
+        .as_ref()
+        .err()
+        .map(EnclosureError::diagnostic_code),
+        Some("reference.enclosure.argument-too-large")
+    );
+    assert_eq!(certified_exp_f32(-f32::MAX), Ok(0.0));
+}
+
 /// The certified exponential admits only a provably correctly rounded value.
 #[test]
 fn the_certified_exponential_agrees_with_the_pinned_value_at_one() {
@@ -324,9 +384,12 @@ fn the_registered_contract_decides_conformance_against_a_certified_enclosure() {
         // Two exclusions, and each names a different boundary. Above the
         // contract's ceiling the reference overflows and the finite-overflow rule
         // governs instead of this clause. Below `-104` the reference is smaller
-        // than half the least subnormal and the enclosure's argument reduction
-        // refuses rather than approximating — the contract still holds there, but
-        // this *evaluator* does not decide it, and saying so is the point.
+        // than half the least subnormal, so `certified_exp_f32`'s underflow guard
+        // answers `+0.0` without consulting an enclosure at all — and the corpus
+        // argument that reaches this branch is `-f32::MAX`, whose exponential is
+        // past the enclosure's own result-magnitude budget and is refused there
+        // too. The contract still holds in that region; this *evaluator* does not
+        // decide it, and saying so is the point.
         if exponent_argument > f32::from_bits(0x42b1_7217) || exponent_argument < -104.0 {
             continue;
         }
