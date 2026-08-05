@@ -7,12 +7,12 @@ use super::{
     BuildError, CONCATENATE_AXIS_ATTRIBUTE, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField,
     CanonicalValue, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE,
     OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
-    SemanticProgramBuilder, ShapedValue, Value, ValueId, add_bf16_op, add_f32_op, broadcast_f32_op,
-    canonical_bf16_bits, concatenate_f32_axis_attribute, concatenate_f32_op, constant_bf16_op,
-    constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
-    rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op, silu_f32_op,
-    softmax_f32_axis_attribute, softmax_f32_op, strict_serial_sum_f32_op,
-    strict_tensor_contraction_f32_op,
+    SLICE_SELECTION_ATTRIBUTE, SemanticProgramBuilder, ShapedValue, SliceSelection, Value, ValueId,
+    add_bf16_op, add_f32_op, broadcast_f32_op, canonical_bf16_bits, concatenate_f32_axis_attribute,
+    concatenate_f32_op, constant_bf16_op, constant_f32_op, multiply_bf16_op, multiply_f32_op,
+    reindex_f32_op, rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
+    silu_f32_op, slice_f32_op, softmax_f32_axis_attribute, softmax_f32_op,
+    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -394,6 +394,43 @@ impl F32Concatenate {
         .map_err(BuildError::InvalidOperationAttributes)?;
         let operands: Vec<ValueId> = inputs.iter().map(|input| input.erase()).collect();
         apply_single(builder, concatenate_f32_op(), attributes, &operands)
+    }
+}
+
+/// Binary32 `Slice` over one total per-axis selection.
+///
+/// A selection reads a rectangular sub-region and changes no value. It makes no
+/// claim that storage was copied or viewed; whether an occurrence costs a
+/// dispatch, an offset in a consumer's access map, or nothing at all is a
+/// planning outcome.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32Slice;
+
+impl F32Slice {
+    /// Applies the registered selection semantics.
+    ///
+    /// The selection is stated once and validated once, by the registered
+    /// operation authority: a reserved or unadmitted relation, a selection whose
+    /// entries are not the operand's axes, and a window that leaves its axis are
+    /// all refused here rather than clamped or approximated. The result's shape is
+    /// derived from the selection and the operand's extents, never declared by a
+    /// caller, and rank is preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on failure,
+    /// naming the rule the occurrence violated against this operand.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        selection: &SliceSelection,
+        input: Value<F32>,
+    ) -> Result<Value<F32>, BuildError> {
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            SLICE_SELECTION_ATTRIBUTE,
+            selection.canonical_value().clone(),
+        )])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        apply_single(builder, slice_f32_op(), attributes, &[input.erase()])
     }
 }
 

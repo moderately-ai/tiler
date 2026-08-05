@@ -1,30 +1,33 @@
-//! Reference semantics for the three governed structural families.
+//! Reference semantics for the four governed structural families.
 //!
-//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@1`, and `tiler::concatenate-f32@1`
-//! move elements and compute nothing, so these evaluators decode no
-//! floating-point value and produce none: each result element is the operand
-//! element its coordinate map — or, for the concatenation, its operand block —
-//! names, cloned byte for byte. The crate-wide [`canonicalize_arithmetic_f32`]
-//! rule is deliberately **not** applied — it exists for arithmetic that
-//! *produces* a result, and applying it here would rewrite a non-canonical NaN a
-//! program only transported, which is the one thing a structural family must
-//! never do.
+//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@1`, `tiler::slice-f32@1`, and
+//! `tiler::concatenate-f32@1` move elements and compute nothing, so these
+//! evaluators decode no floating-point value and produce none: each result
+//! element is the operand element its coordinate map — or, for the concatenation,
+//! its operand block — names, cloned byte for byte. The crate-wide
+//! [`canonicalize_arithmetic_f32`] rule is deliberately **not** applied — it
+//! exists for arithmetic that *produces* a result, and applying it here would
+//! rewrite a non-canonical NaN a program only transported, which is the one thing
+//! a structural family must never do.
 //!
 //! [`canonicalize_arithmetic_f32`]: crate::canonicalize_arithmetic_f32
 //!
-//! All three evaluators recompute the family's own shape rule from the attribute
+//! All four evaluators recompute the family's own shape rule from the attribute
 //! rather than trusting the operand and result shapes the graph carries. The
 //! semantic registry already refused a malformed mapping at construction, so a
 //! disagreement here is invalid state rather than a caller error, and it is
 //! reported as an invalid application instead of being resolved in favour of
-//! either side.
+//! either side. That recomputation is what makes the selection's bounds hold
+//! here too: an occurrence whose window left its axis never reaches an operand
+//! read, because the shape rule refuses before the walk begins.
 
 use std::cmp::Ordering;
 
 use tiler_ir::semantic::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
     CONCATENATE_AXIS_ATTRIBUTE, F32, OperationAttributes, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
-    ReindexFormKind, concatenate_axis, concatenate_result_shape,
+    ReindexFormKind, SLICE_SELECTION_ATTRIBUTE, SliceSelection, concatenate_axis,
+    concatenate_result_shape,
 };
 use tiler_ir::shape::{Extent, Shape};
 
@@ -85,6 +88,43 @@ impl ReferenceOperation for BroadcastF32Reference {
                     .operand_axis()
                     .ok_or(ReferenceOperationError::InvalidApplication)?;
                 *index_mut(operand, axis.get())? = coordinate;
+            }
+            Ok(())
+        })
+        .and_then(|tensor| outputs.push(tensor))
+    }
+}
+
+pub(crate) struct SliceF32Reference;
+
+impl ReferenceOperation for SliceF32Reference {
+    fn evaluate(
+        &self,
+        request: ReferenceEvaluationRequest<'_>,
+        outputs: &mut ReferenceOutputs,
+    ) -> Result<(), ReferenceOperationError> {
+        let [input] = request.operands() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        let selection = slice_selection(request.attributes())?;
+        let result_shape = selection
+            .result_shape(input.shape())
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        gather(input, &result_shape, |result, operand| {
+            for (axis, entry) in selection.axes().iter().enumerate() {
+                // A whole axis reads its own coordinate and a window reads that
+                // coordinate shifted by the offset; `offset` reports zero for the
+                // former, so both are the same addition rather than two paths.
+                let coordinate = *result
+                    .get(axis)
+                    .ok_or(ReferenceOperationError::InvalidApplication)?;
+                let offset = usize::try_from(entry.offset())
+                    .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+                *operand
+                    .get_mut(axis)
+                    .ok_or(ReferenceOperationError::InvalidApplication)? = coordinate
+                    .checked_add(offset)
+                    .ok_or(ReferenceOperationError::ShapeTooLarge)?;
             }
             Ok(())
         })
@@ -368,6 +408,19 @@ fn reindex_form(attributes: &OperationAttributes) -> Result<ReindexForm, Referen
         return Err(ReferenceOperationError::InvalidApplication);
     }
     ReindexForm::from_canonical_value(value)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)
+}
+
+fn slice_selection(
+    attributes: &OperationAttributes,
+) -> Result<SliceSelection, ReferenceOperationError> {
+    let Some(value) = attributes.get(SLICE_SELECTION_ATTRIBUTE) else {
+        return Err(ReferenceOperationError::InvalidApplication);
+    };
+    if attributes.fields().len() != 1 {
+        return Err(ReferenceOperationError::InvalidApplication);
+    }
+    SliceSelection::from_canonical_value(value)
         .map_err(|_| ReferenceOperationError::InvalidApplication)
 }
 

@@ -10,7 +10,8 @@ use tiler_ir::semantic::{
     CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS,
     MIN_CONCATENATE_OPERANDS, ProviderIdentity, TypeKey, add_f32_op, broadcast_f32_op,
     concatenate_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_op,
-    silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    silu_f32_op, slice_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
+    strict_tensor_contraction_f32_op,
 };
 
 use super::bf16::register_standard_bf16;
@@ -26,7 +27,9 @@ use super::registry::{
 use super::rms_norm::rms_norm_reference;
 use super::silu::silu_reference;
 use super::softmax::softmax_reference;
-use super::structural::{BroadcastF32Reference, ConcatenateF32Reference, ReindexF32Reference};
+use super::structural::{
+    BroadcastF32Reference, ConcatenateF32Reference, ReindexF32Reference, SliceF32Reference,
+};
 use super::tensor::{FloatBitOrder, ReferenceElement, Tensor, TensorPayloadView};
 
 pub(crate) struct StandardReferenceProvider;
@@ -107,6 +110,18 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
             unary_signature.clone(),
             revision,
             Arc::new(BroadcastF32Reference),
+        )?;
+        // The third coordinate-mapping family shares the two above's signature
+        // exactly: one f32 operand, one f32 result, and everything that
+        // distinguishes it carried by its attribute. What separates the three is
+        // the class of map the attribute may state — bijective, many-to-one, and
+        // injective-not-surjective — which is a semantic admission rather than a
+        // signature, so nothing here needs to tell them apart.
+        registrar.register(
+            slice_f32_op(),
+            unary_signature.clone(),
+            revision,
+            Arc::new(SliceF32Reference),
         )?;
         // One capability per admitted arity, because a capability is keyed by an
         // *exact* resolved signature and the concatenation's operand arity is a

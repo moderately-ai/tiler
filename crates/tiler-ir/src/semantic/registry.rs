@@ -27,6 +27,7 @@ use super::quantization::register_standard_quantization;
 use super::reindex::register_standard_reindex;
 use super::rms_norm::register_standard_rms_norm;
 use super::silu::register_standard_silu;
+use super::slice::register_standard_slice;
 use super::softmax::register_standard_softmax;
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
@@ -2376,6 +2377,11 @@ impl SemanticRegistryProvider for StandardSemantics {
         // one that *joins* values rather than remapping one; registration order
         // fixes nothing about semantics.
         register_standard_concatenate(registrar)?;
+        // The fourth structural family, and the one the other three refuse by
+        // name: a non-surjective coordinate relation is neither a reindex nor a
+        // broadcast, and until this registration nothing in the profile could
+        // state one. Registration order fixes nothing about semantics.
+        register_standard_slice(registrar)?;
         register_standard_quantization(registrar)?;
 
         // Logical realization support is a sidecar of this same provider
