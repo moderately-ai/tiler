@@ -1,7 +1,7 @@
 ---
 id: refuse-an-enclosure-precision-the-grid-arithmetic-cannot-express
 title: Refuse an enclosure precision the grid arithmetic cannot express
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [bound-the-certified-exponential-s-cost-in-its-admitted-argument-region]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: []
 paths: []
 tags: [numerics]
+claimed_from: todo
+assignee: agent-enclosure-depth
+lease_expires_at: 1785971429
 ---
 ## The finding
 

@@ -1,7 +1,7 @@
 ---
 id: connect-certified-rounding-error-bounds-to-rewrite-permissions
 title: Connect certified rounding-error bounds to rewrite permissions
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-certified-bounds
+lease_expires_at: 1785971429
 ---
 ## User-visible outcome
 
