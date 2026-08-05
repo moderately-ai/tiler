@@ -1,0 +1,19 @@
+[package]
+name = "cache-envelope-digest-coverage"
+description = "Measures which envelope corruptions only the cache bundle's envelope-section digest catches"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cache-envelope-digest-coverage"
+path = "src/main.rs"
+
+[dependencies]
+tiler-artifact.workspace = true
+tiler-cache.workspace = true
+tiler-compiler.workspace = true
+tiler-ir.workspace = true
+
+[lints]
+workspace = true
