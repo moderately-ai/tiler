@@ -1627,6 +1627,13 @@ pub(crate) fn barrier_call(spec: &BarrierSpec) -> Result<String, MetalEmitError>
     // SIMD-group visibility. No in-kernel barrier establishes device-wide
     // visibility, and the governed memory scopes cannot name SIMD-group
     // visibility at all, so a SIMD-group barrier has no admissible scope here.
+    //
+    // Both scope vocabularies are `#[non_exhaustive]`, so the wildcard is
+    // required out of crate and a widened scope would reach it silently, at run
+    // time. The build error that announces such a widening is therefore in
+    // `tiler-ir` rather than here — `barrier_scope_vocabulary_is_closed` — and
+    // `add-subgroup-memory-scope-when-collectives-land` owns the arm that would
+    // then be added below.
     match (spec.execution_scope, spec.memory_scope) {
         (ExecutionScope::Workgroup, MemoryScope::Workgroup) => {}
         _ => {

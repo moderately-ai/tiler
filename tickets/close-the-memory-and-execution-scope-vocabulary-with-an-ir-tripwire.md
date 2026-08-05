@@ -1,7 +1,7 @@
 ---
 id: close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire
 title: Close the memory and execution scope vocabulary with an IR tripwire
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [add-subgroup-memory-scope-when-collectives-land, compose-the-two-level-subgroup-and-workgroup-reduction]
@@ -38,3 +38,13 @@ Widening `MemoryScope` or `ExecutionScope` becomes a build error naming the tick
 ## Closes when
 
 Test-only exhaustive matches over `MemoryScope` and `ExecutionScope` exist in `crates/tiler-ir`, each naming the ticket that must act when it breaks; the tripwire is demonstrated failing by adding a throwaway variant locally and observing the build error, and that perturbation is reverted; and the correct current citations replace the stale ones the deferred ticket's addenda carry.
+
+## Outcome (2026-08-05)
+
+**Landed.** `barrier_scope_vocabulary_is_closed` and `the_barrier_scope_vocabularies_are_still_closed` in `crates/tiler-ir/src/kernel/tests.rs`, modelled on `body_shaping_vocabulary_is_closed` and naming [`add-subgroup-memory-scope-when-collectives-land`](add-subgroup-memory-scope-when-collectives-land.md); the visibility match in `crates/tiler-metal/src/emit.rs` gained the reciprocal pointer, so the wildcard arm a reader lands on says where the announcement lives. No scope admitted, no rejection relaxed, no identity encoding touched — the `tag` bodies on both enums are byte-for-byte unchanged, so there is no appends-only question to answer.
+
+**Measurement — watched failing, both halves, at base `692d323e` under the pinned toolchain.** A throwaway `MemoryScope::Subgroup` broke `cargo check -p tiler-ir -p tiler-metal --all-targets` at `MemoryScope::tag`, `verify::barrier_subject`, *and* the new tripwire; satisfying the first two and re-running left `tiler-metal` checking clean (exit 0) with `tiler-ir`'s lib test failing at the tripwire alone. A throwaway `ExecutionScope::Cluster` gave the same shape. Both perturbations reverted, `git status` confirmed clean of them before the commit.
+
+**Correction — this ticket's own "Why this exists" overstates the gap, and the correction is recorded on the deferred ticket as well.** "Adding `MemoryScope::Subgroup` to `model.rs` compiles cleanly in `tiler-metal`" is exact and now measured. But the widening was **never** silent inside `tiler-ir`: `verify::barrier_subject` is a *production* exhaustive match whose doc comment already states the property, and `MemoryScope::tag` is a second. What the tripwire adds is therefore the **named owner**, not the build error — the natural repair at those two sites is local, plausible, and says nothing about the run-time rejection waiting downstream. The tripwire is worth having for that reason, which is narrower than the reason the ticket was filed with.
+
+**Citation drift, third round.** The `tiler-metal` numbers drifted again between the 2026-08-04 sweep and this landing: `barrier_call` is `crates/tiler-metal/src/emit.rs:1613`, not `:1601`, with its subgroup binding at `:1616`. So did the `tiler-ir` half this ticket called re-verified and unchanged: `ExecutionScope` is `crates/tiler-ir/src/kernel/model.rs:609` and `MemoryScope` is `:628`, not `:595` and `:614`. **That recurrence is the argument for not fixing this with numbers a fourth time**, which is why the tripwire's doc comment cites constructs and the deferred ticket's correction tells a reader to prefer the grep to the number.
