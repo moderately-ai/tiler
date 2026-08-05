@@ -1,0 +1,12 @@
+# Preserved upstream bytes. `-text` stops any end-of-line conversion from rewriting a
+# checkout and breaking the recorded digests; `-whitespace` stops `git diff --check` from
+# reporting trailing whitespace that belongs to the upstream document and must stay there.
+# These files are evidence, not source: the only correct edit is replacing a whole document
+# with a newly retrieved edition and updating its record.
+* -text -whitespace
+
+# The record itself is ordinary repository text and is checked like any other file.
+README.md text whitespace
+expected-sources.tsv text whitespace
+verify-sources.sh text whitespace
+.gitattributes text whitespace
