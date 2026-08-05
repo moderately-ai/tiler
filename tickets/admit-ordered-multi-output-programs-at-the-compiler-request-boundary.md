@@ -1,7 +1,7 @@
 ---
 id: admit-ordered-multi-output-programs-at-the-compiler-request-boundary
 title: Admit ordered multi-output programs at the compiler request boundary
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, implement-general-dag-partitioning, carry-artifact-program-output-order-into-kernel-program-identity, assemble-a-kernel-program-from-an-arbitrary-cover, recognize-several-ordered-named-outputs-at-the-compiler-request-boundary]
 related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, accept-the-public-compiler-facade-boundary, admit-elementwise-epilogues-over-a-materialized-intermediate, derive-physical-proposals-from-the-cover-region-subject]
