@@ -1,7 +1,7 @@
 ---
 id: refuse-an-enclosure-precision-the-grid-arithmetic-cannot-express
 title: Refuse an enclosure precision the grid arithmetic cannot express
-status: awaiting-decision
+status: todo
 priority: p2
 dependencies: []
 related: [bound-the-certified-exponential-s-cost-in-its-admitted-argument-region]
@@ -48,3 +48,7 @@ This is a public-boundary question and belongs to Tom, which is why it is filed 
 `exp_enclosure` has no reachable panic on any `(ExactRational, EnclosurePrecision)` pair its public signature admits; the refusal — wherever it is placed — carries a typed error with a stable diagnostic code and a test that watches it fire *and* watches the admitted neighbour; and `exp_enclosure`'s `# Panics` section states what is actually true rather than a bound that does not exist.
 
 Filed at `awaiting-decision` rather than `todo` because every option above moves a public boundary — a `const fn`'s signature or a new governed diagnostic code — and the board must not offer a ticket whose first step is a decision it cannot make. Tom's answer to "What to decide" is what makes it dispatchable.
+
+## Decided — defence in depth, 2026-08-05
+
+Tom decided at the live review (witnessed first-hand by the coordinator): both layers, not either. (1) `EnclosurePrecision` gains a validated construction bound so the overflowing grid width is unrepresentable — the primary repair. (2) The consumption site's `i32` conversion becomes a checked conversion returning the typed `EnclosureError` refusal rather than a panic — the second layer, kept even though the bound makes it unreachable through the validated constructor, because defence in depth is the stated preference. The second layer's watched-failing evidence comes from perturbing the construction bound (the pattern the exp-bound landing used), not from a wildcard test; a check that cannot be demonstrated failing under a stated perturbation does not land. Both surface changes return for acceptance as one delta. Status moves to `todo`: this is now a decided implementation ticket awaiting dispatch.
