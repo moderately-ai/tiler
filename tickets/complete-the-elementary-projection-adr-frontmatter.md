@@ -1,7 +1,7 @@
 ---
 id: complete-the-elementary-projection-adr-frontmatter
 title: Complete the drafted elementary-projection ADR frontmatter to the decision schema
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-registered-unary-families-at-the-compiler-request-boundary, land-the-elementary-family-projection-adr]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, documentation, schema]
-claimed_from: todo
-assignee: agent-adr-frontmatter
-lease_expires_at: 1785903981
 ---
 ## User-visible outcome
 
