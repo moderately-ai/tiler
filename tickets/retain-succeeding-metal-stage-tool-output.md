@@ -1,7 +1,7 @@
 ---
 id: retain-succeeding-metal-stage-tool-output
 title: Retain a succeeding Metal stage's tool output
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [retain-canonical-msl-under-a-debug-expansion-cache-entry]
@@ -9,6 +9,9 @@ scopes: [implementation/metal-aot, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, diagnostics, cache]
+claimed_from: todo
+assignee: agent-metal-retain
+lease_expires_at: 1785938306
 ---
 ## User-visible outcome
 
