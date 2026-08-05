@@ -38,3 +38,7 @@ Any one of:
 2. A validated route exists and its cost is measured rather than assumed — the extra pass, and whatever synchronization the answer needs.
 3. An occurrence carrying the precondition refuses with a typed, explainable reason naming the threshold and the element that violated it; an occurrence not carrying it keeps today's defined behaviour unchanged.
 4. The explain output distinguishes "precondition discharged", "precondition validated at runtime", and "no precondition stated", because the three are different claims about the same result.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** None of the three: the pinned workload's normalized inputs stay bounded below `RMS_NORM_F32_SQUARING_OVERFLOW_BITS` by construction; no caller can state a value-domain assumption, because no public way to do so exists; and no runtime-validation authority for a tensor-contents precondition has arrived. `ValueDomainProvenance` and `ExceptionalValueAssumption` are consumed only by Metal emission's safe-math decision (`crates/tiler-metal/src/emit.rs:70-71,884-887`) and by nothing that carries a caller-supplied bound. Recheck: `grep -rn 'ValueDomainProvenance' crates/ --include='*.rs'`.

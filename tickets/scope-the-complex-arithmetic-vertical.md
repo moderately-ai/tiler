@@ -35,3 +35,7 @@ The trigger has fired and the vertical is stated with its component oracle, its 
 ## Graph maintenance
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-6 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-6's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):179: no named operation and component type has arrived, and F-40 spectral transforms — the first family that would require it — is unadmitted.

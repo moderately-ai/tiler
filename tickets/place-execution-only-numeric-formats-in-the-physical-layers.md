@@ -34,3 +34,7 @@ The trigger has fired and the physical fact is stated at the layer that owns it 
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-11 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
 - A target-profile or Metal change this eventually needs is that owner's, not this ticket's; declare the scope when the trigger fires rather than reserving it now.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-11's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):217: no selected backend operation needs TF32, `.ue4m3`, `.ue8m0`, `x86_fp80`, or `ppc_fp128`, and none could yet state its conversion boundaries, delivered behaviour, target detection, artifact identity, and refusal.

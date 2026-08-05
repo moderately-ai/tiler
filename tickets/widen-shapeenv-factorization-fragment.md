@@ -45,3 +45,7 @@ The former proposed resolution—treat a compile-phase caller parameter as known
 ## Closes when
 
 When activated, the shape contract records either the durable explicit refusal or the admitted specialization-input/undecided model, and no implementation infers a known value from availability alone. If the durable refusal and reopening trigger land elsewhere first, close this ticket as superseded by that contract.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** No frontend or product requires one artifact to serve arbitrary runtime tile sizes without recompilation; every admitted route specializes on a static factor, and the refusal remains the tested behaviour at `crates/tiler-ir/src/shape/env.rs`'s `a_relation_outside_the_supported_fragment_is_refused_rather_than_ignored`. A demand satisfiable by recompiling per tile size is explicitly not the trigger. Recheck: `grep -n 'a_relation_outside_the_supported_fragment_is_refused_rather_than_ignored' crates/tiler-ir/src/shape/env.rs`.

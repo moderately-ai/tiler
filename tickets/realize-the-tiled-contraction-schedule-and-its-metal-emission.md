@@ -41,3 +41,7 @@ Deferred behind both dependencies. It becomes work when [`admit-a-cooperative-ti
 ## Closes when
 
 A contraction of the profile's projection structure compiles through the ordinary entry point to a tiled Metal kernel, its results are bit-identical to the reference at every profile cell, the `K` precondition refuses with a typed reason that was watched firing, and the emitted module carries no fused multiply-add on the contraction's accumulation path.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** The activation trigger is [`admit-a-cooperative-tile-over-shared-operands`](admit-a-cooperative-tile-over-shared-operands.md) reaching `done`; it is still `deferred`, and this sweep found its own trigger only half fired — its dependency landed but the two public boundaries it needs are Tom's and unaccepted. Recheck: that ticket's status and its trigger-check log.

@@ -1,7 +1,7 @@
 ---
 id: audit-dead-code-admissions-after-public-boundary-promotions
 title: Audit dead-code admissions after public-boundary promotions
-status: deferred
+status: todo
 priority: p3
 dependencies: [promote-the-symbolic-index-profile-to-a-public-boundary, promote-the-metal-aot-compilation-identity, expose-the-governed-fact-field-vocabulary, expose-the-numerical-contract-preference-list, wire-the-delivered-realization-record-into-the-artifact]
 related: []
@@ -60,3 +60,7 @@ current construction/consumer search, no whole-file admission has returned
 without a reason naming a real unavailable producer or consumer, every retained
 reason has had each of its clauses checked rather than the allow as a whole,
 and the full gate passes.
+
+## Trigger check log
+
+- 2026-08-04 — **FIRED, partially; reactivated to `todo`.** The ticket's own trigger admits a partial sweep "if a *subsystem* completes — all of `tiler-ir`'s promotions, or all of `tiler-artifact`'s". [`promote-the-symbolic-index-profile-to-a-public-boundary`](promote-the-symbolic-index-profile-to-a-public-boundary.md) is `done`, which is the whole of `tiler-ir`'s promotion set, and [`promote-the-metal-aot-compilation-identity`](promote-the-metal-aot-compilation-identity.md) is `done`, which is `tiler-metal-aot`'s. Both partial sweeps were owed by the promotion that closed them and neither was run. **The inventory has also moved and the 2026-07-28 table is stale**: the file-scope admissions are now eight rather than twelve, `crates/tiler-ir/src/index/sourced.rs`, `crates/tiler-ir/src/shape/env.rs`, `crates/tiler-cache/src/expansion/{collect,preflight}.rs`, and `crates/tiler-metal-aot/src/{family,identity}.rs` are gone, and `crates/tiler-compiler/src/policy.rs` and `crates/tiler-compiler/src/target/accuracy.rs` are new. Reproduce: `grep -rn -B2 dead_code crates/*/src --include='*.rs' | grep '#!\[allow('` prints eight lines. The *item*-level admissions in the two completed subsystems are what the partial sweep now owes; the frontmatter dependencies still gate the full five-promotion sweep on [`wire-the-delivered-realization-record-into-the-artifact`](wire-the-delivered-realization-record-into-the-artifact.md), which is `todo`, so this sits at `todo` waiting on that edge rather than at `deferred` waiting on nothing.

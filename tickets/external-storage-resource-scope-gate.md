@@ -67,3 +67,7 @@ Primary starting points:
 - https://iree.dev/guides/parameters/
 - https://iree.dev/reference/mlir-dialects/Stream/
 - https://docs.jax.dev/en/latest/notebooks/host-offloading.html
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** No proposed milestone requires file-backed, out-of-core, or persistent resources that ordinary runtime-provided tensor inputs cannot represent. The expansion cache that landed this wave is a *compile-time* artifact cache under `tiler-cache`, not a program resource, so it does not fire this gate. Recheck: the gate's own condition, stated as a corpus state.

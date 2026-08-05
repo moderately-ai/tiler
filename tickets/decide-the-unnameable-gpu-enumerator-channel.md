@@ -54,3 +54,7 @@ Tom accepts one of the two surviving candidates. If the channel is accepted, `ti
 ## Deferral (2026-08-01)
 
 Tom approved the recommendation: defer. The runner is fail-closed regardless, and the general fallible-probe channel activates on the recorded triggers — a second raw-value-less binding needing the same decision, or `widen-the-metal-gpu-family-vocabulary-to-apple10` firing the build error the counted-population assertion now guarantees.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Both recorded triggers are unmet: this workspace still binds Metal through exactly two crates, and only `prototypes/serial-sum-run` (`metal` 0.33.0) has the raw-value-less shape, so there is no second instance; and [`widen-the-metal-gpu-family-vocabulary-to-apple10`](widen-the-metal-gpu-family-vocabulary-to-apple10.md) recorded its own deferral the same day, so the counted-population assertion has not been made to fire. Recheck: `grep -rn 'objc2-metal\|^metal = \|metal = "' prototypes/*/Cargo.toml`.

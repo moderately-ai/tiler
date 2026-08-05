@@ -36,3 +36,7 @@ The trigger has fired and the vertical is stated including the block oracle, the
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-9 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
 - Depends on [`scope-the-ocp-reduced-precision-float-vertical`](scope-the-ocp-reduced-precision-float-vertical.md) for its constituent element semantics and on [`implement-workload-selected-quantized-parameter-maps`](implement-workload-selected-quantized-parameter-maps.md) for the non-per-tensor map that is its stated prerequisite. Numerical and reference authority precedes any optimizer or backend claim here, as the ledger's graph policy requires.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-9's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):201. Verified independently against the tree: `ParameterIndexMapKind` still has exactly one variant, `PerTensor` (`crates/tiler-ir/src/semantic/types.rs:1247-1249`), so the stated prerequisite — a non-per-tensor parameter-index map — does not exist, and [`implement-workload-selected-quantized-parameter-maps`](implement-workload-selected-quantized-parameter-maps.md) is `todo`. Recheck: `grep -n 'enum ParameterIndexMapKind' -A 4 crates/tiler-ir/src/semantic/types.rs`.

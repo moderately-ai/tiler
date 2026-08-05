@@ -4,7 +4,7 @@ title: Separate the tree and split groupings at a contributor count where their 
 status: deferred
 priority: p3
 dependencies: []
-related: [drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies, raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells, calibrate-and-activate-parallel-reduction-selection]
+related: [drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies, raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells, calibrate-and-activate-parallel-reduction-selection, establish-an-upper-bound-authority-for-the-metal-grid-axis-row]
 scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 tags: [numerics, reductions, deferred, evidence-gap]
@@ -48,3 +48,7 @@ No cost model and no selection change — [`calibrate-and-activate-parallel-redu
 
 - Filed 2026-08-02 at integration of the producing ticket, which recorded the limit rather than hunting around it and asked whether it should become a ticket. It should: a bounded capability with a named activation trigger belongs on the board rather than in a closed ticket's prose.
 - Do **not** convert this to `todo` because the grid-axis ticket is merely claimed. The trigger is a *reachable* discriminating count, which means that work landed and the count verified reachable — check it, do not infer it.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired, and the named concrete route landed and turns out to be insufficient.** The grid-axis row this ticket blamed *did* move: [`establish-an-upper-bound-authority-for-the-metal-grid-axis-row`](establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md) is `done` and the authoritative declaration now carries a measured `grid_axis_threads: 268_435_456` (`crates/tiler-build/src/metal_declaration.rs:225`, was `4`), so wider shapes are reachable and more than one shape now retains all three strategies. **That does not produce a discriminating count.** The ticket's own trigger is a count at which the *tree's* partition differs from the *split's*, and both still read the identical value from one function — `single_workgroup_tree_region` calls `governed_partition(contributors)` (`crates/tiler-compiler/src/physical.rs:1159`) exactly as `partial_reduction_region` does, and `workgroup_tree_tile` fixes `rounds: 1` (`crates/tiler-ir/src/schedule/cooperative.rs:887`), which is precisely the condition the ticket recorded as making the two groupings identical. Widening the row moves the count but not the divergence, at **every** count. The surviving route is therefore the ticket's second one alone: a cooperative tile whose `rounds` exceeds one. The ticket's own instruction — "check which arrived before assuming it was the grid-axis row" — is what caught this. Recheck: `grep -n 'governed_partition(contributors)' crates/tiler-compiler/src/physical.rs` and `grep -n 'rounds: 1' crates/tiler-ir/src/schedule/cooperative.rs`.

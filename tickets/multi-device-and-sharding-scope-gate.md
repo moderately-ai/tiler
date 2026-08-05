@@ -74,3 +74,7 @@ Primary starting points:
 - https://openxla.org/shardy/propagation
 - https://openxla.org/xla/operation_semantics#send
 - https://iree.dev/reference/mlir-dialects/Stream/
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Tiler proposes no semantic collective, no compiler-selected sharding, and no execution across more than one live device; the compile path still assembles single-device kernel programs. Recheck: the gate's own three conditions, each a corpus state.

@@ -33,3 +33,7 @@ Any one of these fires it:
 ## What the work would be
 
 Decide whether the fallback must refuse a contract it cannot honour, honour it, or state explicitly that it is unconstrained — and record which, because all three are defensible and only one can be true. Whatever is chosen, the evidence is a test that can fail: a fallback path that ignores a stated contract must be shown ignoring it, not assumed to.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** A `fallback-only` region still "opens no cache, resolves no root, and spawns no" backend compilation and expands to the semantic fallback that constructs the declared result (`crates/tiler-macros/src/aot.rs:25-29`), so trigger 1 is unmet. Trigger 2 is unmet: [`prototype-a-bounded-scalar-cpu-backend-vertical`](prototype-a-bounded-scalar-cpu-backend-vertical.md) is `done` but is a prototype, and no admitted reference or CPU execution path is reachable from a `fallback-only` region. Trigger 3 is unmet: no stated contract enters `RegionFacts`, artifact identity, or route facts on a non-delivering path. Recheck: `grep -n 'fallback-only' crates/tiler-macros/src/aot.rs`.

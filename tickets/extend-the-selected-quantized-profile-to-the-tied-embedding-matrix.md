@@ -39,3 +39,7 @@ The tied matrix is one quantized logical value consumed by both its gather and i
 ## Graph maintenance
 
 Filed by [`scope-first-quantized-lm-profile`](scope-first-quantized-lm-profile.md). Advance no ledger cell that this ticket does not itself test.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Both dependencies are `todo`: [`implement-first-quantized-backend-profile`](implement-first-quantized-backend-profile.md) and [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md). The activation boundary is explicit that neither exists yet.

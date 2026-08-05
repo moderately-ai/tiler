@@ -33,3 +33,7 @@ Each member has either an extension provider carrying it end to end, or a record
 ## Graph maintenance
 
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-12 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
+
+## Trigger check log
+
+- 2026-08-04 — **not fired**, per member. Track D-12's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):225: no member has an exact producer and consumer, and the route additionally needs the registration governance [`govern-external-dtype-namespace-registration-and-equivalence`](govern-external-dtype-namespace-registration-and-equivalence.md) owes, which this sweep also found unfired.

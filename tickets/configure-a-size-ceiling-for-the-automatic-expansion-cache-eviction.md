@@ -4,7 +4,7 @@ title: Configure a size ceiling for the automatic expansion cache eviction
 status: deferred
 priority: p3
 dependencies: []
-related: [wire-the-env-configured-eviction-policy-through-the-deliver-path, admit-an-age-bounded-automatic-eviction-into-the-expansion-cache, measure-the-expansion-cache-hot-path-efficiency]
+related: [wire-the-env-configured-eviction-policy-through-the-deliver-path, admit-an-age-bounded-automatic-eviction-into-the-expansion-cache, measure-the-expansion-cache-hot-path-efficiency, define-supported-expansion-cache-filesystems]
 scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
@@ -34,3 +34,7 @@ Any one of these fires it:
 - A byte spelling with units, refusing an unsuffixed count for `TILER_EXPANSION_CACHE_MAX_ENTRY_AGE`'s reason: a bare number is the ambiguity that deletes the wrong amount.
 - Composition evidence: `CollectionBound` runs the age pass first and the aggregate pass over what it left, so the three ceilings compose as a union. A test asserting the exact `(key, reason)` sequence already exists in `tiler-cache`; the frontend owes the analogous end-to-end one.
 - The frontend contract section in `docs/integration/frontends.md` extended with the new names, their absence-by-default, and the pathology stated plainly.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired, and trigger 3's named route is now closed rather than merely unmet.** Trigger 1: no working-set lifetime measurement exists — [Bounded collection](../docs/research/cache/bounded-collection.md):100,109 states on this date that "the working-set measurement that would ground a byte or entry ceiling still does not exist" and "what exists is per-entry size", even though [`measure-the-expansion-cache-hot-path-efficiency`](measure-the-expansion-cache-hot-path-efficiency.md) is `done`. Trigger 2: the age bound only landed today, so no report of a cache exceeding a budget despite it can exist yet. **Trigger 3 is refuted:** [`define-supported-expansion-cache-filesystems`](define-supported-expansion-cache-filesystems.md) is `done` and answered the access-time question **no** — [Supported filesystems](../docs/research/cache/supported-filesystems.md):125, "No supported filesystem maintains access time usefully enough to order a working set" — so a least-recently-*used* order does not arrive from that owner and the publication-recency objection is not going to disappear that way. `CollectionOrder` still has one variant, `OldestPublicationFirst` (`crates/tiler-cache/src/expansion/collect.rs:404`). A future sweep should read trigger 3 as closed and evaluate only triggers 1 and 2.

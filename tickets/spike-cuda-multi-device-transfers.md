@@ -42,3 +42,7 @@ topology as `Unknown`. Marking the ticket done requires results from at least tw
 devices plus complete device, driver, runtime, allocation, stream/event, and
 failure-boundary provenance; otherwise retain the ticket as deferred evidence
 work rather than generalizing from a partial host.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** The platform-policy precondition is unchanged: AGENTS.md still records macOS-only development and `deps.sh` provisions the Apple Metal toolchain alone, so CUDA remains outside the supported platform set and no arrangement of hardware changes it. The multi-device scope gate has also not activated. Recheck: AGENTS.md's Toolchain and environment section.

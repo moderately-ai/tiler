@@ -4,7 +4,7 @@ title: Search the P-elem sign assignment for the model-level band
 status: deferred
 priority: p2
 dependencies: [measure-the-model-level-comparison-envelope-under-the-target-realization]
-related: [design-model-level-qualification-and-optimization, define-the-model-level-conformance-corpus, define-first-metal-lm-workload]
+related: [design-model-level-qualification-and-optimization, define-the-model-level-conformance-corpus, define-first-metal-lm-workload, prove-the-c1-complete-model-execution]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
@@ -32,3 +32,7 @@ Bound the worst case rather than sample it. The tractable direction is per-outpu
 ## Explicit non-goals
 
 No threshold: this widens or confirms a measured band and decides nothing about what is gated on it. No new prompt, checkpoint, or target row — a broader corpus is [`define-the-model-level-conformance-corpus`](define-the-model-level-conformance-corpus.md)'s. No re-derivation of the contracts themselves.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Triggers 1, 2, and 3 all require a *Tiler* result at a C1 position, and no Tiler execution of the workload exists ([`prove-the-c1-complete-model-execution`](prove-the-c1-complete-model-execution.md) is `todo`). Trigger 4 is unmet: no accuracy contract subordinate to `tiler::softmax-f32@1`, `tiler::silu-f32@1`, or `tiler::rms-norm-f32@1` has widened and no fourth subordinate has joined them.

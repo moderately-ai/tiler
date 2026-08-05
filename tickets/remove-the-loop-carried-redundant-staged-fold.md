@@ -28,3 +28,7 @@ Either of these fires it; neither has:
 - Tom accepting a value-producing predicated region for an unrelated reason, at which point this becomes a mechanical follow-up rather than a question.
 
 Until then the redundancy is a stated cost of an implemented capability, recorded in `emit_loop_carried_cooperative`'s own documentation, and not a defect.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Trigger 2 is unmet: `OperationKind::Predicated { predicate, body }` still carries no results (`crates/tiler-ir/src/kernel/model.rs:755`, `:1289`), so no value-producing predicated region has been accepted. Trigger 1 is unmet: the only multi-round cooperative consumer is the tiled contraction, whose realization is still `deferred`, so no multi-round kernel has been measured on device. Recheck: `grep -n 'Predicated {' crates/tiler-ir/src/kernel/model.rs`.

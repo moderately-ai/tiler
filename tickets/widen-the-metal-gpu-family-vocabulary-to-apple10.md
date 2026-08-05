@@ -54,3 +54,7 @@ Whichever way it goes, the `MetalGpuFamily` doc comment currently points here by
 **Verification against the current environment, 2026-08-04.** The selected toolchain moved to the Xcode 27.0 beta since this ticket's facts were recorded; the 27.0 SDK's `MTLDevice.h` declares `MTLGPUFamilyApple1 = 1001` through `MTLGPUFamilyApple10 = 1010` at the same lines (`233–242`), and the cited 26.5 SDK header still names `Apple10`. Reproduce: `grep -n MTLGPUFamilyApple "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLDevice.h"`. The `MetalGpuFamily` doc comment now states the deferral and its trigger directly.
 
 **Reactivation triggers:** a retained measurement of a device reporting `MTLGPUFamilyApple10`, with the `serial-sum-run` binding gap resolved first as a precondition. On reactivation, the ordering and payload-comparison consequences in "Why this is not a transcription" are the work plan.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired**, re-confirmed by the deferred sweep hours after the deferral above was recorded. No retained measurement observes a device reporting `MTLGPUFamilyApple10`, and the `prototypes/serial-sum-run` binding gap is unresolved, so the stated precondition is also unmet.

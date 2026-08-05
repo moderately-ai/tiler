@@ -39,3 +39,7 @@ The trigger has fired and the six obligations above are stated together with `RQ
 - Filed by [`derive-dtype-family-research-tracks-from-the-mature-taxonomy`](derive-dtype-family-research-tracks-from-the-mature-taxonomy.md) as track D-1 of [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md).
 - `research/semantic-graph` is declared because the predicate value-kind half of the statement belongs on the operation axis, where `RQ-OP-03` lives; `research/numerics` alone could not carry it.
 - Do not move any [dtype support ledger](../docs/dtype-support.md) cell from this ticket. The ledger owns delivered state and a scoping statement delivers nothing.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Track D-1's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):133. Verified independently against the tree: the only `Bool` in the semantic layer is `CanonicalValueKind::Bool` / `CanonicalValueData::Bool` (`crates/tiler-ir/src/semantic/operation.rs:369-370`, `crates/tiler-ir/src/semantic/types.rs:717,743`), which is the **attribute** vocabulary, not a tensor element type — so no registered operation admits a `bool` operand at any arity and the additive-mask selection still stands. `RQ-OP-03` must close with it. Recheck: `grep -n 'Bool' crates/tiler-ir/src/semantic/types.rs`.

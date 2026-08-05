@@ -4,7 +4,7 @@ title: Search a tie-demonstrating prompt for the model-level corpus
 status: deferred
 priority: p3
 dependencies: [reclassify-language-model-work-as-a-conformance-track]
-related: [define-the-model-level-conformance-corpus, build-the-model-level-measurement-harness, prove-the-c1-complete-model-execution, define-first-metal-lm-workload]
+related: [define-the-model-level-conformance-corpus, build-the-model-level-measurement-harness, prove-the-c1-complete-model-execution, define-first-metal-lm-workload, drive-the-complete-forward-pass-over-three-artifacts]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
@@ -43,3 +43,7 @@ No change to the tie policy, which is L1's and is declared. No second checkpoint
 ## Closes when
 
 Either a demonstrating prompt exists and `A-tie` carries exact inputs and a required outcome, or a search with a stated instrument and budget reports a negative wider than the retained one and this ticket is re-deferred with that boundary recorded.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Trigger 1 is unmet: [`drive-the-complete-forward-pass-over-three-artifacts`](drive-the-complete-forward-pass-over-three-artifacts.md) is `todo`, so no tie-resolving implementation exists that a demonstrating row could fail. Trigger 2 is unmet: no workload with a narrower runner-up margin than C1's 0.266 has been named. Recheck: that ticket's status.

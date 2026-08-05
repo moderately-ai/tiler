@@ -26,3 +26,7 @@ smallest signed iOS runner needed to install and execute those cases on an
 attached physical device. Record device model, iOS build, Xcode/toolchain,
 provisioning route, GPU identity, and exact deployment procedure. A simulator
 or a Mac loading an iOS metallib is not device evidence.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Hardware-blocked and unchanged: no physical Apple-silicon iOS device is attached to this host, so the `IOsDevice` device side is unmeasurable. Tom's 2026-08-01 iOS deprioritization applies to the whole park. Recheck: the record's own `environment.family.ios-device.execution` row, `unavailable:no iOS device is attached to this host`.

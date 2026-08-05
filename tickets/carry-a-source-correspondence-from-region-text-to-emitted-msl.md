@@ -32,3 +32,7 @@ tags: [deferred, diagnostics, frontend]
 - Which span a consumer acts on when one MSL line comes from several fused semantic operations, and what is reported when the answer is "all of them".
 - How the correspondence survives fusion, splitting, and reassociation without becoming a second authority over what produced which line — the parent ticket's standing constraint is that a span must never be inferred by matching MSL text against region tokens.
 - Whether the correspondence participates in artifact identity. It must not change the compiled bytes, and something must hold that.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired**, re-confirmed by the deferred sweep against the same tree the deferral above was written on. Neither trigger moved: no invocation-controlled text reaches emitted MSL, and no `metal` diagnostic is consumer-actionable. Recheck: the two conditions in the section above, each already stated as a corpus state.
