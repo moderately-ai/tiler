@@ -1,7 +1,7 @@
 ---
 id: catalog-the-cache-hot-path-efficiency-records
 title: Catalog the cache hot-path efficiency records
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [measure-the-expansion-cache-hot-path-efficiency]
