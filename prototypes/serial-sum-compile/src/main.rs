@@ -137,14 +137,23 @@ use tiler_metal_aot::input::OptimizationLevel;
 
 /// Rows of the packaged program's input; each row reduces to one output element.
 ///
-/// One is deliberate. The authoritative declaration's grid-axis row is a
-/// deliberately conservative four-thread compile guarantee — the macOS 26.5 SDK
-/// contract proves that extent representable and states no maximum at all — and
-/// the materialized nontrivial plan's
-/// pointwise stage launches `rows * columns` threads. With the three
-/// contributors required below, one row keeps both the fused and materialized
-/// programs feasible without inventing a larger target capability. The
-/// sidecar still supplies five independent operand classes for that row,
+/// **One, and now for a cross-crate reason rather than for capacity.** It was
+/// one because the authoritative declaration's grid-axis row was a conservative
+/// four-thread compile guarantee and the materialized nontrivial plan's
+/// pointwise stage launches `rows * columns` threads, so the three contributors
+/// required below left room for one row and no more. That row is now a measured
+/// 268,435,456, and a wider program composes.
+///
+/// What keeps it at one is the pinned pair with `prototypes/serial-sum-run`,
+/// asserted as a literal by
+/// `the_published_shape_matrix_is_the_one_the_runner_expects` below. That crate
+/// holds this value as `PUBLISHED_ROWS` and separately reduces four rows on its
+/// own direct path, and it asserts the two *differ* — which is what makes a
+/// runner substituting its own row count for the artifact's declared one
+/// detectable at all. Raising this to four would erase the inequality and with
+/// it the check.
+///
+/// The sidecar still supplies five independent operand classes for that row,
 /// including exceptional and contraction-sensitive values; row count is not
 /// being used as a proxy for numerical coverage.
 const ROWS: u64 = 1;

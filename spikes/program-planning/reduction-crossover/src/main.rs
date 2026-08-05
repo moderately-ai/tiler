@@ -52,12 +52,20 @@ use tiler_ir::shape::{Axis, Shape};
 
 /// Contributor counts swept along the reduced axis.
 ///
-/// Chosen to bracket the two structural thresholds this sweep exists to locate
-/// rather than to sample uniformly: `governed_partition` splits nothing below
-/// four contributors, and the profile's grid-axis row is the first capacity a
-/// growing prologue can exceed. Counts below four establish that the split is
-/// absent for a stated reason, counts at and just above four locate the upper
-/// edge, and the larger powers of two confirm the edge does not reopen.
+/// Chosen to bracket the two structural thresholds this sweep was built to
+/// locate rather than to sample uniformly: `governed_partition` splits nothing
+/// below four contributors, and — when this matrix was chosen — the profile's
+/// grid-axis row was the first capacity a growing prologue could exceed, at four
+/// work items. Counts below four establish that the split is absent for a stated
+/// reason; counts at and just above four located that upper edge; the larger
+/// powers of two confirmed it did not reopen.
+///
+/// **The upper threshold has since left this matrix.** The grid-axis row is a
+/// measured 268,435,456, so the widest shape swept here — 1,024 contributors
+/// over four rows, 4,096 work items — sits five orders of magnitude below the
+/// bound. The wide counts now record the *absence* of a capacity edge rather
+/// than its position. The matrix is deliberately unchanged anyway, so that a
+/// rerun stays row-for-row comparable with the retained 2026-08-02 sweep.
 const CONTRIBUTORS: [u64; 12] = [1, 2, 3, 4, 5, 6, 8, 9, 12, 16, 64, 1024];
 
 /// Row counts swept across the retained axis.

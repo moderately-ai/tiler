@@ -1123,9 +1123,21 @@ fn a_target_neutral_build_failure_refuses_the_whole_invocation() {
 /// The approved region over a different extent, so two programs share every
 /// input except the one thing artifact identity must separate them by.
 ///
-/// Narrower rather than wider: the bound declaration's measured grid-axis
-/// capacity is four threads, so an extent of eight has no feasible plan at all
-/// and would make this a test about capacity instead of about the cache.
+/// **A second distinct program is still required.**
+/// `a_semantically_wrong_entry_is_a_typed_refusal_rather_than_a_silent_rebuild`
+/// publishes *this* region's envelope under the *approved* region's cache
+/// subject, so it needs a program whose artifact genuinely differs — which is
+/// what the `assert_ne!` on the two envelopes pins before the poisoning is
+/// attempted. One program would poison nothing.
+///
+/// **What no longer holds is the reason the extent went down.** When this was
+/// written the bound declaration's grid-axis row admitted four threads, so the
+/// approved region's extent of four sat at that limit and eight had no feasible
+/// plan at all. The row is now a measured 268,435,456 and either direction is
+/// feasible, so two is kept for a cost rather than a capacity reason: each of
+/// these programs is a real `xcrun metal` compilation on a cold cache, and
+/// nothing this case asserts varies with the extent once the two artifacts
+/// differ.
 fn narrower_region() -> SemanticProgram {
     let mut builder =
         SemanticProgramBuilder::try_standard().expect("the governed profile composes");
@@ -1355,17 +1367,25 @@ fn a_fallback_only_selection_is_refused_before_any_backend_work() {
 /// and `crates/tiler/tests/facade/pass/deliver_compiles_embeds_and_routes.rs`
 /// states it in a consumer crate under the contract measured below.
 ///
-/// **One row and four contributors, which is the window rather than an example
-/// chosen from a range.** The reduction is where the split lives, so the extents
-/// are the ones that reach it: the governed partition splits four two-by-two, and
-/// four is also the largest the bound declaration's measured grid-axis capacity
-/// admits. Measured on this declaration under `flush_and_reassociate_f32`,
-/// `[rows: 1, cols: 8]` and `[rows: 2, cols: 4]` are both refused as
-/// `NoFeasiblePlan` — under a contract permitting regrouping the whole-program
-/// fused plan is withheld, so a portfolio with no admissible split has no plan at
-/// all — and `[rows: 1, cols: 5]` is refused as `InvalidCompilerOutput`, the
-/// unsplittable-reduction defect
-/// `correct-the-declined-strategy-record-for-an-unsplittable-reduction` owns.
+/// **One row and four contributors, which is the smallest shape whose selected
+/// plan splits.** The reduction is where the split lives, so the extents are the
+/// ones that reach it: `governed_partition` requires at least two partitions of
+/// at least two contributors each, so four is the smallest count at which a
+/// split exists to be selected at all, and one row is the fewest that carries
+/// it. That is a lower edge and it still holds.
+///
+/// **The upper edge that used to close the window is gone.** This comment
+/// recorded `[rows: 1, cols: 8]` and `[rows: 2, cols: 4]` as `NoFeasiblePlan`
+/// and `[rows: 1, cols: 5]` as `InvalidCompilerOutput`. Neither refusal survives
+/// its cause: the grid-axis row those two hit is now a measured 268,435,456
+/// rather than four, and the unsplittable-reduction defect the third hit is
+/// closed by
+/// `correct-the-declined-strategy-record-for-an-unsplittable-reduction`. So this
+/// shape is the smallest that splits rather than the only one, and *which*
+/// wider shapes also select a split is an open measurement belonging to
+/// `calibrate-and-activate-parallel-reduction-selection` — not restated here,
+/// because this test is about what an expansion packages and not about the
+/// domain.
 fn split_region() -> SemanticProgram {
     let mut builder =
         SemanticProgramBuilder::try_standard().expect("the governed profile composes");
