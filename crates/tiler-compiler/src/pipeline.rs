@@ -255,6 +255,17 @@ pub(crate) struct ProgramAlternative {
     pub(crate) kernels: Vec<VerifiedKernel>,
     pub(crate) program: KernelProgram,
     pub(crate) artifact_plan: ArtifactConstructionPlan,
+    /// The dense subject and sparse obligation tables the public
+    /// delivered-realization view borrows.
+    ///
+    /// Materialized here rather than on [`SelectedPlan`] because an obligation
+    /// is keyed by a [`tiler_ir::program::SemanticOccurrence`], and that ordinal
+    /// is minted by `crate::lowering::OccurrenceLowering::covered_occurrence`
+    /// from a completed index-refinement receipt — evidence a plan selected over
+    /// cover regions does not hold. This is the first point at which the
+    /// retained plan's honoured facts and the packaged program's proof-derived
+    /// coverage are both in hand.
+    pub(crate) realization: crate::session::DeliveredRealizationEvidence,
     pub(crate) structural_cost: PlanStructuralCost,
     pub(crate) equivalence: EquivalenceEvidence,
 }

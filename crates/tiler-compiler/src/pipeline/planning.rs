@@ -879,6 +879,21 @@ pub(super) fn build_alternative_for_origin(
             ProgramAlternativeKind::Materialized => None,
         },
     };
+    // The delivered-realization evidence is materialized here because it needs
+    // both authorities at once: the retained plan's honoured facts and the
+    // packaged program's proof-derived occurrence coverage. A fact naming a
+    // subject or a declaring profile other than the assessed one refuses rather
+    // than being dropped, because a dropped obligation would let the artifact
+    // builder derive that dimension's disposition as unrequired.
+    let realization = crate::session::DeliveredRealizationEvidence::materialize(
+        &verified.numerical_contract(),
+        plan,
+        &program,
+        verified.target_profile().profile_key().as_str(),
+    )
+    .map_err(|error| {
+        failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.copied())
+    })?;
     let identity = ProgramAlternativeIdentity::new(owner.origin, semantic, verified, plan);
     Ok(ProgramAlternative {
         stable_id: identity.label(),
@@ -890,6 +905,7 @@ pub(super) fn build_alternative_for_origin(
         kernels,
         program,
         artifact_plan,
+        realization,
         structural_cost: plan.cost(),
         equivalence,
     })
