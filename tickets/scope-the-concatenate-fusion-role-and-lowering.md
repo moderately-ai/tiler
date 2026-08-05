@@ -1,7 +1,7 @@
 ---
 id: scope-the-concatenate-fusion-role-and-lowering
 title: Scope the concatenate family's fusion role and lowering
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [scope-an-in-place-append-into-a-caller-retained-allocation, admit-a-fusion-role-for-the-tensor-contraction, reach-a-verified-kernel-through-the-structural-families, derive-the-operation-family-and-signature-delivery-graph]
