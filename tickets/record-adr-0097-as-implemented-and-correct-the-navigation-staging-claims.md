@@ -1,7 +1,7 @@
 ---
 id: record-adr-0097-as-implemented-and-correct-the-navigation-staging-claims
 title: Record ADR 0097 as implemented and correct the navigation docs' staging-relation claims
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5, admit-a-two-dimensional-cooperative-staging-relation]
@@ -36,3 +36,11 @@ Two deferrals ADR 0097 records are also unchanged and must survive the edit: the
 ## Closes when
 
 `implementation_status` on ADR 0097 reflects the landed implementation, its Implementation boundary section describes the tree as it is (or is replaced by a statement of what landed and where), the decisions catalog row agrees, and neither navigation document still asserts the one-dimensional staging relation or attributes the domain step to a ticket that has completed it.
+
+## Outcome, 2026-08-05, read at `92a8a64e`
+
+`implementation_status` moved `not-started` to `implemented`, on the ground that all seven decisions compile and verify and decision 7's identity step is executed at `a395852a`. The Implementation boundary section was rewritten rather than patched, naming each claim it retired instead of deleting them, and it keeps three maturity claims apart: implemented-and-verified for the seven constructs, tested-guarantee for the five named rank-two tests, and implemented-without-a-test for the rank-two *lowering* refusal. The record's measurement-boundary and work-record paragraphs also carried stale status language ("the decision Tom has not yet made", "does not start until that acceptance lands") that the status paragraph had contradicted since 2026-08-02, and both are corrected in place with the date.
+
+**`docs/decisions/README.md` needed no edit, and the check is one line.** `grep -n 'implement\|not-started\|partial\|spike-only' docs/decisions/README.md` returns nothing: neither catalog view encodes `implementation_status` for any ADR, so 0097's two rows say `accepted` — its unchanged `decision_status` — and already agree. Adding a status word to one row of a uniform hand-maintained view would have made the view inconsistent rather than more accurate.
+
+**One gap was found and filed rather than absorbed.** `grep -rn 'CooperativeLoweringShape' crates/` returns the variant, its diagnostic string, and its single binding in `cooperative_plan`, and no test in the workspace — so the refusal that keeps a rank-two tile out of the emitted body has never been watched refusing. [`test-the-cooperative-lowering-shape-refusal`](test-the-cooperative-lowering-shape-refusal.md) owns it at `todo`; it is out of this ticket's scopes, which reach no `crates/` path.
