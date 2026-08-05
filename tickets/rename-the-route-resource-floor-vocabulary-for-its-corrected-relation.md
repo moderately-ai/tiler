@@ -1,7 +1,7 @@
 ---
 id: rename-the-route-resource-floor-vocabulary-for-its-corrected-relation
 title: Rename the route resource floor vocabulary for its corrected relation
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-the-subgroup-threads-route-dimension-meaning]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/runtime, implementation/candle,
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, runtime, naming, public-boundary]
+claimed_from: todo
+assignee: agent-floor-rename
+lease_expires_at: 1785954211
 ---
 ## User-visible outcome
 
