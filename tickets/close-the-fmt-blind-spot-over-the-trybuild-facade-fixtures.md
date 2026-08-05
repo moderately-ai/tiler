@@ -1,7 +1,7 @@
 ---
 id: close-the-fmt-blind-spot-over-the-trybuild-facade-fixtures
 title: Close the fmt blind spot over the trybuild facade fixtures
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: []

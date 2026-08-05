@@ -51,7 +51,10 @@ impl TensorAdapter for Toy {
     }
 
     fn metadata(value: &Buffer) -> Result<ValueMetadata, Refused> {
-        Ok(ValueMetadata::new(value.scalar, value.extents.iter().copied()))
+        Ok(ValueMetadata::new(
+            value.scalar,
+            value.extents.iter().copied(),
+        ))
     }
 
     fn build(_: &(), request: &ResultRequest<'_>) -> Result<Buffer, Refused> {

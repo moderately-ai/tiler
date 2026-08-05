@@ -23,7 +23,9 @@
 //! in the macro crate reads this file and asserts it. `FACTS` is likewise the
 //! emitter's own text, for the region `sym n; in a: f32[n]; out d: f32[n, 2]`.
 
-use tiler::value::{AdapterCapability, ResultRequest, StorageScalar, Tensor, TensorAdapter, ValueMetadata};
+use tiler::value::{
+    AdapterCapability, ResultRequest, StorageScalar, Tensor, TensorAdapter, ValueMetadata,
+};
 
 /// This consumer's own tensor. `tiler` never learns what is in it.
 #[derive(Clone, Debug, PartialEq)]
@@ -59,7 +61,10 @@ impl TensorAdapter for Toy {
     }
 
     fn metadata(value: &Buffer) -> Result<ValueMetadata, Refused> {
-        Ok(ValueMetadata::new(value.scalar, value.extents.iter().copied()))
+        Ok(ValueMetadata::new(
+            value.scalar,
+            value.extents.iter().copied(),
+        ))
     }
 
     fn build(_: &(), request: &ResultRequest<'_>) -> Result<Buffer, Refused> {
@@ -70,8 +75,19 @@ impl TensorAdapter for Toy {
     }
 }
 
+// Emitter output, verbatim. The macro crate's comparison asserts this file
+// contains that text byte for byte, so reflowing this constant would break the
+// binding between the two ends rather than tidy it.
+#[rustfmt::skip]
 const FACTS: ::tiler::__private::RegionFacts = ::tiler::__private::RegionFacts { operands: &[::tiler::__private::OperandFacts { key: "a", storage_scalar: ::tiler::value::StorageScalar::F32, extents: &[::tiler::__private::OperandExtent::Symbolic] }], symbols: &[::tiler::__private::SymbolFacts { name: "n", source: ::tiler::__private::AxisRef { operand: 0usize, axis: 0usize }, obligations: &[] }], capabilities: &[::tiler::value::AdapterCapability::DenseRowMajorStorage, ::tiler::value::AdapterCapability::ResultConstruction], result: ::tiler::__private::ResultFacts { key: "d", storage_scalar: ::tiler::value::StorageScalar::F32, axes: &[::tiler::__private::ResultAxis::Symbol(0usize), ::tiler::__private::ResultAxis::Literal(2u64)] } };
 
+// The delivery items inside are emitter output, verbatim: one contiguous run of
+// lines at column zero, which the macro crate's comparison looks for as a single
+// substring. The skip sits on the whole function because an attribute on the
+// items themselves would land between them and split that run — and indenting
+// them into the block would change every line. The cost is that this function's
+// ordinary code is not format-checked either.
+#[rustfmt::skip]
 fn main() {
     let a = Tensor::<Toy>::new(
         Buffer {

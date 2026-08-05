@@ -18,7 +18,9 @@
 //! arbitrary integration writes, and no part of `tiler` had to change to accept
 //! it.
 
-use tiler::value::{AdapterCapability, ResultRequest, StorageScalar, Tensor, TensorAdapter, ValueMetadata};
+use tiler::value::{
+    AdapterCapability, ResultRequest, StorageScalar, Tensor, TensorAdapter, ValueMetadata,
+};
 
 /// This consumer's own tensor. `tiler` never learns what is in it.
 #[derive(Clone, Debug, PartialEq)]
@@ -57,7 +59,10 @@ impl TensorAdapter for Toy {
     }
 
     fn metadata(value: &Buffer) -> Result<ValueMetadata, Refused> {
-        Ok(ValueMetadata::new(value.scalar, value.extents.iter().copied()))
+        Ok(ValueMetadata::new(
+            value.scalar,
+            value.extents.iter().copied(),
+        ))
     }
 
     fn build(_: &(), request: &ResultRequest<'_>) -> Result<Buffer, Refused> {
@@ -66,7 +71,8 @@ impl TensorAdapter for Toy {
             .iter()
             .try_fold(1_u64, |total, extent| total.checked_mul(*extent))
             .ok_or(Refused("the requested element count overflows"))?;
-        let count = usize::try_from(count).map_err(|_| Refused("the requested element count is not addressable"))?;
+        let count = usize::try_from(count)
+            .map_err(|_| Refused("the requested element count is not addressable"))?;
         Ok(Buffer {
             scalar: request.storage_scalar(),
             extents: request.extents().to_vec(),
@@ -75,6 +81,10 @@ impl TensorAdapter for Toy {
     }
 }
 
+// Emitter output, verbatim. The macro crate's comparison asserts this file
+// contains that text byte for byte, so reflowing this constant would break the
+// binding between the two ends rather than tidy it.
+#[rustfmt::skip]
 const FACTS: ::tiler::__private::RegionFacts = ::tiler::__private::RegionFacts { operands: &[::tiler::__private::OperandFacts { key: "a", storage_scalar: ::tiler::value::StorageScalar::F32, extents: &[::tiler::__private::OperandExtent::Symbolic] }], symbols: &[::tiler::__private::SymbolFacts { name: "n", source: ::tiler::__private::AxisRef { operand: 0usize, axis: 0usize }, obligations: &[] }], capabilities: &[::tiler::value::AdapterCapability::DenseRowMajorStorage, ::tiler::value::AdapterCapability::ResultConstruction], result: ::tiler::__private::ResultFacts { key: "d", storage_scalar: ::tiler::value::StorageScalar::F32, axes: &[::tiler::__private::ResultAxis::Symbol(0usize), ::tiler::__private::ResultAxis::Literal(2u64)] } };
 
 fn main() {
