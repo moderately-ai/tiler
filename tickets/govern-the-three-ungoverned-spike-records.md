@@ -1,7 +1,7 @@
 ---
 id: govern-the-three-ungoverned-spike-records
 title: Govern the three spike records the experiment catalog renders from nothing
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [reconcile-the-research-and-experiment-catalogs-with-their-frontmatter, list-the-corpus-reachability-spike-in-the-spike-index]

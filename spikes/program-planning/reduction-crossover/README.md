@@ -1,9 +1,16 @@
 ---
-id: tiler.spike.program-planning.reduction-crossover
-experiment_status: reproducible
-evidence_classes: ["measurement"]
+schema: "tiler-doc/v1"
+id: "tiler.spike.program-planning.reduction-crossover"
+kind: "experiment"
+title: "Where a parallel-reduction crossover could be measured"
+topics: ["program-planning", "scheduling", "reductions", "feasibility", "metal"]
+experiment_status: "reproducible"
+implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement"]
+supports: ["tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger"]
 entrypoints: ["spikes/program-planning/reduction-crossover/src/main.rs"]
-last_verified: 2026-08-02
+last_verified: "2026-08-02"
+ticket: "calibrate-and-activate-parallel-reduction-selection"
 ---
 
 # Where a parallel-reduction crossover could be measured
