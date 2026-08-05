@@ -1,7 +1,7 @@
 ---
 id: state-and-check-a-bf16-numerical-contract
 title: State and check a BF16 numerical contract
-status: in-progress
+status: review
 priority: p1
 dependencies: [declare-the-bf16-rows-on-the-authoritative-metal-profile]
 related: [admit-bf16-into-the-schedule-and-kernel-vocabulary, design-the-bf16-computation-and-accumulator-contract]
