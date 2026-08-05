@@ -16,7 +16,7 @@ A cover region holding `tiler::concatenate-f32@1` beside another operation deriv
 
 ## Why this exists
 
-**Fact — the family resolves to no legality at all today.** `FusionNumericalCapabilities::governed` (`crates/tiler-compiler/src/fusion_legality.rs:268-335`) registers eight keys and the concatenate is not among them; `derive_member` returns `Ok(None)` for an unregistered family (`:1037-1039`) and `derive_fusion_legality` converts that into `FusionLegality::Unknown` with obligation `OperationCapabilitiesResolved` and reason `"unsupported-operation-capability"` (`:940-953`).
+**Fact — the family resolves to no legality at all today.** `FusionNumericalCapabilities::governed` (`crates/tiler-compiler/src/fusion_legality.rs:268-335`) registers nine keys and the concatenate is not among them; `derive_member` returns `Ok(None)` for an unregistered family (`:1037-1039`) and `derive_fusion_legality` converts that into `FusionLegality::Unknown` with obligation `OperationCapabilitiesResolved` and reason `"unsupported-operation-capability"` (`:940-953`).
 
 **Fact — the elimination is done and one candidate survived.** [Concatenate fusion role and lowering](../docs/research/indexing/concatenate-fusion-role-and-lowering.md) tests four candidates — no role, `ValueSource`, a new seventh role, and `CoordinateRelation` — against what `derive_obligations` actually decides, and only `CoordinateRelation` survives. `ValueSource` fails on the role doc's own distinction at `fusion_legality.rs:205-212`; a seventh role fails because it derives no obligation differently and a fifth `FusionRegionStructure` count would move the content identity of every region the vocabulary can already encode (`:511-538`).
 

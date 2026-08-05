@@ -43,7 +43,7 @@ Claims are labelled **Fact** when traced to inspected source at that commit, **I
 
 ### What a role has to answer for
 
-**Fact.** The fusion authority is `crates/tiler-compiler/src/fusion_legality.rs`. `FusionOperationRole` (`:132-223`) has six variants; `FusionNumericalCapabilities::governed()` (`:268-335`) maps eight operation keys onto them; `classify` (`:349-351`) is a checked lookup and `derive_member` returns `Ok(None)` for an unregistered family (`:1037-1039`), which `derive_fusion_legality` converts into `FusionLegality::Unknown` with obligation `OperationCapabilitiesResolved` and reason `"unsupported-operation-capability"` (`:940-953`). That is exactly the state the ticket's user-visible outcome asks to leave.
+**Fact.** The fusion authority is `crates/tiler-compiler/src/fusion_legality.rs`. `FusionOperationRole` (`:132-223`) has six variants; `FusionNumericalCapabilities::governed()` (`:268-335`) maps nine operation keys onto them; `classify` (`:349-351`) is a checked lookup and `derive_member` returns `Ok(None)` for an unregistered family (`:1037-1039`), which `derive_fusion_legality` converts into `FusionLegality::Unknown` with obligation `OperationCapabilitiesResolved` and reason `"unsupported-operation-capability"` (`:940-953`). That is exactly the state the ticket's user-visible outcome asks to leave.
 
 **Fact.** Nine obligations exist (`:372-391`) and `derive_obligations` (`:1063-1163`) discharges each one from the members' roles, their reached definitions, their derived purity, their dtype homogeneity, and the numerical contract. Nothing in that function, or in `derive_fusion_legality` (`:922-967`), resolves an index-access lowering capability, consults a realization law, or reaches the request boundary.
 
@@ -148,7 +148,7 @@ The ticket requires checking, not inheriting, the matrix row's assertion that an
 Each is one command from the repository root, with the positive control that proves it can return something.
 
 ```sh
-# 1. The fusion-role table holds eight keys and no concatenate.
+# 1. The fusion-role table holds nine keys and no concatenate.
 grep -n 'roles.insert(' crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds reindex_f32_op and broadcast_f32_op,
 #    so a missing key is an absence from a list with members rather than an
