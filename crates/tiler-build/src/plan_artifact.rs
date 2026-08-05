@@ -50,6 +50,8 @@ use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::program::StageRef;
 use tiler_ir::semantic::SemanticProgram;
 
+use crate::realization::RealizationTranslationError;
+
 /// What one backend declares for a single program stage's executable entry.
 ///
 /// A caller-constructed leaf record with public fields, in the convention this
@@ -79,6 +81,8 @@ pub enum PlanArtifactError {
     Build(ArtifactBuildError),
     /// Whole-artifact verification rejected the assembled program.
     Verification(ArtifactVerificationError),
+    /// The plan's delivered-realization evidence did not translate.
+    Realization(RealizationTranslationError),
 }
 
 impl fmt::Display for PlanArtifactError {
@@ -90,6 +94,12 @@ impl fmt::Display for PlanArtifactError {
                 "whole-artifact verification failed: {:?}",
                 error.diagnostics(),
             ),
+            Self::Realization(error) => {
+                write!(
+                    formatter,
+                    "delivered-realization translation failed: {error}"
+                )
+            }
         }
     }
 }
@@ -99,6 +109,7 @@ impl Error for PlanArtifactError {
         match self {
             Self::Build(error) => Some(error),
             Self::Verification(error) => Some(error),
+            Self::Realization(error) => Some(error),
         }
     }
 }
@@ -106,6 +117,12 @@ impl Error for PlanArtifactError {
 impl From<ArtifactBuildError> for PlanArtifactError {
     fn from(error: ArtifactBuildError) -> Self {
         Self::Build(error)
+    }
+}
+
+impl From<RealizationTranslationError> for PlanArtifactError {
+    fn from(error: RealizationTranslationError) -> Self {
+        Self::Realization(error)
     }
 }
 
@@ -146,9 +163,19 @@ impl From<ArtifactBuildError> for PlanArtifactError {
 ///
 /// Returns [`PlanArtifactError::Build`] for a rejected declaration — a foreign
 /// handle, a binding-count disagreement with the stage, a launch precondition
-/// reading a fact unavailable at launch preflight, a duplicate payload — and
-/// [`PlanArtifactError::Verification`] with every whole-artifact diagnostic when
-/// the assembled program does not verify.
+/// reading a fact unavailable at launch preflight, a duplicate payload —
+/// [`PlanArtifactError::Realization`] when the plan's own delivered-realization
+/// evidence does not translate, and [`PlanArtifactError::Verification`] with
+/// every whole-artifact diagnostic when the assembled program does not verify.
+///
+/// # Panics
+///
+/// Panics if the bound program holds more than [`u32::MAX`] stages. The
+/// artifact model's own entry bound is four orders of magnitude below that, so
+/// the conversion is infallible for any plan this function can package; it is an
+/// assertion rather than a silent truncation because a truncated count would
+/// leave a packaged entry with no policy-subject binding and the artifact would
+/// then be refused for the wrong reason.
 pub fn assemble_plan_artifact(
     semantic: &SemanticProgram,
     plan: PlanAlternative<'_>,
@@ -215,15 +242,26 @@ pub fn assemble_plan_artifact(
         });
     }
 
+    let packaged_entries = u32::try_from(entries.len()).expect("a bounded entry table fits u32");
     builder.push_variant(
         program,
         VariantSpec {
-            target_profile: profile,
+            target_profile: profile.clone(),
             feasibility_rules: rules,
             deferred_predicates,
             entries,
         },
     )?;
+    // The delivered realization, transcribed from the plan's own compiler
+    // evidence. Declared after the variant so the entry count it binds is the
+    // one the artifact actually packaged, and derived rather than delegated
+    // because no backend may state a numerical fact: the two `declare_*`
+    // closures above receive no way to reach this.
+    builder.declare_realization(crate::realization::translate(
+        plan.delivered_realization(),
+        &profile,
+        packaged_entries,
+    )?)?;
     builder.build().map_err(PlanArtifactError::Verification)
 }
 

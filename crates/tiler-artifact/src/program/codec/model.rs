@@ -40,6 +40,10 @@ use super::super::model::{
     RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
     VariantData, canonical_deferred_order, deferred_key, encode_identity, stage_key,
 };
+use super::super::realization::codec::{
+    ArtifactCrossCheck, RealizationCodecError, validate_against_artifact,
+};
+use super::super::realization::{DeliveredRealizationRecord, EntryRealization};
 use super::super::requirement::{RouteRequirement, canonical_requirement_order};
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::payload::{PayloadContent, encode_metadata};
@@ -270,6 +274,37 @@ impl NumericalFacts {
             infinity_assumptions,
         }
     }
+
+    /// Projects this dispatch record onto the record's cross-check subject.
+    ///
+    /// The second of the two sites [`EntryRealization`] exists to serve. The
+    /// destructuring is exhaustive and field-named, so widening either record is
+    /// a build error here rather than a cross-check that silently stops covering
+    /// a dimension.
+    pub(super) fn entry_realization(&self) -> EntryRealization {
+        let Self {
+            profile_key: _,
+            canonical_arithmetic_nan_bits: _,
+            input_subnormals,
+            result_subnormals,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
+        } = self;
+        EntryRealization {
+            input_subnormals: *input_subnormals,
+            result_subnormals: *result_subnormals,
+            contraction: *contraction,
+            reassociation: *reassociation,
+            permutation: *permutation,
+            signed_zero: *signed_zero,
+            nan_assumptions: *nan_assumptions,
+            infinity_assumptions: *infinity_assumptions,
+        }
+    }
 }
 
 /// The governed purpose of one framed envelope section.
@@ -485,6 +520,12 @@ pub(crate) struct ArtifactEnvelope {
     pub(super) payload_content: Vec<Option<PayloadSections>>,
     pub(super) expressions: Vec<ExprNode>,
     pub(super) variants: Vec<VariantRow>,
+    /// The numerical realization the packaged artifact delivered.
+    ///
+    /// Carried verbatim rather than re-derived: the builder already put its
+    /// entry bindings in the flat canonical packaged-entry space, so a projection
+    /// that remapped them again would be a second definition of that space.
+    pub(super) realization: DeliveredRealizationRecord,
     pub(super) sections: Vec<Section>,
 }
 
@@ -580,6 +621,7 @@ impl ArtifactEnvelope {
             payload_content,
             expressions,
             variants,
+            realization: data.realization.clone(),
             sections,
         };
         envelope.features = envelope.derived_features();
@@ -616,6 +658,7 @@ impl ArtifactEnvelope {
             payload_content,
             expressions,
             variants,
+            realization,
         } = body;
         Self {
             schema,
@@ -629,6 +672,7 @@ impl ArtifactEnvelope {
             payload_content,
             expressions,
             variants,
+            realization,
             sections,
         }
     }
@@ -705,6 +749,71 @@ impl ArtifactEnvelope {
     /// Returns the framed sections in canonical content order.
     pub(crate) fn sections(&self) -> &[Section] {
         &self.sections
+    }
+
+    /// Returns the numerical realization the packaged artifact delivered.
+    pub(crate) const fn realization(&self) -> &DeliveredRealizationRecord {
+        &self.realization
+    }
+
+    /// Cross-checks the delivered-realization record against the artifact.
+    ///
+    /// One function reached from both sides of the wire, because the obligation
+    /// is one obligation: `super::super::ArtifactProgramBuilder::build` runs it
+    /// on the envelope it projects, and `super::validate` runs it on the envelope
+    /// it decodes. Running it on the *envelope* rather than on the builder's
+    /// draft is what fixes the packaged-entry ordinal space — a variant's entries
+    /// are in canonical stage-key order here, and a flat walk over the variants
+    /// in routing priority order is the space the record's bindings name.
+    ///
+    /// Three things are proved, and no more. The record's profile equals the
+    /// profile of **every** packaged variant, which is the artifact's single
+    /// `TargetProfileRef` — compared per variant rather than against a
+    /// portfolio-wide copy, because a decoded envelope carries one profile per
+    /// variant row and nothing else re-proves they agree. Every packaged entry
+    /// references an existing policy subject. And the record's eight overlapping
+    /// resolutions equal every bound entry's own realization statement.
+    ///
+    /// What it does not prove is on `super::super::validate_against_artifact`
+    /// and is load-bearing: an untrusted producer can write a wholly
+    /// self-consistent record, a false `NotRequired` included, and every check
+    /// here passes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactDiagnostic::DeliveredRealization`] carrying the typed
+    /// cause: a profile mismatch, an unbound entry, a dangling subject
+    /// reference, or an overlapping-behaviour disagreement.
+    pub(crate) fn check_realization(&self) -> Result<(), ArtifactDiagnostic> {
+        let realization = |cause| ArtifactDiagnostic::DeliveredRealization {
+            cause: Box::new(cause),
+        };
+        // Every variant against the record, rather than every variant against
+        // the first: the record's profile is the fixed point, so one comparison
+        // per variant proves both that the record names the artifact's profile
+        // and that the artifact has only one.
+        for variant in &self.variants {
+            if variant.profile != *self.realization.profile() {
+                return Err(realization(RealizationCodecError::ProfileMismatch {
+                    recorded: Box::new(self.realization.profile().clone()),
+                    artifact: Box::new(variant.profile.clone()),
+                }));
+            }
+        }
+        let entries: Vec<EntryRealization> = self
+            .variants
+            .iter()
+            .flat_map(|variant| &variant.entries)
+            .map(|entry| entry.numerical.entry_realization())
+            .collect();
+        validate_against_artifact(
+            &self.realization,
+            &ArtifactCrossCheck {
+                profile: self.realization.profile(),
+                entries: &entries,
+            },
+        )
+        .map_err(realization)
     }
 
     /// Derives the canonical identity of the artifact this envelope packages.
@@ -957,7 +1066,7 @@ fn project_sections(
 /// cannot disagree about which canonical slot a declared entry landed in. Both
 /// call sites derive from the same `stage_keys`, so a change to the ordering
 /// rule moves them together.
-fn canonical_entry_positions(stage_keys: &[Vec<u8>]) -> Vec<u32> {
+pub(crate) fn canonical_entry_positions(stage_keys: &[Vec<u8>]) -> Vec<u32> {
     let mut order: Vec<usize> = (0..stage_keys.len()).collect();
     order.sort_unstable_by(|left, right| stage_keys[*left].cmp(&stage_keys[*right]));
     let mut entry_of = vec![0_u32; stage_keys.len()];

@@ -27,13 +27,14 @@ use tiler_ir::numerics::{
 };
 use tiler_ir::program::SemanticOccurrence;
 use tiler_ir::program::abi::AvailabilityPhase;
-use tiler_ir::schedule::{ArithmeticType, NumericalRealization};
+use tiler_ir::schedule::ArithmeticType;
 
 use super::super::keys::{TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef};
 use super::{
     AssessmentDisposition, DELIVERED_REALIZATION_DOMAIN, DeliveredRealizationRecord,
-    EntryPolicyBinding, LATEST_DELIVERED_PHASE, NumericalObligation, NumericalPolicySubject,
-    RecordFamily, ScalarArithmeticRecord, TargetEvidence, overlapping_behaviour,
+    EntryPolicyBinding, EntryRealization, LATEST_DELIVERED_PHASE, NumericalObligation,
+    NumericalPolicySubject, RecordFamily, ScalarArithmeticRecord, TargetEvidence,
+    overlapping_behaviour,
 };
 
 /// The subject a decode rejection names.
@@ -910,9 +911,9 @@ fn check_references(
 pub struct ArtifactCrossCheck<'a> {
     /// The one target profile the artifact pins across its portfolio.
     pub profile: &'a TargetProfileRef,
-    /// Each packaged entry's own numerical realization, by canonical packaged
-    /// entry ordinal.
-    pub entries: &'a [NumericalRealization],
+    /// Each packaged entry's own numerical realization statement, by canonical
+    /// packaged entry ordinal.
+    pub entries: &'a [EntryRealization],
 }
 
 /// Validates a record against the artifact that carries it.
@@ -931,11 +932,11 @@ pub struct ArtifactCrossCheck<'a> {
 /// layering is: the compiler proves the policy subject, the obligation loci, the
 /// required behaviours, and the `NotRequired` claims from the checked plan;
 /// `tiler-build` proves its translation agrees with that compiler view; and this
-/// function proves the encoded associations. Ordinary checked production is
-/// meant to go through `tiler-build`, and no artifact carries a record yet —
-/// `wire-the-delivered-realization-record-into-the-artifact` owns both, and any
-/// low-level construction seam it retains accepts typed producer assertions and
-/// must be named so at its own call site.
+/// function proves the encoded associations. Ordinary checked production goes
+/// through `tiler_build::realization::translate`;
+/// [`ArtifactProgramBuilder::declare_realization`](super::super::ArtifactProgramBuilder::declare_realization)
+/// is the low-level seam a producer reaches directly, and it accepts typed
+/// producer assertions, which its own documentation says.
 ///
 /// `entries` is read in the caller's own order and the record's binding ordinals
 /// are interpreted in that same order. This function does not decide which

@@ -33,14 +33,20 @@
 //! about a real Metal compilation.
 
 use tiler_artifact::program::{
-    ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef, BackendKey,
-    BindingKind, BindingSpec, CapabilityKey, CompilationEnvironment, EntrySpec,
-    FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping,
-    PayloadMetadata, PayloadPlatform, PayloadProvenance, RepresentationKey, SchemaVersion,
-    SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-    ToolComponent, VariantSpec, VerifiedArtifactProgram,
+    ApproximationEnvelope, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
+    BackendEntryRef, BackendKey, BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityKey,
+    CompilationEnvironment, DIMENSION_COUNT, DeliveredRealizationBuilder,
+    DeliveredRealizationRecord, DimensionBehaviour, EntryRealization, EntrySpec,
+    FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
+    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
+    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
+    PolicyLocus, ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
+    SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec, VerifiedArtifactProgram,
+    overlapping_behaviour,
 };
 use tiler_compiler::session::{Compilation, NumericalContract, PlanAlternative, compile_governed};
+use tiler_ir::program::VerifiedKernelProgram;
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
@@ -318,14 +324,89 @@ fn assemble(
         .push_variant(
             program,
             VariantSpec {
-                target_profile: profile,
+                target_profile: profile.clone(),
                 feasibility_rules: rules,
                 deferred_predicates: Vec::new(),
                 entries,
             },
         )
         .expect("the variant packages the plan it was built from");
+    builder
+        .declare_realization(realization_record(&profile, program))
+        .expect("the record agrees with the packaged portfolio");
     builder.build().expect("the assembled artifact verifies")
+}
+
+/// Builds the delivered-realization record every executable artifact carries.
+///
+/// The eleven resolutions are derived from the packaged program's own scheduled
+/// realization rather than restated here, so this harness cannot describe a
+/// contract its plan does not schedule. Every packaged entry is bound, in the
+/// flat declared space; one variant means that is the program's stage count.
+///
+/// The obligation is stated at the computation locus of occurrence 0 with
+/// `SupportedExactly` means, which is what the strict contract this spike
+/// compiles under actually rests on. A harness that invented a relaxation it did
+/// not need would be writing a fact rather than recording one.
+fn realization_record(
+    profile: &TargetProfileRef,
+    program: &VerifiedKernelProgram,
+) -> DeliveredRealizationRecord {
+    let entry = EntryRealization::of(
+        program
+            .stages()
+            .next()
+            .expect("a packaged program has a stage")
+            .kernel()
+            .numerical(),
+    );
+    let entries = u32::try_from(program.stages().len()).expect("a bounded stage table fits u32");
+    let mut resolutions =
+        [DimensionBehaviour::Transform(NumericalPermission::Forbidden); DIMENSION_COUNT];
+    for dimension in CANONICAL_DIMENSIONS {
+        resolutions[dimension.index()] =
+            overlapping_behaviour(dimension, entry).unwrap_or(match dimension {
+                NumericalDimension::ApproximateIntrinsics => {
+                    DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden)
+                }
+                NumericalDimension::MaterializationRounding => {
+                    DimensionBehaviour::Rounding(MaterializationRounding::NearestTiesToEven)
+                }
+                // Reciprocal transform, the third dimension no scheduled
+                // realization carries. The remaining arm rather than a wildcard
+                // over all eleven, so a dimension leaving the overlapping set
+                // stops the build here.
+                _ => DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+            });
+    }
+    let subject = ScalarArithmeticSubject::f32().identity();
+    let mut record = DeliveredRealizationBuilder::new(profile.clone());
+    record
+        .declare_scalar_arithmetic(subject.clone(), resolutions)
+        .expect("the selected scalar contract");
+    record
+        .require(
+            &subject,
+            NumericalDimension::Contraction,
+            NumericalObligationKey::new(SemanticOccurrence::new(0), PolicyLocus::Computation),
+            resolutions[NumericalDimension::Contraction.index()],
+            TargetEvidenceDeclaration {
+                declared: resolutions[NumericalDimension::Contraction.index()],
+                means: HonouringMeans::SupportedExactly,
+                profile: profile.clone(),
+                source: FactSourceProvenance::governed(
+                    ProvenanceIdentity::new(profile.key.as_str(), 1),
+                    ProvenanceIdentity::new("tiler.spike.strict-f32-guarantee", 1),
+                ),
+            },
+        )
+        .expect("the obligation this packaged route relies on");
+    for entry in 0..entries {
+        record
+            .bind_entry(entry, &subject)
+            .expect("a packaged entry");
+    }
+    record.build().expect("the record this artifact delivers")
 }
 
 /// Object bytes that vary, so no digest ever sees a constant run.

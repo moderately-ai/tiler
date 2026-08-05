@@ -111,8 +111,11 @@
 //! # use tiler_artifact::program::{
 //! #     ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef,
 //! #     BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
-//! #     CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
-//! #     PayloadDigest, RepresentationKey, SchemaVersion, SelectedProvider,
+//! #     CompilationEnvironment, DeliveredRealizationBuilder, DimensionBehaviour, EntrySpec,
+//! #     FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans,
+//! #     LaunchSpec, NumericalDimension, NumericalObligationKey, PayloadDigest, PolicyLocus,
+//! #     ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
+//! #     SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration,
 //! #     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
 //! # };
 //! # use tiler_ir::semantic::ProviderIdentity;
@@ -409,6 +412,45 @@
 //! #         }],
 //! #     },
 //! # )?;
+//! # // Every executable artifact carries the numerical realization it
+//! # // delivered; `crate::program`'s walk-through is where that record is
+//! # // built through the typed producer path and read back.
+//! # let subject = ScalarArithmeticSubject::f32().identity();
+//! # let profile = TargetProfileRef {
+//! #     key: TargetProfileKey::new("tiler.prototype-target-neutral-baseline.v1")?,
+//! #     descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02])?,
+//! # };
+//! # let mut realization = DeliveredRealizationBuilder::new(profile.clone());
+//! # realization.declare_scalar_arithmetic(subject.clone(), [
+//! #     DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+//! #     DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+//! #     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//! #     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//! #     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//! #     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//! #     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//! #     DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden),
+//! #     DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
+//! #     DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
+//! #     DimensionBehaviour::Rounding(MaterializationRounding::NearestTiesToEven),
+//! # ])?;
+//! # realization.require(
+//! #     &subject,
+//! #     NumericalDimension::Contraction,
+//! #     NumericalObligationKey::new(SemanticOccurrence::new(0), PolicyLocus::Computation),
+//! #     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//! #     TargetEvidenceDeclaration {
+//! #         declared: DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//! #         means: HonouringMeans::SupportedExactly,
+//! #         profile: profile.clone(),
+//! #         source: FactSourceProvenance::governed(
+//! #             ProvenanceIdentity::new("tiler.prototype-target-neutral-baseline.v1", 1),
+//! #             ProvenanceIdentity::new("tiler.guarantee.strict-f32", 1),
+//! #         ),
+//! #     },
+//! # )?;
+//! # realization.bind_entry(0, &subject)?;
+//! # artifact.declare_realization(realization.build()?)?;
 //! # let artifact = artifact.build()?;
 //! // The producer holds the artifact and the graph it reference-evaluated. The
 //! // association is not supplied: the builder encodes the artifact itself and

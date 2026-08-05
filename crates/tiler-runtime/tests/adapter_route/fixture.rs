@@ -66,13 +66,18 @@
 //! built for, which is per-payload by design.
 
 use tiler_artifact::program::{
-    ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey,
-    BackendEntryRef, BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec,
-    CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadMetadata, PayloadPlatform,
-    PayloadProvenance, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
-    RouteRequirement, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef, TargetPropertyKey, ToolComponent, VariantSpec,
+    ApproximationEnvelope, ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase,
+    BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey, BindingKind,
+    BindingSpec, CANONICAL_DIMENSIONS, CapabilityKey, CompilationEnvironment, DIMENSION_COUNT,
+    DeferredPredicateSpec, DeliveredRealizationBuilder, DimensionBehaviour, EntryRealization,
+    EntrySpec, ExceptionalValueAssumption, FactSourceProvenance, FeasibilityRuleSetKey,
+    FeasibilityRuleSetRef, HonouringMeans, LaunchSpec, MaterializationRounding, NumericalDimension,
+    NumericalObligationKey, NumericalPermission, PayloadContent, PayloadMetadata, PayloadPlatform,
+    PayloadProvenance, PolicyLocus, ProvenanceIdentity, RecordedArtifactProgramIdentity,
+    RepresentationKey, RouteFeatureKey, RouteRequirement, ScalarArithmeticSubject, SchemaVersion,
+    SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEvidenceDeclaration,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
+    ToolComponent, VariantSpec, overlapping_behaviour,
 };
 use tiler_ir::index::{
     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexInteger,
@@ -92,13 +97,17 @@ use tiler_ir::program::{
     RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
     StorageScalar, ValueRole, VerifiedKernelProgram,
 };
+// The five behaviour vocabularies `DimensionBehaviour` ranges over are named
+// through `tiler_artifact::program` above rather than here, even where this half
+// of the fixture uses them to schedule a region: they are one type reached by two
+// paths, and naming them through the boundary a consumer at ADR 0081 item 2's
+// closure actually has is what keeps this file evidence that the closure suffices.
 use tiler_ir::schedule::{
-    Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey,
-    InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
-    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
+    ExecutionBinding, F32NumericalContractKey, InputOrdinal, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
+    ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant,
@@ -605,6 +614,8 @@ pub fn assemble_portfolio(members: &[FixtureSpec]) -> Fixture {
         push_member(&mut draft, &semantic, spec);
     }
 
+    declare_realization(&mut draft, members);
+
     let artifact = draft.build().expect("the fixture artifact verifies");
     let bytes = artifact.encode().expect("the fixture artifact encodes");
     let expected =
@@ -614,6 +625,81 @@ pub fn assemble_portfolio(members: &[FixtureSpec]) -> Fixture {
 }
 
 /// Declares one member's payload and its variant on a portfolio draft.
+/// Declares the numerical realization the fixture artifact delivers.
+///
+/// Every executable artifact carries one, so a consumer-side fixture that could
+/// not build one would be evidence the boundary is unusable from outside the
+/// producing crates. It is assembled here entirely through
+/// `tiler_artifact::program` re-exports — no `tiler_ir` path appears in it —
+/// which is what proves the record is reachable from a consumer whose dependency
+/// closure ADR 0081 item 2 fixes at `[tiler-artifact]`.
+///
+/// The eleven resolutions are derived from the packaged kernels' own scheduled
+/// realization rather than restated, so a fixture that changed its contract
+/// cannot leave a record describing the old one.
+///
+/// # Panics
+///
+/// Panics when the record does not build. The fixture states one governed `f32`
+/// contract and binds every packaged entry to it, so a refusal is a defect in
+/// this file rather than a case under test.
+fn declare_realization(draft: &mut ArtifactProgramBuilder, members: &[FixtureSpec]) {
+    let entry = EntryRealization::of(strict());
+    let mut resolutions =
+        [DimensionBehaviour::Transform(NumericalPermission::Forbidden); DIMENSION_COUNT];
+    for dimension in CANONICAL_DIMENSIONS {
+        resolutions[dimension.index()] =
+            overlapping_behaviour(dimension, entry).unwrap_or(match dimension {
+                NumericalDimension::ApproximateIntrinsics => {
+                    DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden)
+                }
+                NumericalDimension::MaterializationRounding => {
+                    DimensionBehaviour::Rounding(MaterializationRounding::NearestTiesToEven)
+                }
+                // Reciprocal transform, the third dimension the scheduled
+                // realization does not carry. Named as the remaining arm rather
+                // than a wildcard over all eleven.
+                _ => DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+            });
+    }
+    // The portfolio's single profile: `push_variant` refuses a second variant
+    // declaring a different one, so the first member's is every member's.
+    let profile = members[0].variant_profile.clone();
+    let subject = ScalarArithmeticSubject::f32().identity();
+    let mut record = DeliveredRealizationBuilder::new(profile.clone());
+    record
+        .declare_scalar_arithmetic(subject.clone(), resolutions)
+        .expect("the fixture contract");
+    record
+        .require(
+            &subject,
+            NumericalDimension::Contraction,
+            NumericalObligationKey::new(SemanticOccurrence::new(0), PolicyLocus::Computation),
+            resolutions[NumericalDimension::Contraction.index()],
+            TargetEvidenceDeclaration {
+                declared: resolutions[NumericalDimension::Contraction.index()],
+                means: HonouringMeans::SupportedExactly,
+                profile,
+                source: FactSourceProvenance::governed(
+                    ProvenanceIdentity::new(PROFILE_KEY, 1),
+                    ProvenanceIdentity::new("tiler.test.scalar-host.guarantee", 1),
+                ),
+            },
+        )
+        .expect("the fixture obligation");
+    // The flat declared packaged-entry space: every member's entries, in the
+    // order the members are pushed as variants.
+    let entries = members.iter().map(|spec| spec.entries.len()).sum::<usize>();
+    for entry in 0..u32::try_from(entries).expect("a bounded entry table fits u32") {
+        record
+            .bind_entry(entry, &subject)
+            .expect("a packaged entry");
+    }
+    draft
+        .declare_realization(record.build().expect("the fixture record"))
+        .expect("the fixture record agrees with the packaged portfolio");
+}
+
 fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, spec: &FixtureSpec) {
     let program = match spec.plan {
         PackagedPlan::Fused => fused_program(semantic, FusedGuard::AlwaysHolds),

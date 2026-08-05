@@ -87,9 +87,16 @@
 //! use tiler_artifact::program::{
 //!     ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef,
 //!     BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
-//!     CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
-//!     PayloadDigest, RepresentationKey, SchemaVersion, SelectedProvider,
+//!     CompilationEnvironment, DeliveredRealizationBuilder, DimensionBehaviour, DispositionView,
+//!     EntrySpec, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
+//!     HonouringMeans, LaunchSpec, NumericalDimension, NumericalObligationKey, PayloadDigest,
+//!     PolicyLocus, ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
+//!     SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration,
 //!     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
+//! };
+//! use tiler_ir::schedule::{
+//!     ApproximationEnvelope, ExceptionalValueAssumption, MaterializationRounding,
+//!     NumericalPermission, SubnormalMode,
 //! };
 //! use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
 //! # use tiler_ir::index::{
@@ -106,12 +113,11 @@
 //! #     StorageScalar, ValueRole,
 //! # };
 //! # use tiler_ir::schedule::{
-//! #     Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
-//! #     ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey, InputOrdinal,
-//! #     KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding, NumericalPermission,
+//! #     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExecutionBinding,
+//! #     F32NumericalContractKey, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
 //! #     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
 //! #     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
-//! #     ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+//! #     ScheduledRegionBuilder, TailPolicy, TensorRole,
 //! # };
 //! # use tiler_ir::semantic::{F32, F32Multiply, SemanticProgramBuilder};
 //! # use tiler_ir::shape::{Extent, Shape};
@@ -385,7 +391,82 @@
 //!         }],
 //!     },
 //! )?;
+//!
+//! // Every executable artifact carries the numerical realization it delivered,
+//! // and the record is built through the typed producer path rather than from
+//! // opaque means bytes: the governed `f32` policy subject, its eleven resolved
+//! // behaviours in canonical dimension order, and — for the one dimension this
+//! // packaged route consumes — the locus that requires it, the behaviour that
+//! // locus requires, and the structured evidence honouring it.
+//! //
+//! // The strict contract this program schedules forbids contraction, so
+//! // `SupportedExactly` is the honest means: this target honours the
+//! // requirement as it stands rather than under a declared relaxation. A
+//! // producer that cannot say which it is has no business writing either.
+//! let subject = ScalarArithmeticSubject::f32().identity();
+//! let mut realization = DeliveredRealizationBuilder::new(TargetProfileRef {
+//!     key: TargetProfileKey::new("tiler.prototype-target-neutral-baseline.v1")?,
+//!     descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02])?,
+//! });
+//! realization.declare_scalar_arithmetic(subject.clone(), [
+//!     DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+//!     DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+//!     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//!     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//!     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//!     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//!     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//!     DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden),
+//!     DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
+//!     DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
+//!     DimensionBehaviour::Rounding(MaterializationRounding::NearestTiesToEven),
+//! ])?;
+//! realization.require(
+//!     &subject,
+//!     NumericalDimension::Contraction,
+//!     NumericalObligationKey::new(SemanticOccurrence::new(0), PolicyLocus::Computation),
+//!     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//!     TargetEvidenceDeclaration {
+//!         declared: DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//!         means: HonouringMeans::SupportedExactly,
+//!         profile: TargetProfileRef {
+//!             key: TargetProfileKey::new("tiler.prototype-target-neutral-baseline.v1")?,
+//!             descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02])?,
+//!         },
+//!         source: FactSourceProvenance::governed(
+//!             ProvenanceIdentity::new("tiler.prototype-target-neutral-baseline.v1", 1),
+//!             ProvenanceIdentity::new("tiler.guarantee.strict-f32", 1),
+//!         ),
+//!     },
+//! )?;
+//! // The one packaged entry, at flat declared ordinal 0: one variant, one stage.
+//! realization.bind_entry(0, &subject)?;
+//! artifact.declare_realization(realization.build()?)?;
+//!
 //! let artifact = artifact.build()?;
+//!
+//! // A consumer reads the delivered means from the artifact rather than
+//! // inferring it from the request or the target's name.
+//! let delivered = artifact
+//!     .delivered_realization()
+//!     .scalar_arithmetic(&subject)
+//!     .expect("the packaged f32 contract");
+//! assert_eq!(
+//!     delivered.resolution(NumericalDimension::Contraction),
+//!     DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+//! );
+//! match delivered.assessment(NumericalDimension::Contraction) {
+//!     DispositionView::Required(obligations) => assert_eq!(
+//!         delivered.evidence_for(&obligations[0]).means(),
+//!         &HonouringMeans::SupportedExactly,
+//!     ),
+//!     DispositionView::NotRequired => panic!("this route requires contraction to be forbidden"),
+//! }
+//! // A dimension no packaged route consumes carries no fabricated target fact.
+//! assert_eq!(
+//!     delivered.assessment(NumericalDimension::ReciprocalTransform),
+//!     DispositionView::NotRequired,
+//! );
 //!
 //! assert_eq!(artifact.variants().len(), 1);
 //! assert_eq!(artifact.delivery_positions(), 1);
@@ -433,6 +514,12 @@ pub use tiler_ir::program::abi::{
     TargetPropertyProviderIdentity, TargetPropertyQuery, TargetPropertyQueryError,
     TargetPropertyRequirementRelation,
 };
+// Re-exported for the reason [`BufferAccess`] is: a delivered-realization
+// obligation is keyed by one, `NumericalObligationKey::occurrence` hands one
+// back, and `NumericalObligationKey::new` takes one — so a consumer whose
+// dependency closure is fixed at `[tiler-artifact]` under ADR 0081 could neither
+// read nor state a locus without it.
+pub use tiler_ir::program::SemanticOccurrence;
 
 pub use codec::{
     ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedComponent,
@@ -498,9 +585,9 @@ pub use realization::codec::{
 pub use realization::{
     AssessmentDisposition, DELIVERED_REALIZATION_DOMAIN, DeliveredRealizationBuilder,
     DeliveredRealizationError, DeliveredRealizationRecord, DispositionView, EntryPolicyBinding,
-    LATEST_DELIVERED_PHASE, NumericalObligation, NumericalPolicySubject, RecordFamily,
-    ScalarArithmeticRecord, ScalarArithmeticView, TargetEvidence, TargetEvidenceDeclaration,
-    overlapping_behaviour,
+    EntryRealization, LATEST_DELIVERED_PHASE, NumericalObligation, NumericalPolicySubject,
+    RecordFamily, ScalarArithmeticRecord, ScalarArithmeticView, TargetEvidence,
+    TargetEvidenceDeclaration, overlapping_behaviour,
 };
 // The one shared scalar-arithmetic policy vocabulary, named by re-export rather
 // than restated. `tiler-compiler` names the same types the same way, so the
@@ -523,6 +610,21 @@ pub use tiler_ir::numerics::{
     NumericalDimension, NumericalObligationKey, PolicyLocus, ProvenanceIdentity,
     RelaxationRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectError,
     ScalarArithmeticSubjectIdentity,
+};
+// [`DimensionBehaviour`]'s own payloads, and the arithmetic type a subject
+// identity names. Re-exported for the reason [`BufferAccess`] is, and now
+// unavoidably so: every artifact carries a delivered-realization record, so a
+// consumer that reads one matches `DimensionBehaviour` and reaches these, and a
+// consumer that produces one constructs them. A record whose behaviours its
+// callers cannot spell would be unusable from a closure ADR 0081 item 2 fixes at
+// `[tiler-artifact]`.
+//
+// [`DecodedNumerical`]'s accessors already returned four of them, which is the
+// same gap one layer down; it is closed here rather than left for the next
+// reader to rediscover.
+pub use tiler_ir::schedule::{
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+    MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,
 };
 
 /// Maximum plan variants admitted by one artifact program.

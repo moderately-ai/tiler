@@ -53,9 +53,10 @@ use super::super::model::{
 use super::super::requirement::{RouteRequirement, RouteRequirementError, RouteResourceDimension};
 use super::super::tests::{
     ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, build_artifact,
-    default_artifact, formulas, fused_program, lowering_provider, partial_window_artifact, payload,
-    prepared_requirement, profile, requiring_artifact, route_feature, route_resource, selection,
-    semantic_program, spare_provider, strict_affine_u4_dequantize_artifact, variant,
+    declare_realization, declare_realization_over, default_artifact, formulas, fused_program,
+    lowering_provider, partial_window_artifact, payload, prepared_requirement, profile,
+    requiring_artifact, route_feature, route_resource, selection, semantic_program, spare_provider,
+    strict_affine_u4_dequantize_artifact, variant,
 };
 use super::super::{
     ArtifactProgramBuilder, CompilationEnvironment, MAX_ROUTE_REQUIREMENTS, MAX_VARIANT_ENTRIES,
@@ -197,6 +198,7 @@ fn guarded_artifact() -> VerifiedArtifactProgram {
         entry: 0,
     }];
     draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
     draft.build().unwrap()
 }
 
@@ -238,6 +240,7 @@ fn two_variant_artifact(forward: bool) -> VerifiedArtifactProgram {
     draft
         .push_variant(&second, variant(&formulas, spare, b"alternate"))
         .unwrap();
+    declare_realization_over(&mut draft, &first, 2);
     draft.build().unwrap()
 }
 
@@ -260,7 +263,7 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v14\0")
+            .starts_with(b"tiler.artifact-program.v15\0")
     );
 }
 
@@ -294,7 +297,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (12, 0));
+    assert_eq!(MANIFEST_SCHEMA, (13, 0));
 }
 
 #[test]
@@ -336,6 +339,7 @@ fn expression_assembly_order_does_not_change_the_bytes() {
         draft
             .push_variant(&program, variant(&formulas, descriptor, b"fused"))
             .unwrap();
+        declare_realization(&mut draft, &program);
         draft.build().unwrap()
     };
 
@@ -1530,6 +1534,7 @@ fn a_deferred_requirement_that_disagrees_with_its_predicate_is_rejected() {
         entry: 0,
     }];
     draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
     let artifact = draft.build().unwrap();
 
     let mut envelope = envelope_of(&artifact);
@@ -1833,6 +1838,7 @@ fn artifact_with(
     draft
         .push_variant(&program, variant(&formulas, descriptor, b"fused"))
         .unwrap();
+    declare_realization(&mut draft, &program);
     draft.build().unwrap()
 }
 
@@ -2964,6 +2970,7 @@ fn a_changed_payload_compatibility_contract_changes_the_artifact() {
         draft
             .push_variant(&program, variant(&formulas, id, b"fused"))
             .unwrap();
+        declare_realization(&mut draft, &program);
         draft.build().unwrap()
     };
     let baseline = build(profile());

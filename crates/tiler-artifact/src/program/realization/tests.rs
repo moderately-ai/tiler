@@ -56,8 +56,8 @@ use super::codec::{
 use super::{
     AssessmentDisposition, DELIVERED_REALIZATION_DOMAIN, DeliveredRealizationBuilder,
     DeliveredRealizationError, DeliveredRealizationRecord, DispositionView, EntryPolicyBinding,
-    NumericalObligation, NumericalPolicySubject, ScalarArithmeticRecord, TargetEvidence,
-    TargetEvidenceDeclaration,
+    EntryRealization, NumericalObligation, NumericalPolicySubject, ScalarArithmeticRecord,
+    TargetEvidence, TargetEvidenceDeclaration,
 };
 use crate::program::keys::{TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef};
 
@@ -725,7 +725,7 @@ fn the_record_round_trips_exactly_and_agrees_with_the_entry_it_binds() {
     );
 
     let profile = profile();
-    let entries = [strict_realization()];
+    let entries = [EntryRealization::of(strict_realization())];
     validate_against_artifact(
         &decoded,
         &ArtifactCrossCheck {
@@ -1368,7 +1368,7 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
     // --- artifact cross-checks --------------------------------------------
     let decoded = decode(&bytes).expect("the baseline record decodes");
     let other = other_profile();
-    let entries = [strict_realization()];
+    let entries = [EntryRealization::of(strict_realization())];
     let error = validate_against_artifact(
         &decoded,
         &ArtifactCrossCheck {
@@ -1386,7 +1386,7 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
     let profile = profile();
     let mut divergent = strict_realization();
     divergent.contraction = NumericalPermission::Permitted;
-    let entries = [divergent];
+    let entries = [EntryRealization::of(divergent)];
     let error = validate_against_artifact(
         &decoded,
         &ArtifactCrossCheck {
@@ -1401,7 +1401,10 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
         observed: rule_of(&error),
     });
 
-    let entries = [strict_realization(), strict_realization()];
+    let entries = [
+        EntryRealization::of(strict_realization()),
+        EntryRealization::of(strict_realization()),
+    ];
     let error = validate_against_artifact(
         &decoded,
         &ArtifactCrossCheck {

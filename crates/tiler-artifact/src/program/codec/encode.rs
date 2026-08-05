@@ -82,7 +82,16 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// so its feature key marks the artifacts that are not — whereas every artifact
 /// at this schema writes the presence byte, so no `11.0` reader can read any of
 /// them and a key would mark nothing.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (12, 0);
+///
+/// Raised to `13.0` when the manifest gained the required delivered-realization
+/// record, written as one framed run after the variant table. Major, and the
+/// asymmetry with the route-requirement family decides it the same way the
+/// `12.0` step was decided: **every** artifact at this schema writes the run, so
+/// a `12.0` reader would consume its length prefix as the section-descriptor
+/// count and lose framing for the rest of the manifest. No reader that predates
+/// the family can read any artifact carrying one, so a required-feature key
+/// beside it would mark nothing.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (13, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -273,6 +282,12 @@ fn encode_manifest(
     encode_provenance_tables(&mut bytes, envelope);
     encode_expressions(&mut bytes, envelope);
     encode_variants(&mut bytes, envelope);
+    // One framed run of the record's own domain-separated canonical bytes,
+    // written after the variants whose entries its bindings name. The manifest
+    // does not restate the record's layout: `super::super::realization::codec`
+    // owns both directions of it, so a reader that frames this run correctly and
+    // then rejects its content rejects for the record's own typed reason.
+    push_slice(&mut bytes, &envelope.realization().canonical_bytes());
     encode_section_descriptors(&mut bytes, envelope, section_digests)?;
 
     push_slice(&mut bytes, identity.as_bytes());

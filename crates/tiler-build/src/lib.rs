@@ -38,6 +38,13 @@
 //! retains nothing today because the AOT driver keeps a stage's output only when
 //! the stage fails.
 //!
+//! [`realization::translate`] is the third, and it is neither an assembly nor a
+//! cache seam: it is the transcription of the compiler's borrowed
+//! delivered-realization evidence into the record every artifact must carry.
+//! [`assemble_plan_artifact`] calls it, so no backend states a numerical fact
+//! and none can. Its own module documentation states why the transcription
+//! forwards structured values rather than matching over them.
+//!
 //! The Metal path above is one caller of both, and
 //! `crates/tiler-build/tests/custom_backend` is another that shares no code with
 //! it. What remains bounded rather than neutral is stated rather than implied:
@@ -61,6 +68,7 @@ mod metal_plan;
 mod metal_profile;
 mod payload_cache;
 mod plan_artifact;
+pub mod realization;
 
 pub use metal_assembly::{
     CompiledMetalPayload, MetalAssemblyError, PreparedMetalPayload, metal_compile_request,

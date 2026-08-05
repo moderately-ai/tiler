@@ -1,11 +1,11 @@
 ---
 id: wire-the-delivered-realization-record-into-the-artifact
 title: Wire the delivered-realization record into the artifact
-status: in-progress
+status: review
 priority: p1
 dependencies: [accept-the-delivered-realization-artifact-surface, construct-and-bind-the-first-authoritative-metal-compile-profile]
 related: [record-delivered-numerical-realization, redesign-the-delivered-realization-record-from-typed-evidence]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, implementation/frontend, contracts/numerics, contracts/artifacts, contracts/decisions]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, implementation/frontend, contracts/numerics, contracts/artifacts, contracts/decisions, implementation/runtime, research/cache, research/target-profiles, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, numerics]
@@ -58,7 +58,7 @@ Stage three stopped there deliberately. The wiring items are one unit whose firs
 
 ## The remainder, in landing order
 
-The remaining wiring is one unit rather than four: the record only becomes *required* when the builder, the model, the codec, the fixtures, and the identity step all move, and the contract text below describes that landed state rather than the current one. Items 1, 2, and 6 are **done**; 3, 4, 5, 7, and 8 remain.
+The remaining wiring is one unit rather than four: the record only becomes *required* when the builder, the model, the codec, the fixtures, and the identity step all move, and the contract text below describes that landed state rather than the current one. **Every item is now done**; the section is kept as written because each item's derivation is what the landed shape rests on, and the stage-four record below states what each turned into.
 
 1. **Replace `crates/tiler-artifact/src/program/realization.rs`.** Remove the stale four-dimension, dtype-free, opaque-means draft entirely — including its convention-7 file allow at `:1-4` — and land the packet's record: canonical sorted subject slice, dense dimension-indexed resolution and disposition arrays through the one exhaustive `NumericalDimension::index`, sparse obligation rows sorted by `(subject, dimension, locus)`, deduplicated referenced evidence, dispositions derived at `build()` rather than declared. Public per `accept-the-delivered-realization-artifact-surface` (`done`), so no `dead_code` allow survives.
 2. **The codec.** Decode rejecting shuffled, duplicated, missing, malformed, mismatched, and dangling rows with typed causes; unknown family, subject-kind, dimension, disposition, means, provenance, locus, phase, authority, validity, and behaviour tags failing closed.
@@ -95,6 +95,42 @@ The remaining wiring is one unit rather than four: the record only becomes *requ
    `implementation/frontend` was added to `scopes` for that one pin. It is required by work this ticket already authorizes — closes-when 3 folds `canonical_bytes` into `encode_identity`, which moves the artifact identity domain, which this literal restates — so the declaration is scheduling metadata rather than a product-scope expansion, and it is declared now so stage three does not discover a scope escape at its guard.
 
    `crates/tiler-artifact/src/proof/codec.rs:65` also spells `MANIFEST_SCHEMA`, at `(1, 0)`. It is the **proof sidecar's** manifest, a different subject, and it does **not** move; it is named here so a reader sweeping for the constant does not move it by pattern. Every moving pin is recomputed on the tree the step lands into and enumerated in the report. A pin outside this set moving is a stop.
+
+**Stage four — the wiring and the identity step, landed as one commit.** Items 3, 4, 5, 7, and 8 are done, in one commit because the first encoded byte forces the schema and there is no boundary inside them.
+
+- **The record is required.** `ArtifactProgramBuilder::declare_realization` is the producer seam; `build` refuses a draft without one and reports `ArtifactDiagnostic::MissingDeliveredRealization`. `ArtifactProgramData.realization` and `ArtifactEnvelope.realization` are non-`Option` fields; `VerifiedArtifactProgram::delivered_realization` and `DecodedArtifact::delivered_realization` are total readers.
+- **The entry ordinal space is defined, on `DeferredPredicateData.entry`'s precedent.** A producer states a flat **declared** ordinal over (variant declaration rank, declared entry ordinal); `build` remaps it once through `packaged_entry_positions`, which is built on the codec's own `canonical_entry_positions` rather than a second definition of the stage-key order, into the flat **canonical** ordinal over (routing rank, canonical entry). The remap is `DeliveredRealizationRecord::remap_entries`, which re-sorts because a remap does not preserve the canonical `(entry, subject)` order. `ArtifactDiagnostic::DeliveredRealizationEntryOutOfRange` refuses a binding naming no packaged entry.
+- **The cross-check runs on the envelope, from both sides.** `ArtifactEnvelope::check_realization` compares the record's profile against **every** variant's — which is stronger than comparing it against a portfolio-wide copy the decoder does not re-prove — and then calls the ratified `validate_against_artifact` over the flat canonical entry sequence. `build` calls it after projecting; `codec::validate` calls it last, after the entry table's own structural obligations, because running it first reported a forged *extra* entry as an unbound one.
+- **`overlapping_behaviour` gained a subject.** It took `NumericalRealization`, which a decoder cannot hold: a decoded entry's contract key arrived as bytes and `NumericalFacts` owns it. `EntryRealization` names the eight behaviours both sides do hold, with `EntryRealization::of` projecting the shared-IR record by exhaustive field-named destructuring and `NumericalFacts::entry_realization` projecting the dispatch record the same way, so widening either is a build error at both.
+- **The codec carries it as one framed run**, written after the variant table, decoded by the record's own codec and reported as `ArtifactCodecError::DeliveredRealization` — the record failing on its own terms, kept distinct from `ModelObligation`, which is its disagreement with the artifact around it. `check_text_budgets` gained the record's profile key and every provenance text run its evidence rows write, through one exhaustive `push_provenance_text` match over `FactEvidenceBasis`.
+- **`tiler_build::realization::translate`** is the one transcription, called from the single artifact-construction site `assemble_plan_artifact`. It forwards `DimensionBehaviour`, `HonouringMeans` with its relaxation payload, `NumericalObligationKey`, and `FactSourceProvenance` by value rather than matching over them — the stronger form of exhaustive, since widening any of them is a build error at their own total encoders. It refuses a profile the compiler evidence does not name, an obligation naming a subject outside the view, a view with no policy subject, and a view with several and nothing deciding which governs an entry.
+
+**The fixture population, and the four spikes.** Every `tiler-artifact` fixture declares a record through one `realization_record` helper that *derives* the eleven resolutions from the packaged program's own scheduled realization, so a fixture whose contract changes cannot leave a record describing the old one; `declare_realization` and `declare_realization_over` are the two call shapes. `tiler-runtime`'s `tests/adapter_route/fixture.rs` builds its record entirely through `tiler_artifact::program` re-exports — no `tiler_ir` path in it — which is what proves the record is reachable from a consumer whose closure ADR 0081 item 2 fixes at `[tiler-artifact]`. `prototypes/serial-sum-run` uses `tiler_build::realization::translate`, because it holds a `PlanAlternative` and assembles by hand. All four spike harnesses were repaired in this commit and re-run by hand from their own directories:
+
+| Spike | Verdict |
+| --- | --- |
+| `spikes/cache/build-tool-exercise` | re-run `--skip-analyzer --concurrency 3`; every counted cell of all five cargo scenarios identical to the 2026-08-05 row. The three analyzer scenarios were not re-run and are unverified at this base. |
+| `spikes/cache/envelope-digest-coverage` | re-run and recorded under a new label; all 36 verdict rows identical, the two whole-run substitutions still the only `only-bundle-digest` members. One quantity moved: the envelope 113,303 → 118,225 bytes, so the sweep is 236,450 decodes rather than 226,606, all refused. |
+| `spikes/cache/hot-path-efficiency` | repaired, and then **aborts on its own precondition**: `SIZES` is the measured 32,136–47,803 envelope band and one envelope's fixed overhead is now 114,025 bytes. Proved to predate this ticket — the record contributes 2,453 canonical bytes carried twice, ≈4.9 KB of the 114,025. Filed as [`re-derive-the-measured-envelope-band-the-cache-hot-path-sweeps`](re-derive-the-measured-envelope-band-the-cache-hot-path-sweeps.md). |
+| `spikes/target-profiles/scalar-cpu-vertical` | re-run green, bit-for-bit agreement on all twelve elements; fixture re-recorded at its stable path. Envelope 82,918 → 87,338 and artifact identity 40,622 → 42,832, which is the record folded into the identity the manifest also carries. The `CanonicalizeF32Nan` perturbation was re-applied and the run exited 1 naming exactly one differing element. |
+
+**Every moving pin, recomputed on this tree.**
+
+| Pin | Was | Now |
+| --- | --- | --- |
+| `ARTIFACT_DOMAIN` (`crates/tiler-artifact/src/program/model.rs`) | `tiler.artifact-program.v14` | `tiler.artifact-program.v15` |
+| `MANIFEST_SCHEMA` (`crates/tiler-artifact/src/program/codec/encode.rs`) | `(12, 0)` | `(13, 0)` |
+| domain literal (`crates/tiler-artifact/src/program/codec/tests.rs`) | `tiler.artifact-program.v14` | `tiler.artifact-program.v15` |
+| schema assertion (`crates/tiler-artifact/src/program/codec/tests.rs`) | `(12, 0)` | `(13, 0)` |
+| `IDENTITY_DOMAIN` (`crates/tiler/src/route/tests.rs`) | `tiler.artifact-program.v14` | `tiler.artifact-program.v15` |
+| `ARTIFACT_IDENTITY` golden (`crates/tiler-build/src/metal_plan.rs`) | `1c84ec3a…c481d` | `d22c0d11…ce832` |
+| `CACHE_SUBJECT` golden (`crates/tiler-build/src/metal_plan.rs`) | `2700a51f…e4ff1` | `6dee9552…79d68` |
+| identity ledger (`docs/artifact-abi.md`) | artifact v14, manifest 12.0 | artifact v15, manifest 13.0 |
+| identity ledger (`docs/status.md`) | artifact program v14, manifest schema 12.0 | artifact program v15, manifest schema 13.0 |
+
+`crates/tiler-artifact/src/proof/codec.rs`'s `MANIFEST_SCHEMA = (1, 0)` is the proof sidecar's and did **not** move; the exact check `grep -rn "tiler.artifact-program.v1[45]\|MANIFEST_SCHEMA" --include="*.rs" crates/ prototypes/` returns it unchanged. No pin outside the table above moved.
+
+**Four scopes were added to this ticket at stage four**, each required by work the ticket already authorizes and recorded here rather than asked about: `implementation/runtime` for `crates/tiler-runtime`'s fixture and `prototypes/serial-sum-run`, both in the surveyed fixture population; `research/cache` and `research/target-profiles` for the four spike harnesses the survey names, which map to those scopes rather than to a spikes-wide one; and `contracts/navigation` for `docs/status.md`, which the pin table above already required. `tkt list --status in-progress` showed no other live ticket holding any of the four at the time they were added.
 
 ## Closes when
 
