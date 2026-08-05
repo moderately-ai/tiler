@@ -1,11 +1,11 @@
 ---
 id: land-the-elementary-family-projection-adr
 title: Land the elementary-family projection ADR
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-the-registered-unary-families-at-the-compiler-request-boundary, complete-the-elementary-projection-adr-frontmatter]
 related: []
-scopes: [contracts/decisions]
+scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, decisions, carrier]
@@ -15,7 +15,9 @@ lease_expires_at: 1785904792
 ---
 ## User-visible outcome
 
-The route the compiler took to make a registered elementary family reachable is an accepted decision in `docs/decisions/`, so the next reader of `crates/tiler-compiler/src/elementary.rs` finds the derivation behind it rather than a module comment asserting one.
+The route the compiler took to make a registered elementary family reachable is a catalogued decision record in `docs/decisions/`, so the next reader of `crates/tiler-compiler/src/elementary.rs` finds the derivation behind it rather than a module comment asserting one.
+
+**Corrected 2026-08-04 — this sentence read "an accepted decision", which this ticket cannot deliver and was never asked to.** Required delivery below states `decision_status` stays `proposed`, and Closes when requires "no acceptance claimed", so the outcome as written contradicted the ticket's own two normative sections and would have made a supported close look like an overstatement. What the carrier delivers is the catalogued record; **acceptance is Tom's** and is now a node of its own, [`accept-adr-0099-elementary-family-projection`](accept-adr-0099-elementary-family-projection.md), filed at `awaiting-decision` in the shape [`accept-adr-0098-inline-delivery-statement`](accept-adr-0098-inline-delivery-statement.md) established. Filing it is what stops this ticket from being held open for a decision no agent may make.
 
 ## Why this is a carrier ticket
 
@@ -29,6 +31,8 @@ The route the compiler took to make a registered elementary family reachable is 
 
   **Correction 2026-08-04 — the filename this bullet stated does not follow the corpus's own handling of a possessive.** It read `NNNN-project-an-elementary-family-s-per-point-body-from-one-shared-statement.md`, spelling the apostrophe as `-s-`. The corpus drops the apostrophe and keeps the `s`: [0092](../docs/decisions/0092-answer-backend-scoped-route-requirements-in-the-owning-backends-vocabulary.md) renders "the owning backend's vocabulary" as `the-owning-backends-vocabulary`, and [0098](../docs/decisions/0098-state-an-inline-regions-delivery-policy-with-a-named-profile-or-a-family-list.md) renders "an inline region's delivery policy" as `an-inline-regions-delivery-policy`. The mechanical slug is therefore `0099-project-an-elementary-familys-per-point-body-from-one-shared-statement.md`. **The slug is not a strict transform of the title and the carrier may shorten it** — [0088](../docs/decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) drops "consumer" from its own title — so this correction fixes the apostrophe convention rather than fixing the name.
 - The catalog block in `docs/decisions/README.md` updated in the same commit as the metadata behind it. That file maps to `contracts/navigation`, so this ticket declares both scopes.
+
+  **`contracts/navigation` was added to `scopes:` on 2026-08-04, because the sentence above asserted a declaration the frontmatter did not carry.** `scopes:` held `contracts/decisions` alone, so `tkt guard tkt/land-the-elementary-family-projection-adr-2` reported `under_declared: ["contracts/navigation"]` and `severity: conflict` on the commit that wrote the catalog entry. This is bookkeeping the work already authorized: the catalog deliverable is stated in this bullet, `ticketsplease.toml` maps `docs/decisions/README.md` to that scope, and adding it expands no product outcome. **No live ticket holds it** — every one of the eighteen tickets the guard names on `contracts/decisions` or `contracts/navigation` is `done` or `closed` (checked by reading each one's `status:`), so there is no branch to verify file-level disjointness against.
 - `decision_status` left at `proposed`. **Acceptance is Tom's and nothing in the deriving work relayed one.** Moving it to accepted, updating the catalog views, and correcting every contract sentence whose truth depended on the old status is a separate step with its own acceptance provenance — who accepted, the date, and the venue.
 
 ## Non-goals
@@ -38,6 +42,17 @@ Re-deriving the decision. The elimination is recorded in the deriving ticket and
 ## Closes when
 
 The ADR file exists at an allocated number with the drafted body byte-identical, the catalog names it, and `decision_status` is `proposed` with no acceptance claimed.
+
+## Outcome 2026-08-04 — the record is landed at 0099, byte-identically, and still proposed
+
+**[`docs/decisions/0099-project-an-elementary-familys-per-point-body-from-one-shared-statement.md`](../docs/decisions/0099-project-an-elementary-familys-per-point-body-from-one-shared-statement.md) exists, the catalog names it in both blocks, and `decision_status` is `proposed`.** That is the Closes-when condition, so this ticket's stated outcome is supported. **Acceptance is not part of it and is not claimed anywhere**: nothing in the deriving work, the amendment, or this dispatch relayed an acceptance, and moving the status — with the catalog views and every contract sentence that depended on the old status — is Tom's, in a separate step carrying its own provenance.
+
+- **The number was verified free against both authorities, and both checks were fault-proven.** `ls docs/decisions/0099*` reported no match and `grep -n '0099' docs/decisions/README.md` reported nothing, at the base `a7fa9b5d`. Each check was then run against `0098`, where the listing names [the delivery-policy record](../docs/decisions/0098-state-an-inline-regions-delivery-policy-with-a-named-profile-or-a-family-list.md) and the grep counts `2` — so "no match" was distinguishable from a check that could not fire. **The licence in Required delivery to adjust a taken number is therefore unspent**: nothing about the filename, `id`, or H1 moved, because the amendment had already set all three to `0099`.
+- **The transfer is byte-identical and proved by an empty diff.** The extraction was piped straight into `diff` rather than compared by eye, and the same command against `0098-…` prints the differing `id` line — the fault-proof that the empty output is a match. The command and its control are recorded beside the fenced block in [the deriving ticket](admit-the-registered-unary-families-at-the-compiler-request-boundary.md), which stays the source of record; **not one byte inside that fence changed**, and re-extracting after the note was added still yields the same 87 lines.
+- **The catalog entry is written in its ninety-eight neighbours' rendered shape, and resolves both ways.** In *Physical planning and lowering* — the `catalog_group` the amendment derived — filed alphabetically by title between [0073](../docs/decisions/0073-own-typed-explain-in-tiler-compiler.md) and [0084](../docs/decisions/0084-reference-canonical-index-expressions-from-domain-predicates.md), and appended to the chronological index after 0098. `contracts:` renders `applies_to` in its declared order, which is the convention the section already follows (0073's entry renders optimizer before architecture, matching its `applies_to`): [Optimizer model](../docs/compiler/optimizer.md) then [IR stack and invariants](../docs/ir.md). `evidence:` renders [Transformer non-linear, normalization, and reduction contracts](../docs/research/numerics/transformer-nonlinear-normalization-and-reductions.md) under that record's own `title`, as the corpus renders every research target. Both directions were checked: each rendered path exists from `docs/decisions/`, and each id in the landed frontmatter resolves to exactly the file the entry links (`grep -rl 'id: "tiler.contract.optimizer"' docs/` and its two siblings return one path each).
+- **No other catalog needed the entry, and that is a check rather than an assumption.** `grep -rn 0098 docs --include='*.md'`, excluding the record's own file and the decision catalog, returns one hit — an ONNX operator table's `1.05070102214813232421875` — so `docs/decisions/README.md` is the only index that enumerates decision records.
+- **The slug follows the corpus's possessive handling**, per this ticket's own 2026-08-04 correction: the apostrophe is dropped and the `s` kept, as [0092](../docs/decisions/0092-answer-backend-scoped-route-requirements-in-the-owning-backends-vocabulary.md) and [0098](../docs/decisions/0098-state-an-inline-regions-delivery-policy-with-a-named-profile-or-a-family-list.md) do. It is the unshortened transform of the title; the licence to shorten was available and not used.
+- **The landed body carries no local links, and the checker was shown able to say so wrongly first.** A link extractor over the file reports `0 local links, 0 missing`; the same extractor reports `26 local links, 0 missing` over `0098-…` and `1 missing` over a two-link fixture whose second target does not exist. So the zero is the body's own property — it is prose with no markdown links, which is why the deriving ticket could draft it without the `docs/decisions/`-relative link tension a traceability section would have created.
 
 ## Unblocked 2026-08-04 — the draft is schema-valid and the transfer is mechanical again
 
