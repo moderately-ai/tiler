@@ -719,7 +719,8 @@ impl ScalarArithmeticSubject {
 /// wrong, and the copy is what a caller's pair would then be checked against.
 ///
 /// `None` when no catalog row carries that spelling.
-fn registered_arithmetic_facts(arithmetic: ArithmeticType) -> Option<CanonicalValue> {
+#[must_use]
+pub fn registered_arithmetic_facts(arithmetic: ArithmeticType) -> Option<CanonicalValue> {
     builtin_scalar_value_types()
         .into_iter()
         .find(|value| {
@@ -733,9 +734,8 @@ fn registered_arithmetic_facts(arithmetic: ArithmeticType) -> Option<CanonicalVa
 
 /// Returns the registered value identity `arithmetic` names.
 ///
-/// The complement of the private descriptor lookup
-/// [`ScalarArithmeticSubject::new`] uses, reading the same catalog row for its
-/// *key* rather than its descriptor. Every arithmetic type resolves
+/// The complement of [`registered_arithmetic_facts`], reading the same catalog
+/// row for its *key* rather than its descriptor. Every arithmetic type resolves
 /// here — the vocabulary and the catalog are pinned to each other by a test in
 /// this crate — so a numerical requirement can always be stated for the exact
 /// value identity its width computes over, including the widths this build
@@ -763,7 +763,8 @@ pub fn registered_arithmetic_value_type(arithmetic: ArithmeticType) -> Option<Re
 /// `None` when the descriptor states neither, which is a real answer rather than
 /// a malformed one: a logical-predicate row states a value cardinality and no
 /// width at all, so there is no format for an arithmetic subject to agree with.
-fn registered_scalar_format(facts: &CanonicalValue) -> Option<(&str, u64)> {
+#[must_use]
+pub fn registered_scalar_format(facts: &CanonicalValue) -> Option<(&str, u64)> {
     let CanonicalValueView::Record(fields) = facts.view() else {
         return None;
     };

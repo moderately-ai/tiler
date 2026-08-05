@@ -470,7 +470,7 @@ impl fmt::Display for PhysicalError {
                     cause.dimension().key(),
                     region.get(),
                     cause.required().key(),
-                    cause.means().key(),
+                    cause.means().label(),
                 )?;
                 if let Some(honoured) = cause.honoured() {
                     write!(formatter, " and honours {}", honoured.key())?;

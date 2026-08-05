@@ -22,8 +22,8 @@ use tiler_ir::shape::{Axis, Extent, Shape};
 // The numerical-realization vocabulary is target-neutral and owned by the shared
 // IR (ADR 0070); the compiler contract references it rather than duplicating it.
 pub(crate) use tiler_ir::schedule::{
-    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
-    MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, MaterializationRounding,
+    NumericalPermission, SubnormalMode, ValueDomainProvenance,
 };
 use tiler_ir::schedule::{
     Bf16NumericalContractKey, F32NumericalContractKey, NumericalContractKeyError,
@@ -1988,33 +1988,15 @@ fn encode_contract(bytes: &mut Vec<u8>, contract: StrictF32NumericalContract) {
     }
 }
 
-/// Returns the canonical tag of one subnormal dimension.
-///
-/// The mapping is an exhaustive match rather than an `as` discriminant cast.
-/// A cast reads whatever ordinal position a variant happens to occupy, so
-/// adding or reordering a variant would silently change every encoded request
-/// subject; a match stops the build instead (ADR 0074 convention 5b). It also
-/// gives the two flush behaviours distinct tags, which a cast over a struct
-/// variant cannot express at all.
-pub(crate) const fn subnormal_tag(mode: SubnormalMode) -> u8 {
-    match mode {
-        SubnormalMode::Preserve => 0x01,
-        SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::PreservesSign,
-        } => 0x02,
-        SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::AlwaysPositive,
-        } => 0x03,
-    }
-}
-
-/// Returns the canonical tag of one transform permission.
-pub(crate) const fn permission_tag(permission: NumericalPermission) -> u8 {
-    match permission {
-        NumericalPermission::Forbidden => 0x01,
-        NumericalPermission::Permitted => 0x02,
-    }
-}
+// The transform-permission tag is `tiler_ir::numerics`'. It was duplicated
+// here and in the artifact's own encoder; the request subject,
+// the target-profile descriptor, and the delivered-realization record all
+// encode the same behaviours, so one definition is what keeps them from
+// drifting. Both remain exhaustive matches rather than discriminant casts, for
+// the reason the relocated definitions record: a cast reads whatever ordinal a
+// variant happens to occupy, so adding or reordering one would silently restate
+// every encoded subject (ADR 0074 convention 5b).
+pub(crate) use tiler_ir::numerics::permission_tag;
 
 /// Appends one recognized elementwise expression's complete canonical encoding.
 ///
@@ -2026,7 +2008,8 @@ pub(crate) const fn permission_tag(permission: NumericalPermission) -> u8 {
 /// would let one artifact stand for two programs.
 ///
 /// The per-node tag is an exhaustive match rather than a discriminant cast, for
-/// the reason [`subnormal_tag`] states: a node added to the vocabulary must stop
+/// the reason the relocated tag encoders record: a node added to the
+/// vocabulary must stop
 /// the build here rather than silently encode under a neighbour's tag.
 fn encode_pointwise_expression(bytes: &mut Vec<u8>, expression: &PointwiseF32Expression) {
     push_len(bytes, expression.nodes().len());
@@ -2399,7 +2382,7 @@ impl fmt::Display for ContractRejection {
         )?;
         match self {
             Self::Unhonourable { cause, .. } => {
-                write!(formatter, ", target declares {}", cause.means().key())?;
+                write!(formatter, ", target declares {}", cause.means().label())?;
                 if let Some(honoured) = cause.honoured() {
                     write!(formatter, " and honours {}", honoured.key())?;
                 }
@@ -3962,6 +3945,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use tiler_ir::schedule::FlushedZeroSign;
     use tiler_ir::semantic::{
         CanonicalValue, CanonicalValueKind, F32Add, F32Constant, F32Multiply,
         NormativeDefinitionRef, OperationArity, OperationAttributeSchema, OperationAttributes,

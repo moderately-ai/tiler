@@ -93,6 +93,7 @@ use tiler_compiler::target::{
     TargetNormativeReferenceIdentity, TargetProfile, TargetProfileBuildError, TargetProfileBuilder,
     TargetProfileKey, TargetProfileKeyError,
 };
+use tiler_ir::numerics::ScalarArithmeticSubjectError;
 use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
@@ -774,7 +775,7 @@ fn declare_metal_bf16_subnormal_behaviour(
         .behaviour(MetalFloatArithmeticType::Bf16)
         .map_err(|_| BoundMetalDeclarationError::UnstatedBf16SubnormalBehaviour)?;
     let subject = ScalarArithmetic::new(ArithmeticType::Bf16, Bf16::resolved_type())
-        .map_err(BoundMetalDeclarationError::Bf16SubnormalProjection)?;
+        .map_err(BoundMetalDeclarationError::Bf16Subject)?;
     let mut staged = builder.clone();
     staged
         .declare_measured_input_subnormal_behaviour(
@@ -971,6 +972,14 @@ pub enum BoundMetalDeclarationError {
     SubnormalProjection(MetalF32TargetProfileError),
     /// The Metal record omitted the BF16 behaviour this declaration requires.
     UnstatedBf16SubnormalBehaviour,
+    /// The governed scalar catalog refused the BF16 policy subject.
+    ///
+    /// Distinct from [`Self::Bf16SubnormalProjection`] because a different
+    /// authority refuses: the catalog decides whether `bf16` arithmetic is
+    /// defined over `tiler::bf16@1` at all, while the profile decides whether a
+    /// row over that subject may be declared. Folding the two into one variant
+    /// would make a rejection unable to name which one said no.
+    Bf16Subject(ScalarArithmeticSubjectError),
     /// The compiler profile refused the declaration-owned BF16 projection.
     Bf16SubnormalProjection(TargetProfileBuildError),
     /// The compiler's offered buffer capacity exceeds the emission limit.
@@ -1030,6 +1039,7 @@ impl fmt::Display for BoundMetalDeclarationError {
             Self::Provenance(error) => ("fact source", error),
             Self::Profile(error) => ("compiler profile row", error),
             Self::SubnormalProjection(error) => ("f32 subnormal projection", error),
+            Self::Bf16Subject(error) => ("BF16 policy subject", error),
             Self::Bf16SubnormalProjection(error) => ("BF16 subnormal projection", error),
             Self::AotTarget(error) => ("AOT target", error),
             Self::UnstatedBf16SubnormalBehaviour => {
@@ -1058,6 +1068,7 @@ impl Error for BoundMetalDeclarationError {
             Self::ProfileKey(error) => Some(error),
             Self::Provenance(error) => Some(error),
             Self::Profile(error) | Self::Bf16SubnormalProjection(error) => Some(error),
+            Self::Bf16Subject(error) => Some(error),
             Self::SubnormalProjection(error) => Some(error),
             Self::AotTarget(error) => Some(error),
             Self::PreparedEntryQuery

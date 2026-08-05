@@ -3608,7 +3608,7 @@ mod tests {
                 resolved_type: cause.resolved_type().clone(),
                 required: ReasonCode::new(cause.required().key()).unwrap(),
                 outcome: HonourabilityOutcome::Unhonourable {
-                    means: ReasonCode::new(cause.means().key()).unwrap(),
+                    means: ReasonCode::new(cause.means().label()).unwrap(),
                     honoured: cause
                         .honoured()
                         .map(|honoured| ReasonCode::new(honoured.key()).unwrap()),

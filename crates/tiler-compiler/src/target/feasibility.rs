@@ -344,107 +344,15 @@ const fn target_property_relation(
     }
 }
 
-/// The entity vouching for a capability fact.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum FactAuthority {
-    /// A governed, conservative compile-time profile guarantee.
-    GovernedProfile,
-    /// A named external producer's normative target-family declaration.
-    ///
-    /// This is available at the compile-profile phase but is not a compiler
-    /// proof. Its source record carries both the producer identity and the
-    /// versioned specification or guarantee it relies on.
-    ExternalProfile,
-    /// An empirical compiler-profile measurement tied to exact compiler builds
-    /// and execution environments.
-    MeasuredProfile,
-    /// Evidence attributed to a produced artifact.
-    ArtifactEvidence,
-    /// A live device runtime.
-    DeviceRuntime,
-    /// A prepared, specialized kernel.
-    PreparedKernel,
-    /// A concrete launch instance.
-    LaunchInstance,
-}
-
-impl FactAuthority {
-    /// Returns the governed tag naming this authority in a canonical descriptor.
-    ///
-    /// Exhaustive for the same reason as [`CapabilityAxis::tag`].
-    pub(crate) const fn tag(self) -> u8 {
-        match self {
-            Self::GovernedProfile => 0x01,
-            Self::ExternalProfile => 0x06,
-            Self::MeasuredProfile => 0x07,
-            Self::ArtifactEvidence => 0x02,
-            Self::DeviceRuntime => 0x03,
-            Self::PreparedKernel => 0x04,
-            Self::LaunchInstance => 0x05,
-        }
-    }
-
-    /// The governed canonical key naming this authority in an explanation.
-    ///
-    /// Exhaustive for the same reason as [`Self::tag`]: a rejection that cannot
-    /// name the authority vouching for the refusing fact is not explainable.
-    pub(crate) const fn key(self) -> &'static str {
-        match self {
-            Self::GovernedProfile => "governed-profile",
-            Self::ExternalProfile => "external-profile",
-            Self::MeasuredProfile => "measured-profile",
-            Self::ArtifactEvidence => "artifact-evidence",
-            Self::DeviceRuntime => "device-runtime",
-            Self::PreparedKernel => "prepared-kernel",
-            Self::LaunchInstance => "launch-instance",
-        }
-    }
-}
-
-/// The scope over which a capability fact is valid.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum FactValidityScope {
-    /// Valid for any device matching the portable profile.
-    PortableProfile,
-    /// Valid only for the exact measured compiler/environment population.
-    MeasuredEnvironment,
-    /// Valid for one device instance only.
-    DeviceInstance,
-    /// Valid for one prepared artifact only.
-    PreparedArtifact,
-    /// Valid for one launch instance only.
-    LaunchInstance,
-}
-
-impl FactValidityScope {
-    /// Returns the governed tag naming this scope in a canonical descriptor.
-    ///
-    /// Exhaustive for the same reason as [`CapabilityAxis::tag`].
-    pub(crate) const fn tag(self) -> u8 {
-        match self {
-            Self::PortableProfile => 0x01,
-            Self::MeasuredEnvironment => 0x05,
-            Self::DeviceInstance => 0x02,
-            Self::PreparedArtifact => 0x03,
-            Self::LaunchInstance => 0x04,
-        }
-    }
-
-    /// The governed canonical key naming this scope in an explanation.
-    ///
-    /// Exhaustive for the same reason as [`Self::tag`]: a refusal whose
-    /// validity scope is unnamed cannot be acted on, because a reader cannot
-    /// tell a portable claim from one true of one measured population.
-    pub(crate) const fn key(self) -> &'static str {
-        match self {
-            Self::PortableProfile => "portable-profile",
-            Self::MeasuredEnvironment => "measured-environment",
-            Self::DeviceInstance => "device-instance",
-            Self::PreparedArtifact => "prepared-artifact",
-            Self::LaunchInstance => "launch-instance",
-        }
-    }
-}
+// The fact-provenance vocabulary is `tiler_ir::numerics`, not this module's.
+// A capability fact and a numerical fact answer to the same authorities and the
+// same validity scopes, and the delivered-realization record has to read both;
+// naming one authority by re-export is what keeps the two from drifting. The
+// out-of-declaration-order wire tags (`ExternalProfile` 0x06, `MeasuredProfile`
+// 0x07, `MeasuredEnvironment` 0x05) are preserved there byte for byte, because
+// renumbering them would silently restate every target-profile descriptor that
+// declares a measured fact.
+pub(crate) use tiler_ir::numerics::{FactAuthority, FactValidityScope};
 
 /// Identity of the feasibility rule set a candidate was assessed under.
 ///
@@ -1187,9 +1095,16 @@ impl CheckedTargetProfile {
             // unauthorized relaxation disproves rather than defers.
             HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { relaxation } => {
                 authorized.iter().any(|stated| {
+                    // The relaxation carries its subject as the serialized
+                    // identity, because that is the only form that survives the
+                    // codec into the delivered-realization record. Comparing the
+                    // stated requirement's own canonical encoding against it is
+                    // exact: `canonical_encoding` is collision free, so equal
+                    // bytes are the same resolved type.
                     stated.dimension() == relaxation.dimension()
-                        && stated.arithmetic() == relaxation.arithmetic()
-                        && stated.resolved_type() == relaxation.resolved_type()
+                        && stated.arithmetic() == relaxation.subject().arithmetic()
+                        && stated.resolved_type().canonical_encoding().as_bytes()
+                            == relaxation.subject().resolved_type_identity()
                         && stated.behaviour() == relaxation.behaviour()
                 })
             }
@@ -2041,8 +1956,9 @@ mod tests {
 
     use crate::target::honourability::{
         CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, ExecutionEnvironmentIdentity,
-        FactSourceProvenance, MeasurementContext, ProvenanceIdentity, RelaxationRequirement,
+        FactSourceProvenance, MeasurementContext, ProvenanceIdentity,
     };
+    use tiler_ir::numerics::{RelaxationRequirement, ScalarArithmeticSubject};
     use tiler_ir::program::abi::{TargetPropertyKey, TargetPropertyProviderIdentity};
     use tiler_ir::schedule::{FlushedZeroSign, NumericalPermission, SubnormalMode};
     use tiler_ir::semantic::F32;
@@ -2928,9 +2844,8 @@ mod tests {
             PRESERVE,
             HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
                 relaxation: RelaxationRequirement::new(
+                    ScalarArithmeticSubject::f32().identity(),
                     NumericalDimension::Reassociation,
-                    ArithmeticType::F32,
-                    F32::resolved_type(),
                     PERMITTED,
                 ),
             },
@@ -2960,9 +2875,8 @@ mod tests {
             cause.means(),
             HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
                 relaxation: RelaxationRequirement::new(
+                    ScalarArithmeticSubject::f32().identity(),
                     NumericalDimension::Reassociation,
-                    ArithmeticType::F32,
-                    F32::resolved_type(),
                     PERMITTED,
                 ),
             }
@@ -3599,9 +3513,8 @@ mod tests {
                     PRESERVE,
                     HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
                         relaxation: RelaxationRequirement::new(
+                            ScalarArithmeticSubject::f32().identity(),
                             NumericalDimension::Reassociation,
-                            ArithmeticType::F32,
-                            F32::resolved_type(),
                             PRESERVE,
                         ),
                     },
