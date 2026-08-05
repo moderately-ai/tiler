@@ -1,7 +1,7 @@
 ---
 id: catalogue-adr-0100-and-the-multi-round-composition-record
 title: Catalogue ADR 0100 and the multi-round composition record
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [derive-the-multi-round-two-level-reduction-composition]
@@ -29,3 +29,7 @@ tags: [contracts, navigation, adr, scheduling, catalog]
 ## Closes when
 
 Both catalogs carry a row for their record, each row's status field matches the record's own frontmatter, and every link in the two new rows resolves.
+
+## Outcome — executed by the acceptance sweep
+
+Both rows landed with ADR 0100's acceptance on 2026-08-05 (the acceptance node held both scopes): the decisions catalog's theme and chronology rows, and the research catalog's row for the composition record, each transcribed from frontmatter. This ticket closes on that verification.

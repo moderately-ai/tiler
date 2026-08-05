@@ -5,7 +5,7 @@ kind: "decision"
 title: "Admit the multi-round two-level reduction composition over a lexicographic round-subgroup-lane block index"
 topics: ["scheduling", "gpu", "metal", "reductions", "numerics", "execution-hierarchy", "subgroup", "identity", "public-boundary"]
 catalog_group: "physical-planning-lowering"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.fusion-and-scheduling", "tiler.contract.ir"]
 evidence: ["tiler.research.scheduling.multi-round-two-level-reduction-composition"]
@@ -15,7 +15,7 @@ ticket: "derive-the-multi-round-two-level-reduction-composition"
 
 # 0100: Admit the multi-round two-level reduction composition over a lexicographic round-subgroup-lane block index
 
-**Status: proposed. Nobody has accepted this, and its acceptance node has not been filed at the time of writing.** It is drafted by the ticket [ADR 0096](0096-compose-the-subgroup-and-workgroup-reduction-levels.md)'s open questions hand the multi-round derivation to, and under [the decisions index](README.md)'s own preamble a proposed record remains a non-decision until Tom accepts it. [The multi-round two-level reduction composition](../research/scheduling/multi-round-two-level-reduction-composition.md) is the derivation; this record states the decisions and cites it rather than re-deriving them.
+**Status: accepted by Tom on 2026-08-05 at the third live decision review in the coordination session, witnessed first-hand by the coordinator that executed this sweep.** The acceptance supersedes [ADR 0096](0096-compose-the-subgroup-and-workgroup-reduction-levels.md) **decision 8 only** — the one-round exclusion, whose stated ground that record had already corrected as stale — and nothing else in that record; the supersession is recorded in prose on both records rather than in frontmatter, because a whole-record `supersedes` edge would overstate it. None of the five public-boundary items the derivation enumerates is accepted by this; each arrives individually under ADR 0075. It was drafted by the ticket [ADR 0096](0096-compose-the-subgroup-and-workgroup-reduction-levels.md)'s open questions hand the multi-round derivation to, and under [the decisions index](README.md)'s own preamble a proposed record remained a non-decision until this acceptance. [The multi-round two-level reduction composition](../research/scheduling/multi-round-two-level-reduction-composition.md) is the derivation; this record states the decisions and cites it rather than re-deriving them.
 
 **What acceptance would do to ADR 0096, stated here because it is the one thing a reader must not infer.** ADR 0096 decision 8 reads "One staging round, and a second is refused rather than approximated", and its ground — that the cooperative profile models no per-round lifetime — was already dead at that record's own base, which its implementation boundary says. **Accepting this record supersedes decision 8 and nothing else in ADR 0096**; decisions 1 through 7 are consumed here unchanged, and decision 1 additionally receives a correction that is a correction of *scope* rather than a supersession (see decision 3). This record is deliberately not marked as superseding ADR 0096 in frontmatter, because whole-record supersession is not what is proposed and a frontmatter claim of it would be false.
 
