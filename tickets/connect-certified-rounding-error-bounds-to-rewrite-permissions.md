@@ -1,7 +1,7 @@
 ---
 id: connect-certified-rounding-error-bounds-to-rewrite-permissions
 title: Connect certified rounding-error bounds to rewrite permissions
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [derive-the-capability-set-for-search-discovered-flash-class-attention-kernels, reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller, name-the-elementary-identity-rewrite-dimension, expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate, derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound, tighten-the-rescaling-bound-with-the-sharpened-summation-constants]
@@ -9,9 +9,6 @@ scopes: [research/numerics, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-certified-bounds
-lease_expires_at: 1785971429
 ---
 ## User-visible outcome
 
