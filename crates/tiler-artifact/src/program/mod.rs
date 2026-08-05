@@ -413,10 +413,6 @@ mod facts;
 mod handles;
 mod keys;
 mod model;
-// Deliberately not re-exported. The delivered-realization record is a reviewed
-// draft staged under ADR 0074 convention 7: its constructor and its reader are
-// both public artifact surface that ADR 0075 reserves to Tom, and the module
-// documentation records what is staged and what the wiring slice still owes.
 mod realization;
 mod requirement;
 mod verify;
@@ -494,10 +490,39 @@ pub use model::{
     InterfaceComponentRef, RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion,
     SelectedProvider, StageDependencyReason, VariantRef, VerifiedArtifactProgram,
 };
+pub use realization::codec::{
+    ArtifactCrossCheck, OrderedSubject as RealizationOrderedSubject, RealizationCodecError,
+    ReferenceSubject as RealizationReferenceSubject, TagSubject as RealizationTagSubject,
+    decode as decode_realization, validate_against_artifact,
+};
+pub use realization::{
+    AssessmentDisposition, DELIVERED_REALIZATION_DOMAIN, DeliveredRealizationBuilder,
+    DeliveredRealizationError, DeliveredRealizationRecord, DispositionView, EntryPolicyBinding,
+    LATEST_DELIVERED_PHASE, NumericalObligation, NumericalPolicySubject, RecordFamily,
+    ScalarArithmeticRecord, ScalarArithmeticView, TargetEvidence, TargetEvidenceDeclaration,
+    overlapping_behaviour,
+};
+// The one shared scalar-arithmetic policy vocabulary, named by re-export rather
+// than restated. `tiler-compiler` names the same types the same way, so the
+// dimension set, the behaviour spaces, the means, the locus, and the structured
+// provenance exist once in the workspace and a widened one is a build error at
+// every total encoder rather than a silent divergence between two copies. It
+// travels with the accessors that produce and consume it for the reason
+// [`BufferAccess`] does: a public method whose types its callers cannot spell is
+// unusable, and `tiler-runtime`'s dependency closure is fixed at
+// `[tiler-artifact]` under ADR 0081.
 pub use requirement::{
     BackendFeatureRequirement, MAX_ROUTE_FEATURE_PAYLOAD_BYTES, RouteRequirement,
     RouteRequirementError, RouteRequirementSubject, RouteResourceDimension,
     RouteResourceRequirement,
+};
+pub use tiler_ir::numerics::{
+    BehaviourSpace, CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole,
+    DIMENSION_COUNT, DimensionBehaviour, ExecutionEnvironmentIdentity, FactAuthority,
+    FactEvidenceBasis, FactSourceProvenance, FactValidityScope, HonouringMeans, MeasurementContext,
+    NumericalDimension, NumericalObligationKey, PolicyLocus, ProvenanceIdentity,
+    RelaxationRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectError,
+    ScalarArithmeticSubjectIdentity,
 };
 
 /// Maximum plan variants admitted by one artifact program.
