@@ -99,6 +99,168 @@ fn affine_prologue(expression: &PointwiseF32Expression) -> Option<(u32, u32)> {
         .then_some((*scale, *bias))
 }
 
+/// Stable name of the serial-or-direct baseline every cover region is offered.
+///
+/// Named beside the two parallel reduction strategies because it is withheld
+/// the same way they are: a region the schedule vocabulary cannot spell earns a
+/// [`crate::frontier::DeclinedStrategy`] against this name, so "no baseline for
+/// this region" is a statement in the trace rather than an absence in it.
+pub(crate) const SERIAL_BASELINE_STRATEGY: &str = "tiler.region.serial-baseline";
+
+/// Which tensor one cover region's owning write targets.
+///
+/// **The cover decides this, and only the cover can.** A region writes a
+/// declared program output when the cover assigns it one, and a materialized
+/// intermediate when one of the cover's materialization edges names it as
+/// producer. Asking the *request* instead — whether its whole program was
+/// recognized as an elementwise one or as a reduction prologue — answers a
+/// question about the program where a question about the region belongs, and
+/// gives every region a cover places the same answer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RegionWrite {
+    /// The cover assigns this region a declared program output.
+    ProgramOutput,
+    /// A materialization edge names this region as the producer of a value
+    /// another region reads.
+    Materialized,
+}
+
+impl RegionWrite {
+    /// Returns the boundary tensor role the region's owning write carries.
+    pub(crate) const fn tensor(self) -> TensorRole {
+        match self {
+            Self::ProgramOutput => TensorRole::Output,
+            Self::Materialized => TensorRole::Intermediate,
+        }
+    }
+}
+
+/// Which region of the bounded schedule vocabulary spells one cover region.
+///
+/// This is what [`spell_region`] decides, and it is deliberately a decision
+/// about the *region* rather than about the program: the same recognized
+/// program is covered many ways, and only the placed occurrences say which
+/// region — if any — the vocabulary has for each part.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RegionSpelling {
+    /// An elementwise pass over the declared inputs, writing the tensor the
+    /// cover assigned it.
+    Pointwise(RegionWrite),
+    /// A strict serial fold over the materialized contributor domain.
+    SerialSum,
+    /// A strict tensor contraction over the declared inputs.
+    Contraction,
+    /// The fold and its affine prologue realized as one region.
+    FusedSerialSum,
+}
+
+/// Why the bounded schedule vocabulary cannot spell one cover region.
+///
+/// Every variant is a fact about the region *the cover placed*, decided from
+/// its exact occurrences — never about the target, the contract, or the
+/// program's admissibility. Each occurrence in such a region already resolved
+/// its lowering capability and the grouping is already legal; what is missing
+/// is a scheduled region that expresses those occurrences together.
+///
+/// The three walls are the ones
+/// `docs/research/program-planning/minimum-correct-physical-realization-profile.md`
+/// names as *widenings with their own owning tickets*. Each becomes an offer
+/// when its widening lands, with no change to this classification's shape. The
+/// profile's third named wall — a reduction folding a declared input directly —
+/// has no variant here because `recognize_reduction` refuses that program at
+/// the request boundary, so no cover ever places such a region.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RegionVocabularyWall {
+    /// The region covers part of a recognized occurrence group the vocabulary
+    /// spells only whole.
+    ///
+    /// The scalar program carries the recognizer's expression entire — node
+    /// topology, ordered operands, constant bits, and explicit root — and no
+    /// sub-expression of it, so a cover that split the chain has no region to
+    /// build for either half.
+    PartialCoverage,
+    /// The region covers the reduction together with part, but not all, of its
+    /// recognized prologue.
+    ///
+    /// Distinct from [`Self::PartialCoverage`] because the wall is a different
+    /// one: [`ScalarProgram::FusedMultiplyAddSerialSum`] fuses the *whole*
+    /// prologue into the fold or nothing, so a partially fused region is
+    /// unspellable even where each half separately would not be.
+    PartialFusedProgram,
+    /// The region is the whole recognized program, and the fused reduction
+    /// vocabulary cannot spell its prologue.
+    ///
+    /// The one wall that was already decided and already lost a candidate
+    /// silently: [`fused_region`] answers `None` for every prologue that is not
+    /// the affine one, and the materialized cover still realizes the program.
+    FusedPrologueUnspellable,
+}
+
+impl RegionVocabularyWall {
+    /// Returns the stable reason code naming this wall.
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::PartialCoverage => "region-partial-coverage",
+            Self::PartialFusedProgram => "region-partial-fused-program",
+            // The rule `build_fused_scheduled_region` already names for the same
+            // condition, so one code covers both spellings of the fact.
+            Self::FusedPrologueUnspellable => "fused-prologue-unspellable",
+        }
+    }
+}
+
+/// Decides which scheduled region spells the occurrences one cover placed.
+///
+/// **The subject is what is read, and the recognition is the context it is read
+/// against.** `members` are the exact occurrences the cover grouped and `write`
+/// is the tensor the cover assigned that group; the request supplies what those
+/// occurrences *are* — the recognized expression, its shapes, and how the
+/// program partitions into prologue and fold — which a region subject does not
+/// and cannot carry. A derivation that read the recognition alone would answer
+/// the same for every region of a program, which is exactly the defect this
+/// replaces.
+///
+/// The answer is total: every member set either names a region this vocabulary
+/// builds or a wall it hit, and there is no third state. That totality is the
+/// whole point — the caller converts an `Err` into a typed decline, so silence
+/// stops being an admissible answer for a region a legal cover placed.
+pub(crate) fn spell_region(
+    request: &VerifiedTargetRequest,
+    members: &[SemanticMemberId],
+    write: RegionWrite,
+) -> Result<RegionSpelling, RegionVocabularyWall> {
+    if let Some(pointwise) = request.pointwise() {
+        if members == pointwise.members {
+            return Ok(RegionSpelling::Pointwise(write));
+        }
+    } else if let Some(contraction) = request.contraction() {
+        // Before the serial-sum accessor, which panics for any other strategy.
+        if members == contraction.members {
+            return Ok(RegionSpelling::Contraction);
+        }
+    } else {
+        let recognized = &request.serial_sum().members;
+        if members == recognized.pointwise() {
+            return Ok(RegionSpelling::Pointwise(write));
+        }
+        if members == recognized.reduction() {
+            return Ok(RegionSpelling::SerialSum);
+        }
+        if members == recognized.all() {
+            return fused_prologue_constants(request)
+                .map(|_| RegionSpelling::FusedSerialSum)
+                .ok_or(RegionVocabularyWall::FusedPrologueUnspellable);
+        }
+        if members
+            .iter()
+            .any(|member| recognized.reduction().contains(member))
+        {
+            return Err(RegionVocabularyWall::PartialFusedProgram);
+        }
+    }
+    Err(RegionVocabularyWall::PartialCoverage)
+}
+
 /// Stable candidate identity used when assessing one scheduled region.
 const REGION_PROPOSAL_CANDIDATE: &str = "tiler.prototype.scheduled-region";
 
@@ -324,7 +486,9 @@ impl Error for PhysicalError {}
 pub(crate) fn build_scheduled_regions(
     request: &VerifiedTargetRequest,
 ) -> Result<Vec<VerifiedScheduledRegion>, PhysicalError> {
-    let (pointwise, pointwise_members) = pointwise_region(request);
+    // The prologue of a materialized serial sum, which every cover placing it
+    // materializes for the fold that reads it.
+    let (pointwise, pointwise_members) = pointwise_region(request, RegionWrite::Materialized);
     let (reduction, reduction_members) = reduction_region(request);
     Ok(vec![
         verify_schedule(pointwise, pointwise_members, request)?,
@@ -349,11 +513,17 @@ pub(crate) fn build_fused_scheduled_region(
 /// Builds the canonical elementwise scheduled region for one request.
 ///
 /// This constructs the raw, not-yet-verified region and its recognized
-/// elementwise members, either as a reduction prologue that writes an
-/// intermediate or as a standalone whole-program region that writes the output.
-/// Both carry the recognizer's own [`PointwiseF32Expression`] rather than a
-/// spelling rebuilt here, which is what lets one builder serve every expression
-/// the recognizer admits instead of one shape it was taught.
+/// elementwise members. It carries the recognizer's own
+/// [`PointwiseF32Expression`] rather than a spelling rebuilt here, which is what
+/// lets one builder serve every expression the recognizer admits instead of one
+/// shape it was taught.
+///
+/// **`write` comes from the cover, not from the recognition.** The elementwise
+/// region a cover places is a reduction prologue when a materialization edge
+/// names it as producer and a whole-program region when the cover assigns it a
+/// declared output, and those are the same two regions this builder always
+/// built — it simply used to decide between them by asking which whole-program
+/// recognizer had matched, which is a question about the program.
 ///
 /// # Panics
 ///
@@ -366,14 +536,15 @@ pub(crate) fn build_fused_scheduled_region(
 /// governed profile cannot dispatch.
 pub(crate) fn pointwise_region(
     request: &VerifiedTargetRequest,
+    write: RegionWrite,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
-    let (shape, elements, inputs, write_tensor, expression, members) =
+    let write_tensor = write.tensor();
+    let (shape, elements, inputs, expression, members) =
         if let Some(pointwise) = request.pointwise() {
             (
                 pointwise.shape.clone(),
                 pointwise.elements,
                 pointwise.input_keys.len(),
-                TensorRole::Output,
                 pointwise.expression.clone(),
                 pointwise.members.clone(),
             )
@@ -383,7 +554,6 @@ pub(crate) fn pointwise_region(
                 serial.input_shape.clone(),
                 serial.input_elements,
                 serial.input_keys.len(),
-                TensorRole::Intermediate,
                 serial.prologue.clone(),
                 serial.members.pointwise().to_vec(),
             )
@@ -2470,7 +2640,7 @@ mod tests {
     #[test]
     fn pointwise_schedule_requires_exact_expression_and_complete_ordered_coverage() {
         let request = pointwise_request();
-        let (raw, members) = pointwise_region(&request);
+        let (raw, members) = pointwise_region(&request, RegionWrite::ProgramOutput);
         let region = verify_schedule(raw, members, &request).unwrap();
         let expected = [
             SemanticMemberId(0),

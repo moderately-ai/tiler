@@ -728,6 +728,282 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     }
 }
 
+/// One region subject's frontier attribution, read out of the compile path's
+/// own trace.
+struct RegionAttribution {
+    role: String,
+    admitted: u64,
+    /// Whether the provider declined the serial baseline for this region and
+    /// named the region-vocabulary wall it hit.
+    declined_baseline: Option<String>,
+    /// The record closing this region's frontier enumeration, which is what
+    /// every later attribution for this
+    /// region cites: its causal chain runs back through each decline the
+    /// enumeration recorded to the admitted count that opened it, so following
+    /// one cause from a coverage gap reaches the wall that caused it.
+    enumeration_tail: ExplainRecordId,
+}
+
+/// Reads one attribution per region subject out of a compiled trace.
+///
+/// Keyed by the region's explain subject, which is what the whole explain half
+/// of this work is about: a role-keyed reading would fold fourteen of the
+/// governed program's subjects into one entry and could not tell an answered
+/// region from an unanswered one.
+fn region_attributions(trace: &VerifiedExplainTrace) -> BTreeMap<String, RegionAttribution> {
+    let mut attributions: BTreeMap<String, RegionAttribution> = BTreeMap::new();
+    for record in trace.records() {
+        let ExplainEvent::Check { assessment, .. } = record.event() else {
+            continue;
+        };
+        if assessment.predicate().as_str() != "frontier.locally-feasible" {
+            continue;
+        }
+        let fact = |key: &str| {
+            assessment
+                .facts()
+                .iter()
+                .find(|fact| fact.key().as_str() == key)
+        };
+        let Some(FactValue::Count(admitted)) = fact("admitted-count").map(ExplainFact::value)
+        else {
+            panic!("a frontier record states its admitted count");
+        };
+        let Some(FactValue::Identity(role)) = fact("region-role").map(ExplainFact::value) else {
+            panic!("a frontier record states its region role");
+        };
+        let previous = attributions.insert(
+            record.subjects()[0].key().as_str().to_owned(),
+            RegionAttribution {
+                role: role.as_str().to_owned(),
+                admitted: *admitted,
+                declined_baseline: None,
+                enumeration_tail: record.id(),
+            },
+        );
+        assert!(
+            previous.is_none(),
+            "one region subject enumerated its frontier twice",
+        );
+    }
+    for record in trace.records() {
+        let ExplainEvent::Check { assessment, .. } = record.event() else {
+            continue;
+        };
+        if assessment.predicate().as_str() != "frontier.rejections-recorded" {
+            continue;
+        }
+        attributions
+            .get_mut(record.subjects()[0].key().as_str())
+            .expect("a rejection count closes a subject whose frontier was enumerated")
+            .enumeration_tail = record.id();
+    }
+    for record in trace.records() {
+        if record.rule().key().as_str() != "frontier.strategy-decline.v1" {
+            continue;
+        }
+        let ExplainEvent::Check { assessment, .. } = record.event() else {
+            continue;
+        };
+        let baseline = assessment.facts().iter().any(|fact| {
+            fact.key().as_str() == "strategy"
+                && matches!(
+                    fact.value(),
+                    FactValue::Identity(key)
+                        if key.as_str() == crate::physical::SERIAL_BASELINE_STRATEGY
+                )
+        });
+        if !baseline {
+            continue;
+        }
+        let key = record.subjects()[0].key().as_str();
+        let reason = assessment
+            .reason()
+            .expect("a decline names the wall it hit")
+            .as_str()
+            .to_owned();
+        attributions
+            .get_mut(key)
+            .expect("a decline is recorded on a subject whose frontier was enumerated")
+            .declined_baseline = Some(reason);
+    }
+    attributions
+}
+
+/// **Obligation 4 of the minimum correct physical realization profile, end to
+/// end: no region a legal cover placed is answered with silence.**
+///
+/// Every region subject the compile path enumerates either admits at least one
+/// implementation or carries a typed decline naming which region-vocabulary
+/// wall it hit. Before the provider read the cover region subject, fourteen of
+/// this program's seventeen subjects reached the final `else` of a member-set
+/// comparison and returned an empty offer, so complete-plan selection saw an
+/// unimplemented region with nothing said about it.
+///
+/// The implication is what this asserts, and it is a check that can say no:
+/// deleting the `Err(wall)` arm of `GovernedPhysicalProvider::propose` restores
+/// the empty offer and fourteen subjects fail it at once.
+#[test]
+fn every_cover_region_receives_a_proposal_or_a_typed_decline() {
+    let semantic = semantic(false);
+    let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let attributions = region_attributions(&product.targets[0].explain);
+
+    assert_eq!(
+        attributions.len(),
+        17,
+        "the governed five-operation program covers seventeen distinct region subjects",
+    );
+    for (key, attribution) in &attributions {
+        assert!(
+            attribution.admitted > 0 || attribution.declined_baseline.is_some(),
+            "region {key} ({}) was answered with silence",
+            attribution.role,
+        );
+    }
+    // The three the vocabulary spells are answered with implementations, and
+    // every other one with a wall. Asserting both halves is what stops a
+    // regression that declined *everything* from passing the implication above.
+    let mut answered: Vec<&str> = attributions
+        .values()
+        .filter(|attribution| attribution.admitted > 0)
+        .map(|attribution| attribution.role.as_str())
+        .collect();
+    answered.sort_unstable();
+    assert_eq!(answered, ["pointwise", "reduction", "whole-program"]);
+    let walls: BTreeMap<&str, usize> = attributions
+        .values()
+        .filter_map(|attribution| attribution.declined_baseline.as_deref())
+        .fold(BTreeMap::new(), |mut counts, reason| {
+            *counts.entry(reason).or_insert(0) += 1;
+            counts
+        });
+    assert_eq!(
+        walls,
+        BTreeMap::from([
+            // Five regions covering the reduction together with part, but not
+            // all, of its four-occurrence prologue.
+            ("region-partial-fused-program", 5),
+            // Nine regions covering a proper part of that prologue.
+            ("region-partial-coverage", 9),
+        ]),
+        "the fourteen declines no longer name the walls they hit",
+    );
+}
+
+/// **Fourteen region subjects share one role and are fourteen explain
+/// subjects.**
+///
+/// The role vocabulary has four values and the cover space has seventeen
+/// regions, so a role-keyed trace could not name thirteen of them at all —
+/// `record_frontier` was called on the first sighting of each role, and the
+/// rest emitted nothing. Keying on the region's canonical occurrence makes the
+/// deduplication correct rather than lossy.
+///
+/// The check that can say no is the key itself: reverting the subject key to
+/// `region:{role}` collapses these fourteen to one and the count fails.
+#[test]
+fn region_subjects_sharing_a_role_are_distinct_explain_subjects() {
+    let semantic = semantic(false);
+    let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let attributions = region_attributions(&product.targets[0].explain);
+
+    let unrecognized: Vec<&String> = attributions
+        .iter()
+        .filter(|(_, attribution)| attribution.role == "unrecognized")
+        .map(|(key, _)| key)
+        .collect();
+    assert_eq!(unrecognized.len(), 14);
+    // `region_attributions` is a map keyed by the subject, so distinctness is
+    // structural — but stating it is what makes the count above a claim about
+    // fourteen regions rather than about fourteen records.
+    let distinct: std::collections::BTreeSet<&&String> = unrecognized.iter().collect();
+    assert_eq!(distinct.len(), unrecognized.len());
+    // Each one covers a different occurrence set, which is why one record for
+    // all of them was lossy: the declines they carry are not interchangeable.
+    assert!(
+        attributions
+            .values()
+            .filter(|attribution| attribution.role == "unrecognized")
+            .any(|attribution| attribution.declined_baseline.as_deref()
+                == Some("region-partial-fused-program"))
+    );
+}
+
+/// **The per-cover coverage gap reaches a production reader.**
+///
+/// `PlanRejection::RegionUnimplemented` has always been constructed — the
+/// governed program records thirty-eight per compile — and
+/// `SelectedPortfolio::rejections()` had no caller outside `selection.rs`'s own
+/// test module, so the one authority that states the gap *per cover* was
+/// compiled away. This drives the reader that now emits it, and checks each
+/// record is caused by the frontier enumeration for its own region rather than
+/// by whatever record happened to be last.
+///
+/// The check that can say no is the emission: removing the `record_coverage_gaps`
+/// call leaves the rejections constructed and the trace empty of them, and the
+/// count below fails.
+#[test]
+fn the_per_cover_coverage_gap_reaches_the_trace() {
+    let semantic = semantic(false);
+    let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let trace = &product.targets[0].explain;
+    let attributions = region_attributions(trace);
+
+    let gaps: Vec<&crate::explain::ExplainRecord> = trace
+        .records()
+        .iter()
+        .filter(|record| record.rule().key().as_str() == "selection.region-coverage.v1")
+        .collect();
+    assert_eq!(
+        gaps.len(),
+        38,
+        "the governed program's covers report thirty-eight region coverage gaps",
+    );
+    for gap in &gaps {
+        assert!(matches!(
+            gap.event(),
+            ExplainEvent::Check { assessment, .. }
+                if assessment.predicate().as_str() == "selection.region-implemented"
+                    && assessment
+                        .reason()
+                        .is_some_and(|reason| reason.as_str() == "region-unimplemented")
+        ));
+        // Two subjects: the region that had no implementation and the cover
+        // that placed it. A gap naming only one of them cannot be acted on —
+        // the same region is implementable in no cover, and the same cover
+        // fails for exactly one region.
+        let subjects: Vec<&str> = gap
+            .subjects()
+            .iter()
+            .map(|subject| subject.key().as_str())
+            .collect();
+        assert_eq!(subjects.len(), 2);
+        assert!(subjects[1].starts_with("region-cover:"));
+        let attribution = attributions
+            .get(subjects[0])
+            .expect("a coverage gap names a region whose frontier was enumerated");
+        assert_eq!(attribution.admitted, 0);
+        assert_eq!(
+            gap.causes(),
+            [attribution.enumeration_tail],
+            "the coverage gap is not caused by its own region's frontier enumeration",
+        );
+    }
+    // Every cover that reported a gap is one that contributed no plan, and the
+    // regions named are exactly the ones nothing implemented.
+    let named: std::collections::BTreeSet<&str> = gaps
+        .iter()
+        .map(|gap| gap.subjects()[0].key().as_str())
+        .collect();
+    assert!(
+        named
+            .iter()
+            .all(|key| attributions[*key].declined_baseline.is_some()),
+        "a region was reported unimplemented without a decline explaining why",
+    );
+}
+
 /// Every draft authority the conformance gate wires must speak the explain
 /// vocabulary; a silent authority cannot be audited.
 #[test]
@@ -750,20 +1026,36 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("cover.enumeration.v1", 1),
             ("fusion.legality.v1", 12),
             ("fusion.strict-f32-equivalence", 1),
-            // Two summary records remain per region subject: admitted count and
+            // Two summary records per region subject: admitted count and
             // rejected count. Typed per-opaque-rejection detail records accompany
             // them when present; this governed compile fixture has no opaque
-            // rejection, so its four region subjects still contribute eight.
-            ("frontier.enumeration.v1", 8),
-            // Exactly two strategies are considered and withheld, both at the
-            // reduction subject and both for the same reason: this fixture
-            // compiles under the strict contract, and the multi-pass split and
-            // the single-workgroup tree each *are* a reassociation of the
-            // declared contributor sequence. The other three subjects never
-            // reach either strategy, so a third record would mean one was being
-            // considered somewhere it does not apply.
-            ("frontier.strategy-decline.v1", 2),
+            // rejection, so its **seventeen** region subjects contribute
+            // thirty-four.
+            //
+            // Seventeen rather than the four this census used to record, and
+            // the difference is the explain half of the region-general
+            // provider: the frontier record is keyed by each region's canonical
+            // occurrence rather than by its role, so the fourteen subjects that
+            // share the role `unrecognized` are fourteen records instead of one
+            // record and thirteen silences.
+            ("frontier.enumeration.v1", 34),
+            // Sixteen: the two parallel reduction strategies, plus the serial
+            // baseline withheld once for each of the fourteen region subjects
+            // this schedule vocabulary cannot spell.
+            //
+            // The two are the multi-pass split and the single-workgroup tree,
+            // both at the reduction subject and both for the same reason — this
+            // fixture compiles under the strict contract, and each *is* a
+            // reassociation of the declared contributor sequence. No other
+            // subject reaches either strategy, so a seventeenth record would
+            // mean one was being considered somewhere it does not apply.
+            ("frontier.strategy-decline.v1", 16),
             ("selection.complete-plan.v1", 1),
+            // One per (cover, unimplemented region) pair: the coverage gap that
+            // was constructed and never emitted. Thirty-eight is the count
+            // `select_physical_plans` already recorded internally, now reaching
+            // a reader with the region named rather than the role.
+            ("selection.region-coverage.v1", 38),
             ("compile.region.verified", 3),
             ("compile.plan.boundary", 2),
             ("schedule.plan-regions", 2),
@@ -1767,9 +2059,11 @@ fn infeasible_baseline_does_not_suppress_a_feasible_fused_plan() {
         target.portfolio.alternatives[0].kind,
         ProgramAlternativeKind::Fused
     );
+    let pointwise = region_subject_key(&target.explain, "pointwise")
+        .expect("the pointwise region subject reached the frontier");
     assert!(target.explain.records().iter().any(|record| {
         record.rule().key().as_str() == "target.grid-axis"
-            && record.subjects()[0].key().as_str() == "region:pointwise"
+            && record.subjects()[0].key().as_str() == pointwise
             && record.event().disposition() == ExplainDisposition::RejectedTarget
             && matches!(
                 record.event(),
@@ -1894,20 +2188,25 @@ fn no_feasible_plan_retains_a_typed_terminal_failure_trace() {
             .iter()
             .all(|record| { record.event().disposition() == ExplainDisposition::RejectedTarget })
     );
-    // Every recognized region role the target refused is named exactly once.
+    // Every recognized region the target refused is named exactly once, by the
+    // region's own explain subject rather than by its role: the roles below
+    // resolve to three distinct occurrence labels, and a rejection keyed by role
+    // could not have told them apart from the eleven other subjects this
+    // program covers.
     let mut subjects = causal_rejections
         .iter()
-        .map(|record| record.subjects()[0].key().as_str())
+        .map(|record| record.subjects()[0].key().as_str().to_owned())
         .collect::<Vec<_>>();
-    subjects.sort_unstable();
-    assert_eq!(
-        subjects,
-        [
-            "region:pointwise",
-            "region:reduction",
-            "region:whole-program"
-        ]
-    );
+    subjects.sort();
+    let mut expected = ["pointwise", "reduction", "whole-program"]
+        .into_iter()
+        .map(|role| {
+            region_subject_key(explain, role)
+                .unwrap_or_else(|| panic!("the {role} region subject reached the frontier"))
+        })
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(subjects, expected);
 }
 
 #[test]
@@ -2880,7 +3179,11 @@ fn mixed_frontier_trace(
     let semantic = semantic(false);
     let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = verified.for_target(verified.target_profiles()[0]).unwrap();
-    let subject = FrontierRegionSubject::new("fused", request.serial_sum().members.all());
+    let subject = FrontierRegionSubject::new(
+        "fused",
+        request.serial_sum().members.all(),
+        crate::physical::RegionWrite::ProgramOutput,
+    );
     let governed = GovernedPhysicalProvider;
     let opaque = UnregisteredOpaqueProvider {
         identity: tiler_ir::semantic::ProviderIdentity::new(
@@ -2930,7 +3233,7 @@ fn mixed_frontier_trace(
 
     let mut explain = ExplainWriter::new(&request).unwrap();
     let root = test_root(&mut explain);
-    let cause = record_frontier(&mut explain, "fused", &frontier, root).unwrap();
+    let cause = record_frontier(&mut explain, "region:fused", "fused", &frontier, root).unwrap();
     let alternative = explain
         .subject(SubjectKind::Alternative, "alternative:test")
         .unwrap();
@@ -3122,30 +3425,64 @@ fn fixture_call_identity() -> crate::call_registry::OpaqueCallIdentity {
         .expect("the fixture call identity is valid")
 }
 
+/// The frontier record the compile path emitted for the region subject carrying
+/// `role`, if any.
+///
+/// The record is keyed by the region's canonical occurrence label rather than by
+/// its role, so a test asking for "the pointwise region" asks the trace which
+/// subject reported that role instead of reconstructing a digest. It panics when
+/// two subjects report the role: the roles these tests name identify exactly one
+/// region of the governed program, and a silent first match would let a
+/// collapsed role pass as a resolved one.
+fn frontier_record<'trace>(
+    trace: &'trace VerifiedExplainTrace,
+    role: &str,
+) -> Option<&'trace crate::explain::ExplainRecord> {
+    let matching: Vec<_> = trace
+        .records()
+        .iter()
+        .filter(|record| {
+            let ExplainEvent::Check { assessment, .. } = record.event() else {
+                return false;
+            };
+            assessment.predicate().as_str() == "frontier.locally-feasible"
+                && assessment.facts().iter().any(|fact| {
+                    fact.key().as_str() == "region-role"
+                        && matches!(fact.value(), FactValue::Identity(key) if key.as_str() == role)
+                })
+        })
+        .collect();
+    assert!(
+        matching.len() <= 1,
+        "{} region subjects reported the role {role}, so it names no single region",
+        matching.len(),
+    );
+    matching.first().copied()
+}
+
+/// The explain subject key of the region subject carrying `role`.
+fn region_subject_key(trace: &VerifiedExplainTrace, role: &str) -> Option<String> {
+    Some(
+        frontier_record(trace, role)?.subjects()[0]
+            .key()
+            .as_str()
+            .to_owned(),
+    )
+}
+
 /// The implementations the frontier admitted for one region role, as the compile
 /// path's own explain trace reports them.
 fn admitted_count(trace: &VerifiedExplainTrace, role: &str) -> Option<u64> {
-    let key = format!("region:{role}");
-    trace.records().iter().find_map(|record| {
-        let ExplainEvent::Check { assessment, .. } = record.event() else {
-            return None;
-        };
-        if assessment.predicate().as_str() != "frontier.locally-feasible"
-            || !record
-                .subjects()
-                .iter()
-                .any(|subject| subject.key().as_str() == key)
-        {
-            return None;
-        }
-        assessment
-            .facts()
-            .iter()
-            .find_map(|fact| match (fact.key().as_str(), fact.value()) {
-                ("admitted-count", FactValue::Count(count)) => Some(*count),
-                _ => None,
-            })
-    })
+    let ExplainEvent::Check { assessment, .. } = frontier_record(trace, role)?.event() else {
+        return None;
+    };
+    assessment
+        .facts()
+        .iter()
+        .find_map(|fact| match (fact.key().as_str(), fact.value()) {
+            ("admitted-count", FactValue::Count(count)) => Some(*count),
+            _ => None,
+        })
 }
 
 /// A registered opaque call reaches the compile path and is admitted there.
@@ -3330,6 +3667,7 @@ fn reduction_frontier(
     let subject = FrontierRegionSubject::new(
         "reduction",
         request.serial_sum().members.reduction().to_vec(),
+        crate::physical::RegionWrite::ProgramOutput,
     );
     let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
     enumerate_frontier(
@@ -4005,7 +4343,8 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
 fn split_regions(
     request: &crate::request::VerifiedTargetRequest,
 ) -> Vec<crate::physical::VerifiedScheduledRegion> {
-    let (raw, members) = crate::physical::pointwise_region(request);
+    let (raw, members) =
+        crate::physical::pointwise_region(request, crate::physical::RegionWrite::Materialized);
     let mut regions = vec![
         crate::physical::verify_schedule(raw, members, request).expect("the prologue verifies"),
     ];

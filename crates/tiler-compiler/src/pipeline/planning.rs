@@ -16,6 +16,23 @@ one parent whose contents are visible in the same directory"
 
 use super::*;
 
+/// One region subject's explain attribution, recorded once however many covers
+/// place that region.
+///
+/// Held against the region *subject* rather than against its presentation role,
+/// which is what makes the deduplication correct instead of lossy: fourteen of
+/// the governed program's seventeen subjects share the role `unrecognized`, so
+/// a role-keyed guard recorded one of them and dropped the other thirteen
+/// entirely.
+struct RegionRecord {
+    /// The region's own bounded explain subject key.
+    key: String,
+    /// The frontier record every later attribution for this region cites.
+    frontier: ExplainRecordId,
+    /// The target refusal this region earned, when it earned one.
+    refusal: Option<TerminalCause>,
+}
+
 /// Everything the complete-plan authorities produced for one target.
 pub(super) struct CompletePlans {
     /// Every recognized occurrence's resolved capability and refinement evidence.
@@ -186,7 +203,7 @@ pub(super) fn enumerate_complete_plans(
     let mut sources = Vec::new();
     let mut rejections = TargetRejections::default();
     let mut frontier_cause = numerical_cause;
-    let mut recorded_roles = std::collections::BTreeMap::new();
+    let mut recorded_subjects: Vec<(FrontierRegionSubject, RegionRecord)> = Vec::new();
     // Covers every one of whose regions was proposed for, but at least one of
     // which the target refused. A reader expects those ruled out by feasibility
     // rather than by a missing capability, so each is noted in the terminal
@@ -228,12 +245,29 @@ pub(super) fn enumerate_complete_plans(
         let mut refusal: Option<TerminalCause> = None;
         for region in cover.regions() {
             let role = region_role(verified, region.members());
-            // The sizes of the intermediates *this cover* hands this region, so
-            // a work scaling stated per element of an intermediate resolves
-            // against the edge that exists rather than declining. The cover is
-            // the only authority that knows them: the same region placed in two
-            // covers may read different intermediates, which is why the counts
-            // are stated on the subject and the subject keys the memo below.
+            // The tensor this region's owning write targets, decided by the
+            // cover that placed it: a region another region reads from writes
+            // the intermediate that edge materializes, and one no edge names as
+            // producer writes a declared program output. `verify_cover` already
+            // proved each ordered named output is produced by exactly one
+            // region, so "produces no edge" is "produces an output" for the
+            // single-output programs the request boundary admits.
+            let write = if cover
+                .materializations()
+                .iter()
+                .any(|edge| edge.producer() == region.occurrence())
+            {
+                crate::physical::RegionWrite::Materialized
+            } else {
+                crate::physical::RegionWrite::ProgramOutput
+            };
+            // The subject additionally states the sizes of the intermediates
+            // *this cover* hands this region, so a work scaling stated per
+            // element of an intermediate resolves against the edge that exists
+            // rather than declining. The cover is the only authority that knows
+            // them: the same region placed in two covers may read different
+            // intermediates, which is why the counts are stated on the subject
+            // and the subject keys the memo below.
             let subject = FrontierRegionSubject::reading_intermediates(
                 role,
                 region.members().to_vec(),
@@ -246,6 +280,7 @@ pub(super) fn enumerate_complete_plans(
                             .any(|consumer| consumer == region.occurrence())
                     })
                     .map(crate::cover::MaterializationEdge::element_count),
+                write,
             );
             let frontier = if let Some((_, enumerated)) = frontiers_by_subject
                 .iter()
@@ -268,12 +303,26 @@ pub(super) fn enumerate_complete_plans(
             if frontier.admitted().is_empty() && frontier.rejections().is_empty() {
                 proposed_everywhere = false;
             }
-            // One region role yields one region subject, so its frontier and any
-            // rejection it carries are recorded exactly once however many covers
-            // place that same region.
-            let first_sighting = !recorded_roles.contains_key(role);
+            // One region subject yields one explain subject, so its frontier and
+            // any rejection it carries are recorded exactly once however many
+            // covers place that same region.
+            //
+            // The key is the region's canonical occurrence label, which region
+            // formation already proved pairwise distinct within a compilation.
+            // Under the exact-partition policy the subject and the occurrence
+            // determine each other — a region's boundary inputs and its retained
+            // output follow from its members, so which values a cover
+            // materializes around it does too — and a duplicating policy would
+            // break that correspondence rather than this key.
+            let first_sighting = !recorded_subjects.iter().any(|(seen, _)| *seen == subject);
             if first_sighting {
-                frontier_cause = record_frontier(explain, role, &frontier, frontier_cause)?;
+                let key = region.label().to_owned();
+                let mut record = RegionRecord {
+                    frontier: record_frontier(explain, &key, role, &frontier, frontier_cause)?,
+                    key,
+                    refusal: None,
+                };
+                frontier_cause = record.frontier;
                 for rejection in frontier.rejections() {
                     let error = match rejection {
                         crate::frontier::FrontierRejection::Infeasible {
@@ -333,15 +382,20 @@ pub(super) fn enumerate_complete_plans(
                         | crate::frontier::FrontierRejection::NotApplicable { .. } => None,
                     };
                     if let Some(error) = error {
-                        let cause = record_target_rejection(explain, &error, role, frontier_cause)?;
-                        recorded_roles.insert(role, Some(cause));
+                        let cause =
+                            record_target_rejection(explain, &error, &record.key, frontier_cause)?;
+                        record.refusal = Some(cause);
                         rejections.push(TargetRejection { role, error, cause })?;
                     }
                 }
-                recorded_roles.entry(role).or_insert(None);
+                recorded_subjects.push((subject.clone(), record));
             }
-            if let Some(Some(cause)) = recorded_roles.get(role) {
-                refusal.get_or_insert(*cause);
+            if let Some(cause) = recorded_subjects
+                .iter()
+                .find(|(seen, _)| *seen == subject)
+                .and_then(|(_, record)| record.refusal)
+            {
+                refusal.get_or_insert(cause);
             }
             region_frontiers.push(RegionFrontier::new(subject, frontier));
         }
@@ -368,7 +422,15 @@ pub(super) fn enumerate_complete_plans(
             note_infeasible_cover(explain, &identity.label(), Some(cause))?;
         }
     }
-    let selection_record = record_plan_selection(explain, &portfolio, frontier_cause)?;
+    // Every region subject's frontier record, so the coverage gap the selection
+    // stage publishes is caused by the enumeration that found nothing rather
+    // than by whatever record happened to be last.
+    let frontier_records: Vec<(&str, ExplainRecordId)> = recorded_subjects
+        .iter()
+        .map(|(_, record)| (record.key.as_str(), record.frontier))
+        .collect();
+    let selection_record =
+        record_plan_selection(explain, &portfolio, &frontier_records, frontier_cause)?;
     Ok(CompletePlans {
         lowering,
         portfolio,

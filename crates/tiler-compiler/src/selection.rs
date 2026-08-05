@@ -585,6 +585,15 @@ pub(crate) enum PlanRejection {
     /// A cover region has no feasible implementation on this target, so no complete
     /// plan can cover it. This is the legitimate reason a cover contributes no plan.
     RegionUnimplemented {
+        /// The bounded explain label of the region occurrence that had no
+        /// implementation.
+        ///
+        /// The region rather than only its role, because the role is a
+        /// four-valued presentation label: a cover places many regions under
+        /// `unrecognized`, and keying the gap by role reported one of them and
+        /// silently dropped the rest. This is the only authority that states
+        /// the coverage gap *per cover*, so it has to name which region.
+        region: String,
         /// The region presentation role that had no implementation.
         role: &'static str,
         /// The cover identity whose region was unimplemented.
@@ -600,10 +609,28 @@ pub(crate) enum PlanRejection {
 }
 
 impl PlanRejection {
+    /// Returns the bounded explain label of the cover this rejection is about.
+    ///
+    /// Derived from the identity bytes the rejection already carries rather
+    /// than stored beside them, so the label a reader sees and the identity the
+    /// deduplication uses cannot disagree.
+    pub(crate) fn cover_label(&self) -> String {
+        match self {
+            Self::RegionUnimplemented { cover, .. } | Self::BoundaryDisagreement { cover, .. } => {
+                crate::region::hex_label("region-cover:", digest(cover))
+            }
+        }
+    }
+
     fn encode(&self, output: &mut Vec<u8>) {
         match self {
-            Self::RegionUnimplemented { role, cover } => {
+            Self::RegionUnimplemented {
+                region,
+                role,
+                cover,
+            } => {
                 output.push(1);
+                push_slice(output, region.as_bytes());
                 push_slice(output, role.as_bytes());
                 push_slice(output, cover);
             }
@@ -922,25 +949,26 @@ pub(crate) fn select_physical_plans(
 
         // A cover region with no admitted implementation cannot be completed.
         //
-        // The rejection is keyed by role and cover, so several unimplemented
-        // regions sharing a role within one cover describe one rejection and
-        // `or_insert` kept the first. Recognising the repeat here drops it
-        // before it costs a copy of the cover identity and an encoded sort key:
-        // the governed program records 38 of these per compile, every one of
-        // them the role `unrecognized`.
+        // The rejection is keyed by the region occurrence and the cover, so one
+        // rejection is recorded per region a cover could not implement. It used
+        // to be keyed by role and cover, which collapsed every `unrecognized`
+        // region of one cover into a single rejection: the governed program
+        // recorded 38 of these per compile, every one of them under that role,
+        // and a reader could not tell which region each was about.
+        //
+        // The cover's regions are distinct occurrences, so no deduplication is
+        // needed within one cover; the map still deduplicates across the covers
+        // that place the same region.
         let mut unimplemented = false;
-        let mut rejected_roles: Vec<&'static str> = Vec::new();
         for entry in &region_impls {
             if entry.admitted.is_empty() {
                 unimplemented = true;
-                if !rejected_roles.contains(&entry.role) {
-                    rejected_roles.push(entry.role);
-                    let rejection = PlanRejection::RegionUnimplemented {
-                        role: entry.role,
-                        cover: cover_identity.to_vec(),
-                    };
-                    rejections.entry(rejection.sort_key()).or_insert(rejection);
-                }
+                let rejection = PlanRejection::RegionUnimplemented {
+                    region: entry.region.to_owned(),
+                    role: entry.role,
+                    cover: cover_identity.to_vec(),
+                };
+                rejections.entry(rejection.sort_key()).or_insert(rejection);
             }
         }
         if unimplemented {
@@ -1041,8 +1069,11 @@ pub(crate) fn verify_selected_portfolio(
     Ok(())
 }
 
-/// The admitted implementations of one cover region, with its subject role.
+/// The admitted implementations of one cover region, with its explain subject.
 struct RegionFrontierBinding<'a> {
+    /// The bounded explain label of the region occurrence, which is what a
+    /// coverage gap must name: the role alone cannot distinguish two regions.
+    region: &'a str,
     role: &'static str,
     admitted: &'a [AdmittedImplementation],
 }
@@ -1074,7 +1105,7 @@ fn coherent_target_profile<'a>(
 
 /// Binds each cover region to its supplied frontier by semantic members.
 fn bind_region_frontiers<'a>(
-    cover: &RegionCover,
+    cover: &'a RegionCover,
     regions: &'a [RegionFrontier],
     target_profile: Option<&TargetProfile>,
 ) -> Result<Vec<RegionFrontierBinding<'a>>, SelectionError> {
@@ -1113,6 +1144,7 @@ fn bind_region_frontiers<'a>(
             }
         }
         bound.push(RegionFrontierBinding {
+            region: region.label(),
             role: entry.subject.role(),
             admitted: entry.frontier.admitted(),
         });
@@ -1937,7 +1969,11 @@ mod tests {
     pub(super) fn opaque_fused_portfolio(program: &SemanticProgram) -> super::SelectedPortfolio {
         let request = request_for(program);
         let cover = cover_with_partitions(program, &[vec![0, 1, 2, 3, 4]]);
-        let subject = FrontierRegionSubject::new("fused", request.serial_sum().members.all());
+        let subject = FrontierRegionSubject::new(
+            "fused",
+            request.serial_sum().members.all(),
+            crate::physical::RegionWrite::ProgramOutput,
+        );
         let source = CoverFrontiers::new(
             &cover,
             vec![frontier_with_opaque(
@@ -2002,6 +2038,7 @@ mod tests {
         let subject = FrontierRegionSubject::new(
             "pointwise",
             request.serial_sum().members.pointwise().to_vec(),
+            crate::physical::RegionWrite::Materialized,
         );
         let host = FixedRegionProvider {
             provider: provider_identity(provider, 1),
@@ -2027,6 +2064,7 @@ mod tests {
         let subject = FrontierRegionSubject::new(
             "reduction",
             request.serial_sum().members.reduction().to_vec(),
+            crate::physical::RegionWrite::ProgramOutput,
         );
         let host = FixedRegionProvider {
             provider: provider_identity(provider, 1),
@@ -2063,7 +2101,11 @@ mod tests {
         request: &VerifiedTargetRequest,
         providers: &[(&str, PhysicalCostEstimate)],
     ) -> RegionFrontier {
-        let subject = FrontierRegionSubject::new("fused", request.serial_sum().members.all());
+        let subject = FrontierRegionSubject::new(
+            "fused",
+            request.serial_sum().members.all(),
+            crate::physical::RegionWrite::ProgramOutput,
+        );
         let hosts: Vec<FixedRegionProvider> = providers
             .iter()
             .map(|(name, cost)| FixedRegionProvider {
@@ -2202,6 +2244,7 @@ mod tests {
                     FrontierRegionSubject::new(
                         "pointwise",
                         governed.serial_sum().members.pointwise().to_vec(),
+                        crate::physical::RegionWrite::Materialized,
                     ),
                     &governed,
                 ),
@@ -2209,6 +2252,7 @@ mod tests {
                     FrontierRegionSubject::new(
                         "reduction",
                         narrowed.serial_sum().members.reduction().to_vec(),
+                        crate::physical::RegionWrite::ProgramOutput,
                     ),
                     &narrowed,
                 ),
@@ -2397,6 +2441,7 @@ mod tests {
         let pointwise_subject = FrontierRegionSubject::new(
             "pointwise",
             request.serial_sum().members.pointwise().to_vec(),
+            crate::physical::RegionWrite::Materialized,
         );
         let source = CoverFrontiers::new(
             &cover,
@@ -2448,6 +2493,7 @@ mod tests {
         let reduction_subject = FrontierRegionSubject::new(
             "reduction",
             request.serial_sum().members.reduction().to_vec(),
+            crate::physical::RegionWrite::ProgramOutput,
         );
         let source = CoverFrontiers::new(
             &cover,

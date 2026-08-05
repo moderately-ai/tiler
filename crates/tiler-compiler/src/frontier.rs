@@ -1106,6 +1106,31 @@ pub(crate) enum StrategyDeclineCause {
         /// Stable code naming the unrepresentable quantity.
         rule: &'static str,
     },
+    /// The schedule vocabulary has no region spelling the occurrences this
+    /// cover region groups.
+    ///
+    /// The one cause that is a fact about the *region* rather than about the
+    /// request. The three above are decided from the request's permissions and
+    /// extents before any region exists, and hold for every region of that
+    /// request; this one holds for the exact occurrences a cover placed
+    /// together, and a different cover of the same program hits a different
+    /// answer.
+    ///
+    /// **Which occurrences those are is the region's canonical occurrence
+    /// identity, which the frontier record is keyed by, and it is deliberately
+    /// not restated here as a member ordinal.** A [`SemanticMemberId`] is a
+    /// graph-local *authoring* coordinate: the two spellings of the governed
+    /// program that `product_is_deterministic_and_preserves_the_materialized_boundary`
+    /// compares number the same occurrence `0` and `1`, so a cause carrying one
+    /// would put an authoring accident into a canonical encoding and into the
+    /// trace. The occurrence count is a property of the region itself and
+    /// carries safely.
+    UnspellableRegion {
+        /// Stable code naming which region-vocabulary wall the region hit.
+        rule: &'static str,
+        /// How many occurrences the region covers.
+        covered: u32,
+    },
 }
 
 impl StrategyDeclineCause {
@@ -1113,10 +1138,23 @@ impl StrategyDeclineCause {
     pub(crate) const fn reason(self) -> &'static str {
         match self {
             Self::NumericalPermissionRefused { .. } => "numerical-permission-refused",
-            Self::NoAdmissibleShape { rule, .. } | Self::Unrepresentable { rule } => rule,
+            Self::NoAdmissibleShape { rule, .. }
+            | Self::Unrepresentable { rule }
+            | Self::UnspellableRegion { rule, .. } => rule,
         }
     }
 
+    /// Appends this cause's canonical encoding.
+    ///
+    /// **Appends-only, carried by per-tag injectivity at this site rather than
+    /// by a green gate.** Each variant writes a distinct leading tag byte —
+    /// `0x01`, `0x02`, `0x03`, `0x04` — and no variant writes another's, so two
+    /// causes can share an encoding only if one variant's payload equals its
+    /// own for two distinct values. Within `0x04` the rule is length-prefixed
+    /// and the count is a fixed four-byte field, so the payload is a bijection
+    /// onto `(rule, covered)`. `0x04` was unused before this variant existed,
+    /// so every previously encoded cause keeps its exact bytes and no pinned
+    /// identity moves.
     fn encode(self, output: &mut Vec<u8>) {
         match self {
             Self::NumericalPermissionRefused { dimension } => {
@@ -1131,6 +1169,11 @@ impl StrategyDeclineCause {
             Self::Unrepresentable { rule } => {
                 output.push(0x03);
                 push_slice(output, rule.as_bytes());
+            }
+            Self::UnspellableRegion { rule, covered } => {
+                output.push(0x04);
+                push_slice(output, rule.as_bytes());
+                output.extend_from_slice(&covered.to_be_bytes());
             }
         }
     }
@@ -1224,10 +1267,19 @@ pub(crate) struct FrontierRegionSubject {
     /// without a cover, and a work scaling that needs one then declines rather
     /// than being sized against another tensor.
     intermediate_elements: Vec<u64>,
+    /// The tensor this region's owning write targets, as the cover assigned it.
+    ///
+    /// Stated here for the same reason `intermediate_elements` is: it is a fact
+    /// the *cover* holds. The same elementwise occurrences write a declared
+    /// program output in one cover and a materialized intermediate in another,
+    /// and asking the request instead gives every region of one program the
+    /// same answer.
+    write: crate::physical::RegionWrite,
 }
 
 impl FrontierRegionSubject {
-    /// Builds a region subject from a presentation role and its exact members.
+    /// Builds a region subject from a presentation role, its exact members, and
+    /// the tensor its owning write targets.
     ///
     /// The subject reads no cover-materialized intermediate. A local enumeration
     /// for a region considered outside any cover is exactly this case, and a
@@ -1236,11 +1288,16 @@ impl FrontierRegionSubject {
         dead_code,
         reason = "the coverless constructor states the local-authority case this module documents; the compile path always holds a cover and states its edges instead, so it is exercised by this authority's own tests"
     )]
-    pub(crate) fn new(role: &'static str, semantic_members: Vec<SemanticMemberId>) -> Self {
+    pub(crate) fn new(
+        role: &'static str,
+        semantic_members: Vec<SemanticMemberId>,
+        write: crate::physical::RegionWrite,
+    ) -> Self {
         Self {
             role,
             semantic_members,
             intermediate_elements: Vec::new(),
+            write,
         }
     }
 
@@ -1253,6 +1310,7 @@ impl FrontierRegionSubject {
         role: &'static str,
         semantic_members: Vec<SemanticMemberId>,
         intermediate_elements: impl IntoIterator<Item = u64>,
+        write: crate::physical::RegionWrite,
     ) -> Self {
         let mut intermediate_elements: Vec<u64> = intermediate_elements.into_iter().collect();
         intermediate_elements.sort_unstable();
@@ -1261,12 +1319,18 @@ impl FrontierRegionSubject {
             role,
             semantic_members,
             intermediate_elements,
+            write,
         }
     }
 
     /// Returns the stable presentation role of the region.
     pub(crate) const fn role(&self) -> &'static str {
         self.role
+    }
+
+    /// Returns the tensor this region's owning write targets.
+    pub(crate) const fn write(&self) -> crate::physical::RegionWrite {
+        self.write
     }
 
     /// Returns the exact recognized semantic occurrences the region covers.
@@ -2880,17 +2944,27 @@ const GOVERNED_PHYSICAL_REVISION: u32 = 1;
 
 /// Tiler's own governed physical implementation provider for the bounded profile.
 ///
-/// It offers one checked scheduled-kernel body per *recognized* region subject —
-/// the materialized pointwise prologue, the materialized reduction, and the fused
-/// whole-program region — and nothing at all for any other member set. Offering
-/// nothing is a legitimate local result, so a cover this profile cannot implement
-/// is reported by complete-plan selection as an unimplemented region rather than
-/// being silently approximated.
+/// It answers for **every** region a cover places: the occurrences the subject
+/// names are spelled against the schedule vocabulary by
+/// [`crate::physical::spell_region`], and the answer is either one checked
+/// scheduled-kernel body — with the split and the workgroup tree additive beside
+/// it where the subject admits them — or a [`DeclinedStrategy`] naming the
+/// region-vocabulary wall it hit.
+///
+/// **Silence is not among its answers for a region a cover placed**, and that is
+/// the whole of what generalizing it changed. This build installs exactly one
+/// provider, so its empty offer was indistinguishable from a coverage gap it
+/// should have named: complete-plan selection saw an unimplemented region and a
+/// reader of the trace saw an absence. A subject naming *no* occurrence is the
+/// one case that still answers with an empty offer, because it is the local
+/// enumeration the trait's contract describes rather than a region a cover
+/// placed.
 ///
 /// The provider declares only a body, an applicability predicate, and a cost
 /// estimate. It cannot stamp its own provenance, derive its resources, or bypass
 /// verification: the frontier resubmits every body through the ordinary checked
-/// path in [`crate::physical::verify_schedule_with_feasibility`].
+/// path in [`crate::physical::verify_schedule_with_feasibility`], so the
+/// generalization gains it no trust it did not have.
 pub(crate) struct GovernedPhysicalProvider;
 
 impl GovernedPhysicalProvider {
@@ -2917,7 +2991,8 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
 
     fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
         let request = context.request();
-        let members = context.subject().semantic_members();
+        let subject = context.subject();
+        let members = subject.semantic_members();
         let input_elements = request.normalized().max_input_elements();
         let output_elements = request.normalized().output_elements();
         // A materialized f32 intermediate costs four bytes per element. The
@@ -2925,70 +3000,78 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         let intermediate_bytes = input_elements.saturating_mul(4);
         let applicability =
             TargetApplicability::for_targets([request.target_profile().profile_key().clone()]);
+        // A subject naming no occurrence is the coverless local enumeration the
+        // trait's contract describes, not a region a cover placed, so the empty
+        // offer is the honest answer and a decline would name a wall no cover
+        // hit.
+        if members.is_empty() {
+            return ProviderOffer::default();
+        }
+        let spelling = match crate::physical::spell_region(request, members, subject.write()) {
+            Ok(spelling) => spelling,
+            Err(wall) => {
+                return ProviderOffer::default().decline(DeclinedStrategy::new(
+                    crate::physical::SERIAL_BASELINE_STRATEGY,
+                    StrategyDeclineCause::UnspellableRegion {
+                        rule: wall.reason(),
+                        covered: u32::try_from(members.len()).unwrap_or(u32::MAX),
+                    },
+                ));
+            }
+        };
         let mut split = None;
         let mut tree = None;
-        let (region, cost) = if let Some(pointwise) = request.pointwise() {
-            if members != pointwise.members {
-                return ProviderOffer::default();
-            }
-            (
-                crate::physical::pointwise_region(request).0,
-                PhysicalCostEstimate::structural(1, output_elements, 0),
-            )
-        } else if let Some(contraction) = request.contraction() {
-            // A whole-program strategy like the pointwise one above: one region,
-            // one dispatch, no intermediate, and no split — a contraction's fold
-            // is the declared contributor sequence, and splitting it would
-            // consume the reassociation this family declares forbidden.
-            //
-            // The early return matters structurally as well: every branch below
-            // calls `request.serial_sum()`, which panics for a request this
-            // recognizer produced.
-            if members != contraction.members {
-                return ProviderOffer::default();
-            }
-            (
-                crate::physical::contraction_region(request).0,
-                PhysicalCostEstimate::structural(1, output_elements, 0),
-            )
-        } else if members == request.serial_sum().members.pointwise() {
-            (
-                crate::physical::pointwise_region(request).0,
-                PhysicalCostEstimate::structural(1, input_elements, intermediate_bytes),
-            )
-        } else if members == request.serial_sum().members.reduction() {
+        let (region, cost) = match spelling {
+            // One elementwise pass, whichever tensor the cover assigned its
+            // write. The two write roles cost differently because the cover
+            // decided differently: a region whose result another region reads
+            // stages that result, and one that writes a declared program output
+            // stages nothing.
+            crate::physical::RegionSpelling::Pointwise(write) => (
+                crate::physical::pointwise_region(request, write).0,
+                match write {
+                    crate::physical::RegionWrite::ProgramOutput => {
+                        PhysicalCostEstimate::structural(1, output_elements, 0)
+                    }
+                    crate::physical::RegionWrite::Materialized => {
+                        PhysicalCostEstimate::structural(1, input_elements, intermediate_bytes)
+                    }
+                },
+            ),
             // The reduction subject is the one place a split is even a
             // candidate, so it is the one place the strategy is considered and
             // — when this request does not admit it — the one place the decline
             // is stated. The serial alternative is offered either way; a split
             // is additive and never replaces it.
-            split = Some(propose_split(request, &applicability));
-            tree = Some(propose_workgroup_tree(request, &applicability));
-            (
-                crate::physical::reduction_region(request).0,
+            crate::physical::RegionSpelling::SerialSum => {
+                split = Some(propose_split(request, &applicability));
+                tree = Some(propose_workgroup_tree(request, &applicability));
+                (
+                    crate::physical::reduction_region(request).0,
+                    PhysicalCostEstimate::structural(1, output_elements, 0),
+                )
+            }
+            // No split: a contraction's fold is the declared contributor
+            // sequence, and splitting it would consume the reassociation this
+            // family declares forbidden.
+            crate::physical::RegionSpelling::Contraction => (
+                crate::physical::contraction_region(request).0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
-            )
-        } else if members == request.serial_sum().members.all() {
+            ),
             // Whether the whole-program region may be *fused* belongs to the
             // numerical-legality authority and whether it *fits* belongs to this
             // target; neither is a capability question. Every occurrence the
             // region covers already resolved its lowering capability before any
-            // cover reached this proposer, so no capability gap is left to defer.
-            //
-            // Offering nothing when the recognized prologue has no fused
-            // spelling is a legitimate local result, not a refusal: the
-            // materialized cover still has its two regions, and complete-plan
-            // selection reports an unimplementable cover rather than
-            // approximating one.
-            let Some((region, _)) = crate::physical::fused_region(request) else {
-                return ProviderOffer::default();
-            };
-            (
-                region,
+            // cover reached this proposer, so no capability gap is left to
+            // defer. A prologue with no fused spelling never reaches here —
+            // `spell_region` declines it by name, so the materialized cover's
+            // two regions remain the plan and the lost candidate is recorded.
+            crate::physical::RegionSpelling::FusedSerialSum => (
+                crate::physical::fused_region(request)
+                    .expect("a fused spelling is decided before the region is built")
+                    .0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
-            )
-        } else {
-            return ProviderOffer::default();
+            ),
         };
         let serial = ImplementationProposal::new(
             ProposalBody::ScheduledKernel(Box::new(region)),
@@ -3262,13 +3345,18 @@ mod tests {
     }
 
     fn fused_subject(request: &VerifiedTargetRequest) -> FrontierRegionSubject {
-        FrontierRegionSubject::new("fused", request.serial_sum().members.all())
+        FrontierRegionSubject::new(
+            "fused",
+            request.serial_sum().members.all(),
+            crate::physical::RegionWrite::ProgramOutput,
+        )
     }
 
     fn pointwise_subject(request: &VerifiedTargetRequest) -> FrontierRegionSubject {
         FrontierRegionSubject::new(
             "pointwise",
             request.serial_sum().members.pointwise().to_vec(),
+            crate::physical::RegionWrite::Materialized,
         )
     }
 
@@ -3781,7 +3869,10 @@ mod tests {
                 PhysicalProviderProvenance::new(provider_identity("infeasible", 1))
             }
             fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
-                let (region, _) = pointwise_region(context.request());
+                let (region, _) = pointwise_region(
+                    context.request(),
+                    crate::physical::RegionWrite::Materialized,
+                );
                 ProviderOffer::proposing(vec![ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(region)),
                     governed_applicability(),
@@ -4193,7 +4284,8 @@ mod tests {
                 &FrontierRegionSubject::reading_intermediates(
                     "region",
                     Vec::new(),
-                    [edge_elements]
+                    [edge_elements],
+                    crate::physical::RegionWrite::ProgramOutput,
                 ),
                 &request
             ),
@@ -4208,7 +4300,12 @@ mod tests {
             resolve_work_items(
                 WorkScaling::PerElementOf("z"),
                 &bindings,
-                &FrontierRegionSubject::reading_intermediates("region", Vec::new(), [1, 2]),
+                &FrontierRegionSubject::reading_intermediates(
+                    "region",
+                    Vec::new(),
+                    [1, 2],
+                    crate::physical::RegionWrite::ProgramOutput,
+                ),
                 &request
             ),
             Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: "z" }),
@@ -4218,7 +4315,11 @@ mod tests {
 
     /// A region subject stated outside any cover, reading no intermediate.
     fn coverless_subject() -> FrontierRegionSubject {
-        FrontierRegionSubject::new("region", Vec::new())
+        FrontierRegionSubject::new(
+            "region",
+            Vec::new(),
+            crate::physical::RegionWrite::ProgramOutput,
+        )
     }
 
     fn strict_call_resources() -> tiler_ir::schedule::ResourceRequirements {
@@ -5221,6 +5322,164 @@ mod tests {
         assert!(!non_dominated.contains(&&provider_identity("dominated", 1)));
     }
 
+    /// A whole-program elementwise request, recognized as a pointwise program.
+    fn whole_program_pointwise_request() -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let root = F32Add::apply(&mut builder, product, bias).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        request.for_target(0).unwrap()
+    }
+
+    /// The `ab,bc->ac` matrix product, recognized as a contraction program.
+    fn contraction_request() -> VerifiedTargetRequest {
+        use tiler_ir::semantic::{
+            ContractionIndex, ContractionIndexStructure, F32TensorContraction,
+        };
+
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let left = builder
+            .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let right = builder
+            .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let structure = ContractionIndexStructure::new(
+            [
+                vec![ContractionIndex::new(0), ContractionIndex::new(1)],
+                vec![ContractionIndex::new(1), ContractionIndex::new(2)],
+            ],
+            [ContractionIndex::new(0), ContractionIndex::new(2)],
+        )
+        .unwrap();
+        let product = F32TensorContraction::apply(&mut builder, &structure, left, right).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), product)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        request.for_target(0).unwrap()
+    }
+
+    /// Every region subject the governed provider spells, reported as one line
+    /// per admitted implementation: role, kind, the three structural cost
+    /// dimensions, and the canonical proposal identity in hex.
+    fn governed_proposal_report(
+        request: &VerifiedTargetRequest,
+        subject: &FrontierRegionSubject,
+    ) -> Vec<String> {
+        use std::fmt::Write as _;
+
+        let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
+        let frontier =
+            enumerate_frontier(request, subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        assert!(
+            !frontier.admitted().is_empty(),
+            "no admitted implementation for {}: {:?}",
+            subject.role(),
+            frontier.rejections()
+        );
+        frontier
+            .admitted()
+            .iter()
+            .map(|admitted| {
+                let cost = admitted.cost();
+                let mut line = format!(
+                    "{}|{}|{}|{}|{}|",
+                    subject.role(),
+                    admitted.provenance().kind(),
+                    cost.dispatch_count(),
+                    cost.launched_threads(),
+                    cost.temporary_bytes(),
+                );
+                for byte in admitted.identity().as_bytes() {
+                    write!(line, "{byte:02x}").expect("writing to a String cannot fail");
+                }
+                line
+            })
+            .collect()
+    }
+
+    /// The recognized region subjects keep their exact proposals, byte for byte.
+    ///
+    /// **This is the regression check the region-general provider is measured
+    /// against, and it is deliberately a golden rather than a property.** A
+    /// proposal identity folds the shared-IR region identity, the provider
+    /// provenance, the proposal kind, the applicability predicate, and the
+    /// derived boundary contract, and it is carried through plan selection into
+    /// kernel-program and artifact identity. So a generalization that changed
+    /// *anything* about how a recognized region is built — its accesses, its
+    /// written tensor role, its ownership proof, its scalar program, or the
+    /// structural cost attributed to it — moves bytes that are observable to a
+    /// caller and invalidate every cache entry derived from them.
+    ///
+    /// The five cases are every branch the member-set-matching provider had:
+    /// the serial sum's prologue, its reduction, and its fused whole-program
+    /// region, plus the two whole-program recognizers. Recorded at `a48b38ea`,
+    /// before the provider read the cover region subject.
+    ///
+    /// Regenerate only when a proposal is *deliberately* changed, and step the
+    /// proposal identity tag in the same commit when the encoding moves.
+    #[test]
+    fn the_recognized_region_subjects_keep_their_exact_proposals() {
+        let serial = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let pointwise = whole_program_pointwise_request();
+        let contraction = contraction_request();
+        let whole_pointwise_subject = FrontierRegionSubject::new(
+            "whole-program",
+            pointwise.pointwise().unwrap().members.clone(),
+            crate::physical::RegionWrite::ProgramOutput,
+        );
+        let whole_contraction_subject = FrontierRegionSubject::new(
+            "whole-program",
+            contraction.contraction().unwrap().members.clone(),
+            crate::physical::RegionWrite::ProgramOutput,
+        );
+
+        let mut report = Vec::new();
+        report.extend(governed_proposal_report(
+            &serial,
+            &pointwise_subject(&serial),
+        ));
+        report.extend(governed_proposal_report(
+            &serial,
+            &reduction_subject(&serial),
+        ));
+        report.extend(governed_proposal_report(&serial, &fused_subject(&serial)));
+        report.extend(governed_proposal_report(
+            &pointwise,
+            &whole_pointwise_subject,
+        ));
+        report.extend(governed_proposal_report(
+            &contraction,
+            &whole_contraction_subject,
+        ));
+
+        assert_eq!(
+            report, GOVERNED_PROPOSALS,
+            "a recognized region subject's proposal moved; every plan, kernel-program, and \
+             artifact identity derived from it moves with it",
+        );
+    }
+
+    /// The recorded proposals of [`the_recognized_region_subjects_keep_their_exact_proposals`].
+    const GOVERNED_PROPOSALS: [&str; 5] = [
+        "pointwise|scheduled-kernel|1|4|16|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76320000000000000001d774696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000020000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000400000001020011000000000000000400000000020000000000000004240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000040000000101000000003100000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000000000000010100000000010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000102010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "reduction|scheduled-kernel|1|2|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e763200000000000000019074696c65722e7363686564756c652e76350000000000000000010000000000000002000000000000000202000102000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000001000000010100000002000300020100000003010000000100000000000000020000000202001200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000100000001010000000303001100000000000000020000000103000000000000000222000000000000000100000001017fc0000000000000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000020000000101000000013200000000000000010000000101000000000000000000020000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000000102010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "fused|scheduled-kernel|1|2|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76320000000000000001a174696c65722e7363686564756c652e763500000000000000000100000000000000020000000000000002010000000000010200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000100000001010000000000030002010000000101000000000000000000000002000000000100000000001200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000100000001010000000103001100000000000000020000000003000000000000000223400000003f800000000000000000000100000001017fc000000000000000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000020000000101000000003200000000000000010000000101000000000000000000020000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000000000000010100000000010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "whole-program|scheduled-kernel|1|4|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76320000000000000001d774696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000020000000000000002010000000000010100000000000300020100000001010000000000000000000000020000000001000000000011000000000000000400000001030011000000000000000400000000030000000000000004240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000040000000101000000003100000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000000000000010100000000010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "whole-program|scheduled-kernel|1|4|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e763200000000000000020874696c65722e7363686564756c652e76350000000000000000020000000000000002000000000000000200000000000000030100000000000105000000000000000200000000000000020000000000000002000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000002010000000002000000000100000000000100000001000105000000000000000200000000000000020000000000000002000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000002020000000001000000010100000001000300020100000002010000000000000000000000030000000001000000000011000000000000000400000001010000000100110000000000000004000000020300110000000000000004000000000300000000000000042700000000000000010000000000000002017fc00000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc000000101010101010101010000000000000004000000010100000000340000000000000001000000000000000201000000000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000000000000020100000000010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d61727906000000000000000101070108010100000001010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+    ];
+
     #[test]
     fn a_frontier_with_no_providers_is_a_valid_empty_result() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
@@ -5299,6 +5558,7 @@ mod tests {
         FrontierRegionSubject::new(
             "reduction",
             request.serial_sum().members.reduction().to_vec(),
+            crate::physical::RegionWrite::ProgramOutput,
         )
     }
 
@@ -5395,7 +5655,8 @@ mod tests {
         // leak the cover cannot see and the assembler would have to invent an
         // owner for.
         let leaking = vec![split_stages(&request)[0].clone(), {
-            let (region, members) = pointwise_region(&request);
+            let (region, members) =
+                pointwise_region(&request, crate::physical::RegionWrite::Materialized);
             SubprogramStage::new(region, members)
         }];
         assert!(matches!(

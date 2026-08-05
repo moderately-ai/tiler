@@ -539,23 +539,53 @@ pub(super) fn record_numerical_equivalence(
 }
 
 /// Records one region subject's bounded implementation frontier.
+///
+/// **`key` is the region's own explain subject, not its role.** The role is a
+/// four-valued presentation label and a cover places many regions under
+/// `unrecognized`, so a role-keyed record merges regions covering different
+/// occurrences into one subject a reader cannot disentangle. The caller passes
+/// the bounded label of the region's canonical occurrence identity, which
+/// region formation already proved pairwise distinct within one compilation, so
+/// the record names exactly the region it is about. The role travels beside it
+/// as a fact, which is what it was always good for.
 pub(super) fn record_frontier(
     explain: &mut ExplainWriter,
+    key: &str,
     role: &'static str,
     frontier: &crate::frontier::ImplementationFrontier,
     cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
-    let key = format!("region:{role}");
-    let mut cause = record_count_step(
-        explain,
-        "frontier.enumeration.v1",
-        SubjectKind::Schedule,
-        &key,
+    let mut cause = explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(SubjectKind::Schedule, key)?;
+            Ok(explain.push_detail(
+                RuleRef::builtin("frontier.enumeration.v1")?,
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::IntrinsicScheduling,
+                    assessment: PredicateAssessment::proven(
+                        "frontier.locally-feasible",
+                        EvidenceBasis::CheckedInvariant,
+                    )?
+                    .with_fact(ExplainFact::new(
+                        "admitted-count",
+                        FactValue::Count(
+                            u64::try_from(frontier.admitted().len()).unwrap_or(u64::MAX),
+                        ),
+                    )?)?
+                    .with_fact(ExplainFact::new(
+                        "region-role",
+                        FactValue::Identity(crate::explain::SubjectKey::new(role)?),
+                    )?)?,
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+                vec![cause],
+            )?)
+        })(),
         ExplainStage::IntrinsicScheduling,
-        "frontier.locally-feasible",
-        "admitted-count",
-        frontier.admitted().len(),
-        cause,
+        SubjectKind::Schedule,
+        key,
+        record_cause(cause),
     )?;
     for rejection in frontier.rejections() {
         match rejection {
@@ -573,7 +603,7 @@ pub(super) fn record_frontier(
                 cause: decline,
             } => {
                 cause =
-                    record_declined_strategy(explain, role, provider, strategy, *decline, cause)?;
+                    record_declined_strategy(explain, key, provider, strategy, *decline, cause)?;
             }
             crate::frontier::FrontierRejection::Infeasible { .. }
             | crate::frontier::FrontierRejection::Unhonourable { .. }
@@ -591,7 +621,7 @@ pub(super) fn record_frontier(
         explain,
         "frontier.enumeration.v1",
         SubjectKind::Schedule,
-        &key,
+        key,
         ExplainStage::IntrinsicScheduling,
         "frontier.rejections-recorded",
         "rejected-count",
@@ -610,31 +640,35 @@ pub(super) fn record_frontier(
 /// numerical dimension, or the contributor extent that admitted no partition —
 /// are what separate them.
 ///
-/// The disposition is `Disproved` and never `Unknown`: each cause is decided
-/// from the request alone, before any region exists, so nothing further could
-/// resolve it.
+/// The disposition is `Disproved` and never `Unknown`: every cause is decided
+/// before any region is built — the first three from the request alone and the
+/// fourth from the exact occurrences the cover grouped — so nothing further
+/// could resolve it.
 fn record_declined_strategy(
     explain: &mut ExplainWriter,
-    role: &'static str,
+    key: &str,
     provider: &crate::frontier::PhysicalProviderProvenance,
     strategy: &'static str,
     cause: crate::frontier::StrategyDeclineCause,
     parent: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
-    let key = format!("region:{role}");
     let stage = match cause {
         crate::frontier::StrategyDeclineCause::NumericalPermissionRefused { .. } => {
             ExplainStage::NumericalLegality
         }
         crate::frontier::StrategyDeclineCause::NoAdmissibleShape { .. }
-        | crate::frontier::StrategyDeclineCause::Unrepresentable { .. } => {
+        | crate::frontier::StrategyDeclineCause::Unrepresentable { .. }
+        // A missing region spelling is a scheduling-vocabulary fact, exactly as
+        // an inadmissible shape is: the caller's numerical contract permits
+        // this region, and nothing about the target refused it.
+        | crate::frontier::StrategyDeclineCause::UnspellableRegion { .. } => {
             ExplainStage::IntrinsicScheduling
         }
     };
     explain_step(
         (|| -> Result<_, CompileError> {
             let subjects = vec![
-                explain.subject(SubjectKind::Schedule, &key)?,
+                explain.subject(SubjectKind::Schedule, key)?,
                 explain.subject(SubjectKind::Provider, provider.explain_subject())?,
             ];
             let mut assessment = PredicateAssessment::disproved(
@@ -657,6 +691,12 @@ fn record_declined_strategy(
                     assessment.with_fact(ExplainFact::new("extent", FactValue::Count(extent))?)?
                 }
                 crate::frontier::StrategyDeclineCause::Unrepresentable { .. } => assessment,
+                crate::frontier::StrategyDeclineCause::UnspellableRegion { covered, .. } => {
+                    assessment.with_fact(ExplainFact::new(
+                        "covered-occurrences",
+                        FactValue::Count(u64::from(covered)),
+                    )?)?
+                }
             };
             Ok(explain.push_detail(
                 RuleRef::builtin("frontier.strategy-decline.v1")?,
@@ -675,7 +715,7 @@ fn record_declined_strategy(
         })(),
         stage,
         SubjectKind::Schedule,
-        &key,
+        key,
         record_cause(parent),
     )
 }
@@ -927,6 +967,7 @@ fn work_resolution_assessment(
 pub(super) fn record_plan_selection(
     explain: &mut ExplainWriter,
     portfolio: &SelectedPortfolio,
+    frontier_records: &[(&str, ExplainRecordId)],
     cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
     let mut cause = record_count_step(
@@ -963,7 +1004,86 @@ pub(super) fn record_plan_selection(
             record_cause(cause),
         )?;
     }
+    record_coverage_gaps(explain, portfolio, frontier_records, cause)?;
     Ok(cause)
+}
+
+/// Publishes each cover's coverage gap: a region no implementation covered.
+///
+/// **The only authority that states the gap per cover, and it used to be read by
+/// tests alone.** `select_physical_plans` has always constructed a
+/// [`PlanRejection::RegionUnimplemented`] for every cover region with an empty
+/// admitted set, and nothing on the compile path ever emitted one — so a caller
+/// reading the trace saw a cover that produced no plan and no record saying
+/// which of its regions had nothing to implement it.
+///
+/// Each record is caused by *that region's own frontier record* rather than by
+/// the selection chain, because the frontier enumeration is where the answer
+/// was decided: following the cause reaches the declined strategy naming the
+/// region-vocabulary wall. A region whose frontier record is not among
+/// `frontier_records` cites the selection chain instead, which happens only for
+/// a portfolio assembled outside the planning loop.
+///
+/// These are leaves rather than links in the returned chain: a coverage gap
+/// explains a cover that produced nothing, so hanging the retained
+/// alternatives' attribution off it would say the plans that *were* built
+/// followed from it.
+///
+/// The stage is `CandidateEnumeration` — the one `record_plan_selection`'s own
+/// plan-count and budget-stop records already carry — and not `Selection`,
+/// because the explain vocabulary deliberately admits no `Check` at that stage:
+/// selection owns a typed event carrying an outcome a checked predicate cannot,
+/// and a `Check` there would silently lose it. What is recorded here is why a
+/// candidate cover contributed no complete plan, which is a fact about the
+/// enumeration rather than about which plan was chosen.
+fn record_coverage_gaps(
+    explain: &mut ExplainWriter,
+    portfolio: &SelectedPortfolio,
+    frontier_records: &[(&str, ExplainRecordId)],
+    fallback: ExplainRecordId,
+) -> Result<(), TargetFailure> {
+    for rejection in portfolio.rejections() {
+        let crate::selection::PlanRejection::RegionUnimplemented { region, role, .. } = rejection
+        else {
+            continue;
+        };
+        let cover = rejection.cover_label();
+        let cause = frontier_records
+            .iter()
+            .find(|(key, _)| key == region)
+            .map_or(fallback, |(_, record)| *record);
+        explain_step(
+            (|| -> Result<_, CompileError> {
+                let subjects = vec![
+                    explain.subject(SubjectKind::Schedule, region)?,
+                    explain.subject(SubjectKind::Alternative, &cover)?,
+                ];
+                Ok(explain.push_detail(
+                    RuleRef::builtin("selection.region-coverage.v1")?,
+                    subjects,
+                    ExplainEvent::Check {
+                        stage: ExplainStage::CandidateEnumeration,
+                        assessment: PredicateAssessment::disproved(
+                            "selection.region-implemented",
+                            ReasonCode::new("region-unimplemented")?,
+                            EvidenceBasis::CheckedInvariant,
+                        )?
+                        .with_fact(ExplainFact::new(
+                            "region-role",
+                            FactValue::Identity(crate::explain::SubjectKey::new(*role)?),
+                        )?)?,
+                        rejection: RejectionClass::IntrinsicInvalid,
+                    },
+                    vec![cause],
+                )?)
+            })(),
+            ExplainStage::CandidateEnumeration,
+            SubjectKind::Schedule,
+            region,
+            record_cause(cause),
+        )?;
+    }
+    Ok(())
 }
 
 /// Reports each retained plan's analytical component costs.
@@ -1124,10 +1244,9 @@ const fn analytical_quantity(unit: CostUnit, value: u64) -> Quantity {
 pub(super) fn record_target_rejection(
     explain: &mut ExplainWriter,
     error: &PhysicalError,
-    role: &'static str,
+    key: &str,
     cause: ExplainRecordId,
 ) -> Result<TerminalCause, TargetFailure> {
-    let key = format!("region:{role}");
     let (rule_key, event) = match error {
         PhysicalError::Target {
             rule,
@@ -1201,7 +1320,7 @@ pub(super) fn record_target_rejection(
     };
     explain_step(
         (|| -> Result<_, CompileError> {
-            let subject = explain.subject(SubjectKind::Region, &key)?;
+            let subject = explain.subject(SubjectKind::Region, key)?;
             Ok(explain.push_causal_detail(
                 RuleRef::builtin(rule_key)?,
                 subject,
@@ -1211,7 +1330,7 @@ pub(super) fn record_target_rejection(
         })(),
         ExplainStage::TargetFeasibility,
         SubjectKind::Region,
-        &key,
+        key,
         record_cause(cause),
     )
 }
@@ -1629,6 +1748,27 @@ mod tests {
         let compiled = product.targets[0]
             .compiled()
             .expect("the serial alternative survives both parallel declines");
+        // Restricted to the two *reduction* strategies by the name each decline
+        // carries. Every region a cover places that this vocabulary cannot
+        // spell also declines the serial baseline, and those declines are the
+        // point of the region-general provider — counting them here would make
+        // this test's number a fact about the program's cover space instead of
+        // about the two parallel strategies it is asserting on.
+        let parallel = |record: &&crate::explain::ExplainRecord| {
+            let ExplainEvent::Check { assessment, .. } = record.event() else {
+                return false;
+            };
+            assessment.facts().iter().any(|fact| {
+                fact.key().as_str() == "strategy"
+                    && matches!(
+                        fact.value(),
+                        FactValue::Identity(key)
+                            if key.as_str() == crate::physical::MULTI_PASS_SPLIT_STRATEGY
+                                || key.as_str()
+                                    == crate::physical::SINGLE_WORKGROUP_TREE_STRATEGY
+                    )
+            })
+        };
         let declines = compiled
             .explain
             .records()
@@ -1637,6 +1777,7 @@ mod tests {
                 record.rule().key().as_str() == "frontier.strategy-decline.v1"
                     && record.event().disposition() == ExplainDisposition::RejectedIntrinsic
             })
+            .filter(parallel)
             .collect::<Vec<_>>();
         assert_eq!(
             declines.len(),

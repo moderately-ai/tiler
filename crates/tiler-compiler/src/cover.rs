@@ -210,13 +210,16 @@ impl CoverPolicy {
     /// timidity.** A duplicating cover assigns one semantic occurrence to
     /// several region subjects, and a plan over it needs a physical
     /// implementation for each of those subjects. The bounded physical profile
-    /// proposes implementations for exactly three recognized member sets, and
-    /// program assembly implements exactly three plan shapes, so every
-    /// duplicating cover of a governed program would be enumerated, found
-    /// unimplementable, and rejected — paying the whole search to report a
-    /// refusal. Enabling it is a physical-provider and program-assembly
-    /// question, not a legality one; see
-    /// `tickets/activate-shared-work-duplication-on-the-compile-path.md`.
+    /// now *answers* for every region a cover places, but the schedule
+    /// vocabulary it answers from still spells only the three recognized region
+    /// shapes: every region a duplicating cover introduces earns a
+    /// `StrategyDeclineCause::UnspellableRegion` and no admitted
+    /// implementation. Program assembly implements exactly three plan shapes on
+    /// top of that. So every duplicating cover of a governed program would be
+    /// enumerated, found unimplementable, and rejected — paying the whole
+    /// search, and now the explanation too, to report a refusal. Enabling it is
+    /// a region-vocabulary and program-assembly question, not a legality one;
+    /// see `tickets/activate-shared-work-duplication-on-the-compile-path.md`.
     pub(crate) const fn governed(contract: StrictF32NumericalContract) -> Self {
         Self {
             duplication: CoverDuplicationAdmission::Forbidden,
