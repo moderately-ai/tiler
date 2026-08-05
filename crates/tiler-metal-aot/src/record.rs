@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 
+use crate::diagnostic::{CompileStage, ToolOutput};
 use crate::input::{
     ApplePlatform, DeploymentMinimum, MslVersion, NumericalRealization, OptimizationLevel,
 };
@@ -112,7 +113,53 @@ pub struct ArtifactProvenance {
     pub link_flags: Vec<String>,
 }
 
-/// A compiled `metallib` and its complete provenance.
+/// What each stage of one *succeeding* compilation wrote.
+///
+/// A compiler that warns and exits zero has said something about the artifact it
+/// produced, and dropping it at the process boundary leaves nothing able to
+/// report it. This is that output, captured under exactly the bound
+/// [`ToolOutput`] already applies to a failing stage's output, so there is one
+/// capture idiom and one bound rather than a success-path copy of both.
+///
+/// **One named field per stage, not a list of runs.** The two stages are
+/// different tools with different vocabularies, and a positional list would
+/// admit a compilation carrying one output, three, or two in the other order —
+/// at which point the linker's words are readable as the compiler's, which is
+/// exactly what a reader acts on. Naming them makes every succeeding compilation
+/// carry exactly one output per stage and makes a swap a type-level mistake at
+/// the single construction site rather than an ordering convention.
+///
+/// **Only what the stage wrote to standard error is here.** That is the stream
+/// the offline tools diagnose on, and the one
+/// [`DriverError::ToolFailure`](crate::diagnostic::DriverError::ToolFailure)
+/// already keeps; capturing standard output beside it would be a second run per
+/// stage under a second bound for a stream these tools use to carry no
+/// diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StageOutputs {
+    /// What the `metal` front end wrote while compiling MSL to AIR.
+    pub metal: ToolOutput,
+    /// What the `metallib` linker wrote while linking AIR into a Metal library.
+    pub metallib: ToolOutput,
+}
+
+impl StageOutputs {
+    /// Returns what one stage wrote.
+    ///
+    /// The exhaustive match is what keeps a stage added to
+    /// [`CompileStage`] a build error here rather than an output silently
+    /// attributed to whichever stage a wildcard arm chose.
+    #[must_use]
+    pub const fn stage(&self, stage: CompileStage) -> &ToolOutput {
+        match stage {
+            CompileStage::Metal => &self.metal,
+            CompileStage::Metallib => &self.metallib,
+        }
+    }
+}
+
+/// A compiled `metallib`, its complete provenance, and what its stages wrote.
 /// # Growth
 ///
 /// `#[non_exhaustive]`, because this is a value the driver produces and a
@@ -134,4 +181,11 @@ pub struct CompiledArtifact {
     pub metallib: Vec<u8>,
     /// The full provenance of this compilation.
     pub provenance: ArtifactProvenance,
+    /// What each stage wrote while producing these bytes.
+    ///
+    /// Diagnostics beside the artifact, never part of it: nothing here reaches
+    /// [`ArtifactProvenance`], the compilation identity, or any cache subject,
+    /// because a warning is not a compilation input and folding one would give
+    /// two hosts two identities for one compilation.
+    pub stage_outputs: StageOutputs,
 }

@@ -20,6 +20,7 @@ use crate::identity::CompilationIdentity;
 use crate::input::{AppleSdk, CompileRequest};
 use crate::record::{
     ArtifactProvenance, CompiledArtifact, ResolvedTool, ResolvedToolchain, SdkIdentity,
+    StageOutputs,
 };
 
 /// The four magic bytes that begin every Metal library file.
@@ -138,7 +139,8 @@ impl Toolchain {
         })
     }
 
-    /// Compiles MSL source into a `metallib` with full provenance.
+    /// Compiles MSL source into a `metallib` with full provenance and each
+    /// stage's own captured output.
     ///
     /// The single selected SDK from `request.target` is used for both the
     /// `metal` and `metallib` invocations. Both run with the explicit flags from
@@ -261,7 +263,8 @@ impl Toolchain {
         Ok(text)
     }
 
-    /// Runs one compile or link stage, executing the tool that was resolved.
+    /// Runs one compile or link stage, executing the tool that was resolved, and
+    /// returns what that stage wrote when it succeeded.
     ///
     /// **`tool` is the binary provenance names.** It used to re-select by bare
     /// name through the launcher, so the recorded path and the executed one were
@@ -269,11 +272,18 @@ impl Toolchain {
     /// between them produced real bytes attributed to a toolchain that never ran
     /// them. Taking the resolved tool makes the two the same object, and there
     /// is no longer a second selection to disagree with the first.
+    ///
+    /// **A success returns the same capture a failure carries.** A tool that
+    /// warns and exits zero has diagnosed the artifact it produced, and the
+    /// success and failure paths capture the same stream under the same bound,
+    /// so a caller reads one kind of value however the stage ended. The returned
+    /// output is attributed by the caller's own binding, never by position in a
+    /// list, so the linker's words cannot arrive under the compiler's name.
     fn run_stage(
         tool: &ResolvedTool,
         stage: CompileStage,
         args: &[OsString],
-    ) -> Result<(), DriverError> {
+    ) -> Result<ToolOutput, DriverError> {
         let output = Command::new(&tool.path)
             .args(args)
             .env("ZERO_AR_DATE", "1")
@@ -294,7 +304,7 @@ impl Toolchain {
                 stderr: ToolOutput::capture(&output.stderr),
             });
         }
-        Ok(())
+        Ok(ToolOutput::capture(&output.stderr))
     }
 }
 
@@ -337,6 +347,12 @@ impl PreparedCompilation<'_> {
     /// Retrying after any failure requires a new preparation and therefore a
     /// fresh identity and cache lookup.
     ///
+    /// The artifact carries what each stage wrote in
+    /// [`CompiledArtifact::stage_outputs`], including the empty output of a
+    /// stage that said nothing. Nothing in it reaches
+    /// [`Self::identity`] or [`Self::provenance`]: both are derived during
+    /// preparation, before either tool runs.
+    ///
     /// # Errors
     ///
     /// Fails closed with a typed [`DriverError`] when scratch filesystem work
@@ -366,14 +382,16 @@ impl PreparedCompilation<'_> {
         metal_args.push(source_path.clone().into_os_string());
         metal_args.push(OsString::from("-o"));
         metal_args.push(air_path.clone().into_os_string());
-        Toolchain::run_stage(&provenance.metal, CompileStage::Metal, &metal_args)?;
+        let metal_output =
+            Toolchain::run_stage(&provenance.metal, CompileStage::Metal, &metal_args)?;
 
         let mut link_args: Vec<OsString> =
             provenance.link_flags.iter().map(OsString::from).collect();
         link_args.push(air_path.clone().into_os_string());
         link_args.push(OsString::from("-o"));
         link_args.push(metallib_path.clone().into_os_string());
-        Toolchain::run_stage(&provenance.metallib, CompileStage::Metallib, &link_args)?;
+        let metallib_output =
+            Toolchain::run_stage(&provenance.metallib, CompileStage::Metallib, &link_args)?;
 
         let metallib = fs::read(&metallib_path).map_err(|error| DriverError::Host {
             detail: format!("could not read metallib output: {error}"),
@@ -392,6 +410,13 @@ impl PreparedCompilation<'_> {
         Ok(CompiledArtifact {
             metallib,
             provenance,
+            // Bound stage by stage at the two calls above rather than collected
+            // in run order: a compilation that reordered its stages would still
+            // name each output for the tool that wrote it.
+            stage_outputs: StageOutputs {
+                metal: metal_output,
+                metallib: metallib_output,
+            },
         })
     }
 }
@@ -553,6 +578,53 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
     // The following tests exercise the real Apple toolchain. They self-skip when
     // no qualified toolchain is present so the repository gate passes on hosts
     // and CI runners without one.
+
+    /// The real Apple front end warns, exits zero, and its words survive.
+    ///
+    /// **The whole reason this capture exists, measured against the tool that
+    /// motivated it.** An unused local is a warning every `metal` release
+    /// diagnoses, so the case asserts a warning was retained without pinning the
+    /// exact sentence, which is Apple's to change; the trivial kernel beside it
+    /// is the quiet control, and the two together separate "the compiler said
+    /// nothing" from "nothing was captured". The linker stage is not asserted to
+    /// be quiet — that is this toolchain's behaviour today rather than a
+    /// guarantee, and pinning it would make an Apple release a test failure.
+    #[test]
+    fn a_real_front_end_warning_survives_a_succeeding_compilation() {
+        const UNUSED_LOCAL_MSL: &str = "#include <metal_stdlib>\n\
+using namespace metal;\n\
+kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
+                        device float* out [[buffer(1)]],\n\
+                        uint gid [[thread_position_in_grid]]) {\n\
+    int unused_local = 3;\n\
+    out[gid] = in[gid];\n\
+}\n";
+        let toolchain = Toolchain::system();
+        if toolchain.resolve(AppleSdk::MacOs).is_err() {
+            return;
+        }
+
+        let quiet = toolchain
+            .compile(&macos_request(TRIVIAL_MSL))
+            .expect("the trivial kernel compiles");
+        assert!(
+            quiet.stage_outputs.metal.is_empty(),
+            "the control kernel was expected to compile silently, and said: {}",
+            quiet.stage_outputs.metal,
+        );
+
+        let warned = toolchain
+            .compile(&macos_request(UNUSED_LOCAL_MSL))
+            .expect("an unused local is a warning, not an error");
+        let front_end = &warned.stage_outputs.metal;
+        assert!(!front_end.is_empty(), "the front end retained nothing");
+        assert!(front_end.is_valid_utf8());
+        assert!(
+            String::from_utf8_lossy(front_end.as_bytes()).contains("warning:"),
+            "expected a front-end warning, got: {front_end}",
+        );
+        assert_eq!(&warned.metallib[..4], b"MTLB");
+    }
 
     #[test]
     fn compiles_trivial_kernel_when_toolchain_available() {
@@ -755,6 +827,157 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
         );
         assert_eq!(artifact.provenance, expected_provenance);
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A toolchain whose stages write exactly the supplied bytes to standard
+    /// error and still succeed.
+    ///
+    /// The noise is read from a file rather than embedded in the script, so a
+    /// case states the exact bytes a stage writes — including none, and
+    /// including more than the capture bound retains — without quoting them
+    /// through a shell.
+    fn talking_toolchain(directory: &std::path::Path, metal: &[u8], metallib: &[u8]) -> Toolchain {
+        let metal_noise = directory.join("metal.stderr");
+        let metallib_noise = directory.join("metallib.stderr");
+        std::fs::write(&metal_noise, metal).expect("the metal noise file is writable");
+        std::fs::write(&metallib_noise, metallib).expect("the metallib noise file is writable");
+        let metal_tool = directory.join("metal");
+        let metallib_tool = directory.join("metallib");
+        let launcher = directory.join("xcrun");
+        write_executable(
+            &metal_tool,
+            &format!(
+                "#!/bin/sh\n\
+                 if [ \"$1\" = \"--version\" ]; then echo 'Metal talking-v1'; exit 0; fi\n\
+                 cat '{}' >&2\n\
+                 while [ \"$#\" -gt 0 ]; do\n\
+                   if [ \"$1\" = \"-o\" ]; then shift; printf AIR > \"$1\"; exit 0; fi\n\
+                   shift\n\
+                 done\n\
+                 exit 1\n",
+                metal_noise.display(),
+            ),
+        );
+        write_executable(
+            &metallib_tool,
+            &format!(
+                "#!/bin/sh\n\
+                 if [ \"$1\" = \"--version\" ]; then echo 'metallib talking-v1'; exit 0; fi\n\
+                 cat '{}' >&2\n\
+                 while [ \"$#\" -gt 0 ]; do\n\
+                   if [ \"$1\" = \"-o\" ]; then shift; printf MTLBtalking > \"$1\"; exit 0; fi\n\
+                   shift\n\
+                 done\n\
+                 exit 1\n",
+                metallib_noise.display(),
+            ),
+        );
+        write_executable(
+            &launcher,
+            &format!(
+                "#!/bin/sh\n\
+                 shift 2\n\
+                 case \"$1\" in\n\
+                   --find) if [ \"$2\" = \"metal\" ]; then echo '{}'; else echo '{}'; fi ;;\n\
+                   --show-sdk-version) echo 26.5 ;;\n\
+                   --show-sdk-build-version) echo 25F70 ;;\n\
+                   *) exit 1 ;;\n\
+                 esac\n",
+                metal_tool.display(),
+                metallib_tool.display(),
+            ),
+        );
+        Toolchain::with_launcher(launcher)
+    }
+
+    fn talking_scratch(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tiler-metal-aot-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&path).expect("the scratch directory is creatable");
+        path
+    }
+
+    /// A succeeding compilation carries each stage's words under that stage.
+    ///
+    /// The two stages write different text, so an implementation that captured
+    /// one run for both, or bound them in the order they happened to be
+    /// collected, would report the linker's words as the compiler's. Both
+    /// directions are asserted, because equality alone would pass for a value
+    /// that also carried the other stage's bytes.
+    #[test]
+    fn each_stage_carries_its_own_output_out_of_a_succeeding_compilation() {
+        let directory = talking_scratch("stage-output");
+        let compiler = b"warning: the front end spoke".as_slice();
+        let linker = b"warning: the linker spoke".as_slice();
+        let artifact = talking_toolchain(&directory, compiler, linker)
+            .compile(&macos_request(TRIVIAL_MSL))
+            .expect("the talking toolchain succeeds");
+
+        assert_eq!(artifact.metallib, b"MTLBtalking");
+        assert_eq!(artifact.stage_outputs.metal.as_bytes(), compiler);
+        assert_eq!(artifact.stage_outputs.metallib.as_bytes(), linker);
+        assert_eq!(
+            artifact.stage_outputs.stage(CompileStage::Metal),
+            &artifact.stage_outputs.metal,
+        );
+        assert_eq!(
+            artifact.stage_outputs.stage(CompileStage::Metallib),
+            &artifact.stage_outputs.metallib,
+        );
+        assert_ne!(
+            artifact.stage_outputs.metal, artifact.stage_outputs.metallib,
+            "one capture serving both stages would attribute the linker's words to the compiler",
+        );
+        assert!(!artifact.stage_outputs.metal.is_empty());
+        assert!(!artifact.stage_outputs.metal.is_truncated());
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// A stage that wrote nothing is an empty output, not a missing one.
+    ///
+    /// Both stages ran, so both are reported; the front end simply had nothing
+    /// to say. A representation that dropped silent stages would leave a reader
+    /// unable to tell "the compiler was quiet" from "nobody looked".
+    #[test]
+    fn a_silent_stage_is_an_empty_output_rather_than_an_absent_one() {
+        let directory = talking_scratch("stage-output-silent");
+        let linker = b"warning: only the linker spoke".as_slice();
+        let artifact = talking_toolchain(&directory, b"", linker)
+            .compile(&macos_request(TRIVIAL_MSL))
+            .expect("a silent front end still compiles");
+
+        assert!(artifact.stage_outputs.metal.is_empty());
+        assert_eq!(artifact.stage_outputs.metal.total_bytes(), 0);
+        assert_eq!(artifact.stage_outputs.metal.as_bytes(), b"");
+        assert_eq!(artifact.stage_outputs.metallib.as_bytes(), linker);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// A chatty succeeding stage is bounded exactly as a failing one is.
+    ///
+    /// The same capture, so the same bound and the same recorded total: a
+    /// success path that kept everything would make one warning as expensive to
+    /// move as the artifact it describes, and one that truncated without
+    /// recording the total would show a prefix as the whole.
+    #[test]
+    fn a_succeeding_stage_output_is_bounded_and_records_its_truncation() {
+        let directory = talking_scratch("stage-output-bound");
+        let noisy = vec![b'w'; crate::diagnostic::MAX_RETAINED_OUTPUT_BYTES + 64];
+        let artifact = talking_toolchain(&directory, &noisy, b"")
+            .compile(&macos_request(TRIVIAL_MSL))
+            .expect("a chatty front end still compiles");
+
+        let output = &artifact.stage_outputs.metal;
+        assert_eq!(
+            output.as_bytes().len(),
+            crate::diagnostic::MAX_RETAINED_OUTPUT_BYTES,
+        );
+        assert_eq!(output.total_bytes(), noisy.len());
+        assert!(output.is_truncated());
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     /// A toolchain selection that changes between observation and execution
