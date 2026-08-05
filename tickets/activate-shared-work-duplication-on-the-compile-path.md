@@ -30,8 +30,8 @@ The compile path enumerates covers under `CoverPolicy::permitting_shared_work_du
 
 Any one of these makes this startable; the first two are what actually change the answer.
 
-1. A physical provider proposes implementations for member sets beyond the three recognized ones — the general-region proposer, or a caller-supplied provider through `drive-an-external-physical-implementation-provider-through-compilation`.
-2. `build_plan_program` assembles a kernel program from an arbitrary cover shape rather than three enumerated ones.
+1. A physical provider proposes implementations for member sets beyond the three recognized ones — owned since 2026-08-04 by [`derive-physical-proposals-from-the-cover-region-subject`](derive-physical-proposals-from-the-cover-region-subject.md), or a caller-supplied provider through `drive-an-external-physical-implementation-provider-through-compilation`.
+2. `build_plan_program` assembles a kernel program from an arbitrary cover shape rather than three enumerated ones — owned since 2026-08-04 by [`assemble-a-kernel-program-from-an-arbitrary-cover`](assemble-a-kernel-program-from-an-arbitrary-cover.md).
 3. A frontend admits a program whose fan-out producer is cheap enough that recomputation beats materialization on a *measured* device cost, not only on the partition-structural estimate.
 
 ## What is already done and must not be re-done
