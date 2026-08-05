@@ -1,7 +1,7 @@
 ---
 id: call-the-expansion-cache-preflight-on-the-resolved-root
 title: Call the expansion cache preflight on the resolved root
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [prototype-expansion-content-cache, decide-the-expansion-cache-collection-schedule, configure-a-size-ceiling-for-the-automatic-expansion-cache-eviction]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, frontend, diagnostics]
+claimed_from: todo
+assignee: agent-preflight
+lease_expires_at: 1785940859
 ---
 ## User-visible outcome
 

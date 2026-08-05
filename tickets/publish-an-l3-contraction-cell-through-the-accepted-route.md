@@ -1,7 +1,7 @@
 ---
 id: publish-an-l3-contraction-cell-through-the-accepted-route
 title: Publish an L3 contraction cell through the accepted route and compare its retained digest
-status: todo
+status: in-progress
 priority: p2
 dependencies: [raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells]
 related: [integrate-the-contraction-vertical-into-the-runtime, correct-the-four-thread-grid-rationales-the-measured-row-falsified, realize-the-tiled-contraction-schedule-and-its-metal-emission]
@@ -9,6 +9,9 @@ scopes: [implementation/metal-aot, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, contraction, runtime, conformance]
+claimed_from: todo
+assignee: agent-l3-publish
+lease_expires_at: 1785940859
 ---
 ## User-visible outcome
 

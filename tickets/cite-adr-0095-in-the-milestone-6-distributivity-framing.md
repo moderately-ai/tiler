@@ -1,7 +1,7 @@
 ---
 id: cite-adr-0095-in-the-milestone-6-distributivity-framing
 title: Cite ADR 0095 at the reserved-framing sites the landing branch could not reach
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [decide-whether-to-admit-a-distributivity-permission, realize-the-strict-contraction-on-metal]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation, research/shapes, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics, contracts]
+claimed_from: todo
+assignee: agent-adr0095
+lease_expires_at: 1785940859
 ---
 ## User-visible outcome
 

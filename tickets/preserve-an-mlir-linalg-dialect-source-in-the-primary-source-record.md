@@ -1,7 +1,7 @@
 ---
 id: preserve-an-mlir-linalg-dialect-source-in-the-primary-source-record
 title: Preserve an MLIR Linalg dialect source in the primary-source record
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [enumerate-the-mature-tensor-operation-and-signature-taxonomy, preserve-the-array-api-standard-2025-12-as-a-numerics-source-record]
@@ -9,6 +9,9 @@ scopes: [research/numerics, research/semantic-graph]
 shared_scopes: [project/tickets]
 paths: []
 tags: [sources, provenance, numerics]
+claimed_from: todo
+assignee: agent-mlir-linalg
+lease_expires_at: 1785940859
 ---
 ## User-visible outcome
 
