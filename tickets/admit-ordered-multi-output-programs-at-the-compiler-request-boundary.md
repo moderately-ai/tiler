@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, conformance]
-claimed_from: todo
-assignee: agent-multi-output
-lease_expires_at: 1785949101
 ---
 ## User-visible outcome
 
