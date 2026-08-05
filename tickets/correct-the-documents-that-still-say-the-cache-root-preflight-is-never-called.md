@@ -1,7 +1,7 @@
 ---
 id: correct-the-documents-that-still-say-the-cache-root-preflight-is-never-called
 title: Correct the documents that still say the cache-root preflight is never called
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [call-the-expansion-cache-preflight-on-the-resolved-root]
