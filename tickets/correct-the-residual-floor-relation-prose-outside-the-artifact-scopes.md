@@ -1,7 +1,7 @@
 ---
 id: correct-the-residual-floor-relation-prose-outside-the-artifact-scopes
 title: Correct the residual floor-relation prose the subgroup-threads equality falsified
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-the-subgroup-threads-route-dimension-meaning, rename-the-route-resource-floor-vocabulary-for-its-corrected-relation]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, research/scheduling, research/extensions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, naming]
+claimed_from: todo
+assignee: agent-floor-prose
+lease_expires_at: 1785955637
 ---
 ## Why this exists
 
