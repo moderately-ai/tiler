@@ -1,7 +1,7 @@
 ---
 id: admit-ordered-multi-output-programs-at-the-compiler-request-boundary
 title: Admit ordered multi-output programs at the compiler request boundary
-status: review
+status: done
 priority: p1
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, implement-general-dag-partitioning, carry-artifact-program-output-order-into-kernel-program-identity, assemble-a-kernel-program-from-an-arbitrary-cover, recognize-several-ordered-named-outputs-at-the-compiler-request-boundary]
 related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, accept-the-public-compiler-facade-boundary, admit-elementwise-epilogues-over-a-materialized-intermediate, derive-physical-proposals-from-the-cover-region-subject]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics, contracts/optimizer, resea
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, conformance]
-claimed_from: todo
-assignee: agent-multi-output-2
-lease_expires_at: 1785954597
 ---
 ## User-visible outcome
 
