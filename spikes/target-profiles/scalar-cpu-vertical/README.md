@@ -9,8 +9,8 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.target-profiles.physical-feasibility-model", "tiler.contract.cpu-backend"]
 entrypoints: ["spikes/target-profiles/scalar-cpu-vertical/src/main.rs"]
-last_verified: "2026-08-01"
-verified_at_commit: "2119b20"
+last_verified: "2026-08-05"
+verified_at_commit: "d5960e81"
 ticket: "prototype-a-bounded-scalar-cpu-backend-vertical"
 ---
 
@@ -42,7 +42,7 @@ The binary's only product is a verdict: every stage that fails exits non-zero wi
 ## What one run does, in order
 
 1. **Declares a bounded scalar CPU target profile** (`src/profile.rs`) through `tiler_compiler::target::TargetProfileBuilder`: governed key `tiler.target.cpu-scalar-host-aarch64-darwin`, triple `aarch64-apple-darwin`, the AAPCS64/Darwin data layout, a 64-bit address model, one thread per workgroup, zero staged local memory, two buffer bindings per entry, complete unsigned-64 index arithmetic, `f32` dispatchable, and a numerical table that preserves subnormals exactly and declares **every** reshaping freedom unsupported. Vector width, mask and tail support, scalable-vector length, thread count, task granularity, and oversubscription are undeclared and therefore `Unknown` — the builder's sparse-profile rule, used as the mechanism rather than worked around.
-2. **Compiles** the smallest scalar program this build's semantic, normalization, and reference layers all admit, under `NumericalContract::StrictF32`, against that profile alone.
+2. **Compiles** the smallest scalar program this build's semantic, normalization, and reference layers all admit, under `NumericalContract::STRICT_F32`, against that profile alone.
 3. **Translates** each verified structured kernel into `tiler.cpu.scalar-image-v1` (`src/image.rs`) and serializes it. The translation is a real consumer of KIR: launch builtins, typed constants, index arithmetic, comparisons, the named NaN canonicalization, typed loads and stores, predicated blocks, and bounded serial loops, all read through `VerifiedKernel`'s public views.
 4. **Observes the translator refusing** every buffer parameter this backend cannot bind, against an accepted neighbour, before the positive path is claimed.
 5. **Packages** a real artifact: one carried payload whose `code` is the serialized image, whose compilation subject names the kernel identities it was translated from, and one variant bound to the compiler's own kernel program.
@@ -54,11 +54,11 @@ The binary's only product is a verdict: every stage that fails exits non-zero wi
 
 ## Result
 
-**Measurement**, Apple M-series arm64 macOS, `rust-toolchain.toml`'s pinned nightly, base commit `2119b20`:
+**Measurement**, Apple M-series arm64 macOS, `rust-toolchain.toml`'s pinned nightly, base commit `d5960e81`:
 
 The vertical executed. Twelve `f32` elements agreed **bit for bit** with `tiler-reference`, including a negative zero whose sign survived, the least positive and least negative subnormals preserved through a multiply, a non-canonical NaN payload canonicalized to the realization's exact `0x7fc00000`, and both infinities. The retained fixture is [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json).
 
-Recorded quantities from that run: profile descriptor 865 bytes, payload 265 bytes, envelope 21,296 bytes, artifact identity 9,969 bytes, reference registry identity 912,256 bytes, **zero** deferred prepared-entry predicates.
+Recorded quantities from that run: profile descriptor 865 bytes, payload 265 bytes, envelope 82,918 bytes, artifact identity 40,622 bytes, reference registry identity 1,420,906 bytes, **zero** deferred prepared-entry predicates.
 
 ### Three identity sizes moved between `488efac` and `63f9259`
 
@@ -125,6 +125,29 @@ Recorded quantities from that run: profile descriptor 865 bytes, payload 265 byt
 
 **A correction to the ticket that ordered this run.** It predicted `payload_bytes` would move from 265, reasoning that the provenance record's canonical subject lost three SDK text runs and gained a platform tag. It did not move, and the prediction rested on reading the fixture's field as the payload's canonical subject: `payload_bytes` records the length of the serialized scalar image — the payload's `code` — which no provenance field is part of. Provenance folds into the payload descriptor's canonical key and therefore into artifact identity and the envelope, and those are two of the numbers that did move.
 
+### The composed numerical contract, a widened kernel type, and four quantities moved between `2119b20` and `d5960e81`
+
+**Fact — two drifts, and the second was not the one the ticket enumerated.** [`restore-the-spikes-against-the-composed-numerical-contract`](../../../tickets/restore-the-spikes-against-the-composed-numerical-contract.md) named one site here: `NumericalContract` stopped being a preset enumeration, its named points became associated constants on a composed record, and `NumericalContract::StrictF32` is now `NumericalContract::STRICT_F32`. A clean `cargo check --workspace --all-targets` reported **two** errors. The second is `KernelType::Bf16`, a variant added after that enumeration was written, and it surfaced here as a non-exhaustive `match` in `ImageType::from_kernel` — which is the enum working as designed rather than an accident: `KernelType` is deliberately not `#[non_exhaustive]` precisely so that widening it is a build error at every backend that has to decide what the new variant means.
+
+**This backend's decision is to refuse it, and the type's own definition is what asks for that.** `KernelType::Bf16` is admitted in KIR as a *type* rather than a lowerable one, and its documentation states that a backend which cannot yet lower it refuses it by name rather than spelling it. This profile declares `f32` dispatchable and says nothing about `bf16`, so `Bf16` joins `U8` and `I32` in the refusing arm and the refusal path carries the type: `TranslationError::UnsupportedValueType { found: KernelType }`. No wildcard arm was added — a catch-all is exactly what would stop the next widening from being a build error, which is the property that caught this one.
+
+**Measurement.** Recorded against the previous run at `2119b20`:
+
+| Quantity | `2119b20` | `d5960e81` |
+| --- | --- | --- |
+| selected plan | `program-alternative:72d49e71d668fff8` | `program-alternative:f6c5c487fbfbd8fa` |
+| envelope bytes | 21,296 | 82,918 |
+| artifact identity bytes | 9,969 | 40,622 |
+| reference registry identity bytes | 912,256 | 1,420,906 |
+
+**What did not move.** The twelve output bit patterns are byte-identical to every earlier fixture, and so are the profile descriptor (865), the payload (265), the element count, the zero deferred predicates, the host string, and every governed key. The profile descriptor held at 865 across this interval, having moved for the first time in the last one.
+
+**No delta here is attributable to any single landing, and the interval is again why.** 517 commits separate the two bases, 125 of them touching `crates/` across 198 files. The envelope and the artifact identity roughly quadrupled and the reference registry identity grew by half, which is a larger step than any previous interval recorded here, and this table states *that* they moved rather than *what* moved them. The byte-count boundary two sections above applies unchanged: three of these four rows are lengths, and an identity whose content changed without changing length would read the same.
+
+**The comparison was re-proved able to say no, because the oracle moved again.** The reference registry identity grew from 912,256 to 1,420,906 bytes, so the reference this run is checked against is not the one the previous re-run used and this README's own rule required the perturbation again. Replacing the `CanonicalizeF32Nan` arm in `src/interpret.rs` with an identity made the run exit 1 naming exactly one differing element — the backend returning the operand's own `0x7fc01234` where the reference requires `0x7fc00000`, with all eleven other elements still agreeing. Perturbation reverted; `git diff` over `src/interpret.rs` is empty.
+
+**Determinism, re-measured rather than inherited.** Four runs at this base — one of them after the rebuild the perturbation forced — produced byte-identical fixtures and byte-identical 47-line run narratives, `diff` exit 0 on every pair.
+
 ## Findings
 
 Each is what a consumer-neutral backend-provider contract has to account for. **Fact** means inspected source or this run's output; **Inference** is derived from those.
@@ -167,7 +190,7 @@ Every check below was run against a case that must fail, and observed failing. E
 
 **Host context**: an image declaring flushed input subnormals, an image declaring flushed result subnormals, an artifact declaring a 32-bit address model, and an artifact declaring `x86_64`, each refused by the measured context, against the unperturbed declaration it admits.
 
-**The comparison itself**, which is the one that matters most, because every probe above would still pass if the final check could not fail. Deleting the `CanonicalizeF32Nan` arm from `src/interpret.rs` — replacing it with an identity — makes the run exit non-zero at the comparison, naming exactly one differing element: the backend returns the operand's own `0x7fc01234` payload where the reference requires the realization's canonical `0x7fc00000`. Every other element still agrees. That perturbation was made, observed, and reverted; it is the evidence that the agreement above is a result rather than a tautology, and that the NaN canonicalization the kernel names is load-bearing rather than decorative. It was re-run at `63f9259`, at `e2da98f`, and at `2119b20`, all on 2026-08-01, and produced that same single-element failure each time — exit 1, `0x7fc01234` where the reference requires `0x7fc00000`, every other element still agreeing — so the comparison is still a check that can say no on the current tree rather than one inherited from a run nobody repeated. None of the re-runs is redundant, and the rule is the same each time: the reference registry identity moved across every one of those intervals, so the oracle the comparison is against is never the one the previous re-run used.
+**The comparison itself**, which is the one that matters most, because every probe above would still pass if the final check could not fail. Deleting the `CanonicalizeF32Nan` arm from `src/interpret.rs` — replacing it with an identity — makes the run exit non-zero at the comparison, naming exactly one differing element: the backend returns the operand's own `0x7fc01234` payload where the reference requires the realization's canonical `0x7fc00000`. Every other element still agrees. That perturbation was made, observed, and reverted; it is the evidence that the agreement above is a result rather than a tautology, and that the NaN canonicalization the kernel names is load-bearing rather than decorative. It was re-run at `63f9259`, at `e2da98f`, and at `2119b20`, all on 2026-08-01, and again at `d5960e81` on 2026-08-05, and produced that same single-element failure each time — exit 1, `0x7fc01234` where the reference requires `0x7fc00000`, every other element still agreeing — so the comparison is still a check that can say no on the current tree rather than one inherited from a run nobody repeated. None of the re-runs is redundant, and the rule is the same each time: the reference registry identity moved across every one of those intervals, so the oracle the comparison is against is never the one the previous re-run used.
 
 ## Measurement boundary
 
@@ -180,5 +203,5 @@ Every check below was run against a case that must fail, and observed failing. E
 
 ## Retained evidence
 
-- [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json) — the identities, byte counts, and exact output bit patterns of the run recorded above. Re-running with the same argument overwrites it; a diff is drift from the source beside it. The date in the name is the fixture's origin, deliberately not bumped per run: the path is stable so that `git diff` is the drift signal, and the run it currently holds is dated by `last_verified` above. The 2026-08-01 restoration made four of its numbers move, the loader-vocabulary re-run later the same day moved two more, and the delivery-position repair later still moved five; all three are tabled under "Result" with the superseded values kept rather than overwritten. The run this file currently holds is deterministic across invocations: three consecutive runs at `2119b20`, one of them after a rebuild, produced byte-identical fixtures and byte-identical 47-line run narratives.
+- [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json) — the identities, byte counts, and exact output bit patterns of the run recorded above. Re-running with the same argument overwrites it; a diff is drift from the source beside it. The date in the name is the fixture's origin, deliberately not bumped per run: the path is stable so that `git diff` is the drift signal, and the run it currently holds is dated by `last_verified` above. The 2026-08-01 restoration made four of its numbers move, the loader-vocabulary re-run later the same day moved two more, the delivery-position repair later still moved five, and the 2026-08-05 contract-and-`KernelType` restoration moved four; all four are tabled under "Result" with the superseded values kept rather than overwritten. The run this file currently holds is deterministic across invocations: four consecutive runs at `d5960e81`, one of them after a rebuild, produced byte-identical fixtures and byte-identical 47-line run narratives.
 - `Cargo.lock` is tracked, so the dependency set a recorded run was taken under is recoverable.

@@ -32,7 +32,7 @@ fn main() {
 
     let _ = CompileRequest::new(
         &program,
-        NumericalContract::FlushSubnormalsToZeroF32,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
         targets,
     )
     .with_physical_providers([&acme_provider::identity()]);

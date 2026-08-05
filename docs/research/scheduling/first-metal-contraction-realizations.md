@@ -89,7 +89,7 @@ ADR 0087 fixes the identity; this section states the rest of the obligations for
 | Empty domain | statically unreachable — `K ≥ 1024` in every cell — and the family still owes a declared behaviour | "the family still owes a declared behaviour, because the extent is an attribute and not a proof" is the same rule L3′ applied to a zero normalized axis |
 | Order permissions | reassociation Forbidden, permutation Forbidden, distributivity absent | the governed strict and flush-to-zero contracts forbid the first two; no contract Tiler can express grants the third |
 | ADR 0015 contraction | Forbidden | the governed strict and flush-to-zero contracts forbid it and require `-ffp-contract=off`; only the registered relaxed contract permits it |
-| Subnormals | `FlushSubnormalsToZeroF32`, sign-preserving, inputs and results | the declared realization of the qualified Apple9/F32 row, which ADR 0076 forbids substituting away |
+| Subnormals | `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32`, sign-preserving, inputs and results | the declared realization of the qualified Apple9/F32 row, which ADR 0076 forbids substituting away |
 | NaN results | `tiler::canonical-arithmetic-nan-f32@1`, after every combine and at the result boundary | the rule the registered strict serial sum already carries |
 | Determinism | plan deterministic | the initial scoped guarantee; nothing here uses an atomic |
 
