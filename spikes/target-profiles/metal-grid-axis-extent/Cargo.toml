@@ -1,0 +1,28 @@
+[package]
+name = "metal-grid-axis-extent"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace root, following `spikes/target-profiles/scalar-cpu-vertical`
+# and `spikes/program-planning/reduction-crossover`: `make` never reaches here
+# and this spike's dependency set is its own.
+[workspace]
+
+[dependencies]
+# The same binding the runtime prototype dispatches through, so the measurement
+# exercises the route Tiler actually encodes rather than a second one.
+metal = "0.33.0"
+
+[lints.rust]
+missing_docs = "warn"
+# `deny` rather than `forbid`, and the difference is the whole reason this line
+# is not a copy of the neighbouring spike's. Reading an `MTLBuffer` back has no
+# safe route through the binding, so exactly one site opts in by name under
+# ADR 0079 -- `forbid` would make that opt-in impossible and the measurement
+# unobtainable. `src/readback.rs` is the complete extent of unsafe code here.
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
