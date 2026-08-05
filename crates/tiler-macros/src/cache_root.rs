@@ -371,9 +371,11 @@ fn resolve_user_cache(home: Option<&OsStr>) -> Result<CacheRootDecision, RootRef
 /// Absoluteness and shared-tree membership are the *only* privacy properties
 /// decidable without touching the filesystem, and this function claims nothing
 /// more: a root that passes is asserted private by whoever named it, not proven
-/// private by Tiler. `ExpansionCache::preflight` reports the filesystem
-/// properties the publication protocol needs, and neither it nor this decides
-/// ownership or mode.
+/// private by Tiler. The filesystem properties the publication protocol needs
+/// are a separate question, taken by [`crate::preflight`] against the root this
+/// decision produced — once per process, reported on standard error, and never
+/// a refusal. Neither that probe nor this decides ownership or mode, so a root
+/// that passes both may still be readable by another user.
 fn checked(root: PathBuf, source: RootSource) -> Result<CacheRootDecision, RootRefusal> {
     if !root.is_absolute() {
         return Err(RootRefusal::NotAbsolute {

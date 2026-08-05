@@ -35,6 +35,7 @@ use crate::cache_root::{DISABLE_VALUE, RootEnvironment};
 use crate::delivery::{NamedProfile, byte_string_literal};
 use crate::eviction::{EvictionEnvironment, EvictionGate, EvictionSchedule};
 use crate::numerics::{StatedContract, resolve};
+use crate::preflight::PreflightGate;
 
 /// The approved region `in a: f32[4], b: f32[4], c: f32[4]; out (a * b) + c`.
 ///
@@ -177,6 +178,7 @@ fn a_delivering_expansion_publishes_and_then_hits() {
         flushing(),
         macos_selection(),
         &environment,
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -186,6 +188,7 @@ fn a_delivering_expansion_publishes_and_then_hits() {
         flushing(),
         macos_selection(),
         &environment,
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -245,6 +248,7 @@ fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
         flushing(),
         macos_selection(),
         &RootEnvironment::new(Some(std::ffi::OsString::from(DISABLE_VALUE)), None),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &toolchain,
     )
@@ -274,6 +278,7 @@ fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &toolchain,
     )
@@ -467,6 +472,7 @@ fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
         strict,
         macos_selection(),
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -497,6 +503,7 @@ fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -517,6 +524,7 @@ fn a_symbolic_region_cannot_deliver_a_selected_family() {
         flushing(),
         macos_selection(),
         &stating(std::path::Path::new("/unreachable")),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -602,6 +610,7 @@ fn every_unbuildable_selection_is_refused_before_any_toolchain_work() {
             flushing(),
             selection,
             &unreachable,
+            &PreflightGate::new(),
             &automatic(&EvictionGate::new()),
             &Toolchain::system(),
         )
@@ -657,6 +666,7 @@ fn a_mixed_selection_refuses_by_naming_only_its_unmeasured_families() {
         flushing(),
         selection,
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -702,6 +712,7 @@ fn the_emitted_route_facts_name_the_embedded_artifact_rather_than_copying_it() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -770,6 +781,7 @@ fn a_toolchain_failure_is_retained_under_the_family_it_belongs_to() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::with_launcher(root.join("no-such-xcrun")),
     )
@@ -966,6 +978,7 @@ fn a_real_metal_front_end_rejection_is_retained_under_its_family() {
             flushing(),
             macos_selection(),
             &stating(&root),
+            &PreflightGate::new(),
             &automatic(&EvictionGate::new()),
             &rejecting_toolchain(&root, &metal, rejection),
         )
@@ -1011,6 +1024,7 @@ fn a_real_metal_front_end_rejection_is_retained_under_its_family() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1049,6 +1063,7 @@ fn a_retained_msl_diagnostic_carries_the_emitted_source_position() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &rejecting_toolchain(&root, &metal, MetalRejection::DefectiveEmission),
     )
@@ -1211,6 +1226,7 @@ fn a_semantically_wrong_entry_is_a_typed_refusal_rather_than_a_silent_rebuild() 
         flushing(),
         macos_selection(),
         &stating(&poisoned),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1245,6 +1261,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
         flushing(),
         macos_selection(),
         &environment,
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1268,6 +1285,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
         flushing(),
         macos_selection(),
         &environment,
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1309,6 +1327,7 @@ fn a_fallback_only_selection_is_refused_before_any_backend_work() {
         flushing(),
         selection,
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1560,6 +1579,7 @@ fn a_split_selection_packages_every_entry_in_the_one_embedded_artifact() {
         reassociating(),
         macos_selection(),
         &stating(&directory),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &toolchain,
     )
@@ -1603,6 +1623,7 @@ fn a_publishing_expansion_evicts_an_entry_that_reached_the_stated_age() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1619,6 +1640,7 @@ fn a_publishing_expansion_evicts_an_entry_that_reached_the_stated_age() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &stating_age("1h", &EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1654,6 +1676,7 @@ fn a_cache_hit_evicts_nothing() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1666,6 +1689,7 @@ fn a_cache_hit_evicts_nothing() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &stating_age("1h", &EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1695,6 +1719,7 @@ fn the_opt_out_publishes_and_removes_nothing() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1706,6 +1731,7 @@ fn the_opt_out_publishes_and_removes_nothing() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &stating_age(DISABLE_VALUE, &EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1742,6 +1768,7 @@ fn an_unusable_eviction_policy_delivers_the_region_and_removes_nothing() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1753,6 +1780,7 @@ fn an_unusable_eviction_policy_delivers_the_region_and_removes_nothing() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &stating_age("30 days", &EvictionGate::new()),
         &Toolchain::system(),
     )
@@ -1796,6 +1824,7 @@ fn only_the_first_publication_in_a_process_sweeps() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &stating_age("1h", &process),
         &Toolchain::system(),
     )
@@ -1807,6 +1836,7 @@ fn only_the_first_publication_in_a_process_sweeps() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &stating_age("1h", &process),
         &Toolchain::system(),
     )
@@ -1822,6 +1852,7 @@ fn only_the_first_publication_in_a_process_sweeps() {
         flushing(),
         macos_selection(),
         &stating(&root),
+        &PreflightGate::new(),
         &stating_age("1h", &EvictionGate::new()),
         &Toolchain::system(),
     )
