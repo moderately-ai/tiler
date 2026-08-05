@@ -1,7 +1,7 @@
 ---
 id: wire-the-delivered-realization-record-into-the-artifact
 title: Wire the delivered-realization record into the artifact
-status: in-progress
+status: review
 priority: p1
 dependencies: [accept-the-delivered-realization-artifact-surface, construct-and-bind-the-first-authoritative-metal-compile-profile]
 related: [record-delivered-numerical-realization, redesign-the-delivered-realization-record-from-typed-evidence]
