@@ -27,6 +27,7 @@ mod reindex;
 mod rms_norm;
 mod shape_evidence;
 mod silu;
+mod slice;
 mod softmax;
 mod standard_operations;
 mod types;
@@ -189,6 +190,14 @@ pub use silu::{
     silu_f32_exponential_exceptional_contract, silu_f32_exponential_reference_semantics,
     silu_f32_facts, silu_f32_op, silu_f32_reference_semantics,
 };
+pub use slice::{
+    CanonicalSliceSelection, MAX_SLICE_SELECTION_AXES, SLICE_AXIS_EXTENT, SLICE_AXIS_OFFSET,
+    SLICE_AXIS_RELATION, SLICE_FACT_ADMITTED_RELATIONS, SLICE_FACT_MAPPING_CLASS,
+    SLICE_FACT_OUT_OF_BOUNDS, SLICE_FACT_STORAGE_CLAIM, SLICE_FACT_VALUE_BEHAVIOUR,
+    SLICE_RELATION_STRIDED_WINDOW, SLICE_RELATION_SYMBOLIC_WINDOW, SLICE_RELATION_WHOLE_AXIS,
+    SLICE_RELATION_WINDOW, SLICE_SELECTION_ATTRIBUTE, SLICE_SELECTION_AXES, SliceAttributeSubject,
+    SliceAxisSelection, SliceSelection, SliceSelectionError, slice_f32_op,
+};
 pub use softmax::{
     SOFTMAX_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, SOFTMAX_F32_EXPONENTIAL_ULP_TOLERANCE,
     SOFTMAX_F32_FACT_ACCUMULATOR_TYPE, SOFTMAX_F32_FACT_APPROXIMATE_INTRINSIC_PERMITTED,
@@ -207,7 +216,7 @@ pub use softmax::{
 };
 pub use standard_operations::{
     Bf16Add, Bf16Constant, Bf16Multiply, F32Add, F32Broadcast, F32Concatenate, F32Constant,
-    F32Multiply, F32Reindex, F32RmsNorm, F32Silu, F32Softmax, F32TensorContraction,
+    F32Multiply, F32Reindex, F32RmsNorm, F32Silu, F32Slice, F32Softmax, F32TensorContraction,
     StrictSerialF32Sum,
 };
 pub use types::{
