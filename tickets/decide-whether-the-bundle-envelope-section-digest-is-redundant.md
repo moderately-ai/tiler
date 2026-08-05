@@ -1,14 +1,17 @@
 ---
 id: decide-whether-the-bundle-envelope-section-digest-is-redundant
 title: Decide whether the bundle envelope-section digest is redundant
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [measure-the-expansion-cache-hot-path-efficiency, decide-whether-the-canonicity-re-encode-is-redundant]
 scopes: [implementation/cache]
-shared_scopes: [contracts/decisions]
+shared_scopes: [contracts/decisions, project/tickets]
 paths: []
 tags: [performance, cache, correctness]
+claimed_from: todo
+assignee: agent-bundle-digest
+lease_expires_at: 1785943617
 ---
 **Measured: the bundle's two section digests are 19.4–24.0% of a validated cache hit — 10,875 ns of 55,833 ns at a 32,136-byte envelope and 16,125 ns of 67,458 ns at a 47,803-byte one, on Apple M4 Max, release, `rustc 1.99.0-nightly (eff8269f7 2026-07-18)`, reproduced by a second run at the same commit.** Reproduce with the invocation `spikes/cache/hot-path-efficiency/README.md` records; the retained rows are `decompose … bundle-section-digests` in `spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-04.tsv`, and the derivation is [the hot-path efficiency note](../docs/research/cache/hot-path-efficiency.md).
 
