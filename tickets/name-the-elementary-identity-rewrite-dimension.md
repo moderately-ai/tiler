@@ -1,11 +1,11 @@
 ---
 id: name-the-elementary-identity-rewrite-dimension
 title: Name the elementary-identity rewrite dimension
-status: in-progress
+status: review
 priority: p2
 dependencies: []
-related: [connect-certified-rounding-error-bounds-to-rewrite-permissions, reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller]
-scopes: [research/numerics]
+related: [connect-certified-rounding-error-bounds-to-rewrite-permissions, reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller, carry-the-elementary-identity-dimension-adr, decide-whether-to-admit-an-elementary-identity-permission, correct-the-online-single-pass-softmax-fold-legality-fact, measure-whether-the-metal-runtime-compiler-folds-an-elementary-identity]
+scopes: [research/numerics, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, optimizer]
@@ -39,3 +39,15 @@ Admitting a permission (Tom's, under the same boundary as ADR 0095); implementin
 ## Closes when
 
 The dimension is defined in a research record with its worked counterexample, its relationship to the order contract and to the accuracy contract is stated, and either a permission is proposed for Tom or the dimension is named-and-unpermissioned in the shape ADR 0080 used for distributivity. Either outcome must leave the refusal wording specified.
+
+## Scope added by the worker, and why
+
+**`contracts/navigation`, added 2026-08-05.** The deliverable is a research record plus a preserved experiment, and `ticketsplease.toml` routes both catalogs that must move with them — `docs/research/README.md` and `spikes/README.md` — to `contracts/navigation` rather than to `research/numerics`, which covers `docs/research/numerics/**` and `spikes/numerics/**` only. AGENTS.md requires a catalog to be edited in the same change as the metadata behind it, and no gate checks the corpus, so leaving the two rows for a later ticket would leave a record and a spike unreachable from the indexes that are the only way a reader finds them. The mapping was read from `ticketsplease.toml` rather than asserted, and the two edits are one line each. This is declaration and scheduling metadata rather than product-scope expansion; nothing decision- or contract-shaped is applied, and `contracts/decisions` and `contracts/numerics` were deliberately **not** added — the vocabulary proposal is drafted inside the record for [`carry-the-elementary-identity-dimension-adr`](carry-the-elementary-identity-dimension-adr.md) to transfer.
+
+## Outcome
+
+**The dimension is one, it is a fourth, and the correct disposition today is named-and-unpermissioned.** [The elementary-identity rewrite dimension](../docs/research/numerics/elementary-identity-rewrite-dimension.md) carries the derivation: the elimination over all twelve dimensions, the grain argument on ADR 0014's capability-asymmetry standard, the three-layer answer that puts per-function content in the operation capability and per-identity quantitative content in the rule's bound, the accuracy-composition analysis, the vocabulary cost, and the drafted verbatim-landable ADR body.
+
+**Two measurements were taken rather than assumed**, both preserved at [`spikes/numerics/elementary_identity_folding/`](../spikes/numerics/elementary_identity_folding/README.md). The rewrite is observable in binary32 under a *correctly rounded* exponential — 502 of 1681 non-positive integer argument pairs disagree, the smallest at `a = b = -1.0` where the product rounds to `0x3e0a9556` and `exp(-2.0)` is `0x3e0a9555` — which is what proves the accuracy machinery structurally unable to bound it. And the offline Metal compiler folds no elementary identity under any of six math-mode flag sets, which is the evidence a target-profile declaration would rest on if the dimension were admitted; the runtime half is `Unknown` and filed.
+
+**Four tickets file what the derivation makes actionable**, and one finding is a defect rather than a proposal: `SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM` registers the string `a-reassociation-of-the-sum-and-not-a-free-implementation-choice`, which the certified-bounds derivation refutes and which points a scheduler at exactly the wrong permission. Correcting it is an identity-domain step, so it is [`correct-the-online-single-pass-softmax-fold-legality-fact`](correct-the-online-single-pass-softmax-fold-legality-fact.md) rather than a change here.

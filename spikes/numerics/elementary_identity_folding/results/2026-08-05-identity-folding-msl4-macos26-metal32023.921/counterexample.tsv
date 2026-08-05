@@ -1,0 +1,10 @@
+population	1681
+disagreements	502
+disagreement_fraction	0.2986
+smallest_a	-1.0
+smallest_b	-1.0
+smallest_exp_a_bits	0x3ebc5ab2
+smallest_product_bits	0x3e0a9556
+smallest_exp_sum_bits	0x3e0a9555
+exp_implementation	correctly rounded to binary32 from Decimal at 120 digits
+argument_grid	non-positive integers in [-40, 0], both arguments

@@ -1,0 +1,19 @@
+probe_date	2026-08-05
+offline_compiler	Apple metal version 32023.921 (metalfe-32023.921)
+compiler_target	air64-apple-darwin27.0.0
+compiler_installed_dir	/Users/tsanterre/Library/Developer/DVTDownloads/MetalToolchain/mounts/e0303a069097c7034cc5befc63a7a7c2c8ee7720/Metal.xctoolchain/usr/metal/current/bin
+xcode_select_path	/Applications/Xcode-beta.app/Contents/Developer
+xcode	Xcode 27.0 build 27A5228h
+sdk_path	/Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+host_os	macOS 27.0 26A5388g
+msl_std	metal4.0
+air_target	air64-apple-macos26.0
+probe_sh_sha256	cdaefe9d0380bab3deb76194cd1df828a04c62f02aaf1993615c0152f363dce3
+probe_metal_sha256	24e0fc978cb3de7a17220e8bdd3836dab5897b08c7c9beff412c2dc469bfd380
+identity_counterexample_py_sha256	66cd36c86bc52c320d6ac5cddc621c33be91a8c5eabe54f44d715378fe14a3aa
+declared_kernels	16
+flag_sets	6
+counterexample_interpreter	CPython 3.11.13 arm64 Darwin
+counterexample_modes	unoptimized and -O, byte-identical output
+device_executed	no
+runtime_compiler_exercised	no
