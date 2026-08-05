@@ -1,7 +1,7 @@
 ---
 id: raise-the-adopted-research-records-to-their-landed-implementation-status
 title: Raise the adopted research records to their landed implementation status
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [close-remaining-adr-status-drift, re-audit-adr-implementation-status-after-the-runtime-and-metal-landings]
