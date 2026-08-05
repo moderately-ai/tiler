@@ -1,7 +1,7 @@
 ---
 id: land-the-elementary-family-projection-adr
 title: Land the elementary-family projection ADR
-status: review
+status: done
 priority: p1
 dependencies: [admit-the-registered-unary-families-at-the-compiler-request-boundary, complete-the-elementary-projection-adr-frontmatter]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, decisions, carrier]
-claimed_from: todo
-assignee: agent-adr-carrier2
-lease_expires_at: 1785904792
 ---
 ## User-visible outcome
 
