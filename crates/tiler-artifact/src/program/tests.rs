@@ -7,6 +7,17 @@
 
 use std::sync::Arc;
 
+use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::index::{
+    DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexInteger,
+    IndexRealizationAuthority, IndexRealizationLaw, IndexRefinementSubject,
+    IndexRefinementVerificationOutcome, IndexRegionBuilder, NumericalContractIdentity, ScalarArity,
+    ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+    ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
+    ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder,
+    TensorRole as IndexTensorRole, VerifiedIndexRegion, add_f32_scalar_op, constant_f32_scalar_op,
+    multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+};
 use tiler_ir::kernel::{
     KernelType, MAX_KERNEL_IDENTITY_BYTES, VerifiedKernel, lower_scheduled_region,
 };
@@ -15,38 +26,37 @@ use tiler_ir::program::abi::{
     TargetPropertyRequirementRelation,
 };
 use tiler_ir::program::{
-    AllocationOwnership, AllocationSpec, ByteWindow, KernelProgramBuilder,
+    AllocationOwnership, AllocationSpec, ByteWindow, CoveredOccurrence, KernelProgramBuilder,
     MaterializedComponentSpec, MaterializedOrigin, MaterializedValueSpec, MemorySpace,
-    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
-    StageLaunch, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
+    RoutingCommitState, RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch,
+    StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
 };
 use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
-    ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey,
+    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
+    MaterializationRounding, NumericalPermission, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology,
+    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
-    CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
-    F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply, InputKey,
-    NormativeDefinitionRef, OpKey, OperationArity, OperationAttributeSchema, OperationAttributes,
-    OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
-    OperationInferenceError, OperationInferenceOutputs, OperationInferenceRequest,
-    OperationInferencer, OperationSchema, OutputKey, ProviderDiagnosticCode, ProviderIdentity,
-    REDUCTION_AXES_ATTRIBUTE, RegistryError, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
-    STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgram, SemanticProgramBuilder,
-    SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar, StrictAffineU4,
-    StrictSerialF32Sum, TypeDefinitionFacts, TypeKey, ValueFact, ValueTypeDefinition,
-    ValueTypeDefinitionKey, add_f32_op, constant_f32_op, dequantize_strict_affine_op,
-    multiply_f32_op, strict_serial_sum_f32_op,
+    CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView,
+    F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply, FrozenSemanticRegistry,
+    InputKey, NormativeDefinitionRef, OpKey, OperationArity, OperationAttributeSchema,
+    OperationAttributes, OperationConformance, OperationDefinition, OperationDefinitionFacts,
+    OperationEffect, OperationId, OperationInferenceError, OperationInferenceOutputs,
+    OperationInferenceRequest, OperationInferencer, OperationSchema, OutputKey,
+    ProviderDiagnosticCode, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, RegistryError,
+    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+    SemanticProgram, SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
+    SemanticRegistryRegistrar, StrictAffineU4, StrictSerialF32Sum, TypeDefinitionFacts, TypeKey,
+    ValueFact, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op, constant_f32_op,
+    dequantize_strict_affine_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape};
 
 use super::BackendFeatureRequirement;
-use super::model::{
-    ARTIFACT_DOMAIN_LABEL, LEGACY_STAGE_KEY_DOMAIN, STAGE_KEY_DOMAIN, stage_key_with_domain,
-};
+use super::model::{ARTIFACT_DOMAIN_LABEL, LENGTH_BYTES, STAGE_KEY_DOMAIN, framed, stage_key};
 use super::{
     AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiFactBinder, AbiFacts, AbiRoot, AbiType,
     AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
@@ -204,6 +214,360 @@ pub(crate) fn semantic_program() -> SemanticProgram {
     build_graph(SemanticProgramBuilder::try_standard().unwrap())
 }
 
+/// Obtains proof-derived coverage over the governed standard scalar authority.
+///
+/// This crate cannot mint a refinement receipt, and the point of the coverage
+/// binding is that it cannot: a `CoveredOccurrence` exists only where a
+/// completed receipt does. So the fixtures walk the same sealed IR path a
+/// lowering consumer walks — derive each occurrence's subject, admit an
+/// authority, build a *candidate* index region here, and submit the pair to the
+/// verifier, which mints a receipt only when the candidate's canonical identity
+/// equals the registered law's.
+///
+/// Building the candidate here rather than asking the law for its own answer is
+/// forced and is also the point: a caller that could obtain the expected region
+/// and hand it straight back would turn the verifier into a rubber stamp.
+fn checked_coverage(semantic: &SemanticProgram) -> Vec<CoveredOccurrence> {
+    checked_coverage_under(semantic, &strict_contract())
+}
+
+fn checked_coverage_under(
+    semantic: &SemanticProgram,
+    contract: &NumericalContractIdentity,
+) -> Vec<CoveredOccurrence> {
+    let scalars = FrozenScalarRegistry::standard().expect("the standard scalar authority freezes");
+    checked_coverage_over(semantic, &scalars, contract)
+}
+
+/// The same walk over a scalar authority composed for this exact graph.
+///
+/// The provider-provenance fixtures build semantic registries the standard
+/// scalar profile is not composed with — that profile is pinned to
+/// [`tiler_ir::semantic::FrozenSemanticRegistry::standard`], and a refinement
+/// verifier refuses a scalar authority frozen over another semantic authority.
+/// Those fixtures therefore pair their registry with [`scalars_over`].
+fn checked_coverage_over(
+    semantic: &SemanticProgram,
+    scalars: &FrozenScalarRegistry,
+    contract: &NumericalContractIdentity,
+) -> Vec<CoveredOccurrence> {
+    let laws = FrozenIndexRealizationLawRegistry::from_semantic(
+        semantic.semantic_registry().clone(),
+        scalars.clone(),
+    )
+    .expect("the fixture's scalar and semantic authorities cohere");
+    let mut coverage: Vec<CoveredOccurrence> = semantic
+        .operations()
+        .map(|operation| checked_occurrence(semantic, scalars, &laws, operation.id(), contract))
+        .collect();
+    coverage.sort_unstable_by_key(CoveredOccurrence::occurrence);
+    coverage
+}
+
+fn checked_occurrence(
+    semantic: &SemanticProgram,
+    scalars: &FrozenScalarRegistry,
+    laws: &FrozenIndexRealizationLawRegistry,
+    operation: OperationId,
+    contract: &NumericalContractIdentity,
+) -> CoveredOccurrence {
+    let subject = IndexRefinementSubject::derive(semantic, operation, contract.clone())
+        .expect("every fixture operation derives a refinement subject");
+    let (emitted, region) = if subject.operation() == &constant_f32_op() {
+        (
+            vec![constant_f32_scalar_op()],
+            constant_region(&subject, scalars),
+        )
+    } else if subject.operation() == &multiply_f32_op() {
+        (
+            vec![multiply_f32_scalar_op()],
+            pointwise_region(&subject, scalars, multiply_f32_scalar_op()),
+        )
+    } else if subject.operation() == &add_f32_op() {
+        (
+            vec![add_f32_scalar_op()],
+            pointwise_region(&subject, scalars, add_f32_scalar_op()),
+        )
+    } else if subject.operation() == &strict_serial_sum_f32_op() {
+        (
+            vec![add_f32_scalar_op()],
+            serial_sum_region(&subject, scalars),
+        )
+    } else {
+        panic!(
+            "the fixture has no candidate region for {}",
+            subject.operation()
+        )
+    };
+    let authority = IndexRealizationAuthority::admit(
+        semantic.semantic_registry(),
+        scalars,
+        subject.operation().clone(),
+        subject.signature().clone(),
+        &emitted,
+    )
+    .expect("the fixture's emission ceiling is admissible");
+    let resolution = laws
+        .resolve(&subject)
+        .expect("the registered law resolves for this subject");
+    match resolution
+        .verify(&authority, &region)
+        .expect("the fixture's candidate region realizes its operation")
+    {
+        IndexRefinementVerificationOutcome::Verified(receipt) => {
+            CoveredOccurrence::from_receipt(&receipt)
+        }
+        IndexRefinementVerificationOutcome::Pending(_) => {
+            panic!("the fixture's static regions retain no residual index-domain obligation")
+        }
+    }
+}
+
+/// The governed strict F32 contract the fixture kernels realize.
+fn strict_contract() -> NumericalContractIdentity {
+    F32NumericalContractKey::new(
+        SubnormalMode::Preserve,
+        SubnormalMode::Preserve,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        MaterializationRounding::NearestTiesToEven,
+    )
+    .expect("the fixture contract vector is coherent")
+    .into()
+}
+
+/// The same contract flushing subnormals, used only to perturb *evidence*.
+///
+/// A numerical contract reaches a receipt's executable coverage and is
+/// deliberately absent from semantic graph meaning, so two coverages minted
+/// under these two contracts name the same occurrences of the same graph and
+/// carry different proofs.
+fn flush_contract() -> NumericalContractIdentity {
+    F32NumericalContractKey::new(
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        },
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        },
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        MaterializationRounding::NearestTiesToEven,
+    )
+    .expect("the fixture contract vector is coherent")
+    .into()
+}
+
+fn constant_region(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+) -> VerifiedIndexRegion {
+    let [result] = subject.results() else {
+        panic!("a constant has one result")
+    };
+    let bits = subject
+        .attributes()
+        .get(F32_CONSTANT_BITS_ATTRIBUTE)
+        .expect("a constant carries its bits attribute")
+        .clone();
+    let attributes = ScalarAttributes::new(
+        CanonicalValue::record([CanonicalField::new(F32_CONSTANT_BITS_ATTRIBUTE, bits)])
+            .expect("the scalar attribute record composes"),
+    )
+    .expect("scalar attributes are a record");
+    let mut region = IndexRegionBuilder::new(scalars.clone()).expect("an index region builder");
+    let output = region
+        .tensor(
+            IndexTensorRole::Output,
+            result.value_type().clone(),
+            result.shape().clone(),
+        )
+        .expect("the constant's output tensor");
+    let value = region
+        .apply(constant_f32_scalar_op(), attributes, &[])
+        .expect("the constant scalar applies")
+        .get(0)
+        .expect("one constant result");
+    let write = region.write(output, &[], &[]).expect("the constant write");
+    region.output(write, value).expect("the output root");
+    region.build().expect("a verified constant region")
+}
+
+fn pointwise_region(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+    operation: ScalarOpKey,
+) -> VerifiedIndexRegion {
+    let [result] = subject.results() else {
+        panic!("a binary pointwise operation has one result")
+    };
+    let mut region = IndexRegionBuilder::new(scalars.clone()).expect("an index region builder");
+    let dimensions = result
+        .shape()
+        .extents()
+        .iter()
+        .copied()
+        .map(|extent| {
+            region
+                .dimension(DomainRole::Parallel, extent)
+                .expect("a parallel dimension")
+        })
+        .collect::<Vec<_>>();
+    let coordinates = dimensions
+        .iter()
+        .copied()
+        .map(|dimension| {
+            region
+                .dimension_expr(dimension)
+                .expect("a dimension coordinate")
+        })
+        .collect::<Vec<_>>();
+    let tensors = subject
+        .inputs()
+        .iter()
+        .map(|input| {
+            region
+                .tensor(
+                    IndexTensorRole::Input,
+                    input.value_type().clone(),
+                    input.shape().clone(),
+                )
+                .expect("a pointwise input tensor")
+        })
+        .collect::<Vec<_>>();
+    let operands = subject
+        .operands()
+        .iter()
+        .map(|position| {
+            let input = &subject.inputs()[*position];
+            if input.shape() == result.shape() {
+                region
+                    .read(tensors[*position], &dimensions, &coordinates)
+                    .expect("an elementwise read")
+            } else {
+                region
+                    .read(tensors[*position], &[], &[])
+                    .expect("a rank-zero broadcast read")
+            }
+        })
+        .collect::<Vec<_>>();
+    let value = region
+        .apply(operation, ScalarAttributes::empty(), &operands)
+        .expect("the pointwise scalar applies")
+        .get(0)
+        .expect("one pointwise result");
+    let output = region
+        .tensor(
+            IndexTensorRole::Output,
+            result.value_type().clone(),
+            result.shape().clone(),
+        )
+        .expect("the pointwise output tensor");
+    let write = region
+        .write(output, &dimensions, &coordinates)
+        .expect("the pointwise write");
+    region.output(write, value).expect("the output root");
+    region.build().expect("a verified pointwise region")
+}
+
+fn serial_sum_region(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+) -> VerifiedIndexRegion {
+    let ([input], [result]) = (subject.inputs(), subject.results()) else {
+        panic!("a serial sum has one input and one result")
+    };
+    let [rows, columns] = input.shape().extents() else {
+        panic!("the fixture reduces a rank-two input")
+    };
+    let (rows, columns) = (*rows, columns.get());
+    let mut region = IndexRegionBuilder::new(scalars.clone()).expect("an index region builder");
+    let row = region
+        .dimension(DomainRole::Parallel, rows)
+        .expect("the row dimension");
+    let row_coordinate = region.dimension_expr(row).expect("the row coordinate");
+    let zero = region
+        .constant(IndexInteger::from_u64(0))
+        .expect("the seed column");
+    let input_tensor = region
+        .tensor(
+            IndexTensorRole::Input,
+            input.value_type().clone(),
+            input.shape().clone(),
+        )
+        .expect("the reduction input tensor");
+    let seed = region
+        .read(input_tensor, &[row], &[row_coordinate, zero])
+        .expect("the first contributor");
+    let tail = region
+        .dimension(DomainRole::Reduction, Extent::new(columns - 1))
+        .expect("the tail dimension");
+    let tail_coordinate = region.dimension_expr(tail).expect("the tail coordinate");
+    let one = IndexInteger::from_u64(1);
+    let contributor_column = region
+        .linear_combination(one.clone(), &[(one, tail_coordinate)])
+        .expect("the tail contributor coordinate");
+    let contributor = region
+        .read(
+            input_tensor,
+            &[row, tail],
+            &[row_coordinate, contributor_column],
+        )
+        .expect("a tail contributor");
+    let total = region
+        .reduce(&[tail], &[seed], &[contributor], |body| {
+            let state = body.state(0).expect("one reduction state");
+            let value = body.contributor(0).expect("one contributor");
+            let accumulated = body
+                .apply(
+                    add_f32_scalar_op(),
+                    ScalarAttributes::empty(),
+                    &[state, value],
+                )?
+                .get(0)
+                .expect("one accumulated result");
+            body.yield_values(&[accumulated])
+        })
+        .expect("the serial reduction")
+        .get(0)
+        .expect("one reduction result");
+    let output = region
+        .tensor(
+            IndexTensorRole::Output,
+            result.value_type().clone(),
+            result.shape().clone(),
+        )
+        .expect("the reduction output tensor");
+    let write = region
+        .write(output, &[row], &[row_coordinate])
+        .expect("the reduction write");
+    region.output(write, total).expect("the output root");
+    region.build().expect("a verified serial-sum region")
+}
+
+fn coverage_range(
+    coverage: &[CoveredOccurrence],
+    range: std::ops::Range<u32>,
+) -> Vec<CoveredOccurrence> {
+    coverage
+        .iter()
+        .filter(|covered| range.contains(&covered.occurrence().get()))
+        .cloned()
+        .collect()
+}
+
 /// Builds the fixture graph publishing its one reduction under two names.
 ///
 /// `SemanticProgramBuilder::output_resolved` rejects a repeated *key* and not a
@@ -283,13 +647,8 @@ fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
     let read = plan.push_whole_view(source).unwrap();
     let write = plan.push_whole_view(result).unwrap();
     let (accesses, launch) = declare_program_contract(&mut plan, read, write);
-    plan.push_stage(
-        &kernel,
-        &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
-        &accesses,
-        launch,
-    )
-    .unwrap();
+    plan.push_stage(&kernel, &checked_coverage(semantic), &accesses, launch)
+        .unwrap();
     plan.push_output(OutputKey::new("result").unwrap(), result)
         .unwrap();
     plan.push_output(OutputKey::new("copy").unwrap(), result)
@@ -396,6 +755,31 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
 
 /// Builds the single-stage kernel program the artifact packages.
 pub(crate) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> VerifiedKernelProgram {
+    fused_program_with_coverage(semantic, scale_bits, &checked_coverage(semantic))
+}
+
+/// The fused program over a graph whose registry is not the standard one.
+///
+/// See [`scalars_over`] for why these fixtures cannot use the governed standard
+/// scalar profile.
+fn fused_program_over_fixture_scalars(
+    semantic: &SemanticProgram,
+    scale_bits: u32,
+) -> VerifiedKernelProgram {
+    let scalars = scalars_over(semantic.semantic_registry());
+    fused_program_with_coverage(
+        semantic,
+        scale_bits,
+        &checked_coverage_over(semantic, &scalars, &strict_contract()),
+    )
+}
+
+/// The same program over supplied coverage, so a test can vary only the proof.
+fn fused_program_with_coverage(
+    semantic: &SemanticProgram,
+    scale_bits: u32,
+    coverage: &[CoveredOccurrence],
+) -> VerifiedKernelProgram {
     let kernel = fused_kernel(scale_bits);
     let mut plan = KernelProgramBuilder::new(semantic).unwrap();
     let external = plan
@@ -449,13 +833,8 @@ pub(crate) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> Veri
     let read = plan.push_whole_view(source).unwrap();
     let write = plan.push_whole_view(result).unwrap();
     let (accesses, launch) = declare_program_contract(&mut plan, read, write);
-    plan.push_stage(
-        &kernel,
-        &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
-        &accesses,
-        launch,
-    )
-    .unwrap();
+    plan.push_stage(&kernel, coverage, &accesses, launch)
+        .unwrap();
     plan.push_output(OutputKey::new("result").unwrap(), result)
         .unwrap();
     plan.build().unwrap()
@@ -846,11 +1225,12 @@ pub(super) fn partial_window_program(semantic: &SemanticProgram) -> VerifiedKern
         scratch_view,
         write,
     } = wire_two_stage_storage(&mut plan);
+    let coverage = checked_coverage(semantic);
 
     let first = plan
         .push_stage(
             &pointwise,
-            &(0..4).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+            &coverage_range(&coverage, 0..4),
             &[
                 StageAccess {
                     view: read,
@@ -872,7 +1252,7 @@ pub(super) fn partial_window_program(semantic: &SemanticProgram) -> VerifiedKern
     let second = plan
         .push_stage(
             &reduction,
-            &[SemanticOccurrence::new(4)],
+            &coverage_range(&coverage, 4..5),
             &[
                 StageAccess {
                     view: scratch_view,
@@ -918,6 +1298,128 @@ fn strict_affine_u4_dequantize_semantic() -> SemanticProgram {
         .output_resolved(OutputKey::new("result").expect("output key"), output)
         .expect("dense output");
     draft.build().expect("verified semantic program")
+}
+
+/// Mints the strict-affine fixture's real IR-owned refinement receipt.
+///
+/// Governed compilation is not available here and the reason is not a fixture
+/// gap: the current target profile supports dense F32 only, so a graph with an
+/// encoded input is refused before physical planning. That must not tempt this
+/// fixture to forge coverage. Instead it builds the candidate region through
+/// the public index builder and submits it to the same sealed authority the
+/// compiler would use. The verifier compares canonical identities and is the
+/// only code that can mint the receipt retained below, so this coverage is as
+/// real as the compiled fixtures' — it simply reaches the verifier by the other
+/// public door.
+fn strict_affine_checked_coverage(semantic: &SemanticProgram) -> Vec<CoveredOccurrence> {
+    let scalars = FrozenScalarRegistry::standard().expect("the standard scalar authority freezes");
+    let laws = FrozenIndexRealizationLawRegistry::from_semantic(
+        semantic.semantic_registry().clone(),
+        scalars.clone(),
+    )
+    .expect("the standard scalar and semantic authorities cohere");
+    let operation = semantic
+        .operations()
+        .next()
+        .expect("the fixture graph has one operation")
+        .id();
+    let subject = IndexRefinementSubject::derive(semantic, operation, strict_contract())
+        .expect("the strict-affine subject derives");
+    let authority = IndexRealizationAuthority::admit(
+        semantic.semantic_registry(),
+        &scalars,
+        subject.operation().clone(),
+        subject.signature().clone(),
+        &[strict_affine_u4_dequantize_scalar_op()],
+    )
+    .expect("the strict-affine emission ceiling is admissible");
+    let resolution = laws
+        .resolve(&subject)
+        .expect("the strict-affine law resolves");
+
+    let [input] = subject.inputs() else {
+        panic!("the strict-affine subject has one input")
+    };
+    let [result] = subject.results() else {
+        panic!("the strict-affine subject has one result")
+    };
+    let (_, encoded) = input
+        .value_type()
+        .encoded_numeric_parts()
+        .expect("the input is an encoded numeric value");
+    let mut region = IndexRegionBuilder::new(scalars).expect("an index region builder");
+    let dimensions = result
+        .shape()
+        .extents()
+        .iter()
+        .copied()
+        .map(|extent| {
+            region
+                .dimension(DomainRole::Parallel, extent)
+                .expect("a parallel dimension")
+        })
+        .collect::<Vec<_>>();
+    let coordinates = dimensions
+        .iter()
+        .copied()
+        .map(|dimension| {
+            region
+                .dimension_expr(dimension)
+                .expect("a dimension coordinate")
+        })
+        .collect::<Vec<_>>();
+    let tensors = encoded
+        .components()
+        .iter()
+        .map(|component| {
+            region
+                .tensor(
+                    IndexTensorRole::Input,
+                    component.resolved_type().clone(),
+                    component.shape_relation().component_shape(input.shape()),
+                )
+                .expect("an encoded component tensor")
+        })
+        .collect::<Vec<_>>();
+    let codes = region
+        .read(tensors[0], &dimensions, &coordinates)
+        .expect("the codes read");
+    let scale = region.read(tensors[1], &[], &[]).expect("the scale read");
+    let zero_point = region
+        .read(tensors[2], &[], &[])
+        .expect("the zero-point read");
+    let decoded = region
+        .apply(
+            strict_affine_u4_dequantize_scalar_op(),
+            ScalarAttributes::empty(),
+            &[codes, scale, zero_point],
+        )
+        .expect("the strict-affine decode applies")
+        .get(0)
+        .expect("one decoded result");
+    let output = region
+        .tensor(
+            IndexTensorRole::Output,
+            result.value_type().clone(),
+            result.shape().clone(),
+        )
+        .expect("the dense output tensor");
+    let write = region
+        .write(output, &dimensions, &coordinates)
+        .expect("the dense output write");
+    region.output(write, decoded).expect("the output root");
+    let region = region.build().expect("a verified canonical index region");
+    match resolution
+        .verify(&authority, &region)
+        .expect("the candidate region realizes the governed strict-affine law")
+    {
+        IndexRefinementVerificationOutcome::Verified(receipt) => {
+            vec![CoveredOccurrence::from_receipt(&receipt)]
+        }
+        IndexRefinementVerificationOutcome::Pending(_) => {
+            panic!("the static strict-affine region retains no residual proof obligation")
+        }
+    }
 }
 
 fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
@@ -1141,7 +1643,7 @@ fn strict_affine_u4_dequantize_program(semantic: &SemanticProgram) -> VerifiedKe
         .expect("applicability guard");
     plan.push_stage(
         &kernel,
-        &[SemanticOccurrence::new(0)],
+        &strict_affine_checked_coverage(semantic),
         &[
             StageAccess {
                 view: codes,
@@ -1433,22 +1935,104 @@ pub(crate) fn default_artifact() -> VerifiedArtifactProgram {
     build_artifact(&semantic, &program, provider.clone(), &[provider])
 }
 
+/// Reconstructs the historical stage-key payload: the bound kernel identity and
+/// the bare coverage ordinals, with no refinement evidence beside them.
+///
+/// `v1` and `v2` share this payload byte for byte and differ only in their
+/// separator, because the canonical-coverage step *reinterpreted* those raw
+/// ordinals rather than changing them. `v3` is the first step that changes the
+/// payload, which is why this reconstruction is written here rather than
+/// obtained by handing another separator to the production encoder.
+fn coverage_only_stage_key(stage: tiler_ir::program::StageRef<'_>, domain: &[u8]) -> Vec<u8> {
+    let mut bytes = domain.to_vec();
+    push_slice(&mut bytes, stage.kernel().canonical_identity().as_bytes());
+    push_len(&mut bytes, stage.coverage().len());
+    for covered in stage.coverage() {
+        bytes.extend_from_slice(&covered.occurrence().get().to_be_bytes());
+    }
+    bytes
+}
+
 #[test]
-fn v2_artifact_stage_key_separates_canonical_coverage_from_v1_storage_coverage() {
+fn each_artifact_stage_key_generation_is_separated_from_the_last() {
+    const V1: &[u8] = b"tiler.artifact-program.stage.v1\0";
+    const V2: &[u8] = b"tiler.artifact-program.stage.v2\0";
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let stage = program.stages().next().expect("one fused stage");
-    let current = stage_key_with_domain(stage, STAGE_KEY_DOMAIN);
-    let v1_storage_meaning = stage_key_with_domain(stage, LEGACY_STAGE_KEY_DOMAIN);
-    let v1_canonical_meaning = v1_storage_meaning.clone();
+    let current = stage_key(stage);
+    let v1 = coverage_only_stage_key(stage, V1);
+    let v2 = coverage_only_stage_key(stage, V2);
 
     assert!(current.starts_with(STAGE_KEY_DOMAIN));
-    assert!(!current.starts_with(LEGACY_STAGE_KEY_DOMAIN));
+    assert!(!current.starts_with(V1));
+    assert!(!current.starts_with(V2));
+    // v1 → v2 moved the separator over an unchanged payload, because the step
+    // reinterpreted the ordinals rather than rewriting them.
     assert_eq!(
-        v1_storage_meaning, v1_canonical_meaning,
-        "v1 gave the unchanged raw coverage payload one spelling under both meanings"
+        v1[V1.len()..],
+        v2[V2.len()..],
+        "v1 and v2 spell the same coverage payload"
     );
-    assert_ne!(current, v1_storage_meaning);
+    assert_ne!(v1, v2);
+    // v2 → v3 rewrote the payload: each record gained its framed evidence, so
+    // the current key is strictly longer and shares no reading with either.
+    assert!(current.len() > v2.len());
+    assert_ne!(current, v2);
+    assert_ne!(current, v1);
+}
+
+/// The two independent stage encoders agree on what a coverage record is.
+///
+/// `tiler-ir`'s two encoder sites destructure `CoveredOccurrence`, so a field
+/// added to that record stops their build until it is folded. This encoder
+/// cannot do that: the fields are private and this is another crate, which is
+/// the sealed-construction design working as intended — the same privacy that
+/// stops a caller assembling a record stops this crate reading it apart. So the
+/// artifact side is held here instead, and this is the check that fails.
+///
+/// Both encoders write the same per-record run — the occurrence's four bytes
+/// then its length-framed evidence — and differ only in what precedes it: this
+/// key opens with its own separator, the program encoding does not. The run
+/// this key writes is therefore a contiguous subsequence of the program
+/// identity, and stays one exactly while the two agree. If `tiler-ir` folds a
+/// new field and this encoder does not, its run stops matching and this test
+/// says so; the reverse fails the same way.
+///
+/// What this does *not* hold is the framing around the run, which the two
+/// deliberately spell differently. That is why the assertion is containment
+/// rather than equality.
+#[test]
+fn the_artifact_stage_key_encodes_the_same_coverage_record_as_the_kernel_program() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let identity = program.canonical_identity().as_bytes();
+
+    let mut stages = 0_usize;
+    for stage in program.stages() {
+        stages += 1;
+        assert!(
+            !stage.coverage().is_empty(),
+            "a stage covering nothing would make the run below empty, and an \
+             empty needle occurs everywhere",
+        );
+        let key = stage_key(stage);
+        // Everything this key writes after its count: the coverage run itself.
+        let prefix = STAGE_KEY_DOMAIN.len()
+            + framed(stage.kernel().canonical_identity().as_bytes().len())
+            + LENGTH_BYTES;
+        let run = &key[prefix..];
+        assert_eq!(
+            identity
+                .windows(run.len())
+                .filter(|window| *window == run)
+                .count(),
+            1,
+            "the coverage run this stage key writes must appear exactly once in \
+             the kernel-program identity; the two encoders have drifted",
+        );
+    }
+    assert_eq!(stages, 1, "the fused fixture packages one stage");
 }
 
 // -------------------------------------------------------------------------
@@ -1936,6 +2520,64 @@ fn the_expression_arena_is_canonically_deduplicated() {
 // Reached versus unused provenance (ADR 0072)
 // -------------------------------------------------------------------------
 
+/// The refinement evidence a stage names reaches artifact identity.
+///
+/// This is the artifact half of the coverage binding, and it is the half that
+/// needs its own test: the artifact writes the stage subject through its own
+/// encoder, so an artifact blind to a difference the kernel program folds would
+/// be a real divergence rather than a duplicated assertion. The perturbation is
+/// the governed numerical contract the receipts were minted under — a genuine
+/// difference in what was proved, and one the semantic graph does not carry.
+#[test]
+fn refinement_evidence_moves_program_and_artifact_identity() {
+    let semantic = semantic_program();
+    let strict = checked_coverage_under(&semantic, &strict_contract());
+    let flushed = checked_coverage_under(&semantic, &flush_contract());
+    assert_eq!(
+        strict
+            .iter()
+            .map(CoveredOccurrence::occurrence)
+            .collect::<Vec<_>>(),
+        flushed
+            .iter()
+            .map(CoveredOccurrence::occurrence)
+            .collect::<Vec<_>>(),
+        "the perturbation changes evidence, not which occurrences are covered",
+    );
+    assert!(
+        strict
+            .iter()
+            .zip(&flushed)
+            .any(|(left, right)| left.refinement() != right.refinement()),
+        "two governed contracts must mint distinct executable-coverage evidence",
+    );
+
+    let strict_program = fused_program_with_coverage(&semantic, SCALE_BITS, &strict);
+    let flushed_program = fused_program_with_coverage(&semantic, SCALE_BITS, &flushed);
+    assert_ne!(
+        strict_program.canonical_identity(),
+        flushed_program.canonical_identity(),
+    );
+
+    let provider = lowering_provider(1);
+    let strict_artifact = build_artifact(
+        &semantic,
+        &strict_program,
+        provider.clone(),
+        std::slice::from_ref(&provider),
+    );
+    let flushed_artifact = build_artifact(
+        &semantic,
+        &flushed_program,
+        provider.clone(),
+        std::slice::from_ref(&provider),
+    );
+    assert_ne!(
+        strict_artifact.canonical_identity(),
+        flushed_artifact.canonical_identity(),
+    );
+}
+
 #[test]
 fn a_reached_capability_provider_revision_changes_identity() {
     let semantic = semantic_program();
@@ -2042,13 +2684,13 @@ fn a_reached_semantic_provider_revision_changes_identity() {
     let provider = lowering_provider(1);
     let first_artifact = build_artifact(
         &first,
-        &fused_program(&first, SCALE_BITS),
+        &fused_program_over_fixture_scalars(&first, SCALE_BITS),
         provider.clone(),
         std::slice::from_ref(&provider),
     );
     let second_artifact = build_artifact(
         &second,
-        &fused_program(&second, SCALE_BITS),
+        &fused_program_over_fixture_scalars(&second, SCALE_BITS),
         provider.clone(),
         &[provider],
     );
@@ -2072,8 +2714,8 @@ fn an_unused_semantic_provider_revision_does_not_change_identity() {
         second.semantic_identity().admission_provenance(),
     );
     let provider = lowering_provider(1);
-    let first_program = fused_program(&first, SCALE_BITS);
-    let second_program = fused_program(&second, SCALE_BITS);
+    let first_program = fused_program_over_fixture_scalars(&first, SCALE_BITS);
+    let second_program = fused_program_over_fixture_scalars(&second, SCALE_BITS);
     // The kernel-program leg is asserted separately from the artifact leg: the
     // artifact folds the program identity, so equal artifacts would otherwise
     // leave a program-level divergence indistinguishable from an artifact-level
@@ -3271,9 +3913,24 @@ impl SemanticRegistryProvider for GovernedTestSemantics {
                 CanonicalValueKind::FloatBits,
             )],
             TestOperation::Constant,
+            IndexRealizationLaw::constant_f32(),
         )?;
-        register_test_operation(registrar, multiply_f32_op(), 2, [], TestOperation::Binary)?;
-        register_test_operation(registrar, add_f32_op(), 2, [], TestOperation::Binary)?;
+        register_test_operation(
+            registrar,
+            multiply_f32_op(),
+            2,
+            [],
+            TestOperation::Binary,
+            IndexRealizationLaw::multiply_f32(),
+        )?;
+        register_test_operation(
+            registrar,
+            add_f32_op(),
+            2,
+            [],
+            TestOperation::Binary,
+            IndexRealizationLaw::add_f32(),
+        )?;
         register_test_operation(
             registrar,
             strict_serial_sum_f32_op(),
@@ -3283,19 +3940,27 @@ impl SemanticRegistryProvider for GovernedTestSemantics {
                 CanonicalValueKind::Sequence,
             )],
             TestOperation::Sum,
+            IndexRealizationLaw::strict_serial_sum_f32(),
         )
     }
 }
 
+/// Registers one governed test operation together with its realization law.
+///
+/// The law travels with the operation because an operation without one cannot
+/// be refined, and a stage covering it therefore cannot name the proof its
+/// coverage record requires. A "governed" test provider that registered
+/// operations and no laws would describe a registry no program could execute.
 fn register_test_operation<const N: usize>(
     registrar: &mut SemanticRegistryRegistrar<'_>,
     key: OpKey,
     operands: u32,
     attributes: [OperationAttributeSchema; N],
     inferencer: TestOperation,
+    law: IndexRealizationLaw,
 ) -> Result<(), RegistryError> {
     registrar.register_operation(OperationDefinition::new(
-        key,
+        key.clone(),
         OperationSchema::new(
             OperationArity::exact(operands),
             OperationArity::exact(1),
@@ -3307,7 +3972,8 @@ fn register_test_operation<const N: usize>(
         OperationConformance::new(CanonicalValue::boolean(true)),
         OperationEffect::Pure,
         Arc::new(inferencer),
-    ))
+    ))?;
+    registrar.register_index_realization_law(key, 1, law)
 }
 
 /// A provider the packaged graph never reaches.
@@ -3343,6 +4009,82 @@ fn program_with_unused_provider(revision: u32) -> SemanticProgram {
         .register_provider(&UnusedSemantics { revision })
         .unwrap();
     build_graph(SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap())
+}
+
+/// A scalar authority composed with an exact non-standard semantic registry.
+///
+/// The governed standard scalar profile is frozen over
+/// [`FrozenSemanticRegistry::standard`], and a refinement verifier refuses a
+/// scalar authority frozen over a different semantic authority — deliberately,
+/// because the two together name what a region's arithmetic *means*. The
+/// provider-provenance fixtures build their own semantic registries, so they
+/// compose their own scalar profile over exactly those registries. The
+/// definitions are the fixture's rather than the standard ones, which is
+/// visible in the resulting evidence bytes and irrelevant to what these tests
+/// compare: every artifact they compare was built through this same authority.
+fn scalars_over(semantic: &FrozenSemanticRegistry) -> FrozenScalarRegistry {
+    let provider = ProviderIdentity::new("tiler-test", "fixture-scalars", 1).unwrap();
+    let mut builder = ScalarRegistryBuilder::new(semantic.clone());
+    builder
+        .register(
+            provider.clone(),
+            fixture_scalar_definition(
+                constant_f32_scalar_op(),
+                ScalarAttributeSchema::new([tiler_ir::index::ScalarAttributeField::required(
+                    F32_CONSTANT_BITS_ATTRIBUTE,
+                    CanonicalValueKind::FloatBits,
+                )])
+                .unwrap(),
+                0,
+            ),
+        )
+        .unwrap();
+    for key in [multiply_f32_scalar_op(), add_f32_scalar_op()] {
+        builder
+            .register(
+                provider.clone(),
+                fixture_scalar_definition(key, ScalarAttributeSchema::empty(), 2),
+            )
+            .unwrap();
+    }
+    builder.freeze()
+}
+
+fn fixture_scalar_definition(
+    key: ScalarOpKey,
+    attributes: ScalarAttributeSchema,
+    operands: usize,
+) -> ScalarOperationDefinition {
+    ScalarOperationDefinition::new(
+        key,
+        NormativeDefinitionRef::new("fixture scalar semantics").unwrap(),
+        ScalarOperationContract::new(
+            attributes,
+            ScalarArity::exact(operands).unwrap(),
+            ScalarArity::exact(1).unwrap(),
+            ScalarEffect::Pure,
+            CanonicalValue::record([]).unwrap(),
+            CanonicalValue::record([]).unwrap(),
+        ),
+        Arc::new(FixtureF32Scalar),
+    )
+}
+
+/// Every fixture scalar operation produces one `f32`.
+///
+/// A constant takes no operand, so the result type cannot be read off the
+/// operands; the fixture's graph is homogeneous `f32` throughout, and this
+/// states that rather than inferring it.
+struct FixtureF32Scalar;
+
+impl ScalarOperationInferencer for FixtureF32Scalar {
+    fn infer(
+        &self,
+        _request: ScalarInferenceRequest<'_>,
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        outputs.try_push(F32::resolved_type())
+    }
 }
 
 /// Artifact identity grows linearly with the ABI arena, on a chain and on a

@@ -113,6 +113,19 @@ cannot distinguish those proofs.
 **Proposal.** Bind stage coverage to the refinement identity before artifacts
 or caches treat the stage coverage as complete executable identity.
 
+**Resolved in the tree; the public boundary is not yet accepted.**
+[`bind-stage-coverage-to-index-refinement-identity`](../../../tickets/bind-stage-coverage-to-index-refinement-identity.md)
+made each covered occurrence a `CoveredOccurrence` carrying the reached-only
+executable-coverage identity of the receipt that proved it, folded by both the
+kernel program's own encoder and the artifact's independently serialized stage
+key — `tiler.kernel-program.v9` and `tiler.artifact-program.stage.v3`. The
+inference above is now false of the tree: two stage bodies justified by
+different index refinements have different program and artifact identities.
+What the finding did not anticipate is *which* identity to fold. The receipt's
+complete identity restates the frozen registry snapshots, so folding it would
+have made an unused provider revision invalidate an otherwise identical
+artifact; the reached-only projection is folded instead.
+
 ### Artifact schema evolution needed an explicit major transition
 
 **Fact.** During the audit, the program envelope's variant layout changed while

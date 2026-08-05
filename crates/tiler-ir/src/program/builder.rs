@@ -39,13 +39,13 @@ use super::handles::{
     next_program_builder_id,
 };
 use super::model::{
-    AllocationData, AllocationOwnership, AllocationSpec, ByteWindow, DependencyData,
-    DependencyReasonData, KernelProgramData, MaterializedComponentSpec, MaterializedOrigin,
-    MaterializedValueData, MaterializedValueSpec, MemorySpace, PartialReduction,
-    PartialReductionData, ProgramOutputData, ROUTING_COMMIT_TRANSITIONS, RoutingCommitState,
-    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessData, StageAccessMode,
-    StageData, StageLaunch, StageLaunchData, StorageEncoding, StorageScalar, ValueRole,
-    VerifiedKernelProgram, ViewData, element_bytes, encode_identity,
+    AllocationData, AllocationOwnership, AllocationSpec, ByteWindow, CoveredOccurrence,
+    DependencyData, DependencyReasonData, KernelProgramData, MaterializedComponentSpec,
+    MaterializedOrigin, MaterializedValueData, MaterializedValueSpec, MemorySpace,
+    PartialReduction, PartialReductionData, ProgramOutputData, ROUTING_COMMIT_TRANSITIONS,
+    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessData,
+    StageAccessMode, StageData, StageLaunch, StageLaunchData, StorageEncoding, StorageScalar,
+    ValueRole, VerifiedKernelProgram, ViewData, element_bytes, encode_identity,
 };
 use super::{
     MAX_PROGRAM_ABI_EXPRESSIONS, MAX_PROGRAM_ALLOCATIONS, MAX_PROGRAM_DEPENDENCIES,
@@ -560,19 +560,20 @@ impl KernelProgramBuilder {
     /// type, and addressed element count, and must state an ABI expression
     /// computing exactly the byte count its own view addresses. The launch
     /// geometry must likewise state a workgroup width the bound kernel
-    /// requires. The covered occurrences are the exact operations of the bound
-    /// semantic program this stage implements.
+    /// requires. The coverage records name the exact operations of the bound
+    /// semantic program this stage implements, each carrying the completed
+    /// refinement receipt's reached-only evidence that it is realized.
     ///
     /// # Errors
     ///
-    /// Returns a handle error, a coverage range or disjointness violation, a
-    /// stage/kernel signature disagreement, an ABI use-site type, phase,
-    /// interface-root, evaluation, accessible-range, or workgroup-width
+    /// Returns a handle error, a coverage range, disjointness, or foreign-graph
+    /// violation, a stage/kernel signature disagreement, an ABI use-site type,
+    /// phase, interface-root, evaluation, accessible-range, or workgroup-width
     /// rejection, or a structural-limit error.
     pub fn push_stage(
         &mut self,
         kernel: &VerifiedKernel,
-        coverage: &[SemanticOccurrence],
+        coverage: &[CoveredOccurrence],
         accesses: &[StageAccess],
         launch: StageLaunch,
     ) -> Result<StageId, KernelProgramBuildError> {
@@ -594,7 +595,8 @@ impl KernelProgramBuilder {
                 limit: MAX_PROGRAM_STAGES,
             },
         )?;
-        self.covered.extend_from_slice(&coverage);
+        self.covered
+            .extend(coverage.iter().map(CoveredOccurrence::occurrence));
         self.stages.push(StageData {
             kernel: kernel.clone(),
             coverage,
@@ -1066,30 +1068,39 @@ impl KernelProgramBuilder {
     /// declared after its stages exist. Whole-program verification is therefore
     /// where the question can be answered, and it answers it as
     /// [`super::error::KernelProgramDiagnostic::UncoveringStage`].
+    /// The graph check leads because it is the one that says *whose* proof this
+    /// is. A receipt minted against another semantic graph can carry an
+    /// in-range, unclaimed occurrence and would otherwise be accepted as
+    /// evidence for this program's operation of the same ordinal — exactly the
+    /// substitution the binding exists to prevent.
     fn check_coverage(
         &self,
-        coverage: &[SemanticOccurrence],
-    ) -> Result<Vec<SemanticOccurrence>, KernelProgramBuildError> {
+        coverage: &[CoveredOccurrence],
+    ) -> Result<Vec<CoveredOccurrence>, KernelProgramBuildError> {
         limit(
             coverage.len(),
             MAX_STAGE_COVERAGE,
             ProgramLimitKind::StageCoverage,
         )?;
         let mut ordered = coverage.to_vec();
-        ordered.sort_unstable();
-        for (position, occurrence) in ordered.iter().enumerate() {
+        ordered.sort_unstable_by_key(CoveredOccurrence::occurrence);
+        for (position, covered) in ordered.iter().enumerate() {
+            let occurrence = covered.occurrence();
+            if covered.graph() != &self.subject.graph {
+                return Err(KernelProgramBuildError::ForeignCoverageGraph { occurrence });
+            }
             if occurrence.get() >= self.subject.operations {
                 return Err(KernelProgramBuildError::CoverageOutOfRange {
-                    occurrence: *occurrence,
+                    occurrence,
                     operations: self.subject.operations,
                 });
             }
-            if ordered.get(position.saturating_add(1)) == Some(occurrence)
-                || self.covered.contains(occurrence)
+            if ordered
+                .get(position.saturating_add(1))
+                .is_some_and(|next| next.occurrence() == occurrence)
+                || self.covered.contains(&occurrence)
             {
-                return Err(KernelProgramBuildError::DuplicateCoverage {
-                    occurrence: *occurrence,
-                });
+                return Err(KernelProgramBuildError::DuplicateCoverage { occurrence });
             }
         }
         Ok(ordered)

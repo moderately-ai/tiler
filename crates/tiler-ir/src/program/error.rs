@@ -265,9 +265,20 @@ pub enum KernelProgramBuildError {
         /// Operation count of the bound semantic program.
         operations: u32,
     },
-    /// A semantic occurrence was covered by more than one stage.
+    /// A semantic occurrence was covered more than once.
+    ///
+    /// Now that coverage carries evidence, a repeat is two refinement receipts
+    /// claiming one occurrence. There is no reading under which that is
+    /// harmless — either the two prove the same thing and one is redundant, or
+    /// they disagree and the program does not say which one it rests on — so it
+    /// is refused rather than resolved by keeping the last writer.
     DuplicateCoverage {
         /// Repeated occurrence.
+        occurrence: SemanticOccurrence,
+    },
+    /// A coverage record's refinement was minted against another semantic graph.
+    ForeignCoverageGraph {
+        /// Occurrence the foreign receipt names in its own graph.
         occurrence: SemanticOccurrence,
     },
     /// A stage declared a different access count than its kernel signature.

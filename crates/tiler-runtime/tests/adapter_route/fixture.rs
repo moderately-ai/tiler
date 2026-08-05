@@ -74,29 +74,38 @@ use tiler_artifact::program::{
     RouteRequirement, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef, TargetPropertyKey, ToolComponent, VariantSpec,
 };
+use tiler_ir::index::{
+    DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexInteger,
+    IndexRealizationAuthority, IndexRefinementSubject, IndexRefinementVerificationOutcome,
+    IndexRegionBuilder, NumericalContractIdentity, ScalarAttributes, ScalarOpKey,
+    TensorRole as IndexTensorRole, VerifiedIndexRegion, add_f32_scalar_op, constant_f32_scalar_op,
+    multiply_f32_scalar_op,
+};
 use tiler_ir::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
 use tiler_ir::program::abi::{
     AbiBinaryOp, AbiRoot, PreparedEntryTargetRequirement, TargetPropertyProviderIdentity,
     TargetPropertyQuery, TargetPropertyRequirementRelation,
 };
 use tiler_ir::program::{
-    AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
-    MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
-    SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, StorageEncoding, StorageScalar,
-    ValueRole, VerifiedKernelProgram,
+    AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
+    MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
+    RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
+    StorageScalar, ValueRole, VerifiedKernelProgram,
 };
 use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey,
+    InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding,
+    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
     RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity, SemanticProgram,
-    SemanticProgramBuilder, StrictSerialF32Sum,
+    CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant,
+    F32Multiply, InputKey, OutputKey, ProviderIdentity, SemanticProgram, SemanticProgramBuilder,
+    StrictSerialF32Sum, add_f32_op, constant_f32_op, multiply_f32_op,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape};
 use tiler_runtime::load::ExecutionEnvironment;
 
 use crate::image::{IDENTITY_BIAS_BITS, IDENTITY_SCALE_BITS, ScalarEntry, ScalarImage, encode};
@@ -792,6 +801,298 @@ pub fn semantic_program() -> SemanticProgram {
     draft.build().expect("the program verifies")
 }
 
+/// Obtains proof-derived coverage for a range of canonical occurrences.
+///
+/// This fixture assembles its own physical programs, but it does not get to
+/// invent the logical evidence those programs claim. Each record below comes
+/// from the sealed IR path: derive the occurrence's subject, admit a lowering
+/// authority, build a *candidate* index region here rather than asking the law
+/// for its own answer, and submit the pair to the verifier — which mints a
+/// receipt only when the candidate's canonical identity equals the law's.
+///
+/// Building the candidate independently is the point, and is also forced: the
+/// law's realization is deliberately not public, because a caller that could
+/// ask for the expected region and hand it straight back would turn the
+/// verifier into a rubber stamp. This crate reaches `tiler-ir` and never
+/// `tiler-compiler`, so the region below is this fixture's own claim about what
+/// the operation means, checked against an authority it cannot influence.
+fn checked_coverage(
+    semantic: &SemanticProgram,
+    occurrences: std::ops::Range<u32>,
+) -> Vec<CoveredOccurrence> {
+    let scalars = FrozenScalarRegistry::standard().expect("the standard scalar authority freezes");
+    let laws = FrozenIndexRealizationLawRegistry::from_semantic(
+        semantic.semantic_registry().clone(),
+        scalars.clone(),
+    )
+    .expect("the standard scalar and semantic authorities cohere");
+    let mut coverage: Vec<CoveredOccurrence> = semantic
+        .operations()
+        .map(|operation| checked_occurrence(semantic, &scalars, &laws, operation.id()))
+        .collect();
+    coverage.sort_unstable_by_key(CoveredOccurrence::occurrence);
+    coverage.retain(|covered| occurrences.contains(&covered.occurrence().get()));
+    coverage
+}
+
+fn checked_occurrence(
+    semantic: &SemanticProgram,
+    scalars: &FrozenScalarRegistry,
+    laws: &FrozenIndexRealizationLawRegistry,
+    operation: tiler_ir::semantic::OperationId,
+) -> CoveredOccurrence {
+    let subject = IndexRefinementSubject::derive(semantic, operation, strict_contract())
+        .expect("every fixture operation derives a refinement subject");
+    let (emitted, region): (Vec<ScalarOpKey>, VerifiedIndexRegion) =
+        if subject.operation() == &constant_f32_op() {
+            (
+                vec![constant_f32_scalar_op()],
+                constant_region(&subject, scalars),
+            )
+        } else if subject.operation() == &multiply_f32_op() {
+            (
+                vec![multiply_f32_scalar_op()],
+                pointwise_region(&subject, scalars, multiply_f32_scalar_op()),
+            )
+        } else if subject.operation() == &add_f32_op() {
+            (
+                vec![add_f32_scalar_op()],
+                pointwise_region(&subject, scalars, add_f32_scalar_op()),
+            )
+        } else {
+            (
+                vec![add_f32_scalar_op()],
+                serial_sum_region(&subject, scalars),
+            )
+        };
+    let authority = IndexRealizationAuthority::admit(
+        semantic.semantic_registry(),
+        scalars,
+        subject.operation().clone(),
+        subject.signature().clone(),
+        &emitted,
+    )
+    .expect("the fixture's emission ceiling is admissible");
+    let resolution = laws
+        .resolve(&subject)
+        .expect("the registered law resolves for this subject");
+    match resolution
+        .verify(&authority, &region)
+        .expect("the fixture's candidate region realizes its operation")
+    {
+        IndexRefinementVerificationOutcome::Verified(receipt) => {
+            CoveredOccurrence::from_receipt(&receipt)
+        }
+        IndexRefinementVerificationOutcome::Pending(_) => {
+            panic!("the fixture's static regions retain no residual index-domain obligation")
+        }
+    }
+}
+
+/// The governed strict F32 contract the fixture's kernels realize.
+fn strict_contract() -> NumericalContractIdentity {
+    F32NumericalContractKey::new(
+        SubnormalMode::Preserve,
+        SubnormalMode::Preserve,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        MaterializationRounding::NearestTiesToEven,
+    )
+    .expect("the fixture contract vector is coherent")
+    .into()
+}
+
+fn constant_region(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+) -> VerifiedIndexRegion {
+    let [result] = subject.results() else {
+        panic!("a constant has one result")
+    };
+    let bits = subject
+        .attributes()
+        .get(F32_CONSTANT_BITS_ATTRIBUTE)
+        .expect("a constant carries its bits attribute")
+        .clone();
+    let attributes = ScalarAttributes::new(
+        CanonicalValue::record([CanonicalField::new(F32_CONSTANT_BITS_ATTRIBUTE, bits)])
+            .expect("the scalar attribute record composes"),
+    )
+    .expect("scalar attributes are a record");
+    let mut region = IndexRegionBuilder::new(scalars.clone()).expect("an index region builder");
+    let output = region
+        .tensor(
+            IndexTensorRole::Output,
+            result.value_type().clone(),
+            result.shape().clone(),
+        )
+        .expect("the constant's output tensor");
+    let value = region
+        .apply(constant_f32_scalar_op(), attributes, &[])
+        .expect("the constant scalar applies")
+        .get(0)
+        .expect("one constant result");
+    let write = region.write(output, &[], &[]).expect("the constant write");
+    region.output(write, value).expect("the output root");
+    region.build().expect("a verified constant region")
+}
+
+fn pointwise_region(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+    operation: ScalarOpKey,
+) -> VerifiedIndexRegion {
+    let [result] = subject.results() else {
+        panic!("a binary pointwise operation has one result")
+    };
+    let mut region = IndexRegionBuilder::new(scalars.clone()).expect("an index region builder");
+    let dimensions = result
+        .shape()
+        .extents()
+        .iter()
+        .copied()
+        .map(|extent| {
+            region
+                .dimension(DomainRole::Parallel, extent)
+                .expect("a parallel dimension")
+        })
+        .collect::<Vec<_>>();
+    let coordinates = dimensions
+        .iter()
+        .copied()
+        .map(|dimension| {
+            region
+                .dimension_expr(dimension)
+                .expect("a dimension coordinate")
+        })
+        .collect::<Vec<_>>();
+    let tensors = subject
+        .inputs()
+        .iter()
+        .map(|input| {
+            region
+                .tensor(
+                    IndexTensorRole::Input,
+                    input.value_type().clone(),
+                    input.shape().clone(),
+                )
+                .expect("a pointwise input tensor")
+        })
+        .collect::<Vec<_>>();
+    let operands = subject
+        .operands()
+        .iter()
+        .map(|position| {
+            let input = &subject.inputs()[*position];
+            if input.shape() == result.shape() {
+                region
+                    .read(tensors[*position], &dimensions, &coordinates)
+                    .expect("an elementwise read")
+            } else {
+                region
+                    .read(tensors[*position], &[], &[])
+                    .expect("a rank-zero broadcast read")
+            }
+        })
+        .collect::<Vec<_>>();
+    let value = region
+        .apply(operation, ScalarAttributes::empty(), &operands)
+        .expect("the pointwise scalar applies")
+        .get(0)
+        .expect("one pointwise result");
+    let output = region
+        .tensor(
+            IndexTensorRole::Output,
+            result.value_type().clone(),
+            result.shape().clone(),
+        )
+        .expect("the pointwise output tensor");
+    let write = region
+        .write(output, &dimensions, &coordinates)
+        .expect("the pointwise write");
+    region.output(write, value).expect("the output root");
+    region.build().expect("a verified pointwise region")
+}
+
+fn serial_sum_region(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+) -> VerifiedIndexRegion {
+    let ([input], [result]) = (subject.inputs(), subject.results()) else {
+        panic!("a serial sum has one input and one result")
+    };
+    assert_eq!(input.shape(), &Shape::from_dims([ROWS, COLUMNS]));
+    assert_eq!(result.shape(), &Shape::from_dims([ROWS]));
+    let mut region = IndexRegionBuilder::new(scalars.clone()).expect("an index region builder");
+    let row = region
+        .dimension(DomainRole::Parallel, Extent::new(ROWS))
+        .expect("the row dimension");
+    let row_coordinate = region.dimension_expr(row).expect("the row coordinate");
+    let zero = region
+        .constant(IndexInteger::from_u64(0))
+        .expect("the seed column");
+    let input_tensor = region
+        .tensor(
+            IndexTensorRole::Input,
+            input.value_type().clone(),
+            input.shape().clone(),
+        )
+        .expect("the reduction input tensor");
+    let seed = region
+        .read(input_tensor, &[row], &[row_coordinate, zero])
+        .expect("the first contributor");
+    let tail = region
+        .dimension(DomainRole::Reduction, Extent::new(COLUMNS - 1))
+        .expect("the tail dimension");
+    let tail_coordinate = region.dimension_expr(tail).expect("the tail coordinate");
+    let one = IndexInteger::from_u64(1);
+    let contributor_column = region
+        .linear_combination(one.clone(), &[(one, tail_coordinate)])
+        .expect("the tail contributor coordinate");
+    let contributor = region
+        .read(
+            input_tensor,
+            &[row, tail],
+            &[row_coordinate, contributor_column],
+        )
+        .expect("a tail contributor");
+    let total = region
+        .reduce(&[tail], &[seed], &[contributor], |body| {
+            let state = body.state(0).expect("one reduction state");
+            let value = body.contributor(0).expect("one contributor");
+            let accumulated = body
+                .apply(
+                    add_f32_scalar_op(),
+                    ScalarAttributes::empty(),
+                    &[state, value],
+                )?
+                .get(0)
+                .expect("one accumulated result");
+            body.yield_values(&[accumulated])
+        })
+        .expect("the serial reduction")
+        .get(0)
+        .expect("one reduction result");
+    let output = region
+        .tensor(
+            IndexTensorRole::Output,
+            result.value_type().clone(),
+            result.shape().clone(),
+        )
+        .expect("the reduction output tensor");
+    let write = region
+        .write(output, &[row], &[row_coordinate])
+        .expect("the reduction write");
+    region.output(write, total).expect("the output root");
+    region.build().expect("a verified serial-sum region")
+}
+
 /// Builds the one fused reduction kernel the packaged plan dispatches.
 fn fused_kernel() -> VerifiedKernel {
     let axes = vec![Axis::new(1)];
@@ -991,7 +1292,7 @@ pub fn fused_program(semantic: &SemanticProgram, guard: FusedGuard) -> VerifiedK
 
     plan.push_stage(
         &kernel,
-        &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+        &checked_coverage(semantic, 0..5),
         &[
             StageAccess {
                 view: read,
@@ -1362,7 +1663,7 @@ pub fn materialized_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
     let map = plan
         .push_stage(
             &pointwise,
-            &(0..4).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+            &checked_coverage(semantic, 0..4),
             &[
                 StageAccess {
                     view: read,
@@ -1384,7 +1685,7 @@ pub fn materialized_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
     let reduce = plan
         .push_stage(
             &reduction,
-            &(4..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+            &checked_coverage(semantic, 4..5),
             &[
                 StageAccess {
                     view: scratch_view,

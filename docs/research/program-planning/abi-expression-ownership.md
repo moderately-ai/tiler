@@ -32,8 +32,8 @@ moved the *uses* down as well: a `VerifiedKernelProgram` owns its own
 expression arena, applicability guard, per-stage launch geometry, and
 per-access accessible range, and folds each into the complete program
 identity. That step established historical `tiler.kernel-program.v2`; later
-encoding, ABI-completeness, split-reduction, canonical-coverage, and published-output-order changes moved the current domain to
-`tiler.kernel-program.v8`. Binding live facts and enforcing the phase at which each could
+encoding, ABI-completeness, split-reduction, canonical-coverage, published-output-order, and proof-bound-coverage changes moved the current domain to
+`tiler.kernel-program.v9`. Binding live facts and enforcing the phase at which each could
 legally be queried stayed in `tiler_artifact::program::facts`, which is the
 half ADR 0068 assigns to that crate.
 

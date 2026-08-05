@@ -12,6 +12,18 @@ test = true
 doctest = true
 doc = true
 
+# No `tiler-compiler` dev-dependency, and the reason is a check rather than a
+# preference. Proof-bound stage coverage made one tempting: this crate cannot
+# mint a refinement receipt — that is the property the binding exists to have —
+# so compiling the same graph is the cheapest way for a fixture to obtain real
+# coverage. But `tiler-runtime`'s `the_consumer_links_no_compiler_emitter_or_build_provider`
+# walks `Cargo.lock`, which merges normal and development edges per package, and
+# a dev edge here therefore puts `tiler-compiler` in the consumer's closure and
+# fails that test. ADR 0081 item 2 fixes the consumer closure at `[tiler-artifact]`,
+# so the guard is what it says it is. The fixtures below reach the refinement
+# verifier through `tiler_ir::index` instead, which they need anyway: their
+# provider-provenance and dual-output graphs are ones governed compilation
+# refuses.
 [dependencies]
 sha2.workspace = true
 tiler-ir.workspace = true

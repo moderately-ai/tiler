@@ -28,7 +28,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
-use tiler_ir::program::SemanticOccurrence;
+use tiler_ir::program::CoveredOccurrence;
 use tiler_ir::semantic::{OpKey, SemanticProgram};
 
 use crate::capability::{LoweringResolveError, LoweringSignature, ResolvedLoweringCapability};
@@ -89,10 +89,18 @@ impl OccurrenceLowering {
         &self.evidence
     }
 
-    /// Returns the canonical semantic occurrence proved by this lowering.
-    pub(crate) const fn canonical_occurrence(&self) -> SemanticOccurrence {
+    /// Returns the kernel-program coverage record this lowering justifies.
+    ///
+    /// Derived from the retained receipt rather than assembled beside it, so the
+    /// occurrence and the evidence a program stage carries are always the same
+    /// receipt's. `OccurrenceEvidence` has one variant by construction — budget
+    /// and proof gaps refuse before a `ResolvedLowering` exists — so there is no
+    /// arm here that could produce coverage without a proof.
+    pub(crate) fn covered_occurrence(&self) -> CoveredOccurrence {
         match &self.evidence {
-            OccurrenceEvidence::Refined(refinement) => refinement.receipt().occurrence(),
+            OccurrenceEvidence::Refined(refinement) => {
+                CoveredOccurrence::from_receipt(refinement.receipt())
+            }
         }
     }
 

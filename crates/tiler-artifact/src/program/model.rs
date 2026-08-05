@@ -203,6 +203,22 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// nothing for an entry that synchronizes nothing would leave "no requirement"
 /// recoverable from bytes that never stated it, so a later entry that gained one
 /// could share identity with the one that had none.
+///
+/// # Why proof-bound stage coverage is not a `v15` step
+///
+/// Binding each covered occurrence to its refinement evidence moved
+/// [`STAGE_KEY_DOMAIN`] to `v3` and moved this identity's *value* for every
+/// artifact ever minted — a cache holding the old bytes misses, which is the
+/// outcome a step exists to produce. It does not move this *domain*, and the
+/// reason is per-tag injectivity at the one site the new bytes reach:
+/// [`push_variant`] writes each entry's stage subject with `push_slice`, so the
+/// complete stepped key including its own separator arrives length-framed. No
+/// `v14` encoding of one artifact can equal a `v14` encoding of another across
+/// the change, because the framed run they differ in is delimited and its first
+/// bytes are the separator that names its grammar. This is the same reasoning
+/// the canonical-coverage step recorded when it moved the stage key from `v1`
+/// to `v2` and held this domain, and `docs/artifact-abi.md` carries it as the
+/// artifact ledger's own rule rather than as a one-off.
 const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v14\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
@@ -228,9 +244,17 @@ pub(super) const ARTIFACT_DOMAIN_LABEL: &str = {
 /// canonical semantic occurrence order. The payload layout is unchanged, so
 /// the separator must step to prevent the same raw ordinal from retaining its
 /// v1 spelling while naming another operation.
-pub(super) const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v2\0";
-#[cfg(test)]
-pub(super) const LEGACY_STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
+///
+/// `v3` writes, after each occurrence ordinal, the length-framed reached-only
+/// executable-coverage identity of the completed index-refinement receipt that
+/// proved it. This is a record-layout change inside a repeated run: a `v2`
+/// reader handed `v3` bytes would read the framed identity as the following
+/// occurrence, so the separator steps rather than the field being appended
+/// silently. This key is compared on its own and serialized into every entry
+/// row, which is why it carries its own separator instead of relying on
+/// [`ARTIFACT_DOMAIN`] — and why that domain does not step with it, as the note
+/// there records.
+pub(super) const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v3\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
 ///
@@ -1707,25 +1731,36 @@ pub enum AbiExprView<'a> {
 
 /// Derives the canonical content key of one program stage.
 ///
-/// The key is the shared IR's own stage subject — the exact bound kernel and
-/// the semantic occurrences it covers — so an artifact entry cross-references a
-/// stage by content rather than by the program's declaration position.
+/// The key is the shared IR's own stage subject — the exact bound kernel, and
+/// the semantic occurrences it covers each paired with the reached-only
+/// executable-coverage identity proving it — so an artifact entry
+/// cross-references a stage by content rather than by the program's declaration
+/// position, and two stages that differ only in which verified index
+/// realization justifies their coverage are two stages here as well as in the
+/// kernel program.
+///
+/// This is the second, independent writer of that subject. It is deliberately
+/// not shared with `tiler_ir`'s own stage encoder: a widening the two disagree
+/// about must be a visible divergence between two readable encoders rather than
+/// a silent agreement neither states.
 pub(super) fn stage_key(stage: StageRef<'_>) -> Vec<u8> {
-    stage_key_with_domain(stage, STAGE_KEY_DOMAIN)
-}
-
-pub(super) fn stage_key_with_domain(stage: StageRef<'_>, domain: &[u8]) -> Vec<u8> {
-    // Each coverage entry is one `SemanticOccurrence`, a `u32` ordinal.
-    let exact = domain.len()
+    // Each coverage record is one `SemanticOccurrence` — a `u32` ordinal —
+    // followed by its length-framed refinement evidence.
+    let exact = STAGE_KEY_DOMAIN.len()
         + framed(stage.kernel().canonical_identity().as_bytes().len())
         + LENGTH_BYTES
-        + stage.coverage().len() * size_of::<u32>();
+        + stage
+            .coverage()
+            .iter()
+            .map(|covered| size_of::<u32>() + framed(covered.refinement().as_bytes().len()))
+            .sum::<usize>();
     let mut bytes = Vec::with_capacity(exact);
-    bytes.extend_from_slice(domain);
+    bytes.extend_from_slice(STAGE_KEY_DOMAIN);
     push_slice(&mut bytes, stage.kernel().canonical_identity().as_bytes());
     push_len(&mut bytes, stage.coverage().len());
-    for occurrence in stage.coverage() {
-        bytes.extend_from_slice(&occurrence.get().to_be_bytes());
+    for covered in stage.coverage() {
+        bytes.extend_from_slice(&covered.occurrence().get().to_be_bytes());
+        push_slice(&mut bytes, covered.refinement().as_bytes());
     }
     debug_assert_eq!(bytes.len(), exact, "stage key capacity is exact");
     bytes

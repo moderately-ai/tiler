@@ -16,6 +16,7 @@
 use std::fmt;
 
 use crate::identity::{push_len, push_slice};
+use crate::index::{IndexRefinementExecutableCoverageIdentity, IndexRefinementReceipt};
 use crate::kernel::{KernelType, VerifiedKernel};
 use crate::schedule::TensorRole;
 use crate::semantic::{
@@ -65,6 +66,79 @@ impl SemanticOccurrence {
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0
+    }
+}
+
+/// One covered occurrence inseparably bound to the proof that justifies it.
+///
+/// A stage claims to implement exact operations of the bound semantic graph.
+/// The claim alone is a structural assertion; what makes it evidence is the
+/// completed [`IndexRefinementReceipt`] that proved one verified index region
+/// realizes that occurrence. This record is the two facts as one value, so no
+/// caller can pair an occurrence with another occurrence's evidence.
+///
+/// The retained identity is the receipt's *reached-only* executable coverage
+/// projection, never its complete receipt identity. The distinction is what
+/// keeps an unused semantic or scalar provider revision out of kernel-program
+/// and artifact identity, as ADR 0072 requires: a receipt identity restates the
+/// complete frozen registry snapshots, which are compilation-request
+/// provenance, while executable coverage restates only the definitions and
+/// admission provenance the occurrence actually reached.
+///
+/// Construction is proof-derived. [`Self::from_receipt`] is the only
+/// constructor, and only [`crate::index::ResolvedIndexRealization::verify`] and
+/// [`crate::index::ResolvedIndexRealization::complete`] mint the receipt it
+/// requires. A refinement that is pending, disproved, or unsupported yields no
+/// receipt, so a proof gap has no spelling here rather than a placeholder one.
+///
+/// # Adding a field here has two consequences, and only one is a build error
+///
+/// This module's two encoders — `stage_key` and `encode_identity` — destructure
+/// this record rather than reading it through accessors, so a new field stops
+/// their build until it is folded or explicitly discarded. `tiler-artifact`'s
+/// independent stage encoder cannot do the same: the fields are private and it
+/// is another crate, which is this type's sealed construction working as
+/// designed rather than an oversight — the privacy that stops a caller
+/// assembling a record also stops a sibling crate reading one apart. What holds
+/// that side is `the_artifact_stage_key_encodes_the_same_coverage_record_as_the_kernel_program`
+/// in `crates/tiler-artifact/src/program/tests.rs`, which fails when the two
+/// encoders stop writing the same per-record run.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CoveredOccurrence {
+    /// Retained so the program builder can refuse a receipt minted against
+    /// another graph. It is not written into identity: the program encoding
+    /// already folds its one bound `SemanticGraphIdentity` once, and the
+    /// builder proves every record names that same graph.
+    graph: SemanticGraphIdentity,
+    occurrence: SemanticOccurrence,
+    refinement: IndexRefinementExecutableCoverageIdentity,
+}
+
+impl CoveredOccurrence {
+    /// Derives one verified coverage record from a completed refinement receipt.
+    #[must_use]
+    pub fn from_receipt(receipt: &IndexRefinementReceipt) -> Self {
+        Self {
+            graph: receipt.graph().clone(),
+            occurrence: receipt.occurrence(),
+            refinement: receipt.executable_coverage_identity().clone(),
+        }
+    }
+
+    /// Returns the canonical graph-local occurrence this record covers.
+    #[must_use]
+    pub const fn occurrence(&self) -> SemanticOccurrence {
+        self.occurrence
+    }
+
+    /// Returns the reached-only executable-coverage identity proving it.
+    #[must_use]
+    pub const fn refinement(&self) -> &IndexRefinementExecutableCoverageIdentity {
+        &self.refinement
+    }
+
+    pub(super) const fn graph(&self) -> &SemanticGraphIdentity {
+        &self.graph
     }
 }
 
@@ -546,8 +620,8 @@ pub(super) const fn element_bytes(element_type: KernelType) -> u64 {
 #[derive(Clone, Debug)]
 pub(super) struct StageData {
     pub(super) kernel: VerifiedKernel,
-    /// Covered occurrences in ascending order.
-    pub(super) coverage: Vec<SemanticOccurrence>,
+    /// Covered occurrences in ascending occurrence order.
+    pub(super) coverage: Vec<CoveredOccurrence>,
     pub(super) accesses: Vec<StageAccessData>,
     pub(super) launch: StageLaunchData,
 }
@@ -678,9 +752,11 @@ pub(super) struct DerivedProgramFacts {
 /// bound implementation of every stage through each stage's
 /// [`CanonicalKernelIdentity`](crate::kernel::CanonicalKernelIdentity) (which
 /// itself folds the canonical scheduled region it refines), the complete
-/// semantic coverage those stages claim, the materializations, buffers, typed
-/// dependencies and named outputs that structure them, the entry ABI, the
-/// applicability guard, and the routing-commit lifecycle.
+/// semantic coverage those stages claim together with the reached-only
+/// executable-coverage identity proving each covered occurrence, the
+/// materializations, buffers, typed dependencies and named outputs that
+/// structure them, the entry ABI, the applicability guard, and the
+/// routing-commit lifecycle.
 ///
 /// The ABI expression arena is folded *transitively*: the reachable arena is
 /// written once in canonical order and each use site names its node by
@@ -887,9 +963,9 @@ impl<'a> StageRef<'a> {
         &self.data().kernel
     }
 
-    /// Returns the semantic occurrences this stage covers, in ascending order.
+    /// Returns the proof-derived coverage records, in ascending occurrence order.
     #[must_use]
-    pub fn coverage(self) -> &'a [SemanticOccurrence] {
+    pub fn coverage(self) -> &'a [CoveredOccurrence] {
         &self.data().coverage
     }
 
@@ -1337,20 +1413,31 @@ impl<'a> ProgramOutputRef<'a> {
     }
 }
 
-/// Cross-reference key domains, unchanged at `v1`.
+/// Cross-reference key domains; the stage key moved to `v2` with proof-bound
+/// coverage, and the other three are unchanged at `v1`.
 ///
 /// These keys are what dependency edges, value definitions and allocation
 /// bindings name each other by. `complete-program-identity-with-abi-guards-and-routing`
 /// added the entry ABI, the applicability guard and the routing-commit contract
 /// to *program* identity without changing what any of these keys means: a stage
-/// is still identified by the implementation it binds and the occurrences it
-/// covers, and its launch geometry is folded beside it in the program encoding
+/// is still identified by the implementation it binds and the coverage it
+/// claims, and its launch geometry is folded beside it in the program encoding
 /// rather than into the key other entities cross-reference it by.
-const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v1\0";
+///
+/// `v2` is what that coverage now says. Each record writes the occurrence
+/// followed by the length-framed reached-only executable-coverage identity that
+/// proves it, so the key's record grammar changed and its separator steps with
+/// it. Unlike its artifact-side sibling this key is never serialized and never
+/// compared across versions — [`canonical_keys`] derives it inside one build to
+/// order and cross-reference entities — so the step is grammar hygiene rather
+/// than a cache-miss obligation. It is taken anyway, because a canonical key
+/// compared on its own is exactly the value whose separator must describe the
+/// bytes that follow it.
+const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v2\0";
 const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
-/// Program identity domain, currently `v8`.
+/// Program identity domain, currently `v9`.
 ///
 /// `v2` folded the semantic graph, bound implementations, coverage, program
 /// structure, the entry ABI, the applicability guard and the routing-commit
@@ -1404,7 +1491,27 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// than an append: a `v7` reader handed a `v8` section would recover the same
 /// records in an order that layer never meant, so a cache or artifact holding a
 /// `v7` identity must miss rather than match.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v8\0";
+///
+/// `v9` binds every covered occurrence to the proof that justifies it. Each
+/// coverage record writes its four-byte occurrence as before and then the
+/// length-framed reached-only executable-coverage identity of the completed
+/// index-refinement receipt it was derived from, so a `v8` identity asserted
+/// which operations a stage claimed while a `v9` identity additionally states
+/// which verified index realization proved each claim. Two programs alike in
+/// every structural respect but resting on different refinement evidence are
+/// two programs. The tag steps rather than the field being appended silently,
+/// because a `v8` reader handed a `v9` stage section would read the framed
+/// identity as the next occurrence and recover a different program.
+///
+/// What is *not* folded is as deliberate. The record carries the receipt's
+/// reached-only projection, never [`crate::index::IndexRefinementReceiptIdentity`],
+/// which restates the complete semantic, scalar, and law registry snapshots. An
+/// unused provider revision would otherwise invalidate an otherwise identical
+/// executable program, which ADR 0072 forbids and
+/// `an_unused_semantic_provider_revision_does_not_change_identity` holds. Nor is
+/// the bound graph restated per record: the program encoding writes its one
+/// `SemanticGraphIdentity` above, and the builder proves every record names it.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v9\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -1533,8 +1640,18 @@ fn stage_key(stage: &StageData) -> Vec<u8> {
     bytes.extend_from_slice(STAGE_KEY_DOMAIN);
     push_slice(&mut bytes, stage.kernel.canonical_identity().as_bytes());
     push_len(&mut bytes, stage.coverage.len());
-    for occurrence in &stage.coverage {
+    for covered in &stage.coverage {
+        // Destructured rather than read through accessors so that a field added
+        // to `CoveredOccurrence` is a compile error here instead of silently
+        // going unfolded. `graph` is bound and discarded deliberately: the
+        // program encoding writes its one bound graph identity once, above.
+        let CoveredOccurrence {
+            graph: _,
+            occurrence,
+            refinement,
+        } = covered;
         bytes.extend_from_slice(&occurrence.get().to_be_bytes());
+        push_slice(&mut bytes, refinement.as_bytes());
     }
     bytes
 }
@@ -1725,15 +1842,24 @@ pub(super) fn encode_identity(
     push_slice(&mut bytes, data.semantic_graph.as_bytes());
     arena.encode(&data.abi_expressions, &mut bytes);
 
-    // A stage names only its bound implementation and the occurrences it
-    // covers, so it depends on no other entity and leads.
+    // A stage names only its bound implementation and its proof-bound coverage,
+    // so it depends on no other entity and leads.
     push_len(&mut bytes, data.stages.len());
     for stage in &stages.order {
         let stage = &data.stages[*stage];
         push_slice(&mut bytes, stage.kernel.canonical_identity().as_bytes());
         push_len(&mut bytes, stage.coverage.len());
-        for occurrence in &stage.coverage {
+        for covered in &stage.coverage {
+            // Destructured for the reason `stage_key` is: a widened
+            // `CoveredOccurrence` must stop this build rather than encode less
+            // than the record holds.
+            let CoveredOccurrence {
+                graph: _,
+                occurrence,
+                refinement,
+            } = covered;
             bytes.extend_from_slice(&occurrence.get().to_be_bytes());
+            push_slice(&mut bytes, refinement.as_bytes());
         }
     }
 

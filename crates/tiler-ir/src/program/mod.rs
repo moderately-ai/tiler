@@ -29,8 +29,12 @@
 //!   [`CanonicalScheduledRegionIdentity`](crate::schedule::CanonicalScheduledRegionIdentity)
 //!   it refines. A program identity therefore changes when any selected
 //!   refinement changes, at any structural layer.
-//! - **Complete coverage.** The semantic occurrences each stage claims, proven
-//!   to be a disjoint partition of every operation of the bound graph.
+//! - **Complete coverage and the proof behind it.** Each stage carries
+//!   [`CoveredOccurrence`](crate::program::CoveredOccurrence) records binding
+//!   the semantic occurrences it claims to the reached-only executable-coverage
+//!   identity of the completed index-refinement receipt that proved each one,
+//!   and those occurrences are proven to be a disjoint partition of every
+//!   operation of the bound graph.
 //! - **Materializations and buffers.** Values, byte views, allocations, typed
 //!   dependencies, and the ordered named outputs described below.
 //! - **The entry ABI.** Each stage's launch geometry and each access's
@@ -41,7 +45,7 @@
 //! - **The routing-commit contract.** The ordered lifecycle from preflight to
 //!   publication and, for each step, whether fallback is still permitted.
 //!
-//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`, which moved the domain from `tiler.kernel-program.v1` to historical v2 because a v1 identity was blind to two programs that differed only in their guard, ABI, or fallback contract. Later encoding and ABI-completeness changes moved the same subject through v3 and v4 to v5, folding the declared split-reduction contracts moved it to v6, canonical semantic stage coverage moved it to v7, and folding the published outputs in interface order rather than sorted by content moved it to the current `tiler.kernel-program.v8`; [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity) documents each step.
+//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`, which moved the domain from `tiler.kernel-program.v1` to historical v2 because a v1 identity was blind to two programs that differed only in their guard, ABI, or fallback contract. Later encoding and ABI-completeness changes moved the same subject through v3 and v4 to v5, folding the declared split-reduction contracts moved it to v6, canonical semantic stage coverage moved it to v7, folding the published outputs in interface order rather than sorted by content moved it to v8, and binding each covered occurrence to its reached-only refinement evidence moved it to the current `tiler.kernel-program.v9`; [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity) documents each step.
 //!
 //! Every transient ordinal is excluded: builder insertion order, the program's
 //! own stage/value/view/allocation/arena positions, and the planning `RegionId`
@@ -105,17 +109,65 @@
 //! lifetimes, an explicit handoff, and no live alias across it), and named
 //! outputs that are complete and published in the semantic interface's order.
 //!
-//! It does **not** prove that a stage's kernel computes the semantic operations
-//! it covers. Coverage here is a structural completeness and disjointness
-//! obligation; semantic equivalence remains compiler-owned refinement evidence.
+//! It does **not** re-derive, at this layer, that a stage's kernel computes the
+//! semantic operations it covers. That proof is the index-refinement verifier's
+//! and arrives already made: each [`CoveredOccurrence`](crate::program::CoveredOccurrence)
+//! is minted from a completed [`IndexRefinementReceipt`](crate::index::IndexRefinementReceipt),
+//! and this layer proves the receipt belongs to the bound graph, retains its
+//! reached-only evidence in identity, and separately proves the coverage is
+//! complete and disjoint. What it still does not prove is that the *kernel* the
+//! stage dispatches is the lowering of the region that receipt is about; that
+//! remains the compiler's obligation.
 //!
+//! # A coverage record cannot be assembled from parts
+//!
+//! [`CoveredOccurrence`](crate::program::CoveredOccurrence) has private fields
+//! and one constructor, which requires a completed receipt. Pairing an
+//! occurrence with unrelated evidence is not a mistake to be caught; it does not
+//! typecheck:
+//!
+//! ```compile_fail
+//! use tiler_ir::program::{CoveredOccurrence, SemanticOccurrence};
+//!
+//! fn forge(
+//!     refinement: tiler_ir::index::IndexRefinementExecutableCoverageIdentity,
+//! ) -> CoveredOccurrence {
+//!     CoveredOccurrence {
+//!         graph: todo!(),
+//!         occurrence: SemanticOccurrence::new(0),
+//!         refinement,
+//!     }
+//! }
 //! ```
+//!
+//! A proof gap has no spelling either. Only a *completed* receipt exposes the
+//! executable-coverage projection, so a pending association cannot be turned
+//! into coverage:
+//!
+//! ```compile_fail
+//! use tiler_ir::index::PendingIndexRefinementReceipt;
+//! use tiler_ir::program::CoveredOccurrence;
+//!
+//! fn coverage_from_a_gap(pending: &PendingIndexRefinementReceipt) -> CoveredOccurrence {
+//!     CoveredOccurrence::from_receipt(pending)
+//! }
+//! ```
+//!
+//! The assembly example below is `ignore`d for exactly this reason, and the
+//! omission is the point rather than an oversight. Minting the receipts its
+//! `push_stage` call needs means resolving a realization law and building the
+//! candidate index region for every operation of the graph — work a lowering
+//! consumer does and a documentation example cannot fake. The executable
+//! version of this walk-through lives in this module's test suite, where the
+//! coverage comes from the real verifier.
+//!
+//! ```ignore
 //! use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 //! use tiler_ir::program::abi::AbiRoot;
 //! use tiler_ir::program::{
-//!     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
-//!     MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
-//!     SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
+//!     AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
+//!     MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
+//!     RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
 //!     StorageScalar, ValueRole,
 //! };
 //! use tiler_ir::schedule::{
@@ -286,9 +338,13 @@
 //! let guard = program.push_abi_root(AbiRoot::BooleanLiteral(true))?;
 //! program.applicability_guard(guard)?;
 //!
+//! // One record per operation of the bound graph, each minted by
+//! // `CoveredOccurrence::from_receipt` from the completed refinement receipt
+//! // the consumer's lowering produced for that occurrence.
+//! let coverage: Vec<CoveredOccurrence> = refined_coverage();
 //! program.push_stage(
 //!     &kernel,
-//!     &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+//!     &coverage,
 //!     &[
 //!         StageAccess { view: read, mode: StageAccessMode::Read, accessible_bytes: read_bytes },
 //!         StageAccess { view: write, mode: StageAccessMode::Write, accessible_bytes: write_bytes },
@@ -339,12 +395,12 @@ pub use error::{
 pub use handles::{AbiExprId, AllocationId, MaterializedValueId, StageId, ViewId};
 pub use model::{
     AllocationOwnership, AllocationRef, AllocationSpec, BitPackedEncoding, ByteWindow,
-    CanonicalKernelProgramIdentity, DependencyReasonView, DependencyRef, MaterializedComponentSpec,
-    MaterializedOrigin, MaterializedValueRef, MaterializedValueSpec, MemorySpace, PackedBitOrder,
-    PackedTailRule, PartialReduction, PartialReductionRef, ProgramOutputRef, RoutingCommitState,
-    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode, StageAccessRef,
-    StageLaunch, StageLaunchView, StageRef, StorageEncoding, StorageScalar, ValueRole,
-    VerifiedKernelProgram, ViewRef,
+    CanonicalKernelProgramIdentity, CoveredOccurrence, DependencyReasonView, DependencyRef,
+    MaterializedComponentSpec, MaterializedOrigin, MaterializedValueRef, MaterializedValueSpec,
+    MemorySpace, PackedBitOrder, PackedTailRule, PartialReduction, PartialReductionRef,
+    ProgramOutputRef, RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess,
+    StageAccessMode, StageAccessRef, StageLaunch, StageLaunchView, StageRef, StorageEncoding,
+    StorageScalar, ValueRole, VerifiedKernelProgram, ViewRef,
 };
 
 /// Maximum stages admitted by one kernel program.

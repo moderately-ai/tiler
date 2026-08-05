@@ -152,9 +152,19 @@ fn stage_coverage_uses_verified_canonical_receipt_occurrences() {
     let request = request.for_target(request.target_profiles()[0]).unwrap();
     let lowering = crate::lowering::resolve_lowering(&semantic, &request).unwrap();
     let member = crate::region::SemanticMemberId(0);
-    let expected = lowering.occurrence(member).unwrap().canonical_occurrence();
-    assert_ne!(expected, SemanticOccurrence::new(member.0));
-    assert_eq!(covered(&[member], &lowering).unwrap(), vec![expected]);
+    let occurrence = lowering.occurrence(member).unwrap();
+    let covered = covered(&[member], &lowering).unwrap();
+    let [record] = covered.as_slice() else {
+        panic!("one member covers one occurrence")
+    };
+    assert_ne!(
+        record.occurrence(),
+        tiler_ir::program::SemanticOccurrence::new(member.0),
+        "the storage member ordinal and the canonical occurrence differ here",
+    );
+    // The record is the receipt's own, not an occurrence looked up beside an
+    // identity: the two halves must not be separately derivable.
+    assert_eq!(record, &occurrence.covered_occurrence());
 }
 
 #[test]
