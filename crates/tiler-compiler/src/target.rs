@@ -5444,26 +5444,34 @@ mod tests {
         domain
     }
 
-    /// **The measured-calibration trigger for parallel reduction selection.**
+    /// **The prototype baseline admits one three-strategy shape, and it is not
+    /// the profile calibration measures against.**
     ///
-    /// [`calibrate-and-activate-parallel-reduction-selection`] needs a crossover:
-    /// a shape at which the winning reduction strategy changes. That needs at
-    /// least two shapes on which all three strategies exist and can be timed. On
-    /// the governed profile there is exactly one, so no crossover is measurable
-    /// and no calibration can be derived — a fit through one point is not a model.
+    /// This test was written as the measured-calibration trigger for
+    /// [`calibrate-and-activate-parallel-reduction-selection`], and it could not
+    /// have fired. It reads the bound from [`TargetProfileBuilder::governed`] —
+    /// the *target-neutral prototype baseline*, keyed
+    /// `tiler.prototype-target-neutral-baseline.v1` — while calibration measures
+    /// against `tiler_build::BoundMetalCompileDeclaration::first_macos_apple9`.
+    /// Both declared four, so the difference was invisible until one of them
+    /// moved.
     ///
-    /// The single point is forced by arithmetic rather than found by sampling.
+    /// **On 2026-08-04 the Metal row moved to a measured 268,435,456 and this
+    /// one deliberately did not.** A macOS Apple9 device measurement is evidence
+    /// about one target; a baseline standing in for every target cannot be
+    /// widened by it, and widening it on the compiler's own say-so would be a
+    /// number chosen rather than sourced. So the prototype row keeps its
+    /// conservative four, and the real trigger lives in the crate that can see
+    /// the profile it is about:
+    /// `tiler_build::metal_plan::tests::the_measured_grid_axis_admits_more_than_one_three_strategy_shape`.
+    ///
+    /// What this test still checks is worth keeping and is what its name now
+    /// says: on *this* profile the derivation `4 <= contributors <=
+    /// rows * contributors <= bound` closes on `(1, 4)`, because
     /// `governed_partition` withholds both parallel strategies below four
-    /// contributors, and the grid-axis bound caps `rows * contributors`, so
-    /// `4 <= contributors <= rows * contributors <= bound`. At `bound == 4` that
-    /// chain closes and admits only `(1, 4)`.
-    ///
-    /// **This test exists to fail when that changes.** The grid-axis row is a
-    /// deliberately conservative compile guarantee rather than a hardware maximum
-    /// — the macOS SDK's `dispatchThreads:` contract establishes no upper bound at
-    /// all — so raising it is expected eventually, and when it happens calibration
-    /// becomes possible and this assertion fires to say so. The retained sweep at
-    /// `spikes/program-planning/reduction-crossover` reports the new domain.
+    /// contributors. If the prototype baseline is ever widened — which is a
+    /// product question about what a target-neutral guarantee should offer, not
+    /// an authority question this ticket could answer — this fires.
     ///
     /// The raised-bound case below is not decoration: without it a domain
     /// computation that returned a one-element vector unconditionally would pass
@@ -5473,7 +5481,7 @@ mod tests {
     /// [`calibrate-and-activate-parallel-reduction-selection`]:
     ///     ../../../tickets/calibrate-and-activate-parallel-reduction-selection.md
     #[test]
-    fn only_one_shape_admits_all_three_reduction_strategies() {
+    fn the_prototype_baseline_admits_one_three_strategy_shape() {
         let bound = TargetProfileBuilder::governed()
             .quantitative
             .iter()
@@ -5485,10 +5493,11 @@ mod tests {
         assert_eq!(
             domain,
             vec![(1, 4)],
-            "the three-strategy domain moved at grid-axis bound {bound}: measured calibration \
-             needs at least two shapes, so if this domain now has two or more, \
-             calibrate-and-activate-parallel-reduction-selection is unblocked — rerun \
-             spikes/program-planning/reduction-crossover for the new domain"
+            "the prototype baseline's three-strategy domain moved at grid-axis bound {bound}. \
+             This is the target-neutral baseline, not the profile calibration measures against: \
+             widening it needs an authority covering every target, which no device measurement \
+             can supply. The Metal profile's domain is reported by tiler-build's \
+             the_measured_grid_axis_admits_more_than_one_three_strategy_shape"
         );
 
         // The same derivation at a wider bound, so the single point above is a

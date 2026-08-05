@@ -39,20 +39,31 @@
 //!
 //! # Which authority class each row carries
 //!
-//! The quantitative rows are **normative**: they come from primary Apple
-//! documents and SDK headers, so they are declared through
+//! Most quantitative rows are **normative**: they come from primary Apple
+//! documents, so they are declared through
 //! [`TargetFactSource::external_guarantee`] naming the exact document as a
-//! versioned normative reference. The dispatchability and numerical rows are
-//! **measured**: they come from one retained MSL 4.0 run, so they are declared
-//! through [`TargetCompileProfileMeasurementSource`], whose phase, authority,
-//! and validity are fixed by construction and cannot widen into a portable
-//! claim.
+//! versioned normative reference. The dispatchability, numerical, **and
+//! grid-axis** rows are **measured**: they come from retained runs on one exact
+//! environment, so they are declared through
+//! [`TargetCompileProfileMeasurementSource`], whose phase, authority, and
+//! validity are fixed by construction and cannot widen into a portable claim.
+//!
+//! **The grid axis is the row that crossed that line, and the reason generalizes.**
+//! It is consumed as a guarantee — every extent up to the bound is admissible —
+//! so it needs an authority stating a floor on capability. Every normative
+//! source available states a ceiling on the space instead: the SDK's
+//! `dispatchThreads:` contract proves representability without a maximum, the
+//! feature tables carry no compute-grid row at all, and MSL 4.0 Table 5.8 caps
+//! the addressable grid at `2^32` by typing `[[thread_position_in_grid]]` no
+//! wider than `uint`. A ceiling forbids declaring more; it licenses nothing. So
+//! the number comes from `spikes/target-profiles/metal-grid-axis-extent` and
+//! travels with that run's exact validity.
 //!
 //! Three normative references rather than one, because three different documents
-//! establish the rows and a reader repairing a stale row needs to know which:
-//! the macOS 26.5 SDK header for the grid-axis API contract, the Metal Feature
-//! Set Tables for the family limits and 64-bit integer math, and the MSL 4.0
-//! specification for the `device` address space.
+//! establish the remaining rows and a reader repairing a stale row needs to know
+//! which: the Metal Feature Set Tables for the family limits and 64-bit integer
+//! math, the MSL 4.0 specification for the `device` address space, and its
+//! threadgroup-synchronization section for the barrier realization.
 //!
 //! # The selected realizations are not capabilities
 //!
@@ -187,10 +198,31 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
     // The unified MSL 4.0/macOS 26 record reports Apple9 bfloat support and
     // executes the BF16 kernels on this exact host/toolchain row.
     bf16_dispatchability: Some(DTypeDispatchability::Dispatchable),
-    // "Grid-axis threads — 4": the macOS 26.5 SDK's `dispatchThreads:` contract
-    // proves extent 4 is representable and establishes no upper bound at all, so
-    // 4 is a deliberately conservative compile guarantee rather than a maximum.
-    grid_axis_threads: 4,
+    // "Grid-axis threads — 268,435,456, measured".
+    //
+    // **The row is a guarantee, so its authority has to be a floor, and every
+    // normative source available is a ceiling.** Feasibility reads this row as
+    // *every dispatch with axis extent at most this works*. The superseded
+    // value was 4, sourced from the macOS SDK's `dispatchThreads:` contract —
+    // which proves an extent is *representable* and states no maximum at all,
+    // so it licensed no number and four was chosen to cover a program. The
+    // Metal Feature Set Tables carry no compute-grid row (only object- and
+    // mesh-shader grids), and MSL 4.0 Table 5.8 types
+    // `[[thread_position_in_grid]]` as `ushort` or `uint` and nothing wider,
+    // which caps the addressable grid at `2^32` without licensing any value
+    // inside it. A bounded measurement is the only class that can supply a
+    // floor, so this row is measured and carries the measurement's own
+    // validity rather than a normative reference.
+    //
+    // `spikes/target-profiles/metal-grid-axis-extent` dispatched a ladder of
+    // extents through this profile's own compilation, launch realization, and
+    // dispatch route on the exact offline and execution environments below,
+    // verifying every slot of a poisoned buffer at three threadgroup widths.
+    // All 6,294 rows completed and verified; `2^28` is the widest extent
+    // verified at every width, and it is the run's stop condition rather than
+    // an observed limit — nothing measured a failure, so nothing here says
+    // where one is.
+    grid_axis_threads: 268_435_456,
     // "Workgroup threads — absent as a fact, declared as a prepared-kernel query".
     workgroup_property_key: "tiler.target.prepared-entry.max-threads-per-workgroup.v1",
     // "Buffer bindings per entry — 31", feature tables, `Apple9` column.
@@ -294,9 +326,6 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
 const NORMATIVE_PRODUCER: &str = "tiler.metal.first-macos-apple9-msl4.normative.v1";
 /// Producer of every measured row in this declaration.
 const MEASURED_PRODUCER: &str = "tiler.metal.first-macos-apple9-msl4.measured.v1";
-/// The macOS 26.5 SDK header establishing the grid-axis API contract.
-const SDK_DISPATCH_REFERENCE: &str =
-    "apple.macos-sdk-26.5.mtlcomputecommandencoder.dispatch-threads";
 /// Apple's Metal Feature Set Tables, the vendored 2025-10-20 revision.
 const FEATURE_TABLES_REFERENCE: &str = "apple.metal-feature-set-tables.2025-10-20";
 /// The MSL 4.0 specification's address-space chapter.
@@ -532,9 +561,16 @@ impl BoundMetalCompileDeclaration {
         let mut builder =
             TargetProfileBuilder::new(TargetProfileKey::new(rows.profile_key.to_owned())?);
 
-        // ---- quantitative rows, every one normatively sourced ---------------
+        // ---- quantitative rows -----------------------------------------------
+        // Five of the six are normatively sourced. The grid axis is not, and it
+        // is the one row whose class the ledger had to change: an authority that
+        // caps the space cannot fill a row consumed as a guarantee, so this one
+        // carries the same `TargetCompileProfileMeasurementSource` the
+        // dispatchability and numerical rows do — the same one, not a second,
+        // because the extent ladder ran on exactly the offline and execution
+        // environments those rows were taken on.
         builder
-            .declare_max_threads_per_grid_axis(rows.grid_axis_threads, normative.sdk_dispatch)?;
+            .declare_measured_max_threads_per_grid_axis(rows.grid_axis_threads, measured.clone())?;
         builder.declare_max_threads_per_workgroup_query(
             TargetPropertyQuery::new(
                 TargetPropertyKey::new(rows.workgroup_property_key)
@@ -754,9 +790,16 @@ fn declare_metal_bf16_subnormal_behaviour(
     Ok(())
 }
 
-/// The three normative references the quantitative rows are attributed to.
+/// The three normative references the normatively sourced rows are attributed to.
+///
+/// Three, and the grid axis is deliberately not among them: its authority is a
+/// measurement, so it is declared through the measured source beside the
+/// dispatchability and numerical rows rather than through an external guarantee.
+/// The macOS SDK's `dispatchThreads:` contract remains why any extent is
+/// *expressible* on this target, but a precondition is not a source for a value,
+/// and carrying it here would attribute a measured number to a document that
+/// states none.
 struct NormativeSources {
-    sdk_dispatch: TargetFactSource,
     feature_tables: TargetFactSource,
     msl_address_space: TargetFactSource,
     msl_barrier: TargetFactSource,
@@ -767,10 +810,6 @@ impl NormativeSources {
         let producer = || TargetFactProducerIdentity::new(NORMATIVE_PRODUCER.to_owned(), 1);
         let reference = |key: &str| TargetNormativeReferenceIdentity::new(key.to_owned(), 1);
         Ok(Self {
-            sdk_dispatch: TargetFactSource::external_guarantee(
-                producer()?,
-                reference(SDK_DISPATCH_REFERENCE)?,
-            ),
             feature_tables: TargetFactSource::external_guarantee(
                 producer()?,
                 reference(FEATURE_TABLES_REFERENCE)?,
@@ -1520,7 +1559,9 @@ mod tests {
     fn every_projected_row_moves_the_profile_descriptor() {
         let baseline = descriptor(&FIRST_MACOS_APPLE9);
         let perturbations: [RowPerturbation; 8] = [
-            ("grid-axis threads", |rows| rows.grid_axis_threads = 8),
+            // The superseded value, so the perturbation is also the check that
+            // the row's own movement is what the descriptor recorded.
+            ("grid-axis threads", |rows| rows.grid_axis_threads = 4),
             ("buffer bindings", |rows| rows.buffer_bindings = 16),
             ("local memory bytes", |rows| {
                 rows.local_memory_bytes = 16_384;
@@ -1721,9 +1762,18 @@ mod tests {
         // from 1,963 when the independent BF16 dispatchability and input/result
         // subnormal tables were added (and from 1,741 before the barrier and
         // permitted-reassociation rows).
+        //
+        // It **shrank** to 1,999 when the grid-axis row became measured, and the
+        // direction is the point: the bound itself is a fixed-width `u64` in the
+        // encoding, so its value moves no bytes. What moved is the source table.
+        // The macOS SDK dispatch reference was the grid row's only user, so
+        // retiring it removed one whole `external_guarantee` record — producer
+        // identity and normative-reference identity — while the measured source
+        // the row joined was already present for the dispatchability and
+        // numerical rows and cost nothing to share.
         assert_eq!(
             descriptor.len(),
-            2_149,
+            1_999,
             "the canonical descriptor length moved; update the authority ledger with it",
         );
     }

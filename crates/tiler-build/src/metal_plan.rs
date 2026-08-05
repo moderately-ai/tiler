@@ -846,14 +846,34 @@ mod tests {
     /// separator included, so neither the artifact domain nor the manifest
     /// schema needed a step of its own.
     ///
+    /// **And again when the grid-axis row became a measurement.** The
+    /// profile's canonical descriptor is folded into artifact identity and the
+    /// cache subject, and that row moved twice over in one step: its value went
+    /// from 4 to 268,435,456, and its source went from an external guarantee
+    /// naming the macOS SDK dispatch header to the profile's own measurement
+    /// source. The descriptor *shrank* by 150 bytes as a result, because the
+    /// retired normative reference was the grid row's only user while the
+    /// measured source it joined was already carried by the dispatchability and
+    /// numerical rows. The two steps landed on sibling branches and composed at
+    /// integration, where both pins were recomputed on the merged tree.
+    ///
     /// The values are recorded rather than written in because a sibling branch
     /// may move the same two pins from its own base, and two branch-local
     /// rebaselines cannot compose: a pinned identity is recomputed on the tree
-    /// the step lands into, never taken from either side. Observed on this branch:
-    /// `ARTIFACT_IDENTITY`
-    /// `2b15415053d8f688de094d7f4490b90fa001463717affc686ee1fe3692786a81`,
-    /// `CACHE_SUBJECT`
-    /// `b0803f2a48f41aa03baed4a136f7e44ddb3dbafac39bc560673c2bb7f8801ae9`.
+    /// the step lands into, never taken from either side.
+    /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
+    /// sibling that depends on this row for exactly that reason. The constants
+    /// below were recomputed on the 2026-08-04 merged tree carrying both the
+    /// kernel-program v8 step and the measured grid-axis row. Superseded
+    /// branch-local values, for a reader reconciling an older record: v8-only
+    /// `2b15415053d8f688de094d7f4490b90fa001463717affc686ee1fe3692786a81` /
+    /// `b0803f2a48f41aa03baed4a136f7e44ddb3dbafac39bc560673c2bb7f8801ae9`,
+    /// grid-row-only
+    /// `3f98afa59d9ef46999acc211f2153a7d194444f5be3d0dd946f4128b57674a69` /
+    /// `8bca5e7825cdd1dc37da5135b0ea7d6dbd3e9ce1557097f2ee9e60e79fe23d07`,
+    /// and pre-both
+    /// `124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` /
+    /// `94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
     /// Regenerate on the merged tree with:
     ///
     /// ```text
@@ -869,9 +889,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "2b15415053d8f688de094d7f4490b90fa001463717affc686ee1fe3692786a81";
+            "886ed671cb98364ed0e020e7e2d51d69db1cd210d11f11d8ed7ee2c82f403892";
         const CACHE_SUBJECT: &str =
-            "b0803f2a48f41aa03baed4a136f7e44ddb3dbafac39bc560673c2bb7f8801ae9";
+            "f23ac9ddf349011f751e3128a8d89d7c423d4f155a37d9a03d1d8838deb64ba1";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -927,23 +947,36 @@ mod tests {
     /// under a reassociation-permitting contract; this fixture is sized above
     /// that defect rather than around it.
     ///
-    /// **One output, because the widest stage has to fit the grid axis.** This
-    /// profile's grid-axis row admits four threads. The measured launches are:
-    /// the fused reduction, one invocation per output; the tree, one per
-    /// participant per output, so two; the split's partial stage, one per
-    /// partition per output, so two; and the materialized pointwise stage, one
-    /// per *element*, so four — the widest, and exactly at the limit. A second
-    /// output doubles the pointwise stage to eight and the whole compilation
-    /// fails `target.grid-axis` before any plan composes, which is what the
-    /// two-output shape did the first time a parallel strategy was reachable
-    /// here at all.
+    /// **One output, and the reason is now history rather than a constraint.**
+    /// When this fixture was written the profile's grid-axis row admitted four
+    /// threads, and the materialized pointwise stage — one invocation per
+    /// *element* — sat exactly at that limit, so a second output doubled it to
+    /// eight and failed `target.grid-axis` before any plan composed. That row is
+    /// now a measured 268,435,456, so the shape is no longer forced; it is kept
+    /// because this test is about *which strategies a contract retains*, and the
+    /// smallest shape that retains all three is the one that isolates that
+    /// question from everything a larger program would also exercise. The domain
+    /// the widened row opened is reported by
+    /// `the_measured_grid_axis_admits_more_than_one_three_strategy_shape` below.
     fn reassociating_program() -> SemanticProgram {
+        reduction_program(1, 4)
+    }
+
+    /// A `rows x contributors` multiply-add prologue feeding a trailing-axis sum.
+    ///
+    /// The same program family the retained reduction-crossover sweep drives,
+    /// parameterized on both extents so the domain report below and the
+    /// portfolio test above cannot drift apart by describing different programs.
+    /// The prologue is what makes the multi-pass split expressible at all: the
+    /// split divides the *materialized* reduction, so a bare sum is a different
+    /// program.
+    fn reduction_program(rows: u64, contributors: u64) -> SemanticProgram {
         let mut builder =
             SemanticProgramBuilder::try_standard().expect("the semantic profile composes");
         let input = builder
             .input::<F32>(
                 InputKey::new("input").expect("the input key is valid"),
-                Shape::from_dims([1, 4]),
+                Shape::from_dims([rows, contributors]),
             )
             .expect("the input binds");
         let scale = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the scale applies");
@@ -1094,6 +1127,107 @@ mod tests {
             composed_shape.len() > flushing_shape.len(),
             "the composed contract retained no alternative the flush-only contract did not: \
              {composed_shape:?} against {flushing_shape:?}",
+        );
+    }
+
+    /// **The measured-calibration domain, reported against the profile that
+    /// calibration measures.**
+    ///
+    /// [`calibrate-and-activate-parallel-reduction-selection`] needs a crossover:
+    /// a shape at which the winning reduction strategy changes. That needs at
+    /// least two shapes on which all three strategies exist and can be timed. Its
+    /// 2026-08-02 outcome recorded that exactly one existed, and named the cause
+    /// — the grid-axis row capped the prologue's one-invocation-per-element
+    /// launch at four, and `governed_partition` withholds both parallel
+    /// strategies below four contributors, so
+    /// `4 <= contributors <= rows * contributors <= bound` closed on `(1, 4)`.
+    ///
+    /// **This test replaces a trigger that could not have fired.**
+    /// `tiler_compiler::target::tests::only_one_shape_admits_all_three_reduction_strategies`
+    /// was written as that trigger, but it reads the bound from
+    /// `TargetProfileBuilder::governed`, the *target-neutral prototype baseline*,
+    /// while calibration measures against `BoundMetalCompileDeclaration::first_macos_apple9`.
+    /// The two agreed at four, which hid the difference. They do not agree now
+    /// and cannot be made to: a macOS Apple9 measurement is evidence about one
+    /// target and can never source a row that stands in for every target, so the
+    /// prototype row stays where it is and the trigger has to live here, in the
+    /// crate that can see the profile it is about.
+    ///
+    /// **Read from compilation rather than derived.** The domain is observed by
+    /// compiling each candidate shape and counting the strategies its portfolio
+    /// retains, using the same two structural observables as the test above. A
+    /// reimplementation of the arithmetic would agree with itself while the
+    /// compiler disagreed.
+    ///
+    /// The refusal case at the end is what stops this from being a check that
+    /// passes whatever the row says: a shape whose work items exceed the declared
+    /// bound must still be refused, on the grid axis, by name.
+    ///
+    /// [`calibrate-and-activate-parallel-reduction-selection`]:
+    ///     ../../../tickets/calibrate-and-activate-parallel-reduction-selection.md
+    #[test]
+    fn the_measured_grid_axis_admits_more_than_one_three_strategy_shape() {
+        let declaration = declaration();
+        let targets =
+            || TargetRequest::new([declaration.profile().clone()]).expect("a singleton request");
+
+        // Contributor counts admitting a balanced exact partition, so a shape
+        // that is absent from the domain is absent for a target reason rather
+        // than for `correct-the-declined-strategy-record-for-an-unsplittable-reduction`.
+        let candidates = [(1, 4), (1, 8), (2, 4), (4, 16), (64, 64)];
+        let mut domain = Vec::new();
+        for (rows, contributors) in candidates {
+            let program = reduction_program(rows, contributors);
+            let compilation = compiled(
+                NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+                &program,
+                targets(),
+            );
+            let shape = portfolio_shape(&compilation);
+            let split = shape.iter().any(|(stages, _)| *stages == 3);
+            let tree = shape.iter().any(|(_, width)| *width > 1);
+            let serial = shape
+                .iter()
+                .any(|(stages, width)| *stages < 3 && *width == 1);
+            if split && tree && serial {
+                domain.push((rows, contributors));
+            }
+        }
+        assert!(
+            domain.len() > 1,
+            "the three-strategy domain is {domain:?}: a crossover needs at least two shapes on \
+             which every alternative exists and can be timed, so calibration is still blocked",
+        );
+        assert!(
+            domain.contains(&(1, 4)),
+            "the widened domain must extend the one shape the superseded row admitted rather \
+             than replace it: {domain:?}",
+        );
+
+        // The axis still refuses above its declared bound, and says so by name.
+        // Shapes are symbolic, so this costs no more to compile than the others.
+        // Mutation-proved at the boundary rather than far from it: `(2,
+        // 134_217_728)` is exactly 268,435,456 work items and compiles, so the
+        // refusal below is the bound doing its job and not a shape that fails
+        // for some unrelated reason.
+        let refusal = compile(CompileRequest::new(
+            &reduction_program(2, 268_435_456),
+            NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+            targets(),
+        ))
+        .expect("the batch resolves")
+        .into_targets()
+        .pop()
+        .expect("one target outcome")
+        .into_parts()
+        .1
+        .expect_err("536,870,912 work items exceed the declared grid-axis bound");
+        let rendered = refusal
+            .explain()
+            .map_or_else(|| format!("{refusal:?}"), |report| report.render());
+        assert!(
+            rendered.contains("grid-axis:rejected"),
+            "a shape above the declared bound was refused, but not on the grid axis: {rendered}",
         );
     }
 
