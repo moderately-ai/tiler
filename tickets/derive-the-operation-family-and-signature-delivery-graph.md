@@ -1,7 +1,7 @@
 ---
 id: derive-the-operation-family-and-signature-delivery-graph
 title: Derive the operation-family and signature delivery graph
-status: review
+status: done
 priority: p1
 dependencies: [enumerate-the-mature-tensor-operation-and-signature-taxonomy]
 related: [own-operation-family-support-matrix, admit-the-registered-unary-families-at-the-compiler-request-boundary]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, research/semantic-graph, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, operations, roadmap, ticket-graph]
-claimed_from: todo
-assignee: agent-delivery-graph
-lease_expires_at: 1785947697
 ---
 ## User-visible outcome
 
