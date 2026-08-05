@@ -1,7 +1,7 @@
 ---
 id: calibrate-and-activate-parallel-reduction-selection
 title: Calibrate and activate parallel reduction selection
-status: blocked
+status: todo
 priority: p1
 dependencies: [realize-parallel-reduction-strategies-on-metal, establish-an-upper-bound-authority-for-the-metal-grid-axis-row]
 related: [implement-parallel-reduction-strategies]

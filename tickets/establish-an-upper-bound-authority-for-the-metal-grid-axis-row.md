@@ -1,7 +1,7 @@
 ---
 id: establish-an-upper-bound-authority-for-the-metal-grid-axis-row
 title: Establish an upper-bound authority for the Metal grid-axis row
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [calibrate-and-activate-parallel-reduction-selection]
@@ -9,9 +9,6 @@ scopes: [research/target-profiles, implementation/build, implementation/compiler
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [research, target-profiles, measurement]
-claimed_from: todo
-assignee: agent-grid-axis
-lease_expires_at: 1785879207
 ---
 ## User-visible outcome
 
