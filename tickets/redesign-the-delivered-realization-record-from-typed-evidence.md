@@ -1,11 +1,11 @@
 ---
 id: redesign-the-delivered-realization-record-from-typed-evidence
 title: Redesign the delivered-realization record from typed evidence
-status: in-progress
+status: review
 priority: p1
 dependencies: [carry-the-honourability-fact-provenance-into-the-artifact-record, express-metal-honourability-in-the-shared-form]
 related: [record-delivered-numerical-realization, drive-the-build-orchestrator-from-a-checked-compiler-plan, widen-the-region-realization-to-consumable-dimensions]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, contracts/numerics, contracts/artifacts, contracts/decisions]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, contracts/numerics, contracts/artifacts, contracts/decisions, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, artifact, numerics, provenance, api]
@@ -87,11 +87,47 @@ Place the private draft under `spikes/numerics/delivered-realization-record/` wi
 
 The review packet eliminates the stale draft, defines the exact signatures and call sites across the shared dimension, compiler evidence view, artifact record, and build translation, includes the exact proposed ADR 0076 and numerical/artifact contract corrections, demonstrates the compact representation and adversarial validation in a compile-checked bounded spike or equivalent private draft, and leaves applying those contract changes plus every production public item and wire/schema/identity change for acceptance and downstream implementation.
 
+## Outcome — the packet exists and is reviewable
+
+The compile-checked private design packet is `spikes/numerics/delivered-realization-record/`, its own workspace carrying no `rust-toolchain.toml` of its own. Exact invocation, from that directory: `CARGO_TARGET_DIR=./target cargo run`. Ten stages, ending in **38 perturbations covering all 25 distinct rule identifiers** the two proposed error vocabularies define; `cargo clippy` and `cargo fmt --check` are clean.
+
+**Production is untouched.** `git diff --name-only <base>..HEAD` reaches nothing under `crates/`; `crates/tiler-artifact/src/program/realization.rs` is byte-identical.
+
+### The five cited defects, each verified at source
+
+All hold at base `6544d4f`. The packet README carries the line-level derivation:
+
+1. The artifact's second `NumericalDimension` has four cases against the compiler's eleven — **and** its doc comment claims those four are what `NumericalRealization` carries, which has been **eight** since `widen-the-region-realization-to-consumable-dimensions`. The comment is false in the direction that makes the draft look complete.
+2. Honourability is keyed by more than `(dimension, arithmetic)`: the **complete resolved type** is the third coordinate (`NumericalRequirement::subject`), and `tiler_compiler::target::ScalarArithmetic` is already the public validated subject.
+3. `HonouringMeans::key` collapses every declared relaxation to one constant string while `encode` carries the payload. This is the decisive defect: opaque key bytes cannot carry the record even for comparison, which is what reopens the elimination `record-delivered-numerical-realization` recorded.
+4. Authority, validity scope, compiler build, and execution environment are absent; the vocabulary now exists in `tiler-compiler` and is `pub(crate)`.
+5. `declare` validates framing, not that a checked plan selected the claim.
+
+### One correction that bounds a fixture's claim
+
+The ticket says "the measured Apple profile preserves `f16` input subnormals and flushes `f32`". The divergence is measured and real, but **no target profile in this tree declares an `f16` honourability row** — it lives in `tiler-metal`'s `MetalSubnormalArithmeticFacts`, every `ScalarHonourabilityDeclaration` is over `f32` or `bf16`, and `crates/tiler-build/src/metal_declaration.rs:616-620` states F16 is deliberately absent. The two-dtype fixture therefore uses checked synthetic evidence — which `express-metal-honourability-in-the-shared-form` explicitly admits for this ticket — and proves a property of the **record**, not of any measured target. Its README says so where the fixture is defined.
+
+### Two defects found while verifying, filed rather than absorbed
+
+- `derive-per-locus-numerical-obligations` — the compiler has no locus vocabulary at all (`grep -rni "locus" --include="*.rs" crates/` is empty), so it cannot yet produce the obligation rows the record is shaped to carry. The shape is derived from ADR 0011 and is not blocked by this; the producer is, and a single-locus producer is admissible meanwhile.
+- `key-numerical-requirements-by-the-contract-s-own-resolved-type` — `policy::dimension_requirements` hard-codes `F32::resolved_type()` while reading `contract.arithmetic`, so no non-`f32` contract can ever be honoured. It fails closed, so it is a structural refusal rather than a wrong answer.
+
+### Boundaries held
+
+No production edit, no identity or schema advance, no pinned rebaseline, no contract edit — the proposed ADR 0076, numerical-semantics, and artifact-abi text is drafted **inside** the packet. The packet is a proposal and is not accepted by having compiled.
+
+### Remainder
+
+The top-level `spikes/README.md` catalog entry is deliberately not made: that file maps to `contracts/navigation`, which the live ticket `cite-adr-0095-in-the-milestone-6-distributivity-framing` holds. `spikes/numerics/README.md` — inside this ticket's `research/numerics` scope — lists the packet and also corrects a pre-existing omission of the BF16 spike from that portal.
+
 ## Graph maintenance
 
-- This ticket follows both structured provenance and `express-metal-honourability-in-the-shared-form`; the review fixture cannot claim compiler-selected Metal evidence until the producer path exists.
+- `research/numerics` was added to this ticket's scopes: the packet lands under `spikes/numerics/**`, which `ticketsplease.toml` maps to that scope. Declaration and scheduling metadata for already-authorized work, not a product-scope expansion.
+- **Scope-overlap verification.** `tkt guard` reports `severity: warn`, `conflict: false`, `under_declared: []`. Two tickets share `research/numerics` directly. `define-the-runtime-kv-state-boundary` is `closed`, and `git diff --name-only main...tkt/define-the-runtime-kv-state-boundary` touches only `docs/` and `tickets/` — file-level disjoint from `spikes/numerics/**`. `preserve-an-mlir-linalg-dialect-source-in-the-primary-source-record` is `in-progress` with **no `tkt/` branch**, so there is no diff to verify against; the check that can be reproduced is `git rev-parse --verify tkt/preserve-an-mlir-linalg-dialect-source-in-the-primary-source-record`, which fails. Every remaining collision is a `shared` claim on `project/tickets`, which every claimed ticket declares. `contracts/navigation` was deliberately not touched — see the remainder above.
+- This ticket follows both structured provenance and `express-metal-honourability-in-the-shared-form`; the review fixture cannot claim compiler-selected Metal evidence until the producer path exists — and it does not: it says in its own README that its evidence is checked synthetic.
 - `accept-the-delivered-realization-artifact-surface` depends on this review packet and owns Tom's exact public-boundary ratification.
 - `wire-the-delivered-realization-record-into-the-artifact` follows acceptance and owns all production integration.
-- Qualify `record-delivered-numerical-realization` as historical evidence: its staged four-dimension outcome was valid for its tree and is not the current candidate.
+- Qualify `record-delivered-numerical-realization` as historical evidence: its staged four-dimension outcome was valid for its tree and is not the current candidate. **Done 2026-08-05** — its `## Outcome` now carries a confirmed-historical note re-verifying every qualifying claim at source, plus the two corrections to that ticket's own text (the false "four dimensions `NumericalRealization` carries" comment, and the overstated "measured `f16`/`f32` divergence" that no profile declares).
+- `derive-per-locus-numerical-obligations` and `key-numerical-requirements-by-the-contract-s-own-resolved-type` were filed from this work; neither blocks acceptance.
 - Keep the caller-profile declaration and checked Metal adapter visible as explicit upstream gates rather than relying on prose or a reversed provenance edge.
 - Leave removing the stale four-dimension production module, applying accepted contract text, advancing schema/identity domains, and recomputing production goldens to `wire-the-delivered-realization-record-into-the-artifact` after public acceptance.
