@@ -61,8 +61,8 @@ use tiler_artifact::program::{
     VerifiedArtifactProgram,
 };
 use tiler_build::{
-    BackendEntryDeclaration, DeclaredPayload, accept_or_publish_delivered_payload_artifact,
-    assemble_plan_artifact,
+    BackendEntryDeclaration, CompiledPayloads, DeclaredPayload,
+    accept_or_publish_delivered_payload_artifact, assemble_plan_artifact,
 };
 use tiler_cache::expansion::{ExpansionCache, Resolution};
 use tiler_compiler::session::{
@@ -879,7 +879,7 @@ fn produce(cache: &ExpansionCache, variant: Variant) -> Result<Produced, Produce
             &pending,
             std::slice::from_ref(&declared),
             |_, actual: &PayloadMetadata| correspondence(&expected, actual),
-            || Ok::<Vec<PayloadContent>, String>(vec![content.clone()]),
+            || Ok::<CompiledPayloads, String>(vec![content.clone()].into()),
             |contents| assemble_carried(&semantic, plan, variant, sole(contents)),
         )
         .expect_err("an envelope that does not decode cannot reach the cache");
@@ -910,7 +910,7 @@ fn produce(cache: &ExpansionCache, variant: Variant) -> Result<Produced, Produce
         &pending,
         std::slice::from_ref(&declared),
         |_, actual: &PayloadMetadata| correspondence(&expected, actual),
-        || Ok::<Vec<PayloadContent>, String>(vec![content.clone()]),
+        || Ok::<CompiledPayloads, String>(vec![content.clone()].into()),
         |contents| assemble_carried(&semantic, plan, variant, sole(contents)),
     )
     .map_err(|failure| ProducerFailure::Cache(failure.to_string()))?;

@@ -111,7 +111,8 @@ use tiler_artifact::program::{
     decode_artifact,
 };
 use tiler_cache::expansion::{
-    ComposedSubject, ExpansionCache, PublishFailure, Resolution, SubjectFacets, SubjectRefusal,
+    ComposedSubject, DebugRetention, ExpansionCache, PublishFailure, Resolution, SubjectFacets,
+    SubjectRefusal,
 };
 
 /// Domain the seam compares two object byte runs under.
@@ -154,6 +155,49 @@ pub struct DeclaredPayload<'facts> {
     /// this run beside the artifact program's own canonical identity, and
     /// completeness *within* the run is the producing authority's obligation.
     pub compilation: &'facts [u8],
+}
+
+/// What one cache miss compiled, and what it retained while compiling.
+///
+/// A caller-constructed leaf record with public fields, in the convention this
+/// crate's callers already write. The two halves are separate because they are
+/// different kinds of statement: the contents are what the artifact carries and
+/// are validated against the declaration at three points, while the retention is
+/// debug text nothing validates and nothing keys — it travels beside the entry
+/// and is read back on a later hit.
+///
+/// `From<Vec<PayloadContent>>` is the whole of the non-retaining case, which is
+/// every backend that has no diagnostics to keep. That conversion is what keeps
+/// there being one seam rather than a retaining one and a plain one that have to
+/// stay in step.
+#[derive(Debug, Default)]
+pub struct CompiledPayloads {
+    /// One compiled payload per delivery position, in delivery order.
+    pub contents: Vec<PayloadContent>,
+    /// Debug text to retain beside a published entry.
+    ///
+    /// **Stated by the backend, never discovered here.** Nothing in this crate
+    /// or in `tiler_cache` reads an environment variable or a build profile to
+    /// decide whether to retain: a producer under a debug configuration supplies
+    /// runs, and one that is not supplies [`DebugRetention::none`].
+    ///
+    /// **A payload's canonical source does not belong here.** It is already
+    /// inside the artifact envelope, in the payload metadata the payload digest
+    /// is taken over, so it reaches a reader from any resolution — a hit
+    /// included — under the identity that names it. Retention is for what the
+    /// envelope cannot carry: the output of the tool run, which is not a
+    /// compilation input and would make one compilation's identity depend on
+    /// which host emitted which warning.
+    pub retained: DebugRetention,
+}
+
+impl From<Vec<PayloadContent>> for CompiledPayloads {
+    fn from(contents: Vec<PayloadContent>) -> Self {
+        Self {
+            contents,
+            retained: DebugRetention::none(),
+        }
+    }
 }
 
 /// One cache resolution whose artifact was accepted against its declaration.
@@ -433,11 +477,21 @@ enum PublicationError<M, C, A> {
 /// is available before compilation, and `declared` is what its payloads must say
 /// at each delivery position, in delivery order. `compile` runs only on a cache
 /// miss and performs whatever external work the backend's representation
-/// requires, returning one compiled object per declaration in the same order;
-/// `assemble` then carries them into the corresponding artifact.
-/// `correspondence` is the backend's own fact-level check over one decoded
-/// payload's metadata at a named position, invoked before publication and again
-/// on every result.
+/// requires, returning one compiled object per declaration in the same order —
+/// as a [`CompiledPayloads`], which a backend with no diagnostics to keep reaches
+/// by `From<Vec<PayloadContent>>`. `assemble` then carries them into the
+/// corresponding artifact. `correspondence` is the backend's own fact-level check
+/// over one decoded payload's metadata at a named position, invoked before
+/// publication and again on every result.
+///
+/// # What a retention changes, which is nothing about identity
+///
+/// [`CompiledPayloads::retained`] travels to the published entry and is read back
+/// from a later hit; it does not reach the cache subject, the cache key, or any
+/// validation. So a producer that turns retention on resolves to the entries it
+/// already had — finding nothing to show on the ones published without it — and
+/// a hit never recompiles to acquire the text, because a hit does not run
+/// `compile` at all.
 ///
 /// # The order of the checks is part of the contract
 ///
@@ -468,7 +522,7 @@ pub fn accept_or_publish_delivered_payload_artifact<M, C, A>(
     pending: &VerifiedArtifactProgram,
     declared: &[DeclaredPayload<'_>],
     correspondence: impl Fn(usize, &PayloadMetadata) -> Result<(), M>,
-    compile: impl FnOnce() -> Result<Vec<PayloadContent>, C>,
+    compile: impl FnOnce() -> Result<CompiledPayloads, C>,
     assemble: impl FnOnce(Vec<PayloadContent>) -> Result<VerifiedArtifactProgram, A>,
 ) -> Result<AcceptedArtifact, DeliveredPayloadCacheError<M, C, A>> {
     let expected_descriptors = validate_pending_payloads(pending, declared)
@@ -484,8 +538,9 @@ pub fn accept_or_publish_delivered_payload_artifact<M, C, A>(
     .map_err(DeliveredPayloadCacheError::Subject)?;
 
     let resolution = cache
-        .get_or_publish(&subject, || {
-            let contents = compile().map_err(PublicationError::Compile)?;
+        .get_or_publish_retaining(&subject, || {
+            let CompiledPayloads { contents, retained } =
+                compile().map_err(PublicationError::Compile)?;
             if contents.len() != declared.len() {
                 return Err(PublicationError::Protocol(
                     DeliveredPayloadProtocolError::CompiledPortfolio {
@@ -514,7 +569,10 @@ pub fn accept_or_publish_delivered_payload_artifact<M, C, A>(
                 Some(&expected_objects),
             )
             .map_err(PublicationError::Protocol)?;
-            Ok(envelope)
+            // The retention rides to publication only after every check above
+            // passed. A refusal here means no entry is written, so there is no
+            // entry for the debug text to be attached to either.
+            Ok((envelope, retained))
         })
         .map_err(map_publish_failure)?;
 

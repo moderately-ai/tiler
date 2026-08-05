@@ -37,6 +37,19 @@
 //! hit instead of trusted. It also makes the subject available for diagnosis,
 //! which is the difference between "this entry was rejected" and "this entry was
 //! rejected and here is what it claimed to be".
+//!
+//! # The one optional section, and what its optionality costs
+//!
+//! [`BundleSection::DebugRetention`] is framed only when a caller stated one, so
+//! a bundle carries two sections or three. That is the only optionality in this
+//! frame, and it is bounded on both sides: the two required sections are
+//! [`BundleRejection::MissingSection`] when absent, and the retention carries its
+//! own content digest, sits inside the declared total length, and must begin
+//! exactly where the previous section ended — so an entry cannot be edited to add,
+//! remove, or alter retained text and stay valid. What optionality buys is that a
+//! build which retains and a build which does not agree about one entry, because
+//! the key is a function of the subject alone.
+//! [`DebugRetention`](super::DebugRetention) states the whole identity argument.
 
 use core::fmt;
 use core::ops::Range;
@@ -45,6 +58,7 @@ use tiler_artifact::program::{DIGEST_BYTES, Digest, DigestAlgorithm};
 
 use super::key::CacheKey;
 use super::limits::Limits;
+use super::retention::{DebugRetention, RetentionRejection};
 
 /// Opening bytes of every cache bundle.
 const MAGIC: &[u8; 8] = b"TLRCACHE";
@@ -77,11 +91,24 @@ pub enum BundleSection {
     CompilationSubject,
     /// The target-neutral artifact envelope this compilation produced.
     ArtifactEnvelope,
+    /// Debug text the publishing caller retained beside the entry.
+    ///
+    /// The only section a valid bundle may omit, and the only one that is not
+    /// part of what the entry *is*: it does not reach the key, and a reader that
+    /// finds none has a complete hit with nothing to show.
+    DebugRetention,
 }
 
 impl BundleSection {
     /// Sections in the exact order a bundle frames them.
-    const ORDER: [Self; 2] = [Self::CompilationSubject, Self::ArtifactEnvelope];
+    ///
+    /// A bundle frames this sequence with [`Self::DebugRetention`] omitted when
+    /// the caller retained nothing; no other section may be omitted.
+    const ORDER: [Self; 3] = [
+        Self::CompilationSubject,
+        Self::ArtifactEnvelope,
+        Self::DebugRetention,
+    ];
 
     /// Returns this section's stable wire tag.
     ///
@@ -91,6 +118,7 @@ impl BundleSection {
         match self {
             Self::CompilationSubject => 0x0000_0001,
             Self::ArtifactEnvelope => 0x0000_0002,
+            Self::DebugRetention => 0x0000_0003,
         }
     }
 
@@ -99,6 +127,7 @@ impl BundleSection {
         match tag {
             0x0000_0001 => Some(Self::CompilationSubject),
             0x0000_0002 => Some(Self::ArtifactEnvelope),
+            0x0000_0003 => Some(Self::DebugRetention),
             _ => None,
         }
     }
@@ -109,6 +138,7 @@ impl BundleSection {
         match self {
             Self::CompilationSubject => "compilation-subject",
             Self::ArtifactEnvelope => "artifact-envelope",
+            Self::DebugRetention => "debug-retention",
         }
     }
 }
@@ -138,25 +168,55 @@ pub(crate) struct BundleView {
     pub(crate) key: CacheKey,
     pub(crate) subject: Range<usize>,
     pub(crate) envelope: Range<usize>,
+    /// The retained debug text this bundle framed, empty when it framed none.
+    ///
+    /// Owned rather than a span, because unlike the two required sections this
+    /// one is *this crate's own* encoding: a reader that returned its bytes would
+    /// be handing out an unparsed structure that nothing had validated, and
+    /// validation on every hit means every framed byte is accounted for before
+    /// anything is returned.
+    pub(crate) retained: DebugRetention,
 }
 
 /// Encodes one bundle.
 ///
 /// The key is derived here from the subject rather than accepted from the
 /// caller, so a published bundle cannot be filed under a key its subject does
-/// not produce.
+/// not produce. `retained` is framed only when it carries something: an empty
+/// retention is the absence of the section, which is why publishing the same
+/// compilation with and without debug retention produces one key and one entry
+/// path.
 pub(crate) fn encode(
     subject: &[u8],
     envelope: &[u8],
+    retained: &DebugRetention,
     limits: &Limits,
 ) -> Result<(CacheKey, Vec<u8>), BundleRejection> {
+    // Derived from the subject alone, before the retention is even encoded. The
+    // retained text cannot reach this derivation, which is what makes "retention
+    // does not participate in the key" a property of the code rather than a rule
+    // someone has to remember.
     let key = CacheKey::derive_bytes(subject);
-    let sections = [subject, envelope];
+    let retention = (!retained.is_empty()).then(|| retained.encode());
+    let mut sections: Vec<(BundleSection, &[u8])> = vec![
+        (BundleSection::CompilationSubject, subject),
+        (BundleSection::ArtifactEnvelope, envelope),
+    ];
+    if let Some(bytes) = retention.as_deref() {
+        sections.push((BundleSection::DebugRetention, bytes));
+    }
+    debug_assert!(
+        sections
+            .iter()
+            .map(|(purpose, _)| *purpose)
+            .eq(BundleSection::ORDER.into_iter().take(sections.len())),
+        "a bundle frames the canonical section order, omitting only the retention",
+    );
     let table_bytes = DESCRIPTOR_BYTES * sections.len();
-    let body_bytes: usize = sections.iter().map(|section| section.len()).sum();
+    let body_bytes: usize = sections.iter().map(|(_, section)| section.len()).sum();
     let total = HEADER_BYTES + table_bytes + body_bytes;
 
-    for (index, section) in sections.iter().enumerate() {
+    for (index, (_, section)) in sections.iter().enumerate() {
         let length = section.len() as u64;
         if length > limits.max_section_bytes {
             return Err(BundleRejection::SectionTooLarge {
@@ -196,7 +256,7 @@ pub(crate) fn encode(
     );
 
     let mut offset = (HEADER_BYTES + table_bytes) as u64;
-    for (purpose, section) in BundleSection::ORDER.iter().zip(sections) {
+    for (purpose, section) in &sections {
         let length = section.len() as u64;
         bytes.extend_from_slice(&purpose.tag().to_be_bytes());
         bytes.extend_from_slice(&offset.to_be_bytes());
@@ -204,7 +264,7 @@ pub(crate) fn encode(
         bytes.extend_from_slice(section_digest(section).as_bytes());
         offset += length;
     }
-    for section in sections {
+    for (_, section) in &sections {
         bytes.extend_from_slice(section);
     }
     debug_assert_eq!(bytes.len(), total, "the encoded length is the declared one");
@@ -224,7 +284,7 @@ pub(crate) fn decode(
     limits: &Limits,
 ) -> Result<BundleView, BundleRejection> {
     let header = decode_header(bytes, requested, limits)?;
-    let (subject, envelope) = decode_sections(bytes, &header, limits)?;
+    let (subject, envelope, retention) = decode_sections(bytes, &header, limits)?;
 
     // The key is a *function* of the subject, so a bundle whose carried subject
     // does not produce the key it is filed under is refused even though every
@@ -238,10 +298,21 @@ pub(crate) fn decode(
         });
     }
 
+    // Parsed rather than carried forward as bytes. The subject and the envelope
+    // belong to other authorities and travel opaquely; the retention is this
+    // crate's own encoding, so leaving it unparsed would mean returning a
+    // structure from a validated hit that nothing had validated.
+    let retained = match retention {
+        Some(range) => DebugRetention::decode(&bytes[range])
+            .map_err(|rejection| BundleRejection::RetainedDebug { rejection })?,
+        None => DebugRetention::none(),
+    };
+
     Ok(BundleView {
         key: header.key,
         subject,
         envelope,
+        retained,
     })
 }
 
@@ -344,13 +415,16 @@ fn decode_header(
 }
 
 /// Validates every section descriptor and the bytes it frames.
+type FramedSections = (Range<usize>, Range<usize>, Option<Range<usize>>);
+
 fn decode_sections(
     bytes: &[u8],
     header: &Header,
     limits: &Limits,
-) -> Result<(Range<usize>, Range<usize>), BundleRejection> {
+) -> Result<FramedSections, BundleRejection> {
     let mut subject: Option<Range<usize>> = None;
     let mut envelope: Option<Range<usize>> = None;
+    let mut retention: Option<Range<usize>> = None;
     let mut expected_offset = header.table_end as u64;
     for index in 0..header.sections {
         let at = HEADER_BYTES + DESCRIPTOR_BYTES * index;
@@ -416,6 +490,7 @@ fn decode_sections(
         let slot = match purpose {
             BundleSection::CompilationSubject => &mut subject,
             BundleSection::ArtifactEnvelope => &mut envelope,
+            BundleSection::DebugRetention => &mut retention,
         };
         if slot.is_some() {
             return Err(BundleRejection::DuplicateSection { purpose });
@@ -436,6 +511,11 @@ fn decode_sections(
         envelope.ok_or(BundleRejection::MissingSection {
             purpose: BundleSection::ArtifactEnvelope,
         })?,
+        // Deliberately not `ok_or`: an entry published by a build that retained
+        // nothing frames no retention, and refusing it here would turn every
+        // already-published entry into a miss the moment anyone turned retention
+        // on.
+        retention,
     ))
 }
 
@@ -579,6 +659,17 @@ pub enum BundleRejection {
         /// Rendered key the carried subject produces.
         derived: String,
     },
+    /// The framed debug-retention section is not one this build wrote.
+    ///
+    /// A rejection rather than a hit with the retention dropped. The section
+    /// digest already proved these bytes are the bytes the writer framed, so
+    /// bytes that then fail to parse mean the writer and this reader disagree
+    /// about the encoding — and an entry this reader cannot fully account for is
+    /// not a validated entry, whatever the unaccounted part was for.
+    RetainedDebug {
+        /// What the retention decoder refused.
+        rejection: RetentionRejection,
+    },
 }
 
 impl fmt::Display for BundleRejection {
@@ -671,8 +762,19 @@ impl fmt::Display for BundleRejection {
                 formatter,
                 "a cache bundle embeds key {embedded} and carries a subject deriving {derived}",
             ),
+            Self::RetainedDebug { rejection } => write!(
+                formatter,
+                "a cache bundle's retained debug section was refused: {rejection}",
+            ),
         }
     }
 }
 
-impl std::error::Error for BundleRejection {}
+impl std::error::Error for BundleRejection {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::RetainedDebug { rejection } => Some(rejection),
+            _ => None,
+        }
+    }
+}

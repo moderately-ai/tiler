@@ -27,6 +27,21 @@
 //! to, or edited in place. It is created by one `rename` and afterwards only
 //! read, replaced by another whole `rename`, or unlinked.
 //!
+//! That property is what decided where a *stated debug retention* sits, and the
+//! three answers are implemented rather than intended.
+//! [`DebugRetention`] does **not** participate in the key — [`CacheKey::derive`]
+//! is a function of the composed subject alone and the encoder derives the key
+//! from the subject section it writes, so one compilation resolves to one entry
+//! whether or not a build retained anything. It **does** participate in the
+//! frame's digest set — the section carries its own content digest inside the
+//! declared total length and the contiguity chain, so an entry cannot be edited
+//! to add, alter, or remove retained text and stay valid. And an **absent**
+//! section is a hit with nothing to show, never a miss, so turning retention on
+//! does not discard the entries a fleet already published.
+//! [`DebugRetention`] and [`CachedEntry::retained_debug`] carry the derivation,
+//! including why a payload's canonical source is read from the artifact envelope
+//! rather than copied into a retention.
+//!
 //! **Atomic publication.** One `rename` from a `create_new` temporary file on
 //! the same filesystem is the only operation that makes an entry visible. The
 //! temporary is validated through a *separate descriptor* first, so the bytes
@@ -114,6 +129,7 @@ mod limits;
 mod lock;
 mod preflight;
 mod report;
+mod retention;
 mod store;
 mod subject;
 
@@ -132,6 +148,10 @@ pub use preflight::{PreflightReport, PreflightVerdict};
 pub use report::{
     CacheOperation, CacheReport, CacheUnavailable, EntryRejection, MissReason, PublicationRefusal,
     QuarantineOutcome,
+};
+pub use retention::{
+    DebugRetention, MAX_RETAINED_RUN_BYTES, MAX_RETAINED_RUNS, MAX_RETENTION_LABEL_BYTES,
+    RetainedText, RetentionRefusal, RetentionRejection,
 };
 pub use store::{
     CachedEntry, Durability, Eviction, ExpansionCache, Lookup, PublishFailure, Resolution,

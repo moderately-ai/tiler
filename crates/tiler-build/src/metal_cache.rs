@@ -44,8 +44,8 @@ use crate::metal_assembly::{
 };
 use crate::metal_payload::validate_metal_payload_metadata;
 use crate::payload_cache::{
-    AcceptedArtifact, DeclaredPayload, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
-    accept_or_publish_delivered_payload_artifact,
+    AcceptedArtifact, CompiledPayloads, DeclaredPayload, DeliveredPayloadCacheError,
+    DeliveredPayloadProtocolError, accept_or_publish_delivered_payload_artifact,
 };
 
 /// A decoded or assembled artifact contradicts the prepared Metal subjects.
@@ -372,6 +372,14 @@ pub fn accept_or_publish_delivered_metal_artifact<E>(
         &declared,
         |delivery, actual| validate_metal_payload_metadata(&expected_metadata[delivery], actual),
         || {
+            // Retains nothing, and that is a fact about the driver rather than a
+            // decision here. `tiler_metal_aot::driver::Toolchain::run_stage`
+            // keeps a stage's captured output only when the stage *fails*, in
+            // `DriverError::ToolFailure`, and drops both streams on success — so
+            // a succeeding Metal compilation has no diagnostics for this backend
+            // to state. `retain-succeeding-metal-stage-tool-output` owns making
+            // them reachable; until it lands, a retention here would be an empty
+            // section claiming a capability nothing can fill.
             tokens
                 .into_iter()
                 .map(|(prepared, metadata, _digest)| {
@@ -379,6 +387,7 @@ pub fn accept_or_publish_delivered_metal_artifact<E>(
                         .map(CompiledMetalPayload::into_content)
                 })
                 .collect::<Result<Vec<_>, _>>()
+                .map(CompiledPayloads::from)
         },
         |contents| {
             assemble(

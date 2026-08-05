@@ -48,10 +48,12 @@ use tiler_artifact::program::{
     PayloadPlatform, ProvenanceField, RepresentationKey, VerifiedArtifactProgram, decode_artifact,
 };
 use tiler_build::{
-    AcceptedArtifact, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
+    AcceptedArtifact, CompiledPayloads, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
     accept_or_publish_delivered_payload_artifact,
 };
-use tiler_cache::expansion::{ExpansionCache, Resolution, SubjectFacet, SubjectRefusal};
+use tiler_cache::expansion::{
+    DebugRetention, ExpansionCache, Resolution, SubjectFacet, SubjectRefusal,
+};
 use tiler_compiler::session::{
     Compilation, CompileRequest, NumericalContract, PlanAlternative, compile, compile_governed,
 };
@@ -456,6 +458,8 @@ struct SeamRun<'run> {
     expected: &'run PayloadMetadata,
     /// The launch statements the miss assembly makes.
     perturbation: EntryPerturbation,
+    /// The debug text the miss closure states, empty in every case but one.
+    retained: DebugRetention,
     /// Counts the miss closure's invocations.
     compilations: &'run Cell<usize>,
 }
@@ -470,6 +474,7 @@ fn resolve(cache: &ExpansionCache, run: SeamRun<'_>) -> Result<AcceptedArtifact,
         compiled,
         expected,
         perturbation,
+        retained,
         compilations,
     } = run;
     accept_or_publish_delivered_payload_artifact(
@@ -479,7 +484,10 @@ fn resolve(cache: &ExpansionCache, run: SeamRun<'_>) -> Result<AcceptedArtifact,
         |_, actual| backend::correspondence(expected, actual),
         || {
             compilations.set(compilations.get() + 1);
-            Ok::<Vec<PayloadContent>, ScalarHostRefusal>(vec![compiled])
+            Ok::<CompiledPayloads, ScalarHostRefusal>(CompiledPayloads {
+                contents: vec![compiled],
+                retained,
+            })
         },
         |contents| backend::assemble(semantic, plan, sole(contents), perturbation),
     )
@@ -528,6 +536,7 @@ impl CacheFixture {
             compiled: self.compiled(),
             expected: &self.prepared.metadata,
             perturbation: EntryPerturbation::default(),
+            retained: DebugRetention::none(),
             compilations,
         }
     }
@@ -578,6 +587,130 @@ fn a_custom_payload_publishes_then_is_accepted_from_the_cache() {
         compilations.get(),
         1,
         "the hit must not re-enter the compile step",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A backend's retained debug text reaches the entry and comes back from the hit.
+///
+/// The producer side of the cache's debug-retention section, exercised by a
+/// backend that shares no code with the Metal path. Three facts are asserted
+/// together because each one is what makes the others meaningful: the text is
+/// readable from a *validated hit* rather than from the publication that wrote
+/// it; the hit did not recompile, so the text came off disk; and the retention
+/// did not move the key, so the entry a retaining build resolves to is the entry
+/// a non-retaining build would have.
+///
+/// The canonical source is deliberately *not* asserted here, because it is not
+/// what this section carries: this backend's compiled payload keeps its source
+/// in the payload metadata inside the envelope, which is where any consumer reads
+/// it from on any resolution.
+#[test]
+fn a_retained_diagnostic_survives_publication_and_returns_from_the_hit() {
+    let directory = scratch("retention");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+    let compilations = Cell::new(0);
+    let retained = DebugRetention::none()
+        .retaining("scalar-host.notes", b"note: two entries lowered")
+        .expect("a governed label");
+
+    let published = resolve(
+        &cache,
+        SeamRun {
+            retained: retained.clone(),
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect("the retaining producer resolves");
+    assert_eq!(outcome(published.resolution()), "published");
+    let published_key = match published.resolution() {
+        Resolution::Published { entry, .. } | Resolution::Hit { entry, .. } => *entry.key(),
+        Resolution::Uncached { .. } => panic!("the fixture cache stores entries"),
+    };
+
+    // A second run that states no retention at all still resolves to the same
+    // entry, and reads back what the *publishing* build retained.
+    let hit = resolve(&cache, fixture.run(&semantic, plan, &compilations))
+        .expect("the stored entry resolves");
+    assert_eq!(outcome(hit.resolution()), "hit");
+    assert_eq!(
+        compilations.get(),
+        1,
+        "a hit must not re-enter the compile step to acquire retained text",
+    );
+    let Resolution::Hit { entry, .. } = hit.resolution() else {
+        panic!("the second run hits");
+    };
+    assert_eq!(
+        *entry.key(),
+        published_key,
+        "retaining must not move the key, or a debug build would miss every entry",
+    );
+    assert_eq!(entry.retained_debug(), &retained);
+    let run = entry
+        .retained_debug()
+        .run("scalar-host.notes")
+        .expect("the labelled run survived the round trip");
+    assert_eq!(run.as_bytes(), b"note: two entries lowered");
+    assert!(!run.is_truncated());
+
+    // And the compiled source is readable from the same hit *without* the
+    // retention, because it travels in the envelope: it is part of the payload
+    // metadata the payload digest is taken over. That is why no retention here
+    // carries a copy of it — an unkeyed second copy could disagree with this one
+    // and nothing could refuse the disagreement. One payload means one
+    // descriptor, so index zero is the sole carried payload.
+    assert_eq!(
+        entry
+            .artifact()
+            .payload_metadata(0)
+            .expect("the sole carried payload keeps its compilation metadata")
+            .source,
+        fixture.prepared.metadata.source,
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// An entry published without retention is a hit with nothing to show.
+///
+/// The absent case at the seam. A producer that turns retention on after entries
+/// exist keeps hitting them: the compile step does not run, so nothing is
+/// retained, and the entry is not rewritten under an unchanged key.
+#[test]
+fn a_hit_on_an_entry_published_without_retention_shows_nothing() {
+    let directory = scratch("retention-absent");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+    let compilations = Cell::new(0);
+
+    resolve(&cache, fixture.run(&semantic, plan, &compilations))
+        .expect("the plain producer publishes");
+    let hit = resolve(
+        &cache,
+        SeamRun {
+            retained: DebugRetention::none()
+                .retaining("scalar-host.notes", b"note: never reached")
+                .expect("a governed label"),
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect("the stored entry resolves");
+
+    assert_eq!(outcome(hit.resolution()), "hit");
+    assert_eq!(compilations.get(), 1);
+    let Resolution::Hit { entry, .. } = hit.resolution() else {
+        panic!("the second run hits");
+    };
+    assert!(
+        entry.retained_debug().is_empty(),
+        "an entry published without retention has nothing to show, and is a hit all the same",
     );
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -806,7 +939,7 @@ fn a_failing_compile_step_is_not_a_protocol_defect() {
         &fixture.pending,
         std::slice::from_ref(&fixture.prepared.declaration.declared()),
         |_, actual| backend::correspondence(&fixture.prepared.metadata, actual),
-        || Err::<Vec<PayloadContent>, _>(ScalarHostRefusal::UnsupportedAccessPattern { entry: 0 }),
+        || Err::<CompiledPayloads, _>(ScalarHostRefusal::UnsupportedAccessPattern { entry: 0 }),
         |contents| {
             backend::assemble(
                 &semantic,
@@ -991,7 +1124,7 @@ fn an_artifact_carrying_other_object_bytes_is_refused_before_publication() {
         &fixture.pending,
         std::slice::from_ref(&fixture.prepared.declaration.declared()),
         |_, actual| backend::correspondence(&fixture.prepared.metadata, actual),
-        || Ok::<Vec<PayloadContent>, ScalarHostRefusal>(vec![fixture.compiled()]),
+        || Ok::<CompiledPayloads, ScalarHostRefusal>(vec![fixture.compiled()].into()),
         |contents| {
             let mut substituted = sole(contents);
             substituted.code.push(0);
@@ -1030,7 +1163,7 @@ fn an_artifact_carrying_no_payload_content_is_refused_before_publication() {
         &fixture.pending,
         std::slice::from_ref(&fixture.prepared.declaration.declared()),
         |_, actual| backend::correspondence(&fixture.prepared.metadata, actual),
-        || Ok::<Vec<PayloadContent>, ScalarHostRefusal>(vec![fixture.compiled()]),
+        || Ok::<CompiledPayloads, ScalarHostRefusal>(vec![fixture.compiled()].into()),
         |_| {
             backend::assemble_pending(
                 &semantic,
