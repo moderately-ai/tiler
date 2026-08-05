@@ -1,14 +1,17 @@
 ---
 id: refresh-the-spike-catalog-entry-for-the-c1-attribution-fixture
 title: Refresh the spike catalog entry for the C1 attribution fixture
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [retain-the-c1-model-attribution-fixture, retain-the-qwen-conformance-reference-logit-fixture]
 scopes: [contracts/navigation]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [docs, catalog, navigation]
+claimed_from: todo
+assignee: agent-c1-catalog
+lease_expires_at: 1785948034
 ---
 ## User-visible outcome
 

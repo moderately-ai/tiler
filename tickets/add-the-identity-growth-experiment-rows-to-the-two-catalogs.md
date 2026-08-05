@@ -1,7 +1,7 @@
 ---
 id: add-the-identity-growth-experiment-rows-to-the-two-catalogs
 title: Add the identity-growth experiment rows to the two catalogs
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound, derive-the-operation-family-and-signature-delivery-graph]
