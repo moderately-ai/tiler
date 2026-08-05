@@ -1,7 +1,7 @@
 ---
 id: refresh-the-spike-catalog-entry-for-the-c1-attribution-fixture
 title: Refresh the spike catalog entry for the C1 attribution fixture
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [retain-the-c1-model-attribution-fixture, retain-the-qwen-conformance-reference-logit-fixture]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, catalog, navigation]
-claimed_from: todo
-assignee: agent-c1-catalog
-lease_expires_at: 1785948034
 ---
 ## User-visible outcome
 
@@ -30,3 +27,7 @@ One catalog line, matched to the spike's own frontmatter: the current title, and
 ## Closes when
 
 `spikes/README.md`'s entry agrees with `spikes/program-planning/qwen3-conformance-fixture/README.md`'s `title` and `supports` fields, and no other catalog line disagrees with the spike frontmatter it describes.
+
+## Outcome — already discharged at claim time, verified rather than assumed
+
+Checked 2026-08-05 at `55dda5c8`: `spikes/README.md`'s row already reads the fixture's current title and names all three records its `supports` field lists — reproduce with `grep -n "Qwen3-0.6B-Base C1" spikes/README.md` against `grep -E "^title|^supports" spikes/program-planning/qwen3-conformance-fixture/README.md`. The row was repaired by this week's catalog reconciliation wave (`reconcile-the-research-and-experiment-catalogs-with-their-frontmatter` and its successors), which swept exactly this defect class across both catalogs with a counted-population check. No edit was owed; the ticket closes on the verification.
