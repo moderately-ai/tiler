@@ -154,14 +154,26 @@ fn the_reciprocal_square_root_brackets() {
 }
 
 /// An argument beyond the governed halving bound is refused rather than looped over.
+///
+/// The bound is stated where the *domain* changes rather than only far past it,
+/// because the halving count is the reduction depth plus the binade and the two
+/// have to move together: `2^23` is the first binade the bound refuses, and an
+/// admitted neighbour is asserted below it so that a change which quietly narrowed
+/// the domain would fail here rather than pass by refusing more.
 #[test]
 fn an_over_large_argument_is_refused() {
-    let huge = ExactRational::power_of_two(40);
-    assert_eq!(
-        exp_enclosure(&huge, corpus_precision())
-            .expect_err("too large to reduce")
-            .diagnostic_code(),
-        "reference.enclosure.argument-too-large"
+    for binade in [23_i32, 40] {
+        assert_eq!(
+            exp_enclosure(&ExactRational::power_of_two(binade), corpus_precision())
+                .expect_err("too large to reduce")
+                .diagnostic_code(),
+            "reference.enclosure.argument-too-large",
+            "2^{binade} is past the halving bound"
+        );
+    }
+    assert!(
+        exp_enclosure(&ExactRational::power_of_two(10), corpus_precision()).is_ok(),
+        "an argument well inside the bound still brackets"
     );
 }
 
@@ -188,14 +200,26 @@ fn a_grid_too_coarse_to_bracket_is_refused() {
 /// The cap exists because a loop bounded only by its own convergence test cannot
 /// report that it failed to converge. Asking for a grid far finer than the
 /// truncated series can supply is what makes it say so.
+///
+/// **The grid is derived rather than picked, because the reduction depth moves
+/// it.** The final term the cap admits is `T_512 = y^512 / 512!` at `y <= 2^-k`,
+/// which is at or below `2^-(512 * k + log2(512!))` — about `2^-8483` at the
+/// depth this module reduces to — so a grid below that is reached and one above
+/// it is not. A depth that reached further would make this test pass by
+/// succeeding rather than by refusing, which is why the number is stated with its
+/// derivation instead of as a constant that once worked.
 #[test]
 fn a_precision_the_series_cannot_reach_is_refused() {
-    let error = exp_enclosure(&ExactRational::one(), EnclosurePrecision::new(5_000))
-        .expect_err("512 terms cannot reach a 5000-bit grid");
+    let error = exp_enclosure(&ExactRational::one(), EnclosurePrecision::new(12_000))
+        .expect_err("512 terms cannot reach a 12000-bit grid");
     assert_eq!(
         error.diagnostic_code(),
         "reference.enclosure.precision-unreachable"
     );
+
+    // The reachable neighbour, so the refusal is attributable to the grid rather
+    // than to the argument: the same argument at a grid the series does reach.
+    assert!(exp_enclosure(&ExactRational::one(), EnclosurePrecision::new(4_000)).is_ok());
 }
 
 // --- the conformance decision --------------------------------------------
