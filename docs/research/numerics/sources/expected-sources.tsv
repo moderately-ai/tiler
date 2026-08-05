@@ -57,3 +57,20 @@ spirv-unified-1.6-rev7	vendored	spirv-1.6-rev7/SPIRV.html	013b397e99b2dbe3b8eb7a
 wgsl-crd-20260716	vendored	wgsl-20260716/CRD-WGSL-20260716.html	2ae2de9464930086cb7c611951262bfd4c989a312802e30162cfd246567d66aa
 w3c-document-license-2023	vendored	wgsl-20260716/w3c-software-and-document-license-2023.html	aab6d2da3de7e0c6158551b2fd8f43ffe2a3373f2ffecb0f1c6db9fa79b0690b
 nvidia-tensorrt-accuracy-11.2.1	metadata-only	-	10d6c4f44af0ddbfa018d6e6b35d70a4678a44befab51e09f468d91e6da5989b
+#	Python array API standard 2025.12, cited by the operation and signature taxonomy rather than by the
+#	dtype research. Preserved per chapter because the standard is a multi-document website, not one file.
+array-api-license-2025.12	vendored	array-api-2025.12/LICENSE	cc2ba65b0a0b8635dc8a42b65cff898c2babfcaff1c012a40bf89a53a86c39f5
+array-api-type-promotion-2025.12	vendored	array-api-2025.12/type_promotion.rst	03c2af9a3a5a7552481ce3ff8c8fa071c0e27e1f434ef18a29d21cc334bc084e
+array-api-indexing-2025.12	vendored	array-api-2025.12/indexing.rst	ac01e8159e18edb07d47fa7c1d21de9c2994875b32594ac45b2adb30c717b336
+array-api-creation-functions-2025.12	vendored	array-api-2025.12/creation_functions.rst	a6c807c21997e0338426c62fa093e89d8c926b5a6d19ed406dc9fb2f56170b93
+array-api-elementwise-functions-2025.12	vendored	array-api-2025.12/elementwise_functions.rst	04726b9f86efd26fa5f29fb7cc87a1d3b60b7511980faf089ac2877e79651311
+array-api-manipulation-functions-2025.12	vendored	array-api-2025.12/manipulation_functions.rst	b010ae1fc6700e24dc40f1ab6d471ba39e720e5db5e7c7f4e5833030781ce5bf
+array-api-searching-functions-2025.12	vendored	array-api-2025.12/searching_functions.rst	175a0d7634acdbfe3cadd0e57f9ccd95b0af0c15c936ed2610e2a496a55c8edf
+array-api-sorting-functions-2025.12	vendored	array-api-2025.12/sorting_functions.rst	b9081d3a29ab26fd5cc0ade4ba360d22bad93b49f77a3342218bf91a15bf10a8
+array-api-set-functions-2025.12	vendored	array-api-2025.12/set_functions.rst	6c695734d79816d6116c02af6f01919f9750d27191756e00dca451a37f4c2e17
+array-api-statistical-functions-2025.12	vendored	array-api-2025.12/statistical_functions.rst	073e55fb4c18ae67476b5e03d8377a96251e20262f411aa51de9267506525e3d
+array-api-indexing-functions-2025.12	vendored	array-api-2025.12/indexing_functions.rst	426d824f5210325e363a178e1e365f7b759405fd5d5492bfc96b2f2907031ff9
+array-api-utility-functions-2025.12	vendored	array-api-2025.12/utility_functions.rst	19ae59f9968e53a6176f68be968b0a694d89e5603f8bf11c6910d7bada2dc9c0
+array-api-linear-algebra-functions-2025.12	vendored	array-api-2025.12/linear_algebra_functions.rst	16769c4b6274714310642daaa2225f831faa31b1379af498c459419fa5317bb1
+array-api-linalg-extension-2025.12	vendored	array-api-2025.12/extensions-linear_algebra_functions.rst	abc25702330894ee56e9e1f21ae0357c46afea61351b4ff181bee02fb6190dd5
+array-api-indexing-functions-stub-2025.12	vendored	array-api-2025.12/indexing_functions.py	b1e3835093ff291ac07181c300a55bd0d9c908c1baa0193a7e3d7a1074d9ae6c

@@ -1,8 +1,8 @@
-# Preserved sources for the dtype catalog
+# Preserved primary sources
 
-These records keep the documents behind Tiler's recognized dtype catalog reproducible when an upstream URL moves, changes, or disappears. Preservation is licence-aware rather than uniform: a document whose own terms permit dissemination is vendored here byte-for-byte, and a document whose terms do not — or whose terms could not be read — keeps bibliographic identity, a retrieval fingerprint where one exists, and an official acquisition route, with no bytes checked in.
+These records keep the documents behind Tiler's recognized dtype catalog — and, since the third wave, behind its operation taxonomy — reproducible when an upstream URL moves, changes, or disappears. Preservation is licence-aware rather than uniform: a document whose own terms permit dissemination is vendored here byte-for-byte, and a document whose terms do not — or whose terms could not be read — keeps bibliographic identity, a retrieval fingerprint where one exists, and an official acquisition route, with no bytes checked in.
 
-**Retrieval date for every record below: 2026-07-31.** Both preservation waves — the format-defining specifications and the ecosystem precedents added after them — were retrieved on that date.
+**Retrieval date for every record below except one: 2026-07-31.** Both of the first two preservation waves — the format-defining specifications and the ecosystem precedents added after them — were retrieved on that date. The array API standard, added in a third wave, was retrieved on **2026-08-05**; its record states that date again where it matters.
 
 Digests are deliberately not repeated in this file. `expected-sources.tsv` is the single authority for the expected population, each record's classification, and each SHA-256; `verify-sources.sh` enforces it. A digest written twice drifts silently, and the copy nothing checks is the one a reader would trust.
 
@@ -16,13 +16,15 @@ Vendor documentation preserved under an open-source licence (NVIDIA Transformer 
 
 ## Population boundary
 
-This record closes over every document the dtype research cites as a primary source, in two classes that stay distinguishable because a reader acts differently on each.
+This record closes over every document the dtype research cites as a primary source, in two classes that stay distinguishable because a reader acts differently on each, plus a third class the [operation and signature taxonomy](../../semantic-graph/mature-operation-and-signature-taxonomy.md) contributed later.
 
 **Format-defining sources** are the **numerical-format and quantization-semantics** specifications cited by [the mature dtype taxonomy](../mature-dtype-taxonomy.md) and by the accepted dtype ADRs 0026–0038 (the `dtypes-quantization` catalog group) through their evidence documents — documents that *define* a format's value set, encoding, or quantization contract. Losing one of these would leave an admitted Tiler identity without its normative definition.
 
 **Ecosystem precedents** are cited by the same documents for how an existing system *spells*, *exposes*, or *governs* a format rather than for what a format means: PyTorch, NumPy, JAX, Arrow, the GCC manual's decimal float extension, SPIR-V, WGSL, and the NVIDIA TensorRT accuracy guide, joined by two namespace-governance precedents — the StableHLO compatibility page and the MLIR language reference. None of them defines a value set, so losing one cannot invalidate an admitted identity; they carry the alias-resolution and naming evidence instead — that `complex64` means different things in different ecosystems, that a PyTorch shell dtype proves representation can precede arithmetic — which is why they are worth preserving rather than citing from a live URL.
 
-Keeping both classes in one manifest is deliberate: the check's value comes from a single declared population, and two manifests would each be able to agree with themselves. A further wave of citations extends this record and restates the boundary here rather than starting a third one.
+**Operation-semantics sources** are cited for what an *operation* means rather than for what a format means: the Python array API standard, added in the third wave. It defines no value set Tiler admits and no numerical format; it carries function inventories, a type-promotion chapter, and the chapter notes where the standard declines to specify a behaviour — and it is those refusals, not its definitions, that the operation taxonomy leans on. Losing it would leave the no-promotion policy's strongest supporting evidence resting on a live URL.
+
+Keeping all three classes in one manifest is deliberate: the check's value comes from a single declared population, and separate manifests would each be able to agree with themselves. A further wave of citations extends this record and restates the boundary here rather than starting a fourth one. The directory's name predates the third wave and is now narrower than its contents; the manifest and this boundary section are the authority on what the population is, not the path.
 
 Apple Metal language and capability evidence stays under [its own record](../../apple-targets/sources/README.md).
 
@@ -70,6 +72,21 @@ Apple Metal language and capability evidence stays under [its own record](../../
 | `spirv-1.6-rev7/SPIRV.html` | `spirv-unified-1.6-rev7` |
 | `wgsl-20260716/CRD-WGSL-20260716.html` | `wgsl-crd-20260716` |
 | `wgsl-20260716/w3c-software-and-document-license-2023.html` | `w3c-document-license-2023` |
+| `array-api-2025.12/creation_functions.rst` | `array-api-creation-functions-2025.12` |
+| `array-api-2025.12/elementwise_functions.rst` | `array-api-elementwise-functions-2025.12` |
+| `array-api-2025.12/manipulation_functions.rst` | `array-api-manipulation-functions-2025.12` |
+| `array-api-2025.12/searching_functions.rst` | `array-api-searching-functions-2025.12` |
+| `array-api-2025.12/sorting_functions.rst` | `array-api-sorting-functions-2025.12` |
+| `array-api-2025.12/set_functions.rst` | `array-api-set-functions-2025.12` |
+| `array-api-2025.12/statistical_functions.rst` | `array-api-statistical-functions-2025.12` |
+| `array-api-2025.12/indexing_functions.rst` | `array-api-indexing-functions-2025.12` |
+| `array-api-2025.12/indexing_functions.py` | `array-api-indexing-functions-stub-2025.12` |
+| `array-api-2025.12/utility_functions.rst` | `array-api-utility-functions-2025.12` |
+| `array-api-2025.12/linear_algebra_functions.rst` | `array-api-linear-algebra-functions-2025.12` |
+| `array-api-2025.12/extensions-linear_algebra_functions.rst` | `array-api-linalg-extension-2025.12` |
+| `array-api-2025.12/type_promotion.rst` | `array-api-type-promotion-2025.12` |
+| `array-api-2025.12/indexing.rst` | `array-api-indexing-2025.12` |
+| `array-api-2025.12/LICENSE` | `array-api-license-2025.12` |
 
 Six source ids retain no bytes here: `ieee-754-2019`, `ocp-ofp8-v1.0`, `ocp-mx-v1.0`, `posit-standard-2022`, `nvidia-ptx-isa-cuda-13.3.0`, and `nvidia-tensorrt-accuracy-11.2.1`.
 
@@ -225,6 +242,26 @@ Six source ids retain no bytes here: `ieee-754-2019`, `ocp-ofp8-v1.0`, `ocp-mx-v
 - **Verdict:** vendored, with the licence preserved beside the document to satisfy that condition. `w3c-software-and-document-license-2023.html` is the licence page as served from `https://www.w3.org/copyright/software-license/`, which redirects to `https://www.w3.org/copyright/software-license-2023/`; that is the version in effect since 1 January 2023 and the one the preserved draft links. Nothing here is modified, so the licence's change-notice condition does not arise.
 - **Cited for:** the taxonomy's cross-system claim that a narrow portable shader arithmetic set — `i32`/`u32`/`f32` with optional f16 — demonstrates backend independence. The preserved draft carries the scalar-type sections and the `f16` enable-extension table entry gating the type behind the WebGPU `shader-f16` feature.
 
+### `array-api-*-2025.12` (fifteen ids)
+
+- **Document:** the Python array API standard, version 2025.12. The version-pinned rendered edition at `https://data-apis.org/array-api/2025.12/` carries the version string "Python array API standard 2025.12" in its own title, which is how the edition was confirmed before anything was preserved; the `latest` alias the operation taxonomy originally cited served byte-identical content on the retrieval date and is a moving pointer, so it is not the identity here.
+- **Owner:** Consortium for Python Data API Standards.
+- **Pinned to:** `data-apis/array-api` tag `2025.12`, commit `d016d578040d151707a5b7dd2ba1e55f48a8d511`.
+- **Retrieved 2026-08-05** from `https://raw.githubusercontent.com/data-apis/array-api/2025.12/<path>` for each path below.
+- **Licence:** MIT. The operative grant, read in the acquired `LICENSE` itself: "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software", subject to the condition that "The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software." The repository's `spec/2025.12/license.rst` binds the published document to that same grant — "All content on this website and the corresponding GitHub repository is licensed under the following license" — so the grant covers the specification text and not merely code.
+- **Verdict:** vendored, with `LICENSE` preserved beside the documents to satisfy the notice condition. The verdict rests on the two sentences quoted above, read in the copy under this directory, not on MIT's reputation.
+- **Documents and upstream paths.** Every `.rst` below comes from `spec/2025.12/`; the one `.py` comes from `src/array_api_stubs/_2025_12/`.
+  - `creation_functions.rst`, `elementwise_functions.rst`, `manipulation_functions.rst`, `searching_functions.rst`, `sorting_functions.rst`, `set_functions.rst`, `statistical_functions.rst`, `indexing_functions.rst`, `utility_functions.rst`, `linear_algebra_functions.rst` ← `API_specification/`. Each is a chapter of the standard: the normative sentence "A conforming implementation of the array API standard must provide and support the following functions" followed by that chapter's complete function inventory, plus any chapter-level note. The inventories are the substance — these files are why a reader can re-derive which functions the standard defines without fetching anything.
+  - `extensions-linear_algebra_functions.rst` ← `extensions/linear_algebra_functions.rst`, the `linalg` extension. It is renamed here because the standard carries two files of that name in different directories, exactly as `mlir-LangRef.md` is renamed above; `linear_algebra_functions.rst` is the main-namespace chapter (`matmul`, `matrix_transpose`, `tensordot`, `vecdot`) and `extensions-linear_algebra_functions.rst` is the optional extension.
+  - `type_promotion.rst` ← `API_specification/type_promotion.rst`, the promotion chapter and its tables.
+  - `indexing.rst` ← `API_specification/indexing.rst`, the slicing and integer-indexing chapter.
+  - `indexing_functions.py` ← the stub module whose docstrings generate the rendered `take` and `take_along_axis` pages. It is the only per-function stub module preserved, and the boundary below says why.
+- **Cited for:** the creation, element-wise, manipulation, searching, sorting, set, statistical, indexing, utility, and `linalg` function inventories in the [operation and signature taxonomy](../../semantic-graph/mature-operation-and-signature-taxonomy.md), and — the load-bearing part — three places where the standard declines to specify a behaviour. `type_promotion.rst` states that "Mixed integer and floating-point type promotion rules are not specified because behavior varies between implementations", that "Type promotion of non-numerical data types to numerical data types is unspecified", and that mixing a Python `float` with an integer array "may give `float32`, `float64`, or raise an exception"; that refusal is the evidence behind the taxonomy's no-promotion policy. `sorting_functions.rst` carries the chapter note that "For floating-point input arrays, the sort order of NaNs and signed zeros is unspecified and thus implementation-dependent". `indexing.rst` and `indexing_functions.py` carry the out-of-bounds refusal — that the specification "does not require 'clipping' out-of-bounds slice indices. This is in contrast to Python slice semantics where `0:100` and `0:10` are equivalent on a list of length `10`", and that for `take` "the behavior for out-of-bounds indices is unspecified and thus implementation-defined".
+- **Boundary — what is not preserved.** The standard's per-function semantics live in Sphinx autodoc docstrings under `src/array_api_stubs/_2025_12/`, which the chapter files reference by name rather than contain. Only `indexing_functions.py` is preserved, because exactly one taxonomy claim rests on per-function docstring text. A future citation of per-function prose from any other chapter — an accuracy requirement on `exp`, a broadcasting rule inside `matmul` — is **not** reproducible from this record and must extend it. The design-topic chapters (`accuracy.rst`, `complex_numbers.rst`, `data_dependent_output_shapes.rst`, and their siblings) are likewise not preserved and no current claim rests on them.
+- **Identity note:** `indexing.rst` is the *chapter* on indexing and slicing; `indexing_functions.rst` is the two-function chapter (`take`, `take_along_axis`). The ids differ by one word and the documents are different, which is why both are named here rather than left to be told apart by filename.
+- **Reproducibility, 2026-08-05.** Every one of the fifteen files was retrieved twice by independent routes — once from `raw.githubusercontent.com` at the tag and once from the release tarball `https://github.com/data-apis/array-api/archive/refs/tags/2025.12.tar.gz` — and compared byte-for-byte: fifteen compared, fifteen identical. Each retrieved length also equals the blob size the GitHub tree API reports for that path at commit `d016d578040d151707a5b7dd2ba1e55f48a8d511`. Unlike the SPIR-V record, a fresh retrieval reproduces these digests.
+- **Citation-token note:** the operation taxonomy writes `array-api-2025.12` inline as a single source token. No manifest id has that exact spelling — fifteen do, one per preserved file, all beginning `array-api-` and ending `-2025.12`. The token denotes the family, and the filename map above resolves it to a file.
+
 ## Metadata-only records
 
 ### `ieee-754-2019`
@@ -268,6 +305,8 @@ Six source ids retain no bytes here: `ieee-754-2019`, `ocp-ofp8-v1.0`, `ocp-mx-v
 
 ## Pending-acquisition records
 
+Both records below are classified `metadata-only` in the manifest, and the `pending-acquisition` class is empty. The heading is a narrative grouping — these are the two documents whose route to a vendored verdict is known and merely unexecuted — and the class counts the verifier enforces are the ones stated above. A reader who takes this heading for a classification will find `verify-sources.sh` disagreeing, and the verifier is right.
+
 ### `ocp-ofp8-v1.0`
 
 - **Document:** OCP 8-bit Floating Point Specification (OFP8), Revision 1.0. Title page: Date Submitted May 26, 2023; Date Approved June 20, 2023; page footers dated June 20, 2023. Authors from NVIDIA, Intel, Arm, Google, AMD, and Meta.
@@ -300,7 +339,7 @@ Two of the three format families ADR 0036 pins to an external normative definiti
 docs/research/numerics/sources/verify-sources.sh
 ```
 
-The check reads `expected-sources.tsv` and enforces a declared population — 46 records, of which 40 vendored, 4 metadata-only, 2 pending-acquisition — before it inspects anything, so a manifest that lost rows fails rather than agreeing with itself. It then verifies that ids are unique, that every vendored file exists and matches its recorded digest, that no metadata-only or pending record retains local bytes, and that every file present on disk is claimed by exactly one record. A deleted file, a mutated digest, mutated preserved bytes, an emptied manifest, and an unrecorded stray file were each observed failing before the first wave was committed, and a deleted file and a mutated digest were observed failing again over the extended population before the ecosystem precedents were committed.
+The check reads `expected-sources.tsv` and enforces a declared population — 61 records, of which 55 vendored and 6 metadata-only, with no record in the `pending-acquisition` class — before it inspects anything, so a manifest that lost rows fails rather than agreeing with itself. It then verifies that ids are unique, that every vendored file exists and matches its recorded digest, that no metadata-only or pending record retains local bytes, and that every file present on disk is claimed by exactly one record. A deleted file, a mutated digest, mutated preserved bytes, an emptied manifest, and an unrecorded stray file were each observed failing before the first wave was committed, and a deleted file and a mutated digest were observed failing again over the extended population before the ecosystem precedents were committed.
 
 Two ids may legitimately share a digest: `jax-license-v0.11.0` and `onnx-license-v1.22.0` are both the stock Apache-2.0 text. The check requires unique ids, not unique digests, which is why that agreement is a consistency signal rather than a failure.
 
