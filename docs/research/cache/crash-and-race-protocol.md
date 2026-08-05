@@ -7,7 +7,7 @@ topics: ["cache", "artifacts", "concurrency", "durability"]
 catalog_group: "artifacts-build-toolchains"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis", "executable-model", "bounded-measurement"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.frontend-integration"]
 adopted_by: ["ADR-0050"]
@@ -362,6 +362,16 @@ of scope for this ticket.
    collection yet, and nothing runs one automatically.
 7. Run the harness under Cargo and rust-analyzer process patterns once the
    proc-macro spike exists; this ticket only establishes the storage protocol.
+
+## Implementation status
+
+`implementation_status` moved from `spike-only` to `partial` on 2026-08-05 by [`raise-the-adopted-research-records-to-their-landed-implementation-status`](../../../tickets/raise-the-adopted-research-records-to-their-landed-implementation-status.md), read at `561dfe0b`. The body above already narrates production code in several places — `ExpansionCache::purge`, `tiler_cache::expansion::collect`, `tiler_cache::expansion::harness` — so the frontmatter was the last thing still reading `spike-only`. This section states which of *this record's own* decided behaviours the value rests on, at which of the four maturity claims `AGENTS.md` keeps apart, and it decides nothing.
+
+**Implemented support with a tested guarantee, for the whole required protocol.** `crates/tiler-cache/src/expansion/` is this record's protocol line for line. The namespace is `layout.rs`, with entry, lock, and temporary shards under one root and a parser that accepts only a fixed-width lowercase hexadecimal key. The lock is `lock.rs`, 88 lines: an OS advisory lock held by an open descriptor on a stable never-unlinked lock file, with the module header stating in its own words that there is no PID file, no lease, and no stale-lock deletion rule. The publication sequence is `store.rs:511-946` and runs in this record's order — lock-free validated read, lock, recheck, build, `create_new` temporary on the same root, write, re-open through a *separate descriptor* and re-validate, optional `sync_all`, one `fs::rename`, optional directory `sync_all`, release. Validation on every hit has no fast path: `read_entry` (`store.rs:642`) is the only read route, and it validates the path the bytes were found at, the whole bundle frame, and then the payload through `tiler_artifact::program::decode_artifact`. Entries are immutable because nothing ever opens an entry path for writing; the only operations on one are open, rename, and unlink. Every cache-mechanism failure falls open and a build or artifact failure does not (`PublishFailure`, `store.rs:173`). GC rules 1 to 4 hold, and rules 5 and 6 landed as `collect.rs` with the two documented departures the collection note records. The in-process half is 87 tests in `expansion/tests.rs` plus 5 decoder-fuzz tests in `fuzz.rs`, and that file's own header states it is not evidence for any cross-process property.
+
+**A bounded measurement, and the strongest evidence class this record's crash claims can carry.** `expansion/harness.rs` re-executes the crate's own test binary and aborts the armed child inside the real publication path at the nine named phases of `fault.rs:60`, then asserts recovery, compile-once suppression at 1, 8, and 32 real processes, damaged-entry replacement, external deletion, and a reader reading across eviction. That is a measurement on one host with a stated procedure, not a portable guarantee, exactly as the spike observations above were. The harness substitutes a stand-in payload validator for `decode_artifact`, which it states in its own module header, so it measures the protocol rather than the artifact decode.
+
+**Not implemented, which is why this is not `implemented`.** ADR 0050's own implementation note names the two remaining boundaries and they are both reachability rather than protocol: `tiler-metal-aot` keeps `CompilationIdentity::as_bytes` crate-private, so a production caller cannot yet supply the backend-compilation facet of the complete key, and no orchestrator has carried a real compiled backend object through publication and a validated hit — the public path's delegation to the artifact decoder is proven only negatively today. The framing half of follow-up gate 2 is partly open under `fuzz-the-expansion-cache-framing-paths`. The `full-fsync` durability policy of the table above does not exist; `Durability` is `ProcessCrash` or `Fsync` only. Power-loss survival is unmeasured and, per ADR 0083, cannot be inferred from the latency that was measured.
 
 ## Traceability
 
