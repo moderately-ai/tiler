@@ -1,10 +1,10 @@
 ---
 id: correct-two-stale-delivery-spans-in-the-frontends-contract
 title: Correct the two stale delivery spans in the frontends contract
-status: in-progress
+status: review
 priority: p2
 dependencies: []
-related: [draft-an-adr-for-the-inline-delivery-statement, accept-the-inline-artifact-family-profile-syntax, first-authoritative-ios-metal-compile-declaration]
+related: [draft-an-adr-for-the-inline-delivery-statement, accept-the-inline-artifact-family-profile-syntax, first-authoritative-ios-metal-compile-declaration, correct-the-deliberately-absent-storage-claim-in-the-frontends-contract, correct-the-only-spelling-claim-in-the-fallback-only-facade-fixture]
 scopes: [contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
@@ -48,3 +48,5 @@ Both spans state what the tree does, checkable against the goldens named above; 
 ## Graph maintenance
 
 If ADR 0098 has been accepted by the time this lands, the contract may cite it for the delivery statement the way it already cites ADR 0089 for the cache root; if it is still `proposed`, cite the deciding ticket instead and do not describe the record as accepted.
+
+**Checked at `561dfe0b`: ADR 0098's `decision_status` is `proposed`** (`grep -n decision_status docs/decisions/0098-*.md`), and [`accept-adr-0098-inline-delivery-statement`](accept-adr-0098-inline-delivery-statement.md) is where it becomes accepted. The contract therefore cites [`draft-an-adr-for-the-inline-delivery-statement`](draft-an-adr-for-the-inline-delivery-statement.md), names the record `proposed` rather than accepted, and rests the floors rule on the driver's governed table and `DeliveredFamily::governed_minimum` instead of on the record. Nothing was added to the contract's frontmatter, which links accepted decisions only. Two out-of-scope stale claims found during the whole-file sweep were filed rather than absorbed: [`correct-the-deliberately-absent-storage-claim-in-the-frontends-contract`](correct-the-deliberately-absent-storage-claim-in-the-frontends-contract.md) (same file, different axis — "nothing dispatches yet") and [`correct-the-only-spelling-claim-in-the-fallback-only-facade-fixture`](correct-the-only-spelling-claim-in-the-fallback-only-facade-fixture.md) (`implementation/frontend`, unreachable from this ticket's scopes).
