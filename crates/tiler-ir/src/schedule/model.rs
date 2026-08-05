@@ -422,10 +422,15 @@ pub enum ScalarProgram {
     /// **The `-0.0 < +0.0` ordering makes this fold order-insensitive**, which is
     /// what separates its legality from every sum in this vocabulary: the pinned
     /// family is associative and commutative on *every* binary32 input, so any
-    /// tree over the same contributors gives the same bits. The topology admitted
-    /// here is nevertheless the serial one alone — a multi-pass extrema split is a
-    /// schedule the reduction-strategies work owns, and refusing it is fail-closed
-    /// rather than a claim that it is illegal.
+    /// tree over the same contributors gives the same bits. Every reduction
+    /// topology this vocabulary states is therefore admitted for it — the serial
+    /// fold, the [`ReductionTopology::MultiPass`] split, and the
+    /// [`ReductionTopology::CooperativeWorkgroup`] tile — and admitted *under a
+    /// strict contract*, because a split of this family spends no reassociation
+    /// permission. The identity-less-ness reaches the parallel forms as the
+    /// non-emptiness precondition rather than as a staged `has_value` flag: the
+    /// split contract makes every partition's contributor count a nonzero factor
+    /// of a nonzero product, so each staged partial is a real maximum.
     ///
     /// It carries `canonical_nan_bits` like every other reduction: a maximum
     /// selects bit patterns rather than computing values, but a NaN it selects is
@@ -586,7 +591,12 @@ pub enum ReductionTopology {
         ///
         /// A multi-pass split *is* a reassociation of the declared contributor
         /// sequence, so the schedule verifier admits this topology only when
-        /// this is true.
+        /// this is true — for every family whose fold order is observable. The
+        /// one exception is [`ScalarProgram::StrictSerialMaximum`], where every
+        /// tree over the same contributors returns the same bits, so the split
+        /// changes nothing the permission governs and spends none of it. The
+        /// field is still required to agree with the region's declared
+        /// realization in either case.
         permits_reassociation: bool,
         /// Whether the contract permits contributor permutation.
         ///
@@ -676,8 +686,12 @@ pub enum ReductionTopology {
         accumulation: ArithmeticType,
         /// Whether the contract permits reassociation.
         ///
-        /// The permission this strategy consumes; the verifier admits the
-        /// topology only when it holds.
+        /// The permission this strategy consumes, and the verifier admits the
+        /// topology only when it holds — except over
+        /// [`ScalarProgram::StrictSerialMaximum`], whose fold is order-insensitive
+        /// on every binary32 input, so a tile over it consumes nothing and a
+        /// strict contract admits one. Required to agree with the region's
+        /// declared realization either way.
         permits_reassociation: bool,
         /// Whether the contract permits contributor permutation.
         ///

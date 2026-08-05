@@ -3576,6 +3576,362 @@ fn maximum_reduction_region(id: RegionId) -> VerifiedScheduledRegion {
     builder.build().unwrap()
 }
 
+/// The partial pass of a `[2, 6] -> [2]` extrema fold split three ways.
+///
+/// A *strict* realization, because a split of this family spends no
+/// reassociation permission — the schedule verifier's admission rests on the
+/// family's algebra rather than on the contract, and a fixture that relaxed the
+/// contract would not exercise that.
+fn maximum_partial_pass_region() -> VerifiedScheduledRegion {
+    let input = Shape::from_dims([2, 6]);
+    let output = Shape::from_dims([2]);
+    let axes = [Axis::new(1)];
+    let partition = ContributorPartition {
+        partitions: 3,
+        contributors_per_partition: 2,
+    };
+    let iteration = crate::schedule::partial_reduction_shape(&output, partition)
+        .expect("a rank-two partial shape is within the governed bound");
+    let partial_elements =
+        crate::schedule::element_count(&iteration).expect("bounded fixture shape");
+    let tensor = TensorRole::Input {
+        ordinal: InputOrdinal::FIRST,
+    };
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(33));
+    builder.iteration_shape(iteration).unwrap();
+    builder
+        .push_access(Access {
+            tensor,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ReductionContributor {
+                input_shape: input.clone(),
+                output_shape: output.clone(),
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor,
+            component_role: None,
+            kind: BoundsProofKind::ReductionDomain {
+                input_shape: input,
+                output_shape: output,
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: partial_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: partial_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictSerialMaximum {
+            axes: axes.to_vec(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+        })
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(KernelSchedule {
+            reduction: ReductionTopology::MultiPass {
+                pass: ReductionPass::Partial,
+                partition,
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: crate::schedule::ArithmeticType::F32,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            ..linear_schedule(partial_elements, OwnershipWitnessId::new(0))
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// The cooperative realization of a `[2, 6] -> [2]` extrema fold.
+///
+/// The sum fixture's tile, participant space, and synchronization point over the
+/// identity-less family and a strict realization: three participants each folding
+/// two contributors into their own slot, all three reading the staged set back,
+/// one committing.
+fn cooperative_maximum_region() -> VerifiedScheduledRegion {
+    let tensor = TensorRole::Input {
+        ordinal: InputOrdinal::FIRST,
+    };
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(34));
+    builder.iteration_shape(Shape::from_dims([2, 3])).unwrap();
+    builder
+        .push_access(Access {
+            tensor,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ReductionContributor {
+                input_shape: Shape::from_dims([2, 6]),
+                output_shape: Shape::from_dims([2]),
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor,
+            component_role: None,
+            kind: BoundsProofKind::ReductionDomain {
+                input_shape: Shape::from_dims([2, 6]),
+                output_shape: Shape::from_dims([2]),
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange { element_count: 2 },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictSerialMaximum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+        })
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(KernelSchedule {
+            threads_per_workgroup: 3,
+            reduction: ReductionTopology::CooperativeWorkgroup {
+                partition: ContributorPartition {
+                    partitions: 3,
+                    contributors_per_partition: 2,
+                },
+                tile: CooperativeTile {
+                    rounds: 1,
+                    coordinates: LocalCoordinates {
+                        source: LocalCoordinateSource::LocalLinearInvocation,
+                        participants: ParticipantSpace::new(&[3])
+                            .expect("rank one is within the bound"),
+                    },
+                    staging: vec![WorkgroupStaging {
+                        id: StagingId::FIRST,
+                        element: StagedElement::F32,
+                        slots: 3,
+                        live_from: PhaseId::FIRST,
+                        live_through: PhaseId::new(1),
+                    }],
+                    phases: vec![
+                        CooperativePhase {
+                            id: PhaseId::FIRST,
+                            participation: ParticipantRange { first: 0, count: 3 },
+                            writes: vec![StagedWrite {
+                                staging: StagingId::FIRST,
+                                span: StagedSpan::new(&[1], 0, 1)
+                                    .expect("rank one is within the bound"),
+                            }],
+                            reads: Vec::new(),
+                        },
+                        CooperativePhase {
+                            id: PhaseId::new(1),
+                            participation: ParticipantRange { first: 0, count: 3 },
+                            writes: Vec::new(),
+                            reads: vec![StagedRead {
+                                staging: StagingId::FIRST,
+                                span: StagedSpan::new(&[0], 0, 3)
+                                    .expect("rank one is within the bound"),
+                            }],
+                        },
+                    ],
+                    synchronization: vec![cooperative_point()],
+                    commit: ParticipantRange { first: 0, count: 1 },
+                },
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: crate::schedule::ArithmeticType::F32,
+                permits_reassociation: false,
+                permits_permutation: false,
+                arrival: crate::schedule::ContributorArrival::AscendingParticipant,
+            },
+            launch: LaunchPlan {
+                grid_threads: 6,
+                threads_per_workgroup: 3,
+                zero_work_skips_dispatch: true,
+            },
+            ..linear_schedule(6, OwnershipWitnessId::new(0))
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// The partial pass of an extrema split lowers with partitioned addressing.
+///
+/// The two facts that make it a *split* of *this* family rather than either one
+/// alone: the invocation index is divided into an output coordinate and a
+/// partition ordinal — which the unsplit serial extrema fold never emits — and
+/// the fold that consumes the result combines with a maximum. A body that split
+/// correctly and added would be structurally right and numerically wrong.
+#[test]
+fn a_split_extrema_partial_pass_lowers_with_partitioned_addressing_and_a_maximum() {
+    let kernel = lower_scheduled_region(&maximum_partial_pass_region())
+        .expect("the extrema partial pass lowers");
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Maximum),
+        1,
+        "one combine per loop iteration over the partition's two contributors"
+    );
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Add),
+        0,
+        "a split of the extrema fold never combines with an addition"
+    );
+    let divides = binary_op_counts(&kernel, BinaryOp::IndexDivide);
+    let modulos = binary_op_counts(&kernel, BinaryOp::IndexModulo);
+    assert_eq!((divides, modulos), (2, 2));
+
+    // The control: the unsplit serial extrema fold over the same family emits
+    // neither, so the split arithmetic is the topology's and not the family's.
+    let serial = lower_scheduled_region(&maximum_reduction_region(RegionId::new(35)))
+        .expect("the serial extrema region lowers");
+    assert_eq!(binary_op_counts(&serial, BinaryOp::IndexDivide), 0);
+    assert_eq!(binary_op_counts(&serial, BinaryOp::IndexModulo), 0);
+}
+
+/// A cooperative extrema tile folds and stages with a maximum at both levels.
+///
+/// The tile folds twice — each participant's own contributor share, then the
+/// staged set — and the combiner has to reach both. A lowering that carried the
+/// family only to the first would stage correct partials and reduce them with an
+/// addition, which is the exact defect the two counts below refuse.
+#[test]
+fn a_cooperative_extrema_tile_folds_and_stages_with_a_maximum() {
+    let kernel = lower_scheduled_region(&cooperative_maximum_region())
+        .expect("the cooperative extrema region lowers");
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Maximum),
+        2,
+        "one combine in the partition fold and one in the staged fold"
+    );
+    assert_eq!(binary_op_counts(&kernel, BinaryOp::F32Add), 0);
+    assert_eq!(kernel.requirements().local_memory_bytes, 12);
+
+    // The control: the same tile over the strict serial sum emits the reverse at
+    // both levels, so the combiner is read from the program rather than fixed.
+    let summed =
+        lower_scheduled_region(&cooperative_region()).expect("the cooperative sum region lowers");
+    assert_eq!(binary_op_counts(&summed, BinaryOp::F32Maximum), 0);
+    assert_eq!(binary_op_counts(&summed, BinaryOp::F32Add), 2);
+}
+
+/// A loop-carried extrema tile combines with a maximum at every level.
+///
+/// The round loop is the third place the fold's operation has to reach — after
+/// each participant's own share and the staged set — because a tile whose phases
+/// repeat carries an accumulator across the back edge. Its per-round width is one
+/// contributor, so the partition fold emits no combine at all and every maximum
+/// counted below belongs to the staged fold or the round accumulator: the peel's
+/// staged fold, the loop body's staged fold, and the round combine.
+#[test]
+fn a_loop_carried_extrema_tile_carries_its_maximum_across_rounds() {
+    let kernel = lower_scheduled_region(&multi_round_maximum_region())
+        .expect("the loop-carried extrema region lowers");
+    assert_eq!(binary_op_counts(&kernel, BinaryOp::F32Maximum), 3);
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Add),
+        0,
+        "the round accumulator combines with the family's own operation"
+    );
+
+    // The control: the same tile over the strict serial sum emits the reverse.
+    let summed = lower_scheduled_region(&multi_round_cooperative_region())
+        .expect("the loop-carried sum region lowers");
+    assert_eq!(binary_op_counts(&summed, BinaryOp::F32Maximum), 0);
+    assert_eq!(binary_op_counts(&summed, BinaryOp::F32Add), 3);
+}
+
+/// The extrema tile with its phases run twice and its slots rewritten.
+///
+/// The same transformation [`multi_round_cooperative_region`] applies to the sum
+/// fixture, over the identity-less family: one contributor per participant per
+/// round, both points naming the round-loop convergence derivation, and a round
+/// boundary discharging the rewrite.
+fn multi_round_maximum_region() -> VerifiedScheduledRegion {
+    let mut region = cooperative_maximum_region().region().clone();
+    let ReductionTopology::CooperativeWorkgroup {
+        partition, tile, ..
+    } = &mut region.schedule.reduction
+    else {
+        panic!("the cooperative fixture builds a cooperative topology")
+    };
+    partition.contributors_per_partition = 1;
+    tile.rounds = 2;
+    tile.synchronization[0].convergence = ConvergenceEvidence::EveryParticipantExecutesEveryRound;
+    tile.synchronization.push(SynchronizationPoint {
+        id: SyncPointId::new(1),
+        placement: SynchronizationPlacement::RoundBoundary,
+        convergence: ConvergenceEvidence::EveryParticipantExecutesEveryRound,
+        ..cooperative_point()
+    });
+    ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("the loop-carried extrema region verifies")
+}
+
 /// Counts the binary operations a kernel body contains, nested blocks included.
 ///
 /// The same traversal `loaded_buffers` performs, over a different operation kind:
