@@ -34,6 +34,9 @@ pub mod identity;
 pub mod index;
 /// Public backend-consumable structured kernel IR, verifier, and identity.
 pub mod kernel;
+/// The one shared scalar-arithmetic policy, means, locus, and provenance
+/// vocabulary.
+pub mod numerics;
 /// Public target-neutral kernel-program IR, verifier, and identity.
 pub mod program;
 /// Public target-neutral scheduled-region IR, verifier, and identity.

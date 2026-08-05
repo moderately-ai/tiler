@@ -53,6 +53,7 @@
 use std::{fmt, sync::Arc};
 
 use tiler_ir::kernel::VerifiedKernel;
+use tiler_ir::numerics::ScalarArithmeticSubjectIdentity;
 use tiler_ir::program::abi::{AvailabilityPhase, ExprNode, PreparedEntryTargetRequirement};
 use tiler_ir::program::{StageRef, VerifiedKernelProgram};
 use tiler_ir::schedule::{
@@ -2229,6 +2230,20 @@ fn public_numerical_rejection(
         arithmetic: rejection.arithmetic(),
         resolved_type: rejection.resolved_type().clone(),
     };
+    // The serialized form of the same subject, so a declared relaxation's
+    // identity can be compared against it without reconstructing a resolved type
+    // from one-way canonical bytes.
+    let rejection_subject = ScalarArithmeticSubjectIdentity::from_parts(
+        rejection.arithmetic(),
+        rejection.resolved_type().canonical_encoding().as_bytes(),
+    )
+    .ok_or_else(|| {
+        CompileError::InvalidCompilerOutput(crate::pipeline::CompilerOutputError::Program(
+            ProgramError::Structure {
+                rule: "public-numerical-subject-identity",
+            },
+        ))
+    })?;
     let requirement =
         public_numerical_requirement(rejection.dimension(), rejection.required(), subject.clone())?;
     let disposition = match rejection {
@@ -2239,14 +2254,29 @@ fn public_numerical_rejection(
                     TargetNumericalDeclaredMeans::SupportedWithExactEmulation
                 }
                 HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { relaxation } => {
+                    // The relaxation carries its subject as the serialized
+                    // identity, which is one-way: nothing reconstructs a
+                    // `ResolvedValueType` from it. The profile builder refuses a
+                    // relaxation naming a subject other than the one its
+                    // declaration speaks about, so the rejection's own subject
+                    // *is* the relaxation's -- but that is checked here rather
+                    // than assumed, because a builder that stopped enforcing it
+                    // would otherwise make this boundary report a requirement
+                    // stated for the wrong dtype.
+                    if relaxation.subject() != &rejection_subject {
+                        return Err(CompileError::InvalidCompilerOutput(
+                            crate::pipeline::CompilerOutputError::Program(
+                                ProgramError::Structure {
+                                    rule: "public-numerical-relaxation-subject",
+                                },
+                            ),
+                        ));
+                    }
                     TargetNumericalDeclaredMeans::SupportedOnlyUnderDeclaredRelaxation {
                         required: public_numerical_requirement(
                             relaxation.dimension(),
                             relaxation.behaviour(),
-                            TargetNumericalSubject {
-                                arithmetic: relaxation.arithmetic(),
-                                resolved_type: relaxation.resolved_type().clone(),
-                            },
+                            subject.clone(),
                         )?,
                     }
                 }

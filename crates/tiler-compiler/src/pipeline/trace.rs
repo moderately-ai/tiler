@@ -865,7 +865,7 @@ fn opaque_call_rejection_event(
                     resolved_type: cause.resolved_type().clone(),
                     required: ReasonCode::new(cause.required().key())?,
                     outcome: crate::explain::HonourabilityOutcome::Unhonourable {
-                        means: ReasonCode::new(cause.means().key())?,
+                        means: ReasonCode::new(cause.means().label())?,
                         honoured: cause
                             .honoured()
                             .map(|honoured| ReasonCode::new(honoured.key()))
@@ -1288,7 +1288,7 @@ pub(super) fn record_target_rejection(
                     resolved_type: cause.resolved_type().clone(),
                     required: ReasonCode::new(cause.required().key())?,
                     outcome: crate::explain::HonourabilityOutcome::Unhonourable {
-                        means: ReasonCode::new(cause.means().key())?,
+                        means: ReasonCode::new(cause.means().label())?,
                         honoured: cause
                             .honoured()
                             .map(|honoured| ReasonCode::new(honoured.key()))
@@ -1444,7 +1444,7 @@ pub(super) fn record_target_admissions(
                             resolved_type: honoured.resolved_type().clone(),
                             required: ReasonCode::new(honoured.behaviour().key())?,
                             outcome: crate::explain::HonourabilityOutcome::Honoured {
-                                means: ReasonCode::new(honoured.means().key())?,
+                                means: ReasonCode::new(honoured.means().label())?,
                             },
                             profile: crate::explain::SubjectKey::new(honoured.profile().key())?,
                         },

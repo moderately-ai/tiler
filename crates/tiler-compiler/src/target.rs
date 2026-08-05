@@ -146,14 +146,10 @@ use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
 use tiler_ir::schedule::{
-    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-    SubnormalMode, SynchronizationSubject,
+    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    SynchronizationSubject,
 };
-use tiler_ir::semantic::{
-    CanonicalField, CanonicalValue, CanonicalValueView, F32, ResolvedValueType,
-    SCALAR_TYPE_FACT_CLASS, SCALAR_TYPE_FACT_WIDTH_BITS, builtin_scalar_value_type_facts,
-    builtin_scalar_value_types,
-};
+use tiler_ir::semantic::{F32, ResolvedValueType};
 
 use crate::target::feasibility::{
     CapabilityAxis, CapabilityFact, CapabilityQuery, CheckedTargetProfile,
@@ -1288,169 +1284,16 @@ impl From<&TargetProfileIdentity> for TargetProfileIdentity {
 }
 
 /// One scalar-arithmetic policy subject with its complete semantic dtype.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ScalarArithmetic {
-    arithmetic: ArithmeticType,
-    resolved_type: ResolvedValueType,
-}
-
-impl ScalarArithmetic {
-    fn governed_f32() -> Self {
-        Self::new(ArithmeticType::F32, F32::resolved_type())
-            .expect("the governed F32 arithmetic subject is registered")
-    }
-
-    /// Returns the governed `tiler::f32@1` scalar-arithmetic subject.
-    ///
-    /// Kept beside [`Self::new`] because this pair is named at more call sites
-    /// than every other combined and cannot fail, so those sites carry no
-    /// unreachable error path.
-    #[must_use]
-    pub fn f32() -> Self {
-        Self::governed_f32()
-    }
-
-    /// Pairs one arithmetic type with the semantic value type it computes in.
-    ///
-    /// The association is proven from the governed built-in scalar catalog, not
-    /// from the spelling of either argument: a similar-looking name is not
-    /// evidence that an arithmetic type's semantics were ever defined over a
-    /// value identity. [`ArithmeticType::canonical_type_key`] names the durable
-    /// dtype identity of the arithmetic type, the catalog states which
-    /// identities it registers and what format each one is, and this constructor
-    /// admits the pair only when the value type's registered descriptor states
-    /// the same format class and the same width as the arithmetic type's own
-    /// registered descriptor does.
-    ///
-    /// Constructing a subject is not declaring a fact about it. A profile that
-    /// declares no row for the subject leaves every dimension `Unknown` for it,
-    /// exactly as it does for a dimension it never mentions.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TargetProfileBuildError::UnvalidatedScalarArithmetic`] when the
-    /// value type is not a registered governed scalar, when its descriptor
-    /// states no format class and width — a logical predicate identity states a
-    /// value cardinality instead, and has no format an arithmetic subject could
-    /// match — or when either disagrees with the arithmetic type's own
-    /// registered format. Disagreement is the case a pair of similar formats
-    /// falls into: `tiler::u32@1` shares `f32`'s width and differs in class,
-    /// while `tiler::f16@1` shares `f32`'s class and differs in width.
-    pub fn new(
-        arithmetic: ArithmeticType,
-        resolved_type: ResolvedValueType,
-    ) -> Result<Self, TargetProfileBuildError> {
-        // Both sides are read from the one catalog, so neither this compiler nor
-        // a caller is the authority for what a format is. The arithmetic type's
-        // own lookup failing is not reachable through any argument — every
-        // variant names a registered identity, which `tiler-ir` pins with a test
-        // of its own — and it stays a refusal rather than a panic so that a
-        // catalog and an arithmetic vocabulary which have drifted apart refuse a
-        // subject instead of admitting one no registry describes.
-        let arithmetic_facts = registered_arithmetic_facts(arithmetic)
-            .ok_or(TargetProfileBuildError::UnvalidatedScalarArithmetic)?;
-        let subject_facts = builtin_scalar_value_type_facts(&resolved_type)
-            .ok_or(TargetProfileBuildError::UnvalidatedScalarArithmetic)?;
-        let arithmetic_format = registered_scalar_format(&arithmetic_facts)
-            .ok_or(TargetProfileBuildError::UnvalidatedScalarArithmetic)?;
-        let subject_format = registered_scalar_format(&subject_facts)
-            .ok_or(TargetProfileBuildError::UnvalidatedScalarArithmetic)?;
-        if subject_format != arithmetic_format {
-            return Err(TargetProfileBuildError::UnvalidatedScalarArithmetic);
-        }
-        Ok(Self {
-            arithmetic,
-            resolved_type,
-        })
-    }
-
-    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
-        self.arithmetic
-    }
-
-    /// Returns the complete resolved semantic value type.
-    #[must_use]
-    pub const fn resolved_type(&self) -> &ResolvedValueType {
-        &self.resolved_type
-    }
-
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        bytes.push(self.arithmetic.tag());
-        push_slice(bytes, self.resolved_type.canonical_encoding().as_bytes());
-    }
-}
-
-/// Returns the registered descriptor of the identity `arithmetic` names.
 ///
-/// The arithmetic vocabulary states a durable dtype spelling and the built-in
-/// scalar catalog states which spellings it registers and describes. Resolving
-/// one through the other is what keeps this compiler from carrying a second copy
-/// of a format's parameters: a copy is a second place for the format to be
-/// wrong, and the copy is what a caller's pair would then be checked against.
-///
-/// `None` when no catalog row carries that spelling.
-fn registered_arithmetic_facts(arithmetic: ArithmeticType) -> Option<CanonicalValue> {
-    builtin_scalar_value_types()
-        .into_iter()
-        .find(|value| {
-            value
-                .nominal_key()
-                .is_some_and(|key| key.to_string() == arithmetic.canonical_type_key())
-        })
-        .as_ref()
-        .and_then(builtin_scalar_value_type_facts)
-}
-
-/// Returns the registered value identity `arithmetic` names.
-///
-/// The complement of [`registered_arithmetic_facts`], reading the same catalog
-/// row for its *key* rather than its descriptor. Every arithmetic type resolves
-/// here — the vocabulary and the catalog are pinned to each other by a
-/// `tiler-ir` test — so a numerical requirement can always be stated for the
-/// exact value identity its width computes over, including the widths this build
-/// registers no contract key for.
-///
-/// That totality is what a requirement needs and what a *contract* deliberately
-/// does not get: a subject a profile can be asked about is not a contract a
-/// caller may state.
-///
-/// `None` when no catalog row carries that spelling, which would mean the
-/// arithmetic vocabulary and the catalog had drifted apart.
-pub(crate) fn registered_arithmetic_value_type(
-    arithmetic: ArithmeticType,
-) -> Option<ResolvedValueType> {
-    builtin_scalar_value_types().into_iter().find_map(|value| {
-        value
-            .nominal_key()
-            .filter(|key| key.to_string() == arithmetic.canonical_type_key())
-            .map(|key| ResolvedValueType::nominal(key.clone()))
-    })
-}
-
-/// Returns the format class and stated width of one registered scalar descriptor.
-///
-/// `None` when the descriptor states neither, which is a real answer rather than
-/// a malformed one: a logical-predicate row states a value cardinality and no
-/// width at all, so there is no format for an arithmetic subject to agree with.
-fn registered_scalar_format(facts: &CanonicalValue) -> Option<(&str, u64)> {
-    let CanonicalValueView::Record(fields) = facts.view() else {
-        return None;
-    };
-    let field = |id| {
-        fields
-            .iter()
-            .find(|field| field.id() == id)
-            .map(CanonicalField::value)
-    };
-    let CanonicalValueView::Utf8(class) = field(SCALAR_TYPE_FACT_CLASS)?.view() else {
-        return None;
-    };
-    let CanonicalValueView::Unsigned { bits, .. } = field(SCALAR_TYPE_FACT_WIDTH_BITS)?.view()
-    else {
-        return None;
-    };
-    Some((class, bits))
-}
+/// The type, and the catalog validation behind [`ScalarArithmetic::new`], are
+/// `tiler_ir::numerics::ScalarArithmeticSubject`. Only the siting changed: the
+/// governed built-in scalar catalog the constructor consults lives in
+/// `tiler-ir`, and the artifact record has to name the same subject this
+/// compiler declares about, so a subject minted here and one read off a record
+/// are one type rather than two that must be kept in agreement.
+pub use tiler_ir::numerics::ScalarArithmeticSubject as ScalarArithmetic;
+/// The registered value identity one arithmetic type names.
+pub(crate) use tiler_ir::numerics::registered_arithmetic_value_type;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScalarHonourabilityDeclaration {
@@ -1464,7 +1307,7 @@ struct ScalarHonourabilityDeclaration {
 impl ScalarHonourabilityDeclaration {
     fn governed_exact(dimension: NumericalDimension, behaviour: DimensionBehaviour) -> Self {
         Self {
-            subject: ScalarArithmetic::governed_f32(),
+            subject: ScalarArithmetic::f32(),
             dimension,
             behaviour,
             means: HonouringMeans::SupportedExactly,
@@ -1482,9 +1325,14 @@ impl ScalarHonourabilityDeclaration {
                 return Err(TargetProfileBuildError::UnverifiedExactEmulation);
             }
             HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { relaxation } => {
+                // The relaxation names a subject rather than a loose
+                // (arithmetic, type) pair, so the whole subject is compared in
+                // one step. A profile may only condition a declaration on an
+                // authorization stated for the same subject it is declaring
+                // about; a relaxation naming another subject would make the
+                // condition unresolvable against the caller's contract.
                 if !relaxation.dimension().admits(relaxation.behaviour())
-                    || relaxation.arithmetic() != self.subject.arithmetic()
-                    || relaxation.resolved_type() != self.subject.resolved_type()
+                    || relaxation.subject() != &self.subject.identity()
                 {
                     return Err(TargetProfileBuildError::InvalidRelaxation);
                 }
@@ -3620,10 +3468,16 @@ mod tests {
     use crate::target::honourability::{
         CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole,
         ExecutionEnvironmentIdentity, MeasurementContext, NumericalRequirement, ProvenanceIdentity,
-        RelaxationRequirement,
     };
-    use tiler_ir::schedule::{ApproximationEnvelope, MaterializationRounding};
-    use tiler_ir::semantic::{CanonicalValue, TypeArguments, TypeKey};
+    use tiler_ir::numerics::{
+        RelaxationRequirement, ScalarArithmeticSubjectError, ScalarArithmeticSubjectIdentity,
+        registered_arithmetic_facts, registered_scalar_format,
+    };
+    use tiler_ir::schedule::{ApproximationEnvelope, ArithmeticType, MaterializationRounding};
+    use tiler_ir::semantic::{
+        CanonicalValue, TypeArguments, TypeKey, builtin_scalar_value_type_facts,
+        builtin_scalar_value_types,
+    };
 
     fn nominal(name: impl AsRef<str>) -> ResolvedValueType {
         ResolvedValueType::nominal(TypeKey::new("test", name, 1).unwrap())
@@ -3805,7 +3659,7 @@ mod tests {
     /// class. A rule reading only one of the two fields would admit one of them.
     #[test]
     fn a_pair_the_catalog_does_not_back_is_refused_for_a_stated_reason() {
-        let refused = Err(TargetProfileBuildError::UnvalidatedScalarArithmetic);
+        let refused = Err(ScalarArithmeticSubjectError::UnvalidatedScalarArithmetic);
 
         // An unregistered identity, against every arithmetic type: a `test`
         // namespace is not the governed catalog however the name is spelled.
@@ -3972,7 +3826,7 @@ mod tests {
 
     #[test]
     fn scalar_declarations_reject_invalid_behaviour_relaxation_and_exact_emulation() {
-        let subject = ScalarArithmetic::governed_f32();
+        let subject = ScalarArithmetic::f32();
         let base = |dimension, behaviour, means| ScalarHonourabilityDeclaration {
             subject: subject.clone(),
             dimension,
@@ -3995,9 +3849,12 @@ mod tests {
                 DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
                 HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
                     relaxation: RelaxationRequirement::new(
+                        ScalarArithmeticSubjectIdentity::from_parts(
+                            ArithmeticType::F64,
+                            nominal("future-f64").canonical_encoding().as_bytes(),
+                        )
+                        .expect("a nominal identity is well formed"),
                         NumericalDimension::Contraction,
-                        ArithmeticType::F64,
-                        nominal("future-f64"),
                         DimensionBehaviour::Transform(NumericalPermission::Permitted),
                     ),
                 },
@@ -4022,12 +3879,19 @@ mod tests {
             TargetProfileKey::new("test.scalar-subject.v1".to_owned()).unwrap(),
         );
         let source = public_external_source(1);
-        for resolved_type in [F32::resolved_type(), nominal("future-bf16-subject")] {
+        // Two *governed* subjects, because the relocated validator refuses a
+        // subject over an unregistered type. Holding the arithmetic fixed while
+        // varying the resolved type is no longer constructible at all — the
+        // catalog admits exactly one value identity per arithmetic type — which
+        // is a stronger guarantee than this test used to assert against a
+        // hand-built pair.
+        for subject in [
+            ScalarArithmetic::f32(),
+            ScalarArithmetic::new(ArithmeticType::F16, governed_scalar("f16"))
+                .expect("the catalog registers f16 over tiler::f16@1"),
+        ] {
             builder.scalar.push(ScalarHonourabilityDeclaration {
-                subject: ScalarArithmetic {
-                    arithmetic: ArithmeticType::F32,
-                    resolved_type,
-                },
+                subject,
                 dimension: NumericalDimension::Contraction,
                 behaviour: DimensionBehaviour::Transform(NumericalPermission::Forbidden),
                 means: HonouringMeans::SupportedExactly,
@@ -5293,13 +5157,14 @@ mod tests {
     #[test]
     fn scalar_subject_row_swaps_change_identity_and_exact_feasibility() {
         let source = governed_profile_source();
-        let a = nominal("scalar-a");
-        let b = nominal("scalar-b");
-        let row = |resolved_type, behaviour| ScalarHonourabilityDeclaration {
-            subject: ScalarArithmetic {
-                arithmetic: ArithmeticType::F32,
-                resolved_type,
-            },
+        // Two governed subjects rather than two hand-built nominal ones: the
+        // relocated validator admits exactly one value identity per arithmetic
+        // type, so a subject over an unregistered type cannot be constructed.
+        let a = ScalarArithmetic::f32();
+        let b = ScalarArithmetic::new(ArithmeticType::F16, governed_scalar("f16"))
+            .expect("the catalog registers f16 over tiler::f16@1");
+        let row = |subject, behaviour| ScalarHonourabilityDeclaration {
+            subject,
             dimension: NumericalDimension::InputSubnormals,
             behaviour,
             means: HonouringMeans::SupportedExactly,
@@ -5334,8 +5199,8 @@ mod tests {
             Vec::new(),
             vec![NumericalRequirement::new(
                 NumericalDimension::InputSubnormals,
-                ArithmeticType::F32,
-                a,
+                a.arithmetic(),
+                a.resolved_type().clone(),
                 preserve,
             )],
         )
