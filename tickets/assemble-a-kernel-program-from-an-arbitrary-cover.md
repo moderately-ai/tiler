@@ -1,7 +1,7 @@
 ---
 id: assemble-a-kernel-program-from-an-arbitrary-cover
 title: Assemble a kernel program from an arbitrary cover
-status: todo
+status: in-progress
 priority: p1
 dependencies: [derive-physical-proposals-from-the-cover-region-subject]
 related: [define-the-minimum-correct-physical-realization-profile, implement-general-dag-partitioning, admit-ordered-multi-output-programs-at-the-compiler-request-boundary, activate-shared-work-duplication-on-the-compile-path, widen-the-deterministic-budgets-to-the-decoder-layer-program]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, program-assembly, baseline]
+claimed_from: todo
+assignee: agent-assembly-general
+lease_expires_at: 1785900361
 ---
 ## User-visible outcome
 
