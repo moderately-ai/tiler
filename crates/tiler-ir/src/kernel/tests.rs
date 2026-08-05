@@ -932,6 +932,66 @@ fn the_single_spelling_profile_is_still_narrow_enough_for_derive_and_compare() {
     );
 }
 
+/// Compile-time tripwire for `add-subgroup-memory-scope-when-collectives-land`.
+///
+/// A barrier states its execution scope and its memory scope as two separate
+/// vocabularies (ADR 0048), and the pair is asymmetric today: [`ExecutionScope`]
+/// names a subgroup and [`MemoryScope`] cannot, so subgroup-level visibility is
+/// inexpressible and `tiler-metal` refuses every subgroup barrier rather than
+/// widening its claim to workgroup visibility. That deferred ticket owns closing
+/// the asymmetry.
+///
+/// Widening either enum is *already* a build error inside this crate: `tag` on
+/// each enum and `verify::barrier_subject` are exhaustive, and
+/// `#[non_exhaustive]` has no effect on a match in the defining crate. What
+/// neither of those errors says is what happens downstream. `barrier_call` in
+/// `crates/tiler-metal/src/emit.rs` matches both scopes with wildcard arms, so a
+/// widened scope compiles there and every barrier naming it keeps being rejected
+/// at run time with a typed `UnsupportedBarrier`. Those wildcards are correct and
+/// stay — out of crate `#[non_exhaustive]` requires one, and they are what makes
+/// an unhandled scope a typed rejection rather than a panic. This match is the
+/// break that carries the instructions: whoever hits it should read that ticket
+/// before adding an arm.
+///
+/// The two scope vocabularies only. [`BarrierOrdering`] and [`AddressSpace`] are
+/// wildcarded in the same emitter, but no ticket owns widening either, and a
+/// tripwire that names no owner is a build error with nothing to say.
+///
+/// Deliberately a spelling check and not a semantic one, exactly as
+/// [`body_shaping_vocabulary_is_closed`] states: it cannot tell that a widened
+/// vocabulary admits a new barrier, only that the vocabulary widened, which is
+/// the point at which a human has to look. It cites constructs rather than
+/// lines, because every line citation this tripwire inherited had drifted by the
+/// time it was read.
+fn barrier_scope_vocabulary_is_closed(
+    execution: ExecutionScope,
+    memory: MemoryScope,
+) -> (&'static str, &'static str) {
+    (
+        match execution {
+            ExecutionScope::Subgroup => "subgroup",
+            ExecutionScope::Workgroup => "workgroup",
+        },
+        match memory {
+            MemoryScope::Workgroup => "workgroup",
+            MemoryScope::Device => "device",
+        },
+    )
+}
+
+/// The barrier scope vocabularies are still the pair the backends were built for.
+///
+/// Consumes the spelling of a real cooperative handoff rather than literals, so
+/// the tripwire is anchored to a barrier the profile actually emits.
+#[test]
+fn the_barrier_scope_vocabularies_are_still_closed() {
+    let spec = cooperative_barrier();
+    assert_eq!(
+        barrier_scope_vocabulary_is_closed(spec.execution_scope, spec.memory_scope),
+        ("workgroup", "workgroup")
+    );
+}
+
 /// Collects every buffer handle a block's effects reference, descending into
 /// predicated bodies.
 fn referenced_buffers(block: BlockRef<'_>) -> Vec<VerifiedBufferId> {
