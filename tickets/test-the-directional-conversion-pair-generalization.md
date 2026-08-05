@@ -1,7 +1,7 @@
 ---
 id: test-the-directional-conversion-pair-generalization
 title: Test the directional conversion-pair generalization on a second pair
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [scope-the-in-type-precision-reduction-family, conform-the-bf16-vertical-end-to-end, carry-bf16-through-the-artifact-encoding-and-identity, derive-the-operation-family-and-signature-delivery-graph, land-the-conversion-pair-decomposition-adr, preserve-the-float-to-integer-conversion-precedent-sources]
@@ -9,9 +9,6 @@ scopes: [research/semantic-graph, research/numerics, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, operations, numerics, conversion, dtype]
-claimed_from: todo
-assignee: agent-conversion-pair
-lease_expires_at: 1785963860
 ---
 ## User-visible outcome
 
