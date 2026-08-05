@@ -1,7 +1,7 @@
 ---
 id: correct-the-documents-that-still-say-the-cache-root-preflight-is-never-called
 title: Correct the documents that still say the cache-root preflight is never called
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [call-the-expansion-cache-preflight-on-the-resolved-root]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, frontend, diagnostics, documentation]
-claimed_from: todo
-assignee: agent-preflight-docs
-lease_expires_at: 1785942813
 ---
 ## User-visible outcome
 
