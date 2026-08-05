@@ -2633,11 +2633,27 @@ fn resolve_work_items(
                 // one for both would size a call against the wrong tensor. An
                 // ordinal no declared input occupies is a refusal rather than
                 // another tensor's size.
+                //
+                // Both roles are additionally resolved only when every recognized
+                // output *agrees* on the count, and the reason is that an opaque
+                // call's binding names the tensor role rather than a particular
+                // tensor. `TensorRole::Output` carries no ordinal at all, so with
+                // several declared outputs nothing on the binding says which
+                // published tensor it means; and two outputs may read one
+                // declared input at different domains, a reduction at its
+                // contributor shape and an elementwise sibling at its own.
+                // Answering with one of them would size a call against a tensor
+                // the caller did not name, which is the confidently-wrong verdict
+                // `WorkScaling` exists to prevent, so a disagreement refuses by
+                // the same route an unoccupied ordinal does.
                 TensorRole::Input { ordinal } => request
                     .normalized()
-                    .input_elements_at(*ordinal)
+                    .agreed_input_elements_at(*ordinal)
                     .ok_or(WorkResolutionError::UnknownParameter(name)),
-                TensorRole::Output => Ok(request.normalized().output_elements()),
+                TensorRole::Output => request
+                    .normalized()
+                    .agreed_output_elements()
+                    .ok_or(WorkResolutionError::UnknownParameter(name)),
                 TensorRole::Intermediate => subject
                     .intermediate_elements()
                     .ok_or(WorkResolutionError::IntermediateShapeUnavailable { parameter: name }),
@@ -2993,8 +3009,13 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         let request = context.request();
         let subject = context.subject();
         let members = subject.semantic_members();
+        // Structural cost inputs, taken over every recognized output rather than
+        // resolved per region: they bound the widest thing a plan for this
+        // request could stage, and a cost is an upper bound rather than a
+        // feasibility answer. The region's *own* shapes come from the output the
+        // spelling resolves below.
         let input_elements = request.normalized().max_input_elements();
-        let output_elements = request.normalized().output_elements();
+        let output_elements = request.normalized().max_output_elements();
         // A materialized f32 intermediate costs four bytes per element. The
         // estimate is structural and is never a feasibility input.
         let intermediate_bytes = input_elements.saturating_mul(4);
@@ -3021,14 +3042,19 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         };
         let mut split = None;
         let mut tree = None;
-        let (region, cost) = match spelling {
+        // The recognized output whose partition this region belongs to. The
+        // spelling resolved it from the cover's own occurrences, so every shape,
+        // expression, and member set below is that output's rather than a
+        // whole-program value that would answer the same for every region.
+        let output = request.output_at(spelling.output());
+        let (region, cost) = match spelling.kind() {
             // One elementwise pass, whichever tensor the cover assigned its
             // write. The two write roles cost differently because the cover
             // decided differently: a region whose result another region reads
             // stages that result, and one that writes a declared program output
             // stages nothing.
-            crate::physical::RegionSpelling::Pointwise(write) => (
-                crate::physical::pointwise_region(request, write).0,
+            crate::physical::RegionSpellingKind::Pointwise(write) => (
+                crate::physical::pointwise_region(request, output, write).0,
                 match write {
                     crate::physical::RegionWrite::ProgramOutput => {
                         PhysicalCostEstimate::structural(1, output_elements, 0)
@@ -3043,19 +3069,19 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // — when this request does not admit it — the one place the decline
             // is stated. The serial alternative is offered either way; a split
             // is additive and never replaces it.
-            crate::physical::RegionSpelling::SerialSum => {
-                split = Some(propose_split(request, &applicability));
-                tree = Some(propose_workgroup_tree(request, &applicability));
+            crate::physical::RegionSpellingKind::SerialSum => {
+                split = Some(propose_split(request, output, &applicability));
+                tree = Some(propose_workgroup_tree(request, output, &applicability));
                 (
-                    crate::physical::reduction_region(request).0,
+                    crate::physical::reduction_region(request, output).0,
                     PhysicalCostEstimate::structural(1, output_elements, 0),
                 )
             }
             // No split: a contraction's fold is the declared contributor
             // sequence, and splitting it would consume the reassociation this
             // family declares forbidden.
-            crate::physical::RegionSpelling::Contraction => (
-                crate::physical::contraction_region(request).0,
+            crate::physical::RegionSpellingKind::Contraction => (
+                crate::physical::contraction_region(request, output).0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
             ),
             // Whether the whole-program region may be *fused* belongs to the
@@ -3066,8 +3092,8 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // defer. A prologue with no fused spelling never reaches here —
             // `spell_region` declines it by name, so the materialized cover's
             // two regions remain the plan and the lost candidate is recorded.
-            crate::physical::RegionSpelling::FusedSerialSum => (
-                crate::physical::fused_region(request)
+            crate::physical::RegionSpellingKind::FusedSerialSum => (
+                crate::physical::fused_region(request, output)
                     .expect("a fused spelling is decided before the region is built")
                     .0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
@@ -3112,33 +3138,36 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
 /// for the derivation and the row that blocks it.
 fn propose_split(
     request: &VerifiedTargetRequest,
+    output: &crate::request::NormalizedOutput,
     applicability: &TargetApplicability,
 ) -> Result<ImplementationProposal, DeclinedStrategy> {
-    let split = crate::physical::split_reduction_regions(request).map_err(|unavailable| {
-        DeclinedStrategy::new(
-            crate::physical::MULTI_PASS_SPLIT_STRATEGY,
-            match unavailable {
-                crate::physical::SplitUnavailable::ReassociationForbidden => {
-                    StrategyDeclineCause::NumericalPermissionRefused {
-                        dimension: crate::target::honourability::NumericalDimension::Reassociation
-                            .key(),
+    let split =
+        crate::physical::split_reduction_regions(request, output).map_err(|unavailable| {
+            DeclinedStrategy::new(
+                crate::physical::MULTI_PASS_SPLIT_STRATEGY,
+                match unavailable {
+                    crate::physical::SplitUnavailable::ReassociationForbidden => {
+                        StrategyDeclineCause::NumericalPermissionRefused {
+                            dimension:
+                                crate::target::honourability::NumericalDimension::Reassociation
+                                    .key(),
+                        }
                     }
-                }
-                crate::physical::SplitUnavailable::NoAdmissiblePartition { contributors } => {
-                    StrategyDeclineCause::NoAdmissibleShape {
-                        rule: unavailable.reason(),
-                        extent: contributors,
+                    crate::physical::SplitUnavailable::NoAdmissiblePartition { contributors } => {
+                        StrategyDeclineCause::NoAdmissibleShape {
+                            rule: unavailable.reason(),
+                            extent: contributors,
+                        }
                     }
-                }
-                crate::physical::SplitUnavailable::Unrepresentable => {
-                    StrategyDeclineCause::Unrepresentable {
-                        rule: unavailable.reason(),
+                    crate::physical::SplitUnavailable::Unrepresentable => {
+                        StrategyDeclineCause::Unrepresentable {
+                            rule: unavailable.reason(),
+                        }
                     }
-                }
-            },
-        )
-    })?;
-    let output_elements = request.normalized().output_elements();
+                },
+            )
+        })?;
+    let output_elements = output.output_elements();
     let partial_elements = output_elements.saturating_mul(split.partition.partitions);
     let stages = split
         .stages
@@ -3178,10 +3207,11 @@ fn propose_split(
 /// for the derivation and the row that blocks it.
 fn propose_workgroup_tree(
     request: &VerifiedTargetRequest,
+    output: &crate::request::NormalizedOutput,
     applicability: &TargetApplicability,
 ) -> Result<ImplementationProposal, DeclinedStrategy> {
     let (region, _) =
-        crate::physical::single_workgroup_tree_region(request).map_err(|unavailable| {
+        crate::physical::single_workgroup_tree_region(request, output).map_err(|unavailable| {
             DeclinedStrategy::new(
                 crate::physical::SINGLE_WORKGROUP_TREE_STRATEGY,
                 match unavailable {
@@ -3871,6 +3901,7 @@ mod tests {
             fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
                 let (region, _) = pointwise_region(
                     context.request(),
+                    context.request().sole_output(),
                     crate::physical::RegionWrite::Materialized,
                 );
                 ProviderOffer::proposing(vec![ImplementationProposal::new(
@@ -5591,7 +5622,7 @@ mod tests {
 
     /// Returns the governed split's two raw passes for one request.
     fn split_stages(request: &VerifiedTargetRequest) -> Vec<SubprogramStage> {
-        crate::physical::split_reduction_regions(request)
+        crate::physical::split_reduction_regions(request, request.sole_output())
             .expect("a four-contributor relaxed request admits the split")
             .stages
             .into_iter()
@@ -5655,8 +5686,11 @@ mod tests {
         // leak the cover cannot see and the assembler would have to invent an
         // owner for.
         let leaking = vec![split_stages(&request)[0].clone(), {
-            let (region, members) =
-                pointwise_region(&request, crate::physical::RegionWrite::Materialized);
+            let (region, members) = pointwise_region(
+                &request,
+                request.sole_output(),
+                crate::physical::RegionWrite::Materialized,
+            );
             SubprogramStage::new(region, members)
         }];
         assert!(matches!(

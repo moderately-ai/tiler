@@ -295,7 +295,11 @@ pub(super) fn verify_equivalence(
         // what stands in its place, and it is not weaker: it requires the one
         // scheduled region to cover exactly the candidate's occurrences.
         (ProgramAlternativeKind::Fused, None)
-            if request.pointwise().is_some() || request.contraction().is_some() =>
+            if request
+                .normalized()
+                .outputs()
+                .iter()
+                .all(|output| output.try_serial_sum().is_none()) =>
         {
             let candidate = formation.whole_program_candidate().ok_or({
                 CompileError::InvalidCompilerOutput(CompilerOutputError::Program(

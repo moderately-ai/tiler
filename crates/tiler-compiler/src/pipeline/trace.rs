@@ -503,7 +503,20 @@ pub(super) fn record_numerical_equivalence(
     let key = candidate.label().to_owned();
     explain_step(
         (|| -> Result<_, CompileError> {
-            let reduction = verified.serial_sum().members.reduction();
+            // The fold of the output this candidate implements, resolved from
+            // the candidate's own occurrences rather than from "the" recognized
+            // reduction: a program declaring several outputs has one partition
+            // per output, and the proof forbids the reassociation of *this*
+            // region's fold.
+            let reduction = verified
+                .output_for_region(candidate.members())
+                .and_then(|(_, output)| output.try_serial_sum())
+                .map(|serial| serial.members.reduction().to_vec())
+                .ok_or_else(|| {
+                    CompileError::from(ProgramError::Structure {
+                        rule: "reduction-provider-missing",
+                    })
+                })?;
             let provider = lowering
                 .occurrences()
                 .iter()
