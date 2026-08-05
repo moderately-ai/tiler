@@ -56,6 +56,8 @@ use super::super::model::{
     storage_scalar_from_tag, subnormal_from_tag, synchronization_kind_from_tag,
     synchronization_scope_from_tag,
 };
+use super::super::realization::DeliveredRealizationRecord;
+use super::super::realization::codec::decode as decode_realization;
 use super::super::requirement::{
     BackendFeatureRequirement, RouteRequirement, RouteRequirementError, RouteResourceDimension,
     RouteResourceRequirement,
@@ -295,6 +297,7 @@ pub(super) struct DecodedBody {
     pub(super) payload_content: Vec<Option<PayloadSections>>,
     pub(super) expressions: Vec<ExprNode>,
     pub(super) variants: Vec<VariantRow>,
+    pub(super) realization: DeliveredRealizationRecord,
 }
 
 fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
@@ -339,6 +342,16 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
 
     let expressions = parse_expressions(&mut cursor)?;
     let variants = parse_variants(&mut cursor, expressions.len(), payloads.len())?;
+    // Framed here, decoded by the record's own codec. The framing is this
+    // module's obligation and the content is that module's: every canonical
+    // order, reference, coverage range, tag, and provenance-completeness rule is
+    // re-proven there, fail-closed, and reported as its own typed rule rather
+    // than as a manifest error that lost the reason.
+    let realization = decode_realization(cursor.slice()?).map_err(|cause| {
+        ArtifactCodecError::DeliveredRealization {
+            cause: Box::new(cause),
+        }
+    })?;
 
     let sections = parse_section_descriptors(&mut cursor)?;
     let identity = cursor.slice()?.to_vec();
@@ -382,6 +395,7 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
             payload_content,
             expressions,
             variants,
+            realization,
         },
         sections,
         identity,

@@ -92,7 +92,14 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
         check_variant(envelope, variant, &facts, &keys, &static_facts)?;
     }
     check_duplicate_variants(envelope)?;
-    Ok(())
+    // Last, and deliberately: the record decoded on its own terms before
+    // `validate` ran, so what remains is its agreement with the artifact around
+    // it — the same obligation `ArtifactProgramBuilder::build` discharges on the
+    // envelope it projects. It reads the entry table, so it runs after that
+    // table's own structural obligations have been proven. Running it first
+    // reported a forged *extra* entry as an unbound one, which named a real
+    // disagreement but not the one that made the envelope invalid.
+    envelope.check_realization().map_err(obligation)
 }
 
 /// The per-node value type, availability phase, and interface-only facts.
@@ -790,6 +797,6 @@ fn rule(cause: ArtifactBuildError) -> ArtifactCodecError {
     }
 }
 
-const fn obligation(cause: ArtifactDiagnostic) -> ArtifactCodecError {
+fn obligation(cause: ArtifactDiagnostic) -> ArtifactCodecError {
     ArtifactCodecError::ModelObligation { cause }
 }

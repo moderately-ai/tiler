@@ -46,6 +46,7 @@ use tiler_metal::emit::emit_translation_unit;
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::OptimizationLevel;
 
+use crate::realization::RealizationTranslationError;
 use crate::{
     AcceptedArtifact, BackendEntryDeclaration, BoundMetalCompileDeclaration, CompiledMetalPayload,
     MetalArtifactProtocolError, MetalAssemblyError, MetalCacheError, MetalPlanProfileMismatch,
@@ -80,6 +81,13 @@ pub enum MetalPlanBuildError {
     ArtifactBuild(ArtifactBuildError),
     /// Whole-artifact verification rejected the assembled program.
     ArtifactVerification(ArtifactVerificationError),
+    /// The plan's delivered-realization evidence did not translate.
+    ///
+    /// Its own variant rather than an [`Self::ArtifactBuild`]: the refusal is
+    /// the compiler evidence disagreeing with the artifact's profile, or
+    /// offering no policy subject to bind the packaged entries to — neither of
+    /// which the artifact builder ever sees.
+    ArtifactRealization(RealizationTranslationError),
     /// The complete expansion-cache subject could not be composed.
     CacheSubject(SubjectRefusal),
     /// Metal compilation failed inside the cache miss closure.
@@ -156,6 +164,10 @@ impl fmt::Display for MetalPlanBuildError {
                 "whole-artifact verification failed: {:?}",
                 error.diagnostics(),
             ),
+            Self::ArtifactRealization(error) => write!(
+                formatter,
+                "delivered-realization translation failed: {error}",
+            ),
             Self::CacheSubject(error) => {
                 write!(formatter, "Metal cache subject was refused: {error}")
             }
@@ -182,6 +194,7 @@ impl Error for MetalPlanBuildError {
             Self::Preparation(error) | Self::CacheCompilation(error) => Some(error),
             Self::ArtifactBuild(error) => Some(error),
             Self::ArtifactVerification(error) => Some(error),
+            Self::ArtifactRealization(error) => Some(error),
             Self::CacheSubject(error) => Some(error),
             Self::CacheEncoding(error) | Self::CacheArtifact(error) => Some(error),
             Self::CacheProtocol(error) => Some(error),
@@ -398,6 +411,7 @@ impl From<PlanArtifactError> for MetalPlanBuildError {
         match error {
             PlanArtifactError::Build(error) => Self::ArtifactBuild(error),
             PlanArtifactError::Verification(error) => Self::ArtifactVerification(error),
+            PlanArtifactError::Realization(error) => Self::ArtifactRealization(error),
         }
     }
 }
@@ -1151,9 +1165,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "1c84ec3aa0125950303dd26762f0606781466a29b285afbbe4a015f12ffc481d";
+            "d22c0d11f8486a15b3df7651feee543eb5d0f8d398a7eb9047ae45b15f9ce832";
         const CACHE_SUBJECT: &str =
-            "2700a51f08ab08cb556e2db9bbe4aa70091dfc0c6224b0eebb11344483ce4ff1";
+            "6dee9552e5fb3c0cefe12cacab8d15153fd0909923bf7c93f2d5f92c5d679d68";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

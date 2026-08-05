@@ -10,7 +10,7 @@ evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.target-profiles.physical-feasibility-model", "tiler.contract.cpu-backend"]
 entrypoints: ["spikes/target-profiles/scalar-cpu-vertical/src/main.rs"]
 last_verified: "2026-08-05"
-verified_at_commit: "d5960e81"
+verified_at_commit: "55d1d09f"
 ticket: "prototype-a-bounded-scalar-cpu-backend-vertical"
 ---
 
@@ -58,7 +58,7 @@ The binary's only product is a verdict: every stage that fails exits non-zero wi
 
 The vertical executed. Twelve `f32` elements agreed **bit for bit** with `tiler-reference`, including a negative zero whose sign survived, the least positive and least negative subnormals preserved through a multiply, a non-canonical NaN payload canonicalized to the realization's exact `0x7fc00000`, and both infinities. The retained fixture is [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json).
 
-Recorded quantities from that run: profile descriptor 865 bytes, payload 265 bytes, envelope 82,918 bytes, artifact identity 40,622 bytes, reference registry identity 1,420,906 bytes, **zero** deferred prepared-entry predicates.
+Recorded quantities from that run: profile descriptor 865 bytes, payload 265 bytes, envelope 87,338 bytes, artifact identity 42,832 bytes, reference registry identity 1,420,906 bytes, **zero** deferred prepared-entry predicates.
 
 ### Three identity sizes moved between `488efac` and `63f9259`
 
@@ -148,6 +148,21 @@ Recorded quantities from that run: profile descriptor 865 bytes, payload 265 byt
 
 **Determinism, re-measured rather than inherited.** Four runs at this base — one of them after the rebuild the perturbation forced — produced byte-identical fixtures and byte-identical 47-line run narratives, `diff` exit 0 on every pair.
 
+### The delivered-realization record, and two quantities moved between `d5960e81` and the wiring landing
+
+**Fact — one drift, and it is a required field rather than a rename.** `wire-the-delivered-realization-record-into-the-artifact` made every executable artifact carry a delivered-realization record: `ArtifactProgramBuilder::build` refuses a draft that never called `declare_realization`, so `assemble` here stopped producing an artifact rather than stopping compiling — a state no `cargo check` detects and only running the spike reports. The repair is one `declare_realization` call and one `realization_record` helper beside it, deriving the eleven governed resolutions from the packaged program's own scheduled realization rather than restating them, so a contract change in the plan cannot leave this spike describing the old one.
+
+**Measurement.** Recorded against the previous run at `d5960e81`, on the tree of that ticket based at `55d1d09f`:
+
+| Quantity | `d5960e81` | with the record wired |
+| --- | --- | --- |
+| envelope bytes | 82,918 | 87,338 |
+| artifact identity bytes | 40,622 | 42,832 |
+
+**What did not move, and here the interval is short enough to attribute the delta.** The twelve output bit patterns are byte-identical to every earlier fixture; so are the selected plan (`program-alternative:f6c5c487fbfbd8fa`), the profile descriptor (865), the payload (265), the element count, the zero deferred predicates, the host string, and every governed key. Unlike every interval above, this one is a single landing rather than hundreds of commits, and the two moved rows are exactly what that landing adds: the record's canonical bytes are folded into the artifact identity, and the manifest carries the same run — so the identity grew by 2,210 bytes and the envelope by 4,420, the second being the first counted twice, once inside the folded identity the manifest also carries.
+
+**The comparison was proved able to say no.** The `CanonicalizeF32Nan` perturbation in `src/interpret.rs` was applied again at this base and the run exited 1 naming exactly one differing element, the backend returning `0x7fc01234` where the reference requires `0x7fc00000` and the other eleven still agreeing. Perturbation reverted; `git diff` over `src/interpret.rs` is empty.
+
 ## Findings
 
 Each is what a consumer-neutral backend-provider contract has to account for. **Fact** means inspected source or this run's output; **Inference** is derived from those.
@@ -203,5 +218,5 @@ Every check below was run against a case that must fail, and observed failing. E
 
 ## Retained evidence
 
-- [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json) — the identities, byte counts, and exact output bit patterns of the run recorded above. Re-running with the same argument overwrites it; a diff is drift from the source beside it. The date in the name is the fixture's origin, deliberately not bumped per run: the path is stable so that `git diff` is the drift signal, and the run it currently holds is dated by `last_verified` above. The 2026-08-01 restoration made four of its numbers move, the loader-vocabulary re-run later the same day moved two more, the delivery-position repair later still moved five, and the 2026-08-05 contract-and-`KernelType` restoration moved four; all four are tabled under "Result" with the superseded values kept rather than overwritten. The run this file currently holds is deterministic across invocations: four consecutive runs at `d5960e81`, one of them after a rebuild, produced byte-identical fixtures and byte-identical 47-line run narratives.
+- [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json) — the identities, byte counts, and exact output bit patterns of the run recorded above. Re-running with the same argument overwrites it; a diff is drift from the source beside it. The date in the name is the fixture's origin, deliberately not bumped per run: the path is stable so that `git diff` is the drift signal, and the run it currently holds is dated by `last_verified` above. The 2026-08-01 restoration made four of its numbers move, the loader-vocabulary re-run later the same day moved two more, the delivery-position repair later still moved five, the 2026-08-05 contract-and-`KernelType` restoration moved four, and the delivered-realization wiring moved two; all five are tabled under "Result" with the superseded values kept rather than overwritten. The run this file currently holds is deterministic across invocations: four consecutive runs at `d5960e81`, one of them after a rebuild, produced byte-identical fixtures and byte-identical 47-line run narratives.
 - `Cargo.lock` is tracked, so the dependency set a recorded run was taken under is recoverable.

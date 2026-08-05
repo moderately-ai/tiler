@@ -41,7 +41,7 @@ use crate::value::{
 /// restatement cannot produce, so a domain bump turns each of them into a
 /// `MalformedRouteFacts` failure naming the identity rather than into a silent
 /// pass.
-const IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-program.v14\0";
+const IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-program.v15\0";
 
 /// A consumer-shaped value, so a region has something to bind and build.
 ///

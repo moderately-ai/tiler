@@ -78,6 +78,7 @@ use super::super::model::{
     InterfaceEntryData, RoutingPolicy, StageDependencyData, StageDependencyReason,
     VerifiedArtifactProgram,
 };
+use super::super::realization::DeliveredRealizationRecord;
 use super::super::requirement::RouteRequirement;
 use super::error::ArtifactCodecError;
 use super::model::{ArtifactEnvelope, EntryRow, NumericalFacts, SectionKind, VariantRow, position};
@@ -207,6 +208,24 @@ impl DecodedArtifact {
     #[must_use]
     pub const fn routing(&self) -> RoutingPolicy {
         self.envelope.routing
+    }
+
+    /// Returns the numerical realization this artifact delivered.
+    ///
+    /// A **total** reader: decoded bytes are given no optional path of their
+    /// own. The record decoded on its own terms, its profile was proven to be
+    /// the artifact's, every packaged entry was proven to reference an existing
+    /// policy subject, and the eight overlapping resolutions were proven to
+    /// equal every bound entry's own realization statement — all before this
+    /// view existed. There is no `UnrecordedRealization` state left for a caller
+    /// to rediscover.
+    ///
+    /// Entry bindings name the flat canonical packaged-entry ordinal: variants
+    /// in routing priority order, and within each variant its entries in
+    /// [`DecodedVariant::entries`] order.
+    #[must_use]
+    pub const fn delivered_realization(&self) -> &DeliveredRealizationRecord {
+        self.envelope.realization()
     }
 
     /// Returns the carried backend payload descriptors in canonical order.
@@ -1233,6 +1252,13 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::MalformedInterfaceComponents
             | ArtifactCodecError::UnknownBindingTargetComponent { .. }
             | ArtifactCodecError::BindingComponentMismatch
+            // The record failing on its own terms is classified `Invalid` and
+            // not `Malformed`, including its unknown-tag and truncation rules.
+            // The framing was readable — the manifest's own length prefix
+            // delimited the run and the run's domain separator opened it — so
+            // what refused is an artifact that is well formed and states an
+            // invalid numerical realization, which is what `Invalid` names.
+            | ArtifactCodecError::DeliveredRealization { .. }
             | ArtifactCodecError::BindingAccessTypeMismatch => Self::Invalid { detail },
         }
     }

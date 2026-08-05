@@ -8,8 +8,8 @@
   "plan": "program-alternative:f6c5c487fbfbd8fa",
   "deferred_prepared_entry_predicates": 0,
   "payload_bytes": 265,
-  "envelope_bytes": 82918,
-  "artifact_identity_bytes": 40622,
+  "envelope_bytes": 87338,
+  "artifact_identity_bytes": 42832,
   "reference_registry_identity_bytes": 1420906,
   "elements": 12,
   "output_bits": ["0x40000000", "0x80000000", "0x00000002", "0x7fc00000", "0x7f800000", "0xff800000", "0xc0000000", "0x80000002", "0x40800000", "0x01000000", "0x47ffe000", "0xc1400000"]

@@ -23,6 +23,7 @@ use tiler_ir::shape::ShapeError;
 
 use super::super::error::{ArtifactBuildError, ArtifactDiagnostic, ProvenanceField};
 use super::super::expr::AbiType;
+use super::super::realization::codec::RealizationCodecError;
 
 /// A governed component schema of the artifact model.
 ///
@@ -647,6 +648,17 @@ pub(crate) enum ArtifactCodecError {
         /// The model's own typed diagnostic.
         cause: ArtifactDiagnostic,
     },
+    /// The framed delivered-realization record did not decode.
+    ///
+    /// Distinct from [`Self::ModelObligation`], which carries the record's
+    /// disagreement with the *artifact* around it. This one is the record
+    /// failing on its own terms — a bad domain, a non-canonical table, a
+    /// dangling reference, an unknown family or provenance tag — before any
+    /// cross-check could run.
+    DeliveredRealization {
+        /// The record codec's own typed rejection.
+        cause: Box<RealizationCodecError>,
+    },
 }
 
 impl fmt::Display for ArtifactCodecError {
@@ -664,6 +676,7 @@ impl Error for ArtifactCodecError {
             Self::InvalidShape { cause } => Some(cause),
             Self::ModelRule { cause } => Some(cause.as_ref()),
             Self::ModelObligation { cause } | Self::IdentityDerivation { cause } => Some(cause),
+            Self::DeliveredRealization { cause } => Some(cause.as_ref()),
             Self::Truncated { .. }
             | Self::TrailingBytes { .. }
             | Self::TrailingManifestBytes { .. }

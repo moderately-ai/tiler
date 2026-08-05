@@ -23,6 +23,7 @@ use super::model::{
     ArtifactEnvelope, MAX_FEATURES, MAX_INTERFACE_ENTRIES, MAX_INTERFACE_SHAPE_RANK,
     MAX_SECTION_BYTES, MAX_SECTIONS, MAX_TEXT_BYTES,
 };
+use tiler_ir::numerics::{CompilerBuildRole, FactEvidenceBasis, FactSourceProvenance};
 use tiler_ir::semantic::OutputKey;
 
 /// Proves one projected envelope fits every governed encoder budget.
@@ -144,14 +145,26 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
 /// Proves every encoded text run fits the reader's per-run budget.
 ///
 /// Most of these are governed keys whose own constructors already bound them
-/// well below the parser budget, and checking them again costs nothing. One is
-/// not: a numerical realization's profile key is a `&'static str` chosen by the
-/// producing build (`tiler_ir::schedule::NumericalRealization`), so nothing
-/// bounds it before it reaches this encoder. Without this check an artifact
-/// could encode and then fail to decode, which would break the symmetry the
-/// encoder's documentation claims.
+/// well below the parser budget, and checking them again costs nothing. Two
+/// families are not. A numerical realization's profile key is a `&'static str`
+/// chosen by the producing build (`tiler_ir::schedule::NumericalRealization`),
+/// so nothing bounds it before it reaches this encoder. And the
+/// delivered-realization record's provenance text — the authority and guarantee
+/// identities, each compiler build's implementation, version and build string,
+/// and each execution environment's five fields — arrives from whichever profile
+/// declared the fact, bounded by `tiler_ir::numerics`'s own
+/// `MAX_PROVENANCE_TEXT_BYTES` completeness rule rather than by this manifest's.
+/// Without these rows an artifact could encode a text run no other manifest
+/// field is permitted to carry, which would break the symmetry the encoder's
+/// documentation claims.
 fn check_text_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
     let mut texts: Vec<&str> = Vec::new();
+    let record = envelope.realization();
+    texts.push(record.profile().key.as_str());
+    for row in record.evidence() {
+        texts.push(row.profile().key.as_str());
+        push_provenance_text(&mut texts, row.source());
+    }
     texts.extend(envelope.features().iter().map(String::as_str));
     texts.extend(envelope.inputs().iter().map(|input| input.key.as_str()));
     texts.extend(envelope.outputs().iter().map(|output| output.key.as_str()));
@@ -200,4 +213,35 @@ fn check_text_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecEr
         codec_limit(text.len(), MAX_TEXT_BYTES, CodecLimitKind::TextBytes)?;
     }
     Ok(())
+}
+
+/// Collects every text run one provenance statement writes.
+///
+/// Exhaustive over the basis vocabulary with no wildcard arm, so a fourth
+/// evidence basis carrying text stops the build here rather than encoding a run
+/// this budget never saw.
+fn push_provenance_text<'a>(texts: &mut Vec<&'a str>, source: &'a FactSourceProvenance) {
+    texts.push(source.authority_identity().key());
+    match source.basis() {
+        FactEvidenceBasis::GovernedGuarantee { guarantee } => texts.push(guarantee.key()),
+        FactEvidenceBasis::ExternalGuarantee { reference } => texts.push(reference.key()),
+        FactEvidenceBasis::Measurement { contexts } => {
+            for context in contexts {
+                for build in context.compiler_builds() {
+                    if let CompilerBuildRole::ProviderDefined(identity) = build.role() {
+                        texts.push(identity.key());
+                    }
+                    texts.push(build.implementation());
+                    texts.push(build.version());
+                    texts.extend(build.build());
+                }
+                let environment = context.environment();
+                texts.push(environment.platform());
+                texts.push(environment.platform_version());
+                texts.push(environment.platform_build());
+                texts.push(environment.architecture());
+                texts.push(environment.hardware());
+            }
+        }
+    }
 }

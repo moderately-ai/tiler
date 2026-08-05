@@ -55,6 +55,8 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 
+use tiler_ir::numerics::{CANONICAL_DIMENSIONS, DIMENSION_COUNT};
+
 use super::BackendFeatureRequirement;
 use super::model::{ARTIFACT_DOMAIN_LABEL, LENGTH_BYTES, STAGE_KEY_DOMAIN, framed, stage_key};
 use super::{
@@ -70,6 +72,12 @@ use super::{
     RouteResourceDimension, RouteResourceRequirement, SchemaVersion, SelectedProvider,
     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
     VariantSpec, VerifiedArtifactProgram,
+};
+use super::{
+    DeliveredRealizationBuilder, DeliveredRealizationRecord, DimensionBehaviour, EntryRealization,
+    FactSourceProvenance, HonouringMeans, NumericalDimension, NumericalObligationKey, PolicyLocus,
+    ProvenanceIdentity, ScalarArithmeticSubject, SemanticOccurrence, TargetEvidenceDeclaration,
+    overlapping_behaviour,
 };
 
 // The seven items this suite shares with `crate::proof::tests` are `pub(crate)`
@@ -1745,6 +1753,106 @@ pub(super) fn rules() -> FeasibilityRuleSetRef {
     }
 }
 
+/// Builds the delivered-realization record every artifact fixture must carry.
+///
+/// Derived from the packaged entries' own realization rather than written out,
+/// which is what lets one helper serve every fixture in this file whatever
+/// numerical contract its program schedules: the eight overlapping dimensions
+/// come from [`overlapping_behaviour`], and the three the scheduled realization
+/// does not carry take the strict values that contract implies. A fixture whose
+/// realization changed would otherwise need its record edited beside it, and the
+/// two would drift.
+///
+/// `entries` is the flat **declared** packaged-entry count — every variant's
+/// entries, summed — because [`ArtifactProgramBuilder::declare_realization`]
+/// takes the space a producer can see and `build` remaps it.
+///
+/// One obligation, at the computation locus of occurrence 0, so every fixture
+/// exercises a `Required` disposition and a canonical obligation range rather
+/// than only the all-`NotRequired` shape.
+pub(crate) fn realization_record(
+    profile: &TargetProfileRef,
+    numerical: NumericalRealization,
+    entries: u32,
+) -> DeliveredRealizationRecord {
+    let entry = EntryRealization::of(numerical);
+    let mut resolutions =
+        [DimensionBehaviour::Transform(NumericalPermission::Forbidden); DIMENSION_COUNT];
+    for dimension in CANONICAL_DIMENSIONS {
+        resolutions[dimension.index()] =
+            overlapping_behaviour(dimension, entry).unwrap_or(match dimension {
+                NumericalDimension::ApproximateIntrinsics => {
+                    DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden)
+                }
+                NumericalDimension::MaterializationRounding => {
+                    DimensionBehaviour::Rounding(MaterializationRounding::NearestTiesToEven)
+                }
+                // Reciprocal transform, the third dimension no scheduled
+                // realization carries. Written as the remaining arm rather than
+                // a wildcard over all eleven, so a dimension leaving the
+                // overlapping set stops the build here.
+                _ => DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+            });
+    }
+    let subject = ScalarArithmeticSubject::f32().identity();
+    let mut record = DeliveredRealizationBuilder::new(profile.clone());
+    record
+        .declare_scalar_arithmetic(subject.clone(), resolutions)
+        .expect("the fixture contract");
+    record
+        .require(
+            &subject,
+            NumericalDimension::Contraction,
+            NumericalObligationKey::new(SemanticOccurrence::new(0), PolicyLocus::Computation),
+            resolutions[NumericalDimension::Contraction.index()],
+            TargetEvidenceDeclaration {
+                declared: resolutions[NumericalDimension::Contraction.index()],
+                means: HonouringMeans::SupportedExactly,
+                profile: profile.clone(),
+                source: FactSourceProvenance::governed(
+                    ProvenanceIdentity::new("tiler.test.baseline", 1),
+                    ProvenanceIdentity::new("tiler.test.guarantee", 1),
+                ),
+            },
+        )
+        .expect("the fixture obligation");
+    for entry in 0..entries {
+        record
+            .bind_entry(entry, &subject)
+            .expect("a packaged entry");
+    }
+    record.build().expect("the fixture record")
+}
+
+/// Declares the fixture record for a draft that packages one program once.
+///
+/// The overwhelmingly common shape in this file, spelled once so a fixture that
+/// is *not* that shape is visible by not using it.
+pub(super) fn declare_realization(
+    draft: &mut ArtifactProgramBuilder,
+    program: &VerifiedKernelProgram,
+) {
+    declare_realization_over(draft, program, 1);
+}
+
+/// Declares the fixture record for a draft packaging one program `variants` times.
+pub(super) fn declare_realization_over(
+    draft: &mut ArtifactProgramBuilder,
+    program: &VerifiedKernelProgram,
+    variants: u32,
+) {
+    let numerical = program
+        .stages()
+        .next()
+        .expect("a packaged program has a stage")
+        .kernel()
+        .numerical();
+    let stages = u32::try_from(program.stages().len()).expect("a bounded stage table fits u32");
+    draft
+        .declare_realization(realization_record(&profile(), numerical, stages * variants))
+        .expect("the fixture record");
+}
+
 pub(super) fn prepared_requirement(
     required: u64,
     relation: TargetPropertyRequirementRelation,
@@ -1810,6 +1918,7 @@ pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram 
             },
         )
         .expect("strict-affine variant");
+    declare_realization(&mut draft, &program);
     draft.build().expect("verified strict-affine artifact")
 }
 
@@ -1877,6 +1986,7 @@ pub(crate) fn build_artifact(
     draft
         .push_variant(program, variant(&formulas, descriptor, b"fused"))
         .unwrap();
+    declare_realization(&mut draft, program);
     draft.build().unwrap()
 }
 
@@ -1925,6 +2035,7 @@ pub(super) fn partial_window_artifact() -> VerifiedArtifactProgram {
     draft
         .push_variant(&program, partial_window_variant(descriptor))
         .unwrap();
+    declare_realization(&mut draft, &program);
     draft.build().unwrap()
 }
 
@@ -2455,6 +2566,7 @@ fn identity_ignores_payload_and_provider_declaration_order() {
         draft
             .push_variant(&alternate, variant(&formulas, spare, b"alternate"))
             .unwrap();
+        declare_realization_over(&mut draft, &program, 2);
         draft.build().unwrap()
     };
 
@@ -2490,6 +2602,7 @@ fn identity_ignores_expression_assembly_order() {
         draft
             .push_variant(&program, variant(&formulas, descriptor, b"fused"))
             .unwrap();
+        declare_realization(&mut draft, &program);
         draft.build().unwrap()
     };
 
@@ -2617,6 +2730,7 @@ fn a_reached_capability_revision_changes_identity() {
         draft
             .push_variant(&program, variant(&formulas, descriptor, b"fused"))
             .unwrap();
+        declare_realization(&mut draft, &program);
         draft.build().unwrap()
     };
 
@@ -2884,6 +2998,7 @@ fn accepts_a_complete_prepared_entry_requirement() {
         entry: 0,
     }];
     draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
     let artifact = draft.build().unwrap();
     let deferred = artifact
         .variants()
@@ -3133,6 +3248,12 @@ fn rejects_an_empty_portfolio() {
     let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_provider(selection(provider)).unwrap();
+    // A record with no entry binding, because there is no packaged entry to
+    // bind: what is under test is the empty portfolio, and a record naming an
+    // entry this draft does not have would be refused for that instead.
+    draft
+        .declare_realization(realization_record(&profile(), strict(), 0))
+        .expect("a record over no packaged entry");
     let diagnostics = draft.build().expect_err("an empty portfolio is rejected");
     assert!(
         diagnostics
@@ -3152,6 +3273,7 @@ fn rejects_an_artifact_that_selected_no_provider() {
     draft
         .push_variant(&program, variant(&formulas, descriptor, b"fused"))
         .unwrap();
+    declare_realization(&mut draft, &program);
     let error = draft.build().expect_err("unattributed plans are rejected");
     assert_eq!(
         error.diagnostics(),
@@ -3179,6 +3301,7 @@ fn rejects_an_expression_no_use_site_reaches() {
     draft
         .push_variant(&program, variant(&formulas, descriptor, b"fused"))
         .unwrap();
+    declare_realization(&mut draft, &program);
     assert_eq!(
         draft
             .build()
@@ -3202,6 +3325,7 @@ fn rejects_a_payload_no_entry_realizes() {
     draft
         .push_variant(&program, variant(&formulas, descriptor, b"fused"))
         .unwrap();
+    declare_realization(&mut draft, &program);
     assert_eq!(
         draft
             .build()
@@ -3232,6 +3356,7 @@ fn packages_one_payload_per_delivery_position() {
     let mut spec = variant(&formulas, first, b"fused");
     spec.entries[0].implementation.payloads = vec![first, second];
     draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
     let artifact = draft.build().expect("both positions are realized");
 
     assert_eq!(artifact.delivery_positions(), 2);
@@ -3279,6 +3404,7 @@ fn delivery_order_and_count_are_both_artifact_identity() {
         let mut spec = variant(&formulas, declared[0], b"fused");
         spec.entries[0].implementation.payloads = declared;
         draft.push_variant(&program, spec).unwrap();
+        declare_realization(&mut draft, &program);
         draft
             .build()
             .expect("every declared payload is realized")
@@ -3364,6 +3490,7 @@ fn rejects_a_payload_reached_from_two_delivery_positions() {
     spec.entries[0].implementation.payloads = vec![first, second];
     spec.entries[1].implementation.payloads = vec![second, first];
     draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
     let diagnostics = draft
         .build()
         .expect_err("one object cannot serve two delivery positions")
@@ -3397,6 +3524,7 @@ fn rejects_one_payload_at_two_positions_of_one_entry() {
     let mut spec = variant(&formulas, descriptor, b"fused");
     spec.entries[0].implementation.payloads = vec![descriptor, descriptor];
     draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
     assert_eq!(
         draft
             .build()
@@ -3426,6 +3554,7 @@ fn rejects_two_entries_claiming_one_backend_entry() {
     draft
         .push_variant(&second, variant(&formulas, descriptor, b"fused"))
         .unwrap();
+    declare_realization_over(&mut draft, &first, 2);
     assert_eq!(
         draft
             .build()
@@ -3517,6 +3646,7 @@ fn evaluation_reports_an_unbound_root_rather_than_guessing() {
     let mut spec = variant(&formulas, descriptor, b"fused");
     spec.entries[0].launch.preconditions = vec![predicate];
     draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
     let artifact = draft.build().unwrap();
 
     let facts = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight).build();
@@ -3748,6 +3878,7 @@ fn an_artifact_encodes_an_entry_key_longer_than_the_digest_bound() {
     draft
         .push_variant(&program, variant(&formulas, descriptor, &long_key))
         .unwrap();
+    declare_realization(&mut draft, &program);
     let artifact = draft.build().unwrap();
 
     let bytes = artifact.encode().expect("the envelope encodes");
@@ -4135,6 +4266,7 @@ fn artifact_identity_size_grows_linearly_with_the_abi_arena() {
             let mut spec = variant(&formulas, descriptor, b"fused");
             spec.entries[0].launch.preconditions = vec![grown];
             draft.push_variant(&program, spec).unwrap();
+            declare_realization(&mut draft, &program);
             let artifact = draft.build().unwrap();
 
             let nodes = artifact.expressions().len();
@@ -4298,6 +4430,7 @@ pub(crate) fn requiring_artifact(requirements: &[RouteRequirement]) -> VerifiedA
             .require_route(variant, requirement.clone())
             .expect("each requirement names a distinct subject");
     }
+    declare_realization(&mut draft, &program);
     draft.build().unwrap()
 }
 
@@ -4571,6 +4704,7 @@ fn two_route_requirements_naming_one_subject_are_refused() {
             route_feature("tiler.metal.route-requirement.a", 2, b"x"),
         )
         .unwrap();
+    declare_realization(&mut draft, &program);
     let artifact = draft.build().unwrap();
     assert_eq!(
         artifact

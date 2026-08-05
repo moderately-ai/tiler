@@ -5461,6 +5461,7 @@ mod tests {
         ToolComponent, VariantSpec, VerifiedArtifactProgram,
     };
     use tiler_build::BoundMetalCompileDeclaration;
+    use tiler_build::realization::translate;
     use tiler_compiler::session::{Compilation, PlanAlternative};
     use tiler_ir::program::abi::ExprNode;
     use tiler_ir::program::{
@@ -6125,6 +6126,7 @@ mod tests {
             })
             .collect();
 
+        let declared_profile = profile.clone();
         let variant = builder
             .push_variant(
                 program,
@@ -6147,6 +6149,24 @@ mod tests {
                 .require_route(variant, requirement.clone())
                 .expect("each declared route requirement names a distinct subject");
         }
+        // The delivered realization, transcribed from this plan's own compiler
+        // evidence through the one exhaustive translation. This fixture assembles
+        // the artifact by hand rather than through `assemble_plan_artifact`, so
+        // it reaches the translation directly — which is the point: a consumer
+        // that packages a checked plan itself still states the realization from
+        // the compiler's evidence rather than inventing one.
+        let packaged_entries =
+            u32::try_from(program.stages().len()).expect("a bounded stage table fits u32");
+        builder
+            .declare_realization(
+                translate(
+                    plan.delivered_realization(),
+                    &declared_profile,
+                    packaged_entries,
+                )
+                .expect("the plan's compiler evidence translates"),
+            )
+            .expect("the record agrees with the packaged portfolio");
         builder.build().expect("the assembled artifact verifies")
     }
 

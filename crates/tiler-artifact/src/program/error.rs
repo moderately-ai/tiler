@@ -27,6 +27,7 @@ use super::expr::{
     TargetPropertyKeyError,
 };
 use super::model::ARTIFACT_DOMAIN_LABEL;
+use super::realization::codec::RealizationCodecError;
 use super::requirement::{RouteRequirementError, RouteRequirementSubject};
 
 /// An artifact-owned entity category used by typed handle and closure errors.
@@ -356,6 +357,20 @@ pub enum ArtifactBuildError {
     NumericalContractMismatch,
     /// A plan variant declared a different target profile than its siblings.
     TargetProfileMismatch,
+    /// The delivered-realization record was declared twice.
+    ///
+    /// One artifact delivers one realization. A second declaration would either
+    /// silently replace the first or leave the builder holding two answers to
+    /// one question, and a transactional builder refuses rather than choosing.
+    RealizationRedeclared,
+    /// The delivered-realization record names a profile the portfolio does not.
+    ///
+    /// Reported from both directions, because either can be declared first: a
+    /// record offered against packaged variants that disagree with it, and a
+    /// variant offered against a record that does. The whole-artifact
+    /// cross-check would catch both at `build`; refusing at insertion is what
+    /// keeps the rejection pointed at the statement that caused it.
+    RealizationProfileMismatch,
     /// A plan variant declared a different entry count than its program has stages.
     EntryCardinality {
         /// Stage count of the variant's verified kernel program.
@@ -608,6 +623,8 @@ impl Error for ArtifactBuildError {
             | Self::InterfaceMismatch
             | Self::NumericalContractMismatch
             | Self::TargetProfileMismatch
+            | Self::RealizationRedeclared
+            | Self::RealizationProfileMismatch
             | Self::EntryCardinality { .. }
             | Self::EmptyDelivery { .. }
             | Self::DeliveryCardinality { .. }
@@ -690,7 +707,11 @@ impl Error for RecordedArtifactIdentityError {}
 /// Each variant names an obligation proven by
 /// [`super::ArtifactProgramBuilder::build`]. [`ArtifactDiagnostic::rule`]
 /// returns the stable rule identifier a consumer can surface in an explanation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// Not `Copy`: [`Self::DeliveredRealization`] carries the record codec's own
+/// typed cause rather than erasing it into a rule identifier, and that cause
+/// owns the profiles and behaviours it names.
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ArtifactDiagnostic {
     /// The artifact packages no plan variant.
@@ -730,12 +751,36 @@ pub enum ArtifactDiagnostic {
         /// Maximum byte count.
         limit: usize,
     },
+    /// The artifact declared no delivered-realization record.
+    ///
+    /// Every executable artifact rests on declared honouring means, so absence
+    /// is refused rather than carried as a permissive realization every reader
+    /// would have to rediscover.
+    MissingDeliveredRealization,
+    /// A delivered-realization entry binding names no packaged entry.
+    ///
+    /// A producer states a flat ordinal over (variant declaration rank, declared
+    /// entry ordinal), so an ordinal past the artifact's own entry count is a
+    /// producer statement about an entry that does not exist. Refused rather
+    /// than dropped, because a dropped binding would leave a real entry unbound
+    /// and the record would then be rejected for the wrong reason.
+    DeliveredRealizationEntryOutOfRange {
+        /// Declared packaged-entry ordinal the binding named.
+        entry: u32,
+        /// Packaged entries the artifact holds.
+        entries: usize,
+    },
+    /// The delivered-realization record disagrees with the artifact it describes.
+    DeliveredRealization {
+        /// The record codec's own typed cause.
+        cause: Box<RealizationCodecError>,
+    },
 }
 
 impl ArtifactDiagnostic {
     /// Returns the stable verification-rule identifier for this diagnostic.
     #[must_use]
-    pub const fn rule(self) -> &'static str {
+    pub const fn rule(&self) -> &'static str {
         match self {
             Self::EmptyPortfolio => "empty-portfolio",
             Self::MissingSelectedProvider => "missing-selected-provider",
@@ -745,6 +790,14 @@ impl ArtifactDiagnostic {
             Self::AmbiguousPayloadDelivery { .. } => "ambiguous-payload-delivery",
             Self::AmbiguousCanonicalKey { .. } => "ambiguous-canonical-key",
             Self::IdentityLimit { .. } => "identity-limit",
+            Self::MissingDeliveredRealization => "missing-delivered-realization",
+            Self::DeliveredRealizationEntryOutOfRange { .. } => {
+                "delivered-realization-entry-out-of-range"
+            }
+            // The record's own rule identifier, forwarded rather than collapsed:
+            // a consumer that surfaces this reads which of the record's
+            // nineteen rules refused, not merely that one did.
+            Self::DeliveredRealization { cause } => cause.rule(),
         }
     }
 }
@@ -755,7 +808,23 @@ impl fmt::Display for ArtifactDiagnostic {
     }
 }
 
-impl Error for ArtifactDiagnostic {}
+impl Error for ArtifactDiagnostic {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::DeliveredRealization { cause } => Some(cause),
+            Self::EmptyPortfolio
+            | Self::MissingSelectedProvider
+            | Self::UnusedExpression
+            | Self::UnusedPayload
+            | Self::DuplicateBackendEntry
+            | Self::AmbiguousPayloadDelivery { .. }
+            | Self::AmbiguousCanonicalKey { .. }
+            | Self::IdentityLimit { .. }
+            | Self::MissingDeliveredRealization
+            | Self::DeliveredRealizationEntryOutOfRange { .. } => None,
+        }
+    }
+}
 
 /// Recoverable failure from consuming whole-artifact verification.
 ///

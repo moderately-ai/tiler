@@ -76,4 +76,14 @@ Each control names the population it covers and is a check that can fail.
 
 **A retained result is a positive claim that outlives its producer.** Only re-running this spike detects drift from the source beside it; nothing in the gate reaches here.
 
+## Re-run — the delivered-realization record, and what did not move
+
+**Fact.** `wire-the-delivered-realization-record-into-the-artifact` made every executable artifact carry a delivered-realization record, so `harness/src/envelope.rs` stopped *producing* an artifact — `ArtifactProgramBuilder::build` refuses a draft without one. It kept compiling, which is exactly why this spike had to be re-run rather than checked: a `cargo check` over the nested workspace was clean throughout.
+
+**Measurement**, taken on that ticket's tree based at `55d1d09f`, on the same host and toolchain as the run above, and retained as [the delivered-realization result](results/envelope-digest-coverage-macos-27.0-2026-08-05-delivered-realization.tsv) rather than over the 2026-08-05 file, which is evidence taken at another commit.
+
+**The finding reproduced exactly.** All 36 verdict rows — 35 classes and the sweep — carry the same `shipped`, `neutered`, and attribution values as the 2026-08-05 run, the two whole-run substitutions included: they remain the only members of the `only-bundle-digest` set, and every other corruption is still refused by `decode_artifact` on its own, by the same named boundary. The comparison counted the rows it compared, so "no differences" cannot be confused with "the comparison did not run".
+
+**Exactly one recorded quantity moved, and it is the population rather than a verdict.** The envelope grew from 113,303 to 118,225 bytes — the record's canonical bytes fold into the artifact identity the manifest carries, and the manifest carries the record itself — so the sweep is 118,225 × 2 = 236,450 decodes where it was 226,606, and every derived offset in the class table shifted with it. Every one of those decodes is refused, as every one of the smaller run's was. The frame restatements above are what make that a checked shift rather than a perturbation aimed at the wrong bytes: they were required to hold against the new bytes before any row was written, and they did.
+
 See [the ticket's outcome](../../../tickets/decide-whether-the-bundle-envelope-section-digest-is-redundant.md) for what was decided on this evidence.

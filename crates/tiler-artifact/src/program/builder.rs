@@ -26,7 +26,7 @@ use tiler_ir::shape::Shape;
 
 use super::codec::{ArtifactEnvelope, PayloadContent, PayloadMetadata};
 use super::error::{
-    AbiExprUse, ArtifactBuildError, ArtifactEntityKind, ArtifactLimitKind,
+    AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactLimitKind,
     ArtifactVerificationError, invalid_handle, limit,
 };
 use super::expr::{
@@ -44,8 +44,9 @@ use super::model::{
     BackendPayloadDescriptor, BindingData, BindingKind, BindingTargetData, DeferredPredicateData,
     EntryData, InterfaceComponentData, InterfaceEntryData, LaunchData, RoutingPolicy,
     SchemaVersion, SelectedProvider, StoredBackendEntry, VariantData, VerifiedArtifactProgram,
-    encode_identity,
+    encode_identity, packaged_entry_positions,
 };
+use super::realization::DeliveredRealizationRecord;
 use super::requirement::RouteRequirement;
 use super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
@@ -199,6 +200,18 @@ pub struct ArtifactProgramBuilder {
     expression_phases: Vec<AvailabilityPhase>,
     expression_interface_only: Vec<bool>,
     variants: Vec<VariantData>,
+    /// The delivered-realization record a producer declared, if it has yet.
+    ///
+    /// The one `Option` in the wiring, and it is the *draft's* state rather than
+    /// the artifact's: a transactional builder is incomplete until it is built,
+    /// and [`Self::build`] turns the absence into
+    /// [`ArtifactDiagnostic::MissingDeliveredRealization`] rather than into a
+    /// third state the product carries.
+    ///
+    /// Held in the producer's **declared** entry space; `build` remaps it once.
+    ///
+    /// [`ArtifactDiagnostic::MissingDeliveredRealization`]: super::ArtifactDiagnostic::MissingDeliveredRealization
+    realization: Option<DeliveredRealizationRecord>,
     subject: Option<PortfolioSubject>,
     /// Delivery positions the first accepted entry established, if any.
     ///
@@ -237,6 +250,7 @@ impl ArtifactProgramBuilder {
             expression_phases: Vec::new(),
             expression_interface_only: Vec::new(),
             variants: Vec::new(),
+            realization: None,
             subject: None,
             delivery_positions: None,
             routing: RoutingPolicy::StablePriority,
@@ -776,20 +790,103 @@ impl ArtifactProgramBuilder {
         Ok(())
     }
 
+    /// Declares the numerical realization this artifact delivers.
+    ///
+    /// Required: [`Self::build`] refuses a draft that never called this. ADR
+    /// 0076 item 4's measurement is why — under `-fmetal-math-mode=relaxed` the
+    /// emitted module records `air.compile.fast_math_disable` while every
+    /// floating-point operation carries a fast-math licence, so a consumer that
+    /// inferred the realization from any readable proxy would read the opposite
+    /// of the truth. An artifact without the record leaves that consumer with
+    /// nothing but proxies.
+    ///
+    /// # A typed producer assertion, and what this layer can check
+    ///
+    /// This is the low-level seam. It validates the record against the artifact
+    /// — profile equality, subject references, and agreement with every packaged
+    /// entry's own realization statement — and it **cannot** authenticate that a
+    /// caller transcribed a compiler's evidence rather than inventing it. The
+    /// ordinary path is `tiler_build::realization::translate`, which forwards a
+    /// borrowed compiler view without reconstruction; a caller reaching here
+    /// directly is asserting the same thing without that provenance.
+    ///
+    /// # Which entry ordinal to state
+    ///
+    /// The **declared** one: a flat ordinal over (variant declaration rank,
+    /// declared entry ordinal), counting entries across variants in the order
+    /// they were pushed. A producer states the space it can see. [`Self::build`]
+    /// remaps it once into the canonical stage-key space the envelope, the
+    /// identity, and every reader use — the same treatment
+    /// `DeferredPredicateSpec::entry` gets, and for the same reason: a declared
+    /// ordinal is a transient fact of assembly order, and two artifacts that
+    /// differ only in it are one artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactBuildError::RealizationRedeclared`] when a record was
+    /// already declared, or [`ArtifactBuildError::RealizationProfileMismatch`]
+    /// when the record names a profile the already-packaged variants do not.
+    pub fn declare_realization(
+        &mut self,
+        record: DeliveredRealizationRecord,
+    ) -> Result<(), ArtifactBuildError> {
+        if self.realization.is_some() {
+            return Err(ArtifactBuildError::RealizationRedeclared);
+        }
+        if let Some(subject) = &self.subject
+            && subject.profile != *record.profile()
+        {
+            return Err(ArtifactBuildError::RealizationProfileMismatch);
+        }
+        self.realization = Some(record);
+        Ok(())
+    }
+
     /// Verifies the whole artifact and freezes it, or returns the intact builder.
     ///
     /// # Errors
     ///
     /// Returns an [`ArtifactVerificationError`] carrying every whole-artifact
-    /// diagnostic and the recoverable builder when verification fails.
+    /// diagnostic and the recoverable builder when verification fails, including
+    /// [`ArtifactDiagnostic::MissingDeliveredRealization`] for a draft that
+    /// declared no delivered-realization record.
+    ///
+    /// [`ArtifactDiagnostic::MissingDeliveredRealization`]: super::ArtifactDiagnostic::MissingDeliveredRealization
     pub fn build(self) -> Result<VerifiedArtifactProgram, ArtifactVerificationError> {
-        let data = self.assemble();
+        let Some(declared) = self.realization.clone() else {
+            // Nothing further can be assembled: every downstream stage reads a
+            // record, so reporting the absence alone is the whole answer rather
+            // than the first of several.
+            return Err(ArtifactVerificationError {
+                builder: Box::new(self),
+                diagnostics: vec![ArtifactDiagnostic::MissingDeliveredRealization],
+            });
+        };
+        let mut data = self.assemble(declared);
         let mut diagnostics = super::verify::verify_artifact(&data);
+        // The one place the producer's declared entry ordinals become canonical
+        // ones. Run after `verify_artifact` so a draft that is broken for a
+        // simpler reason — an empty portfolio, say — reports that reason first.
+        let positions = packaged_entry_positions(&data.variants);
+        match data.realization.remap_entries(&positions) {
+            Ok(canonical) => data.realization = canonical,
+            Err(entry) => {
+                diagnostics.push(ArtifactDiagnostic::DeliveredRealizationEntryOutOfRange {
+                    entry,
+                    entries: positions.len(),
+                });
+            }
+        }
         if diagnostics.is_empty() {
             // Identity is derived from the canonical envelope so that the bytes
             // a producer stamps and the bytes a decoder re-derives come from
-            // one encoder rather than from two that agree by inspection.
-            match ArtifactEnvelope::project(&data).and_then(|envelope| encode_identity(&envelope)) {
+            // one encoder rather than from two that agree by inspection. The
+            // record is cross-checked on that same envelope, for the same
+            // reason: the decoder's own check runs there.
+            match ArtifactEnvelope::project(&data).and_then(|envelope| {
+                envelope.check_realization()?;
+                encode_identity(&envelope)
+            }) {
                 Ok(identity) => return Ok(VerifiedArtifactProgram { data, identity }),
                 Err(diagnostic) => diagnostics.push(diagnostic),
             }
@@ -800,7 +897,7 @@ impl ArtifactProgramBuilder {
         })
     }
 
-    fn assemble(&self) -> ArtifactProgramData {
+    fn assemble(&self, realization: DeliveredRealizationRecord) -> ArtifactProgramData {
         let (inputs, outputs) = self.subject.as_ref().map_or_else(
             || (Vec::new(), Vec::new()),
             |subject| (subject.inputs.clone(), subject.outputs.clone()),
@@ -818,6 +915,7 @@ impl ArtifactProgramBuilder {
             expression_keys: self.expression_keys.clone(),
             expression_types: self.expression_types.clone(),
             variants: self.variants.clone(),
+            realization,
         }
     }
 
@@ -1253,6 +1351,14 @@ impl ArtifactProgramBuilder {
             if subject.profile != spec.target_profile {
                 return Err(ArtifactBuildError::TargetProfileMismatch);
             }
+        }
+        // The other direction of `declare_realization`'s check, because either
+        // statement can be made first and the second one made is the one that
+        // introduced the disagreement.
+        if let Some(record) = &self.realization
+            && *record.profile() != spec.target_profile
+        {
+            return Err(ArtifactBuildError::RealizationProfileMismatch);
         }
         Ok(PortfolioSubject {
             inputs,

@@ -38,15 +38,16 @@
 //! `require_recorded` was migration state that a required terminal record
 //! contradicts, and it is gone with it.
 //!
-//! **What is not yet true.** No artifact carries one. Binding a record to a
-//! portfolio — required on construction, required on decode, cross-checked
-//! against the artifact's single [`TargetProfileRef`], folded into artifact
-//! identity, and carried across the envelope codec — is
-//! `wire-the-delivered-realization-record-into-the-artifact`'s remaining work,
-//! and none of it is done here. This module is the ratified boundary and its
-//! evidence; the wiring that makes the record *required of an artifact* is a
-//! separate landing, because the manifest schema step and the artifact identity
-//! step it forces are executed completely or not at all.
+//! **And required of an artifact, not only of itself.** Every executable
+//! artifact carries one:
+//! [`ArtifactProgramBuilder::declare_realization`](super::ArtifactProgramBuilder::declare_realization)
+//! is how a producer supplies it, `build` refuses a draft without one, the
+//! record's profile is checked against the artifact's single
+//! [`TargetProfileRef`], its resolutions are cross-checked against every
+//! packaged entry's own realization statement, its canonical bytes are folded
+//! into the artifact identity, and it crosses the envelope codec as one framed
+//! run the decoder re-validates. [`super::VerifiedArtifactProgram::delivered_realization`]
+//! and [`super::DecodedArtifact::delivered_realization`] are total readers.
 //!
 //! # Eleven named fields are eliminated
 //!
@@ -66,7 +67,9 @@ use tiler_ir::numerics::{
     HonouringMeans, NumericalDimension, NumericalObligationKey, ScalarArithmeticSubjectIdentity,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
-use tiler_ir::schedule::NumericalRealization;
+use tiler_ir::schedule::{
+    ExceptionalValueAssumption, NumericalPermission, NumericalRealization, SubnormalMode,
+};
 
 use super::keys::TargetProfileRef;
 
@@ -461,15 +464,20 @@ impl TargetEvidence {
 /// the compiler and `tiler-build` are what prove its semantic meaning, and this
 /// record says so rather than implying it was checked here.
 ///
-/// The entry ordinal names one packaged executable entry. Which ordinal space
-/// that is — declared order, or the canonical stage-key order the envelope
-/// stores entries in — is fixed by the artifact wiring that binds a record to a
-/// portfolio, and this record is deliberately agnostic: it carries the
-/// association a producer states and [`codec::validate_against_artifact`] checks
-/// it against the entry sequence its caller supplies, in that caller's own
-/// order. `wire-the-delivered-realization-record-into-the-artifact` owns fixing
-/// the space at the builder, and the remap a canonical space would need is not
-/// written here because nothing calls it yet.
+/// The entry ordinal names one packaged executable entry, and this record is
+/// deliberately agnostic about which ordinal space that is: it carries the
+/// association a producer states, and [`codec::validate_against_artifact`]
+/// checks it against the entry sequence its caller supplies, in that caller's
+/// own order.
+///
+/// The artifact wiring fixes the space, exactly as it does for
+/// `DeferredPredicateData::entry`. A producer states a **flat declared** ordinal
+/// over (variant declaration rank, declared entry ordinal), and
+/// [`ArtifactProgramBuilder::build`](super::ArtifactProgramBuilder::build)
+/// remaps it once into the **flat canonical** ordinal over (routing rank,
+/// canonical stage-key entry) that every reader and the wire then carry. See
+/// [`ArtifactProgramBuilder::declare_realization`](super::ArtifactProgramBuilder::declare_realization)
+/// for why a producer states the declared space and never the canonical one.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EntryPolicyBinding {
     entry: u32,
@@ -618,6 +626,39 @@ impl DeliveredRealizationRecord {
             binding.encode(&mut bytes);
         }
         bytes
+    }
+
+    /// Rewrites every entry binding through a packaged-entry position map.
+    ///
+    /// `positions[declared]` is the canonical packaged-entry ordinal of the
+    /// declared one. The result is re-sorted, because a remap does not preserve
+    /// the canonical `(entry, subject)` order the record's own encoder requires
+    /// — which is exactly why this is a rebuild rather than an in-place edit.
+    ///
+    /// Nothing else moves: subjects, obligations, evidence, and the derived
+    /// dispositions are all stated in spaces the entry order does not touch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the declared ordinal a binding named when it lies outside the
+    /// artifact's packaged-entry range.
+    pub(super) fn remap_entries(&self, positions: &[u32]) -> Result<Self, u32> {
+        let mut bindings = Vec::with_capacity(self.bindings.len());
+        for binding in &self.bindings {
+            let declared = binding.entry();
+            let canonical = positions
+                .get(usize::try_from(declared).expect("u32 fits every supported host usize"))
+                .ok_or(declared)?;
+            bindings.push(EntryPolicyBinding::new(*canonical, binding.subject()));
+        }
+        bindings.sort_unstable();
+        Ok(Self {
+            profile: self.profile.clone(),
+            evidence: self.evidence.clone(),
+            subjects: self.subjects.clone(),
+            obligations: self.obligations.clone(),
+            bindings: bindings.into_boxed_slice(),
+        })
     }
 
     /// Assembles a record from already-canonical parts.
@@ -1031,17 +1072,88 @@ impl DeliveredRealizationBuilder {
     }
 }
 
-/// The behaviour one entry's [`NumericalRealization`] states on a dimension.
+/// The eight numerical dimensions one packaged entry's own realization states.
+///
+/// # Why the cross-check subject is its own record
+///
+/// The record is compared against an entry's realization on **both** sides of
+/// the codec, and the two sides hold different values for the same eight facts.
+/// A builder holds the shared IR's [`NumericalRealization`], whose contract key
+/// is a `&'static str` a compiling build chose. A decoder holds an owned-key
+/// dispatch record, whose contract key arrived as bytes — the split
+/// `super::codec`'s `NumericalFacts` documents as decided rather than pending.
+/// Naming the eight behaviours once lets one exhaustive
+/// [`overlapping_behaviour`] serve both, instead of two matches that could
+/// drift.
+///
+/// Neither the contract key nor the canonical NaN bit pattern is carried: the
+/// record states behaviours, and a cross-check that compared a key would be
+/// comparing the profile the two sides already agree on through
+/// [`DeliveredRealizationRecord::profile`].
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct EntryRealization {
+    /// Treatment of subnormal inputs.
+    pub input_subnormals: SubnormalMode,
+    /// Treatment of subnormal results.
+    pub result_subnormals: SubnormalMode,
+    /// Whether contraction is permitted.
+    pub contraction: NumericalPermission,
+    /// Whether ordered reassociation is permitted.
+    pub reassociation: NumericalPermission,
+    /// Whether reduction contributors may be permuted.
+    pub permutation: NumericalPermission,
+    /// Whether observable signed-zero distinctions may be eliminated.
+    pub signed_zero: NumericalPermission,
+    /// Whether NaN values may be assumed absent.
+    pub nan_assumptions: ExceptionalValueAssumption,
+    /// Whether infinity values may be assumed absent.
+    pub infinity_assumptions: ExceptionalValueAssumption,
+}
+
+impl EntryRealization {
+    /// Projects the shared IR's scheduled realization onto its eight behaviours.
+    ///
+    /// The destructuring is exhaustive and field-named, so widening
+    /// [`NumericalRealization`] to a ninth consumable dimension is a build error
+    /// here rather than a cross-check that silently stops covering it.
+    #[must_use]
+    pub const fn of(realization: NumericalRealization) -> Self {
+        let NumericalRealization {
+            profile_key: _,
+            canonical_arithmetic_nan_bits: _,
+            input_subnormals,
+            result_subnormals,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
+        } = realization;
+        Self {
+            input_subnormals,
+            result_subnormals,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
+        }
+    }
+}
+
+/// The behaviour one entry's [`EntryRealization`] states on a dimension.
 ///
 /// `None` for the three dimensions the scheduled realization does not carry —
 /// reciprocal transform, approximate intrinsics, and materialization rounding.
-/// Written as one exhaustive match so widening the realization to a ninth
+/// Written as one exhaustive match so widening the entry statement to a ninth
 /// dimension is a build error here rather than a cross-check that silently stops
 /// covering it.
 #[must_use]
 pub const fn overlapping_behaviour(
     dimension: NumericalDimension,
-    realization: NumericalRealization,
+    realization: EntryRealization,
 ) -> Option<DimensionBehaviour> {
     match dimension {
         NumericalDimension::InputSubnormals => {

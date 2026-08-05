@@ -40,14 +40,19 @@
 use std::fmt;
 
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, ArtifactCodecFailure, ArtifactExecutionPolicy, ArtifactProgramBuilder,
-    AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendKey, BindingKind, BindingSpec,
-    BindingTarget, CapabilityKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata,
-    PayloadPlatform, PayloadProvenance, RecordedArtifactIdentityError,
-    RecordedArtifactProgramIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec,
-    VerifiedArtifactProgram,
+    AbiFactBinder, AbiFacts, ApproximationEnvelope, ArtifactCodecFailure, ArtifactExecutionPolicy,
+    ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendKey,
+    BindingKind, BindingSpec, BindingTarget, CANONICAL_DIMENSIONS, CapabilityKey,
+    CompilationEnvironment, DIMENSION_COUNT, DeliveredRealizationBuilder,
+    DeliveredRealizationRecord, DimensionBehaviour, EntryRealization, EntrySpec,
+    FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
+    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
+    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
+    PolicyLocus, ProvenanceIdentity, RecordedArtifactIdentityError,
+    RecordedArtifactProgramIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
+    SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec, VerifiedArtifactProgram,
+    overlapping_behaviour,
 };
 use tiler_compiler::session::{
     Compilation, CompileFailure, CompileRequest, NumericalContract, PlanAlternative, compile,
@@ -412,7 +417,7 @@ fn assemble(
         .push_variant(
             program,
             VariantSpec {
-                target_profile: profile_ref,
+                target_profile: profile_ref.clone(),
                 feasibility_rules: rules,
                 // Empty, and that is the measured CPU result rather than an
                 // omission: this profile declares its workgroup bound as an
@@ -433,8 +438,87 @@ fn assemble(
         )
         .map_err(|_| VerticalError::Package("the variant does not package the bound plan"))?;
     builder
+        .declare_realization(realization_record(
+            &profile_ref,
+            EntryRealization::of(
+                program
+                    .stages()
+                    .next()
+                    .ok_or(VerticalError::Package("the packaged program has no stage"))?
+                    .kernel()
+                    .numerical(),
+            ),
+            u32::try_from(program.stages().len())
+                .map_err(|_| VerticalError::Package("the stage table exceeds a u32"))?,
+        ))
+        .map_err(|_| VerticalError::Package("the record does not agree with the portfolio"))?;
+    builder
         .build()
         .map_err(|_| VerticalError::Package("the assembled artifact does not verify"))
+}
+
+/// Builds the delivered-realization record every executable artifact carries.
+///
+/// The eleven resolutions are derived from the packaged program's own scheduled
+/// realization rather than restated here, so this harness cannot describe a
+/// contract its plan does not schedule. `entries` is the flat declared
+/// packaged-entry count; one variant means it is the program's stage count.
+///
+/// The obligation is stated at the computation locus of occurrence 0 with
+/// `SupportedExactly` means, which is what the strict contract this spike
+/// compiles under actually rests on. A harness that invented a relaxation it did
+/// not need would be writing a fact rather than recording one.
+fn realization_record(
+    profile: &TargetProfileRef,
+    entry: EntryRealization,
+    entries: u32,
+) -> DeliveredRealizationRecord {
+    let mut resolutions =
+        [DimensionBehaviour::Transform(NumericalPermission::Forbidden); DIMENSION_COUNT];
+    for dimension in CANONICAL_DIMENSIONS {
+        resolutions[dimension.index()] =
+            overlapping_behaviour(dimension, entry).unwrap_or(match dimension {
+                NumericalDimension::ApproximateIntrinsics => {
+                    DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden)
+                }
+                NumericalDimension::MaterializationRounding => {
+                    DimensionBehaviour::Rounding(MaterializationRounding::NearestTiesToEven)
+                }
+                // Reciprocal transform, the third dimension no scheduled
+                // realization carries. The remaining arm rather than a wildcard
+                // over all eleven, so a dimension leaving the overlapping set
+                // stops the build here.
+                _ => DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+            });
+    }
+    let subject = ScalarArithmeticSubject::f32().identity();
+    let mut record = DeliveredRealizationBuilder::new(profile.clone());
+    record
+        .declare_scalar_arithmetic(subject.clone(), resolutions)
+        .expect("the selected scalar contract");
+    record
+        .require(
+            &subject,
+            NumericalDimension::Contraction,
+            NumericalObligationKey::new(SemanticOccurrence::new(0), PolicyLocus::Computation),
+            resolutions[NumericalDimension::Contraction.index()],
+            TargetEvidenceDeclaration {
+                declared: resolutions[NumericalDimension::Contraction.index()],
+                means: HonouringMeans::SupportedExactly,
+                profile: profile.clone(),
+                source: FactSourceProvenance::governed(
+                    ProvenanceIdentity::new(profile.key.as_str(), 1),
+                    ProvenanceIdentity::new("tiler.spike.strict-f32-guarantee", 1),
+                ),
+            },
+        )
+        .expect("the obligation this packaged route relies on");
+    for entry in 0..entries {
+        record
+            .bind_entry(entry, &subject)
+            .expect("a packaged entry");
+    }
+    record.build().expect("the record this artifact delivers")
 }
 
 /// Reads the artifact's declared interface and binds its extents.

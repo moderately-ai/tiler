@@ -39,7 +39,8 @@ use tiler_ir::program::abi::{AbiArenaTraversal, canonical_arena_traversal, compa
 
 use super::MAX_ARTIFACT_IDENTITY_BYTES;
 use super::codec::{
-    ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow, position as node_at,
+    ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow,
+    canonical_entry_positions, position as node_at,
 };
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind, RecordedArtifactIdentityError};
 use super::expr::{
@@ -51,6 +52,7 @@ use super::keys::{
     BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetRef, PayloadDigest,
     RepresentationKey, TargetProfileRef,
 };
+use super::realization::DeliveredRealizationRecord;
 use super::requirement::{RouteRequirement, push_requirements};
 
 /// Versioned domain separator of one packaged artifact's canonical identity.
@@ -219,7 +221,19 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// the canonical-coverage step recorded when it moved the stage key from `v1`
 /// to `v2` and held this domain, and `docs/artifact-abi.md` carries it as the
 /// artifact ledger's own rule rather than as a one-off.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v14\0";
+///
+/// # Why this is a `v15` step
+///
+/// Raised to `v15` when every artifact gained the required delivered-realization
+/// record and this identity began folding its canonical bytes. Two artifacts
+/// that deliver one numerical contract by different **means** — one honouring a
+/// dimension exactly, the other only under a declared relaxation — were
+/// indistinguishable in `v14` bytes, because a means is not a behaviour and no
+/// `v14` field carried one. They are different artifacts to any consumer
+/// comparing generated output against a reference, so a cache holding one must
+/// miss for the other, and the domain step is what makes the old subject
+/// incomparable with the complete one rather than merely unlikely to collide.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v15\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -852,6 +866,36 @@ pub(super) struct ArtifactProgramData {
     pub(super) expression_keys: Vec<Vec<u8>>,
     pub(super) expression_types: Vec<AbiType>,
     pub(super) variants: Vec<VariantData>,
+    /// The numerical realization this artifact delivered.
+    ///
+    /// Not an `Option`: every executable artifact rests on declared honouring
+    /// means, so the absence a migration would need is refused at
+    /// [`super::ArtifactProgramBuilder::build`] rather than carried here as a
+    /// third state every reader would have to rediscover.
+    ///
+    /// Entry bindings are in the **flat canonical** packaged-entry space —
+    /// `build` remaps the producer's declared ordinals once, so this record, the
+    /// envelope's, and a decoded artifact's are one value rather than three
+    /// spellings of it.
+    pub(super) realization: DeliveredRealizationRecord,
+}
+
+/// Maps each declared packaged-entry ordinal to its canonical position.
+///
+/// Flat over (variant, entry). Variant order is routing priority and is
+/// retained, so only entry positions within a variant move, and the rule that
+/// moves them is [`canonical_entry_positions`]'s rather than a second definition
+/// of it.
+pub(super) fn packaged_entry_positions(variants: &[VariantData]) -> Vec<u32> {
+    let mut flat = Vec::new();
+    let mut base = 0_u32;
+    for variant in variants {
+        let stage_keys: Vec<Vec<u8>> = variant.program.stages().map(stage_key).collect();
+        let entry_of = canonical_entry_positions(&stage_keys);
+        flat.extend(entry_of.iter().map(|canonical| base + canonical));
+        base += ordinal(entry_of.len());
+    }
+    flat
 }
 
 /// Opaque canonical bytes identifying one verified artifact program.
@@ -1078,6 +1122,23 @@ impl VerifiedArtifactProgram {
     #[must_use]
     pub const fn routing_policy(&self) -> RoutingPolicy {
         self.data.routing
+    }
+
+    /// Returns the numerical realization this artifact delivered.
+    ///
+    /// A **total** reader: there is no absent state to rediscover, because the
+    /// builder refuses a draft that declared no record. A consumer comparing
+    /// generated output against a CPU reference reads the honouring means here
+    /// rather than reconstructing it from the request, the selected compiler
+    /// flags, or the target's name — ADR 0076 item 4's measurement is that every
+    /// such proxy can state the opposite of the truth.
+    ///
+    /// Entry bindings name the flat canonical packaged-entry ordinal: variants
+    /// in routing priority order, and within each variant its entries in the
+    /// canonical stage-key order [`VariantRef::entries`] reports.
+    #[must_use]
+    pub const fn delivered_realization(&self) -> &DeliveredRealizationRecord {
+        &self.data.realization
     }
 
     /// Returns how many delivery positions this artifact carries a payload for.
@@ -2261,6 +2322,12 @@ pub(super) fn encode_identity(
     for (variant, order) in envelope.variants().iter().zip(&orders) {
         push_variant(&mut bytes, envelope, &arena, variant, order, &payload_keys)?;
     }
+    // The delivered-realization record, folded last and framed. Two artifacts
+    // delivering one contract by different means are not the same artifact, so
+    // the means, the provenance, and the locus-keyed obligations all enter the
+    // identity — through the record's own domain-separated canonical encoder
+    // rather than through a second spelling of it here.
+    push_slice(&mut bytes, &envelope.realization().canonical_bytes());
     if bytes.len() > MAX_ARTIFACT_IDENTITY_BYTES {
         return Err(ArtifactDiagnostic::IdentityLimit {
             bytes: bytes.len(),
