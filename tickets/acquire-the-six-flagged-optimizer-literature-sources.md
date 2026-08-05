@@ -1,7 +1,7 @@
 ---
 id: acquire-the-six-flagged-optimizer-literature-sources
 title: Acquire the six flagged optimizer-literature sources
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature]
@@ -9,9 +9,6 @@ scopes: [research/region-search]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, sources, acquisition]
-claimed_from: todo
-assignee: agent-source-acquire
-lease_expires_at: 1785965292
 ---
 ## User-visible outcome
 
