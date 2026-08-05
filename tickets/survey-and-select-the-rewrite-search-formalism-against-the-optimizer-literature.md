@@ -1,7 +1,7 @@
 ---
 id: survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature
 title: Survey and select the rewrite-search formalism against the optimizer literature
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
@@ -9,6 +9,9 @@ scopes: [research/region-search]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-search-formalism
+lease_expires_at: 1785961721
 ---
 ## User-visible outcome
 
