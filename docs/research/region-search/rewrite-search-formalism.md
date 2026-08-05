@@ -6,7 +6,7 @@ title: "The rewrite-search formalism"
 topics: ["optimizer", "search", "rewrites", "equality-saturation", "phase-ordering"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
-disposition: "pending"
+disposition: "adopted"
 implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.optimizer"]
@@ -232,7 +232,7 @@ The optimizer contract's four obligations, each answered against the survivor an
 
 ## Part 8 — outcomes, in the four sanctioned classes
 
-- **Contract update (owed, not landed).** The optimizer contract's "a Cascades-style memo is one possible implementation technique, not a committed architecture" is now answerable, and the invariant "no semantic alternative is pruned on estimated cost" belongs in the contract beside the four surfaces. `docs/compiler/**` is the `contracts/optimizer` scope, which this ticket does not hold, so a carrier ticket owns the edit. Until it lands, this record's `disposition` stays `pending` and the contract's sentence stands.
+- **Contract update — landed 2026-08-05, which is what moved this record's `disposition` to `adopted`.** [`land-the-rewrite-search-formalism-conclusion-in-the-optimizer-contract`](../../../tickets/land-the-rewrite-search-formalism-conclusion-in-the-optimizer-contract.md) was the carrier, because `docs/compiler/**` is the `contracts/optimizer` scope this survey did not hold. The optimizer contract's "Bounded hierarchical search" section now states the selected staged formalism, the three eliminations with the Cascades one marked as the weak step, and the open stage-1 representation question with its two deferred tickets; "The four surfaces the optimizer may consult" carries **no semantic alternative is pruned on estimated cost, at any stage** as an invariant with its own named review rule beside the tier/backend one; and the budget list states that a budget is a count of work performed and that a wall-clock time-out and a cost threshold are both forbidden axes, from Part 6's Orca comparison. **The sentence this record quotes at the top — "a Cascades-style memo is one possible implementation technique, not a committed architecture" — is therefore the pre-carrier text**, quoted because it is what motivated the survey; the contract no longer carries it, and the quotation is retained rather than repointed so that Part 0's framing stays readable as the state the record was written against.
 - **Accepted decision:** none proposed. The survivor is what the contract's existing obligations already imply, and an ADR that recorded "keep doing what the accepted contract requires" would add a governance object without adding a decision. The one genuinely new commitment — the no-cost-pruning invariant — is a contract sentence, and it becomes an ADR only if someone proposes to relax it.
 - **Bounded experiment:** two. One built and reproducible (the phase-ordering witness). One scoped and deliberately not run (Part 7), filed with its trigger.
 - **Deferred with triggers:** the component-level e-graph at stage 1, and the excluding-property gap from Part 1.

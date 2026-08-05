@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature]
-scopes: [contracts/optimizer, contracts/navigation]
+scopes: [contracts/optimizer, contracts/navigation, research/region-search]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contract, optimizer, search, carrier]
@@ -30,6 +30,12 @@ The optimizer contract stops saying "a Cascades-style memo is one possible imple
 - Record what a budget may and may not be, from the record's Orca comparison: a count of work performed, never a wall-clock time-out or a cost threshold, because the same request must compile to the same portfolio twice.
 - Move the record's `disposition` from `pending` to `adopted` **in the same change**, and update the research catalog row that restates it. That field is in `research/region-search`, so this ticket must declare that scope too, or a second commit must carry it — decide which when claiming and say so.
 - Sweep for contract sentences whose truth depended on the old status.
+
+## Scope declaration added by this work
+
+`research/region-search` was added to `scopes`, resolving the choice this ticket's fourth bullet left to the claimant in favour of one commit rather than two. The record's `disposition` field and the contract sentence it gates are one statement — AGENTS.md requires a catalog and the metadata behind it to move in the same change, and splitting them across two commits would leave an intermediate tree in which the contract states a selected formalism while the record that selected it still reads `pending`. That is the stale-status hazard this ticket exists to remove, so reproducing it for one commit would be self-defeating. The scope is required by already-authorized work and is declaration metadata, not a product-scope expansion.
+
+**Verified before adding, not assumed.** `tkt claims` listed three live claims — `agent-slice-role` on `scope-the-sub-tensor-selection-fusion-role` (`research/indexing`), `agent-conversion-pair` on `test-the-directional-conversion-pair-generalization` (`research/semantic-graph`, `research/numerics`), and `agent-wire-realization` on `wire-the-delivered-realization-record-into-the-artifact` (`implementation/*`, `contracts/numerics`, `contracts/artifacts`, `contracts/decisions`) — plus this ticket's own. None holds `research/region-search`, `contracts/optimizer`, or `contracts/navigation`. The scope's globs were read from `ticketsplease.toml` rather than recalled: `research/region-search = ["docs/research/region-search/**", "spikes/region-search/**"]`.
 
 ## Non-goals
 
