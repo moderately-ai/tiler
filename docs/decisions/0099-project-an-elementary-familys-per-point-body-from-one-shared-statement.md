@@ -5,7 +5,7 @@ kind: "decision"
 title: "Project an elementary family's per-point body from one shared statement"
 topics: ["optimizer", "numerics", "operation-extensions"]
 catalog_group: "physical-planning-lowering"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "partial"
 applies_to: ["tiler.contract.optimizer", "tiler.contract.ir"]
 evidence: ["tiler.research.numerics.transformer-nonlinear-normalization-and-reductions"]
@@ -14,7 +14,7 @@ ticket: "admit-the-registered-unary-families-at-the-compiler-request-boundary"
 
 # 0099: Project an elementary family's per-point body from one shared statement
 
-**Status:** proposed
+**Status:** accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator that executed this sweep — with the one-family caveat presented and accepted: the rule has been exercised by exactly one family, and a second family that refutes it supersedes it explicitly rather than being bent to fit it
 
 ## Context
 

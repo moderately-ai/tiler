@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0098-inline-delivery-statement
 title: Accept or reject the inline delivery-statement ADR
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [draft-an-adr-for-the-inline-delivery-statement]
 related: [accept-the-inline-artifact-family-profile-syntax, first-authoritative-ios-metal-compile-declaration]
@@ -53,3 +53,7 @@ Rejecting the record outright is a deletion of one file plus its two catalog row
 ## Closes when
 
 Tom accepts or rejects it.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator. The acceptance sweep executed in the same change: `decision_status` flipped, both catalog views updated, and the frontends contract's proposed-status disclosure corrected to cite the record's authority.

@@ -1,7 +1,7 @@
 ---
 id: carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit
 title: Carry and check the derived index-arithmetic requirement before routing commit
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: []
 related: [emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable, check-synchronization-realization-before-the-routing-commit, separate-metal-launch-index-from-index-and-address-width, declare-a-required-gpu-family-in-the-artifact]
@@ -62,3 +62,7 @@ The exact carrier is consequential: adding a public field or nominal type to `Re
 - Related to [`check-synchronization-realization-before-the-routing-commit`](check-synchronization-realization-before-the-routing-commit.md), which has the same pre-commit placement but already carries its own whole synchronization subject and uses a different comparison authority. Neither subsumes the other.
 - Related to [`separate-metal-launch-index-from-index-and-address-width`](separate-metal-launch-index-from-index-and-address-width.md), whose separation and Apple-family authority this completes at delivery time without recombining launch width, arithmetic, and address width.
 - Do not unblock or accept [`accept-the-public-route-requirement-answer-boundary`](accept-the-public-route-requirement-answer-boundary.md): no backend route row is minted here.
+
+## Authorized — tested draft, 2026-08-05
+
+Tom authorized the tested-draft route at the live decision review in the coordination session, witnessed first-hand by the coordinator: a worker builds the surviving candidate's exact shapes — the nominal requirement on the verified resource record, the artifact schema/identity step, and the Metal adapter's Apple3-threshold comparison against a family vocabulary that starts at Apple5 — with tests, and the exact surface returns to Tom for acceptance before it is treated as accepted. This discharges this ticket's "only if separately authorized" condition and nothing else; the public shapes remain Tom's to accept.

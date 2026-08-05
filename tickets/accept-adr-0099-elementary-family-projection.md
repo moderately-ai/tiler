@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0099-elementary-family-projection
 title: Accept or reject the elementary-family projection ADR
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [land-the-elementary-family-projection-adr]
 related: [admit-the-registered-unary-families-at-the-compiler-request-boundary, complete-the-elementary-projection-adr-frontmatter]
@@ -51,3 +51,7 @@ Rejecting the record outright is a deletion of one file plus its two catalog row
 ## Closes when
 
 Tom accepts or rejects it.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator, with the one-family caveat presented and accepted: a second family that refutes the rule supersedes it explicitly. Sweep executed in the same change: `decision_status` flipped and both catalog views updated; no research or contract frontmatter moves, per this ticket's own derivation.

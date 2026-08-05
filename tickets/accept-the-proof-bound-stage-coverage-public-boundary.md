@@ -1,7 +1,7 @@
 ---
 id: accept-the-proof-bound-stage-coverage-public-boundary
 title: Accept the proof-bound stage-coverage public boundary
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -23,3 +23,7 @@ Tom accepts or amends the public surface `bind-stage-coverage-to-index-refinemen
 The construction boundary (verifier-receipt-only minting), the ADR 0072 unused-authority exclusion, the foreign-graph guard, and proof-gap unrepresentability were each verified by the independent review with the checks watched failing. The known cost is recorded in `measure-executable-coverage-identity-growth-against-the-program-identity-bound`.
 
 Filed at `awaiting-decision` per this board's convention: only Tom closes an acceptance ticket. Amendments go back through a correction dispatch on a new branch; acceptance closes this ticket and releases the drafted-boundary labelling.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator. The surface carries no draft-labelling language in the code (`grep -rn "awaiting\|reviewed draft" crates/tiler-ir/src/program/model.rs crates/tiler-ir/src/program/mod.rs` returns nothing), so the sweep is this record and the catalog of decisions is untouched — the boundary was tracked here rather than in an ADR. The known identity-growth cost was measured before acceptance: exact fit 134n²+3650n+710, refusal at n=695 by labelled extrapolation, ×125 margin at the roadmap's per-layer partition.

@@ -1,7 +1,7 @@
 ---
 id: accept-the-debug-retention-and-stage-outputs-public-surface
 title: Accept the debug-retention and stage-outputs public surface
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [retain-canonical-msl-under-a-debug-expansion-cache-entry, retain-succeeding-metal-stage-tool-output]
@@ -21,3 +21,11 @@ From `retain-succeeding-metal-stage-tool-output` (commit `7bd91ec9`): `tiler-met
 Known follow-up already filed: `carry-a-producer-stated-total-into-a-retained-run` (double-truncation reads as untruncated at exactly the shared bound).
 
 Filed at `awaiting-decision`: only Tom closes an acceptance ticket.
+
+## Delta appended before decision — the producer-stated total
+
+From `carry-a-producer-stated-total-into-a-retained-run`, commit `c39cb814`, `tiler-cache`: `DebugRetention::retaining_with_stated_total(&str, &[u8], usize) -> Result<Self, RetentionRefusal>` (new public method; `usize` so `ToolOutput::total_bytes()` passes with no cast, stored field stays `u64` for framing width), and `RetentionRefusal::RetainedAboveTotal { retained: usize, total: usize }` (new variant on the already-non-exhaustive enum). Both share the single bounded validation path; the stored form is unchanged.
+
+## Decided — accepted, delta included
+
+Accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator, as "accept + delta": the landed surface plus the constructor above. No draft-labelling language exists in the retention code to release (`grep -rn "reviewed draft\|until Tom" crates/tiler-cache/src/expansion/retention.rs crates/tiler-metal-aot/src/record.rs` returns nothing), so the sweep is this record.

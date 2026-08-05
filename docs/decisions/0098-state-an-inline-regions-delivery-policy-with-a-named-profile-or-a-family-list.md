@@ -5,7 +5,7 @@ kind: "decision"
 title: "State an inline region's delivery policy with a named profile or a family list"
 topics: ["frontends", "proc-macros", "apple-targets", "artifacts", "public-boundary"]
 catalog_group: "artifacts-build-toolchains"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "partial"
 applies_to: ["tiler.contract.frontend-integration"]
 evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.apple-targets.compatibility"]
@@ -15,7 +15,7 @@ ticket: "draft-an-adr-for-the-inline-delivery-statement"
 
 # 0098: State an inline region's delivery policy with a named profile or a family list
 
-**Status:** proposed. The *spelling* this record describes is not proposed — Tom accepted it on 2026-07-31 under [`accept-the-inline-artifact-family-profile-syntax`](../../tickets/accept-the-inline-artifact-family-profile-syntax.md), whose Decision section is the source of record, and it is implemented and tested. What is proposed is this record: lifting that decision out of a ticket outcome, where it is unindexed, unreachable from a contract's frontmatter, and hard to find once the ticket is terminal, into the decision catalog. **Nothing here may change what a consumer writes**, and nothing here re-derives the grounds — the eliminations below are quoted from the deciding ticket rather than reconstructed, because a re-derivation risks recording different grounds than the ones Tom decided against. [`accept-adr-0098-inline-delivery-statement`](../../tickets/accept-adr-0098-inline-delivery-statement.md) is where this record becomes accepted; the acceptance is a relayed fact and that ticket keeps its own rollback cheap.
+**Status:** accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator that executed this sweep. The *spelling* this record describes was never in question here — Tom accepted it on 2026-07-31 under [`accept-the-inline-artifact-family-profile-syntax`](../../tickets/accept-the-inline-artifact-family-profile-syntax.md), whose Decision section is the source of record, and it is implemented and tested. What this acceptance decided is the record itself: lifting that decision out of a ticket outcome, where it is unindexed, unreachable from a contract's frontmatter, and hard to find once the ticket is terminal, into the decision catalog. **Nothing here may change what a consumer writes**, and nothing here re-derives the grounds — the eliminations below are quoted from the deciding ticket rather than reconstructed, because a re-derivation risks recording different grounds than the ones Tom decided against. [`accept-adr-0098-inline-delivery-statement`](../../tickets/accept-adr-0098-inline-delivery-statement.md) carried the decision and records the same provenance.
 
 This record is the delivery half of one consumer-visible surface decided on one day. The other half — the expansion cache root — is [ADR 0089](0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md), accepted 2026-07-31, and this record matches its shape deliberately.
 

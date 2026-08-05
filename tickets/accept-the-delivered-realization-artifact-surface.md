@@ -1,7 +1,7 @@
 ---
 id: accept-the-delivered-realization-artifact-surface
 title: Accept the delivered-realization artifact surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [redesign-the-delivered-realization-record-from-typed-evidence]
 related: [record-delivered-numerical-realization, accept-adr-0076-numerical-realizations, carry-the-honourability-fact-provenance-into-the-artifact-record, wire-the-delivered-realization-record-into-the-artifact]
@@ -64,3 +64,7 @@ The redesign dependency is done; its exact tested public diff and call site are 
 - Keep `wire-the-delivered-realization-record-into-the-artifact` blocked on this acceptance ticket.
 - Qualify the completed four-dimension draft as historical evidence and remove its stale current recommendation from downstream briefs.
 - Do not return this ticket to `awaiting-decision` until the compile-checked review packet exists and has passed its targeted checks. Production wiring, codec, readers, identity/schema movement, and rebaselines remain downstream.
+
+## Decided — ratified
+
+Ratified by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator: the design packet at spikes/numerics/delivered-realization-record/ (commit `471f26ac`), including its fork resolution siting the means/dimension/provenance vocabulary in tiler-ir on the superseded record's own reopening trigger. `wire-the-delivered-realization-record-into-the-artifact` is released and owns all production integration, the proposed ADR 0076 and contract corrections applying operatively as part of that wiring.
