@@ -1,19 +1,38 @@
-//! The one crate a Tiler consumer depends on.
+//! The one crate a consumer of Tiler's inline Rust frontend depends on.
 //!
 //! A consumer writes `tiler = { … }` in its manifest and reaches the inline
-//! frontend through [`tensor!`]. Nothing else in the workspace is part of that
-//! contract: the crates under `crates/tiler-*` are the compiler's internals,
-//! and a consumer that has to name one of them to make generated code compile
+//! frontend through [`tensor!`]. Nothing else in the workspace is part of *that*
+//! contract (ADR 0088 item 1): the inline frontend is closed over this crate,
+//! and a consumer whose generated code had to name another crate to compile
 //! would be holding a dependency it never agreed to.
+//!
+//! # This is the inline frontend's facade and not a wider one
+//!
+//! A program that is not written as a `tensor!` region has no entry point here.
+//! Apart from the macro, this crate publishes no way to construct, compile, or
+//! explain a semantic tensor graph; those surfaces live in `tiler-ir` and
+//! `tiler-compiler` today,
+//! and whether they are eventually presented as one coherent public compiler
+//! facade is a separate boundary that has not been decided —
+//! `tiler_compiler::session` is a reviewed experimental draft rather than an
+//! accepted or stabilized API, and `accept-the-public-compiler-facade-boundary`
+//! owns that decision.
+//!
+//! So "internal" is the wrong reading of the other members. What is decided is
+//! that the inline frontend routes through none of them, which is why nothing a
+//! `tensor!` expansion emits names one. What is undecided is which of them a
+//! consumer that does not use this frontend may name, and this crate answers
+//! nothing about it.
 //!
 //! # Why the macro lives in another crate
 //!
 //! Rust restricts a `proc-macro` crate to exporting macros, so the crate that
 //! implements `tensor!` can never also carry the runtime and frontend types a
 //! consumer needs. Making `tiler` the proc-macro crate would therefore cap the
-//! facade at macros forever; leaving `tiler-macros` as the crate consumers
-//! import would either fix the public path as `tiler_macros::tensor!` or force
-//! generated tokens to name internal crates the consumer did not declare.
+//! facade at macros forever; leaving `tiler-macros` as the crate an inline
+//! consumer imports would either fix the public path as `tiler_macros::tensor!`
+//! or force generated tokens to name other workspace crates the consumer did
+//! not declare.
 //!
 //! A normal facade re-exporting the macro is the standard direction and the
 //! one that keeps both properties: the public path stays `tiler::tensor!`, and
@@ -146,10 +165,11 @@ mod route;
 ///
 /// A consumer that dispatches an embedded artifact implements
 /// [`runtime::adapter::RuntimeAdapter`], and every one of that trait's signatures names a
-/// loader type. This crate is the only one a consumer declares, so those names
-/// have to be reachable through it or generated code and hand-written adapters
-/// would both have to spell `tiler_runtime::` — a crate the consumer never asked
-/// for and, by the facade's own contract, must not have to name.
+/// loader type. This crate is the only one an inline-frontend consumer declares,
+/// so those names have to be reachable through it or generated code and
+/// hand-written adapters would both have to spell `tiler_runtime::` — a crate
+/// that consumer never asked for and, by the facade's own contract, must not
+/// have to name.
 ///
 /// # Re-exported whole rather than curated
 ///
