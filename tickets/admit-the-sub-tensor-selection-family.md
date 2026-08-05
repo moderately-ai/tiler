@@ -1,7 +1,7 @@
 ---
 id: admit-the-sub-tensor-selection-family
 title: Admit the sub-tensor selection operation family
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-a-position-selecting-slice-for-the-rotary-table, project-only-the-final-position-logits, admit-live-extent-operands-to-payload-indexing, admit-the-reindex-and-broadcast-operation-families, own-operation-family-support-matrix, reclassify-language-model-work-as-a-conformance-track]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, implementation/ir, implementation/reference, cont
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, operation-families, slice, breadth, class-generic-capability]
+claimed_from: todo
+assignee: agent-sub-tensor
+lease_expires_at: 1785895177
 ---
 ## User-visible outcome
 
