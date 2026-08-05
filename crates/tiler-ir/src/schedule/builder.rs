@@ -20,11 +20,11 @@ use super::error::{
 use super::handles::{InputOrdinal, RegionId, StagingId};
 use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
-    ContractionAxisSource, ExecutionBinding, IndexRegion, KernelSchedule, LogicalAccess,
-    OwnershipProof, OwnershipProofKind, ReductionPass, ReductionTopology, ResourceRequirements,
-    ScalarProgram, ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion,
-    contributor_count, cooperative_tile, derive_requirements, element_count, encode_identity,
-    partial_reduction_axis, partial_reduction_shape,
+    ContractionAxisSource, ContributorOrder, ExecutionBinding, IndexRegion, KernelSchedule,
+    LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass, ReductionTopology,
+    ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
+    VerifiedScheduledRegion, contributor_count, cooperative_tile, derive_requirements,
+    element_count, encode_identity, partial_reduction_axis, partial_reduction_shape,
 };
 use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalRealization};
 use super::synchronization::{ConvergenceEvidence, SynchronizationRule, required_subject};
@@ -36,6 +36,7 @@ use super::{
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
 };
+use crate::shape::Axis;
 
 /// A transactional scheduled-region builder with private storage.
 ///
@@ -810,6 +811,238 @@ fn verify_access_and_semantics(
     Ok(())
 }
 
+/// What one reduction family commits when its contributor domain is empty.
+///
+/// Two obligations rather than two values of one field. An identity-seeded family
+/// names a bit pattern it commits; an identity-less one has no value that could
+/// ever be correct, so what it owes is a *precondition on the domain* instead of
+/// a constant. A typed enum for the reason [`SplitFamily`] is a struct: the
+/// exhaustive match that decides it is what forces a family added later to state
+/// which obligation it carries rather than inherit whichever it resembles.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EmptyDomainContract {
+    /// The family commits these bits when the reduced domain is empty.
+    Identity {
+        /// Empty-reduction identity bit pattern the scalar program declares.
+        bits: u32,
+    },
+    /// The family has no identity, so a non-empty domain is its precondition.
+    NoIdentity,
+}
+
+/// What one scalar program's own algebra decides about a parallel split.
+///
+/// Both parallel topologies need exactly these facts and check different
+/// structures over them, so they are derived once per topology
+/// ([`multi_pass_family`], [`cooperative_family`]) rather than destructured
+/// inline: a family admitted by one admission and not the other would otherwise
+/// be a difference nobody states.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SplitFamily<'a> {
+    /// Reduced axes the scalar program declares.
+    axes: &'a [Axis],
+    /// Contributor combination order the scalar program declares.
+    order: &'a ContributorOrder,
+    /// The family's empty-domain obligation.
+    empty_domain: EmptyDomainContract,
+    /// Whether splitting this family's contributor sequence spends the
+    /// contract's reassociation permission.
+    ///
+    /// True for every sum here, and false for the pinned extrema family alone.
+    /// The exception is the family's own algebra rather than a relaxation of any
+    /// contract: `Maximum` is associative and commutative on *every* binary32
+    /// input — NaN is absorbing and `-0.0 < +0.0` is a total order — so every
+    /// tree over the same contributors returns the same bits and a split changes
+    /// no observable value. Requiring the permission for it would make a legal
+    /// split need one the operation never spends, which is exactly the asymmetry
+    /// `SOFTMAX_F32_FACT_MAXIMUM_FOLD_LEGALITY` states against
+    /// `SOFTMAX_F32_FACT_SUM_FOLD_ORDER`.
+    ///
+    /// The permission is still *recorded* and cross-checked against the region's
+    /// declared realization whatever this says, exactly as
+    /// [`ReductionTopology::Contraction`] records a permission it does not
+    /// consume: a topology disagreeing with its own contract is incoherent
+    /// however the fold behaves.
+    consumes_reassociation: bool,
+    /// Boundary tensor this pass's single read must bind.
+    read_tensor: TensorRole,
+}
+
+/// Decides one family's empty-domain obligation against a pass's contributors.
+///
+/// The identity-seeded arm requires the strict sum's `+0.0`, which every family
+/// carrying an identity here shares — required at each admission rather than at
+/// one of them, so a split cannot introduce a second empty-domain answer. The
+/// identity-less arm requires a non-empty domain, which is what replaces the
+/// constant the family has no correct value for.
+///
+/// **Non-emptiness of the whole sequence is non-emptiness of every partition**,
+/// which is why this needs no per-partition statement and no `has_value` flag on
+/// the partials. The split contract fixes `partitions * contributors_per_partition`
+/// (times the round count, for a tile) as *exactly* the contributor count, and
+/// refuses a zero partition count; a product of nonzero factors equalling a
+/// nonzero total forces every factor nonzero, so each partition folds at least
+/// one contributor and each staged partial is a real maximum. A carried
+/// `has_value` would be a runtime flag that is constantly true — storage in every
+/// slot and a branch in every combine, for a fact the verifier settles here.
+const fn empty_domain_is_satisfied(contract: EmptyDomainContract, contributors: u64) -> bool {
+    match contract {
+        EmptyDomainContract::Identity { bits } => bits == 0.0_f32.to_bits(),
+        EmptyDomainContract::NoIdentity => contributors != 0,
+    }
+}
+
+/// Resolves what one pass of a multi-dispatch split may be, from its program.
+///
+/// A fused prologue belongs to the pass that reads the original inputs: the final
+/// pass reads partials, so re-applying scale and bias there would scale each
+/// partial a second time and squaring one would square an already-folded value.
+/// Both therefore admit a partial pass alone, and the final pass that consumes
+/// their partials is an ordinary [`ScalarProgram::StrictSerialSum`] region.
+///
+/// **The extrema family is the one here whose two passes read different
+/// tensors.** Its partial pass reads the original scores exactly as the serial
+/// extrema pass does, and its final pass folds the staged partials under the
+/// *same* family — which is what makes the split a reassociation of one fold
+/// rather than two reductions composed. A partial pass that read the original
+/// scores and *summed* them is refused, because every sum admitted here reads an
+/// intermediate: a mis-specified extrema partial cannot be admitted as a sum.
+fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<SplitFamily<'_>> {
+    match program {
+        ScalarProgram::StrictSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            ..
+        } => Some(SplitFamily {
+            axes,
+            order,
+            empty_domain: EmptyDomainContract::Identity {
+                bits: *empty_identity_bits,
+            },
+            consumes_reassociation: true,
+            read_tensor: TensorRole::Intermediate,
+        }),
+        ScalarProgram::FusedMultiplyAddSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            contraction,
+            ..
+        } => match pass {
+            ReductionPass::Partial if !contraction => Some(SplitFamily {
+                axes,
+                order,
+                empty_domain: EmptyDomainContract::Identity {
+                    bits: *empty_identity_bits,
+                },
+                consumes_reassociation: true,
+                read_tensor: FIRST_INPUT,
+            }),
+            ReductionPass::Partial | ReductionPass::Final => None,
+        },
+        ScalarProgram::SquaredSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            ..
+        } => match pass {
+            ReductionPass::Partial => Some(SplitFamily {
+                axes,
+                order,
+                empty_domain: EmptyDomainContract::Identity {
+                    bits: *empty_identity_bits,
+                },
+                consumes_reassociation: true,
+                read_tensor: FIRST_INPUT,
+            }),
+            ReductionPass::Final => None,
+        },
+        ScalarProgram::StrictSerialMaximum { axes, order, .. } => Some(SplitFamily {
+            axes,
+            order,
+            empty_domain: EmptyDomainContract::NoIdentity,
+            consumes_reassociation: false,
+            read_tensor: match pass {
+                ReductionPass::Partial => FIRST_INPUT,
+                ReductionPass::Final => TensorRole::Intermediate,
+            },
+        }),
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::StrictAffineU4Dequantize { .. }
+        | ScalarProgram::StrictTensorContraction { .. } => None,
+    }
+}
+
+/// Resolves what a cooperative tile may fold, from its scalar program.
+///
+/// A tile reads the original inputs and commits the reduction's own output in one
+/// dispatch, so every family whose prologue belongs to the pass that reads the
+/// inputs is admissible — there is no later pass here for a prologue to be
+/// applied twice in. That is also why the extrema family needs no pass
+/// distinction: a tile *is* both halves of the split.
+fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
+    match program {
+        ScalarProgram::StrictSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            ..
+        } => Some(SplitFamily {
+            axes,
+            order,
+            empty_domain: EmptyDomainContract::Identity {
+                bits: *empty_identity_bits,
+            },
+            consumes_reassociation: true,
+            read_tensor: TensorRole::Intermediate,
+        }),
+        ScalarProgram::FusedMultiplyAddSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            contraction,
+            ..
+        } => (!contraction).then_some(SplitFamily {
+            axes,
+            order,
+            empty_domain: EmptyDomainContract::Identity {
+                bits: *empty_identity_bits,
+            },
+            consumes_reassociation: true,
+            read_tensor: FIRST_INPUT,
+        }),
+        ScalarProgram::SquaredSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            ..
+        } => Some(SplitFamily {
+            axes,
+            order,
+            empty_domain: EmptyDomainContract::Identity {
+                bits: *empty_identity_bits,
+            },
+            consumes_reassociation: true,
+            read_tensor: FIRST_INPUT,
+        }),
+        // The extrema fold reads the original scores, as its serial and partial
+        // passes do, and stages one maximum per participant. Every slot it reads
+        // back holds a real contributor's value rather than an identity, which is
+        // what `empty_domain_is_satisfied` records the derivation for.
+        ScalarProgram::StrictSerialMaximum { axes, order, .. } => Some(SplitFamily {
+            axes,
+            order,
+            empty_domain: EmptyDomainContract::NoIdentity,
+            consumes_reassociation: false,
+            read_tensor: FIRST_INPUT,
+        }),
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::StrictAffineU4Dequantize { .. }
+        | ScalarProgram::StrictTensorContraction { .. } => None,
+    }
+}
+
 /// Verifies one pass of a split, multi-dispatch reduction.
 ///
 /// The two passes are checked together here rather than as two more arms of the
@@ -836,13 +1069,19 @@ fn verify_multi_pass_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
+    let family = multi_pass_family(&region.index.scalar_program, *pass)
+        .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
     let numerical = &region.index.numerical;
-    // Reassociation is what the split consumes, and it is checked on its own:
-    // contributor order is preserved by construction, so a permitted
-    // permutation neither grants nor substitutes for this permission.
+    // Reassociation is what a split of an order-*sensitive* fold consumes, and it
+    // is checked on its own: contributor order is preserved by construction, so a
+    // permitted permutation neither grants nor substitutes for this permission.
+    // The extrema family consumes nothing, for the reason
+    // [`SplitFamily::consumes_reassociation`] records — but it still declares the
+    // permissions, and a declaration disagreeing with its own realization would be
+    // incoherent whatever the fold's legality.
     if *permits_reassociation != numerical.permits_reassociation()
         || *permits_permutation != numerical.permits_permutation()
-        || !*permits_reassociation
+        || (family.consumes_reassociation && !*permits_reassociation)
         // The bounded profile combines at the element width. A narrower
         // accumulation is a different computation and is refused rather than
         // silently accepted as equivalent.
@@ -850,45 +1089,6 @@ fn verify_multi_pass_semantics(
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
-
-    // A fused prologue belongs to the pass that reads the original inputs. The
-    // final pass reads partial sums, so re-applying scale and bias there would
-    // scale each partial a second time.
-    let (axes, order, empty_identity_bits, read_tensor) = match (&region.index.scalar_program, pass)
-    {
-        (
-            ScalarProgram::StrictSerialSum {
-                axes,
-                order,
-                empty_identity_bits,
-                ..
-            },
-            ReductionPass::Partial | ReductionPass::Final,
-        ) => (axes, order, *empty_identity_bits, TensorRole::Intermediate),
-        (
-            ScalarProgram::FusedMultiplyAddSerialSum {
-                axes,
-                order,
-                empty_identity_bits,
-                contraction,
-                ..
-            },
-            ReductionPass::Partial,
-        ) if !contraction => (axes, order, *empty_identity_bits, FIRST_INPUT),
-        // The squaring prologue likewise belongs to the pass that reads the
-        // original inputs: squaring a partial sum in the final pass would square
-        // an already-folded value.
-        (
-            ScalarProgram::SquaredSerialSum {
-                axes,
-                order,
-                empty_identity_bits,
-                ..
-            },
-            ReductionPass::Partial,
-        ) => (axes, order, *empty_identity_bits, FIRST_INPUT),
-        _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
-    };
 
     let LogicalAccess::ReductionContributor {
         input_shape,
@@ -899,18 +1099,26 @@ fn verify_multi_pass_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    if axes != scheduled_axes
-        || axes != access_axes
-        || order != scheduled_order
-        || order != access_order
-        || empty_identity_bits != 0.0_f32.to_bits()
+    let axes = family.axes;
+    if axes != scheduled_axes.as_slice()
+        || axes != access_axes.as_slice()
+        || family.order != scheduled_order
+        || family.order != access_order
         || input_shape.without_axes(axes) != *output_shape
-        || read.tensor != read_tensor
+        || read.tensor != family.read_tensor
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     let contributors = contributor_count(axes, &read.map)
         .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    // The family's empty-domain obligation, decided against the sequence this
+    // pass's split covers. It sits after the contributor count rather than in the
+    // agreement block above because the identity-less arm is a statement *about*
+    // that count, and the identity-carrying arm's constant is checked here for the
+    // same reason it is checked in the serial arms: one empty-domain answer.
+    if !empty_domain_is_satisfied(family.empty_domain, contributors) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
     let partial_shape = partial_reduction_shape(output_shape, *partition)
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
 
@@ -925,8 +1133,7 @@ fn verify_multi_pass_semantics(
         // The final pass proves it combines exactly one contributor per
         // partition of that same split, reading the staged partial tensor.
         ReductionPass::Final => {
-            partial_reduction_axis(output_shape)
-                .is_some_and(|axis| axes.as_slice() == [axis].as_slice())
+            partial_reduction_axis(output_shape).is_some_and(|axis| axes == [axis].as_slice())
                 && *input_shape == partial_shape
                 && contributors == partition.partitions
                 && region.index.iteration_shape == *output_shape
@@ -946,7 +1153,8 @@ fn verify_multi_pass_semantics(
 /// the region's declared reduction: the split covers the contributor sequence
 /// exactly once each, the participants are the partitions, the iteration domain
 /// runs one invocation per (output, participant) pair, and the reassociation the
-/// split performs is one the contract permits. The *dataflow* half, in
+/// split performs is one the contract permits — or one the family's own algebra
+/// makes free, which is the extrema fold alone. The *dataflow* half, in
 /// [`verify_cooperative_tile`], proves the staging itself is well formed
 /// independently of what is being reduced.
 ///
@@ -974,13 +1182,18 @@ fn verify_cooperative_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
+    let family = cooperative_family(&region.index.scalar_program)
+        .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
     let numerical = &region.index.numerical;
-    // Reassociation is what a split consumes, exactly as it is for a multi-pass
-    // one, and it is required rather than merely recorded: a contract that
-    // forbids reassociation forbids this strategy outright.
+    // Reassociation is what a split of an order-sensitive fold consumes, exactly
+    // as it is for a multi-pass one, and for those families it is required rather
+    // than merely recorded: a contract that forbids reassociation forbids the
+    // strategy outright. The extrema family spends nothing, so a strict contract
+    // admits a tile over it — the whole asymmetry this vocabulary owes the
+    // softmax's two passes.
     if *permits_reassociation != numerical.permits_reassociation()
         || *permits_permutation != numerical.permits_permutation()
-        || !*permits_reassociation
+        || (family.consumes_reassociation && !*permits_reassociation)
         || *accumulation != ArithmeticType::F32
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
@@ -1000,46 +1213,6 @@ fn verify_cooperative_semantics(
         return Err(cooperative(CooperativeTileRule::UnadmittedArrival));
     }
 
-    // A cooperative tile reads the original inputs and commits the reduction's
-    // own output in one dispatch, so every family whose prologue belongs to the
-    // pass that reads the inputs is admissible — there is no later pass here for
-    // a prologue to be applied twice in.
-    let (axes, order, empty_identity_bits, read_tensor) = match &region.index.scalar_program {
-        ScalarProgram::StrictSerialSum {
-            axes,
-            order,
-            empty_identity_bits,
-            ..
-        } => (axes, order, *empty_identity_bits, TensorRole::Intermediate),
-        ScalarProgram::FusedMultiplyAddSerialSum {
-            axes,
-            order,
-            empty_identity_bits,
-            contraction,
-            ..
-        } if !contraction => (axes, order, *empty_identity_bits, FIRST_INPUT),
-        ScalarProgram::SquaredSerialSum {
-            axes,
-            order,
-            empty_identity_bits,
-            ..
-        } => (axes, order, *empty_identity_bits, FIRST_INPUT),
-        ScalarProgram::PointwiseF32(_)
-        | ScalarProgram::StrictAffineU4Dequantize { .. }
-        | ScalarProgram::StrictTensorContraction { .. }
-        // The extrema fold is refused here structurally rather than by policy:
-        // this destructuring binds an `empty_identity_bits` every admitted
-        // program must carry, and the identity-less family has no such field. A
-        // cooperative extrema tile is legal in principle — the fold is
-        // order-insensitive — and admitting one needs a staged-partial contract
-        // that does not rest on an identity, which is the reduction-strategies
-        // work rather than a widening this variant may assume.
-        | ScalarProgram::StrictSerialMaximum { .. }
-        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
-            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
-        }
-    };
-
     let LogicalAccess::ReductionContributor {
         input_shape,
         output_shape,
@@ -1049,16 +1222,13 @@ fn verify_cooperative_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    if axes != scheduled_axes
-        || axes != access_axes
-        || order != scheduled_order
-        || order != access_order
-        // The strict sum's empty result is `+0.0`, and every family here shares
-        // it. Required at the same place the serial and multi-pass arms require
-        // it, so a tile cannot introduce a second empty-domain answer.
-        || empty_identity_bits != 0.0_f32.to_bits()
+    let axes = family.axes;
+    if axes != scheduled_axes.as_slice()
+        || axes != access_axes.as_slice()
+        || family.order != scheduled_order
+        || family.order != access_order
         || input_shape.without_axes(axes) != *output_shape
-        || read.tensor != read_tensor
+        || read.tensor != family.read_tensor
         || write.tensor != TensorRole::Output
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
@@ -1069,9 +1239,18 @@ fn verify_cooperative_semantics(
     // An empty contributor domain commits the declared identity from one
     // invocation with no fold, which is what the serial topology already does
     // and what needs no staging at all. A tile over it would declare a
-    // visibility edge for values no participant produces.
+    // visibility edge for values no participant produces. This refusal is also
+    // where the identity-less family's own precondition is discharged, which is
+    // why `empty_domain_is_satisfied` below can only decide the other arm here.
     if contributors == 0 {
         return Err(cooperative(CooperativeTileRule::EmptyContributorDomain));
+    }
+    // The strict sum's empty result is `+0.0`, and every identity-carrying family
+    // here shares it. Required at the same place the serial and multi-pass
+    // admissions require it, so a tile cannot introduce a second empty-domain
+    // answer.
+    if !empty_domain_is_satisfied(family.empty_domain, contributors) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     // The iteration domain is the output shape with one trailing participant
     // axis — the same layout a partial pass uses, and for the same reason: it
@@ -2812,36 +2991,484 @@ mod tests {
         assert!(bare.build().is_ok());
     }
 
-    /// Every topology but the serial one is refused for the extrema fold.
+    /// A topology that describes no fold is refused for the extrema family.
     ///
-    /// **Fail-closed rather than a legality claim**, and the distinction is worth
-    /// stating: the fold is order-insensitive, so a split or a cooperative tile
-    /// over it is legal in principle. What is missing is a staged-partial
-    /// contract that does not rest on an empty-domain identity, which is
-    /// `implement-parallel-reduction-strategies`' work. Refusing until then is
-    /// the conservative direction, and this asserts the refusal so that widening
-    /// it has to be deliberate.
+    /// The parallel topologies are admitted (below); these two are not, and the
+    /// reasons are different in kind. [`ReductionTopology::None`] says the region
+    /// performs no reduction, which contradicts a scalar program that is one.
+    /// [`ReductionTopology::Contraction`] folds a *contracted index space* stated
+    /// by the topology, which a one-tensor reduction access does not have.
+    /// Neither is a conservative refusal waiting to be widened.
     #[test]
-    fn every_topology_but_the_serial_one_is_refused_for_the_extrema_fold() {
-        let mut split = serial_reduction_builder(maximum_scalar());
-        split.schedule.as_mut().unwrap().reduction = ReductionTopology::MultiPass {
-            pass: ReductionPass::Partial,
-            partition: SPLIT,
-            axes: vec![Axis::new(1)],
-            order: ContributorOrder::OriginalAxisLexicographic,
-            accumulation: ArithmeticType::F32,
-            permits_reassociation: true,
-            permits_permutation: false,
-        };
-        assert!(split.build().is_err());
-
+    fn a_topology_that_describes_no_fold_is_refused_for_the_extrema_family() {
         let mut none = serial_reduction_builder(maximum_scalar());
         none.schedule.as_mut().unwrap().reduction = ReductionTopology::None;
-        assert!(none.build().is_err());
+        assert_eq!(
+            none.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+
+        let mut contraction = serial_reduction_builder(maximum_scalar());
+        contraction.schedule.as_mut().unwrap().reduction = ReductionTopology::Contraction {
+            contracted_shape: Shape::from_dims([6]),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            permits_reassociation: false,
+            permits_permutation: false,
+        };
+        assert_eq!(
+            contraction.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
 
         // The control: the unmodified serial fixture verifies, so the refusals
         // above are about the topology rather than about the fixture.
         assert!(serial_reduction_builder(maximum_scalar()).build().is_ok());
+    }
+
+    /// A split that covers no contributor, for the empty-domain fixtures below.
+    ///
+    /// `partitions` stays nonzero — [`ContributorPartition::covers`] refuses a
+    /// zero partition count outright — so the empty case is expressed by the
+    /// per-partition width alone, which is exactly the shape an identity-seeded
+    /// family is allowed to have and an identity-less one is not.
+    const EMPTY_SPLIT: ContributorPartition = ContributorPartition {
+        partitions: 3,
+        contributors_per_partition: 0,
+    };
+
+    /// Rewrites one pass of a sum split into the extrema fold's own.
+    ///
+    /// The three edits are the whole difference, and each is load-bearing: the
+    /// read binds the original scores where a sum's partial pass binds an
+    /// intermediate, the program is the identity-less fold, and the realization
+    /// is the *strict* one — reassociation forbidden — because a split of this
+    /// family spends no permission. A fixture that relaxed the contract would
+    /// prove the topology admissible without proving the interesting half of it.
+    fn into_extrema_split(builder: &mut ScheduledRegionBuilder, axes: Vec<Axis>, read: TensorRole) {
+        builder.accesses[0].tensor = read;
+        builder.bounds_proofs[0].tensor = read;
+        builder.scalar_program = Some(ScalarProgram::StrictSerialMaximum {
+            axes,
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+        });
+        builder.numerical = Some(strict_numerical());
+        let Some(ReductionTopology::MultiPass {
+            permits_reassociation,
+            ..
+        }) = builder
+            .schedule
+            .as_mut()
+            .map(|schedule| &mut schedule.reduction)
+        else {
+            panic!("the fixture schedules a multi-pass split")
+        };
+        *permits_reassociation = false;
+    }
+
+    /// The partial pass of an extrema split: fold the scores, stage one maximum.
+    fn extrema_partial_builder(partition: ContributorPartition) -> ScheduledRegionBuilder {
+        let mut builder = partial_pass_builder(partition);
+        into_extrema_split(&mut builder, vec![Axis::new(1)], FIRST_INPUT);
+        builder
+    }
+
+    /// The final pass of an extrema split: fold the staged maxima into the result.
+    fn extrema_final_builder(partition: ContributorPartition) -> ScheduledRegionBuilder {
+        let axes = vec![partial_reduction_axis(&Shape::from_dims([2])).expect("rank one fits u32")];
+        let mut builder = final_pass_builder(partition);
+        into_extrema_split(&mut builder, axes, TensorRole::Intermediate);
+        builder
+    }
+
+    /// The cooperative tile over the extrema fold, under a strict contract.
+    fn extrema_cooperative_builder() -> ScheduledRegionBuilder {
+        let ReductionTopology::CooperativeWorkgroup {
+            partition,
+            tile,
+            axes,
+            order,
+            accumulation,
+            arrival,
+            ..
+        } = cooperative_topology(cooperative_tile_fixture())
+        else {
+            panic!("the cooperative fixture builds a cooperative topology")
+        };
+        let mut builder = cooperative_builder_parts(
+            SPLIT,
+            6,
+            ReductionTopology::CooperativeWorkgroup {
+                partition,
+                tile,
+                axes,
+                order,
+                accumulation,
+                permits_reassociation: false,
+                permits_permutation: false,
+                arrival,
+            },
+            strict_numerical(),
+        );
+        builder.accesses[0].tensor = FIRST_INPUT;
+        builder.bounds_proofs[0].tensor = FIRST_INPUT;
+        builder.scalar_program = Some(maximum_scalar());
+        builder
+    }
+
+    /// Both passes of an extrema split verify under a contract that forbids
+    /// reassociation, and the same split of a *sum* still refuses.
+    ///
+    /// **This is the asymmetry the softmax's two passes owe.** The pinned extrema
+    /// family is associative and commutative on every binary32 input, so a split
+    /// of it changes no observable value and spends no permission —
+    /// `SOFTMAX_F32_FACT_MAXIMUM_FOLD_LEGALITY`. The denominator's sum is the
+    /// other fact, `SOFTMAX_F32_FACT_SUM_FOLD_ORDER`, and the control here is
+    /// what keeps the widening from reading as a relaxation of both: the same
+    /// split shape, the same strict realization, the same fixture — and the sum
+    /// is refused.
+    #[test]
+    fn an_extrema_split_verifies_under_a_strict_contract_and_a_sum_split_does_not() {
+        let partial = extrema_partial_builder(SPLIT)
+            .build()
+            .expect("an extrema partial pass verifies under a strict contract");
+        let combine = extrema_final_builder(SPLIT)
+            .build()
+            .expect("an extrema final pass verifies under a strict contract");
+        assert_eq!(partial.region().schedule.work_items, 6);
+        assert_eq!(combine.region().schedule.work_items, 2);
+        // The split is admitted without spending anything, which is the claim.
+        assert_eq!(
+            partial.requirements().reassociation,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            partial.requirements().permutation,
+            NumericalPermission::Forbidden
+        );
+
+        // The perturbation that fires: the same split of the sum, under the same
+        // strict realization, is still refused.
+        let mut summed = partial_pass_builder(SPLIT);
+        summed.numerical = Some(strict_numerical());
+        let Some(ReductionTopology::MultiPass {
+            permits_reassociation,
+            ..
+        }) = summed
+            .schedule
+            .as_mut()
+            .map(|schedule| &mut schedule.reduction)
+        else {
+            panic!("the fixture schedules a multi-pass split")
+        };
+        *permits_reassociation = false;
+        assert_eq!(
+            summed.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "splitting an ordered sum still consumes the reassociation permission"
+        );
+    }
+
+    /// A cooperative tile over the extrema fold verifies under a strict contract.
+    ///
+    /// The same claim as the split's, at the topology whose partials never leave
+    /// the workgroup: the staged fold seeds at the first slot, which is
+    /// admissible for an identity-less family exactly because the tile's staging
+    /// coverage and the exact launch prove every slot was written by a
+    /// participant that folded at least one contributor.
+    #[test]
+    fn a_cooperative_extrema_tile_verifies_under_a_strict_contract() {
+        let verified = extrema_cooperative_builder()
+            .build()
+            .expect("an extrema tile verifies under a strict contract");
+        assert_eq!(verified.requirements().local_memory_bytes, 12);
+        assert_eq!(
+            verified.requirements().reassociation,
+            NumericalPermission::Forbidden
+        );
+
+        // The control: the fixture's own sum, under the same strict realization
+        // and the same tile, is refused.
+        let ReductionTopology::CooperativeWorkgroup {
+            partition,
+            tile,
+            axes,
+            order,
+            accumulation,
+            arrival,
+            ..
+        } = cooperative_topology(cooperative_tile_fixture())
+        else {
+            panic!("the cooperative fixture builds a cooperative topology")
+        };
+        let summed = cooperative_builder_parts(
+            SPLIT,
+            6,
+            ReductionTopology::CooperativeWorkgroup {
+                partition,
+                tile,
+                axes,
+                order,
+                accumulation,
+                permits_reassociation: false,
+                permits_permutation: false,
+                arrival,
+            },
+            strict_numerical(),
+        );
+        assert_eq!(
+            summed.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a tile over an ordered sum still consumes the reassociation permission"
+        );
+    }
+
+    /// A split of the identity-less fold is refused over an empty domain.
+    ///
+    /// The obligation that replaces the empty-domain constant the family has no
+    /// correct value for, checked where a split could otherwise hide it: a
+    /// partition covering no contributor has nothing to stage. The control is the
+    /// *same* split under the bare sum, which verifies because that family
+    /// commits `+0.0` — so the refusal is about the family and not about the
+    /// zero extent or the zero-width partition.
+    #[test]
+    fn an_empty_split_is_refused_for_the_identity_less_fold() {
+        let empty_input = Shape::from_dims([2, 0]);
+        let empty = |builder: &mut ScheduledRegionBuilder| {
+            let LogicalAccess::ReductionContributor { input_shape, .. } =
+                &mut builder.accesses[0].map
+            else {
+                panic!("the fixture reads a reduction contributor");
+            };
+            *input_shape = empty_input.clone();
+            let BoundsProofKind::ReductionDomain { input_shape, .. } =
+                &mut builder.bounds_proofs[0].kind
+            else {
+                panic!("the fixture proves a reduction domain");
+            };
+            *input_shape = empty_input.clone();
+        };
+
+        let mut maximum = extrema_partial_builder(EMPTY_SPLIT);
+        empty(&mut maximum);
+        assert_eq!(
+            maximum.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "no partition of an identity-less fold may cover nothing"
+        );
+
+        let mut bare = partial_pass_builder(EMPTY_SPLIT);
+        empty(&mut bare);
+        assert!(bare.build().is_ok());
+    }
+
+    /// A partial pass that reads the original scores and *sums* them is refused.
+    ///
+    /// The defect a split of this family must not be able to spell. Every sum
+    /// admitted as a partial pass either reads an intermediate — the bare sum —
+    /// or carries a prologue that changes what it folds, so a region that read the
+    /// scores and added them would be an extrema partial pass computing the wrong
+    /// function. Only the scalar program changes here; the topology, the split,
+    /// the accesses, and the proofs are the verifying fixture's.
+    #[test]
+    fn a_partial_pass_that_reads_the_scores_and_sums_them_is_refused() {
+        let mut summed = extrema_partial_builder(SPLIT);
+        summed.numerical = Some(reassociating_numerical());
+        let Some(ReductionTopology::MultiPass {
+            permits_reassociation,
+            ..
+        }) = summed
+            .schedule
+            .as_mut()
+            .map(|schedule| &mut schedule.reduction)
+        else {
+            panic!("the fixture schedules a multi-pass split")
+        };
+        // Reassociation permitted, so the refusal cannot be the permission: the
+        // sum is refused because it reads the scores, not because it is a split.
+        *permits_reassociation = true;
+        summed.scalar_program = Some(ScalarProgram::StrictSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        });
+        assert_eq!(
+            summed.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+
+        // The control: the extrema program over the identical region verifies.
+        assert!(extrema_partial_builder(SPLIT).build().is_ok());
+    }
+
+    /// A split extrema region shares identity with neither neighbour.
+    ///
+    /// The concrete form of the step verdict. Admitting the parallel topologies
+    /// introduced no tag and moved no field: an extrema split encodes under the
+    /// scalar-program tag `0x28` and the topology tag `0x33`, both already in
+    /// their existing positions, and the pair was simply unreachable before. So
+    /// no previously encodable region's bytes moved — which
+    /// `the_strict_f32_region_has_its_recorded_canonical_identity` pins — while
+    /// the newly reachable regions still separate from every neighbour they could
+    /// be confused with: the same fold serially, the same split summed, and the
+    /// other pass of their own split.
+    #[test]
+    fn a_split_extrema_region_has_its_own_canonical_identity() {
+        let partial = extrema_partial_builder(SPLIT).build().unwrap();
+        let combine = extrema_final_builder(SPLIT).build().unwrap();
+        let serial = serial_reduction_builder(maximum_scalar()).build().unwrap();
+        let summed = partial_pass_builder(SPLIT).build().unwrap();
+        let tile = extrema_cooperative_builder().build().unwrap();
+        let identities = [
+            partial.canonical_identity(),
+            combine.canonical_identity(),
+            serial.canonical_identity(),
+            summed.canonical_identity(),
+            tile.canonical_identity(),
+        ];
+        for (position, identity) in identities.iter().enumerate() {
+            assert!(
+                !identities[..position].contains(identity),
+                "identity {position} collided with an earlier region"
+            );
+        }
+    }
+
+    /// The pinned NaN-propagating extrema family, restated for this test.
+    ///
+    /// `maximum_f32` in `crates/tiler-reference/src/softmax.rs` is the authority
+    /// and evaluates it for the registered operation; this crate cannot call it,
+    /// because `tiler-reference` depends on `tiler-ir` and not the other way
+    /// round. So the schedule-level evidence restates the two rules that make the
+    /// family what it is — NaN is absorbing, and `-0.0 < +0.0` is a total order —
+    /// and the control in
+    /// [`a_split_of_the_extrema_fold_agrees_with_the_serial_fold_bit_for_bit`]
+    /// fails if this is `maxNum` (Rust's `f32::max`) instead, which is the other
+    /// ADR 0023 family and the one a careless restatement would land on.
+    fn maximum_f32(left: f32, right: f32) -> f32 {
+        if left.is_nan() || right.is_nan() {
+            return f32::NAN;
+        }
+        #[allow(
+            clippy::float_cmp,
+            reason = "the extrema family is defined by exact IEEE-754 comparison"
+        )]
+        let equal = left == right;
+        if equal {
+            // Equal under IEEE comparison means two identical values or the pair
+            // `(-0.0, +0.0)` in some order. The bitwise `and` selects `+0.0` for
+            // the second without branching on which side it arrived from, and is
+            // the identity for the first.
+            return f32::from_bits(left.to_bits() & right.to_bits());
+        }
+        if left > right { left } else { right }
+    }
+
+    /// The operands at which associativity could fail, and nothing else.
+    const EXTREMA_CORPUS: [f32; 7] = [
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+    ];
+
+    /// Folds one contiguous run left to right, as the emitted serial loop does.
+    fn fold(values: &[f32], combine: fn(f32, f32) -> f32) -> f32 {
+        values
+            .iter()
+            .copied()
+            .reduce(combine)
+            .expect("every fold below is over a non-empty run")
+    }
+
+    /// Folds a sequence through the partition boundaries a split declares.
+    fn fold_split(values: &[f32], width: usize, combine: fn(f32, f32) -> f32) -> f32 {
+        let partials: Vec<f32> = values
+            .chunks(width)
+            .map(|partition| fold(partition, combine))
+            .collect();
+        fold(&partials, combine)
+    }
+
+    /// The split and the serial fold agree bit for bit on every corpus sequence.
+    ///
+    /// The legality claim executed at the schedule level, over the split a
+    /// *verified* region declares rather than one this test invents: the
+    /// partition width comes back out of the built region's topology, so a change
+    /// to what the verifier admits changes what this folds. Every assignment of
+    /// the corpus to the six contributor positions is enumerated, which is
+    /// exhaustive over the operands the property could fail at.
+    ///
+    /// Two controls, because the agreement is worth nothing without them. The
+    /// *same* split boundaries applied to an ordered sum change its bits, so the
+    /// split shape is one a reassociation difference can travel through; and the
+    /// family restated here is not `f32::max`, so the agreement is this family's
+    /// rather than any maximum's.
+    #[test]
+    fn a_split_of_the_extrema_fold_agrees_with_the_serial_fold_bit_for_bit() {
+        let verified = extrema_partial_builder(SPLIT).build().unwrap();
+        let ReductionTopology::MultiPass { partition, .. } = verified.region().schedule.reduction
+        else {
+            panic!("the extrema partial fixture schedules a multi-pass split")
+        };
+        let width = usize::try_from(partition.contributors_per_partition)
+            .expect("the fixture's partition width fits usize");
+        let contributors = usize::try_from(
+            partition
+                .total_contributors()
+                .expect("the fixture's split does not overflow"),
+        )
+        .expect("the fixture's contributor count fits usize");
+
+        let mut sequence = vec![0.0_f32; contributors];
+        let corpus = EXTREMA_CORPUS.len();
+        for encoded in 0..corpus.pow(u32::try_from(contributors).expect("six fits u32")) {
+            let mut remaining = encoded;
+            for slot in &mut sequence {
+                *slot = EXTREMA_CORPUS[remaining % corpus];
+                remaining /= corpus;
+            }
+            assert_eq!(
+                fold_split(&sequence, width, maximum_f32).to_bits(),
+                fold(&sequence, maximum_f32).to_bits(),
+                "the split disagrees with the serial fold at {sequence:?}"
+            );
+        }
+
+        // The first control. `1.0 + 2^-24` rounds back to `1.0` under
+        // ties-to-even, so the serial fold absorbs every addend and returns
+        // `1.0`; the split adds the small terms to each other first, where they
+        // are exact, and the partials then reach the result. The corpus above
+        // cannot show this — every one of its values is exact under addition —
+        // so the control needs its own sequence rather than a search.
+        let half_ulp = f32::EPSILON / 2.0;
+        let absorbing = vec![1.0_f32, half_ulp, half_ulp, half_ulp, half_ulp, half_ulp];
+        assert_eq!(absorbing.len(), contributors);
+        let add = |left: f32, right: f32| left + right;
+        assert_eq!(fold(&absorbing, add).to_bits(), 1.0_f32.to_bits());
+        assert_ne!(
+            fold_split(&absorbing, width, add).to_bits(),
+            fold(&absorbing, add).to_bits(),
+            "these split boundaries cannot expose a reassociation difference at all"
+        );
+
+        // The second control: the family folded above is the NaN-propagating one
+        // and not `maxNum`, which returns the number beside a NaN.
+        assert!(
+            EXTREMA_CORPUS
+                .iter()
+                .any(
+                    |left| EXTREMA_CORPUS
+                        .iter()
+                        .any(|right| maximum_f32(*left, *right).to_bits()
+                            != left.max(*right).to_bits())
+                ),
+            "the family folded here is indistinguishable from `maxNum` on this corpus"
+        );
     }
 
     /// Builds the final pass that combines those partials into `[2]`.

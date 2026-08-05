@@ -939,10 +939,9 @@ fn emit_cooperative(
             rule: "cooperative-access-count",
         });
     };
-    let prologue =
-        reduction_prologue(plan.scalar).ok_or(KernelLoweringError::UnsupportedRegion {
-            rule: "cooperative-scalar-program",
-        })?;
+    let fold = reduction_fold(plan.scalar).ok_or(KernelLoweringError::UnsupportedRegion {
+        rule: "cooperative-scalar-program",
+    })?;
     let read_buffer = builder.declare_buffer(BufferParameter {
         tensor: read.tensor,
         component_role: None,
@@ -984,7 +983,7 @@ fn emit_cooperative(
         split: SplitInvocation { output, partition },
         local,
         active,
-        prologue,
+        fold,
     };
 
     if cooperative.round_barrier.is_some() {
@@ -996,7 +995,7 @@ fn emit_cooperative(
         let commit = builder.constant(KernelConstant::Index(cooperative.commit_count))?;
         let commits = builder.compare(CompareOp::IndexLessThan, local, commit)?;
         builder.predicated(commits, |builder| {
-            let total = emit_staged_fold(builder, cooperative, staging)?;
+            let total = emit_staged_fold(builder, cooperative, staging, fold.combiner)?;
             builder.store(
                 write_buffer,
                 output,
@@ -1070,7 +1069,8 @@ fn emit_loop_carried_cooperative(
             })?;
     emit_round_production(builder, emission, None)?;
     builder.barrier(cooperative.barrier.clone())?;
-    let seed = emit_staged_fold(builder, cooperative, emission.staging)?;
+    let combiner = emission.fold.combiner;
+    let seed = emit_staged_fold(builder, cooperative, emission.staging, combiner)?;
     let results = builder.serial_loop(
         SerialLoopSpec {
             start: 1,
@@ -1092,10 +1092,10 @@ fn emit_loop_carried_cooperative(
                 }),
             )?;
             builder.barrier(cooperative.barrier.clone())?;
-            let staged = emit_staged_fold(builder, cooperative, emission.staging)?;
-            let sum = builder.binary(BinaryOp::F32Add, accumulator, staged)?;
-            let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
-            Ok(vec![sum])
+            let staged = emit_staged_fold(builder, cooperative, emission.staging, combiner)?;
+            let folded = builder.binary(combiner.op(), accumulator, staged)?;
+            let folded = builder.convert(ConvertOp::CanonicalizeF32Nan, folded)?;
+            Ok(vec![folded])
         },
     )?;
     let total = results
@@ -1158,7 +1158,7 @@ struct CooperativeEmission<'a> {
     split: SplitInvocation,
     local: KernelValueId,
     active: KernelValueId,
-    prologue: ReductionPrologue,
+    fold: ReductionFold,
 }
 
 /// Emits one round's guarded fold and the staged write that publishes it.
@@ -1183,7 +1183,7 @@ fn emit_partition_fold(
     let (read_buffer, read_bounds) = emission.read;
     let SplitInvocation { output, partition } = emission.split;
     let addressing = emission.addressing;
-    let prologue = emission.prologue;
+    let ReductionFold { prologue, combiner } = emission.fold;
     let contributors = emission.plan.contributors_per_partition;
     let seed_contributor =
         emit_partition_contributor(builder, round, partition, None, contributors)?;
@@ -1214,9 +1214,9 @@ fn emit_partition_fold(
             let offset = emit_offset(builder, addressing, output, contributor)?;
             let loaded = builder.load(read_buffer, offset, read_bounds)?;
             let value = emit_prologue(builder, loaded, prologue)?;
-            let sum = builder.binary(BinaryOp::F32Add, accumulator, value)?;
-            let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
-            Ok(vec![sum])
+            let folded = builder.binary(combiner.op(), accumulator, value)?;
+            let folded = builder.convert(ConvertOp::CanonicalizeF32Nan, folded)?;
+            Ok(vec![folded])
         },
     )?;
     results
@@ -1247,10 +1247,20 @@ fn emit_staged_slot(
 }
 
 /// Folds the staged partials in ascending participant order.
+///
+/// **The seed is the first slot, which is admissible only because every slot was
+/// written.** `TailPolicy::Exact` and the intrinsic verifier's
+/// `grid_threads == work_items` rule make every launched invocation satisfy the
+/// producing guard, and the tile's staging-coverage rule proves the participants'
+/// writes are a bijection onto the allocation's slots — so slot zero holds a
+/// participant's own partial rather than an uninitialized value. That argument is
+/// what admits an identity-less family here at all: a seed of `+0.0` would be
+/// wrong for a sum at `-0.0` and unavailable to a maximum, and neither needs one.
 fn emit_staged_fold(
     builder: &mut KernelBuilder,
     cooperative: &CooperativePlan,
     staging: KernelStagingId,
+    combiner: ReductionCombiner,
 ) -> Result<KernelValueId, KernelBuildError> {
     let base = builder.constant(KernelConstant::Index(cooperative.consume_offset))?;
     let seed = builder.staged_load(staging, base, cooperative.consume_phase)?;
@@ -1275,9 +1285,9 @@ fn emit_staged_fold(
                 builder.binary(BinaryOp::IndexAdd, induction, offset)?
             };
             let staged = builder.staged_load(staging, slot, cooperative.consume_phase)?;
-            let sum = builder.binary(BinaryOp::F32Add, accumulator, staged)?;
-            let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
-            Ok(vec![sum])
+            let folded = builder.binary(combiner.op(), accumulator, staged)?;
+            let folded = builder.convert(ConvertOp::CanonicalizeF32Nan, folded)?;
+            Ok(vec![folded])
         },
     )?;
     results
@@ -1285,36 +1295,84 @@ fn emit_staged_fold(
         .ok_or(KernelBuildError::EmptyLoopAccumulators)
 }
 
-/// Returns the per-contributor prologue one reduction scalar program applies.
+/// Returns the per-contributor prologue and combiner one reduction folds with.
 ///
 /// `None` for every program that is not a reduction, which is a refusal rather
-/// than an absent prologue: a cooperative region whose scalar program is not one
-/// of these folds nothing, and the schedule verifier already rejects it.
-const fn reduction_prologue(program: &ScalarProgram) -> Option<ReductionPrologue> {
+/// than an absent fold: a cooperative region whose scalar program is not one of
+/// these folds nothing, and the schedule verifier already rejects it.
+const fn reduction_fold(program: &ScalarProgram) -> Option<ReductionFold> {
     match program {
-        ScalarProgram::StrictSerialSum { .. } => Some(ReductionPrologue::None),
-        ScalarProgram::SquaredSerialSum { .. } => Some(ReductionPrologue::Square),
+        ScalarProgram::StrictSerialSum { .. } => Some(ReductionFold {
+            prologue: ReductionPrologue::None,
+            combiner: ReductionCombiner::F32Add,
+        }),
+        ScalarProgram::SquaredSerialSum { .. } => Some(ReductionFold {
+            prologue: ReductionPrologue::Square,
+            combiner: ReductionCombiner::F32Add,
+        }),
         ScalarProgram::FusedMultiplyAddSerialSum {
             scale_bits,
             bias_bits,
             ..
-        } => Some(ReductionPrologue::ScaleBias {
-            scale_bits: *scale_bits,
-            bias_bits: *bias_bits,
+        } => Some(ReductionFold {
+            prologue: ReductionPrologue::ScaleBias {
+                scale_bits: *scale_bits,
+                bias_bits: *bias_bits,
+            },
+            combiner: ReductionCombiner::F32Add,
+        }),
+        // The extrema fold: no prologue — the softmax's subtraction and
+        // exponential belong to the pointwise pass that consumes this reduction's
+        // result — and the combiner that makes it a maximum rather than a sum.
+        // Carrying the combiner is what admits it here at all: a cooperative tile
+        // over this family stages one participant's maximum and folds the staged
+        // set with the same operation, and reusing the addition would produce a
+        // structurally identical body computing a different function.
+        ScalarProgram::StrictSerialMaximum { .. } => Some(ReductionFold {
+            prologue: ReductionPrologue::None,
+            combiner: ReductionCombiner::F32Maximum,
         }),
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
-        | ScalarProgram::StrictTensorContraction { .. }
-        // The maximum reduction answers `None` for a different reason from the
-        // three above: it *is* a fold, but it is not a fold this function's
-        // caller can drive. `ReductionPrologue` is the per-contributor expression
-        // of a *sum*, and the cooperative lowering that reads it seeds partials
-        // with `+0.0`-compatible arithmetic; an extrema fold has no identity and
-        // no prologue, so the honest answer is that no prologue describes it.
-        // The cooperative topology is separately refused for this program by the
-        // schedule verifier, which is what makes this arm unreachable rather than
-        // merely conservative.
-        | ScalarProgram::StrictSerialMaximum { .. } => None,
+        | ScalarProgram::StrictTensorContraction { .. } => None,
+    }
+}
+
+/// The per-contributor expression and the binary operation one reduction folds
+/// with.
+///
+/// Carried as a pair because a cooperative emission needs both at every level it
+/// folds at — the participant's own share, the staged set, and the accumulator
+/// across rounds — and resolving them separately let one of the three keep an
+/// operation the others had moved off.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ReductionFold {
+    prologue: ReductionPrologue,
+    combiner: ReductionCombiner,
+}
+
+/// The binary operation one reduction family combines two partials with.
+///
+/// A closed enum rather than a [`BinaryOp`], which also spells index arithmetic
+/// and multiplication: an emission that took a `BinaryOp` could be handed one no
+/// reduction family combines with, and nothing would say no. The exhaustive match
+/// in [`ReductionCombiner::op`] is what forces a third family to state its own
+/// operation rather than inherit whichever it resembles.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReductionCombiner {
+    /// The ordered sum every family but the extrema fold combines with.
+    F32Add,
+    /// The NaN-propagating `Maximum` with `-0.0 < +0.0`.
+    F32Maximum,
+}
+
+impl ReductionCombiner {
+    /// Returns the structured operation this combiner emits.
+    const fn op(self) -> BinaryOp {
+        match self {
+            Self::F32Add => BinaryOp::F32Add,
+            Self::F32Maximum => BinaryOp::F32Maximum,
+        }
     }
 }
 
