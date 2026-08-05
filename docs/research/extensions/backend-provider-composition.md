@@ -198,7 +198,7 @@ let profile: TargetProfile = TargetProfileBuilder::new(TargetProfileKey::new(
 )?) /* … declared axes … */ .build()?;
 
 let compilation = tiler_compiler::session::compile(
-    CompileRequest::new(&program, NumericalContract::StrictF32, TargetRequest::new([profile])?),
+    CompileRequest::new(&program, NumericalContract::STRICT_F32, TargetRequest::new([profile])?),
 )?;
 
 // The backend translates the verified kernels into bytes it alone understands,
@@ -289,7 +289,7 @@ What this example demonstrates and what it does not: it demonstrates that a part
 *Measurement, base commit `488efac`, Apple M-series arm64 macOS.* This one is not a proposal — it ran.
 
 1. Declare a bounded scalar CPU target profile through `TargetProfileBuilder`: governed key `tiler.target.cpu-scalar-host-aarch64-darwin`, one thread per workgroup, zero staged local memory, two buffer bindings per entry, subnormals preserved exactly, every reshaping freedom unsupported, and every vector, mask, tail, threading, and cache axis left `Unknown`.
-2. Compile against that profile alone, under `NumericalContract::StrictF32`, through the same `session::compile` Metal uses. **No physical provider is installed and none is needed** — the governed provider's proposals are target-neutral scheduled regions, and the profile is what makes them feasible or not.
+2. Compile against that profile alone, under `NumericalContract::STRICT_F32`, through the same `session::compile` Metal uses. **No physical provider is installed and none is needed** — the governed provider's proposals are target-neutral scheduled regions, and the profile is what makes them feasible or not.
 3. Translate each verified structured kernel into `tiler.cpu.scalar-image-v1`, a representation this backend minted. Observe the translator refusing four buffer parameters it cannot bind, against an accepted neighbour, before claiming the positive path.
 4. Package a real artifact **by calling `tiler_artifact::program` directly and skipping `tiler-build` entirely**, encode and decode the envelope, and run the fail-closed probe set against those exact bytes. The skip is not an oversight; row 8 offers nothing to call.
 5. Decode the payload through a decoder that knows nothing about `VerifiedKernel`, and run the payload-level probe set. **This is the backend's own validation obligation, and it runs while the preflight is still held.**

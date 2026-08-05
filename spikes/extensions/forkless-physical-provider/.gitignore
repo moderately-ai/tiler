@@ -1,5 +1,10 @@
-# Regenerable build products, including the scratch project `trybuild` assembles
-# under `target/tests/trybuild/`. The retained `.stderr` goldens beside each
-# fixture are the evidence and stay tracked; `Cargo.lock` stays tracked too,
-# because the goldens depend on which `trybuild` normalized them.
-/target/
+# Regenerable build products. Unanchored, so the rule matches at every depth:
+# trybuild resolves its scratch project against the *test crate's* manifest
+# directory and writes `probe/target/tests/trybuild/` whatever `CARGO_TARGET_DIR`
+# the run sets, which an anchored `/target/` does not cover — the recorded
+# invocation left 763 MB of it untracked in `git status`.
+#
+# The retained `.stderr` goldens beside each fixture are the evidence and stay
+# tracked; `Cargo.lock` stays tracked too, because the goldens depend on which
+# `trybuild` normalized them.
+target/

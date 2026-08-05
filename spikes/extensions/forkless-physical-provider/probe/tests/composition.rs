@@ -51,7 +51,7 @@ fn target_facts() -> MetalTargetFacts {
 #[test]
 fn governed_compile_path_is_reachable_from_an_out_of_tree_crate() {
     let program = serial_sum_program(ROWS, COLUMNS);
-    let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+    let compilation = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32)
         .expect("the governed program compiles under the flushing contract");
     assert_eq!(
         compilation.target_profile_key(),
@@ -86,7 +86,7 @@ fn governed_compile_path_is_reachable_from_an_out_of_tree_crate() {
 #[test]
 fn public_surface_names_no_physical_provider() {
     let program = serial_sum_program(ROWS, COLUMNS);
-    let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+    let compilation = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32)
         .expect("the governed program compiles under the flushing contract");
     let offered: Vec<String> = compilation
         .offered_providers()

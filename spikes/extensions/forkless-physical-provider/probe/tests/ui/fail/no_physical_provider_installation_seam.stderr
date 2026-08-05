@@ -4,7 +4,7 @@ error[E0599]: no method named `with_physical_providers` found for struct `Compil
 33 |       let _ = CompileRequest::new(
    |  _____________-
 34 | |         &program,
-35 | |         NumericalContract::FlushSubnormalsToZeroF32,
+35 | |         NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
 36 | |         targets,
 37 | |     )
 38 | |     .with_physical_providers([&acme_provider::identity()]);

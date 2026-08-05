@@ -776,7 +776,7 @@ pub fn run() -> Result<Report, VerticalError> {
     let targets = TargetRequest::new([target]).expect("one target composes a request");
     let batch = compile(CompileRequest::new(
         &program,
-        NumericalContract::StrictF32,
+        NumericalContract::STRICT_F32,
         targets,
     ))
     .map_err(|failure| VerticalError::Compile(Box::new(failure)))?;

@@ -87,12 +87,20 @@ impl ImageType {
     /// quantized dequantization path, whose dtypes this profile declares nothing
     /// about, and carrying a type whose operations the image cannot execute
     /// would move the refusal from translation into execution.
+    ///
+    /// `Bf16` is refused for the same reason and on its own authority: this
+    /// profile declares `f32` dispatchable and says nothing about `bf16`, and
+    /// [`KernelType::Bf16`] is admitted in KIR as a type rather than a lowerable
+    /// one, asking a backend that cannot lower it to refuse it *by name*. The
+    /// refusal path does exactly that — [`TranslationError::UnsupportedValueType`]
+    /// carries the `KernelType` — so the widened vocabulary cannot make an
+    /// unimplemented path look reachable here.
     const fn from_kernel(value: KernelType) -> Option<Self> {
         match value {
             KernelType::Bool => Some(Self::Bool),
             KernelType::Index => Some(Self::Index),
             KernelType::F32 => Some(Self::F32),
-            KernelType::U8 | KernelType::I32 => None,
+            KernelType::U8 | KernelType::I32 | KernelType::Bf16 => None,
         }
     }
 }
