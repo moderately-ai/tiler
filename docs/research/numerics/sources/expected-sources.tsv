@@ -85,3 +85,24 @@ mlir-linalg-named-structured-ops-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22
 mlir-destination-style-op-interface-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/DestinationStyleOpInterface.td	386825acee1ad074cd0b809601cd2640cb1224dc068ae0b3cb0ca1f1daec521a
 mlir-indexing-map-op-interface-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/IndexingMapOpInterface.td	6f05ce7f445ec614e59fadd828ac7c2ec44bef6e3eb7d9898f857ec7d87f4038
 mlir-structured-ops-utils-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/StructuredOpsUtils.td	2d431121c30fd736da875a4e41af31e75f20b5e64239698b91ec8e57cd8f8ac1
+#	Fifth wave: the verified floating-point error-analysis literature, cited by the record that
+#	connects a certified rounding-error bound to a rewrite permission. Two groups — the analysis and
+#	tuning tools whose certificate checkability the survey compares, and the classical worst-case
+#	summation analysis the worked online-softmax bound is derived from. Almost all of this group is
+#	metadata-only, which is what publisher copyright over conference papers produces; the two
+#	vendored rows are the two documents carrying a Creative Commons grant in their own text.
+fptaylor-toplas-2018	metadata-only	-	f6eb8d2b0f403bc9efbfc4598a8014f419357a69e525558ddf085a83e1fdc25f
+fptuner-popl-2017	metadata-only	-	9b1f329ab207e345c4cfa4850dda7678b95d72c1f9891dca77360e7d1b0c39fa
+gappa-toms-2010	metadata-only	-	6e95fda58af671023d63cc4ba24d27f1a0bd867bd8f823e34905af26f08b7d88
+gappa-coq-mkm-2009	metadata-only	-	bb9c7f10dab2177d08fb55a2ca493acaeba362317601423be0553f6ba4f9fe4c
+daisy-tacas-2018	vendored	daisy-tacas-2018/daisy-framework.pdf	29b4a6475d670723f111f4d46da8512a995867d4db2b7db518bbdd92f28eb327
+rosa-toplas-2017	metadata-only	-	69cb271683a15b9c91b44d83fcfdf12dea2e64535d4be967426613e1172c6a5b
+anton-rewriting-arxiv-1707.02118v1	metadata-only	-	540c468a14c4131be054e1f44ae1ce73d3baf0cc08a8802618bcdb75bf3dadb6
+herbie-pldi-2015	metadata-only	-	e9642512aa5bbb61db322367708e005ee16213c57d260d1739d89448db82c3ee
+precimonious-sc-2013	metadata-only	-	31bda4d07d20f9677d3181201e0ac799dba563ebad8008a154a4fe584e139283
+hifptuner-issta-2018	metadata-only	-	cdcc39fb08ef39b94531f840a69e210b98b6e51292bc0348db7bbefd121a37a5
+real2float-arxiv-1507.03331v7	metadata-only	-	13d242c343122e493f504091a76036505661080693edec66049b951dce9dda39
+acta-numerica-fp-2023	vendored	acta-numerica-fp-2023/floating-point-arithmetic.pdf	4b12427f7d52c2794d9fe7bea1647f8ea1300fa6d697bd9593e6edf212777c46
+jeannerod-rump-simax-2013	metadata-only	-	cc33fbf15279936b2fb14cd925bcaa08f8996eaf6a4d454de72b51f1e092e51f
+online-softmax-arxiv-1805.02867v2	metadata-only	-	722747b3a32eb90f5f0255d6b59f8bb0e1bc2257702ab7915e684c15275d44d7
+higham-asna-2002	pending-acquisition	-	-
