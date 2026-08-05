@@ -340,6 +340,14 @@ pub enum StorageScalar {
     U8,
     /// An IEEE-754 binary32 value.
     F32,
+    /// A bfloat16 carrier: binary32's sign and exponent over a seven-bit
+    /// significand, in two bytes.
+    ///
+    /// Admitted as a *carrier*, not as a target capability. Nothing in this
+    /// workspace produces a `Bf16`-carried boundary value yet; the carrier
+    /// exists so that every total map over this vocabulary states what it means
+    /// or refuses it by name.
+    Bf16,
 }
 
 impl StorageScalar {
@@ -347,6 +355,11 @@ impl StorageScalar {
         match self {
             Self::U8 => 0x01,
             Self::F32 => 0x02,
+            // Appended: `U8` and `F32` keep their tags and every field keeps its
+            // position, so no previously encodable program's bytes move and the
+            // program identity domain does not step. No program the earlier
+            // vocabulary could express carries `0x03` here.
+            Self::Bf16 => 0x03,
         }
     }
 
@@ -366,6 +379,7 @@ impl StorageScalar {
         match self {
             Self::U8 => 1,
             Self::F32 => 4,
+            Self::Bf16 => 2,
         }
     }
 
@@ -373,6 +387,7 @@ impl StorageScalar {
         match self {
             Self::U8 => KernelType::U8,
             Self::F32 => KernelType::F32,
+            Self::Bf16 => KernelType::Bf16,
         }
     }
 }
@@ -611,6 +626,7 @@ pub struct AllocationSpec {
 pub(super) const fn element_bytes(element_type: KernelType) -> u64 {
     match element_type {
         KernelType::Bool | KernelType::U8 => 1,
+        KernelType::Bf16 => 2,
         KernelType::Index => 8,
         KernelType::F32 | KernelType::I32 => 4,
     }
@@ -1527,6 +1543,9 @@ fn push_element_type(bytes: &mut Vec<u8>, element_type: KernelType) {
         KernelType::F32 => 0x03,
         KernelType::U8 => 0x04,
         KernelType::I32 => 0x05,
+        // Appended, so every program the earlier vocabulary could express keeps
+        // its exact bytes and the program identity domain does not step.
+        KernelType::Bf16 => 0x06,
     });
 }
 

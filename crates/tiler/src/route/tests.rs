@@ -68,11 +68,13 @@ impl Buffer {
 }
 
 /// Bytes a dense row-major value of this shape occupies, for the fixtures.
+///
+/// The width is read from [`StorageScalar::byte_width`], the vocabulary's single
+/// width authority, rather than from a table local to these fixtures. A local
+/// table would keep compiling as the carrier vocabulary widened and would state
+/// a width the carrier itself does not have.
 fn dense_len(scalar: StorageScalar, extents: &[u64]) -> usize {
-    let width = match scalar {
-        StorageScalar::U8 => 1,
-        StorageScalar::F32 => 4,
-    };
+    let width = usize::try_from(scalar.byte_width()).expect("a carrier byte width fits a usize");
     let elements: usize = extents
         .iter()
         .map(|extent| usize::try_from(*extent).expect("a fixture extent fits a usize"))

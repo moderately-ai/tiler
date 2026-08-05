@@ -360,6 +360,15 @@ fn check_target_component(
     Ok(())
 }
 
+/// Proves each binding reads its carrier through the access type that carrier
+/// stores.
+///
+/// The failure this exists to prevent is a width misread: a slot whose carrier
+/// is two bytes wide and whose access type is four would address twice the bytes
+/// the interface provides, and every framing, digest, and identity check would
+/// still pass. So the pairing is stated by name for each carrier, with no
+/// wildcard — a widened carrier vocabulary stops the build here rather than
+/// falling into a neighbouring carrier's access type.
 fn check_binding_access(
     binding: &super::super::model::BindingData,
 ) -> Result<(), ArtifactCodecError> {
@@ -369,6 +378,7 @@ fn check_binding_access(
                 == match binding.storage_scalar {
                     StorageScalar::U8 => KernelType::U8,
                     StorageScalar::F32 => KernelType::F32,
+                    StorageScalar::Bf16 => KernelType::Bf16,
                 }
         }
         StorageEncoding::BitPacked(_) => {

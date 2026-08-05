@@ -2126,9 +2126,9 @@ mod tests {
     /// fewer variant than the vocabulary has.
     #[test]
     fn every_storage_carrier_has_a_representable_alignment() {
-        for scalar in [StorageScalar::U8, StorageScalar::F32] {
+        for scalar in [StorageScalar::U8, StorageScalar::F32, StorageScalar::Bf16] {
             match scalar {
-                StorageScalar::U8 | StorageScalar::F32 => {}
+                StorageScalar::U8 | StorageScalar::F32 | StorageScalar::Bf16 => {}
             }
             let width = scalar.byte_width();
             assert!(

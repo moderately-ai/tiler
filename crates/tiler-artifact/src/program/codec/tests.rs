@@ -417,7 +417,20 @@ fn every_governed_tag_table_round_trips() {
         KernelType::F32,
         KernelType::U8,
         KernelType::I32,
+        KernelType::Bf16,
     ] {
+        // The wildcard-free `match` is what keeps the array above honest. A bare
+        // list would keep passing while covering one fewer variant than the
+        // vocabulary has, which is the opposite of the exhaustive round trip
+        // `docs/artifact-abi.md` claims pins each of these tables.
+        match value {
+            KernelType::Bool
+            | KernelType::Index
+            | KernelType::F32
+            | KernelType::U8
+            | KernelType::I32
+            | KernelType::Bf16 => {}
+        }
         assert_eq!(element_type_from_tag(element_type_tag(value)), Some(value),);
     }
     assert_eq!(element_type_tag(KernelType::Bool), 0x01);
@@ -425,7 +438,11 @@ fn every_governed_tag_table_round_trips() {
     assert_eq!(element_type_tag(KernelType::F32), 0x03);
     assert_eq!(element_type_tag(KernelType::U8), 0x04);
     assert_eq!(element_type_tag(KernelType::I32), 0x05);
-    for value in [StorageScalar::U8, StorageScalar::F32] {
+    assert_eq!(element_type_tag(KernelType::Bf16), 0x06);
+    for value in [StorageScalar::U8, StorageScalar::F32, StorageScalar::Bf16] {
+        match value {
+            StorageScalar::U8 | StorageScalar::F32 | StorageScalar::Bf16 => {}
+        }
         assert_eq!(
             storage_scalar_from_tag(storage_scalar_tag(value)),
             Some(value),
@@ -433,6 +450,7 @@ fn every_governed_tag_table_round_trips() {
     }
     assert_eq!(storage_scalar_tag(StorageScalar::U8), 0x01);
     assert_eq!(storage_scalar_tag(StorageScalar::F32), 0x02);
+    assert_eq!(storage_scalar_tag(StorageScalar::Bf16), 0x03);
     for value in [
         AddressSpace::Device,
         AddressSpace::Workgroup,
@@ -2383,6 +2401,36 @@ fn an_incompatible_binding_access_type_is_rejected() {
             envelope.variants[0].entries[0].bindings[0].access_type = KernelType::Bool;
         }),
         ArtifactCodecError::BindingAccessTypeMismatch,
+    );
+}
+
+/// The two-byte carrier is refused against the four-byte access type.
+///
+/// This is the misread `check_binding_access` exists to stop, stated at the
+/// widest gap the carrier vocabulary now admits: a `Bf16` carrier read as `F32`
+/// addresses twice the bytes the interface provides, and every framing, digest,
+/// and identity check passes on the way there.
+///
+/// The second case is what makes the first about the *pair* rather than about
+/// `Bf16` being refused wherever it appears. Pairing `Bf16` with `Bf16` clears
+/// this check and is stopped one step later by the component it contradicts, so
+/// reaching `BindingComponentMismatch` is the observation that the access check
+/// admitted the matched pair.
+#[test]
+fn a_bf16_carrier_is_refused_against_a_wider_access_type_and_admitted_against_its_own() {
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.variants[0].entries[0].bindings[0].storage_scalar = StorageScalar::Bf16;
+        }),
+        ArtifactCodecError::BindingAccessTypeMismatch,
+    );
+    assert_eq!(
+        reject_forged(|envelope| {
+            let binding = &mut envelope.variants[0].entries[0].bindings[0];
+            binding.storage_scalar = StorageScalar::Bf16;
+            binding.access_type = KernelType::Bf16;
+        }),
+        ArtifactCodecError::BindingComponentMismatch,
     );
 }
 
