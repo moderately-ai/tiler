@@ -1,7 +1,7 @@
 ---
 id: correct-the-deliberately-absent-storage-claim-in-the-frontends-contract
 title: Correct the "Deliberately absent" storage claim in the frontends contract
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [correct-two-stale-delivery-spans-in-the-frontends-contract, route-an-embedded-artifact-through-a-consumer-storage-seam]
