@@ -18,8 +18,8 @@ manifest="$here/expected-sources.tsv"
 
 # The expected population, declared here rather than derived from the manifest, so that a
 # manifest that lost rows fails instead of agreeing with itself.
-expect_total=61
-expect_vendored=55
+expect_total=68
+expect_vendored=62
 expect_metadata_only=6
 expect_pending=0
 

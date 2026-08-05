@@ -74,3 +74,14 @@ array-api-utility-functions-2025.12	vendored	array-api-2025.12/utility_functions
 array-api-linear-algebra-functions-2025.12	vendored	array-api-2025.12/linear_algebra_functions.rst	16769c4b6274714310642daaa2225f831faa31b1379af498c459419fa5317bb1
 array-api-linalg-extension-2025.12	vendored	array-api-2025.12/extensions-linear_algebra_functions.rst	abc25702330894ee56e9e1f21ae0357c46afea61351b4ff181bee02fb6190dd5
 array-api-indexing-functions-stub-2025.12	vendored	array-api-2025.12/indexing_functions.py	b1e3835093ff291ac07181c300a55bd0d9c908c1baa0193a7e3d7a1074d9ae6c
+#	MLIR Linalg definition files, the two operation interfaces they build on, and the enum file that fixes
+#	what `iterator_types` may hold — cited by the operation and signature taxonomy for structured-operation
+#	form. Same LLVM revision as the rows above, so they join `llvm-project-license-llvmorg-22.1.8` rather
+#	than adding a second licence row.
+mlir-linalg-structured-ops-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/LinalgStructuredOps.td	29004ba992bd4a43fed7f7c07c6186ddbd93eadcb3b66b951bbe7e4e34fcefc7
+mlir-linalg-interfaces-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/LinalgInterfaces.td	5840c910999fe93cb1b60222439477da4e9d92f96e3f11ecf985dc28662fa227
+mlir-linalg-relayout-ops-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/LinalgRelayoutOps.td	fc1589f01aade77106fb65d3d28d1051b57b1f25bca436961ce6db0661607f8d
+mlir-linalg-named-structured-ops-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/LinalgNamedStructuredOps.yaml	cd6cd0c78cd2cf3b79dcf279805d7b7c68ba57d244dffd998d2aa3d9bfa75b5c
+mlir-destination-style-op-interface-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/DestinationStyleOpInterface.td	386825acee1ad074cd0b809601cd2640cb1224dc068ae0b3cb0ca1f1daec521a
+mlir-indexing-map-op-interface-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/IndexingMapOpInterface.td	6f05ce7f445ec614e59fadd828ac7c2ec44bef6e3eb7d9898f857ec7d87f4038
+mlir-structured-ops-utils-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/StructuredOpsUtils.td	2d431121c30fd736da875a4e41af31e75f20b5e64239698b91ec8e57cd8f8ac1
