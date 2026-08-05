@@ -1,7 +1,7 @@
 ---
 id: scope-the-sub-tensor-selection-fusion-role
 title: Scope the sub-tensor selection fusion role
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [scope-the-concatenate-fusion-role-and-lowering]
@@ -9,6 +9,9 @@ scopes: [research/indexing]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-slice-role
+lease_expires_at: 1785963860
 ---
 ## User-visible outcome
 
