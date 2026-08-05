@@ -1,7 +1,7 @@
 ---
 id: close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire
 title: Close the memory and execution scope vocabulary with an IR tripwire
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [add-subgroup-memory-scope-when-collectives-land, compose-the-two-level-subgroup-and-workgroup-reduction]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, barriers, tripwire]
+claimed_from: todo
+assignee: agent-scope-tripwire
+lease_expires_at: 1785952345
 ---
 ## User-visible outcome
 
