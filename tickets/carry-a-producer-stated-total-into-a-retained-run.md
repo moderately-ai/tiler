@@ -1,7 +1,7 @@
 ---
 id: carry-a-producer-stated-total-into-a-retained-run
 title: Carry a producer-stated total into a retained run
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [retain-succeeding-metal-stage-tool-output]
@@ -9,9 +9,6 @@ scopes: [implementation/cache, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, diagnostics, cache]
-claimed_from: todo
-assignee: agent-producer-total
-lease_expires_at: 1785946077
 ---
 ## User-visible outcome
 

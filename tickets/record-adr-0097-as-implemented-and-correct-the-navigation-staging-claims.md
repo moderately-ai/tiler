@@ -1,7 +1,7 @@
 ---
 id: record-adr-0097-as-implemented-and-correct-the-navigation-staging-claims
 title: Record ADR 0097 as implemented and correct the navigation docs' staging-relation claims
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5, admit-a-two-dimensional-cooperative-staging-relation]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, scheduling, ir, identity]
-claimed_from: todo
-assignee: agent-adr0097
-lease_expires_at: 1785946214
 ---
 ## User-visible outcome
 
