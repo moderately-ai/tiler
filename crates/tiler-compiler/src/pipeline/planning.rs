@@ -824,18 +824,13 @@ pub(super) fn build_alternative_for_origin(
         numerical,
         ..
     } = plans;
-    // A plan containing an opaque call has no scheduled region for it, and
-    // lowering one is not implemented. Refusing here is what stops the plan
-    // being lowered as though the call were not in it.
-    let scheduled = plan_regions(plan).ok_or_else(|| {
-        failure_at_source(
-            CompileError::from(ProgramError::Structure {
-                rule: "unlowerable-opaque-body",
-            }),
-            ExplainStage::ProgramVerification,
-            cause.copied(),
-        )
-    })?;
+    // The whole structural description this plan's cover assembles into. A plan
+    // containing an opaque call has no scheduled region for it, and a cover this
+    // assembler has no expression for is a named missing capability rather than
+    // invalid compiler output; both reach a caller through this one refusal.
+    let assembly = CoverAssembly::from_plan(semantic, plan)
+        .map_err(|refusal| assembly_failure(&refusal, cause.copied()))?;
+    let scheduled = assembly.regions().to_vec();
     let kernels = scheduled
         .iter()
         .map(lower_structured_kernel)
@@ -844,10 +839,9 @@ pub(super) fn build_alternative_for_origin(
             let stage = physical_error_stage(&error);
             failure_at_source(error.into(), stage, cause.copied())
         })?;
-    let program =
-        build_plan_program(semantic, verified, kind, &scheduled, lowering).map_err(|error| {
-            failure_at_source(error, ExplainStage::ProgramVerification, cause.copied())
-        })?;
+    let program = build_plan_program(semantic, verified, &assembly, lowering).map_err(|error| {
+        failure_at_source(error, ExplainStage::ProgramVerification, cause.copied())
+    })?;
     assert_kernels_match_program(verified, &scheduled, &program, &kernels).map_err(|error| {
         failure_at_source(
             error.into(),
@@ -856,7 +850,7 @@ pub(super) fn build_alternative_for_origin(
         )
     })?;
     let artifact_plan = build_artifact_plan_with_lowering(
-        semantic, verified, &scheduled, &kernels, &program, lowering,
+        semantic, verified, &assembly, &kernels, &program, lowering,
     )
     .map_err(|error| {
         failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.copied())
@@ -894,85 +888,64 @@ pub(super) fn build_alternative_for_origin(
     })
 }
 
-/// Returns a plan's verified scheduled regions in ascending planning order,
-/// borrowed from the plan rather than copied out of it.
+/// Reports one assembly refusal at its own failure class, naming the region.
 ///
-/// A plan's selections are in canonical occurrence order, which is content
-/// derived rather than execution ordered. Downstream program assembly consumes
-/// producers before consumers, so the regions are ordered by the planning ordinal
-/// the request-subject binding already pinned for each recognized region.
-///
-/// Ordering is the whole of what this derives, so it sorts references. A caller
-/// that must *own* the result asks for it through [`plan_regions`]; a caller
-/// that only compares against regions it already holds does not pay for a copy.
-/// Returns `None` when any selection has no scheduled region.
-///
-/// **Filtering here would be silently wrong**, and became so the moment opaque
-/// calls were admittable. A plan of one scheduled region and one opaque call
-/// filters to a single region, which `build_plan_program` then matches as a
-/// *fused* program — producing a kernel that omits the call's work entirely and
-/// reports success. Nothing downstream compares the region count against the
-/// selection count, so the omission would surface as a wrong result rather than
-/// an error.
-///
-/// Lowering an opaque call is genuinely not implemented; declining to order a
-/// plan containing one is how that is said, and the caller turns it into a typed
-/// refusal.
-///
-/// A **subprogram contributes every one of its stages**, not one region standing
-/// for it. Taking the first would be the same silent omission the paragraph
-/// above describes, one dispatch instead of one region: the assembled program
-/// would compute a partial reduction and publish it as the result.
-pub(super) fn plan_region_order(plan: &SelectedPlan) -> Option<Vec<&VerifiedScheduledRegion>> {
-    let mut regions: Vec<&VerifiedScheduledRegion> = Vec::with_capacity(plan.selections().len());
-    for selection in plan.selections() {
-        regions.extend(selection.implementation().scheduled_stages()?);
+/// **The class is the correction this ticket carries.** A cover the assembler
+/// cannot express is a coverage gap, which the optimizer contract's five failure
+/// classes call a *missing compilation capability*; the retired
+/// `"unsupported-plan-shape"` rule reported it as invalid compiler output, which
+/// claims the compiler produced something wrong when it produced nothing at all.
+/// A body this compiler did not schedule keeps its own classification, because
+/// lowering an opaque call is a separate capability with a separate owner.
+fn assembly_failure(refusal: &AssemblyRefusal, cause: Option<TerminalCause>) -> TargetFailure {
+    match refusal.class() {
+        AssemblyRefusalClass::MissingCapability => target_failure(
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "program-assembly",
+                rule: refusal.rule(),
+            }),
+            ExplainStage::ProgramVerification,
+            format!("unsupported-program-assembly-{}", refusal.rule()),
+            SubjectKind::Region,
+            refusal.region(),
+            cause,
+        ),
+        AssemblyRefusalClass::UnlowerableBody => failure_at_source(
+            CompileError::from(ProgramError::Structure {
+                rule: refusal.rule(),
+            }),
+            ExplainStage::ProgramVerification,
+            cause,
+        ),
     }
-    regions.sort_by_key(|region| region.region().index.id.get());
-    Some(regions)
 }
 
-/// Returns an owned copy of a plan's scheduled regions in planning order.
-pub(super) fn plan_regions(plan: &SelectedPlan) -> Option<Vec<VerifiedScheduledRegion>> {
-    Some(plan_region_order(plan)?.into_iter().cloned().collect())
-}
-
-/// Assembles the verified kernel program for one plan shape.
+/// Assembles the verified kernel program one retained plan's cover describes.
 ///
-/// The bounded profile implements exactly three program shapes: a one-region
-/// fused program, a two-region materialized program, and the three-region split
-/// whose reduction is realized by a partial and a final pass. Any other retained
-/// plan shape is invalid compiler output and rejects explicitly rather than
-/// being approximated by the closest implemented assembly.
+/// **There is one shape, not three.** The bounded profile used to match
+/// `(kind, scheduled)` against a one-region fused program, a two-region
+/// materialized one, and the three-stage split, and to classify every other
+/// retained plan as invalid compiler output — so a deterministic topological
+/// partition of any program with more than three occurrences would have looked
+/// like a compiler bug. The assembly is now derived from the cover for any
+/// region count, and a cover it cannot express is a typed missing-capability
+/// refusal naming the region, raised where the description is derived rather
+/// than here.
 ///
-/// The split shares the materialized *kind* because a kind is a property of the
-/// cover — the split refines one of that cover's regions into two dispatches and
-/// changes no grouping — so the region count is what selects the assembly. A
-/// separate kind would have to be derivable from the cover, and it is not.
+/// The alternative *kind* is no longer an input. It was never a property the
+/// assembly needed — a kind is a property of the cover, and the split shares the
+/// materialized kind because it refines one of that cover's regions into two
+/// dispatches and changes no grouping — so the region count selected the
+/// assembly and the kind rode along. Both are now read from the one authority
+/// that determines them.
 pub(super) fn build_plan_program(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
-    kind: ProgramAlternativeKind,
-    scheduled: &[VerifiedScheduledRegion],
+    assembly: &CoverAssembly,
     lowering: &ResolvedLowering,
 ) -> Result<KernelProgram, CompileError> {
-    match (kind, scheduled) {
-        (ProgramAlternativeKind::Fused, [region]) => {
-            build_fused_kernel_program_with_lowering(semantic, verified, region, lowering)
-                .map_err(CompileError::from)
-        }
-        (ProgramAlternativeKind::Materialized, [_, _]) => {
-            build_kernel_program_with_lowering(semantic, verified, scheduled, lowering)
-                .map_err(CompileError::from)
-        }
-        (ProgramAlternativeKind::Materialized, [_, _, _]) => {
-            build_split_kernel_program_with_lowering(semantic, verified, scheduled, lowering)
-                .map_err(CompileError::from)
-        }
-        _ => Err(CompileError::from(ProgramError::Structure {
-            rule: "unsupported-plan-shape",
-        })),
-    }
+    build_cover_kernel_program_with_lowering(semantic, verified, assembly, lowering)
+        .map_err(CompileError::from)
 }
 
 /// Returns the identity of the first structurally non-dominated alternative.
@@ -1011,7 +984,10 @@ pub(super) fn select_non_dominated<'alternatives>(
 
 #[cfg(test)]
 mod tests {
-    use super::semantic_discharge_is_invalid;
+    use super::{
+        AssemblyRefusal, AssemblyRefusalClass, CompileError, ExplainStage, RequestError,
+        SubjectKind, assembly_failure, semantic_discharge_is_invalid,
+    };
     use crate::index_discharge::IndexDomainDischargeRefusalKind;
 
     #[test]
@@ -1022,5 +998,67 @@ mod tests {
         assert!(!semantic_discharge_is_invalid(
             IndexDomainDischargeRefusalKind::Unknown
         ));
+    }
+
+    /// **A cover the assembler cannot express is a missing capability, not a
+    /// compiler fault, and it names the region.**
+    ///
+    /// This is the failure-class correction the retired `"unsupported-plan-shape"`
+    /// rule made necessary: reporting a coverage gap as invalid compiler output
+    /// claims the compiler produced something wrong when it produced nothing at
+    /// all, and the two classes tell a caller to change different things — one
+    /// their installed authority, the other the compiler.
+    ///
+    /// The check can say no in both directions: swapping either arm of
+    /// [`assembly_failure`] moves the class and the assertion below fails, and
+    /// dropping the region from the subject key fails the second assertion while
+    /// leaving the class right.
+    #[test]
+    fn an_unassemblable_cover_is_reported_as_a_missing_capability() {
+        let missing = assembly_failure(
+            &AssemblyRefusal::stated(
+                "region:0123456789abcdef",
+                "cover-named-output-attribution",
+                AssemblyRefusalClass::MissingCapability,
+            ),
+            None,
+        );
+        assert_eq!(
+            missing.source.as_ref(),
+            &CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "program-assembly",
+                rule: "cover-named-output-attribution",
+            })
+        );
+        assert_eq!(
+            missing.context.subject_key.as_str(),
+            "region:0123456789abcdef",
+            "the refusal does not name the region it is about"
+        );
+        assert_eq!(missing.context.subject_kind, SubjectKind::Region);
+        assert_eq!(
+            missing.context.reason.as_str(),
+            "unsupported-program-assembly-cover-named-output-attribution"
+        );
+        assert_eq!(missing.context.stage, ExplainStage::ProgramVerification);
+
+        // A body this compiler did not schedule keeps the classification its own
+        // owning ticket gave it, so this change moves one class and not two.
+        let opaque = assembly_failure(
+            &AssemblyRefusal::stated(
+                "region:0123456789abcdef",
+                "unlowerable-opaque-body",
+                AssemblyRefusalClass::UnlowerableBody,
+            ),
+            None,
+        );
+        assert!(matches!(
+            opaque.source.as_ref(),
+            CompileError::InvalidCompilerOutput(_)
+        ));
+        assert_eq!(
+            opaque.context.reason.as_str(),
+            "structure-unlowerable-opaque-body"
+        );
     }
 }

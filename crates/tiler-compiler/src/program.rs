@@ -31,7 +31,7 @@ use tiler_ir::program::{
     StageLaunch, StageRef, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
     ViewId,
 };
-use tiler_ir::semantic::{F32, InputKey, SemanticIdentity, SemanticProgram};
+use tiler_ir::semantic::{F32, InputKey, OutputKey, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
 
 use tiler_ir::program::abi::{
@@ -40,13 +40,15 @@ use tiler_ir::program::abi::{
 };
 
 use crate::boundary::ByteAlignment;
+use crate::cover::RegionCover;
 use crate::lowering::ResolvedLowering;
 use crate::physical::{
-    NumericalRealization, RegionId, VerifiedKernel, VerifiedScheduledRegion,
-    lower_structured_kernel,
+    AccessMode, ContributorPartition, NumericalRealization, RegionId, TensorRole, VerifiedKernel,
+    VerifiedScheduledRegion, lower_structured_kernel,
 };
-use crate::region::SemanticMemberId;
+use crate::region::{RegionOccurrenceIdentity, SemanticMemberId};
 use crate::request::{LoweringProviderIdentity, TargetProfile, VerifiedTargetRequest};
+use crate::selection::SelectedPlan;
 use crate::target::feasibility::DeferredPredicate;
 use crate::target::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 
@@ -309,385 +311,813 @@ impl From<KernelProgramBuildError> for ProgramError {
     }
 }
 
-/// Builds the two-stage materialized serial-sum program for one request.
+// ---------------------------------------------------------------------------
+// What one cover assembles into
+// ---------------------------------------------------------------------------
+
+/// One value an assembled program owns beyond the tensors its caller binds.
+///
+/// Its extents are the iteration extents of the stage whose owning write
+/// defines it, because every region of this profile's schedule vocabulary
+/// writes one element per iteration point. The element count is derived from
+/// those extents rather than carried beside them, so the allocation capacity,
+/// the value's required bytes, the view window, and the ABI byte expression are
+/// four readings of one fact instead of four numbers something has to keep in
+/// agreement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AssemblyValue {
+    shape: Shape,
+    /// `Temporary` for a value another stage reads, `Output` for one a named
+    /// program output publishes.
+    role: ValueRole,
+}
+
+/// Which program value one stage access binds.
+///
+/// A stage's accesses realize its kernel's buffer parameters positionally, so
+/// there is one of these per access, in access order. Nothing here decides
+/// whether the binding is *legal*: [`KernelProgramBuilder::push_stage`] compares
+/// each bound value's role, component role, element type, and addressed extent
+/// against the buffer it fills, and this only says which value is named.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AssemblyBinding {
+    /// The semantic program's declared input at this ordinal.
+    Input(usize),
+    /// The internal value at this position of [`CoverAssembly::internals`].
+    Internal(usize),
+}
+
+/// One dispatch of the program a cover assembles into.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblyStage {
+    /// The occurrences this stage covers, taken from the cover region it
+    /// realizes.
+    ///
+    /// Empty for every pass of a subprogram after the first, which is the one
+    /// documented exception: the first pass already claims the occurrences the
+    /// passes jointly realize, and claiming them twice would double-cover the
+    /// semantic graph. Whole-program verification admits the uncovering pass
+    /// only because [`KernelProgramBuilder::push_partial_reduction`] declares
+    /// the split; without that declaration it is a stage computing nothing and
+    /// `UncoveringStage` rejects it.
+    pub(crate) coverage: Vec<SemanticMemberId>,
+    pub(crate) bindings: Vec<AssemblyBinding>,
+}
+
+/// One producer-to-consumer data edge between two stages of one program.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AssemblyDependency {
+    producer: usize,
+    consumer: usize,
+    value: usize,
+}
+
+/// One split-reduction contract two consecutive passes of a subprogram declare.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblySplit {
+    pub(crate) producer: usize,
+    pub(crate) combiner: usize,
+    pub(crate) partial: usize,
+    pub(crate) result: usize,
+    pub(crate) partition: ContributorPartition,
+}
+
+/// The complete structural description one retained plan's cover assembles into.
+///
+/// **Every quantity here is read from the cover or from the semantic program,
+/// and none from a whole-program strategy recognizer.** Program inputs and keys
+/// are the semantic program's declared inputs; one internal value and one
+/// program-owned allocation exist per materialization edge, sized by the edge's
+/// own element count; one output value exists per ordered named program output;
+/// one stage exists per scheduled region, ordered so producers precede
+/// consumers; and one data dependency exists per edge, from the producing stage
+/// to each consuming stage.
+///
+/// It proves nothing. [`KernelProgramBuilder::build`] remains the whole-program
+/// authority for complete disjoint coverage of the semantic graph, a unique
+/// writer per materialized value, boundary-contract satisfaction, temporary
+/// initialization and lifetimes, aliasing, ordered opaque effects, ABI and
+/// launch references, and named-output coverage. The claim this type carries is
+/// only that it constructs the same obligations for N regions that the retired
+/// three enumerated shapes constructed for one, two, and three.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CoverAssembly {
+    /// The scheduled regions this program dispatches, in execution order and
+    /// parallel to [`Self::stages`].
+    regions: Vec<VerifiedScheduledRegion>,
+    internals: Vec<AssemblyValue>,
+    stages: Vec<AssemblyStage>,
+    dependencies: Vec<AssemblyDependency>,
+    splits: Vec<AssemblySplit>,
+    /// The ordered named program outputs, each naming the internal value that
+    /// publishes it, in the semantic program's declaration order.
+    outputs: Vec<(OutputKey, usize)>,
+}
+
+/// Which failure class one assembly refusal belongs to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AssemblyRefusalClass {
+    /// A **missing compilation capability**: the plan is valid, its cover is an
+    /// already-verified authority, and the absent authority is this assembler.
+    ///
+    /// This is the correction the retired `"unsupported-plan-shape"` rule makes
+    /// necessary. Reporting a cover the assembler cannot express as invalid
+    /// compiler output claims the compiler produced something wrong when it
+    /// produced nothing at all, and the two classes are not interchangeable:
+    /// one tells a caller their installed authority is incomplete, the other
+    /// says the compiler has a bug.
+    MissingCapability,
+    /// A selected body this compiler did not schedule and cannot lower.
+    ///
+    /// Keeps the classification it already had rather than being reclassified
+    /// alongside the cover shapes: lowering an opaque call is a separate
+    /// capability with a separate owner, and moving its class here would change
+    /// a decision this ticket does not own.
+    UnlowerableBody,
+}
+
+/// Why one retained plan's cover cannot be assembled into a kernel program.
+///
+/// Names the region occurrence the refusal is about, so a caller learns which
+/// part of its program the assembler had no expression for rather than that
+/// "the shape" was unsupported.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblyRefusal {
+    region: String,
+    rule: &'static str,
+    class: AssemblyRefusalClass,
+}
+
+impl AssemblyRefusal {
+    /// States one refusal directly, so a test can drive the reporting path.
+    #[cfg(test)]
+    pub(crate) fn stated(
+        region: impl Into<String>,
+        rule: &'static str,
+        class: AssemblyRefusalClass,
+    ) -> Self {
+        Self {
+            region: region.into(),
+            rule,
+            class,
+        }
+    }
+
+    fn missing(region: impl Into<String>, rule: &'static str) -> Self {
+        Self {
+            region: region.into(),
+            rule,
+            class: AssemblyRefusalClass::MissingCapability,
+        }
+    }
+
+    /// Returns the bounded explain label of the region the refusal is about.
+    pub(crate) fn region(&self) -> &str {
+        &self.region
+    }
+
+    /// Returns the stable rule identifier naming the missing capability.
+    pub(crate) const fn rule(&self) -> &'static str {
+        self.rule
+    }
+
+    /// Returns the failure class a caller reports this refusal under.
+    pub(crate) const fn class(&self) -> AssemblyRefusalClass {
+        self.class
+    }
+}
+
+impl fmt::Display for AssemblyRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "program.assembly.{}: region {} rejected",
+            self.rule, self.region
+        )
+    }
+}
+
+impl Error for AssemblyRefusal {}
+
+impl CoverAssembly {
+    /// Returns the scheduled regions this program dispatches, in stage order.
+    pub(crate) fn regions(&self) -> &[VerifiedScheduledRegion] {
+        &self.regions
+    }
+
+    /// Derives the whole program description one retained plan assembles into.
+    ///
+    /// **The cover is consumed, never re-derived.** `verify_cover` already
+    /// proved that each placed region is an authoritative candidate, that every
+    /// operation is covered, that each ordered named output is produced by
+    /// exactly one region, and that the materialization edges recompute exactly
+    /// — so reading region membership, materialization edges, and write roles
+    /// off it is reading a checked value rather than trusting an unchecked one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`AssemblyRefusal`] naming the region and the missing
+    /// capability. Every refusal is a statement about a shape this assembler
+    /// has no expression for; none of them asserts the plan is malformed.
+    pub(crate) fn from_plan(
+        semantic: &SemanticProgram,
+        plan: &SelectedPlan,
+    ) -> Result<Self, AssemblyRefusal> {
+        let cover = plan.cover();
+        let regions = cover.regions();
+        if plan.selections().len() != regions.len() {
+            return Err(AssemblyRefusal::missing(
+                COVER_SUBJECT,
+                "cover-selection-arity",
+            ));
+        }
+        // One selection per placed region, and the stages that selection
+        // dispatches. A body with no scheduled region -- an opaque call -- has
+        // nothing to bind a stage to, and saying so is what stops the plan being
+        // assembled as though the call were not in it.
+        let mut selected: Vec<&[VerifiedScheduledRegion]> = Vec::with_capacity(regions.len());
+        for region in regions {
+            let selection = plan
+                .selections()
+                .iter()
+                .find(|selection| selection.occurrence() == region.occurrence())
+                .ok_or_else(|| {
+                    AssemblyRefusal::missing(region.label(), "cover-region-unselected")
+                })?;
+            let stages = selection
+                .implementation()
+                .scheduled_stages()
+                .ok_or_else(|| AssemblyRefusal {
+                    region: region.label().to_owned(),
+                    rule: "unlowerable-opaque-body",
+                    class: AssemblyRefusalClass::UnlowerableBody,
+                })?;
+            if stages.is_empty() {
+                return Err(AssemblyRefusal::missing(
+                    region.label(),
+                    "cover-region-undispatched",
+                ));
+            }
+            selected.push(stages);
+        }
+
+        let order = execution_order(cover)?;
+        // The flattened stage ordinal each region's first and last dispatch
+        // occupies, which is what a data edge between two regions names.
+        let mut stage_regions: Vec<VerifiedScheduledRegion> = Vec::new();
+        let mut span: Vec<(usize, usize)> = vec![(0, 0); regions.len()];
+        for position in &order {
+            let stages = selected[*position];
+            let first = stage_regions.len();
+            stage_regions.extend(stages.iter().cloned());
+            span[*position] = (first, stage_regions.len() - 1);
+        }
+
+        // Internal values, in the order the assembler mints them: one per
+        // materialization edge in the cover's own canonical edge order, then one
+        // per pass a subprogram stages between its dispatches, then one per
+        // ordered named program output.
+        let mut internals: Vec<AssemblyValue> = Vec::new();
+        let mut edge_value: Vec<usize> = Vec::with_capacity(cover.materializations().len());
+        for edge in cover.materializations() {
+            let producer = region_position(regions, edge.producer())?;
+            let shape = stage_regions[span[producer].1]
+                .region()
+                .index
+                .iteration_shape
+                .clone();
+            // The edge states the element count and the producing region states
+            // the extents it writes. A disagreement is refused rather than
+            // silently resized, because resizing would publish a buffer neither
+            // authority asked for.
+            if shape_elements(&shape).map_err(|_| {
+                AssemblyRefusal::missing(regions[producer].label(), "materialized-extent-overflow")
+            })? != edge.element_count()
+            {
+                return Err(AssemblyRefusal::missing(
+                    regions[producer].label(),
+                    "materialized-extent-disagreement",
+                ));
+            }
+            edge_value.push(internals.len());
+            internals.push(AssemblyValue {
+                shape,
+                role: ValueRole::Temporary,
+            });
+        }
+        // One staged value per dispatch of a subprogram other than its last: the
+        // pass that writes it and the pass that reads it are two dispatches, and
+        // the dispatch boundary is what makes the staged value visible.
+        let mut pass_values: Vec<Vec<usize>> = vec![Vec::new(); regions.len()];
+        for position in &order {
+            let (first, last) = span[*position];
+            for staged in &stage_regions[first..last] {
+                pass_values[*position].push(internals.len());
+                internals.push(AssemblyValue {
+                    shape: staged.region().index.iteration_shape.clone(),
+                    role: ValueRole::Temporary,
+                });
+            }
+        }
+        // One value per ordered named program output, in declaration order. The
+        // region that publishes it is the one no materialization edge names as a
+        // producer, which is the same rule the frontier's region subject already
+        // decides `RegionWrite` by.
+        let publishing: Vec<usize> = order
+            .iter()
+            .copied()
+            .filter(|position| {
+                !cover
+                    .materializations()
+                    .iter()
+                    .any(|edge| edge.producer() == regions[*position].occurrence())
+            })
+            .collect();
+        let mut outputs: Vec<(OutputKey, usize)> = Vec::new();
+        let mut output_value: Vec<Option<usize>> = vec![None; regions.len()];
+        if publishing.len() != semantic.output_count() || publishing.len() != 1 {
+            // The cover carries which regions publish *an* output but not which
+            // named result each retains, so pairing several publishing regions
+            // with several declared outputs would be a guess. That attribution
+            // is what `admit-ordered-multi-output-programs-at-the-compiler-
+            // request-boundary` owns; until it supplies one, a program with more
+            // than one of either is a named missing capability rather than a
+            // silently mis-ordered interface.
+            return Err(AssemblyRefusal::missing(
+                publishing
+                    .first()
+                    .map_or(COVER_SUBJECT, |position| regions[*position].label()),
+                "cover-named-output-attribution",
+            ));
+        }
+        for (output, position) in semantic.outputs().zip(&publishing) {
+            let shape = semantic
+                .shape(output.value())
+                .map_err(|_| {
+                    AssemblyRefusal::missing(regions[*position].label(), "named-output-unshaped")
+                })?
+                .clone();
+            output_value[*position] = Some(internals.len());
+            outputs.push((output.key().clone(), internals.len()));
+            internals.push(AssemblyValue {
+                shape,
+                role: ValueRole::Output,
+            });
+        }
+
+        let inputs = semantic.input_count();
+        let mut stages: Vec<AssemblyStage> = Vec::with_capacity(stage_regions.len());
+        let mut splits: Vec<AssemblySplit> = Vec::new();
+        for position in &order {
+            let region = &regions[*position];
+            let (first, last) = span[*position];
+            // Which edge this region reads across, and which it writes across.
+            // A region reading or producing several is refused: `TensorRole`
+            // separates reads of *declared inputs* by ordinal and carries none
+            // for an intermediate, so two of either leave nothing to say which
+            // access binds which edge.
+            let consumed: Vec<usize> = cover
+                .materializations()
+                .iter()
+                .enumerate()
+                .filter(|(_, edge)| {
+                    edge.consumers()
+                        .iter()
+                        .any(|consumer| consumer == region.occurrence())
+                })
+                .map(|(edge, _)| edge_value[edge])
+                .collect();
+            let produced: Vec<usize> = cover
+                .materializations()
+                .iter()
+                .enumerate()
+                .filter(|(_, edge)| edge.producer() == region.occurrence())
+                .map(|(edge, _)| edge_value[edge])
+                .collect();
+            if produced.len() > 1 {
+                return Err(AssemblyRefusal::missing(
+                    region.label(),
+                    "cover-region-multiple-materializations",
+                ));
+            }
+            for stage in first..=last {
+                let accesses = &stage_regions[stage].region().index.accesses;
+                let Some((write, reads)) = accesses.split_last() else {
+                    return Err(AssemblyRefusal::missing(
+                        region.label(),
+                        "region-without-accesses",
+                    ));
+                };
+                let mut bindings = Vec::with_capacity(accesses.len());
+                let mut intermediate_reads = 0_usize;
+                for read in reads {
+                    if read.mode != AccessMode::Read {
+                        return Err(AssemblyRefusal::missing(
+                            region.label(),
+                            "region-access-order",
+                        ));
+                    }
+                    match read.tensor {
+                        TensorRole::Input { ordinal } => {
+                            let ordinal = usize::try_from(ordinal.get()).unwrap_or(usize::MAX);
+                            if ordinal >= inputs {
+                                return Err(AssemblyRefusal::missing(
+                                    region.label(),
+                                    "region-input-ordinal",
+                                ));
+                            }
+                            bindings.push(AssemblyBinding::Input(ordinal));
+                        }
+                        TensorRole::Intermediate => {
+                            intermediate_reads += 1;
+                            // One intermediate read per dispatch, and exactly one
+                            // edge for the dispatch that reads across the region
+                            // boundary. `TensorRole::Intermediate` carries no
+                            // ordinal — unlike `Input`, which does — so a second
+                            // one leaves nothing to say which edge it binds, and
+                            // guessing would bind a stage to the wrong buffer.
+                            if intermediate_reads > 1 || (stage == first && consumed.len() != 1) {
+                                return Err(AssemblyRefusal::missing(
+                                    region.label(),
+                                    "cover-intermediate-read-attribution",
+                                ));
+                            }
+                            // The first dispatch of a region reads what the cover
+                            // hands the region; every later one reads what the
+                            // dispatch before it staged.
+                            bindings.push(AssemblyBinding::Internal(if stage == first {
+                                consumed[0]
+                            } else {
+                                pass_values[*position][stage - first - 1]
+                            }));
+                        }
+                        TensorRole::Output => {
+                            return Err(AssemblyRefusal::missing(
+                                region.label(),
+                                "region-reads-program-output",
+                            ));
+                        }
+                    }
+                }
+                if write.mode != AccessMode::Write {
+                    return Err(AssemblyRefusal::missing(
+                        region.label(),
+                        "region-access-order",
+                    ));
+                }
+                let written = match (write.tensor, stage == last) {
+                    // The region's owning write, whose target the cover decided:
+                    // the edge it materializes, or the output it publishes.
+                    (TensorRole::Intermediate, true) => *produced.first().ok_or_else(|| {
+                        AssemblyRefusal::missing(region.label(), "cover-materialization-unnamed")
+                    })?,
+                    (TensorRole::Output, true) => output_value[*position].ok_or_else(|| {
+                        AssemblyRefusal::missing(region.label(), "cover-named-output-unnamed")
+                    })?,
+                    // A pass that is not the region's last stages its result for
+                    // the pass after it, so it writes an intermediate whatever
+                    // the region as a whole writes.
+                    (TensorRole::Intermediate, false) => pass_values[*position][stage - first],
+                    (TensorRole::Output | TensorRole::Input { .. }, false)
+                    | (TensorRole::Input { .. }, true) => {
+                        return Err(AssemblyRefusal::missing(
+                            region.label(),
+                            "region-write-role",
+                        ));
+                    }
+                };
+                bindings.push(AssemblyBinding::Internal(written));
+                stages.push(AssemblyStage {
+                    coverage: if stage == first {
+                        region.members().to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    bindings,
+                });
+            }
+            // The split contract each consecutive pair of passes declares. The
+            // partition is read back from the producing pass's own topology, so
+            // the program-scope declaration agrees with the schedule that
+            // produced it by construction rather than by a second derivation.
+            for stage in first..last {
+                let partition =
+                    crate::physical::declared_partial_partition(stage_regions[stage].region())
+                        .ok_or_else(|| {
+                            AssemblyRefusal::missing(region.label(), "split-partition-undeclared")
+                        })?;
+                let combiner = stage + 1;
+                let result = match stages[combiner].bindings.last() {
+                    Some(AssemblyBinding::Internal(value)) => *value,
+                    _ => {
+                        return Err(AssemblyRefusal::missing(
+                            region.label(),
+                            "split-result-unnamed",
+                        ));
+                    }
+                };
+                splits.push(AssemblySplit {
+                    producer: stage,
+                    combiner,
+                    partial: pass_values[*position][stage - first],
+                    result,
+                    partition,
+                });
+            }
+        }
+
+        let dependencies = derive_dependencies(&stages, internals.len())?;
+        check_materialized_values_are_read(&internals, &dependencies)?;
+        Ok(Self {
+            regions: stage_regions,
+            internals,
+            stages,
+            dependencies,
+            splits,
+            outputs,
+        })
+    }
+
+    /// Spells one assembly from stated structural facts.
+    ///
+    /// **The compile path never reaches this.** [`Self::from_plan`] is its only
+    /// derivation, and every program this crate compiles goes through it. This
+    /// exists so a test can state a cover's facts directly — which values are
+    /// materialized, which stage writes each, which named output publishes which
+    /// — and check what the assembler builds from them, including shapes no
+    /// cover the current region vocabulary admits can state.
+    ///
+    /// The data dependencies are *derived* rather than stated, by the same
+    /// function [`Self::from_plan`] uses, so a stated assembly cannot describe an
+    /// edge set the derived one would not have produced.
+    #[cfg(test)]
+    pub(crate) fn stated(
+        regions: Vec<VerifiedScheduledRegion>,
+        internals: Vec<(Shape, ValueRole)>,
+        stages: Vec<AssemblyStage>,
+        splits: Vec<AssemblySplit>,
+        outputs: Vec<(OutputKey, usize)>,
+    ) -> Result<Self, AssemblyRefusal> {
+        let internals: Vec<AssemblyValue> = internals
+            .into_iter()
+            .map(|(shape, role)| AssemblyValue { shape, role })
+            .collect();
+        let dependencies = derive_dependencies(&stages, internals.len())?;
+        check_materialized_values_are_read(&internals, &dependencies)?;
+        Ok(Self {
+            regions,
+            internals,
+            stages,
+            dependencies,
+            splits,
+            outputs,
+        })
+    }
+}
+
+/// Refuses an assembly that materializes a value no stage reads.
+///
+/// A materialization edge exists because the cover decided a value crosses a
+/// region boundary, so a described program where nothing reads it is one whose
+/// description and whose cover disagree. Left unrefused it would assemble: the
+/// whole-program verifier requires a *writer* for every value and a dependency
+/// behind every cross-stage *read*, and a temporary nobody reads violates
+/// neither. The result would be a program that allocates and fills a buffer for
+/// no consumer, which is the "silently wrong shape" this ticket exists to
+/// prevent rather than a cost.
+///
+/// A value published as a named output is deliberately exempt: publishing *is*
+/// its consumer, and it leaves the program through the interface rather than
+/// through a stage.
+fn check_materialized_values_are_read(
+    internals: &[AssemblyValue],
+    dependencies: &[AssemblyDependency],
+) -> Result<(), AssemblyRefusal> {
+    for (value, internal) in internals.iter().enumerate() {
+        if internal.role == ValueRole::Temporary
+            && !dependencies
+                .iter()
+                .any(|dependency| dependency.value == value)
+        {
+            return Err(AssemblyRefusal::missing(
+                COVER_SUBJECT,
+                "materialized-value-unread",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Derives one data dependency per internal value, in the order values were
+/// minted, from the stage that defines it to each stage that reads it.
+///
+/// **The bindings already say this.** A stage's last binding names the value its
+/// owning write defines and its earlier bindings name what it reads, so the edge
+/// set is a reading of the stage list rather than a second description of it.
+/// For a materialization edge the derived edge is the cover's own
+/// producer-to-consumer edge; for a value one subprogram pass stages for the
+/// next it is the dispatch boundary that makes the partials visible, which is
+/// why a split needs no barrier and declares none.
+fn derive_dependencies(
+    stages: &[AssemblyStage],
+    internals: usize,
+) -> Result<Vec<AssemblyDependency>, AssemblyRefusal> {
+    let mut producers: Vec<Option<usize>> = vec![None; internals];
+    let mut consumers: Vec<Vec<usize>> = vec![Vec::new(); internals];
+    for (position, stage) in stages.iter().enumerate() {
+        let Some((written, read_bindings)) = stage.bindings.split_last() else {
+            return Err(AssemblyRefusal::missing(
+                COVER_SUBJECT,
+                "stage-without-write",
+            ));
+        };
+        for binding in read_bindings {
+            if let AssemblyBinding::Internal(value) = binding {
+                consumers
+                    .get_mut(*value)
+                    .ok_or_else(|| {
+                        AssemblyRefusal::missing(COVER_SUBJECT, "binding-names-no-value")
+                    })?
+                    .push(position);
+            }
+        }
+        let AssemblyBinding::Internal(value) = written else {
+            return Err(AssemblyRefusal::missing(
+                COVER_SUBJECT,
+                "stage-writes-an-input",
+            ));
+        };
+        let slot = producers
+            .get_mut(*value)
+            .ok_or_else(|| AssemblyRefusal::missing(COVER_SUBJECT, "binding-names-no-value"))?;
+        if slot.is_some() {
+            // Two writers of one value is what `KernelProgramBuilder::build`
+            // refuses as an aliasing violation, and describing it here would
+            // hand it a program it must then reject. Refusing at the description
+            // keeps the refusal attributable to the cover rather than to the
+            // assembly it produced.
+            return Err(AssemblyRefusal::missing(
+                COVER_SUBJECT,
+                "value-written-twice",
+            ));
+        }
+        *slot = Some(position);
+    }
+    let mut dependencies = Vec::new();
+    for (value, readers) in consumers.iter().enumerate() {
+        let Some(producer) = producers[value] else {
+            return Err(AssemblyRefusal::missing(
+                COVER_SUBJECT,
+                "internal-unwritten",
+            ));
+        };
+        for consumer in readers {
+            dependencies.push(AssemblyDependency {
+                producer,
+                consumer: *consumer,
+                value,
+            });
+        }
+    }
+    Ok(dependencies)
+}
+
+/// The explain subject a refusal about the cover as a whole is attributed to.
+const COVER_SUBJECT: &str = "region-cover";
+
+/// Orders a cover's regions so every producer precedes each of its consumers.
+///
+/// **Region identifiers cannot order this.** They are constants of the schedule
+/// vocabulary — every elementwise region carries `RegionId::new(0)` whichever
+/// occurrences it covers — so sorting by them returns an arbitrary order the
+/// moment a cover places two regions the same builder produced. The cover's
+/// materialization edges are the authority for what must precede what, and the
+/// cover's own canonical occurrence order breaks every remaining tie, so one
+/// cover has exactly one execution order.
+pub(crate) fn execution_order(cover: &RegionCover) -> Result<Vec<usize>, AssemblyRefusal> {
+    let regions = cover.regions();
+    let mut indegree = vec![0_usize; regions.len()];
+    let mut successors: Vec<Vec<usize>> = vec![Vec::new(); regions.len()];
+    for edge in cover.materializations() {
+        let producer = region_position(regions, edge.producer())?;
+        for consumer in edge.consumers() {
+            let consumer = region_position(regions, consumer)?;
+            if consumer == producer {
+                return Err(AssemblyRefusal::missing(
+                    regions[producer].label(),
+                    "cover-self-materialization",
+                ));
+            }
+            successors[producer].push(consumer);
+            indegree[consumer] = indegree[consumer].saturating_add(1);
+        }
+    }
+    let mut ready: std::collections::BTreeSet<usize> = (0..regions.len())
+        .filter(|position| indegree[*position] == 0)
+        .collect();
+    let mut order = Vec::with_capacity(regions.len());
+    while let Some(next) = ready.pop_first() {
+        order.push(next);
+        for successor in &successors[next] {
+            indegree[*successor] = indegree[*successor].saturating_sub(1);
+            if indegree[*successor] == 0 {
+                ready.insert(*successor);
+            }
+        }
+    }
+    if order.len() != regions.len() {
+        return Err(AssemblyRefusal::missing(
+            COVER_SUBJECT,
+            "cover-materialization-cycle",
+        ));
+    }
+    Ok(order)
+}
+
+/// Returns the position one occurrence occupies in a cover's placed regions.
+fn region_position(
+    regions: &[crate::cover::CoverRegion],
+    occurrence: &RegionOccurrenceIdentity,
+) -> Result<usize, AssemblyRefusal> {
+    regions
+        .iter()
+        .position(|region| region.occurrence() == occurrence)
+        .ok_or_else(|| AssemblyRefusal::missing(COVER_SUBJECT, "cover-edge-region-unknown"))
+}
+
+/// Builds and target-binds the program one assembly describes, resolving the
+/// request's own lowering first.
+///
+/// The compile path resolves lowering once per portfolio and hands it down, so
+/// this convenience exists for tests of the assembler alone.
 #[cfg(test)]
 pub(crate) fn build_kernel_program(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
+    assembly: &CoverAssembly,
 ) -> Result<KernelProgram, ProgramError> {
     let lowering = resolve_program_lowering(semantic, request)?;
-    build_kernel_program_with_lowering(semantic, request, scheduled, &lowering)
+    build_cover_kernel_program_with_lowering(semantic, request, assembly, &lowering)
 }
 
-pub(crate) fn build_kernel_program_with_lowering(
+/// Builds the verified kernel program one cover assembles into.
+pub(crate) fn build_cover_kernel_program_with_lowering(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
+    assembly: &CoverAssembly,
     lowering: &ResolvedLowering,
 ) -> Result<KernelProgram, ProgramError> {
-    let [pointwise, reduction] = scheduled else {
-        return Err(ProgramError::Structure {
-            rule: "strategy-cardinality",
-        });
-    };
-    let core = build_materialized_core(semantic, request, pointwise, reduction, lowering)?;
+    let core = build_cover_core(semantic, request, assembly, lowering)?;
     let program = KernelProgram {
         target_profile: request.target_profile().clone(),
         core,
     };
-    verify_kernel_program_layers(&program, request, scheduled)?;
+    verify_kernel_program_layers(&program, request, assembly.regions())?;
     Ok(program)
 }
 
-/// Builds the three-stage split-reduction program for one request.
-///
-/// The stages are the materialized program's pointwise prologue, then the two
-/// passes that replace its single reduction dispatch: a partial pass staging one
-/// value per partition and a final pass combining them. The split is therefore
-/// additive over the materialized shape rather than a different strategy —
-/// which is why the prologue is unchanged and only the reduction is split.
-///
-/// # Errors
-///
-/// Returns [`ProgramError::Structure`] when the regions are not the three a
-/// split names, when the partial pass declares no split contract, or when the
-/// shared builder or whole-program verifier rejects the assembly.
-#[cfg(test)]
-pub(crate) fn build_split_kernel_program(
-    semantic: &SemanticProgram,
-    request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
-) -> Result<KernelProgram, ProgramError> {
-    let lowering = resolve_program_lowering(semantic, request)?;
-    build_split_kernel_program_with_lowering(semantic, request, scheduled, &lowering)
-}
-
-pub(crate) fn build_split_kernel_program_with_lowering(
-    semantic: &SemanticProgram,
-    request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
-    lowering: &ResolvedLowering,
-) -> Result<KernelProgram, ProgramError> {
-    let [pointwise, partial, combine] = scheduled else {
-        return Err(ProgramError::Structure {
-            rule: "strategy-cardinality",
-        });
-    };
-    let core = build_split_core(semantic, request, pointwise, partial, combine, lowering)?;
-    let program = KernelProgram {
-        target_profile: request.target_profile().clone(),
-        core,
-    };
-    verify_kernel_program_layers(&program, request, scheduled)?;
-    Ok(program)
-}
-
-/// Assembles the shared verified program of the split strategy.
-///
-/// Two obligations distinguish this from [`build_materialized_core`], and both
-/// are proven by [`KernelProgramBuilder::build`] rather than restated here. The
-/// final pass covers **no** semantic occurrence — the partial pass already
-/// claims the reduction the two of them realize — which whole-program
-/// verification admits only because the split is declared; without the
-/// declaration it is a stage computing nothing, and `UncoveringStage` rejects
-/// it. And the partial tensor's extents must agree with the split's partition
-/// count, which `PartialExtentMismatch` checks against the two materialized
-/// shapes.
-///
-/// The partition is read back from the partial pass's own topology rather than
-/// re-derived from the request, so the program-scope declaration agrees with the
-/// schedule that produced it by construction instead of by a second derivation
-/// two authorities could disagree about.
-fn build_split_core(
-    semantic: &SemanticProgram,
-    request: &VerifiedTargetRequest,
-    pointwise: &VerifiedScheduledRegion,
-    partial: &VerifiedScheduledRegion,
-    combine: &VerifiedScheduledRegion,
-    lowering: &ResolvedLowering,
-) -> Result<VerifiedKernelProgram, ProgramError> {
-    let subject = request.serial_sum();
-    let partition = crate::physical::declared_partial_partition(partial.region()).ok_or(
-        ProgramError::Structure {
-            rule: "split-partition-undeclared",
-        },
-    )?;
-    let partial_shape = partial.region().index.iteration_shape.clone();
-    let partial_elements = partial.region().schedule.work_items;
-    let input_bytes = byte_count(subject.input_elements)?;
-    let partial_bytes = byte_count(partial_elements)?;
-    let output_bytes = byte_count(subject.output_elements)?;
-    let mut builder = open_core_builder(semantic, request)?;
-    let abi = declare_host_abi(
-        &mut builder,
-        &vec![subject.input_elements; subject.input_keys.len()],
-        subject.output_elements,
-    )?;
-    let partial_abi = declare_partial_abi(&mut builder, partial_elements)?;
-    let temporary_storage =
-        builder.push_allocation(storage(input_bytes, AllocationOwnership::Program))?;
-    let partial_storage =
-        builder.push_allocation(storage(partial_bytes, AllocationOwnership::Program))?;
-    let output_storage =
-        builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
-    let mut prologue_accesses = Vec::with_capacity(subject.input_keys.len() + 1);
-    for (key, bytes) in subject.input_keys.iter().zip(&abi.input_bytes) {
-        let external =
-            builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
-        let input = builder.push_value(
-            program_input(key.clone(), subject.input_shape.clone()),
-            external,
-        )?;
-        let view = builder.push_whole_view(input)?;
-        prologue_accesses.push(read(view, *bytes));
-    }
-    let temporary = builder.push_value(
-        internal(ValueRole::Temporary, subject.input_shape.clone()),
-        temporary_storage,
-    )?;
-    let partial_value = builder.push_value(
-        internal(ValueRole::Temporary, partial_shape),
-        partial_storage,
-    )?;
-    let output = builder.push_value(
-        internal(ValueRole::Output, subject.output_shape.clone()),
-        output_storage,
-    )?;
-    let temporary_view = builder.push_whole_view(temporary)?;
-    let partial_view = builder.push_whole_view(partial_value)?;
-    let output_view = builder.push_whole_view(output)?;
-    let contributor_bytes = abi.first_input_bytes()?;
-    prologue_accesses.push(write(temporary_view, contributor_bytes));
-    let map_launch = HostAbi::launch(&mut builder, pointwise)?;
-    let map_stage = builder.push_stage(
-        &lower(pointwise)?,
-        &covered(subject.members.pointwise(), lowering)?,
-        &prologue_accesses,
-        map_launch,
-    )?;
-    let partial_launch = HostAbi::launch(&mut builder, partial)?;
-    let partial_stage = builder.push_stage(
-        &lower(partial)?,
-        &covered(subject.members.reduction(), lowering)?,
-        &[
-            read(temporary_view, contributor_bytes),
-            write(partial_view, partial_abi.bytes),
-        ],
-        partial_launch,
-    )?;
-    // The final pass covers nothing: the reduction occurrence it realizes is
-    // already claimed by the partial pass, and claiming it twice would
-    // double-cover the semantic graph.
-    let final_launch = HostAbi::launch(&mut builder, combine)?;
-    let final_stage = builder.push_stage(
-        &lower(combine)?,
-        &[],
-        &[
-            read(partial_view, partial_abi.bytes),
-            write(output_view, abi.output_bytes),
-        ],
-        final_launch,
-    )?;
-    builder.push_data_dependency(map_stage, partial_stage, temporary)?;
-    // The dispatch boundary *is* the pass boundary: this ordinary data edge is
-    // what makes the staged partials visible to the combiner, so a split needs
-    // no barrier and declares none.
-    builder.push_data_dependency(partial_stage, final_stage, partial_value)?;
-    builder.push_partial_reduction(tiler_ir::program::PartialReduction {
-        producer: partial_stage,
-        combiner: final_stage,
-        partial: partial_value,
-        result: output,
-        partitions: partition.partitions,
-        contributors_per_partition: partition.contributors_per_partition,
-    })?;
-    builder.push_output(subject.output_key.clone(), output)?;
-    declare_routing_commit(&mut builder)?;
-    finish_core(builder)
-}
-
-/// Builds a single-stage whole-program kernel for one request.
-///
-/// The scheduled region may be a fused serial sum, a standalone governed
-/// pointwise program, or a contraction.
-#[cfg(test)]
-pub(crate) fn build_fused_kernel_program(
-    semantic: &SemanticProgram,
-    request: &VerifiedTargetRequest,
-    scheduled: &VerifiedScheduledRegion,
-) -> Result<KernelProgram, ProgramError> {
-    let lowering = resolve_program_lowering(semantic, request)?;
-    build_fused_kernel_program_with_lowering(semantic, request, scheduled, &lowering)
-}
-
-pub(crate) fn build_fused_kernel_program_with_lowering(
-    semantic: &SemanticProgram,
-    request: &VerifiedTargetRequest,
-    scheduled: &VerifiedScheduledRegion,
-    lowering: &ResolvedLowering,
-) -> Result<KernelProgram, ProgramError> {
-    let core = build_fused_core(semantic, request, scheduled, lowering)?;
-    let program = KernelProgram {
-        target_profile: request.target_profile().clone(),
-        core,
-    };
-    verify_kernel_program_layers(&program, request, std::slice::from_ref(scheduled))?;
-    Ok(program)
-}
-
-/// Assembles the shared verified program of the materialized strategy.
+/// Assembles the shared verified program of one cover, of any region count.
 ///
 /// Every structural obligation — complete disjoint coverage of the semantic
 /// graph, a unique writer per materialized value, the data dependency behind
-/// the cross-stage read, the aliasing contract, and named-output coverage — is
-/// proven by [`KernelProgramBuilder::build`], not re-implemented here.
-fn build_materialized_core(
+/// each cross-stage read, temporary initialization and lifetimes, the aliasing
+/// contract, the split-reduction contributor coverage, and named-output
+/// coverage — is proven by [`KernelProgramBuilder::build`], not re-implemented
+/// here. This declares them; it does not decide them.
+fn build_cover_core(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    pointwise: &VerifiedScheduledRegion,
-    reduction: &VerifiedScheduledRegion,
+    assembly: &CoverAssembly,
     lowering: &ResolvedLowering,
 ) -> Result<VerifiedKernelProgram, ProgramError> {
-    let subject = request.serial_sum();
-    let input_bytes = byte_count(subject.input_elements)?;
-    let output_bytes = byte_count(subject.output_elements)?;
-    let mut builder = open_core_builder(semantic, request)?;
-    let abi = declare_host_abi(
-        &mut builder,
-        // One entry per declared input, in declaration order: the recognized
-        // prologue may read several tensors, and the prologue stage's accesses
-        // bind to its kernel's buffers positionally.
-        &vec![subject.input_elements; subject.input_keys.len()],
-        subject.output_elements,
-    )?;
-    let temporary_storage =
-        builder.push_allocation(storage(input_bytes, AllocationOwnership::Program))?;
-    let output_storage =
-        builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
-    let mut prologue_accesses = Vec::with_capacity(subject.input_keys.len() + 1);
-    for (key, bytes) in subject.input_keys.iter().zip(&abi.input_bytes) {
-        let external =
-            builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
-        // Every declared input is read at the contributor domain, which is the
-        // one shape the recognized prologue governs.
-        let input = builder.push_value(
-            program_input(key.clone(), subject.input_shape.clone()),
-            external,
-        )?;
-        let view = builder.push_whole_view(input)?;
-        prologue_accesses.push(read(view, *bytes));
+    if assembly.regions.len() != assembly.stages.len() {
+        return Err(ProgramError::Structure {
+            rule: "assembly-stage-cardinality",
+        });
     }
-    let temporary = builder.push_value(
-        internal(ValueRole::Temporary, subject.input_shape.clone()),
-        temporary_storage,
-    )?;
-    let output = builder.push_value(
-        internal(ValueRole::Output, subject.output_shape.clone()),
-        output_storage,
-    )?;
-    let temporary_view = builder.push_whole_view(temporary)?;
-    let output_view = builder.push_whole_view(output)?;
-    let contributor_bytes = abi.first_input_bytes()?;
-    prologue_accesses.push(write(temporary_view, contributor_bytes));
-    let map_launch = HostAbi::launch(&mut builder, pointwise)?;
-    let map_stage = builder.push_stage(
-        &lower(pointwise)?,
-        &covered(subject.members.pointwise(), lowering)?,
-        &prologue_accesses,
-        map_launch,
-    )?;
-    let reduce_launch = HostAbi::launch(&mut builder, reduction)?;
-    let reduce_stage = builder.push_stage(
-        &lower(reduction)?,
-        &covered(subject.members.reduction(), lowering)?,
-        &[
-            read(temporary_view, contributor_bytes),
-            write(output_view, abi.output_bytes),
-        ],
-        reduce_launch,
-    )?;
-    builder.push_data_dependency(map_stage, reduce_stage, temporary)?;
-    builder.push_output(subject.output_key.clone(), output)?;
-    declare_routing_commit(&mut builder)?;
-    finish_core(builder)
-}
+    // The declared program interface, in declaration order, because that order
+    // is what a region's input ordinals index: a stage's accesses bind to its
+    // kernel's buffers positionally, so reordering here would silently bind each
+    // buffer to the wrong tensor.
+    let inputs: Vec<(InputKey, Shape, u64)> = semantic
+        .inputs()
+        .map(|input| {
+            let shape = semantic
+                .shape(input.value())
+                .map_err(|_| ProgramError::Structure {
+                    rule: "program-input-unshaped",
+                })?
+                .clone();
+            let elements = shape_elements(&shape)?;
+            Ok((input.key().clone(), shape, elements))
+        })
+        .collect::<Result<_, ProgramError>>()?;
+    let internal_elements = assembly
+        .internals
+        .iter()
+        .map(|value| shape_elements(&value.shape))
+        .collect::<Result<Vec<_>, ProgramError>>()?;
 
-/// Assembles the shared verified program of the fused strategy.
-fn build_fused_core(
-    semantic: &SemanticProgram,
-    request: &VerifiedTargetRequest,
-    scheduled: &VerifiedScheduledRegion,
-    lowering: &ResolvedLowering,
-) -> Result<VerifiedKernelProgram, ProgramError> {
-    // A pointwise region reads every program input at one shared shape; a fused
-    // serial sum reads the one its reduction contracts over; a contraction reads
-    // two operands whose extents generally differ, so each declared input
-    // carries its own shape, element count, and ABI byte expression. The inputs
-    // travel as a list in declaration order because that order is what the
-    // region's input ordinals index — a stage's accesses bind to its kernel's
-    // buffers positionally, so reordering here would silently bind each buffer
-    // to the wrong tensor.
-    let (inputs, output_key, output_shape, output_elements, members): (
-        Vec<(InputKey, Shape, u64)>,
-        _,
-        _,
-        _,
-        _,
-    ) = if let Some(pointwise) = request.pointwise() {
-        (
-            pointwise
-                .input_keys
-                .iter()
-                .map(|key| (key.clone(), pointwise.shape.clone(), pointwise.elements))
-                .collect(),
-            pointwise.output_key.clone(),
-            pointwise.shape.clone(),
-            pointwise.elements,
-            pointwise.members.clone(),
-        )
-    } else if let Some(contraction) = request.contraction() {
-        (
-            (0..contraction.input_keys.len())
-                .map(|declaration| {
-                    (
-                        contraction.input_keys[declaration].clone(),
-                        contraction.input_shapes[declaration].clone(),
-                        contraction.input_elements[declaration],
-                    )
-                })
-                .collect(),
-            contraction.output_key.clone(),
-            contraction.output_shape.clone(),
-            contraction.output_elements,
-            contraction.members.clone(),
-        )
-    } else {
-        let subject = request.serial_sum();
-        (
-            // Every declared input at the contributor domain, in declaration
-            // order. A fused region and a prologue-less reduction both declare
-            // one, but the list is derived rather than spelled: the arity is the
-            // recognizer's, and a single-region shape that read two tensors
-            // would otherwise bind the second to nothing.
-            subject
-                .input_keys
-                .iter()
-                .map(|key| {
-                    (
-                        key.clone(),
-                        subject.input_shape.clone(),
-                        subject.input_elements,
-                    )
-                })
-                .collect(),
-            subject.output_key.clone(),
-            subject.output_shape.clone(),
-            subject.output_elements,
-            subject.members.all(),
-        )
-    };
-    let output_bytes = byte_count(output_elements)?;
     let mut builder = open_core_builder(semantic, request)?;
     let abi = declare_host_abi(
         &mut builder,
@@ -695,36 +1125,139 @@ fn build_fused_core(
             .iter()
             .map(|(_, _, elements)| *elements)
             .collect::<Vec<_>>(),
-        output_elements,
+        &internal_elements,
     )?;
+    // Program-owned storage for every value the program materializes for
+    // itself, then the externally bound storage of each declared input.
+    let mut internal_storage = Vec::with_capacity(assembly.internals.len());
+    for elements in &internal_elements {
+        internal_storage.push(builder.push_allocation(storage(
+            byte_count(*elements)?,
+            AllocationOwnership::Program,
+        ))?);
+    }
     let mut input_views = Vec::with_capacity(inputs.len());
-    for ((key, shape, elements), bytes) in inputs.into_iter().zip(&abi.input_bytes) {
+    for (key, shape, elements) in &inputs {
         let external = builder.push_allocation(storage(
-            byte_count(elements)?,
+            byte_count(*elements)?,
             AllocationOwnership::External,
         ))?;
-        let input = builder.push_value(program_input(key, shape), external)?;
-        input_views.push((builder.push_whole_view(input)?, *bytes));
+        let input = builder.push_value(program_input(key.clone(), shape.clone()), external)?;
+        input_views.push(builder.push_whole_view(input)?);
     }
-    let output_storage =
-        builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
-    let output = builder.push_value(internal(ValueRole::Output, output_shape), output_storage)?;
-    let output_view = builder.push_whole_view(output)?;
-    let mut accesses: Vec<StageAccess> = input_views
-        .into_iter()
-        .map(|(view, bytes)| read(view, bytes))
-        .collect();
-    accesses.push(write(output_view, abi.output_bytes));
-    let launch = HostAbi::launch(&mut builder, scheduled)?;
-    builder.push_stage(
-        &lower(scheduled)?,
-        &covered(&members, lowering)?,
-        &accesses,
-        launch,
-    )?;
-    builder.push_output(output_key, output)?;
+    let mut internal_values = Vec::with_capacity(assembly.internals.len());
+    for (value, allocation) in assembly.internals.iter().zip(&internal_storage) {
+        internal_values
+            .push(builder.push_value(internal(value.role, value.shape.clone()), *allocation)?);
+    }
+    let mut internal_views = Vec::with_capacity(internal_values.len());
+    for value in &internal_values {
+        internal_views.push(builder.push_whole_view(*value)?);
+    }
+
+    let mut pushed = Vec::with_capacity(assembly.stages.len());
+    for (stage, region) in assembly.stages.iter().zip(&assembly.regions) {
+        let mut accesses = Vec::with_capacity(stage.bindings.len());
+        let Some((written, read_bindings)) = stage.bindings.split_last() else {
+            return Err(ProgramError::Structure {
+                rule: "assembly-stage-bindings",
+            });
+        };
+        for binding in read_bindings {
+            accesses.push(read(
+                view_of(*binding, &input_views, &internal_views)?,
+                bytes_of(*binding, &abi)?,
+            ));
+        }
+        accesses.push(write(
+            view_of(*written, &input_views, &internal_views)?,
+            bytes_of(*written, &abi)?,
+        ));
+        let launch = HostAbi::launch(&mut builder, region)?;
+        pushed.push(builder.push_stage(
+            &lower(region)?,
+            &covered(&stage.coverage, lowering)?,
+            &accesses,
+            launch,
+        )?);
+    }
+    for dependency in &assembly.dependencies {
+        builder.push_data_dependency(
+            *pushed
+                .get(dependency.producer)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-dependency-stage",
+                })?,
+            *pushed
+                .get(dependency.consumer)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-dependency-stage",
+                })?,
+            *internal_values
+                .get(dependency.value)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-dependency-value",
+                })?,
+        )?;
+    }
+    for split in &assembly.splits {
+        builder.push_partial_reduction(tiler_ir::program::PartialReduction {
+            producer: *pushed.get(split.producer).ok_or(ProgramError::Structure {
+                rule: "assembly-split-stage",
+            })?,
+            combiner: *pushed.get(split.combiner).ok_or(ProgramError::Structure {
+                rule: "assembly-split-stage",
+            })?,
+            partial: *internal_values
+                .get(split.partial)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-split-value",
+                })?,
+            result: *internal_values
+                .get(split.result)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-split-value",
+                })?,
+            partitions: split.partition.partitions,
+            contributors_per_partition: split.partition.contributors_per_partition,
+        })?;
+    }
+    for (key, value) in &assembly.outputs {
+        builder.push_output(
+            key.clone(),
+            *internal_values.get(*value).ok_or(ProgramError::Structure {
+                rule: "assembly-output-value",
+            })?,
+        )?;
+    }
     declare_routing_commit(&mut builder)?;
     finish_core(builder)
+}
+
+/// Returns the declared view one binding addresses.
+fn view_of(
+    binding: AssemblyBinding,
+    inputs: &[ViewId],
+    internals: &[ViewId],
+) -> Result<ViewId, ProgramError> {
+    match binding {
+        AssemblyBinding::Input(ordinal) => inputs.get(ordinal).copied(),
+        AssemblyBinding::Internal(value) => internals.get(value).copied(),
+    }
+    .ok_or(ProgramError::Structure {
+        rule: "assembly-binding-value",
+    })
+}
+
+/// Returns the ABI byte expression of the value one binding addresses.
+fn bytes_of(binding: AssemblyBinding, abi: &HostAbi) -> Result<AbiExprId, ProgramError> {
+    match binding {
+        AssemblyBinding::Input(ordinal) => abi.input_bytes.get(ordinal).copied(),
+        AssemblyBinding::Internal(value) => abi.internal_bytes.get(value).copied(),
+    }
+    .ok_or(ProgramError::Structure {
+        rule: "assembly-binding-bytes",
+    })
 }
 
 /// The ABI quantities named by programs in the bounded governed profile.
@@ -735,17 +1268,17 @@ fn build_fused_core(
 /// what a dynamic-shape subject would name instead; promoting these literals is
 /// a capability question tied to dynamic shapes, not a property of the
 /// vocabulary, and nothing in this contract has to change shape for it.
-/// The `input_bytes` and `input_elements` runs are per declared input, in
-/// declaration order, because a contraction's two operands have different
-/// extents and therefore different accessible ranges. The single-input
-/// strategies declare one entry each and reach it through
-/// [`HostAbi::sole_input_bytes`] and [`HostAbi::sole_input_elements`], which
-/// refuse rather than index — a strategy that grew a second input and kept
-/// calling them would fail loudly instead of sizing everything by the first.
+/// The `input_bytes` run is per declared input, in declaration order, because a
+/// contraction's two operands have different extents and therefore different
+/// accessible ranges; `internal_bytes` is per value the program materializes for
+/// itself, in the order [`CoverAssembly`] mints them. Both are indexed by the
+/// binding that names them rather than searched, so a program that grew a value
+/// nothing declared bytes for fails at the lookup instead of sizing a stage by
+/// whichever entry happened to be first.
 #[derive(Clone, Debug)]
 struct HostAbi {
     input_bytes: Vec<AbiExprId>,
-    output_bytes: AbiExprId,
+    internal_bytes: Vec<AbiExprId>,
 }
 
 impl HostAbi {
@@ -791,91 +1324,51 @@ impl HostAbi {
             )))?,
         })
     }
-
-    /// Returns the byte count of the first declared input, or refuses.
-    ///
-    /// It is also the *contributor domain's* byte count in every reduced
-    /// program: each declared input of such a program is read at the one shape
-    /// the recognized prologue governs, which is the shape the staged temporary
-    /// carries. Refusing on an empty list rather than indexing keeps a program
-    /// that declared no input from silently sizing a stage by nothing.
-    fn first_input_bytes(&self) -> Result<AbiExprId, ProgramError> {
-        Self::first(&self.input_bytes)
-    }
-
-    fn first(expressions: &[AbiExprId]) -> Result<AbiExprId, ProgramError> {
-        match expressions {
-            [expression, ..] => Ok(*expression),
-            [] => Err(ProgramError::Structure {
-                rule: "host-abi-input-arity",
-            }),
-        }
-    }
 }
 
 /// Declares the ABI arena and applicability guard of one bounded-profile program.
 ///
 /// The arena is deduplicated by content inside the builder, so declaring the
-/// same formula at several use sites yields one node. Operands always precede
-/// their use, which is the arena's acyclicity invariant.
+/// same formula at several use sites yields one node — two values of equal
+/// extent therefore share one byte expression rather than declaring a second
+/// that nothing keeps in agreement with the first. Operands always precede their
+/// use, which is the arena's acyclicity invariant.
 fn declare_host_abi(
     builder: &mut KernelProgramBuilder,
     input_elements: &[u64],
-    output_elements: u64,
+    internal_elements: &[u64],
 ) -> Result<HostAbi, ProgramError> {
     // The element byte width every accessible range scales by.
     let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(element_bytes()))?;
-    let mut declared_bytes = Vec::with_capacity(input_elements.len());
-    for elements in input_elements {
-        // The element count is declared as its own arena node and reached only
-        // as an operand of the byte expression above it. It stopped being a
-        // field of the record when the launch stopped being derived from it: a
-        // stage's grid is a property of the schedule it lowers, not of an
-        // operand whose extent happened to equal it.
-        let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(*elements))?;
-        declared_bytes.push(builder.push_abi_binary(
-            AbiBinaryOp::CheckedMultiply,
-            element_bytes,
-            elements,
-        )?);
-    }
-    let output_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(output_elements))?;
-    let abi = HostAbi {
-        input_bytes: declared_bytes,
-        output_bytes: builder.push_abi_binary(
-            AbiBinaryOp::CheckedMultiply,
-            element_bytes,
-            output_elements,
-        )?,
+    let declare = |builder: &mut KernelProgramBuilder,
+                   counts: &[u64]|
+     -> Result<Vec<AbiExprId>, ProgramError> {
+        let mut declared = Vec::with_capacity(counts.len());
+        for elements in counts {
+            // The element count is declared as its own arena node and reached
+            // only as an operand of the byte expression above it. It stopped
+            // being a field of the record when the launch stopped being derived
+            // from it: a stage's grid is a property of the schedule it lowers,
+            // not of an operand whose extent happened to equal it.
+            let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(*elements))?;
+            declared.push(builder.push_abi_binary(
+                AbiBinaryOp::CheckedMultiply,
+                element_bytes,
+                elements,
+            )?);
+        }
+        Ok(declared)
     };
+    let input_bytes = declare(builder, input_elements)?;
+    let internal_bytes = declare(builder, internal_elements)?;
     // The bounded profile admits every governed target unconditionally, so the
     // guard is a constant. It is still declared rather than assumed, because a
     // program identity blind to its guard is the hazard ADR 0072 names.
     let guard = builder.push_abi_root(AbiRoot::BooleanLiteral(true))?;
     builder.applicability_guard(guard)?;
-    Ok(abi)
-}
-
-/// The ABI quantities naming one split's staged partial tensor.
-#[derive(Clone, Copy, Debug)]
-struct PartialAbi {
-    bytes: AbiExprId,
-}
-
-/// Declares the element and byte counts of a split's partial tensor.
-///
-/// The element-width node is re-pushed rather than threaded through from
-/// [`declare_host_abi`]: the arena deduplicates by content, so the same literal
-/// resolves to the same node, and asking for it by value keeps this independent
-/// of the order the two declarations run in.
-fn declare_partial_abi(
-    builder: &mut KernelProgramBuilder,
-    partial_elements: u64,
-) -> Result<PartialAbi, ProgramError> {
-    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(element_bytes()))?;
-    let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(partial_elements))?;
-    Ok(PartialAbi {
-        bytes: builder.push_abi_binary(AbiBinaryOp::CheckedMultiply, element_bytes, elements)?,
+    Ok(HostAbi {
+        input_bytes,
+        internal_bytes,
     })
 }
 
@@ -1040,6 +1533,18 @@ fn byte_count(elements: u64) -> Result<u64, ProgramError> {
         })
 }
 
+/// Returns how many elements one declared shape holds.
+///
+/// Routed through the shared shape authority rather than multiplied here, so an
+/// extent product that leaves the 64-bit domain is the same refusal the schedule
+/// and program layers already report rather than a wrapped count this module
+/// invented.
+fn shape_elements(shape: &Shape) -> Result<u64, ProgramError> {
+    tiler_ir::schedule::element_count(shape).map_err(|_| ProgramError::Storage {
+        rule: "element-count-overflow",
+    })
+}
+
 /// Verifies the compiler-owned layers of one program against its shared core.
 ///
 /// The shared core is already verified by construction — including its ABI
@@ -1192,7 +1697,7 @@ fn position(index: u32) -> usize {
 pub(crate) fn build_artifact_plan(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
+    assembly: &CoverAssembly,
     kernels: &[VerifiedKernel],
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
@@ -1204,18 +1709,19 @@ pub(crate) fn build_artifact_plan(
         });
     }
     drop(providers);
-    build_artifact_plan_with_lowering(semantic, request, scheduled, kernels, program, &lowering)
+    build_artifact_plan_with_lowering(semantic, request, assembly, kernels, program, &lowering)
 }
 
 pub(crate) fn build_artifact_plan_with_lowering(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
+    assembly: &CoverAssembly,
     kernels: &[VerifiedKernel],
     program: &KernelProgram,
     lowering: &ResolvedLowering,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
-    verify_artifact_refinements(semantic, request, scheduled, kernels, program, lowering)?;
+    let scheduled = assembly.regions();
+    verify_artifact_refinements(semantic, request, assembly, kernels, program, lowering)?;
     // Lowering provenance is re-derived from the request's own installed
     // registry rather than trusted from the caller, so a plan cannot claim a
     // provider the registry never resolved for this program.
@@ -1280,14 +1786,23 @@ pub(crate) fn build_artifact_plan_with_lowering(
 }
 
 /// Proves the artifact's inputs are the exact refinements of one request.
+///
+/// The expected program is re-derived through the **same route the build path
+/// took** — one call to [`build_cover_kernel_program_with_lowering`] over the
+/// same [`CoverAssembly`] — rather than through a second description of what a
+/// cover assembles into. The retired three-way match over the scheduled slice
+/// was exactly that second description, and it embodied the duplicate-derivation
+/// hazard twice: a change to either assembler had to be mirrored in the receipt
+/// path, and nothing kept the two in agreement.
 fn verify_artifact_refinements(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
+    assembly: &CoverAssembly,
     kernels: &[VerifiedKernel],
     program: &KernelProgram,
     lowering: &ResolvedLowering,
 ) -> Result<(), ProgramError> {
+    let scheduled = assembly.regions();
     if semantic.semantic_identity() != request.semantic_identity() {
         return Err(ProgramError::Structure {
             rule: "semantic-request-binding",
@@ -1313,18 +1828,8 @@ fn verify_artifact_refinements(
             });
         }
     }
-    let expected_program = match scheduled {
-        [single] => build_fused_kernel_program_with_lowering(semantic, request, single, lowering)?,
-        [_, _] => build_kernel_program_with_lowering(semantic, request, scheduled, lowering)?,
-        [_, _, _] => {
-            build_split_kernel_program_with_lowering(semantic, request, scheduled, lowering)?
-        }
-        _ => {
-            return Err(ProgramError::Structure {
-                rule: "artifact-strategy-cardinality",
-            });
-        }
-    };
+    let expected_program =
+        build_cover_kernel_program_with_lowering(semantic, request, assembly, lowering)?;
     if program != &expected_program {
         return Err(ProgramError::Structure {
             rule: "artifact-program-refinement",
@@ -1367,7 +1872,7 @@ pub(crate) fn verify_artifact_plan(
     plan: &ArtifactConstructionPlan,
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
+    assembly: &CoverAssembly,
     kernels: &[VerifiedKernel],
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
@@ -1380,7 +1885,7 @@ pub(crate) fn verify_artifact_plan(
     }
     drop(providers);
     verify_artifact_plan_with_lowering(
-        plan, semantic, request, scheduled, kernels, program, &lowering,
+        plan, semantic, request, assembly, kernels, program, &lowering,
     )
 }
 
@@ -1388,14 +1893,13 @@ pub(crate) fn verify_artifact_plan_with_lowering(
     plan: &ArtifactConstructionPlan,
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
+    assembly: &CoverAssembly,
     kernels: &[VerifiedKernel],
     program: &KernelProgram,
     lowering: &ResolvedLowering,
 ) -> Result<(), ProgramError> {
-    let expected = build_artifact_plan_with_lowering(
-        semantic, request, scheduled, kernels, program, lowering,
-    )?;
+    let expected =
+        build_artifact_plan_with_lowering(semantic, request, assembly, kernels, program, lowering)?;
     if plan != &expected {
         return Err(ProgramError::Structure {
             rule: "artifact-receipt",

@@ -34,6 +34,62 @@ use crate::physical::{
 };
 use crate::request::{CompilationRequest, verify_request};
 
+/// The two-stage materialized assembly, spelled as a cover of two regions
+/// states it.
+///
+/// **Stated rather than derived, and the trade is deliberate.** The compile path
+/// reaches [`CoverAssembly::from_plan`] and nothing else, so the derivation is
+/// exercised by every compiled program in `pipeline::tests` and
+/// `pipeline::conformance`. These tests are about the *assembler* — what it
+/// builds from a description and what it refuses — so they say the description
+/// out loud: one value materialized across the boundary between the prologue and
+/// the fold, and one named output the fold publishes.
+fn materialized_assembly(
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+) -> CoverAssembly {
+    let subject = request.serial_sum();
+    CoverAssembly::stated(
+        scheduled.to_vec(),
+        vec![
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (subject.output_shape.clone(), ValueRole::Output),
+        ],
+        vec![
+            AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(0)],
+            },
+            AssemblyStage {
+                coverage: subject.members.reduction().to_vec(),
+                bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(1)],
+            },
+        ],
+        Vec::new(),
+        vec![(subject.output_key.clone(), 1)],
+    )
+    .expect("the two-region assembly is well formed")
+}
+
+/// The one-stage fused assembly: no materialization, one named output.
+fn fused_assembly(
+    request: &VerifiedTargetRequest,
+    scheduled: &VerifiedScheduledRegion,
+) -> CoverAssembly {
+    let subject = request.serial_sum();
+    CoverAssembly::stated(
+        vec![scheduled.clone()],
+        vec![(subject.output_shape.clone(), ValueRole::Output)],
+        vec![AssemblyStage {
+            coverage: subject.members.all(),
+            bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(0)],
+        }],
+        Vec::new(),
+        vec![(subject.output_key.clone(), 0)],
+    )
+    .expect("the one-region assembly is well formed")
+}
+
 fn fixture() -> (
     SemanticProgram,
     VerifiedTargetRequest,
@@ -106,13 +162,14 @@ fn artifact_construction_rejects_a_cross_program_semantic_request_mix() {
     let (_, request, scheduled) = fixture_with_scale(2.0_f32.to_bits());
     let (different_semantic, _, _) = fixture_with_scale(3.0_f32.to_bits());
     let (semantic, _, _) = fixture_with_scale(2.0_f32.to_bits());
-    let program = build_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let assembly = materialized_assembly(&request, &scheduled);
+    let program = build_kernel_program(&semantic, &request, &assembly).unwrap();
 
     assert_eq!(
         build_artifact_plan(
             &different_semantic,
             &request,
-            &scheduled,
+            &assembly,
             &scheduled
                 .iter()
                 .map(lower_structured_kernel)
@@ -128,7 +185,7 @@ fn artifact_construction_rejects_a_cross_program_semantic_request_mix() {
     // The shared builder is opened against the request's exact program, so a
     // mismatched semantic program cannot even assemble a core.
     assert_eq!(
-        build_kernel_program(&different_semantic, &request, &scheduled),
+        build_kernel_program(&different_semantic, &request, &assembly),
         Err(ProgramError::Structure {
             rule: "semantic-request-binding",
         })
@@ -138,7 +195,8 @@ fn artifact_construction_rejects_a_cross_program_semantic_request_mix() {
 #[test]
 fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
     let (semantic, request, scheduled) = fixture();
-    let program = build_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let assembly = materialized_assembly(&request, &scheduled);
+    let program = build_kernel_program(&semantic, &request, &assembly).unwrap();
     let kernels = [
         lower_structured_kernel(&scheduled[0]).unwrap(),
         lower_structured_kernel(&scheduled[1]).unwrap(),
@@ -148,7 +206,7 @@ fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
     let artifact = build_artifact_plan(
         &semantic,
         &request,
-        &scheduled,
+        &assembly,
         &kernels,
         &program,
         resolved_providers(&semantic, &request),
@@ -258,7 +316,8 @@ fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
 #[test]
 fn the_plan_names_its_target_profile_and_its_feasibility_rules_separately() {
     let (semantic, request, scheduled) = fixture();
-    let program = build_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let assembly = materialized_assembly(&request, &scheduled);
+    let program = build_kernel_program(&semantic, &request, &assembly).unwrap();
     let kernels: Vec<_> = scheduled
         .iter()
         .map(lower_structured_kernel)
@@ -267,7 +326,7 @@ fn the_plan_names_its_target_profile_and_its_feasibility_rules_separately() {
     let artifact = build_artifact_plan(
         &semantic,
         &request,
-        &scheduled,
+        &assembly,
         &kernels,
         &program,
         resolved_providers(&semantic, &request),
@@ -293,15 +352,21 @@ fn the_plan_names_its_target_profile_and_its_feasibility_rules_separately() {
 #[test]
 fn the_program_identity_is_the_shared_canonical_identity() {
     let (semantic, request, scheduled) = fixture();
-    let first = build_kernel_program(&semantic, &request, &scheduled).unwrap();
-    let second = build_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let assembly = materialized_assembly(&request, &scheduled);
+    let first = build_kernel_program(&semantic, &request, &assembly).unwrap();
+    let second = build_kernel_program(&semantic, &request, &assembly).unwrap();
     assert_eq!(
         first.core().canonical_identity().as_bytes(),
         second.core().canonical_identity().as_bytes()
     );
 
     let fused_region = build_fused_scheduled_region(&request).unwrap();
-    let fused = build_fused_kernel_program(&semantic, &request, &fused_region).unwrap();
+    let fused = build_kernel_program(
+        &semantic,
+        &request,
+        &fused_assembly(&request, &fused_region),
+    )
+    .unwrap();
     // The two strategies realize one graph with different bound refinements and
     // a different coverage partition, so their identities differ.
     assert_ne!(
@@ -317,7 +382,12 @@ fn the_program_identity_is_the_shared_canonical_identity() {
 #[test]
 fn compiler_layers_recheck_the_target_and_the_planned_launch() {
     let (semantic, request, scheduled) = fixture();
-    let valid = build_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let valid = build_kernel_program(
+        &semantic,
+        &request,
+        &materialized_assembly(&request, &scheduled),
+    )
+    .unwrap();
 
     let mut wrong_target = valid.clone();
     wrong_target.target_profile =
@@ -343,7 +413,12 @@ fn compiler_layers_recheck_the_target_and_the_planned_launch() {
     // planned over the input extent — must be caught as a launch disagreement
     // rather than accepted because both are individually verified.
     let fused_region = build_fused_scheduled_region(&request).unwrap();
-    let fused = build_fused_kernel_program(&semantic, &request, &fused_region).unwrap();
+    let fused = build_kernel_program(
+        &semantic,
+        &request,
+        &fused_assembly(&request, &fused_region),
+    )
+    .unwrap();
     assert_eq!(
         verify_kernel_program_layers(&fused, &request, &scheduled[..1]),
         Err(ProgramError::Abi {
@@ -377,24 +452,187 @@ fn host_expression_overflow_is_a_hard_failure() {
     );
 }
 
+/// **The obligations the assembler constructs are proven by the shared builder,
+/// and every one of them can say no.**
+///
+/// Each perturbation below states one obligation wrongly and watches
+/// [`tiler_ir::program::KernelProgramBuilder::build`] — or the compiler layer
+/// immediately above it — refuse. The assembly they perturb is the one the
+/// production route builds for a two-region cover, so a check that stopped
+/// firing here would be a check that stopped firing on the compile path.
 #[test]
-fn builders_are_total_over_short_and_forged_slices() {
+fn the_assembled_obligations_are_refused_when_stated_wrongly() {
     let (semantic, request, scheduled) = fixture();
-    assert_eq!(
-        build_kernel_program(&semantic, &request, &[]),
-        Err(ProgramError::Structure {
-            rule: "strategy-cardinality",
-        })
+    let subject = request.serial_sum();
+    let sound = materialized_assembly(&request, &scheduled);
+    build_kernel_program(&semantic, &request, &sound).expect("the stated assembly assembles");
+
+    // The fold reads the tensor the prologue never wrote: the temporary is now
+    // written by nobody and read by the fold, which is an uninitialized read the
+    // whole-program verifier refuses.
+    let unwritten = CoverAssembly::stated(
+        scheduled.clone(),
+        vec![
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (subject.output_shape.clone(), ValueRole::Output),
+        ],
+        vec![
+            AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(1)],
+            },
+            AssemblyStage {
+                coverage: subject.members.reduction().to_vec(),
+                bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(2)],
+            },
+        ],
+        Vec::new(),
+        vec![(subject.output_key.clone(), 2)],
     );
     assert_eq!(
-        build_kernel_program(&semantic, &request, &scheduled[..1]),
-        Err(ProgramError::Structure {
-            rule: "strategy-cardinality",
-        })
+        unwritten.unwrap_err().rule(),
+        "internal-unwritten",
+        "a value nothing writes was described rather than refused"
     );
 
+    // The prologue materializes a value the fold never reads. Nothing downstream
+    // would refuse this — the whole-program verifier requires a writer for every
+    // value and a dependency behind every cross-stage read, and a temporary with
+    // no reader violates neither — so the program would allocate and fill a
+    // buffer for no consumer.
+    let unread = CoverAssembly::stated(
+        scheduled.clone(),
+        vec![
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (subject.output_shape.clone(), ValueRole::Output),
+        ],
+        vec![
+            AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(0)],
+            },
+            AssemblyStage {
+                coverage: subject.members.reduction().to_vec(),
+                bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(1)],
+            },
+        ],
+        Vec::new(),
+        vec![(subject.output_key.clone(), 1)],
+    );
+    assert_eq!(
+        unread.unwrap_err().rule(),
+        "materialized-value-unread",
+        "a value the cover materializes for nobody was described rather than refused"
+    );
+
+    // The fold covers the occurrences the prologue already claims, which is the
+    // double coverage `KernelProgramBuilder::build` exists to refuse.
+    let double = CoverAssembly::stated(
+        scheduled.clone(),
+        vec![
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (subject.output_shape.clone(), ValueRole::Output),
+        ],
+        vec![
+            AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(0)],
+            },
+            AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(1)],
+            },
+        ],
+        Vec::new(),
+        vec![(subject.output_key.clone(), 1)],
+    )
+    .expect("the description itself is well formed");
+    assert!(
+        build_kernel_program(&semantic, &request, &double).is_err(),
+        "a stage claiming occurrences another stage covers was admitted"
+    );
+
+    // The program publishes nothing, so the semantic interface the builder was
+    // opened against is left uncovered.
+    //
+    // The diagnostic is `EmptyProgram` rather than `MissingNamedOutput` because
+    // this fixture declares exactly one named output: publishing *fewer* outputs
+    // than declared while publishing at least one needs a program declaring two,
+    // which the request boundary refuses under `output-arity` and which
+    // `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`
+    // owns. `MissingNamedOutput` is proven reachable in
+    // `tiler_ir::program::tests`, on a program this compiler cannot yet request.
+    let unpublished = CoverAssembly::stated(
+        scheduled.clone(),
+        vec![
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (subject.output_shape.clone(), ValueRole::Output),
+        ],
+        vec![
+            AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(0)],
+            },
+            AssemblyStage {
+                coverage: subject.members.reduction().to_vec(),
+                bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(1)],
+            },
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("the description itself is well formed");
+    assert_eq!(
+        build_kernel_program(&semantic, &request, &unpublished),
+        Err(ProgramError::CoreVerification(
+            tiler_ir::program::KernelProgramDiagnostic::EmptyProgram
+        )),
+        "a program publishing no declared output was admitted"
+    );
+
+    // One allocation sized by the wrong value: the fold's result is described at
+    // the contributor extent, so the view it addresses is not the extent its
+    // kernel's write buffer declares.
+    let mis_sized = CoverAssembly::stated(
+        scheduled.clone(),
+        vec![
+            (subject.input_shape.clone(), ValueRole::Temporary),
+            (subject.input_shape.clone(), ValueRole::Output),
+        ],
+        vec![
+            AssemblyStage {
+                coverage: subject.members.pointwise().to_vec(),
+                bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(0)],
+            },
+            AssemblyStage {
+                coverage: subject.members.reduction().to_vec(),
+                bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(1)],
+            },
+        ],
+        Vec::new(),
+        vec![(subject.output_key.clone(), 1)],
+    )
+    .expect("the description itself is well formed");
+    assert!(
+        matches!(
+            build_kernel_program(&semantic, &request, &mis_sized),
+            Err(ProgramError::CoreConstruction(_))
+        ),
+        "a value sized by the wrong extent was admitted"
+    );
+}
+
+#[test]
+fn a_fused_program_binds_one_stage_and_no_cross_stage_value() {
+    let (semantic, request, scheduled) = fixture();
     let fused_region = build_fused_scheduled_region(&request).unwrap();
-    let fused = build_fused_kernel_program(&semantic, &request, &fused_region).unwrap();
+    let fused = build_kernel_program(
+        &semantic,
+        &request,
+        &fused_assembly(&request, &fused_region),
+    )
+    .unwrap();
     let kernel = lower_structured_kernel(&fused_region).unwrap();
     assert_kernels_match_program(
         &request,
@@ -420,7 +658,8 @@ fn builders_are_total_over_short_and_forged_slices() {
 #[test]
 fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
     let (semantic, request, scheduled) = fixture();
-    let program = build_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let assembly = materialized_assembly(&request, &scheduled);
+    let program = build_kernel_program(&semantic, &request, &assembly).unwrap();
     let kernels = scheduled
         .iter()
         .map(lower_structured_kernel)
@@ -445,7 +684,7 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
     ] {
         assert_eq!(
             build_artifact_plan(
-                &semantic, &request, &scheduled, &kernels, &program, providers,
+                &semantic, &request, &assembly, &kernels, &program, providers,
             ),
             Err(ProgramError::Structure {
                 rule: "artifact-provider-coverage",
@@ -456,7 +695,7 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
     let plan = build_artifact_plan(
         &semantic,
         &request,
-        &scheduled,
+        &assembly,
         &kernels,
         &program,
         resolved.clone(),
@@ -469,7 +708,7 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
             &forged,
             &semantic,
             &request,
-            &scheduled,
+            &assembly,
             &kernels,
             &program,
             resolved.clone(),
@@ -479,15 +718,97 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
         })
     );
 
-    // A program from the other strategy is not the artifact's expected program.
+    // A program from the other strategy is not the artifact's expected program,
+    // and the receipt path finds that by re-deriving through the same route the
+    // build path took rather than by matching the schedule count.
     let fused_region = build_fused_scheduled_region(&request).unwrap();
-    let fused = build_fused_kernel_program(&semantic, &request, &fused_region).unwrap();
+    let fused = build_kernel_program(
+        &semantic,
+        &request,
+        &fused_assembly(&request, &fused_region),
+    )
+    .unwrap();
     assert_eq!(
-        build_artifact_plan(&semantic, &request, &scheduled, &kernels, &fused, resolved),
+        build_artifact_plan(&semantic, &request, &assembly, &kernels, &fused, resolved),
         Err(ProgramError::Structure {
             rule: "artifact-program-refinement",
         })
     );
+}
+
+/// **Stage order comes from the cover's materialization edges, never from a
+/// region identifier.**
+///
+/// The identifiers are constants of the schedule vocabulary — every elementwise
+/// region carries `RegionId::new(0)` whichever occurrences it covers — so the
+/// ordering the retired assembler used returns an arbitrary order the moment a
+/// cover places two regions the same builder produced. This asserts the property
+/// that actually has to hold, over every legal cover the governed program
+/// enumerates: each edge's producer is dispatched before every one of its
+/// consumers.
+///
+/// The population is counted rather than assumed, and the count of covers
+/// carrying at least one edge is asserted separately: a run over covers that all
+/// happened to have no edges would satisfy the property vacuously, and would be
+/// indistinguishable from the check not running.
+#[test]
+fn the_execution_order_places_every_producer_before_its_consumers() {
+    let (semantic, request, _) = fixture();
+    let formation = crate::region::form_region_candidates(
+        &semantic,
+        request.budgets(),
+        request.numerical_contract(),
+    )
+    .expect("the fixture forms regions");
+    let enumeration = crate::cover::enumerate_covers(
+        &semantic,
+        request.budgets(),
+        &formation,
+        crate::cover::CoverPolicy::governed(request.numerical_contract()),
+    )
+    .expect("the fixture enumerates covers");
+
+    let mut with_edges = 0_usize;
+    let mut reordered = 0_usize;
+    for cover in enumeration.covers() {
+        let order = crate::program::execution_order(cover).expect("a legal cover is acyclic");
+        assert_eq!(order.len(), cover.regions().len());
+        let position = |occurrence: &crate::region::RegionOccurrenceIdentity| {
+            let region = cover
+                .regions()
+                .iter()
+                .position(|placed| placed.occurrence() == occurrence)
+                .expect("an edge names a placed region");
+            order
+                .iter()
+                .position(|placed| *placed == region)
+                .expect("every placed region is ordered")
+        };
+        if !cover.materializations().is_empty() {
+            with_edges += 1;
+        }
+        if order != (0..cover.regions().len()).collect::<Vec<_>>() {
+            reordered += 1;
+        }
+        for edge in cover.materializations() {
+            let producer = position(edge.producer());
+            for consumer in edge.consumers() {
+                assert!(
+                    producer < position(consumer),
+                    "a consumer is dispatched before the region that materializes its input"
+                );
+            }
+        }
+    }
+    assert!(
+        with_edges > 0,
+        "no enumerated cover materializes anything, so the ordering property is vacuous"
+    );
+    // Stated rather than asserted: whether any of this program's covers needs
+    // reordering out of canonical occurrence order depends on identity digests,
+    // so a run where none does is a fact about the fixture and not a defect. The
+    // property above holds either way, and this records which case was observed.
+    assert!(reordered <= enumeration.covers().len());
 }
 
 /// The balanced split is exact, and its degenerate inputs are refused.

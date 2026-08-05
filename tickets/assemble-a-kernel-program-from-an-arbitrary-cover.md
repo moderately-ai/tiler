@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [derive-physical-proposals-from-the-cover-region-subject]
 related: [define-the-minimum-correct-physical-realization-profile, implement-general-dag-partitioning, admit-ordered-multi-output-programs-at-the-compiler-request-boundary, activate-shared-work-duplication-on-the-compile-path, widen-the-deterministic-budgets-to-the-decoder-layer-program]
-scopes: [implementation/compiler, contracts/optimizer]
+scopes: [implementation/compiler, contracts/optimizer, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, program-assembly, baseline]
@@ -77,6 +77,28 @@ Each run against a case that must fail, observed failing before it is trusted:
 - Correct the optimizer contract's stage-11 paragraph and the [general compilation boundary](../docs/research/program-planning/general-compilation-boundary.md#the-critical-path-to-a-naive-but-general-compiled-mimo-program)'s item 2 in the same change.
 - When this lands, re-read [`admit-ordered-multi-output-programs-at-the-compiler-request-boundary`](admit-ordered-multi-output-programs-at-the-compiler-request-boundary.md)'s closing condition 2 rather than assuming it is discharged: this ticket removes the shape match, and that ticket still owns both output-arity guards.
 
+## What landed, 2026-08-05
+
+**The assembler is one route with one description.** `CoverAssembly` (`crates/tiler-compiler/src/program.rs`) is the whole structural description a retained plan's cover assembles into: the scheduled regions in execution order, one internal value per materialization edge and per staged subprogram pass and per ordered named output, one binding per stage access, the derived data dependencies, the declared splits, and the named outputs. `CoverAssembly::from_plan` is its only derivation on the compile path; `build_plan_program` and `verify_artifact_refinements` both consume it, so the build path and the receipt path no longer hold two descriptions of one thing. `build_materialized_core`, `build_split_core`, `build_fused_core`, and the three `build_*_kernel_program_with_lowering` entry points are gone rather than retained beside it.
+
+**Stage order comes from the cover, not from a region identifier.** The retired `plan_region_order` sorted by `region().index.id`, which is a constant of the schedule vocabulary — every elementwise region carries `RegionId::new(0)` — so it returned an arbitrary order the moment a cover placed two regions one builder produced. The order is now a stable topological sort over the cover's materialization edges, tie-broken by the cover's own canonical occurrence order, so one cover has exactly one execution order.
+
+**The reclassification landed with its explain consequence.** `"unsupported-plan-shape"` and `"artifact-strategy-cardinality"` are gone. An unassemblable cover reaches a caller as `CompileError::UnsupportedCapability(RequestError::UnsupportedCapability { phase: "program-assembly", rule })` — the missing-compilation-capability class — with the region occurrence label as the explain subject and the reason `unsupported-program-assembly-{rule}`, at `ExplainStage::ProgramVerification`. `"unlowerable-opaque-body"` deliberately keeps its class: lowering a body this compiler did not schedule is a separate capability with a separate owner, and moving it would be a second reclassification this ticket does not own.
+
+**The `output_count() != 1` guard is untouched**, and the assembly derivation adds a *second* refusal beside it rather than a relaxation: the cover states which regions publish an output but not which named result each retains, so `cover-named-output-attribution` refuses more than one of either. That obligation is recorded on [`admit-ordered-multi-output-programs-at-the-compiler-request-boundary`](admit-ordered-multi-output-programs-at-the-compiler-request-boundary.md), which owns supplying the attribution.
+
+**Byte-identity, checked rather than argued.** Every alternative's canonical kernel-program identity was printed before and after the change for the governed serial-sum compile and for the directly built fused, materialized, and split programs, and every one is byte-identical. One presentation-only quantity moves: the *declared* arena position of the applicability guard in the split (4 → 6), because the ABI byte expressions are now declared per value rather than in two passes. It is not identity-visible — `encode_identity` folds a canonical arena traversal from the use sites, and the artifact projects the guard through `expression_of[..]` — and the full workspace suite is green.
+
+## The reachability premise this ticket was filed under is refuted
+
+**Fact, verified by reading `crates/tiler-compiler/src/physical.rs` in full.** `verify_region_subject_binding` admits a verified scheduled region only when its `semantic_members` equal one of the partitions the request-level recognizer pre-computed: `normalized.members` for a pointwise or contraction subject, and `members().pointwise()`, `members().reduction()`, or `members().all()` for a serial-sum subject — plus the empty set a split's combining pass claims. The exact check is `grep -n 'semantic_members ==' crates/tiler-compiler/src/physical.rs`, which returns one comparison per recognized partition and none against anything else.
+
+**Inference — no cover of more than two regions is retainable, so no four-stage program is constructible anywhere.** The dependency's own landing commit says it plainly: "This widens nothing. The three walls still refuse the same programs." A cover placing a region outside those partitions has no proposal, so it retains no plan and never reaches assembly; and because `CoverAssembly` takes *verified* regions, the same binding stops a test from spelling a four-stage assembly by hand. The reachable programs are still the one-region fused, the two-region materialized, and the three-stage split.
+
+**What this ticket's "Why this is a dependency rather than a parallel track" section got wrong.** The ordering was right — the assembler had to follow the provider — but its stated consequence, that landing the provider would make the new paths reachable, does not follow and is false. The correct statement is the one the profile records now: the walls were at stages 8 and 11, both are gone, and what bounds the compiled set is the **region vocabulary**, whose three widening tickets each convert a refusal into an offer with no further change at either stage.
+
+**What is therefore claimed, in the four maturity classes AGENTS.md separates.** The N-region assembler is *implemented support* with its obligations proven by `KernelProgramBuilder::build`; it is **not** a *tested guarantee* over four-region programs, because none can be constructed. The evidence that exists: the derivation runs on the compile path for every compiled program; the general code paths for edges, staged passes, split declarations, execution ordering, and per-value dependencies are all exercised by the one-, two-, and three-stage programs; each constructed obligation is observed refusing when stated wrongly; and the ordering property is asserted over every cover the governed program enumerates.
+
 ## Closes when
 
 1. A retained plan over a cover of any region count assembles, with every structural quantity derived from the cover or the semantic program.
@@ -84,3 +106,9 @@ Each run against a case that must fail, observed failing before it is trusted:
 3. `verify_artifact_refinements` re-derives through the same route as the build path.
 4. The one-, two-, and three-region shapes are byte-identical, and each new check has been observed failing.
 5. The contract sentences that stated the three-shape limit are corrected in the same change.
+
+All five are satisfied as of 2026-08-05; the sections above record how, and record the one thing the closing conditions did not ask for and could not have been given — a compiled four-region program.
+
+## Why `research/program-planning` is declared
+
+Added 2026-08-05 by the implementing worker, as declaration and scheduling metadata rather than product scope. The ticket's own graph-maintenance section requires correcting [the general compilation boundary](../docs/research/program-planning/general-compilation-boundary.md#the-critical-path-to-a-naive-but-general-compiled-mimo-program)'s item 2, and closing the wall additionally makes the [minimum correct physical realization profile](../docs/research/program-planning/minimum-correct-physical-realization-profile.md)'s wall-2 section, stage-11 table row, and assembly-specification status false in the same change. `ticketsplease.toml` maps both files to `research/program-planning`, and the ticket declared only `implementation/compiler` and `contracts/optimizer`. No other live ticket holds the scope — `tkt list --status in-progress` returned this ticket alone.
