@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [declare-the-bf16-rows-on-the-authoritative-metal-profile]
 related: [admit-bf16-into-the-schedule-and-kernel-vocabulary, design-the-bf16-computation-and-accumulator-contract]
-scopes: [implementation/compiler, implementation/ir, contracts/numerics, contracts/foundation]
+scopes: [implementation/compiler, implementation/ir, contracts/numerics, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, bf16, numerics, target-profiles]
@@ -103,9 +103,12 @@ boundary.
   `tiler_ir::index::refinement::NumericalContractIdentity` cannot validate. The
   edit adds `Bf16NumericalContractKey` beside its `f32` sibling and factors the
   shared dimension writer; no `f32` byte moves.
-- `contracts/foundation`. `docs/artifact-abi.md` is the identity ledger and it
+- `contracts/artifacts`. `docs/artifact-abi.md` is the identity ledger and it
   names the numerical-contract key domain. Adding a second domain without moving
-  the ledger sentence leaves a stale assertion the next reader builds on.
+  the ledger sentence leaves a stale assertion the next reader builds on. The
+  scope name was read from `ticketsplease.toml` after a first attempt declared
+  `contracts/foundation` from memory and `tkt guard` refused the branch for
+  under-declaration; `docs/artifact-abi.md` maps to `contracts/artifacts`.
 
 Both are scheduling metadata for already-authorized work, declared under the
 AGENTS.md rule that an agent adds every required scope autonomously.
