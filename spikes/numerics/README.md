@@ -19,6 +19,17 @@ state prerequisites, commands, evidence strength, and limitations:
 - [Region accuracy observations](region_accuracy/README.md)
 - [Sound accuracy analysis](sound_accuracy/README.md)
 - [Transformer reference semantics](transformer_reference_semantics/README.md)
+- [BF16 through the second-dtype seams](bf16-second-dtype/README.md)
+- [The delivered-realization record, redesigned from typed evidence](delivered-realization-record/README.md)
+
+The last two are Rust workspaces rather than Python programs, so neither is
+reached by the acceptance check below, for the same structural reason the
+emission probe is not: that checker works from the standard library alone, and
+these build against the repository crates. Each runs by hand from its own
+directory using the invocation its README records, and each records its own
+perturbations there. The BF16 entry corrects an omission rather than adding a
+spike — it has been listed in the top-level [experiment catalog](../README.md)
+since it landed and was missing from this portal.
 
 The two 2026-07-31 probes stand outside the acceptance check below and say so
 here rather than appearing to be covered by it. The emission probe is a shell

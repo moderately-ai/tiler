@@ -1,0 +1,34 @@
+[package]
+name = "delivered-realization-record"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace root, following `spikes/numerics/bf16-second-dtype`: `make`
+# never reaches here, and the spike's dependency set is its own. The path
+# dependencies below still resolve their `[lints]` through the repository
+# workspace they belong to, and this spike deliberately carries no
+# `rust-toolchain.toml` — the repository pin resolves by directory ancestry.
+[workspace]
+
+[dependencies]
+# `tiler-ir` supplies every behaviour vocabulary the proposal relocates into it
+# and the `ResolvedValueType`/`SemanticOccurrence`/`AvailabilityPhase` identities
+# the record carries, so the model is checked against the real types rather than
+# against a transcription of them.
+tiler-ir = { path = "../../../crates/tiler-ir" }
+# `tiler-compiler` supplies the one public scalar-arithmetic subject constructor
+# that exists today, so the fixture proving a subject is catalog-validated runs
+# against the production validator rather than a copy of it.
+tiler-compiler = { path = "../../../crates/tiler-compiler" }
+# `tiler-artifact` supplies the target-profile reference the record is attributed
+# to and the framing helper its canonical bytes reuse.
+tiler-artifact = { path = "../../../crates/tiler-artifact" }
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
