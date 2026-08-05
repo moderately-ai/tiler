@@ -24,6 +24,7 @@ ticket: "enumerate-the-mature-tensor-operation-and-signature-taxonomy"
 - **Current disposition:** pending. Nothing here is adopted, and the record deliberately makes no selection.
 - **Normative destinations, when a row is eventually adopted:** [IR stack and invariants](../../ir.md) owns the operation/value model and per-layer obligations, [Operation extensions](../../operation-extensions.md) owns the definition and capability contract every family must satisfy, and [Numerical semantics](../../numerical-semantics.md) owns per-operation numerical meaning.
 - **Maturity ledger, which this record does not duplicate and never moves:** the [operation-family support matrix](../../roadmap.md#operation-family-support-matrix). That document owns what is delivered; this one owns what the project intends eventually to be able to express.
+- **Ownership map over this inventory:** the [operation-family delivery graph](operation-family-delivery-graph.md) assigns every family below to one of forty delivery tracks, maps each track across eight delivery rungs, and gives each an owner and — where its work has not started — a checkable activation trigger. It selects nothing, registers nothing, and defers to the support matrix for every claim about delivered state. It is also where all twelve `RQ-OP` questions below acquired a named owner.
 - **Companion inventory on the other axis:** the [mature tensor dtype taxonomy](../numerics/mature-dtype-taxonomy.md) owns the element-type universe. This record enumerates operations and their signature obligations and refers dtype identity questions there rather than restating them.
 - **Preserved primary sources:** [primary-source record](../numerics/sources/README.md). Every source id named below is preserved there, byte-for-byte and under a reviewed licence; no citation in this record rests on a live or unpinned URL. [Primary sources and the preservation boundary](#primary-sources-and-the-preservation-boundary) records which citations were read from the preserved copy during the pass and which were re-checked against it afterwards, because a reader acts differently on each.
 
@@ -31,7 +32,7 @@ ticket: "enumerate-the-mature-tensor-operation-and-signature-taxonomy"
 
 This document enumerates the tensor operation families a mature tensor compiler should eventually be able to *express*, together with the exact signature obligations each family imposes. It is the operation analogue of the [mature dtype taxonomy](../numerics/mature-dtype-taxonomy.md): a catalog, not a support promise, and not a schedule.
 
-**Enumerating a family is not admitting one, and the distinction is load-bearing.** The [sequence-extending tensor family](../shapes/sequence-extending-tensor-family.md) record states the objection this document must answer, in its own words: admitting a family with no occurrence "would be a contract written from imagination". That objection is correct and this record does not weaken it. What it constrains is *registration* — fixing a key, a schema, an inference routine, and a normative reference, all of which bind future readers to a contract nobody's workload asked for. Enumeration does the opposite job: it names the space so that when a workload does arrive, the reader can tell whether the family is a new question or an already-mapped one, and can tell an accidental gap from a deliberate exclusion. The [support matrix](../../roadmap.md#operation-family-support-matrix) already carries the same posture for the twenty rows it tracks — "Listing a family authorizes nothing, and widening any row is separate, explicitly scheduled work" — and this record extends the posture to the families that have no matrix row at all.
+**Enumerating a family is not admitting one, and the distinction is load-bearing.** The [sequence-extending tensor family](../shapes/sequence-extending-tensor-family.md) record states the objection this document must answer, in its own words: admitting a family with no occurrence "would be a contract written from imagination". That objection is correct and this record does not weaken it. What it constrains is *registration* — fixing a key, a schema, an inference routine, and a normative reference, all of which bind future readers to a contract nobody's workload asked for. Enumeration does the opposite job: it names the space so that when a workload does arrive, the reader can tell whether the family is a new question or an already-mapped one, and can tell an accidental gap from a deliberate exclusion. The [support matrix](../../roadmap.md#operation-family-support-matrix) already carries the same posture for the rows it tracks — twenty when this record was written and twenty-two since the [delivery graph](operation-family-delivery-graph.md) split two over-broad ones on 2026-08-05, with no family gaining a row and no rung moving — "Listing a family authorizes nothing, and widening any row is separate, explicitly scheduled work" — and this record extends the posture to the families that have no matrix row at all.
 
 Three things this record therefore does not do. It does not assign a maturity rung to any family; rungs live in the support matrix and move only there. It does not propose an `OpKey`, an attribute schema, or a Rust spelling; those are public boundaries reserved to Tom under [ADR 0075](../../decisions/0075-scope-public-boundary-approval-by-change-category.md). And it does not select a first profile; [Q-SEM-003](../../open-questions.md) owns that and closes on a named production consumer, not on an inventory.
 
@@ -354,13 +355,15 @@ The delivery-graph ticket consumes this record by family. Where a family already
 | --- | --- |
 | Pointwise `f32` constants and separate-rounding arithmetic | F-01, F-06 |
 | Strict serial `f32` `Sum` reduction | F-28 |
-| Remaining pointwise float algebra | F-05, F-06, F-07 |
+| Remaining pointwise float algebra | F-05, F-06 |
+| Fused multiply-add | F-07 |
 | Reductions beyond strict sum | F-28 |
 | Pointwise transcendentals as general keys | F-11 |
 | Elementwise activation; Normalization; Attention normalization | F-12 |
 | Integer data arithmetic | F-08 |
 | Integer division and remainder | F-09 |
-| Cast and convert | F-04, F-18, F-19 |
+| Cast and convert | F-18, F-19 |
+| Bit reinterpretation | F-04 |
 | `QuantizeStrictAffine` and siblings | F-20 |
 | Arithmetic over reduced-precision floats | the dtype axis of F-05 through F-12 |
 | `Minimum` and `Maximum`, `MinimumNumber` and `MaximumNumber` | F-10 |
@@ -369,10 +372,12 @@ The delivery-graph ticket consumes this record by family. Where a family already
 | Sub-tensor selection | F-24 |
 | Tensor contraction | F-32 |
 | `Select` and bit-selecting operations | F-17 |
-| Effectful and stateful operations | F-43, F-44 |
-| *(no matrix row today)* | F-02, F-13, F-14, F-15, F-16, F-21, F-25, F-27, F-29, F-30, F-31, F-33, F-34, F-35, F-36, F-37, F-38, F-39, F-40, F-41, F-42, F-45, F-46, F-47 |
+| Effectful and stateful operations | F-44 |
+| *(no matrix row today)* | F-02, F-13, F-14, F-15, F-16, F-21, F-25, F-27, F-29, F-30, F-31, F-33, F-34, F-35, F-36, F-37, F-38, F-39, F-40, F-41, F-42, F-43, F-45, F-46, F-47 |
 
-Twenty-three of forty-seven families have no matrix row. **That number is this record's main practical output**: it is the size of the gap between what the project tracks and what it will eventually have to express, and it was not previously statable.
+**Twenty-five of forty-seven families have no matrix row. That number is this record's main practical output**: it is the size of the gap between what the project tracks and what it will eventually have to express, and it was not previously statable.
+
+**Corrected 2026-08-05 by [`derive-the-operation-family-and-signature-delivery-graph`](../../../tickets/derive-the-operation-family-and-signature-delivery-graph.md), for two independent reasons, and the number moved from twenty-three to twenty-five.** First, twenty-three was an arithmetic transposition: twenty-three is the count of families *with* a row and the table's own no-row cell listed twenty-four, which is checkable in one line by counting the `F-nn` tokens in the cell above. Second, F-43 counter-based random generation was mapped to `Effectful and stateful operations` and does not belong there: it is classified atomic and **pure** in section J above, and that row's three named members — hidden randomness, floating-point environment observation, and in-place mutation — are F-44's. Moving it makes twenty-five. Two rows were also split in the same pass so that the mapping matches the matrix, and neither split changed which families have a row: `Fused multiply-add` out of the pointwise algebra row, and `Bit reinterpretation` out of the cast-and-convert row.
 
 ## Where this record differs from the corpus it composes with
 
@@ -392,7 +397,7 @@ This record does not correct either document, because both live in a scope this 
 5. **Data-dependent extents gate a second group,** and their blocker is a shape and allocation mechanism rather than any operation design. A compiler-facing portable IR — StableHLO — omits the whole class, which is corroboration that the difficulty is structural.
 6. **Two families are pure despite reading as stateful** — scatter and counter-based random generation — and both are pure for the same reason: the state is a value. Every ecosystem spelling that reads as mutation resolves to the pure form or is out of scope.
 7. **Effect, region, and non-tensor-value support are three separate reservations,** not one "advanced features" bucket. Sorting needs a region and no effect; scatter needs neither; collectives need effects and tokens; control flow needs regions and changes what determinism means.
-8. **Twenty-three enumerated families have no maturity ledger row,** which is the concrete gap this record closes and the number the delivery graph should be sized against.
+8. **Twenty-five enumerated families have no maturity ledger row,** which is the concrete gap this record closes and the number the delivery graph should be sized against. Corrected from twenty-three on 2026-08-05; the [join table](#join-key-for-the-delivery-graph) states both reasons and the one-line check that refutes either.
 9. **The intentionally-invalid list is short and mostly already enforced,** which is evidence that the semantic model is coherent rather than merely restrictive: twelve entries, of which ADR 0087 owns two, the type system owns one, and existing validators own several more.
 10. **Nothing here selects, schedules, or registers anything.** The next step is not implementation; it is a delivery-graph pass that reads the join table above and files work only where a named producer and consumer exist.
 
