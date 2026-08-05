@@ -1,7 +1,7 @@
 ---
 id: preserve-the-array-api-standard-2025-12-as-a-numerics-source-record
 title: Preserve the array API standard 2025.12 as a numerics source record
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [enumerate-the-mature-tensor-operation-and-signature-taxonomy]
@@ -9,9 +9,6 @@ scopes: [research/numerics, research/semantic-graph]
 shared_scopes: [project/tickets]
 paths: []
 tags: [sources, provenance, numerics]
-claimed_from: todo
-assignee: agent-array-api
-lease_expires_at: 1785934520
 ---
 ## User-visible outcome
 
