@@ -507,8 +507,9 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // reads the *selected implementations'* claimed members, so a
                 // duplicating cover has to reach a `SelectedPlan`. That needs a
                 // physical implementation per duplicated region subject, and the
-                // bounded profile's provider proposes for exactly three
-                // recognized member sets while program assembly implements
+                // bounded profile's provider answers every region but spells
+                // only three — every other one earns a typed decline and no
+                // admitted implementation — while program assembly implements
                 // exactly three plan shapes. The compile path therefore
                 // enumerates under the exact-partition contract, which
                 // `CoverPolicy::governed` records, and no plan carries a repeat.

@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: []
 related: [define-the-minimum-correct-physical-realization-profile, implement-general-dag-partitioning, assemble-a-kernel-program-from-an-arbitrary-cover, activate-shared-work-duplication-on-the-compile-path, drive-an-external-physical-implementation-provider-through-compilation, admit-elementwise-epilogues-over-a-materialized-intermediate, admit-a-reduction-over-a-declared-input-tensor, admit-the-registered-unary-families-at-the-compiler-request-boundary, decide-whether-the-implementation-frontier-owes-a-retention-budget]
-scopes: [implementation/compiler, contracts/optimizer]
+scopes: [implementation/compiler, contracts/optimizer, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, physical-planning, explainability, baseline]
@@ -69,6 +69,7 @@ Each run against a case that must fail, observed failing before it is trusted, a
 - **Do not turn on `CoverPolicy::permitting_shared_work_duplication`.** That is [`activate-shared-work-duplication-on-the-compile-path`](activate-shared-work-duplication-on-the-compile-path.md)'s one-line change, and it is deferred until both walls are down.
 - **Do not add a frontier retention budget.** Whether one is owed is [`decide-whether-the-implementation-frontier-owes-a-retention-budget`](decide-whether-the-implementation-frontier-owes-a-retention-budget.md)'s open decision. Report the measured frontier population this change produces as an input to it.
 - `contracts/optimizer` is declared because [the optimizer contract](../docs/compiler/optimizer.md#what-each-stage-is-general-over-today)'s stage-8 paragraph states the current limit as a fact and becomes false in the same change. A catalog is edited in the change that moves the metadata behind it.
+- `research/program-planning` was added by the implementing worker, because this ticket's own graph-maintenance section requires correcting [the general compilation boundary](../docs/research/program-planning/general-compilation-boundary.md#the-critical-path-to-a-naive-but-general-compiled-mimo-program)'s item 1 in the same change, and that file maps to `research/program-planning` in `ticketsplease.toml` rather than to `contracts/optimizer`. The same scope covers the [minimum correct physical realization profile](../docs/research/program-planning/minimum-correct-physical-realization-profile.md), whose stage-8 and stage-9 status cells said `Owed` and became false here. This is scheduling metadata for already-authorized work, not a product-scope expansion: no new outcome is claimed and no `Fact` in either record is rewritten, only the status the ticket's own completion moves.
 
 ## Stop conditions
 
