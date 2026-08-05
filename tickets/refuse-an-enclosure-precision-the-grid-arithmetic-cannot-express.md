@@ -1,7 +1,7 @@
 ---
 id: refuse-an-enclosure-precision-the-grid-arithmetic-cannot-express
 title: Refuse an enclosure precision the grid arithmetic cannot express
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [bound-the-certified-exponential-s-cost-in-its-admitted-argument-region]
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics]
-claimed_from: todo
-assignee: agent-enclosure-depth
-lease_expires_at: 1785971429
 ---
 ## The finding
 
@@ -103,3 +100,7 @@ Named `GridWidthUnrepresentable` rather than `PrecisionUnrepresentable` because 
 **Scope.** The branch touches `crates/tiler-reference/**` (`implementation/reference`) and this ticket file. `project/tickets` was added to `shared_scopes` because recording this outcome writes under `tickets/`, which `ticketsplease.toml` maps to `project/tickets`; the declaration is scheduling metadata for work this ticket already authorizes, not a new outcome.
 
 **Commands run.** `cargo fmt --check`; `cargo check -p tiler-reference --all-targets`; `cargo check --workspace --all-targets --locked`; `cargo clippy -p tiler-reference --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-reference --no-deps`; `cargo nextest run -p tiler-reference` (277 passed, 2 skipped); `cargo test -p tiler-reference --doc`; `git diff --check`; `tkt lint`; `tkt guard`.
+
+## Landed — the surface is the decided shape
+
+The delta (`EnclosurePrecision::new` fallible + `EnclosureError::GridWidthUnrepresentable`) implements Tom's defence-in-depth decision verbatim; it returns at the next decision round as a confirmation item rather than a new question.
