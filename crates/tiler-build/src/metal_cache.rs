@@ -325,7 +325,7 @@ impl<E> From<DeliveredPayloadCacheError<MetalPayloadMismatch, MetalAssemblyError
 /// # What a miss retains beside the entry
 ///
 /// Each position's `metal` and `metallib` runs are retained under their own
-/// labels — see [`stage_retention`] — so a later hit can be asked what the
+/// labels — see `stage_retention` in this module — so a later hit can be asked what the
 /// compiler said about the object it is serving. None of it reaches the payload
 /// metadata, the payload digest, the composed subject, or the cache key: all of
 /// those are derived before either tool runs, from the prepared compilation and
