@@ -4,8 +4,8 @@ title: Connect certified rounding-error bounds to rewrite permissions
 status: in-progress
 priority: p2
 dependencies: []
-related: [derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
-scopes: [research/numerics]
+related: [derive-the-capability-set-for-search-discovered-flash-class-attention-kernels, reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller, name-the-elementary-identity-rewrite-dimension, expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate, derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound, tighten-the-rescaling-bound-with-the-sharpened-summation-constants]
+scopes: [research/numerics, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
@@ -36,3 +36,11 @@ Implementing tolerance vocabulary in `crates/`; accepting any contract change (c
 ## Closes when
 
 The record exists under `docs/research/numerics/` with preserved sources, the admission-rule shape is stated with its trust boundary, the hand-derived softmax bound anchors the tool question, the FPTaylor deferral's trigger log carries this ticket's verdict on whether it fired, and every open axis ends in a filed ticket or a deferred question with a trigger.
+
+## Scope additions and why they are required
+
+**`contracts/navigation`, added 2026-08-05.** Landing a research record obliges the change that adds it to reconcile the catalog that indexes it, and `ticketsplease.toml` maps both catalogs this change touches — `docs/research/README.md` and `spikes/README.md` — to `contracts/navigation` rather than to any research scope. Read from the config rather than asserted: the `contracts/navigation` entry lists both paths explicitly. The precedent is exact — [`survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature`](survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature.md) declared `scopes: [research/region-search, contracts/navigation]` for the same reason, and its landing commit `542a2999` touched `docs/research/README.md` and `spikes/README.md` beside its record. This is declaration and scheduling metadata, not a product-scope expansion: the catalog rows describe work already authorized by this ticket's own outcome.
+
+**Disjointness against the one live holder, verified rather than assumed.** [`admit-bf16-into-the-schedule-and-kernel-vocabulary`](admit-bf16-into-the-schedule-and-kernel-vocabulary.md) is the only non-terminal ticket holding `contracts/navigation` with an assignee (`agent-bf16-vocab`). It has produced no branch — `git rev-parse --verify tkt/admit-bf16-into-the-schedule-and-kernel-vocabulary` fails — so there is no branch diff to collide with, and its status is `todo` rather than `in-progress`. The two catalog edits this ticket makes are one added row in each generated block, both naming this ticket's own record and spike; a BF16 vocabulary landing would touch different rows in the same files, which is an ordinary textual merge rather than a semantic conflict. Recorded here because a scope another ticket holds is admissible only with the check written down.
+
+**`contracts/numerics` was deliberately *not* added.** [Numerical semantics](../docs/numerical-semantics.md) is the normative owner of any tolerance vocabulary, and this ticket's non-goals forbid a contract change. The record's Part 4 is therefore a proposal identified for Tom in the shape the BF16 record used, and no contract sentence moved. Adding the scope would have made a contract edit reachable, which is precisely what the non-goal exists to prevent.

@@ -2,8 +2,9 @@
 #
 # Verifies the preserved source population against expected-sources.tsv. That population covers
 # the format-defining specifications, the ecosystem spelling, exposure, and namespace-governance
-# precedents the dtype research cites, and the operation-semantics sources the operation and
-# signature taxonomy cites.
+# precedents the dtype research cites, the operation-semantics sources the operation and
+# signature taxonomy cites, and the verified floating-point error-analysis literature behind the
+# certified-bounds-as-rewrite-permissions record.
 #
 # The check counts its population before it inspects it. An empty or truncated manifest,
 # a deleted vendored file, an unreferenced stray file, or a mutated digest each fail with
@@ -18,10 +19,10 @@ manifest="$here/expected-sources.tsv"
 
 # The expected population, declared here rather than derived from the manifest, so that a
 # manifest that lost rows fails instead of agreeing with itself.
-expect_total=68
-expect_vendored=62
-expect_metadata_only=6
-expect_pending=0
+expect_total=83
+expect_vendored=64
+expect_metadata_only=18
+expect_pending=1
 
 # Files that are the record itself rather than preserved upstream bytes.
 self_files=("README.md" "expected-sources.tsv" "verify-sources.sh" ".gitattributes")
