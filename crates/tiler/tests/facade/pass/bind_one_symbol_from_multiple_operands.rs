@@ -16,7 +16,10 @@
 //! binding, so the second occurrence is a runtime equality rather than a second
 //! source.
 
-use tiler::value::{AdapterCapability, BindError, OperandAxis, ResultRequest, StorageScalar, Tensor, TensorAdapter, ValueMetadata};
+use tiler::value::{
+    AdapterCapability, BindError, OperandAxis, ResultRequest, StorageScalar, Tensor, TensorAdapter,
+    ValueMetadata,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 struct Buffer {
@@ -49,7 +52,10 @@ impl TensorAdapter for Toy {
     }
 
     fn metadata(value: &Buffer) -> Result<ValueMetadata, Refused> {
-        Ok(ValueMetadata::new(value.scalar, value.extents.iter().copied()))
+        Ok(ValueMetadata::new(
+            value.scalar,
+            value.extents.iter().copied(),
+        ))
     }
 
     fn build(_: &(), request: &ResultRequest<'_>) -> Result<Buffer, Refused> {
@@ -60,6 +66,10 @@ impl TensorAdapter for Toy {
     }
 }
 
+// Emitter output, verbatim. The macro crate's comparison asserts this file
+// contains that text byte for byte, so reflowing this constant would break the
+// binding between the two ends rather than tidy it.
+#[rustfmt::skip]
 const FACTS: ::tiler::__private::RegionFacts = ::tiler::__private::RegionFacts { operands: &[::tiler::__private::OperandFacts { key: "a", storage_scalar: ::tiler::value::StorageScalar::F32, extents: &[::tiler::__private::OperandExtent::Symbolic] }, ::tiler::__private::OperandFacts { key: "b", storage_scalar: ::tiler::value::StorageScalar::F32, extents: &[::tiler::__private::OperandExtent::Symbolic] }], symbols: &[::tiler::__private::SymbolFacts { name: "n", source: ::tiler::__private::AxisRef { operand: 0usize, axis: 0usize }, obligations: &[::tiler::__private::AxisRef { operand: 1usize, axis: 0usize }] }], capabilities: &[::tiler::value::AdapterCapability::DenseRowMajorStorage, ::tiler::value::AdapterCapability::ResultConstruction], result: ::tiler::__private::ResultFacts { key: "d", storage_scalar: ::tiler::value::StorageScalar::F32, axes: &[::tiler::__private::ResultAxis::Symbol(0usize)] } };
 
 fn operand(extent: u64) -> Tensor<Toy> {

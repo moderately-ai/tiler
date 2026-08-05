@@ -12,8 +12,27 @@
 # The working loop.
 check: fmt build lint test
 
+# The second and third commands exist because `cargo fmt` reaches cargo targets
+# and the facade's `trybuild` fixtures are not targets: they are source files a
+# test compiles as a separate crate at run time, so the first command never sees
+# them. The count is asserted rather than trusted — a glob that has stopped
+# matching produces no complaints, which is indistinguishable from a population
+# that is clean. Adding a fixture updates the number in the same commit; that is
+# the intended failure, not an obstacle.
+#
+# `pass/` only. Every `fail/` fixture is paired with a `.stderr` golden that
+# `trybuild` compares byte for byte, and all nine goldens quote the fixture's own
+# source under `--> tests/facade/fail/<name>.rs:LINE:COL` headers with caret
+# columns beneath. Reformatting one moves a line number or a caret and breaks the
+# golden, which costs more than the blind spot it would close. The narrower
+# exclusions — spans inside a `pass/` fixture that are verbatim macro-emitter
+# output, which the macro crate's tests assert the file still contains — carry
+# `#[rustfmt::skip]` at the item itself, so each is stated where it applies
+# instead of turning into a second list here.
 fmt:
 	cargo fmt --all --check
+	test $$(ls crates/tiler/tests/facade/pass/*.rs | wc -l) -eq 9
+	rustfmt --check crates/tiler/tests/facade/pass/*.rs
 
 build:
 	cargo check --workspace --all-targets --locked

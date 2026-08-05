@@ -161,7 +161,11 @@ impl RuntimeAdapter for NoBackend {
         unreachable!("no context was bound")
     }
 
-    fn plan_dispatch(&mut self, _: &LiveExecutionContext, _: &Preflight<'_>) -> Result<(), Refused> {
+    fn plan_dispatch(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &Preflight<'_>,
+    ) -> Result<(), Refused> {
         unreachable!("no context was bound")
     }
 

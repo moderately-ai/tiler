@@ -166,9 +166,11 @@ impl DispatchAdapter for Host {
         // "nothing was handed over" from "nothing got that far".
         let mut journal = context.borrow_mut();
         for operand in request.operands() {
-            journal
-                .handover
-                .push(format!("{}={:?}", operand.key(), read_f32s(operand.bytes())));
+            journal.handover.push(format!(
+                "{}={:?}",
+                operand.key(),
+                read_f32s(operand.bytes())
+            ));
         }
         journal.handover.push(format!(
             "{}={} byte(s) to write",
@@ -285,7 +287,11 @@ impl RuntimeAdapter for Executor<'_> {
         0
     }
 
-    fn plan_dispatch(&mut self, _: &LiveExecutionContext, _: &Preflight<'_>) -> Result<(), Refused> {
+    fn plan_dispatch(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &Preflight<'_>,
+    ) -> Result<(), Refused> {
         self.record("plan-dispatch");
         Err(Refused("this consumer sizes no device storage"))
     }
