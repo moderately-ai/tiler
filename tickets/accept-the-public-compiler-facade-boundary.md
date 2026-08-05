@@ -1,7 +1,7 @@
 ---
 id: accept-the-public-compiler-facade-boundary
 title: Accept or revise the public compiler facade boundary
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, admit-ordered-multi-output-programs-at-the-compiler-request-boundary]
 related: [prototype-public-compiler-api, prototype-optimizer-conformance-gate]
@@ -206,3 +206,7 @@ Four of six are stated as eliminations rather than as questions on purpose. AGEN
 ## Closes when
 
 Tom accepts or revises the facade; `docs/correctness-and-testing.md:106-111`'s precondition is discharged or restated against what he accepted; `:117`'s reviewed-draft disclosure is corrected in the same change, because it becomes wrong the moment acceptance lands; and any surface he declines is named as declined rather than left in the tree unmarked.
+
+## Decided — accepted with one named exclusion
+
+Accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator, per the packet above: `session::compile`, `CompileRequest` and its installation methods, `InstalledCapabilities`, `Compilation` and its accessors, and the `CompileFailureClass` vocabulary. **Excluded: `session::compile_governed`**, held back on the packet's lossiness finding until [`widen-compile-governed-s-error-to-the-target-compile-failure`](widen-compile-governed-s-error-to-the-target-compile-failure.md) lands, when it returns for acceptance as a delta on this node. The sweep executed in the same change: the conformance gate's precondition at `docs/correctness-and-testing.md` is discharged with the exclusion named, and the reviewed-draft disclosure is corrected to the accepted-minus-exclusion state with the acceptance-is-not-stabilization boundary kept explicit. The `contracts/numerics` edits were made against a verified file-level disjointness check on the one live holder's branch (`git diff --name-only main...tkt/wire-the-delivered-realization-record-into-the-artifact` = four tiler-ir files, none under docs/), recorded here per the coordination discipline.

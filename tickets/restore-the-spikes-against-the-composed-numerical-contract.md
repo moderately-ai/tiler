@@ -1,7 +1,7 @@
 ---
 id: restore-the-spikes-against-the-composed-numerical-contract
 title: Restore the contract-naming spikes against the composed numerical contract
-status: review
+status: done
 priority: p3
 dependencies: [compose-the-numerical-contract-from-its-decided-dimensions]
 related: [restore-the-scalar-cpu-vertical-spike-against-the-current-crates]
@@ -9,9 +9,6 @@ scopes: [research/cache, research/extensions, research/target-profiles, research
 shared_scopes: [project/tickets]
 paths: []
 tags: [spikes, maintenance, numerics]
-claimed_from: todo
-assignee: agent-spike-restore
-lease_expires_at: 1785960717
 ---
 ## User-visible outcome
 
