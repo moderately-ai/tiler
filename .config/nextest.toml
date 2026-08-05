@@ -9,9 +9,35 @@
 [profile.default]
 # A green run prints its summary line and nothing else. The suite is ~960 tests
 # and a wall of PASS lines buries the only line that matters when it is not
-# green. `fail` keeps failures, and `final-status-level` keeps them in the
-# summary too.
-status-level = "fail"
+# green. `leak` keeps failures and names a leaky test; `final-status-level` keeps
+# failures in the summary too — `leak` is not one of its levels, and the summary
+# already carries the leaky *count*, so only the live line needed changing.
+#
+# `leak` sits between `slow` and `pass`, so it adds a line only when a test is
+# slow or leaky and never on a clean run; `slow-timeout` below is 60s, so in
+# practice it costs nothing until something happens. It is set because a leaky
+# verdict is otherwise a count with no name, which is unactionable: three of them
+# were recorded before the cause was known, and each cost a fresh investigation.
+#
+# What a leaky verdict here means, so the next reader does not repeat that hunt:
+# nextest captures each test's stdout/stderr through a pipe and calls the test
+# leaky when the pipe has not reached EOF 100ms after the process exits. On
+# macOS the standard library builds pipes with `pipe()` followed by a separate
+# `set_cloexec()` — there is no `pipe2` — so between those two syscalls the
+# descriptors are inheritable, and a `posix_spawn` on another nextest worker
+# thread hands one test's pipe to an unrelated sibling. The sibling holds the
+# write end until it exits, and the arbitrary test whose pipe was captured is
+# reported leaky. Measured on this workspace: 139 of 54020 test processes across
+# 20 full-workspace runs started with a stray inherited pipe descriptor, and 2 of
+# those 20 runs turned into a leaky verdict, naming a different test each time.
+# Nothing in this repository owns that descriptor and no test is at fault.
+#
+# So read the *name* across runs, not the count: a leaky verdict that wanders
+# between unrelated tests is that platform race and is benign — the test already
+# passed and the captured output is complete. A leaky verdict that names the same
+# test repeatedly is a real unreaped child, and that is a defect to fix in the
+# test rather than to report here.
+status-level = "leak"
 final-status-level = "fail"
 
 # Output once, where it happened. `immediate-final` was measured and rejected:
