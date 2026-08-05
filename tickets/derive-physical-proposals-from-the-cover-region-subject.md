@@ -1,7 +1,7 @@
 ---
 id: derive-physical-proposals-from-the-cover-region-subject
 title: Derive physical proposals from the cover region subject
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [define-the-minimum-correct-physical-realization-profile, implement-general-dag-partitioning, assemble-a-kernel-program-from-an-arbitrary-cover, activate-shared-work-duplication-on-the-compile-path, drive-an-external-physical-implementation-provider-through-compilation, admit-elementwise-epilogues-over-a-materialized-intermediate, admit-a-reduction-over-a-declared-input-tensor, admit-the-registered-unary-families-at-the-compiler-request-boundary, decide-whether-the-implementation-frontier-owes-a-retention-budget]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, physical-planning, explainability, baseline]
+claimed_from: todo
+assignee: agent-provider-general
+lease_expires_at: 1785895769
 ---
 ## User-visible outcome
 
