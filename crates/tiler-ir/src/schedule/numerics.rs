@@ -527,23 +527,60 @@ pub enum MaterializationRounding {
 /// Versioned domain of the canonical coherent `f32` numerical-contract key.
 pub const F32_NUMERICAL_CONTRACT_KEY_DOMAIN: &str = "tiler.contract.f32.v2";
 
+/// Versioned domain of the canonical coherent `bf16` numerical-contract key.
+///
+/// **A sibling domain rather than a widening of the `f32` one, and the
+/// separation is what keeps every existing key byte-identical.** A contract is
+/// stated for exactly one [`ArithmeticType`] because subnormal behaviour is
+/// measurably per-dtype, so two contracts resolving the same dimensions for
+/// different widths are different contracts and must not share a key. Putting
+/// `bf16` under its own domain means no `f32` preimage, length, or rendering
+/// moves: the two grammars are disjoint by their first character difference in
+/// the domain, and a reader holding either can tell which it has before decoding
+/// a byte.
+///
+/// It opens at `v1` rather than `v2` because the version counts *this* domain's
+/// rendering revisions and this is its first. The `f32` domain reached `v2` by
+/// replacing a preset-naming scheme it never shared with this one.
+pub const BF16_NUMERICAL_CONTRACT_KEY_DOMAIN: &str = "tiler.contract.bf16.v1";
+
 // The two exceptional-value rows are each either three bytes (no assumption)
 // or four bytes (caller-declared absence). All other rows have fixed width, so
 // these are the complete legal rendered lengths. Checking this before scanning
 // or decoding bounds caller-controlled work and allocation.
 const F32_NUMERICAL_CONTRACT_KEY_LENGTHS: [usize; 3] = [98, 100, 102];
 
+// The same three shapes, over a domain one byte longer and a canonical NaN
+// payload two bytes shorter: `bf16`'s pattern is sixteen bits wide where
+// `f32`'s is thirty-two.
+const BF16_NUMERICAL_CONTRACT_KEY_LENGTHS: [usize; 3] = [95, 97, 99];
+
 /// A validated canonical key for one coherent `f32` numerical contract.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct F32NumericalContractKey(Box<str>);
+
+/// A validated canonical key for one coherent `bf16` numerical contract.
+///
+/// A distinct type rather than an arithmetic-tagged one, for the same reason the
+/// domains are distinct: every site that holds a contract key holds it for one
+/// width, and a type that could be either would let a `bf16` key reach a
+/// consumer whose exhaustive `f32` reasoning was written before `bf16` existed.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Bf16NumericalContractKey(Box<str>);
 
 /// Why a numerical-contract key is not a canonical coherent v2 `f32` key.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum NumericalContractKeyError {
     /// The domain, separator, lowercase-hex rendering, or exact vector grammar is invalid.
+    ///
+    /// A key rendered under a *different* governed domain falls here rather than
+    /// under [`Self::InvalidArithmetic`]: the domain is checked before the
+    /// preimage, so an `f32` key offered to the `bf16` parser is refused for its
+    /// spelling before its arithmetic tag is ever read.
     InvalidCanonicalKey,
-    /// The vector names an arithmetic type or canonical NaN payload other than governed `f32`.
+    /// The vector names an arithmetic type or canonical NaN payload other than
+    /// the one its domain governs.
     InvalidArithmetic,
     /// The vector contains an assumption provenance that a caller-stated contract cannot use.
     IncoherentAssumption,
@@ -573,51 +610,23 @@ impl F32NumericalContractKey {
     ) -> Result<Self, NumericalContractKeyError> {
         let mut bytes = vec![ArithmeticType::F32.tag()];
         bytes.extend_from_slice(&crate::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS.to_be_bytes());
-        push_dimension(&mut bytes, 0x01, |bytes| {
-            encode_subnormal(bytes, input_subnormals);
-            Ok(())
-        })?;
-        push_dimension(&mut bytes, 0x02, |bytes| {
-            encode_subnormal(bytes, result_subnormals);
-            Ok(())
-        })?;
-        for (tag, permission) in [
-            (0x03, contraction),
-            (0x04, reassociation),
-            (0x05, permutation),
-            (0x06, signed_zero),
-            (0x07, reciprocal_transform),
-        ] {
-            push_dimension(&mut bytes, tag, |bytes| {
-                encode_permission(bytes, permission);
-                Ok(())
-            })?;
-        }
-        push_dimension(&mut bytes, 0x08, |bytes| {
-            bytes.extend_from_slice(&[0x03, approximate_intrinsics.tag()]);
-            Ok(())
-        })?;
-        push_dimension(&mut bytes, 0x09, |bytes| {
-            encode_assumption(bytes, nan_assumptions)
-        })?;
-        push_dimension(&mut bytes, 0x0a, |bytes| {
-            encode_assumption(bytes, infinity_assumptions)
-        })?;
-        push_dimension(&mut bytes, 0x0b, |bytes| match materialization_rounding {
-            MaterializationRounding::NearestTiesToEven => {
-                bytes.extend_from_slice(&[0x05, 0x01]);
-                Ok(())
-            }
-        })?;
-        let mut key =
-            String::with_capacity(F32_NUMERICAL_CONTRACT_KEY_DOMAIN.len() + 1 + bytes.len() * 2);
-        key.push_str(F32_NUMERICAL_CONTRACT_KEY_DOMAIN);
-        key.push('.');
-        for byte in bytes {
-            use core::fmt::Write as _;
-            write!(key, "{byte:02x}").expect("writing to a String cannot fail");
-        }
-        Ok(Self(key.into_boxed_str()))
+        encode_contract_dimensions(
+            &mut bytes,
+            input_subnormals,
+            result_subnormals,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
+            nan_assumptions,
+            infinity_assumptions,
+            materialization_rounding,
+        )?;
+        Ok(Self(
+            render_contract_key(F32_NUMERICAL_CONTRACT_KEY_DOMAIN, &bytes).into_boxed_str(),
+        ))
     }
 
     /// Validates and retains one already-rendered canonical key.
@@ -632,34 +641,20 @@ impl F32NumericalContractKey {
 
     fn try_from_str_with_decoder(
         key: &str,
-        mut decode: impl FnMut(u8, u8) -> Option<u8>,
+        decode: impl FnMut(u8, u8) -> Option<u8>,
     ) -> Result<Self, NumericalContractKeyError> {
-        if !F32_NUMERICAL_CONTRACT_KEY_LENGTHS.contains(&key.len()) {
-            return Err(NumericalContractKeyError::InvalidCanonicalKey);
-        }
-        let Some(hex) = key.strip_prefix(F32_NUMERICAL_CONTRACT_KEY_DOMAIN) else {
-            return Err(NumericalContractKeyError::InvalidCanonicalKey);
-        };
-        let Some(hex) = hex.strip_prefix('.') else {
-            return Err(NumericalContractKeyError::InvalidCanonicalKey);
-        };
-        if hex.is_empty()
-            || !hex.len().is_multiple_of(2)
-            || !hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(NumericalContractKeyError::InvalidCanonicalKey);
-        }
-        let bytes = hex
-            .as_bytes()
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| decode(pair[0], pair[1]))
-            .collect::<Option<Vec<_>>>()
-            .ok_or(NumericalContractKeyError::InvalidCanonicalKey)?;
-        validate_contract_preimage(&bytes)?;
+        let bytes = decode_contract_key(
+            key,
+            F32_NUMERICAL_CONTRACT_KEY_DOMAIN,
+            &F32_NUMERICAL_CONTRACT_KEY_LENGTHS,
+            decode,
+        )?;
+        let cursor = validate_contract_header(
+            &bytes,
+            ArithmeticType::F32,
+            &crate::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS.to_be_bytes(),
+        )?;
+        validate_dimension_rows(&bytes, cursor)?;
         Ok(Self(key.into()))
     }
 
@@ -674,6 +669,209 @@ impl F32NumericalContractKey {
     pub const fn arithmetic(&self) -> ArithmeticType {
         ArithmeticType::F32
     }
+}
+
+impl Bf16NumericalContractKey {
+    /// Mints the canonical key from the complete coherent contract vector.
+    ///
+    /// The dimension rows are encoded by the same writer the `f32` key uses, so
+    /// a widened behaviour space is one build error rather than two encoders
+    /// that can drift. Only the header differs, and it is what makes the two
+    /// key spaces disjoint: the arithmetic tag and the canonical arithmetic NaN
+    /// payload of *this* width.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed refusal for an assumption whose provenance cannot be
+    /// stated by a caller. The arithmetic type and canonical arithmetic NaN
+    /// payload are invariants of this `bf16`-specific constructor.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        input_subnormals: SubnormalMode,
+        result_subnormals: SubnormalMode,
+        contraction: NumericalPermission,
+        reassociation: NumericalPermission,
+        permutation: NumericalPermission,
+        signed_zero: NumericalPermission,
+        reciprocal_transform: NumericalPermission,
+        approximate_intrinsics: ApproximationEnvelope,
+        nan_assumptions: ExceptionalValueAssumption,
+        infinity_assumptions: ExceptionalValueAssumption,
+        materialization_rounding: MaterializationRounding,
+    ) -> Result<Self, NumericalContractKeyError> {
+        let mut bytes = vec![ArithmeticType::Bf16.tag()];
+        bytes.extend_from_slice(&crate::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS.to_be_bytes());
+        encode_contract_dimensions(
+            &mut bytes,
+            input_subnormals,
+            result_subnormals,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
+            nan_assumptions,
+            infinity_assumptions,
+            materialization_rounding,
+        )?;
+        Ok(Self(
+            render_contract_key(BF16_NUMERICAL_CONTRACT_KEY_DOMAIN, &bytes).into_boxed_str(),
+        ))
+    }
+
+    /// Validates and retains one already-rendered canonical key.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed refusal unless `key` is the exact lowercase canonical
+    /// spelling of one coherent caller-statable `bf16` contract. An `f32` key is
+    /// refused here, and a `bf16` key is refused by
+    /// [`F32NumericalContractKey::try_from_str`]; neither domain accepts the
+    /// other's rendering.
+    pub fn try_from_str(key: &str) -> Result<Self, NumericalContractKeyError> {
+        Self::try_from_str_with_decoder(key, decode_hex_pair)
+    }
+
+    fn try_from_str_with_decoder(
+        key: &str,
+        decode: impl FnMut(u8, u8) -> Option<u8>,
+    ) -> Result<Self, NumericalContractKeyError> {
+        let bytes = decode_contract_key(
+            key,
+            BF16_NUMERICAL_CONTRACT_KEY_DOMAIN,
+            &BF16_NUMERICAL_CONTRACT_KEY_LENGTHS,
+            decode,
+        )?;
+        let cursor = validate_contract_header(
+            &bytes,
+            ArithmeticType::Bf16,
+            &crate::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS.to_be_bytes(),
+        )?;
+        validate_dimension_rows(&bytes, cursor)?;
+        Ok(Self(key.into()))
+    }
+
+    /// Returns the canonical key spelling.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Returns the arithmetic type established by the validated grammar.
+    #[must_use]
+    pub const fn arithmetic(&self) -> ArithmeticType {
+        ArithmeticType::Bf16
+    }
+}
+
+/// Writes the eleven dimension rows in canonical order.
+///
+/// The **one** writer for both key domains. A dimension added to the vocabulary,
+/// or a behaviour space widened, is a build error here once rather than a
+/// divergence between two per-width encoders — which is the failure mode a
+/// second copy of this function would introduce the first time only one of them
+/// was updated.
+#[allow(clippy::too_many_arguments)]
+fn encode_contract_dimensions(
+    bytes: &mut Vec<u8>,
+    input_subnormals: SubnormalMode,
+    result_subnormals: SubnormalMode,
+    contraction: NumericalPermission,
+    reassociation: NumericalPermission,
+    permutation: NumericalPermission,
+    signed_zero: NumericalPermission,
+    reciprocal_transform: NumericalPermission,
+    approximate_intrinsics: ApproximationEnvelope,
+    nan_assumptions: ExceptionalValueAssumption,
+    infinity_assumptions: ExceptionalValueAssumption,
+    materialization_rounding: MaterializationRounding,
+) -> Result<(), NumericalContractKeyError> {
+    push_dimension(bytes, 0x01, |bytes| {
+        encode_subnormal(bytes, input_subnormals);
+        Ok(())
+    })?;
+    push_dimension(bytes, 0x02, |bytes| {
+        encode_subnormal(bytes, result_subnormals);
+        Ok(())
+    })?;
+    for (tag, permission) in [
+        (0x03, contraction),
+        (0x04, reassociation),
+        (0x05, permutation),
+        (0x06, signed_zero),
+        (0x07, reciprocal_transform),
+    ] {
+        push_dimension(bytes, tag, |bytes| {
+            encode_permission(bytes, permission);
+            Ok(())
+        })?;
+    }
+    push_dimension(bytes, 0x08, |bytes| {
+        bytes.extend_from_slice(&[0x03, approximate_intrinsics.tag()]);
+        Ok(())
+    })?;
+    push_dimension(bytes, 0x09, |bytes| {
+        encode_assumption(bytes, nan_assumptions)
+    })?;
+    push_dimension(bytes, 0x0a, |bytes| {
+        encode_assumption(bytes, infinity_assumptions)
+    })?;
+    push_dimension(bytes, 0x0b, |bytes| match materialization_rounding {
+        MaterializationRounding::NearestTiesToEven => {
+            bytes.extend_from_slice(&[0x05, 0x01]);
+            Ok(())
+        }
+    })
+}
+
+/// Renders one preimage under its versioned domain as lowercase hex.
+fn render_contract_key(domain: &str, bytes: &[u8]) -> String {
+    let mut key = String::with_capacity(domain.len() + 1 + bytes.len() * 2);
+    key.push_str(domain);
+    key.push('.');
+    for byte in bytes {
+        use core::fmt::Write as _;
+        write!(key, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    key
+}
+
+/// Recovers the preimage of one rendered key under its own domain.
+///
+/// The length check runs before any scanning or allocation, so caller-controlled
+/// work stays bounded, and it is per domain because the two headers differ in
+/// width.
+fn decode_contract_key(
+    key: &str,
+    domain: &str,
+    lengths: &[usize],
+    mut decode: impl FnMut(u8, u8) -> Option<u8>,
+) -> Result<Vec<u8>, NumericalContractKeyError> {
+    if !lengths.contains(&key.len()) {
+        return Err(NumericalContractKeyError::InvalidCanonicalKey);
+    }
+    let Some(hex) = key.strip_prefix(domain) else {
+        return Err(NumericalContractKeyError::InvalidCanonicalKey);
+    };
+    let Some(hex) = hex.strip_prefix('.') else {
+        return Err(NumericalContractKeyError::InvalidCanonicalKey);
+    };
+    if hex.is_empty()
+        || !hex.len().is_multiple_of(2)
+        || !hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(NumericalContractKeyError::InvalidCanonicalKey);
+    }
+    hex.as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| decode(pair[0], pair[1]))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(NumericalContractKeyError::InvalidCanonicalKey)
 }
 
 fn push_dimension(
@@ -738,13 +936,26 @@ fn decode_hex_pair(high: u8, low: u8) -> Option<u8> {
     Some(nibble(high)? << 4 | nibble(low)?)
 }
 
-fn validate_contract_preimage(bytes: &[u8]) -> Result<(), NumericalContractKeyError> {
-    if bytes.first() != Some(&ArithmeticType::F32.tag())
-        || bytes.get(1..5) != Some(&0x7fc0_0000_u32.to_be_bytes())
-    {
+/// Checks the arithmetic tag and canonical NaN payload opening one preimage.
+///
+/// Returns the cursor the dimension rows start at, which is where the two
+/// widths' preimages differ in length and the only place they do.
+fn validate_contract_header(
+    bytes: &[u8],
+    arithmetic: ArithmeticType,
+    canonical_nan: &[u8],
+) -> Result<usize, NumericalContractKeyError> {
+    let cursor = 1 + canonical_nan.len();
+    if bytes.first() != Some(&arithmetic.tag()) || bytes.get(1..cursor) != Some(canonical_nan) {
         return Err(NumericalContractKeyError::InvalidArithmetic);
     }
-    let mut cursor = 5;
+    Ok(cursor)
+}
+
+fn validate_dimension_rows(
+    bytes: &[u8],
+    mut cursor: usize,
+) -> Result<(), NumericalContractKeyError> {
     for (tag, space, values) in [
         (0x01, 0x01, &[0x01, 0x02, 0x03][..]),
         (0x02, 0x01, &[0x01, 0x02, 0x03][..]),
@@ -787,9 +998,11 @@ fn validate_contract_preimage(bytes: &[u8]) -> Result<(), NumericalContractKeyEr
 impl core::fmt::Display for NumericalContractKeyError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str(match self {
-            Self::InvalidCanonicalKey => "numerical-contract key is not canonical v2",
+            Self::InvalidCanonicalKey => {
+                "numerical-contract key is not the canonical spelling of its domain"
+            }
             Self::InvalidArithmetic => {
-                "numerical-contract key does not name governed f32 arithmetic"
+                "numerical-contract key does not name its domain's governed arithmetic"
             }
             Self::IncoherentAssumption => {
                 "caller-stated contract uses ineligible assumption provenance"
@@ -803,9 +1016,10 @@ impl std::error::Error for NumericalContractKeyError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, F32NumericalContractKey,
-        FlushedZeroSign, MaterializationRounding, NumericalContractKeyError, NumericalPermission,
-        SubnormalMode, ValueDomainProvenance,
+        ApproximationEnvelope, ArithmeticType, Bf16NumericalContractKey,
+        ExceptionalValueAssumption, F32NumericalContractKey, FlushedZeroSign,
+        MaterializationRounding, NumericalContractKeyError, NumericalPermission, SubnormalMode,
+        ValueDomainProvenance,
     };
     use crate::semantic::{F32, FrozenSemanticRegistry, TypeKey, builtin_scalar_value_types};
 
@@ -981,6 +1195,199 @@ mod tests {
                     provenance: ValueDomainProvenance::CompilerProven,
                 },
                 ExceptionalValueAssumption::MakeNoAssumption,
+                MaterializationRounding::NearestTiesToEven,
+            ),
+            Err(NumericalContractKeyError::IncoherentAssumption)
+        );
+    }
+
+    /// The exact rendered `f32` key of the all-strict vector.
+    ///
+    /// **A pin, not a restatement of the encoder.** Adding the `bf16` domain
+    /// moved the dimension rows into a writer both widths share, and the only
+    /// evidence that no existing key changed is a value computed before the
+    /// refactor and compared after it. Written out rather than derived, because
+    /// a derived expectation would move with whatever moved the encoder.
+    #[test]
+    fn the_strict_f32_key_rendering_is_pinned() {
+        let key = F32NumericalContractKey::new(
+            SubnormalMode::Preserve,
+            SubnormalMode::Preserve,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            MaterializationRounding::NearestTiesToEven,
+        )
+        .unwrap();
+        assert_eq!(
+            key.as_str(),
+            "tiler.contract.f32.v2.037fc0000001010102010103020104020105020106020107020108030109040\
+             10a04010b0501"
+        );
+    }
+
+    fn strict_bf16_key() -> Bf16NumericalContractKey {
+        Bf16NumericalContractKey::new(
+            SubnormalMode::Preserve,
+            SubnormalMode::Preserve,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            MaterializationRounding::NearestTiesToEven,
+        )
+        .unwrap()
+    }
+
+    /// The `bf16` key states its own width in its header and its own domain.
+    #[test]
+    fn the_strict_bf16_key_names_its_own_arithmetic() {
+        let key = strict_bf16_key();
+        assert_eq!(key.arithmetic(), ArithmeticType::Bf16);
+        assert_eq!(
+            key.as_str(),
+            "tiler.contract.bf16.v1.027fc00101010201010302010402010502010602010702010803010904010a0\
+             4010b0501"
+        );
+        assert_eq!(
+            Bf16NumericalContractKey::try_from_str(key.as_str()),
+            Ok(key)
+        );
+    }
+
+    /// Neither domain accepts the other's rendering.
+    ///
+    /// This is the property that makes two same-vector contracts of different
+    /// widths two contracts rather than one: if either parser admitted the
+    /// other's key, a consumer holding a validated key would not know which
+    /// width it had.
+    #[test]
+    fn the_two_contract_key_domains_are_mutually_closed() {
+        let f32_key = strict_f32_key();
+        let bf16_key = strict_bf16_key();
+        assert_ne!(f32_key.as_str(), bf16_key.as_str());
+        assert_eq!(
+            Bf16NumericalContractKey::try_from_str(f32_key.as_str()),
+            Err(NumericalContractKeyError::InvalidCanonicalKey),
+            "an f32 key was admitted as bf16",
+        );
+        assert_eq!(
+            F32NumericalContractKey::try_from_str(bf16_key.as_str()),
+            Err(NumericalContractKeyError::InvalidCanonicalKey),
+            "a bf16 key was admitted as f32",
+        );
+    }
+
+    /// Every statable `bf16` vector renders a distinct key.
+    ///
+    /// Sampled over the dimensions whose spaces differ in width — the two
+    /// subnormal rows and one permission — rather than over the whole product,
+    /// because the encoder is shared with `f32`, whose exhaustive injectivity is
+    /// checked in `crates/tiler-compiler/src/request.rs`. What is *not* shared
+    /// is the header, and the pin above is what fixes that.
+    #[test]
+    fn bf16_contract_keys_are_distinct_per_resolved_vector() {
+        let modes = [
+            SubnormalMode::Preserve,
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            },
+        ];
+        let mut keys = Vec::new();
+        for input in modes {
+            for result in modes {
+                for reassociation in [
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Permitted,
+                ] {
+                    let key = Bf16NumericalContractKey::new(
+                        input,
+                        result,
+                        NumericalPermission::Forbidden,
+                        reassociation,
+                        NumericalPermission::Forbidden,
+                        NumericalPermission::Forbidden,
+                        NumericalPermission::Forbidden,
+                        ApproximationEnvelope::Forbidden,
+                        ExceptionalValueAssumption::MakeNoAssumption,
+                        ExceptionalValueAssumption::MakeNoAssumption,
+                        MaterializationRounding::NearestTiesToEven,
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        Bf16NumericalContractKey::try_from_str(key.as_str()).as_ref(),
+                        Ok(&key),
+                        "a minted bf16 key did not validate",
+                    );
+                    keys.push(key.as_str().to_owned());
+                }
+            }
+        }
+        assert_eq!(keys.len(), 18, "the sampled population changed");
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 18, "two bf16 vectors shared one key");
+    }
+
+    /// The `bf16` parser refuses the same malformed shapes the `f32` one does.
+    #[test]
+    fn bf16_contract_key_parser_refuses_malformed_and_noncanonical_rows() {
+        let key = strict_bf16_key();
+        let mut malformed = vec![
+            String::new(),
+            super::BF16_NUMERICAL_CONTRACT_KEY_DOMAIN.to_owned(),
+            format!("{}.", super::BF16_NUMERICAL_CONTRACT_KEY_DOMAIN),
+            key.as_str().to_ascii_uppercase(),
+            format!("{}0", key.as_str()),
+            format!("{}00", key.as_str()),
+        ];
+        let prefix = super::BF16_NUMERICAL_CONTRACT_KEY_DOMAIN.len() + 1;
+        // Byte 0 is the arithmetic tag, 1..3 the canonical NaN payload, and 3
+        // onward the dimension rows; the last is the materialization row.
+        for byte_offset in [0, 1, 2, 3, 4, 33] {
+            let mut changed = key.as_str().as_bytes().to_vec();
+            let hex = prefix + byte_offset * 2;
+            changed[hex] = if changed[hex] == b'f' { b'e' } else { b'f' };
+            malformed.push(String::from_utf8(changed).unwrap());
+        }
+        assert_eq!(malformed.len(), 12, "the malformed matrix changed");
+        for candidate in malformed {
+            assert!(
+                Bf16NumericalContractKey::try_from_str(&candidate).is_err(),
+                "malformed key was admitted: {candidate}"
+            );
+        }
+    }
+
+    /// A `bf16` key states an ineligible provenance no more than an `f32` one.
+    #[test]
+    fn bf16_contract_key_rejects_ineligible_assumption_provenance() {
+        assert_eq!(
+            Bf16NumericalContractKey::new(
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::AssumeAbsent {
+                    provenance: ValueDomainProvenance::RuntimeValidated,
+                },
                 MaterializationRounding::NearestTiesToEven,
             ),
             Err(NumericalContractKeyError::IncoherentAssumption)

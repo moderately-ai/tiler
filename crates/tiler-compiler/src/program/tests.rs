@@ -32,7 +32,7 @@ use tiler_ir::shape::{Axis, Shape};
 use crate::physical::{
     build_fused_scheduled_region, build_scheduled_regions, lower_structured_kernel,
 };
-use crate::request::{CompilationRequest, verify_request};
+use crate::request::{CompilationRequest, verify_planned_request};
 
 /// The two-stage materialized assembly, spelled as a cover of two regions
 /// states it.
@@ -127,7 +127,7 @@ fn fixture_with_scale(
         .output(OutputKey::new("result").unwrap(), sum)
         .unwrap();
     let semantic = builder.build().unwrap();
-    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = request.for_target(request.target_profiles()[0]).unwrap();
     let scheduled = build_scheduled_regions(&request).unwrap();
     (semantic, request, scheduled)
@@ -148,7 +148,7 @@ fn stage_coverage_uses_verified_canonical_receipt_occurrences() {
         .output(OutputKey::new("result").unwrap(), sum)
         .unwrap();
     let semantic = builder.build().unwrap();
-    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = request.for_target(request.target_profiles()[0]).unwrap();
     let lowering = crate::lowering::resolve_lowering(&semantic, &request).unwrap();
     let member = crate::region::SemanticMemberId(0);

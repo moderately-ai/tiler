@@ -1662,15 +1662,24 @@ fn a_contraction_of_the_workload_shape_is_refused_by_the_target_not_by_recogniti
 ///
 /// The gap this guards is the one registration opens: `builder.build()` now
 /// succeeds for BF16, and "the program verifies" is the step most easily
-/// mistaken for "the dtype works". Nothing below the semantic layer moved —
-/// there is no capability row, no lowering capability, and no target profile
-/// that can state a BF16 numerical contract — so the request boundary refuses
-/// it before any target is consulted.
+/// mistaken for "the dtype works". Nothing below the semantic layer realizes
+/// BF16 — there is no capability row, no lowering capability, and no region
+/// vocabulary for it.
 ///
-/// The rule that says no is `dtype-f32` rather than `operation-set`: the
-/// bounded strategy requires the governed `f32` identity, and it reaches that
-/// check before it reaches the operation vocabulary. Asserting `operation-set`
-/// here would be fiction about which check refused.
+/// **Which boundary answers moved, and the move is the point.** This used to
+/// assert the request-wide `dtype-f32` rule, because the recognizer ran before
+/// any target was consulted and so no profile ever got to answer about BF16.
+/// Target resolution now precedes recognition, and the refusal here is the
+/// governed baseline's own: it declares dispatchability for `tiler::f32@1` and
+/// says nothing about `tiler::bf16@1`, so the dtype is `Unknown` to it and the
+/// program is rejected *per target* rather than for the whole request. That is
+/// a strictly more specific answer — it names the profile that could not take
+/// the program — and it is what lets a profile with measured BF16 rows report a
+/// numerical verdict instead of being unreachable behind the recognizer.
+///
+/// `dtype-f32` has not gone away; it is what a BF16 program reaches on a profile
+/// that *does* declare the dtype, which
+/// `a_dispatchable_bf16_profile_reaches_the_recognizer_dtype_wall` covers.
 #[test]
 fn a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -1688,13 +1697,34 @@ fn a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary() {
     let bf16_program = builder.build().unwrap();
     assert_eq!(bf16_program.operation_count(), 4);
 
+    let product = compile(CompilationRequest::governed(&bf16_program))
+        .expect("a target-local dtype refusal is a batch outcome, not a request error");
+    let [target] = product.targets.as_slice() else {
+        panic!("the governed request names exactly one target");
+    };
+    let Some(CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(
+        RequestError::DTypeNotDispatchable {
+            target_profile,
+            resolved_type,
+            disposition,
+        },
+    ))) = target.failure()
+    else {
+        panic!("expected the profile's own dtype refusal, got {target:?}");
+    };
     assert_eq!(
-        compile(CompilationRequest::governed(&bf16_program)).unwrap_err(),
-        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "dtype-f32",
-        }),
-        "a bf16 program is refused for its dtype, not routed to a target"
+        resolved_type.as_ref(),
+        &tiler_ir::semantic::Bf16::resolved_type(),
+        "the refusal names the exact value identity the profile was asked about",
+    );
+    assert_eq!(
+        *disposition,
+        crate::request::DTypeDispatchRefusalDisposition::Unknown,
+        "silence about bf16 is Unknown, never an inherited f32 verdict",
+    );
+    assert_eq!(
+        target_profile.as_str(),
+        target.target_profile().profile_key().as_str(),
     );
 
     // The neighbour that keeps this about bf16 rather than about a dead
@@ -1882,7 +1912,7 @@ fn empty_and_duplicate_target_sets_are_outer_request_failures() {
 #[test]
 fn target_group_cardinality_mismatch_is_an_outer_compiler_invariant() {
     let semantic = semantic(false);
-    let verified = verify_request(request_with_targets(
+    let verified = verify_planned_request(request_with_targets(
         &semantic,
         vec![
             TargetProfile::governed_with_key_for_test("test.group.first.v1"),
@@ -2212,7 +2242,7 @@ fn no_feasible_plan_retains_a_typed_terminal_failure_trace() {
 #[test]
 fn target_rejections_are_deduplicated_by_region_role_and_axis() {
     let semantic = semantic(false);
-    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = request.for_target(request.target_profiles()[0]).unwrap();
     let mut explain = ExplainWriter::new(&request).unwrap();
     let pointwise = PhysicalError::Target {
@@ -2515,7 +2545,7 @@ fn structured_addressing_realizes_non_trailing_reduction_axes() {
 #[test]
 fn portfolio_selection_and_evidence_are_recomputed_from_exact_contents() {
     let semantic = semantic(false);
-    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = request.for_target(request.target_profiles()[0]).unwrap();
     let product = compile(CompilationRequest::governed(&semantic)).unwrap();
     let target = &product.targets[0];
@@ -2648,7 +2678,7 @@ fn plan_portfolio(
 #[test]
 fn lowering_refuses_an_opaque_plan_before_program_assembly() {
     let semantic = semantic(false);
-    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = request.for_target(request.target_profiles()[0]).unwrap();
     let formation = plan_formation(&semantic, &request);
     let mut explain = ExplainWriter::new(&request).unwrap();
@@ -2691,7 +2721,7 @@ fn lowering_refuses_an_opaque_plan_before_program_assembly() {
 #[test]
 fn verification_refuses_an_alternative_with_an_opaque_plan() {
     let semantic = semantic(false);
-    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = request.for_target(request.target_profiles()[0]).unwrap();
     let formation = plan_formation(&semantic, &request);
     let compiled = compile(CompilationRequest::governed(&semantic)).unwrap();
@@ -2753,7 +2783,7 @@ fn global_semantic_selection_rejects_a_forged_winner() {
 #[test]
 fn final_portfolio_verifier_rejects_deletion_owner_and_origin_misbinding() {
     let semantic = semantic(false);
-    let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let verified = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = verified.for_target(verified.target_profiles()[0]).unwrap();
     let compiled = compile(CompilationRequest::governed(&semantic)).unwrap();
     let portfolio = compiled.targets[0].portfolio.clone();
@@ -2949,7 +2979,7 @@ fn relaxed_reassociation_reaches_verified_global_physical_selection() {
         })
         .expect("the relaxed contract admits the add reassociation")
         .candidate();
-    let rewritten_request = verify_request(CompilationRequest::governed_under(
+    let rewritten_request = verify_planned_request(CompilationRequest::governed_under(
         rewritten,
         StrictF32NumericalContract::governed_relaxed(),
     ))
@@ -2990,7 +3020,7 @@ fn relaxed_reassociation_reaches_verified_global_physical_selection() {
 #[test]
 fn pointwise_region_roles_require_the_exact_whole_program_subject() {
     let semantic = tensor_add_chain();
-    let verified = verify_request(CompilationRequest::governed_under(
+    let verified = verify_planned_request(CompilationRequest::governed_under(
         &semantic,
         StrictF32NumericalContract::governed_relaxed(),
     ))
@@ -3067,7 +3097,7 @@ fn top_level_emitter_renders_strict_numerical_decline_and_algebraic_budget_stop(
     .unwrap();
     let AlgebraicExplorationParts { assessments, .. } = strict.into_parts();
     let binding = semantic(false);
-    let verified = verify_request(CompilationRequest::governed(&binding)).unwrap();
+    let verified = verify_planned_request(CompilationRequest::governed(&binding)).unwrap();
     let target = verified.for_target(verified.target_profiles()[0]).unwrap();
     let mut writer = ExplainWriter::new(&target).unwrap();
     let root = test_root(&mut writer);
@@ -3177,7 +3207,7 @@ fn mixed_frontier_trace(
     reverse_bindings: bool,
 ) -> VerifiedExplainTrace {
     let semantic = semantic(false);
-    let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let verified = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = verified.for_target(verified.target_profiles()[0]).unwrap();
     let subject = FrontierRegionSubject::new(
         "fused",
@@ -3649,7 +3679,7 @@ fn split_request(shape: Shape) -> (SemanticProgram, crate::request::VerifiedTarg
         false,
         Axis::new(1),
     );
-    let verified = verify_request(CompilationRequest::governed_under(
+    let verified = verify_planned_request(CompilationRequest::governed_under(
         &semantic,
         StrictF32NumericalContract::governed_relaxed(),
     ))
@@ -3796,7 +3826,7 @@ fn a_reassociation_forbidding_contract_declines_the_split_by_dimension() {
         false,
         Axis::new(1),
     );
-    let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let verified = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = verified.for_target(verified.target_profiles()[0]).unwrap();
     let frontier = reduction_frontier(&request);
     assert_eq!(frontier.admitted().len(), 1);
@@ -3844,7 +3874,7 @@ fn tree_request(
         StrictF32NumericalContract::governed_relaxed(),
     );
     request.target_profiles = vec![profile];
-    let verified = verify_request(request).expect("the relaxed contract is admitted");
+    let verified = verify_planned_request(request).expect("the relaxed contract is admitted");
     let verified = verified
         .for_target(verified.target_profiles()[0])
         .expect("the target resolves the relaxed contract");
@@ -4025,7 +4055,7 @@ fn each_way_the_tree_can_fail_rejects_before_admission_with_its_own_reason() {
     );
     let mut request = CompilationRequest::governed(&strict);
     request.target_profiles = vec![tree_target()];
-    let verified = verify_request(request).expect("the strict contract is admitted");
+    let verified = verify_planned_request(request).expect("the strict contract is admitted");
     let verified = verified.for_target(verified.target_profiles()[0]).unwrap();
     assert!(
         reduction_frontier(&verified)
@@ -4644,7 +4674,7 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
         }
         assert!(
             matches!(
-                verify_request(request),
+                verify_planned_request(request),
                 Err(crate::request::RequestError::BudgetExceeded { resource: named, .. })
                     if named == resource
             ),

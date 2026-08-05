@@ -1723,7 +1723,7 @@ fn digest(program: &SemanticProgram) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::{CompilationRequest, verify_request};
+    use crate::request::{CompilationRequest, verify_planned_request};
     use tiler_ir::semantic::{
         CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply,
         InputKey, OutputKey, SemanticProgramBuilder, StrictSerialF32Sum, Value,
@@ -2914,7 +2914,7 @@ mod tests {
         let duplicated = program(2.0, 2.0, false);
         let outcome = normalize(&duplicated);
         let normalized = outcome.normalized_program().unwrap();
-        let verified = verify_request(CompilationRequest::governed(normalized)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(normalized)).unwrap();
         let target = verified.for_target(verified.target_profiles()[0]).unwrap();
         let mut explain = ExplainWriter::new(&target).unwrap();
 
@@ -2974,7 +2974,7 @@ mod tests {
         let outcome =
             normalize_semantics(&duplicated, budgets, StrictF32NumericalContract::governed())
                 .unwrap();
-        let verified = verify_request(CompilationRequest::governed(&duplicated)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(&duplicated)).unwrap();
         let target = verified.for_target(verified.target_profiles()[0]).unwrap();
         let mut explain = ExplainWriter::new(&target).unwrap();
 

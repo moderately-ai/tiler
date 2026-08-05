@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [declare-the-bf16-rows-on-the-authoritative-metal-profile]
 related: [admit-bf16-into-the-schedule-and-kernel-vocabulary, design-the-bf16-computation-and-accumulator-contract]
-scopes: [implementation/compiler, contracts/numerics]
+scopes: [implementation/compiler, implementation/ir, contracts/numerics, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, bf16, numerics, target-profiles]
@@ -92,6 +92,34 @@ flush-accepting request passes that dimension; no neighbouring dtype or F32
 identity moves silently; and Tom has accepted every consequential public
 boundary.
 
+## Added scopes, and why each is required
+
+- `implementation/ir`. The scope key "new BF16 meaning receives a distinct,
+  canonical identity" cannot be met inside the compiler: `canonical_contract_key`
+  mints through `F32NumericalContractKey`, which lives in
+  `crates/tiler-ir/src/schedule/numerics.rs` and hard-codes the `f32` domain,
+  arithmetic tag, and NaN payload. Minting a BF16 key in the compiler instead
+  would put contract-key grammar in two crates and produce an identity
+  `tiler_ir::index::refinement::NumericalContractIdentity` cannot validate. The
+  edit adds `Bf16NumericalContractKey` beside its `f32` sibling and factors the
+  shared dimension writer; no `f32` byte moves.
+- `contracts/foundation`. `docs/artifact-abi.md` is the identity ledger and it
+  names the numerical-contract key domain. Adding a second domain without moving
+  the ledger sentence leaves a stale assertion the next reader builds on.
+
+Both are scheduling metadata for already-authorized work, declared under the
+AGENTS.md rule that an agent adds every required scope autonomously.
+
+**Live-scope overlap, verified rather than assumed.** `implementation/ir` is held
+exclusively by `root-cause-the-intermittent-leaky-test-in-the-workspace-gate`.
+Its branch had zero commits at the time of this edit —
+`git log --oneline main..tkt/root-cause-the-intermittent-leaky-test-in-the-workspace-gate`
+was empty and `git merge-base` resolved to this ticket's own base
+`e9ef24dcb106a71696d702cf2be60cf7a403fe95` — so file-level disjointness against
+its *actual* diff is vacuous rather than informative. The integrator must re-run
+that check before merging, treating `crates/tiler-ir/src/schedule/numerics.rs`
+and `crates/tiler-ir/src/schedule/mod.rs` as the files at risk.
+
 ## Graph maintenance
 
 - Depends on `declare-the-bf16-rows-on-the-authoritative-metal-profile`, which
@@ -102,4 +130,25 @@ boundary.
   and must name rather than absorb it.
 - Related to `design-the-bf16-computation-and-accumulator-contract`, whose
   accepted outcome keeps accumulator width on operation identity and forbids a
-  fused BF16 operation. Do not reopen either decision here.
+  fused BF16 operation. Do not reopen either decision here. **Fact.** Neither was
+  reopened: the contract states numerical permissions and required behaviours
+  only, and no computation or accumulator type moved onto it.
+- **Fact — the named unsupported layer is the recognizer, not the schedule
+  vocabulary.** A flush-accepting BF16 request clears numerical feasibility and
+  is then refused by `select_supported_strategy`'s `dtype-f32` rule, a
+  whole-request `UnsupportedCapability`. It never reaches
+  `admit-bf16-into-the-schedule-and-kernel-vocabulary`'s layer, because
+  recognition sits above it. That ticket's relation stands and its wall is the
+  next one after this one, not this one.
+- **Fact — the measured ledger's BF16 rows cover the two subnormal dimensions
+  only.** So on `FIRST_MACOS_APPLE9`'s own rows a flush-accepting BF16 contract
+  meets `Unknown` on the first remaining consumable dimension (contraction)
+  rather than passing every dimension. That is the correct answer for the
+  measurement's boundary and is asserted as its own case; widening those rows is
+  the measured-profile ticket's business, not this one's.
+- Split out, because this ticket's scopes cannot reach either:
+  `bind-the-bf16-contract-refusal-to-the-authoritative-apple9-rows`
+  (`implementation/build` — `FIRST_MACOS_APPLE9` lives in a crate that depends on
+  the compiler) and
+  `move-the-navigation-docs-onto-the-two-contract-key-domains`
+  (`contracts/navigation` — held by a live ticket at the time of this edit).

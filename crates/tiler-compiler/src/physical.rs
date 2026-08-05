@@ -2430,7 +2430,7 @@ mod tests {
         );
     }
     use super::*;
-    use crate::request::{CompilationRequest, StrictF32NumericalContract, verify_request};
+    use crate::request::{CompilationRequest, StrictF32NumericalContract, verify_planned_request};
     use tiler_ir::kernel::{KernelConstant, OperationRef, OperationView};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
@@ -2479,7 +2479,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         let program = builder.build().unwrap();
-        let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let request = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         request.for_target(0).unwrap()
     }
 
@@ -2496,7 +2496,7 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         let program = builder.build().unwrap();
-        let request = verify_request(CompilationRequest::governed_under(
+        let request = verify_planned_request(CompilationRequest::governed_under(
             &program,
             StrictF32NumericalContract::governed_relaxed(),
         ))

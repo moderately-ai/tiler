@@ -79,6 +79,8 @@ use crate::region::{
     REGION_FORMATION_SUBJECT, RegionCandidate, RegionError, RegionFormationOutcome,
     form_region_candidates,
 };
+#[cfg(test)]
+use crate::request::verify_planned_request;
 use crate::request::{CompilationRequest, RequestError, VerifiedTargetResolution, verify_request};
 use crate::rewrite::{
     RewriteAssessment, RewriteProposal, RewriteRuleIdentity, record_adopted_alternatives,
@@ -616,7 +618,6 @@ fn compile_configured(
 ) -> Result<CompilationProduct, CompileError> {
     let semantic = request.program;
     let verified = verify_request(request)?;
-    verify_semantic_output_type(semantic)?;
     let mut outcomes: Vec<Option<TargetCompilationOutcome>> = verified
         .target_slots()
         .iter()
@@ -628,6 +629,26 @@ fn compile_configured(
             }),
         })
         .collect();
+    // A completely refused request has no recognized program and therefore no
+    // group to compile: every slot above already carries its target's own
+    // refusal, and there is nothing further to say about a program no target
+    // admitted.
+    let Some(verified) = verified.planned() else {
+        return Ok(CompilationProduct {
+            targets: outcomes
+                .into_iter()
+                .map(|outcome| {
+                    outcome.ok_or_else(|| target_coordination_error("target-outcome-missing"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        });
+    };
+    // Asked of a program this build is about to plan, and only then. It states
+    // an invariant of the *recognized* program — every output is `f32` — whose
+    // violation is invalid compiler output rather than a caller error, so
+    // asserting it about a request no target admitted would report a compiler
+    // defect for a program the compiler never claimed it could handle.
+    verify_semantic_output_type(semantic)?;
     for group in resolved_target_groups(&verified) {
         #[cfg(test)]
         CONTRACT_GROUP_COMPILATIONS.with(|count| count.set(count.get() + 1));

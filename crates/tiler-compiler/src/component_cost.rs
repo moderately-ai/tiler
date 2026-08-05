@@ -722,11 +722,12 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         let program = builder.build().unwrap();
-        let request =
-            crate::request::verify_request(crate::request::CompilationRequest::governed(&program))
-                .unwrap()
-                .for_target(0)
-                .unwrap();
+        let request = crate::request::verify_planned_request(
+            crate::request::CompilationRequest::governed(&program),
+        )
+        .unwrap()
+        .for_target(0)
+        .unwrap();
         let regions = crate::physical::build_scheduled_regions(&request).unwrap();
 
         // The two regions of the materialized cover claim disjoint occurrences,

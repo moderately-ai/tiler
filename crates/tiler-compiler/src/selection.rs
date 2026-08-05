@@ -1788,7 +1788,7 @@ mod tests {
     use crate::physical::{ScheduledRegion, build_fused_scheduled_region, build_scheduled_regions};
     use crate::request::{
         CompilationRequest, DeterministicBudgets, StrictF32NumericalContract,
-        VerifiedTargetRequest, verify_request,
+        VerifiedTargetRequest, verify_planned_request,
     };
     use std::collections::BTreeMap;
     use tiler_ir::schedule::InputOrdinal;
@@ -1818,7 +1818,7 @@ mod tests {
     }
 
     fn request_for(program: &SemanticProgram) -> VerifiedTargetRequest {
-        let request = verify_request(CompilationRequest::governed(program)).unwrap();
+        let request = verify_planned_request(CompilationRequest::governed(program)).unwrap();
         request.for_target(0).unwrap()
     }
 

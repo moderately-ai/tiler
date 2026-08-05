@@ -25,7 +25,9 @@ pub(crate) use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
     MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,
 };
-use tiler_ir::schedule::{F32NumericalContractKey, NumericalContractKeyError};
+use tiler_ir::schedule::{
+    Bf16NumericalContractKey, F32NumericalContractKey, NumericalContractKeyError,
+};
 
 use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
@@ -141,26 +143,54 @@ fn intern_contract_key(key: String) -> &'static str {
 fn canonical_contract_key(
     contract: &StrictF32NumericalContract,
 ) -> Result<String, NumericalContractKeyError> {
-    if contract.arithmetic != ArithmeticType::F32
-        || contract.canonical_arithmetic_nan_bits
-            != tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS
-    {
-        return Err(NumericalContractKeyError::InvalidArithmetic);
+    // The width selects the key domain, and the NaN payload is checked against
+    // the one that width canonically produces rather than carried through. A
+    // contract naming `bf16` with an `f32` NaN pattern is not a `bf16` contract
+    // with an unusual field; it is a record whose two halves disagree, and
+    // minting a key for it would give that disagreement a canonical identity.
+    match (contract.arithmetic, contract.canonical_arithmetic_nan_bits) {
+        (ArithmeticType::F32, bits)
+            if bits == tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS =>
+        {
+            F32NumericalContractKey::new(
+                contract.input_subnormals,
+                contract.result_subnormals,
+                contract.contraction,
+                contract.reassociation,
+                contract.permutation,
+                contract.signed_zero,
+                contract.reciprocal_transform,
+                contract.approximate_intrinsics,
+                contract.nan_assumptions,
+                contract.infinity_assumptions,
+                contract.materialization_rounding,
+            )
+            .map(|key| key.as_str().to_owned())
+        }
+        (ArithmeticType::Bf16, bits)
+            if bits == u32::from(tiler_ir::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS) =>
+        {
+            Bf16NumericalContractKey::new(
+                contract.input_subnormals,
+                contract.result_subnormals,
+                contract.contraction,
+                contract.reassociation,
+                contract.permutation,
+                contract.signed_zero,
+                contract.reciprocal_transform,
+                contract.approximate_intrinsics,
+                contract.nan_assumptions,
+                contract.infinity_assumptions,
+                contract.materialization_rounding,
+            )
+            .map(|key| key.as_str().to_owned())
+        }
+        // `f16` and `f64` are named by the arithmetic vocabulary and have no key
+        // domain, so a contract stating one is refused here and again at
+        // admission rather than compiled under a placeholder key. Widening this
+        // match is what admitting a further width means.
+        _ => Err(NumericalContractKeyError::InvalidArithmetic),
     }
-    F32NumericalContractKey::new(
-        contract.input_subnormals,
-        contract.result_subnormals,
-        contract.contraction,
-        contract.reassociation,
-        contract.permutation,
-        contract.signed_zero,
-        contract.reciprocal_transform,
-        contract.approximate_intrinsics,
-        contract.nan_assumptions,
-        contract.infinity_assumptions,
-        contract.materialization_rounding,
-    )
-    .map(|key| key.as_str().to_owned())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -394,6 +424,11 @@ impl StrictF32NumericalContract {
     /// must be one this build can realize, so a contract whose meaning no
     /// scheduled region can record is refused before it gives two meanings one
     /// identity.
+    ///
+    /// The first condition is also what admits a *width*: a key is minted only
+    /// for an arithmetic type this build states contracts in, so a contract
+    /// naming `f16` or `f64` fails here rather than reaching a target that would
+    /// have to report a missing declaration for a width no caller may state.
     ///
     /// Membership in a table of four is deliberately *not* among them: that test
     /// is what made an unnamed corner unreachable.
@@ -2290,7 +2325,7 @@ impl Error for RequestError {}
 
 pub(crate) fn verify_request(
     request: CompilationRequest<'_>,
-) -> Result<VerifiedCompilationRequest, RequestError> {
+) -> Result<VerifiedRequest, RequestError> {
     if request.shape_environment != StaticShapeEnvironment::governed() {
         return Err(RequestError::UnsupportedRequestVersion);
     }
@@ -2348,7 +2383,86 @@ pub(crate) fn verify_request(
     if target_keys.windows(2).any(|keys| keys[0] == keys[1]) {
         return Err(RequestError::DuplicateTargetProfile);
     }
-    let (normalized, semantic_identity) = verify_program(request.program, request.budgets)?;
+    // Budgets before targets, because exceeding one is a property of the
+    // submitted program that no target outcome can make admissible. Recognition
+    // is deliberately *not* here — see the phase comment below.
+    check_program_budgets(request.program, request.budgets)?;
+    let dispatch_types = canonical_program_value_types(request.program);
+
+    // Resolve every structurally admitted target independently. A profile that
+    // honours no stated contract is a target-local outcome, not a reason to
+    // discard the other ordered slots. Intrinsic profile/authority failures
+    // remain outer request errors because no target outcome can make malformed
+    // input valid.
+    //
+    // **This runs before the program is recognized, and the order is the whole
+    // point of the phase split.** Honourability is a property of the stated
+    // contract and the target's own declaration; it does not depend on which
+    // physical strategy this build happens to be able to spell. Recognition
+    // answers a different question — what this build can *plan* — so asking it
+    // first attributes a build limitation to a request whose stated meaning the
+    // target already cannot deliver. That is not hypothetical: a pure-`bf16`
+    // program was refused by the recognizer's `dtype-f32` rule before any target
+    // was consulted, so a profile's measured `bf16` subnormal row could never
+    // produce the refusal it exists to produce, and the missing answer read as a
+    // missing target fact rather than as a boundary in the wrong order.
+    //
+    // Each of the three checks below keeps its former relative order, so nothing
+    // about which refusal a rejected target reports has moved.
+    let target_resolutions = request
+        .target_profiles
+        .iter()
+        .map(|target| {
+            let structural = require_compile_profile_dispatch(target, &dispatch_types)
+                .and_then(|()| require_elementary_accuracy(request.program, target));
+            match structural {
+                Ok(()) => match resolve_numerical_contract(&request.numerical_contracts, target) {
+                    Ok(numerical_contract) => Ok(Ok(numerical_contract)),
+                    Err(error @ RequestError::NoResolvableNumericalContract { .. }) => {
+                        Ok(Err(error))
+                    }
+                    Err(error) => Err(error),
+                },
+                // Both structural refusals are target-local: another requested
+                // profile may dispatch the dtype, or declare the elementary
+                // realization, that this one does not.
+                Err(
+                    error @ (RequestError::DTypeNotDispatchable { .. }
+                    | RequestError::UnrealizedElementaryAccuracy { .. }),
+                ) => Ok(Err(error)),
+                Err(error) => Err(error),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Nothing left to plan: no requested target admitted the request, so there
+    // is no program for a strategy to be chosen for. Returning the ordered
+    // refusals here is what keeps the more specific statement — *this target
+    // declares it cannot honour this dimension* — from being replaced by the
+    // recognizer's, which would be true and would answer a question the caller
+    // cannot act on while every target still refuses.
+    if target_resolutions.iter().all(Result::is_err) {
+        return Ok(VerifiedRequest::Refused(
+            request
+                .target_profiles
+                .iter()
+                .zip(target_resolutions)
+                .map(|(target_profile, resolution)| VerifiedTargetSlot {
+                    target_profile: target_profile.clone(),
+                    resolution: VerifiedTargetResolution::Rejected(
+                        resolution.expect_err("every resolution is an error in this branch"),
+                    ),
+                })
+                .collect(),
+        ));
+    }
+
+    // Recognition, then the authorities the recognized program's subject is
+    // bound to. Both keep the order they had relative to each other before the
+    // target phase was hoisted above them, so which refusal a program that fails
+    // more than one of these reports has not moved.
+    let normalized = select_supported_strategy(request.program)?;
+    let semantic_identity = request.program.semantic_identity().clone();
     if request.capabilities.lowering.semantic_snapshot()
         != request.program.semantic_registry().snapshot_identity()
     {
@@ -2360,68 +2474,94 @@ pub(crate) fn verify_request(
     ) else {
         return unsupported("capability", "semantic-authority-pairing");
     };
-    let dispatch_types = canonical_program_value_types(request.program);
-
-    // Resolve every structurally admitted target independently. A profile that
-    // honours no stated contract is a target-local outcome, not a reason to
-    // discard the other ordered slots. Intrinsic profile/authority failures
-    // remain outer request errors because no target outcome can make malformed
-    // input valid.
     let target_slots = request
         .target_profiles
         .iter()
-        .map(|target| {
-            let structural = require_compile_profile_dispatch(target, &dispatch_types)
-                .and_then(|()| require_elementary_accuracy(request.program, target));
-            let resolution = match structural {
-                Ok(()) => match resolve_numerical_contract(&request.numerical_contracts, target) {
-                    Ok(numerical_contract) => {
-                        let authority = request_subject(
-                            &normalized,
-                            &semantic_identity,
-                            &request.numerical_contracts,
-                            numerical_contract,
-                            request.budgets,
-                            target,
-                            VerifiedRequestAuthorities {
-                                installed: &request.capabilities,
-                                realization_laws: &realization_laws,
-                            },
-                        );
-                        VerifiedTargetResolution::Resolved {
-                            numerical_contract,
-                            authority: Box::new(authority),
-                        }
-                    }
-                    Err(error @ RequestError::NoResolvableNumericalContract { .. }) => {
-                        VerifiedTargetResolution::Rejected(error)
-                    }
-                    Err(error) => return Err(error),
+        .zip(target_resolutions)
+        .map(|(target, resolution)| VerifiedTargetSlot {
+            target_profile: target.clone(),
+            resolution: match resolution {
+                Ok(numerical_contract) => VerifiedTargetResolution::Resolved {
+                    numerical_contract,
+                    authority: Box::new(request_subject(
+                        &normalized,
+                        &semantic_identity,
+                        &request.numerical_contracts,
+                        numerical_contract,
+                        request.budgets,
+                        target,
+                        VerifiedRequestAuthorities {
+                            installed: &request.capabilities,
+                            realization_laws: &realization_laws,
+                        },
+                    )),
                 },
-                // Both structural refusals are target-local: another requested
-                // profile may dispatch the dtype, or declare the elementary
-                // realization, that this one does not.
-                Err(
-                    error @ (RequestError::DTypeNotDispatchable { .. }
-                    | RequestError::UnrealizedElementaryAccuracy { .. }),
-                ) => VerifiedTargetResolution::Rejected(error),
-                Err(error) => return Err(error),
-            };
-            Ok(VerifiedTargetSlot {
-                target_profile: target.clone(),
-                resolution,
-            })
+                Err(error) => VerifiedTargetResolution::Rejected(error),
+            },
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(VerifiedCompilationRequest {
-        normalized,
-        semantic_identity,
-        numerical_contracts: request.numerical_contracts,
-        budgets: request.budgets,
-        target_slots,
-        capabilities: request.capabilities,
-        realization_laws,
+        .collect();
+    Ok(VerifiedRequest::Planned(Box::new(
+        VerifiedCompilationRequest {
+            normalized,
+            semantic_identity,
+            numerical_contracts: request.numerical_contracts,
+            budgets: request.budgets,
+            target_slots,
+            capabilities: request.capabilities,
+            realization_laws,
+        },
+    )))
+}
+
+/// The outcome of admitting one compilation request.
+///
+/// Two variants because a request can be completely refused *before* a strategy
+/// is chosen, and the alternative shapes are both worse: an optional recognized
+/// program inside [`VerifiedCompilationRequest`] would make every later stage
+/// carry a case that cannot occur once a target resolved, and forcing
+/// recognition to run anyway would report a recognizer limitation for a request
+/// no target admitted.
+pub(crate) enum VerifiedRequest {
+    /// At least one target admitted the request, so the program was recognized.
+    Planned(Box<VerifiedCompilationRequest>),
+    /// Every requested target refused, in the caller's order.
+    Refused(Vec<VerifiedTargetSlot>),
+}
+
+/// Admits a request whose fixture profile is expected to resolve.
+///
+/// The crate's own fixtures state a contract their governed profile honours, so
+/// the planned outcome is the one under test at every one of these call sites
+/// and an unexpected complete refusal should fail loudly rather than be pattern
+/// matched away. Tests that assert a *refused* request call [`verify_request`]
+/// directly and match the variant.
+#[cfg(test)]
+pub(crate) fn verify_planned_request(
+    request: CompilationRequest<'_>,
+) -> Result<VerifiedCompilationRequest, RequestError> {
+    verify_request(request).map(|verified| {
+        verified
+            .planned()
+            .expect("the fixture profile admits the stated contract")
     })
+}
+
+impl VerifiedRequest {
+    /// The ordered target slots, whichever way the request was admitted.
+    pub(crate) fn target_slots(&self) -> &[VerifiedTargetSlot] {
+        match self {
+            Self::Planned(request) => request.target_slots(),
+            Self::Refused(slots) => slots,
+        }
+    }
+
+    /// The planned request, or `None` when every target refused.
+    pub(crate) fn planned(self) -> Option<VerifiedCompilationRequest> {
+        match self {
+            Self::Planned(request) => Some(*request),
+            Self::Refused(_) => None,
+        }
+    }
 }
 
 /// Returns every exact value type in canonical byte order, without duplicates.
@@ -2502,6 +2642,24 @@ fn verify_program(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
 ) -> Result<(NormalizedProgram, SemanticIdentity), RequestError> {
+    check_program_budgets(program, budgets)?;
+    Ok((
+        select_supported_strategy(program)?,
+        program.semantic_identity().clone(),
+    ))
+}
+
+/// Checks every deterministic budget this request's program must fit.
+///
+/// Separated from recognition so outer admission can run it in its own phase:
+/// exceeding a budget is a property of the submitted program that no target
+/// outcome can excuse, while recognition is a statement about what this build
+/// can plan and is asked only of a request some target admitted. Readmission
+/// keeps both together, because a rewritten candidate has to clear each again.
+fn check_program_budgets(
+    program: &SemanticProgram,
+    budgets: DeterministicBudgets,
+) -> Result<(), RequestError> {
     check_budget(
         "semantic-values",
         budgets.semantic_values,
@@ -2545,10 +2703,7 @@ fn verify_program(
         budgets.buffers,
         program.input_count().saturating_add(3),
     )?;
-    Ok((
-        select_supported_strategy(program)?,
-        program.semantic_identity().clone(),
-    ))
+    Ok(())
 }
 
 /// Resolves a caller's ordered preference against one target's declaration.
@@ -4127,7 +4282,7 @@ mod tests {
     #[test]
     fn governed_request_selects_the_supported_serial_sum_strategy() {
         let program = program();
-        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         let normalized = verified.normalized.serial_sum();
         assert_eq!(normalized.input_shape, Shape::from_dims([2, 3]));
         assert_eq!(normalized.output_shape, Shape::from_dims([2]));
@@ -4210,7 +4365,7 @@ mod tests {
         assert_eq!(recognized.members.all().len(), program.operation_count());
         // No fused spelling exists: `FusedMultiplyAddSerialSum` applies one
         // scalar constant and one scalar bias, and this prologue applies neither.
-        let verified = verify_request(CompilationRequest::governed(&program))
+        let verified = verify_planned_request(CompilationRequest::governed(&program))
             .unwrap()
             .for_target(0)
             .unwrap();
@@ -4577,7 +4732,7 @@ mod tests {
         let mut request = CompilationRequest::governed(&program);
         request.budgets.semantic_operations = 4;
         assert_eq!(
-            verify_request(request),
+            verify_planned_request(request),
             Err(RequestError::BudgetExceeded {
                 resource: "semantic-operations",
                 limit: 4,
@@ -4594,7 +4749,7 @@ mod tests {
             .unwrap();
         let invalid = builder.build().unwrap();
         assert_eq!(
-            verify_request(CompilationRequest::governed(&invalid)),
+            verify_planned_request(CompilationRequest::governed(&invalid)),
             Err(RequestError::UnsupportedCapability {
                 phase: "strategy",
                 rule: "operation-set",
@@ -4611,12 +4766,12 @@ mod tests {
     #[test]
     fn a_single_entry_preference_and_a_bare_contract_are_the_same_request() {
         let program = program();
-        let bare = verify_request(CompilationRequest::governed_under(
+        let bare = verify_planned_request(CompilationRequest::governed_under(
             &program,
             StrictF32NumericalContract::governed(),
         ))
         .unwrap();
-        let listed = verify_request(CompilationRequest::governed_preferring(
+        let listed = verify_planned_request(CompilationRequest::governed_preferring(
             &program,
             NumericalContractPreference::ordered(vec![StrictF32NumericalContract::governed()])
                 .unwrap(),
@@ -4649,7 +4804,7 @@ mod tests {
                 StrictF32NumericalContract::governed(),
             ),
         ] {
-            let verified = verify_request(CompilationRequest::governed_preferring(
+            let verified = verify_planned_request(CompilationRequest::governed_preferring(
                 &program,
                 NumericalContractPreference::ordered(vec![first, second]).unwrap(),
             ))
@@ -4680,13 +4835,13 @@ mod tests {
     #[test]
     fn the_stated_preference_separates_requests_that_resolve_alike() {
         let program = program();
-        let alone = verify_request(CompilationRequest::governed_preferring(
+        let alone = verify_planned_request(CompilationRequest::governed_preferring(
             &program,
             NumericalContractPreference::ordered(vec![StrictF32NumericalContract::governed()])
                 .unwrap(),
         ))
         .unwrap();
-        let with_fallback = verify_request(CompilationRequest::governed_preferring(
+        let with_fallback = verify_planned_request(CompilationRequest::governed_preferring(
             &program,
             NumericalContractPreference::ordered(vec![
                 StrictF32NumericalContract::governed(),
@@ -4722,7 +4877,7 @@ mod tests {
         let mut request = CompilationRequest::governed(&program);
         request.numerical_contracts.stated.clear();
         assert_eq!(
-            verify_request(request),
+            verify_planned_request(request),
             Err(RequestError::UnstatedNumericalContract)
         );
     }
@@ -4749,7 +4904,7 @@ mod tests {
         // asserts the earlier refusal and then drives resolution directly.
         assert!(!positive_flush.is_governed());
         assert_eq!(
-            verify_request(CompilationRequest::governed_under(&program, positive_flush)),
+            verify_planned_request(CompilationRequest::governed_under(&program, positive_flush)),
             Err(RequestError::UnsupportedCapability {
                 phase: "numerics",
                 rule: "governed-contract-profile",
@@ -4870,12 +5025,15 @@ mod tests {
         let program = program();
         let mut empty = CompilationRequest::governed(&program);
         empty.target_profiles.clear();
-        assert_eq!(verify_request(empty), Err(RequestError::EmptyTargetSet));
+        assert_eq!(
+            verify_planned_request(empty),
+            Err(RequestError::EmptyTargetSet)
+        );
 
         let mut duplicate = CompilationRequest::governed(&program);
         duplicate.target_profiles.push(TargetProfile::governed());
         assert_eq!(
-            verify_request(duplicate),
+            verify_planned_request(duplicate),
             Err(RequestError::DuplicateTargetProfile)
         );
     }
@@ -4883,7 +5041,7 @@ mod tests {
     #[test]
     fn verified_request_receipts_reject_post_verification_mutation() {
         let program = program();
-        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         let mut forged = verified.clone();
         forged.budgets.buffers += 1;
         assert_eq!(
@@ -4935,7 +5093,7 @@ mod tests {
     #[test]
     fn verified_target_receipt_detects_every_governed_subject_mutation_class() {
         let program = program();
-        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         let target = verified.for_target(0).unwrap();
 
         let mut forged = target.clone();
@@ -4971,8 +5129,10 @@ mod tests {
     fn used_provider_revision_changes_admission_and_snapshot_subjects() {
         let first = governed_test_program(1);
         let second = governed_test_program(2);
-        let first = verify_request(request_with_matching_empty_capabilities(&first)).unwrap();
-        let second = verify_request(request_with_matching_empty_capabilities(&second)).unwrap();
+        let first =
+            verify_planned_request(request_with_matching_empty_capabilities(&first)).unwrap();
+        let second =
+            verify_planned_request(request_with_matching_empty_capabilities(&second)).unwrap();
 
         assert_eq!(
             first.semantic_identity.graph(),
@@ -4996,8 +5156,10 @@ mod tests {
     fn unused_provider_revision_changes_only_the_snapshot_subject() {
         let first = program_with_unused_provider(1);
         let second = program_with_unused_provider(2);
-        let first = verify_request(request_with_matching_empty_capabilities(&first)).unwrap();
-        let second = verify_request(request_with_matching_empty_capabilities(&second)).unwrap();
+        let first =
+            verify_planned_request(request_with_matching_empty_capabilities(&first)).unwrap();
+        let second =
+            verify_planned_request(request_with_matching_empty_capabilities(&second)).unwrap();
 
         assert_eq!(
             first.semantic_identity.graph(),
@@ -5036,7 +5198,7 @@ mod subject_budget {
     #[test]
     fn the_explain_subject_byte_budget() {
         let program = super::tests::program();
-        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
         let target = verified.for_target(0).unwrap();
         let subject = target.subject();
         let identity = &subject.semantic_identity;
