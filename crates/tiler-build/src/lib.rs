@@ -35,8 +35,11 @@
 //! that costs nothing: `From<Vec<PayloadContent>>` is the whole of the
 //! non-retaining case, and a retention reaches neither the cache subject nor the
 //! key, so one compilation resolves to one entry either way. The Metal path
-//! retains nothing today because the AOT driver keeps a stage's output only when
-//! the stage fails.
+//! states one run per offline stage per delivery position — `stage_retention`,
+//! private to the `metal_cache` module — including the empty run of a stage that
+//! said nothing,
+//! which is what distinguishes a silent compiler from an entry published before
+//! any of this existed.
 //!
 //! [`realization::translate`] is the third, and it is neither an assembly nor a
 //! cache seam: it is the transcription of the compiler's borrowed

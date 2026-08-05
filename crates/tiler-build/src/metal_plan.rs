@@ -449,6 +449,7 @@ mod tests {
     };
     use tiler_ir::shape::{Axis, Shape};
     use tiler_metal::emit::emit_translation_unit;
+    use tiler_metal_aot::diagnostic::MAX_RETAINED_OUTPUT_BYTES;
     use tiler_metal_aot::driver::Toolchain;
     use tiler_metal_aot::input::OptimizationLevel;
 
@@ -799,6 +800,88 @@ mod tests {
                 .expect("the front end spoke")
                 .is_empty(),
         );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// A stage that outwrote the capture bound states the total it had, not the
+    /// prefix that survived.
+    ///
+    /// `tiler_metal_aot::diagnostic::MAX_RETAINED_OUTPUT_BYTES` and
+    /// `tiler_cache::expansion::MAX_RETAINED_RUN_BYTES` are both 16 KiB, so a
+    /// stage that wrote more arrives at the retention already truncated and
+    /// exactly at the bound. Everything else here is short, where a stage's total
+    /// and its retained length agree — so a producer that derived the total from
+    /// the bytes it was handed would present that prefix as the whole diagnostic
+    /// and stay green in every other case. This is the case where the two numbers
+    /// must differ, and the quiet linker beside it is what keeps the assertion
+    /// from being satisfied by a total that is simply always larger.
+    ///
+    /// Read from the *hit*, so the stated total is one the cache encoded, wrote,
+    /// re-read, and re-validated rather than one held in memory since capture.
+    #[test]
+    fn a_stage_that_outwrote_the_capture_bound_states_the_total_it_had() {
+        let directory = scratch("retention-truncated");
+        let cache = ExpansionCache::open(directory.join("cache"));
+        let written = MAX_RETAINED_OUTPUT_BYTES + 512;
+        let (toolchain, _counter) =
+            warning_toolchain(&directory, &"x".repeat(written), METALLIB_WARNING);
+        let program = semantic_program();
+        let declaration = declaration();
+        let compilation = declared_compilation(&declaration, &program);
+        let plan = compilation.selected().expect("one selected plan");
+
+        for _ in 0..2 {
+            let _ = accept_or_publish_metal_plan(
+                &cache,
+                &toolchain,
+                &program,
+                plan,
+                std::slice::from_ref(&declaration),
+                OptimizationLevel::Default,
+            )
+            .expect("the verbose compilation resolves");
+        }
+        let hit = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            std::slice::from_ref(&declaration),
+            OptimizationLevel::Default,
+        )
+        .expect("the stored entry resolves");
+        let Resolution::Hit { entry, .. } = hit.resolution() else {
+            panic!("the third run hits");
+        };
+
+        let retained = entry.retained_debug();
+        let front_end = retained
+            .run("tiler.metal.0.metal")
+            .expect("the front end's run survived the round trip");
+        assert_eq!(
+            front_end.as_bytes().len(),
+            MAX_RETAINED_OUTPUT_BYTES,
+            "the driver's bound is what reaches the retention",
+        );
+        assert_eq!(
+            front_end.total_bytes(),
+            written as u64,
+            "the run must state what the stage wrote, not the prefix that survived",
+        );
+        assert!(
+            front_end.is_truncated(),
+            "a prefix presented as the whole is the failure this states the total to prevent",
+        );
+
+        let linker = retained
+            .run("tiler.metal.0.metallib")
+            .expect("the linker's run survived the round trip");
+        assert_eq!(
+            linker.total_bytes(),
+            METALLIB_WARNING.len() as u64,
+            "a stage under the bound states its own length",
+        );
+        assert!(!linker.is_truncated());
         let _ = std::fs::remove_dir_all(directory);
     }
 
