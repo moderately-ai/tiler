@@ -1,7 +1,7 @@
 ---
 id: measure-executable-coverage-identity-growth-against-the-program-identity-bound
 title: Measure executable-coverage identity growth against the program identity bound
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, measurement]
+claimed_from: todo
+assignee: agent-identity-growth
+lease_expires_at: 1785945150
 ---
 ## User-visible outcome
 
