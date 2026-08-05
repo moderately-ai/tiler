@@ -802,9 +802,9 @@ impl RuntimeAdapter for MetalExecutor<'_> {
         // Exhaustive on both the kind and the dimension: a row this adapter has
         // never seen must stop this build rather than reach an arm that guesses.
         let unowned = match request.requirement() {
-            RouteRequirement::ResourceFloor(floor) => match floor.dimension() {
+            RouteRequirement::Resource(resource) => match resource.dimension() {
                 RouteResourceDimension::SubgroupThreads => {
-                    "a subgroup-threads floor, which Metal publishes no device-scoped answer for"
+                    "a subgroup-threads row, which Metal publishes no device-scoped answer for"
                         .to_owned()
                 }
             },

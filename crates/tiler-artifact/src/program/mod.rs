@@ -439,7 +439,8 @@ pub use model::{
 };
 pub use requirement::{
     BackendFeatureRequirement, MAX_ROUTE_FEATURE_PAYLOAD_BYTES, RouteRequirement,
-    RouteRequirementError, RouteRequirementSubject, RouteResourceDimension, RouteResourceFloor,
+    RouteRequirementError, RouteRequirementSubject, RouteResourceDimension,
+    RouteResourceRequirement,
 };
 
 /// Maximum plan variants admitted by one artifact program.

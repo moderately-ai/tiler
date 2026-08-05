@@ -85,7 +85,7 @@ pub(crate) enum TagSubject {
     TargetPropertyRequirementRelation,
     /// The kind of one live-device route requirement.
     RouteRequirementKind,
-    /// The neutral live-device dimension one route floor bounds.
+    /// The neutral live-device dimension one route resource row constrains.
     RouteResourceDimension,
     /// The node kind of one ABI expression arena entry.
     ExpressionNode,

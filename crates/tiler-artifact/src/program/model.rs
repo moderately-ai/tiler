@@ -159,7 +159,7 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// # Why this is a `v12` step
 ///
 /// A variant now carries the additional requirements its selected route places
-/// on a live device: neutral quantitative floors and backend-scoped qualitative
+/// on a live device: neutral quantitative rows and backend-scoped qualitative
 /// rows. The rows land inside the repeated variant record, so a `v11` encoding
 /// of one artifact could otherwise equal a `v12` encoding of another — and the
 /// subjects genuinely differ, because a `v11` identity described a route that

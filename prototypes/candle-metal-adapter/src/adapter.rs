@@ -781,7 +781,7 @@ impl RuntimeAdapter for CandleMetalAdapter {
         request: LiveDeviceRequest<'_>,
     ) -> LiveDeviceObservation {
         match request.requirement() {
-            RouteRequirement::ResourceFloor(floor) => match floor.dimension() {
+            RouteRequirement::Resource(resource) => match resource.dimension() {
                 RouteResourceDimension::SubgroupThreads => LiveDeviceObservation::Unrecognized,
             },
             RouteRequirement::BackendFeature(feature) => {

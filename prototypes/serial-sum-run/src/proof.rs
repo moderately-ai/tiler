@@ -3320,7 +3320,7 @@ fn decide_live_device_requirement(
     // Exhaustive on both the kind and the dimension: a row this adapter has
     // never seen must stop this build rather than reach an arm that guesses.
     match request.requirement() {
-        RouteRequirement::ResourceFloor(floor) => match floor.dimension() {
+        RouteRequirement::Resource(resource) => match resource.dimension() {
             RouteResourceDimension::SubgroupThreads => LiveDeviceObservation::Unrecognized,
         },
         RouteRequirement::BackendFeature(feature) => {
@@ -5456,7 +5456,7 @@ mod tests {
         CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
         FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata,
         PayloadPlatform, PayloadProvenance, RecordedArtifactProgramIdentity, RepresentationKey,
-        RouteFeatureKey, RouteRequirementSubject, RouteResourceFloor, SchemaVersion,
+        RouteFeatureKey, RouteRequirementSubject, RouteResourceRequirement, SchemaVersion,
         SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
         ToolComponent, VariantSpec, VerifiedArtifactProgram,
     };
@@ -7988,8 +7988,8 @@ mod tests {
         // Every neutral dimension, enumerated from the vocabulary rather than
         // listed here, so a dimension added to it lands in this check.
         unowned.extend(RouteResourceDimension::ALL.into_iter().map(|dimension| {
-            RouteRequirement::ResourceFloor(
-                RouteResourceFloor::new(dimension, 32).expect("a nonzero floor"),
+            RouteRequirement::Resource(
+                RouteResourceRequirement::new(dimension, 32).expect("a nonzero quantity"),
             )
         }));
         assert_eq!(

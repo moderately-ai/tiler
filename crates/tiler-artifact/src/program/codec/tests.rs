@@ -54,7 +54,7 @@ use super::super::requirement::{RouteRequirement, RouteRequirementError, RouteRe
 use super::super::tests::{
     ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, build_artifact,
     default_artifact, formulas, fused_program, lowering_provider, partial_window_artifact, payload,
-    prepared_requirement, profile, requiring_artifact, route_feature, route_floor, selection,
+    prepared_requirement, profile, requiring_artifact, route_feature, route_resource, selection,
     semantic_program, spare_provider, strict_affine_u4_dequantize_artifact, variant,
 };
 use super::super::{
@@ -3246,13 +3246,14 @@ fn hot_path_identity_size() {
 // Live-device route requirements
 // -------------------------------------------------------------------------
 
-/// A minimum no other fixture field can collide with, for locating a floor row.
-const PROBE_FLOOR: u64 = 0x0000_0000_dead_beef;
+/// A required quantity no other fixture field can collide with, for locating a
+/// resource row.
+const PROBE_QUANTITY: u64 = 0x0000_0000_dead_beef;
 
-/// Returns the absolute offset of the floor row in an encoded manifest.
+/// Returns the absolute offset of the resource row in an encoded manifest.
 ///
 /// Located by its exact wire spelling — kind tag, dimension tag, and the
-/// distinctive minimum — rather than by a computed offset, so the search fails
+/// distinctive quantity — rather than by a computed offset, so the search fails
 /// loudly if the row's layout changes instead of quietly patching another field.
 ///
 /// **The pattern occurs exactly twice, and that is asserted rather than worked
@@ -3262,9 +3263,9 @@ const PROBE_FLOOR: u64 = 0x0000_0000_dead_beef;
 /// artifact *is*. The row itself is written first, so the first match is the one
 /// to patch; a count other than two would mean the identity stopped folding the
 /// row, or that something else in the manifest now collides with it.
-fn floor_row_offset(bytes: &[u8]) -> usize {
+fn resource_row_offset(bytes: &[u8]) -> usize {
     let mut pattern = vec![0x01, RouteResourceDimension::SubgroupThreads.tag()];
-    pattern.extend_from_slice(&PROBE_FLOOR.to_be_bytes());
+    pattern.extend_from_slice(&PROBE_QUANTITY.to_be_bytes());
     let manifest_len = usize::try_from(u64::from_be_bytes(
         bytes[MANIFEST_LENGTH_AT..MANIFEST_LENGTH_AT + 8]
             .try_into()
@@ -3305,7 +3306,7 @@ fn route_requirements_round_trip_and_declare_their_feature() {
     );
 
     let rows = [
-        route_floor(PROBE_FLOOR),
+        route_resource(PROBE_QUANTITY),
         route_feature(
             "tiler.metal.route-requirement.minimum-gpu-family",
             1,
@@ -3346,7 +3347,7 @@ fn route_requirements_round_trip_and_declare_their_feature() {
 #[test]
 fn route_requirement_order_is_presentation_and_content_is_identity() {
     let first = route_feature("tiler.metal.route-requirement.a", 1, b"x");
-    let second = route_floor(PROBE_FLOOR);
+    let second = route_resource(PROBE_QUANTITY);
     let forward = requiring_artifact(&[first.clone(), second.clone()]);
     let reversed = requiring_artifact(&[second, first.clone()]);
     assert_eq!(forward.canonical_identity(), reversed.canonical_identity());
@@ -3360,7 +3361,7 @@ fn route_requirement_order_is_presentation_and_content_is_identity() {
     );
     let changed = requiring_artifact(&[
         route_feature("tiler.metal.route-requirement.a", 1, b"y"),
-        route_floor(PROBE_FLOOR),
+        route_resource(PROBE_QUANTITY),
     ]);
     assert_ne!(
         forward.canonical_identity(),
@@ -3376,9 +3377,9 @@ fn route_requirement_order_is_presentation_and_content_is_identity() {
 /// unpatched neighbour decodes, which is what makes each rejection attributable.
 #[test]
 fn an_unrecognized_route_requirement_tag_is_rejected() {
-    let bytes = encoded(&requiring_artifact(&[route_floor(PROBE_FLOOR)]));
+    let bytes = encoded(&requiring_artifact(&[route_resource(PROBE_QUANTITY)]));
     decode(&bytes).expect("the unperturbed requiring envelope decodes");
-    let at = floor_row_offset(&bytes);
+    let at = resource_row_offset(&bytes);
 
     for (offset, subject) in [
         (at, TagSubject::RouteRequirementKind),
@@ -3402,8 +3403,8 @@ fn an_unrecognized_route_requirement_tag_is_rejected() {
 /// decoder exists to refuse rather than trust.
 #[test]
 fn a_zero_required_quantity_is_rejected_on_decode() {
-    let bytes = encoded(&requiring_artifact(&[route_floor(PROBE_FLOOR)]));
-    let at = floor_row_offset(&bytes);
+    let bytes = encoded(&requiring_artifact(&[route_resource(PROBE_QUANTITY)]));
+    let at = resource_row_offset(&bytes);
     let mut forged = bytes;
     forged[at + 2..at + 10].copy_from_slice(&0_u64.to_be_bytes());
     reseal(&mut forged);
@@ -3423,7 +3424,7 @@ fn a_zero_required_quantity_is_rejected_on_decode() {
 #[test]
 fn a_non_canonical_route_requirement_order_is_rejected() {
     let artifact = requiring_artifact(&[
-        route_floor(PROBE_FLOOR),
+        route_resource(PROBE_QUANTITY),
         route_feature("tiler.metal.route-requirement.a", 1, b"x"),
     ]);
     let mut envelope = envelope_of(&artifact);
@@ -3480,7 +3481,7 @@ fn duplicate_route_requirement_subjects_are_rejected_on_decode() {
 /// More rows than the governed bound admits are refused before allocation.
 #[test]
 fn too_many_route_requirements_are_rejected() {
-    let artifact = requiring_artifact(&[route_floor(PROBE_FLOOR)]);
+    let artifact = requiring_artifact(&[route_resource(PROBE_QUANTITY)]);
     let mut envelope = envelope_of(&artifact);
     envelope.variants[0].route_requirements = (0..=MAX_ROUTE_REQUIREMENTS)
         .map(|index| {

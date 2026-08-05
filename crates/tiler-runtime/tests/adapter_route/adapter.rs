@@ -482,7 +482,7 @@ impl RuntimeAdapter for ScalarHostAdapter {
         // Exhaustive on both the kind and the dimension: a row this adapter has
         // never seen must stop this build rather than reach an arm that guesses.
         match request.requirement() {
-            RouteRequirement::ResourceFloor(floor) => match floor.dimension() {
+            RouteRequirement::Resource(resource) => match resource.dimension() {
                 // A scalar host has no subgroup, and reporting a width from a
                 // table would report documentation as an observation.
                 RouteResourceDimension::SubgroupThreads => LiveDeviceObservation::Unrecognized,
