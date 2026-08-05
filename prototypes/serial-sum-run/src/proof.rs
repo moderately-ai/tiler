@@ -4059,12 +4059,11 @@ fn result_digest(bits: &[u32]) -> String {
 /// same conclusion for the same reason and this is the same implementation.
 ///
 /// It is checked against the two published FIPS 180-4 vectors before any
-/// comparison rests on it, by [`the_digest_helper_reproduces_the_published_vectors`]
-/// and again at run time in [`prove_contraction`]: a digest function that
+/// comparison rests on it, by `the_digest_helper_reproduces_the_published_vectors`
+/// in this module's tests and again at run time in [`prove_contraction`]: a digest function that
 /// silently computed something else would make every retained-value comparison
 /// disagree, and a reader would have no way to tell that from a device defect.
 ///
-/// [`the_digest_helper_reproduces_the_published_vectors`]: tests::the_digest_helper_reproduces_the_published_vectors
 fn sha256_hex(message: &[u8]) -> String {
     use std::fmt::Write as _;
 
