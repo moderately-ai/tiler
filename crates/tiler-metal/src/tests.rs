@@ -2186,11 +2186,47 @@ fn emission_never_names_a_semantic_or_schedule_shape() {
 
 #[test]
 fn governed_types_map_to_their_metal_spellings() {
-    assert_eq!(msl_type(KernelType::Bool), "bool");
-    assert_eq!(msl_type(KernelType::U8), "uchar");
-    assert_eq!(msl_type(KernelType::I32), "int");
-    assert_eq!(msl_type(KernelType::Index), "uint64_t");
-    assert_eq!(msl_type(KernelType::F32), "float");
+    assert_eq!(msl_type(KernelType::Bool), Ok("bool"));
+    assert_eq!(msl_type(KernelType::U8), Ok("uchar"));
+    assert_eq!(msl_type(KernelType::I32), Ok("int"));
+    assert_eq!(msl_type(KernelType::Index), Ok("uint64_t"));
+    assert_eq!(msl_type(KernelType::F32), Ok("float"));
+}
+
+/// The admitted BF16 type is refused by name rather than given a spelling.
+///
+/// The assertion is on the rejected type, not merely on failure: a refusal that
+/// named some other type, or that came from a path BF16 never reached, would
+/// pass a bare `is_err`. The neighbours are asserted in the same call so the
+/// refusal is visibly a function of the type — one argument varies and the path
+/// does not.
+///
+/// **Measurement boundary.** This observes the decision site, not a whole
+/// emission. A `VerifiedKernel` carrying a BF16 buffer cannot be built at this
+/// commit: `verify.rs` derives every buffer's expected element type from the
+/// region's `ScalarProgram`, and no BF16 scalar program exists yet, so such a
+/// kernel is refused as `BufferContract` before emission is reached.
+/// `admit-bf16-into-the-schedule-and-kernel-vocabulary` is what makes one
+/// constructible, and it is blocked on this ticket. What is established here is
+/// that the type has no spelling and that every emitter that spells a type goes
+/// through this function — `parameter_declaration`, `staging_declaration`,
+/// `KernelEmitter::value_type`, `emit_convert`, and the translation-unit header
+/// each propagate its `Err` rather than substituting a spelling.
+#[test]
+fn the_admitted_bf16_type_has_no_metal_spelling() {
+    assert_eq!(
+        msl_type(KernelType::Bf16),
+        Err(MetalEmitError::UnsupportedValueType {
+            value_type: KernelType::Bf16,
+        }),
+    );
+    assert_eq!(
+        msl_type(KernelType::Bf16).unwrap_err().rule(),
+        "unsupported-value-type",
+    );
+    // The neighbour on the same call still emits, so the refusal is about the
+    // type rather than about the function having stopped answering.
+    assert_eq!(msl_type(KernelType::F32), Ok("float"));
 }
 
 #[test]

@@ -16,7 +16,7 @@ use core::fmt;
 use std::error::Error;
 
 use tiler_ir::kernel::{
-    AddressSpace, BarrierOrdering, BufferAccess, ExecutionScope, MemoryScope,
+    AddressSpace, BarrierOrdering, BufferAccess, ExecutionScope, KernelType, MemoryScope,
     VerifiedKernelHandleError,
 };
 
@@ -150,6 +150,17 @@ pub enum MetalEmitError {
         /// The family whose member was rejected.
         family: MetalOperationFamily,
     },
+    /// A governed structured value type has no MSL spelling this backend emits.
+    ///
+    /// The type is admitted by the IR vocabulary and refused here, which is a
+    /// narrower statement than "the target cannot represent it": it says this
+    /// backend does not yet emit the type, so a kernel using it is rejected
+    /// rather than given a spelling whose supporting lowering — constant
+    /// reinterpretation, NaN canonicalization, dispatch route — does not exist.
+    UnsupportedValueType {
+        /// The rejected structured value type.
+        value_type: KernelType,
+    },
     /// The kernel body contains a structured operation this backend does not
     /// recognize.
     ///
@@ -240,6 +251,7 @@ impl MetalEmitError {
             Self::UnsupportedAddressSpace { .. } => "unsupported-address-space",
             Self::UnsupportedBufferAccess { .. } => "unsupported-buffer-access",
             Self::UnsupportedOperation { .. } => "unsupported-operation",
+            Self::UnsupportedValueType { .. } => "unsupported-value-type",
             Self::UnrecognizedOperation => "unrecognized-operation",
             Self::UnsupportedBarrier { .. } => "unsupported-barrier",
             Self::InvalidCanonicalNan { .. } => "invalid-canonical-nan",
@@ -266,6 +278,9 @@ impl fmt::Display for MetalEmitError {
                 write!(f, "{}: {access:?} in {space:?}", self.rule())
             }
             Self::UnsupportedOperation { family } => write!(f, "{}: {family}", self.rule()),
+            Self::UnsupportedValueType { value_type } => {
+                write!(f, "{}: {value_type:?}", self.rule())
+            }
             Self::UnsupportedBarrier { reason } => write!(f, "{}: {reason}", self.rule()),
             Self::InvalidCanonicalNan { bits } => write!(f, "{}: {bits:#010x}", self.rule()),
             Self::UnrealizableNumericalObligation { gap } => write!(f, "{}: {gap}", self.rule()),

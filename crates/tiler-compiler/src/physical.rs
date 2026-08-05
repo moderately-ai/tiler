@@ -2291,10 +2291,22 @@ fn region_proposal(
 ///
 /// Exhaustive so a new KIR type is a build error until its target requirement
 /// is classified. Storage availability alone never satisfies this predicate.
+///
+/// Only the index role yields a requirement, and a type yielding `None` here is
+/// making the narrow claim that it needs no *index* arithmetic — not that it
+/// needs no target capability at all. `Bf16` is the case where the distinction
+/// bites: whether a target can compute in bfloat16 is a separate profile fact,
+/// resolved where that arithmetic is proposed, and answering it from this
+/// predicate would be reading a capability out of an axis that does not carry
+/// one.
 const fn index_arithmetic_requirement(value_type: KernelType) -> Option<AxisRequirement> {
     match value_type {
         KernelType::Index => Some(AxisRequirement::new(CapabilityAxis::IndexArithmeticU64, 1)),
-        KernelType::Bool | KernelType::U8 | KernelType::F32 | KernelType::I32 => None,
+        KernelType::Bool
+        | KernelType::U8
+        | KernelType::F32
+        | KernelType::I32
+        | KernelType::Bf16 => None,
     }
 }
 

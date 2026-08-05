@@ -74,8 +74,8 @@ use super::handles::{VerifiedBufferId, VerifiedKernelOwner, VerifiedStagingId, V
 ///
 /// The bounded profile resolves exactly the roles the scheduled-region IR can
 /// require: a control predicate, an unsigned byte carrier, an unsigned 64-bit
-/// index role used for element offsets and induction variables, and the `f32`
-/// element type. Widening this
+/// index role used for element offsets and induction variables, a signed 32-bit
+/// computation type, and the `f32` and `bf16` element types. Widening this
 /// vocabulary is a versioned extension, not an open type universe.
 ///
 /// **Deliberately not `#[non_exhaustive]`, and this one is mandatory rather
@@ -102,6 +102,14 @@ pub enum KernelType {
     F32,
     /// A signed 32-bit integer computation value.
     I32,
+    /// A bfloat16 value: binary32's sign and exponent over a seven-bit
+    /// significand, in two bytes.
+    ///
+    /// Admitted as a *type*, not as a lowerable one. Nothing in this workspace
+    /// produces a `Bf16`-typed value yet, and a backend that cannot yet lower it
+    /// refuses it by name rather than spelling it, so the widened vocabulary
+    /// cannot make an unimplemented path look reachable.
+    Bf16,
 }
 
 impl KernelType {
@@ -112,6 +120,12 @@ impl KernelType {
             Self::F32 => 0x03,
             Self::U8 => 0x04,
             Self::I32 => 0x05,
+            // Appended, like `Builtin::LocalInvocationIndex`: every earlier tag
+            // keeps its value and every field keeps its position, so no
+            // previously encodable kernel's bytes move and the kernel identity
+            // domain does not step. No kernel the earlier vocabulary could
+            // express contains `0x06`.
+            Self::Bf16 => 0x06,
         }
     }
 }

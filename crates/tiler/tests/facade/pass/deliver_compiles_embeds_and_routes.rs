@@ -58,10 +58,10 @@ struct Buffer {
 impl Buffer {
     fn dense(scalar: StorageScalar, extents: Vec<u64>) -> Self {
         let elements: u64 = extents.iter().product();
-        let width = match scalar {
-            StorageScalar::U8 => 1,
-            StorageScalar::F32 => 4,
-        };
+        // Read from the carrier's own width authority rather than a table local
+        // to this fixture: a local table keeps compiling as the carrier
+        // vocabulary widens while stating a width the carrier does not have.
+        let width = scalar.byte_width();
         let len = usize::try_from(elements * width).expect("a region extent fits a usize");
         Self {
             scalar,
