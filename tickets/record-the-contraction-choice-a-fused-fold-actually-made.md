@@ -5,8 +5,8 @@ status: todo
 priority: p3
 dependencies: []
 related: [enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle, measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order]
-scopes: []
-shared_scopes: []
+scopes: [implementation/ir, implementation/compiler, research/reference]
+shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, scheduling, conformance]
 ---
