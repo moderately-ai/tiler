@@ -970,7 +970,12 @@ pub struct IndexRegionEvaluation {
 }
 
 impl IndexRegionEvaluation {
-    /// Returns ordered output-root tensors.
+    /// Returns one tensor per output boundary, ordered by each boundary's first
+    /// write root.
+    ///
+    /// An output several roots partition appears once, jointly filled, because
+    /// one boundary is one tensor however many roots the region split its
+    /// production across.
     #[must_use]
     pub fn outputs(&self) -> &[Tensor] {
         &self.outputs
@@ -982,7 +987,7 @@ impl IndexRegionEvaluation {
         &self.authority
     }
 
-    /// Consumes this evaluation and returns its ordered output tensors.
+    /// Consumes this evaluation and returns its ordered output-boundary tensors.
     #[must_use]
     pub fn into_outputs(self) -> Vec<Tensor> {
         self.outputs
@@ -1108,6 +1113,12 @@ pub enum IndexRegionEvaluationError {
     /// An independently evaluated write left one element uninitialized.
     IncompleteWrite {
         /// Access that left an element unwritten.
+        ///
+        /// An output several roots partition has no single access at fault: the
+        /// gap belongs to the root set, whose coverage obligation is joint. The
+        /// output's first root in region order is named, because the alternative
+        /// — naming whichever root the fill happened to reach last — would make
+        /// the attribution an artifact of iteration order.
         access: VerifiedTensorAccessId,
     },
     /// A governed evaluation resource exceeded its limit.
@@ -1332,7 +1343,8 @@ impl IndexRegionEvaluator {
         &self.scalars
     }
 
-    /// Evaluates every ordered output root of one verified region.
+    /// Evaluates every output boundary of one verified region, over every root
+    /// that writes it.
     ///
     /// The region's scalar authority revalidates first, so a region this
     /// authority cannot admit never reaches an executable capability. Every
@@ -1425,14 +1437,30 @@ impl IndexRegionEvaluator {
 ///   domain with `IndexBuildError::InvalidWriteDomain`. So "the parallel points
 ///   this walk visits" and "the domain each output is written over" are one set
 ///   rather than two that happen to coincide for the regions tried so far.
-/// - **That write is total and injective over that domain.** Every write access
-///   carries a `WriteOwnershipProofView`: `CoordinatePermutation`, where each
-///   coordinate *is* a distinct domain dimension whose extent the environment
-///   proves equal to the axis it indexes, or `Exhaustive`, where a finite
-///   enumeration set one bit per covered element and refused both a repeat and a
-///   gap. Either way the point-to-element map is a bijection, so **a partition
-///   of the parallel points is a partition of each output's elements** and no
-///   span can land on an element another span produced.
+/// - **An output's writes are jointly total and injective over that domain.**
+///   Every write access carries a `WriteOwnershipProofView` in one of three
+///   forms. `CoordinatePermutation`: each coordinate *is* a distinct domain
+///   dimension whose extent the environment proves equal to the axis it indexes.
+///   `Exhaustive`: a finite enumeration set one bit per covered element and
+///   refused both a repeat and a gap. `PartitionMember`: this root is total and
+///   injective over its own partition of an output several roots share, and the
+///   joint obligation across that root set — pairwise disjoint partitions whose
+///   union is the boundary exactly — was discharged over all of them together,
+///   by interval reasoning over their rectangles or by one shared enumeration
+///   bitset.
+///
+///   The entity in bijection with an output's elements is therefore the
+///   **(root, parallel point) pair**, not the parallel point. Under the first
+///   two forms the output has one root and the two coincide, which is why the
+///   pair was invisible until partitions existed. Under the third the map is
+///   still a bijection: each root is injective over the domain by its own proof,
+///   and the joint obligation makes the roots' images pairwise disjoint and
+///   exactly covering, so distinct pairs reach distinct elements and every
+///   element is reached. Since every root of an output iterates the whole
+///   parallel domain, splitting the points splits the pairs, so **a partition of
+///   the parallel points is a partition of each output's elements**, taken over
+///   that output's roots together, and no span can land on an element another
+///   span produced.
 /// - **No value in a region can read a boundary the region writes.** The same
 ///   access preparation refuses a read of an output tensor with
 ///   `IndexBuildError::ReadFromOutput`. The written elements are the only state
@@ -1449,12 +1477,15 @@ impl IndexRegionEvaluator {
 ///
 /// # What staging does not weaken
 ///
-/// The output element buffers live here, across spans, so `DuplicateWrite` and
+/// The output element buffers live here, across spans, and there is one per
+/// output *boundary* rather than one per root, so `DuplicateWrite` and
 /// `IncompleteWrite` see precisely the elements an unstaged walk would have
-/// seen: a duplicate across two spans is the same slot written twice, and a gap
-/// is the same `None` at [`Self::finish`]. Both checks are the oracle's own,
-/// independent of the ownership proof cited above, and staging leaves them
-/// exactly where they were.
+/// seen: a duplicate across two spans or across two roots is the same slot
+/// written twice, and a gap is the same `None` at [`Self::finish`]. Both checks
+/// are the oracle's own, independent of the ownership proof cited above — for a
+/// partitioned output they are this evaluator's own joint obligation, computed
+/// over the same buffer the verifier's shared bitset covered — and staging
+/// leaves them exactly where they were.
 ///
 /// The step budget is not caller-held state. Each span is a self-contained
 /// evaluation of a *stated* run of parallel points whose result is the whole
@@ -1637,9 +1668,20 @@ struct BodyContext<'a> {
     values: HashMap<VerifiedReducerBodyValueId, Tensor>,
 }
 
-struct OutputPlan<'a> {
+/// One write root of an output boundary.
+struct OutputRoot<'a> {
     access: TensorAccessRef<'a>,
     value: VerifiedScalarValueId,
+}
+
+/// One output **boundary** and every root that writes it.
+///
+/// The buffer is per boundary rather than per root because an output several
+/// roots partition is one tensor they fill between them. One buffer per root
+/// would leave each root's copy filled only where that root wrote, which is a
+/// tensor no part of the program ever produces.
+struct OutputPlan<'a> {
+    roots: Vec<OutputRoot<'a>>,
     value_type: ResolvedValueType,
     shape: &'a Shape,
     elements: Vec<Option<ReferenceElement>>,
@@ -1920,7 +1962,14 @@ fn admit_index(value: ExactInteger) -> Result<ExactInteger, IndexRegionEvaluatio
 }
 
 fn finish_output(plan: OutputPlan<'_>) -> Result<Tensor, IndexRegionEvaluationError> {
-    let access = plan.access.id();
+    // Every plan is created from a root and only ever gains more, so an empty
+    // root list is a fail-closed floor rather than a reachable state.
+    let access = plan
+        .roots
+        .first()
+        .ok_or(IndexRegionEvaluationError::MalformedRegion)?
+        .access
+        .id();
     let elements = plan
         .elements
         .into_iter()
@@ -1981,16 +2030,61 @@ impl<'a> RegionEvaluation<'a> {
             .collect()
     }
 
+    /// Plans one buffer per output boundary, carrying every root that writes it.
+    ///
+    /// # Which partitioned regions this admits
+    ///
+    /// All of them, and the admitting boundary is a decision rather than a
+    /// fallthrough. `IndexRegionBuilder` refuses any write whose iteration
+    /// domain is not exactly the region's parallel dimension set
+    /// (`IndexBuildError::InvalidWriteDomain`), so every root of an output is
+    /// visited at every parallel point this walk makes. Grouping the roots onto
+    /// one buffer therefore reproduces a partitioned output exactly: the (root,
+    /// parallel point) pairs are the elements, and evaluating all of them is
+    /// evaluating the whole tensor. There is no partition shape this evaluator
+    /// can see but not reproduce, so there is no
+    /// [`UnsupportedRegionFeature`] to raise here — one would be a refusal
+    /// nothing could ever trigger, which reads as a guarantee while checking
+    /// nothing.
+    ///
+    /// What guards the premise is that violating it fails closed rather than
+    /// silently. A root whose domain were a strict subset of the parallel
+    /// dimensions could not name the missing dimensions in its coordinates
+    /// (`IndexBuildError::CoordinateOutsideAccessDomain`), so walking the full
+    /// parallel space would send it to one element repeatedly and
+    /// [`IndexRegionEvaluationError::DuplicateWrite`] would refuse it. Disjoint
+    /// coverage and totality are likewise checked here per element, against this
+    /// buffer, independently of the verifier's own joint proof.
+    ///
+    /// The retained-element budget counts each boundary once, because one
+    /// boundary is what is retained; charging a partitioned output once per root
+    /// would refuse a program on memory it never allocates.
     fn output_plans(&self) -> Result<Vec<OutputPlan<'a>>, IndexRegionEvaluationError> {
         let region = self.region;
         let mut retained = 0_usize;
-        let mut plans = Vec::with_capacity(region.outputs().len());
+        let mut plans: Vec<OutputPlan<'a>> = Vec::with_capacity(region.outputs().len());
+        let mut planned: HashMap<VerifiedTensorId, usize> = HashMap::new();
         for output in region.outputs() {
             let access = region
                 .access(output.access())
                 .map_err(IndexRegionEvaluationError::Handle)?;
             if access.mode() != AccessMode::Write {
                 return Err(IndexRegionEvaluationError::MalformedRegion);
+            }
+            let root = OutputRoot {
+                access,
+                value: output.value(),
+            };
+            // Ordered by each boundary's first root, so a region no partition
+            // touches produces exactly the plans, in exactly the order, that one
+            // plan per root produced.
+            if let Some(position) = planned.get(&access.tensor()) {
+                plans
+                    .get_mut(*position)
+                    .ok_or(IndexRegionEvaluationError::MalformedRegion)?
+                    .roots
+                    .push(root);
+                continue;
             }
             let tensor = region
                 .tensor(access.tensor())
@@ -2014,9 +2108,9 @@ impl<'a> RegionEvaluation<'a> {
                     u64::try_from(retained).unwrap_or(u64::MAX),
                 ));
             }
+            planned.insert(access.tensor(), plans.len());
             plans.push(OutputPlan {
-                access,
-                value: output.value(),
+                roots: vec![root],
                 value_type: tensor.value_type().clone(),
                 shape,
                 elements: vec![None; count],
@@ -2036,21 +2130,31 @@ impl<'a> RegionEvaluation<'a> {
             frame.environment.insert(*dimension, *coordinate);
         }
         for plan in plans {
-            let value = self.value(&mut frame, plan.value)?;
-            if value.resolved_type() != &plan.value_type {
-                return Err(IndexRegionEvaluationError::MalformedRegion);
+            // Destructured so the roots stay readable while their shared buffer
+            // is written; one point contributes one element per root, which is
+            // what makes the partitioned output whole at the end of the walk.
+            let OutputPlan {
+                roots,
+                value_type,
+                shape,
+                elements,
+            } = plan;
+            for root in roots.iter() {
+                let value = self.value(&mut frame, root.value)?;
+                if value.resolved_type() != &*value_type {
+                    return Err(IndexRegionEvaluationError::MalformedRegion);
+                }
+                let element = dense_element(&value)?;
+                let offset = self.access_offset(&mut frame, root.access, shape)?;
+                let access = root.access.id();
+                let slot = elements
+                    .get_mut(offset)
+                    .ok_or(IndexRegionEvaluationError::CoordinateOutOfBounds { access })?;
+                if slot.is_some() {
+                    return Err(IndexRegionEvaluationError::DuplicateWrite { access });
+                }
+                *slot = Some(element);
             }
-            let element = dense_element(&value)?;
-            let offset = self.access_offset(&mut frame, plan.access, plan.shape)?;
-            let access = plan.access.id();
-            let slot = plan
-                .elements
-                .get_mut(offset)
-                .ok_or(IndexRegionEvaluationError::CoordinateOutOfBounds { access })?;
-            if slot.is_some() {
-                return Err(IndexRegionEvaluationError::DuplicateWrite { access });
-            }
-            *slot = Some(element);
         }
         Ok(())
     }
