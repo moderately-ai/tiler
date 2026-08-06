@@ -22,9 +22,7 @@ ticket: "define-dtype-namespace-admission-policy"
 - **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
 - **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
 - **Preserved primary sources:** [dtype primary-source record](../research/numerics/sources/README.md).
-  The OCP MX version 1.0 specification this decision pins is recorded there as
-  pending-acquisition after a failed retrieval, with no local copy and no
-  digest; the record names the official acquisition route.
+  The OCP MX version 1.0 specification this decision pins is recorded there as metadata-only: it was acquired on 2026-07-31, its licence was reviewed in the document itself — OWFa 1.0 incorporated by reference, with no self-contained redistribution grant — so no copy is vendored, and the row records a digest over the exact reviewed bytes. Re-deriving this decision's pinned scheme definitions means re-acquiring the document through the official route the record names and checking it against that digest.
 
 
 ## Context

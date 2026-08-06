@@ -22,9 +22,7 @@ ticket: "define-dtype-namespace-admission-policy"
 - **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
 - **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
 - **Preserved primary sources:** [dtype primary-source record](../research/numerics/sources/README.md).
-  The RISC-V BF16 contract is vendored there; IEEE 754-2019 is metadata-only
-  and both OCP specifications are pending-acquisition, so those pins resolve to
-  an official acquisition route rather than a local copy.
+  The RISC-V BF16 contract is vendored there; IEEE 754-2019 and both OCP specifications are metadata-only. The OFP8 and MX documents were acquired on 2026-07-31 and each licence was reviewed in its own document — OWFa 1.0.2 by reference for OFP8, OWFa 1.0 by reference for MX — and neither carries a self-contained redistribution grant, so neither is vendored. Every metadata-only row there records a digest over the exact reviewed bytes, so these pins resolve by re-acquiring the document through the recorded official route and checking it against that digest rather than by reading a local copy.
 
 
 ## Context
