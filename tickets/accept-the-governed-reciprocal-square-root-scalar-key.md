@@ -1,7 +1,7 @@
 ---
 id: accept-the-governed-reciprocal-square-root-scalar-key
 title: Accept the governed reciprocal-square-root scalar key
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages]
@@ -40,3 +40,7 @@ Registering the key widens `CanonicalScalarRegistrySnapshotIdentity` and therefo
 ## Closes when
 
 Tom accepts or rejects the exact surface above. On acceptance the draft label at `crates/tiler-ir/src/index/scalar.rs` is removed in the same change that closes this node.
+
+## Accepted 2026-08-06
+
+**Tom accepted the key at the live session's decision round, relayed and executed by the coordinator.** The surface follows the established scalar-key pattern (tenth key, exp/divide shape), with two-sided perturbation evidence and a live consumer (the normalization law in flight). The code-side label flip was routed to the law-widening worker's branch (which holds `implementation/ir`) so the sweep lands whole with that merge; this node records the acceptance and its provenance.

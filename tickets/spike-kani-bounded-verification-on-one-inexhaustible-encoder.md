@@ -1,7 +1,7 @@
 ---
 id: spike-kani-bounded-verification-on-one-inexhaustible-encoder
 title: Spike Kani bounded verification on one inexhaustible encoder
-status: deferred
+status: todo
 priority: p2
 dependencies: [prove-the-exhaustible-encoder-injectivity-claims-natively]
 related: []
@@ -30,3 +30,4 @@ A bounded spike under `spikes/verification/` answering, with a recorded verdict 
 ## Trigger check log
 
 - 2026-08-06 — **not fired.** Tom has not authorized the Kani toolchain installation; the discussion that produced this ticket ended with the authorization question explicitly open. Reproduce: `command -v kani cargo-kani` returns nothing on this host.
+- 2026-08-06, later — **fired.** Tom authorized the Kani toolchain installation at the live session's decision round (relayed by the coordinator). Moved to `todo`; dispatch still gates on the dependency (the native sweep's inexhaustible-encoder menu). Reproduce the authorization from this line and the queue notes; the install itself happens when the spike is claimed, and the exact installed version is recorded then per the standing rule.

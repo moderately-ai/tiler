@@ -1,7 +1,7 @@
 ---
 id: accept-the-realization-witness-surface
 title: Accept the realization witness surface
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle, derive-the-oracle-for-a-permitted-divergence-candidate, accept-the-reference-conformance-threading-surface]
@@ -37,3 +37,7 @@ Tom has accepted, excluded, or redirected each of the three items by name, and t
 ## Graph maintenance
 
 Filed by the freedom-sites enumeration as the public boundary it was forbidden to self-accept.
+
+## Decided 2026-08-06 — A and B accepted; C redirected to the plain-scalar form
+
+**Tom decided at the live session's decision round, relayed and executed by the coordinator:** Item A (`RealizationWitness` in `tiler_ir::schedule`) and Item B (`UnpinnedFreedomSite`, no `Conforms`-shaped arm) are accepted as drafted. Item C is **redirected to the plain-scalar alternative**: the reference keeps taking plain scalars (as `strict_partitioned_sum_under` does) and the aggregation sites in `tiler_ir` alone — `tiler-reference` never names a plan structure. The ground: the evaluability fork's resolution (the reference evaluates the retained semantic program) removed the plain-scalar form's only stated disqualifier, so the `from_witness` dependency-direction commitment would be taken for a convenience the resolved fork no longer requires. Implementation is [`implement-the-realization-witness-vocabulary`](implement-the-realization-witness-vocabulary.md).

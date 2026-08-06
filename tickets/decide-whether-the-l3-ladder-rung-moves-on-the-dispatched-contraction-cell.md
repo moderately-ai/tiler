@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-l3-ladder-rung-moves-on-the-dispatched-contraction-cell
 title: Decide whether the L3 ladder rung moves on the dispatched contraction cell
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [integrate-the-contraction-vertical-into-the-runtime, publish-an-l3-contraction-cell-through-the-accepted-route, raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells, record-the-contraction-execution-row-and-correct-the-matrix-headline, spike-first-metal-contraction-vertical]
@@ -33,3 +33,7 @@ The L3 row's `Maturity today` cell either states the delivered capability with i
 ## Non-goals
 
 Re-running or widening any measurement; the remaining five L3 cells; a second host row; the `tiled` realization; and any change to L4, L5, L6, L7, or L8's own cells beyond the vocabulary consistency the decision forces.
+
+## Decided 2026-08-06 — the rung holds, with a named re-evaluation trigger
+
+**Tom decided at the live session's decision round, relayed and executed by the coordinator:** the L3 `Maturity today` cell does not move on the one dispatched cell. The three arguments this ticket carried stand: one cell of six; the unselected `direct` realization while `tiled` is the record's cost-based selection; and the column's design-rung reading, which a capability-based move would fork. **Re-evaluation trigger, any of:** all six L3 correctness cells dispatched with retained-digest matches; the `tiled` realization lands and dispatches; or a deliberate re-read of the ladder column's semantics (its own ticket, if ever filed). The delivery remains recorded in the ladder prose and the contraction row, which is where a reader finds it today.
