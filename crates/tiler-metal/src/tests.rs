@@ -29,12 +29,13 @@ use tiler_ir::schedule::{
     ContractionAxisSource, ContributorArrival, ContributorOrder, ContributorPartition,
     ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal, KernelSchedule,
     LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseBf16Expression,
+    PointwiseBf16ExpressionBuilder, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
     ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom,
     SubnormalMode, SyncPointId, TailPolicy, TensorRole, ValueDomainProvenance,
     VerifiedScheduledRegion, element_count, workgroup_tree_tile,
 };
-use tiler_ir::semantic::RMS_NORM_F32_QWEN3_EPS_BITS;
+use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, RMS_NORM_F32_QWEN3_EPS_BITS};
 use tiler_ir::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
 };
@@ -42,8 +43,9 @@ use tiler_ir::shape::{Axis, Shape};
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError};
 use crate::emit::{
-    address_space_declaration, barrier_call, emit_translation_unit as emit_with_realization,
-    is_f32_nan, msl_type, realization_requirements, reserve_symbol,
+    address_space_declaration, barrier_call, bf16_canonical_nan,
+    emit_translation_unit as emit_with_realization, is_bf16_nan, is_f32_nan, msl_type,
+    realization_requirements, reserve_symbol,
 };
 use crate::record::{MetalNumericalGap, MetalNumericalRequirement, MetalTranslationUnit};
 use crate::target::{
@@ -55,6 +57,20 @@ use crate::target::{
 const NAN_BITS: u32 = 0x7fc0_0000;
 const SCALE_BITS: u32 = 0x4000_0000;
 const BIAS_BITS: u32 = 0x3f80_0000;
+
+/// The emitted binary32 canonicalization helper's symbol.
+///
+/// Written out rather than composed from the emitter's own prefix, so a change
+/// to that prefix is a failing assertion here instead of a silently renamed
+/// symbol every consumer of the emitted text has to rediscover.
+const CANONICALIZE_F32_SYMBOL: &str = "tiler_canonicalize_nan_f32_7fc00000";
+
+/// The emitted `bfloat16` canonicalization helper's symbol.
+///
+/// The Apple numerical probe harness's recognizer reads the C++-mangled form of
+/// this exact identifier, `_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b`, whose
+/// `32` is this string's length and whose `DF16b` is its `bfloat` parameter.
+const CANONICALIZE_BF16_SYMBOL: &str = "tiler_canonicalize_nan_bf16_7fc0";
 
 fn scale_then_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
@@ -406,6 +422,113 @@ fn pointwise_region_with(
     builder.numerical(realization).unwrap();
     builder.schedule(linear_schedule(elements)).unwrap();
     builder.build().unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// BF16 fixtures
+// ---------------------------------------------------------------------------
+
+/// `bf16` 2.0, the sibling of [`SCALE_BITS`] at the narrower width.
+const BF16_SCALE_BITS: u16 = 0x4000;
+
+/// `bf16` 1.0, the sibling of [`BIAS_BITS`].
+const BF16_BIAS_BITS: u16 = 0x3f80;
+
+/// `bf16`'s canonical arithmetic NaN, zero-extended into the 32-bit field.
+///
+/// Read from the semantic layer rather than written as a literal, so a fixture
+/// cannot drift from the payload the region verifier requires a `bf16` region
+/// to declare. The field is 32 bits wide and the payload is 16, and the
+/// zero-extension is the producer's declaration rather than this backend's
+/// reading of a wider value.
+fn bf16_nan_bits() -> u32 {
+    u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS)
+}
+
+/// `(x * 2.0) + 1.0` in `bf16`, the direct sibling of
+/// [`scale_then_bias_expression`].
+///
+/// The payloads are the same *values* as the `f32` fixture's and not the same
+/// bits, which is the point: a lowering that reused the `f32` constants would
+/// emit patterns no `bfloat` can hold.
+fn bf16_scale_then_bias_expression() -> PointwiseBf16Expression {
+    let mut expression = PointwiseBf16ExpressionBuilder::new();
+    let input = expression
+        .input(InputOrdinal::FIRST)
+        .expect("pointwise input");
+    let scale = expression
+        .constant(BF16_SCALE_BITS)
+        .expect("scale constant");
+    let product = expression
+        .multiply(input, scale)
+        .expect("scale multiplication");
+    let bias = expression.constant(BF16_BIAS_BITS).expect("bias constant");
+    let root = expression.add(product, bias).expect("bias addition");
+    expression
+        .build(root)
+        .expect("verified pointwise bf16 expression")
+}
+
+/// The strict `bf16` declared realization: preserve on both subnormal
+/// dimensions.
+fn bf16_numerical() -> NumericalRealization {
+    subnormal_realization(
+        "tiler.test.strict-bf16",
+        bf16_nan_bits(),
+        SubnormalMode::Preserve,
+        SubnormalMode::Preserve,
+    )
+}
+
+/// The bounded BF16 pointwise fixture under one stated declared realization.
+fn bf16_pointwise_kernel_under(realization: NumericalRealization) -> VerifiedKernel {
+    let region = pointwise_region_with(
+        RegionId::new(30),
+        &Shape::from_dims([4]),
+        realization,
+        ScalarProgram::PointwiseBf16(bf16_scale_then_bias_expression()),
+    );
+    lower_scheduled_region(&region).expect("the bounded bf16 pointwise fixture lowers")
+}
+
+/// The bounded BF16 pointwise fixture under the strict declared realization.
+pub(crate) fn bf16_pointwise_kernel() -> VerifiedKernel {
+    bf16_pointwise_kernel_under(bf16_numerical())
+}
+
+/// The Apple row's per-type facts with the `bf16` entry varied.
+///
+/// The counterpart of [`subnormal_facts`], varying the entry the BF16 tests are
+/// about while stating the measured `f32` and `f16` rows beside it. Both
+/// neighbours are stated deliberately: a target silent about them could not
+/// distinguish "the `bf16` fact was read" from "no fact was found anywhere".
+const fn bf16_subnormal_facts(
+    bf16_behaviour: MetalSubnormalArithmetic,
+) -> MetalSubnormalArithmeticFacts {
+    MetalSubnormalArithmeticFacts::unmeasured()
+        .stating(MetalFloatArithmeticType::F32, APPLE_FLUSH)
+        .stating(
+            MetalFloatArithmeticType::F16,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        )
+        .stating(MetalFloatArithmeticType::Bf16, bf16_behaviour)
+}
+
+/// Emits the BF16 fixture under one declared realization and one `bf16` target
+/// fact.
+///
+/// The sibling of [`emit_pointwise_under`], and it varies the same two things
+/// at the other width. The `f32` fact stays the measured flush in every case,
+/// so a result that changed with the `bf16` argument alone is evidence the
+/// obligation was recorded against the right dtype.
+fn emit_bf16_pointwise_under(
+    realization: NumericalRealization,
+    bf16_behaviour: MetalSubnormalArithmetic,
+) -> MetalTranslationUnit {
+    let kernel = bf16_pointwise_kernel_under(realization);
+    let mut facts = target();
+    facts.subnormal_arithmetic = bf16_subnormal_facts(bf16_behaviour);
+    emit_translation_unit(&[&kernel], &facts).expect("the bounded bf16 fixture emits")
 }
 
 fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
@@ -2191,45 +2314,475 @@ fn governed_types_map_to_their_metal_spellings() {
     assert_eq!(msl_type(KernelType::I32), Ok("int"));
     assert_eq!(msl_type(KernelType::Index), Ok("uint64_t"));
     assert_eq!(msl_type(KernelType::F32), Ok("float"));
+    assert_eq!(msl_type(KernelType::Bf16), Ok("bfloat"));
 }
 
-/// The admitted BF16 type is refused by name rather than given a spelling.
+/// The unspelled-type refusal keeps its identifier and rendering while its arm
+/// is vacant.
 ///
-/// The assertion is on the rejected type, not merely on failure: a refusal that
-/// named some other type, or that came from a path BF16 never reached, would
-/// pass a bare `is_err`. The neighbours are asserted in the same call so the
-/// refusal is visibly a function of the type — one argument varies and the path
-/// does not.
-///
-/// **Measurement boundary.** This observes the decision site, not a whole
-/// emission. A BF16-carrying `VerifiedKernel` *is* constructible since
-/// `admit-bf16-into-the-schedule-and-kernel-vocabulary` added
-/// `ScalarProgram::PointwiseBf16` and the BF16 constant, arithmetic, and
-/// canonicalization constructs — so what stands between such a kernel and
-/// emitted source is this refusal alone, not the absence of a subject. Driving a
-/// whole emission to it is `lower-bf16-to-metal`'s, because the same ticket that
-/// would build the fixture is the one that replaces the refusal with the
-/// `bfloat` spelling, its NaN-canonicalization helper, its constant
-/// reinterpretation, and its dispatch route. What is established here is that
-/// the type has no spelling and that every emitter that spells a type goes
-/// through this function — `parameter_declaration`, `staging_declaration`,
-/// `KernelEmitter::value_type`, `emit_convert`, and the translation-unit header
-/// each propagate its `Err` rather than substituting a spelling.
+/// Every governed `KernelType` now has an MSL spelling, so `msl_type` cannot
+/// currently return this — and that is a statement about today's vocabulary,
+/// not about the diagnostic. `KernelType` is deliberately not
+/// `#[non_exhaustive]`, so `F16` or `F64` stops the build at that match, and the
+/// decision available there has to include "refuse". Keeping the variant
+/// exercised means the widening that reaches for it finds a rule identifier and
+/// a rendering that already work, rather than a surface nothing has checked
+/// since BF16 stopped using it.
 #[test]
-fn the_admitted_bf16_type_has_no_metal_spelling() {
+fn the_unspelled_value_type_refusal_keeps_its_rule_and_rendering() {
+    let refusal = MetalEmitError::UnsupportedValueType {
+        value_type: KernelType::Bf16,
+    };
+    assert_eq!(refusal.rule(), "unsupported-value-type");
+    assert_eq!(refusal.to_string(), "unsupported-value-type: Bf16");
+    // The type it names is carried rather than formatted away, so a widened
+    // vocabulary can report which member was refused.
+    assert_ne!(
+        refusal,
+        MetalEmitError::UnsupportedValueType {
+            value_type: KernelType::F32,
+        },
+    );
+}
+
+/// A BF16 kernel emits `bfloat` in every position a type appears in.
+///
+/// Every position rather than the arithmetic alone, because a lowering that
+/// spelled the operators at `bfloat` and the buffers at `float` would compute
+/// something the region does not mean while still passing an "is there a
+/// `bfloat` in it" question — and at two versus four bytes per element it would
+/// also misread the whole buffer. The `float` neighbour is asserted absent for
+/// the same reason: the fixture is pure BF16, so any `float` in it came from a
+/// path that fell back rather than translated.
+#[test]
+fn a_bf16_kernel_spells_bfloat_at_every_position() {
+    let unit = emit_bf16_pointwise_under(bf16_numerical(), APPLE_FLUSH);
+    let source = unit.source();
+
+    // Signature: both buffers, in declaration order, at the region's own width.
+    assert!(
+        source.contains("device const bfloat *b0 [[buffer(0)]]"),
+        "{source}"
+    );
+    assert!(
+        source.contains("device bfloat *b1 [[buffer(1)]]"),
+        "{source}"
+    );
+    // Body: the load, both constants, both operators, and both
+    // canonicalizations. Anchored on the guarded body's own indentation, so the
+    // helper's `(bfloat value)` parameter is not counted as one of them.
     assert_eq!(
-        msl_type(KernelType::Bf16),
-        Err(MetalEmitError::UnsupportedValueType {
-            value_type: KernelType::Bf16,
-        }),
+        source.matches("\n        bfloat v").count(),
+        7,
+        "load, two constants, two operators, and two canonicalizations: {source}"
+    );
+    assert!(source.contains("bfloat v5 = v3 * v4;"), "{source}");
+    assert!(source.contains("bfloat v8 = v6 + v7;"), "{source}");
+    assert!(source.contains("b1[v0] = v9;"), "{source}");
+
+    // No `float` spelling reaches a value of this kernel. The token is
+    // space-anchored so `bfloat` is not itself read as a match, and the launch
+    // index is still `uint` with the index arithmetic still `uint64_t` — this
+    // is a claim about the floating-point positions, not about the whole file.
+    assert!(!source.contains(" float "), "{source}");
+    assert!(!source.contains("as_type<float>"), "{source}");
+    assert!(
+        !source.contains(CANONICALIZE_F32_SYMBOL),
+        "a bf16 kernel must not reach the f32 canonicalization: {source}"
+    );
+}
+
+/// A BF16 immediate is its exact sixteen-bit pattern, carried by `ushort`.
+///
+/// Two claims and they fail differently. The pattern must be the payload the
+/// region declared — a decimal rendering, or a widening through `f32` and back,
+/// would be a different value at every pattern the two roundings disagree on.
+/// And the carrier must be `ushort`: an unsuffixed MSL integer literal is
+/// `uint`, and `as_type` requires equal sizes, so the `f32` spelling applied at
+/// this width would not compile at all.
+#[test]
+fn bf16_immediates_are_exact_patterns_reinterpreted_through_ushort() {
+    let unit = emit_bf16_pointwise_under(bf16_numerical(), APPLE_FLUSH);
+    let source = unit.source();
+    assert!(
+        source.contains("as_type<bfloat>(ushort(0x4000u))"),
+        "the bf16 2.0 payload is emitted unchanged: {source}"
+    );
+    assert!(
+        source.contains("as_type<bfloat>(ushort(0x3f80u))"),
+        "the bf16 1.0 payload is emitted unchanged: {source}"
+    );
+    // The `f32` payloads of the same two values are absent, which is what
+    // separates "emitted at the right width" from "emitted at all".
+    assert!(!source.contains("0x40000000u"), "{source}");
+    assert!(!source.contains("0x3f800000u"), "{source}");
+}
+
+/// The BF16 canonicalization helper is its own function, named the way the
+/// Apple probe harness's recognizer reads it.
+///
+/// The recognizer matches the C++-mangled spelling
+/// `_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b`, which encodes the identifier's
+/// length and its `bfloat` parameter — so an emitted helper that merely
+/// contained the dtype somewhere would mangle to a different symbol and be
+/// invisible to it. The unmangled name is therefore pinned character for
+/// character, and the length prefix `32` is asserted from the identifier itself
+/// rather than copied, so a rename cannot leave the two disagreeing.
+///
+/// **This is a name-shape agreement, not a run.** Nothing here dispatches, and
+/// nothing here establishes that the harness would classify a module this
+/// backend emitted; it establishes that the symbol it would look for is the
+/// symbol this backend writes.
+#[test]
+fn the_bf16_canonicalization_helper_matches_the_apple_harness_recognizer() {
+    let unit = emit_bf16_pointwise_under(bf16_numerical(), APPLE_FLUSH);
+    let source = unit.source();
+
+    assert_eq!(CANONICALIZE_BF16_SYMBOL, "tiler_canonicalize_nan_bf16_7fc0");
+    assert_eq!(
+        CANONICALIZE_BF16_SYMBOL.len(),
+        32,
+        "the harness's mangled spelling carries this identifier's length"
+    );
+    assert!(
+        source.contains(&format!(
+            "static inline bfloat {CANONICALIZE_BF16_SYMBOL}(bfloat value) {{"
+        )),
+        "{source}"
+    );
+    // Declared once, called twice: one canonicalization per arithmetic result.
+    assert_eq!(
+        source.matches(CANONICALIZE_BF16_SYMBOL).count(),
+        3,
+        "{source}"
+    );
+
+    // The predicate is an integer test at this width, so no math-mode
+    // relaxation licence reaches it, and no floating-point NaN predicate is
+    // emitted in its place.
+    assert!(
+        source.contains("ushort pattern = as_type<ushort>(value);"),
+        "{source}"
+    );
+    assert!(
+        source.contains("bool nan = (pattern & 0x7f80u) == 0x7f80u"),
+        "{source}"
+    );
+    assert!(
+        source.contains("&& (pattern & 0x007fu) != 0x0000u;"),
+        "{source}"
+    );
+    assert!(
+        source.contains("return nan ? as_type<bfloat>(ushort(0x7fc0u)) : value;"),
+        "{source}"
+    );
+    assert!(!source.contains("isnan"), "{source}");
+
+    // Distinct from the binary32 helper rather than an overload of it: the two
+    // take different parameter types and one unit can need both.
+    assert_ne!(CANONICALIZE_BF16_SYMBOL, CANONICALIZE_F32_SYMBOL);
+}
+
+/// A portfolio holding both widths emits both helpers, once each, in a fixed
+/// order.
+///
+/// This is the case the single-kernel tests cannot reach and the one that makes
+/// the two helpers' separate names load-bearing. It also pins that adding the
+/// `bf16` helper did not disturb the emitted order of the two that existed.
+#[test]
+fn a_mixed_width_portfolio_emits_both_canonicalization_helpers_once() {
+    let f32_kernel = pointwise_kernel();
+    let bf16_kernel = bf16_pointwise_kernel();
+    let mut facts = target();
+    facts.subnormal_arithmetic = bf16_subnormal_facts(APPLE_FLUSH);
+    let unit = emit_translation_unit(&[&f32_kernel, &bf16_kernel], &facts).unwrap();
+    let source = unit.source();
+
+    assert_eq!(unit.entry_points().len(), 2);
+    let f32_definition = source
+        .find(&format!("static inline float {CANONICALIZE_F32_SYMBOL}("))
+        .expect("the binary32 helper is defined");
+    let bf16_definition = source
+        .find(&format!("static inline bfloat {CANONICALIZE_BF16_SYMBOL}("))
+        .expect("the bfloat16 helper is defined");
+    assert!(
+        f32_definition < bf16_definition,
+        "helpers are emitted in a fixed order: {source}"
     );
     assert_eq!(
-        msl_type(KernelType::Bf16).unwrap_err().rule(),
-        "unsupported-value-type",
+        source
+            .matches(&format!("static inline float {CANONICALIZE_F32_SYMBOL}("))
+            .count(),
+        1,
     );
-    // The neighbour on the same call still emits, so the refusal is about the
-    // type rather than about the function having stopped answering.
-    assert_eq!(msl_type(KernelType::F32), Ok("float"));
+    assert_eq!(
+        source
+            .matches(&format!("static inline bfloat {CANONICALIZE_BF16_SYMBOL}("))
+            .count(),
+        1,
+    );
+    // Portfolio order does not change the bytes, at mixed widths too.
+    assert_eq!(
+        source,
+        emit_translation_unit(&[&bf16_kernel, &f32_kernel], &facts)
+            .unwrap()
+            .source(),
+    );
+}
+
+/// The subnormal obligation is recorded against `bf16` and never against `f32`.
+///
+/// The two measured Apple rows agree on this host, which is exactly why this
+/// needs a target that disagrees: the `f32` entry stays the measured flush in
+/// both halves below and only the `bf16` entry moves, so a verdict that changed
+/// with it is evidence the lookup used the operation's own arithmetic type. A
+/// backend that read the `f32` fact would report the same gap in both halves.
+#[test]
+fn bf16_arithmetic_reads_the_bf16_fact_and_not_the_f32_one() {
+    let flushing = emit_bf16_pointwise_under(bf16_numerical(), APPLE_FLUSH);
+    assert_eq!(
+        flushing.numerical_gaps(),
+        [MetalNumericalGap::SubnormalFlushInArithmetic],
+    );
+
+    let preserving = emit_bf16_pointwise_under(
+        bf16_numerical(),
+        MetalSubnormalArithmetic::PreservesSubnormals,
+    );
+    assert!(
+        preserving.numerical_gaps().is_empty(),
+        "the f32 flush beside it must not answer for bf16 arithmetic",
+    );
+    preserving.require_declared_realization().unwrap();
+    assert!(
+        preserving
+            .source()
+            .contains("//   f32: flushes-to-zero-preserving-sign"),
+        "the f32 row is still stated, so the empty gap set is a dtype decision",
+    );
+    assert!(
+        preserving
+            .source()
+            .contains("//   bf16: preserves-subnormals")
+    );
+}
+
+/// A strict subnormal-preserving BF16 contract is refused on the measured macOS
+/// row, and the refusal names the numerical gap.
+///
+/// Finding 24 measures BF16 arithmetic flushing subnormal operands and results
+/// on that row, sign-preserving, with an execution witness on every verdict. So
+/// a contract that requires preservation is unrealizable there by any compiler
+/// selection, and the fail-closed answer is a named gap rather than a flag that
+/// would not deliver it.
+#[test]
+fn a_strict_bf16_contract_is_refused_on_the_measured_macos_row() {
+    let unit = emit_bf16_pointwise_under(bf16_numerical(), APPLE_FLUSH);
+    assert_eq!(
+        unit.numerical_gaps(),
+        [MetalNumericalGap::SubnormalFlushInArithmetic],
+    );
+    assert!(unit.unstated_subnormal_arithmetic().is_empty());
+    assert_eq!(
+        unit.require_declared_realization().unwrap_err(),
+        MetalEmitError::UnrealizableNumericalObligation {
+            gap: MetalNumericalGap::SubnormalFlushInArithmetic,
+        },
+    );
+    assert!(
+        unit.source().contains("//   subnormal-flush-in-arithmetic"),
+        "a caller keeping only the emitted text still reads the gap",
+    );
+
+    // The flush the row actually delivers is honoured, which is what makes the
+    // refusal above a decision about the contract rather than a blanket one.
+    let honoured = emit_bf16_pointwise_under(
+        subnormal_realization(
+            "tiler.test.flush-bf16",
+            bf16_nan_bits(),
+            flush(FlushedZeroSign::PreservesSign),
+            flush(FlushedZeroSign::PreservesSign),
+        ),
+        APPLE_FLUSH,
+    );
+    assert!(honoured.numerical_gaps().is_empty());
+    honoured.require_declared_realization().unwrap();
+}
+
+/// A target stating no BF16 subnormal fact refuses the unit, ahead of any gap.
+///
+/// This is the `Unknown` path, and it is the one an unmeasured family reaches:
+/// the retained record leaves `bf16` unmeasured on `IOsDevice` because nothing
+/// dispatched it there. The two neighbouring facts are stated and *disagree*
+/// with each other, so there is no fallback that is merely less precise, and
+/// the refusal has to be the missing measurement rather than a guess.
+#[test]
+fn an_unstated_bf16_fact_refuses_the_unit_naming_the_dtype() {
+    let mut facts = target();
+    facts.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured()
+        .stating(MetalFloatArithmeticType::F32, APPLE_FLUSH)
+        .stating(
+            MetalFloatArithmeticType::F16,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        );
+    let kernel = bf16_pointwise_kernel();
+    let unit = emit_translation_unit(&[&kernel], &facts).unwrap();
+
+    assert_eq!(
+        unit.unstated_subnormal_arithmetic(),
+        [MetalFloatArithmeticType::Bf16],
+    );
+    assert!(
+        unit.numerical_gaps().is_empty(),
+        "gaps computed while a fact is missing are incomplete, not shorter",
+    );
+    let error = unit.require_declared_realization().unwrap_err();
+    assert_eq!(error.rule(), "unstated-subnormal-arithmetic");
+    assert_eq!(error.to_string(), "unstated-subnormal-arithmetic: bf16");
+    let MetalEmitError::UnstatedSubnormalArithmetic { unstated } = error else {
+        panic!("an unstated fact must reject as itself, not as a gap");
+    };
+    assert_eq!(unstated.arithmetic_type(), MetalFloatArithmeticType::Bf16);
+    assert!(
+        unit.source()
+            .contains("// Arithmetic types used with no stated subnormal fact:\n//   bf16\n")
+    );
+    assert!(unit.source().contains("//   bf16: not stated"));
+}
+
+/// The iOS-Simulator profile refuses the same BF16 program before any
+/// compilation or submission.
+///
+/// **What this establishes and what it does not.** The refusal here is the
+/// `Unknown` subnormal fact, taken at the conformance claim — which is before
+/// the source is handed to a compiler, and therefore before any pipeline
+/// creation or command submission. Finding 26 measures that family compiling
+/// and *linking* every `bfloat` module and then failing pipeline creation with
+/// `XPC_ERROR_CONNECTION_INTERRUPTED`, so a refusal that waited for the
+/// toolchain would not have refused at all.
+///
+/// It is **not** the dtype-dispatchability refusal. That fact is a target
+/// profile's (`DTypeDispatchability` at `AvailabilityPhase::CompileProfile`,
+/// owned by `tiler-compiler` and declared by `tiler-build`), it is what stops a
+/// BF16 program on a family that compiles the module and cannot run it, and
+/// `validate-bf16-at-the-runtime-routing-boundary` is the ticket that consumes
+/// it before the one-way routing commit. Nothing in this crate can reach it:
+/// `tiler-metal` does not depend on `tiler-compiler` and must not.
+///
+/// The emitted *source* is deliberately identical to the macOS one, which is
+/// the reason the refusal cannot live in emission: the two families differ in
+/// whether the module runs, not in what it says.
+#[test]
+fn the_ios_simulator_profile_refuses_a_bf16_unit_before_any_compilation() {
+    let kernel = bf16_pointwise_kernel();
+    let mut simulator = target();
+    simulator.platform = MetalPlatform::IOsSimulator;
+    simulator.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured()
+        .stating(MetalFloatArithmeticType::F32, APPLE_FLUSH)
+        .stating(
+            MetalFloatArithmeticType::F16,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        );
+    let unit = emit_translation_unit(&[&kernel], &simulator).unwrap();
+    assert_eq!(
+        unit.require_declared_realization().unwrap_err().rule(),
+        "unstated-subnormal-arithmetic",
+    );
+    assert!(
+        unit.source()
+            .contains("// Artifact family: ios-simulator (deployment minimum 14.0)")
+    );
+
+    // An `f32` kernel on the same profile is unaffected, so the refusal is
+    // about the dtype rather than about the family being refused wholesale.
+    let f32_unit = emit_translation_unit(&[&pointwise_kernel()], &simulator).unwrap();
+    assert!(f32_unit.unstated_subnormal_arithmetic().is_empty());
+}
+
+/// The contraction defence is recorded at BF16's own width.
+///
+/// Finding 28 measures one per-dtype difference in the strictest cell: under
+/// `safe` with `-ffp-contract=fast`, `f16` fuses and `bf16` does not. So an
+/// `f16` conclusion does not carry across, and `-ffp-contract=off` is asserted
+/// for a BF16 unit directly rather than inherited from the `f32` fixture.
+///
+/// The per-statement emission is the other half of the defence and is asserted
+/// beside it: each arithmetic operation is its own statement, so no contraction
+/// can form across two structured operations even under `-ffp-contract=on`.
+#[test]
+fn a_bf16_unit_records_the_contraction_defence_at_its_own_width() {
+    let unit = emit_bf16_pointwise_under(bf16_numerical(), APPLE_FLUSH);
+    assert_eq!(
+        unit.numerical_requirements(),
+        [
+            MetalNumericalRequirement::SafeMathMode,
+            MetalNumericalRequirement::NoFloatingPointContraction,
+        ],
+    );
+    assert_eq!(
+        MetalNumericalRequirement::NoFloatingPointContraction.flag(),
+        "-ffp-contract=off",
+    );
+    // The multiply and the add are separate statements, and no `fma` is
+    // emitted between them: MSL has no `bfloat` overload of it, so a BF16
+    // contraction has nothing to lower to at the source level.
+    let source = unit.source();
+    assert!(source.contains(" * "), "{source}");
+    assert!(source.contains(" + "), "{source}");
+    assert!(!source.contains("fma("), "{source}");
+}
+
+/// Only a `bfloat16` NaN encoding is accepted as a canonical BF16 NaN.
+///
+/// The predicate is exercised directly and the narrowing beside it, because the
+/// scheduled-region verifier already requires a `bf16` region to declare
+/// exactly the zero-extended `0x7fc0` — so neither refusal is reachable through
+/// a verified kernel, and a test that only drove emission would prove the
+/// checks exist without ever making one say no.
+#[test]
+fn only_a_bf16_nan_encoding_is_accepted_as_a_canonical_bf16_nan() {
+    assert!(is_bf16_nan(0x7fc0));
+    assert!(is_bf16_nan(0xffc1));
+    assert!(is_bf16_nan(0x7f81));
+    assert!(!is_bf16_nan(0x0000));
+    // Infinity: the exponent field is full and the significand is empty.
+    assert!(!is_bf16_nan(0x7f80));
+    assert!(!is_bf16_nan(0x3f80));
+
+    // The declared payload the region verifier requires, narrowed.
+    assert_eq!(bf16_canonical_nan(bf16_nan_bits()), Ok(0x7fc0));
+
+    // A non-NaN low half is refused rather than canonicalized to a finite
+    // value.
+    assert_eq!(
+        bf16_canonical_nan(0x0000_3f80),
+        Err(MetalEmitError::InvalidCanonicalNan { bits: 0x0000_3f80 }),
+    );
+
+    // **The binary32 canonical NaN is refused rather than truncated.** Its low
+    // half is `0x0000`, so a narrowing that dropped the high bits would have
+    // emitted a "canonicalization" to positive zero — the exact wrong-tensor
+    // outcome the separate widths exist to prevent, and one that would have
+    // compiled.
+    assert_eq!(
+        bf16_canonical_nan(NAN_BITS),
+        Err(MetalEmitError::InvalidCanonicalNan { bits: NAN_BITS }),
+    );
+    assert_eq!(
+        bf16_canonical_nan(NAN_BITS).unwrap_err().rule(),
+        "invalid-canonical-nan",
+    );
+}
+
+/// The BF16 fixture matches its checked-in golden source.
+#[test]
+fn bf16_pointwise_matches_its_golden_source() {
+    let unit = emit_bf16_pointwise_under(bf16_numerical(), APPLE_FLUSH);
+    assert_golden(
+        "pointwise_scale_bias_bf16.metal",
+        include_str!("../goldens/pointwise_scale_bias_bf16.metal"),
+        unit.source(),
+    );
 }
 
 #[test]

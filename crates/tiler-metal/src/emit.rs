@@ -35,9 +35,12 @@
 //!
 //! Carried by the emitted operations, under every math mode:
 //!
-//! - `f32` immediates are emitted as exact bit patterns through `as_type`,
-//!   never as decimal text, so no rounding can be introduced by the emitter or
-//!   by the Metal compiler's literal parsing.
+//! - Floating-point immediates are emitted as exact bit patterns through
+//!   `as_type`, never as decimal text, so no rounding can be introduced by the
+//!   emitter or by the Metal compiler's literal parsing. `f32` reinterprets a
+//!   `uint` and `bf16` a `ushort`, because `as_type` requires its source and
+//!   result to have the same size and an unsuffixed MSL integer literal is
+//!   `uint`.
 //! - Every arithmetic operation is emitted as its own statement, so no
 //!   contraction can form across two structured operations under
 //!   `-ffp-contract=on`.
@@ -84,8 +87,21 @@ const INDENT: &str = "    ";
 /// Prefix of every emitted entry-point symbol.
 const ENTRY_PREFIX: &str = "tiler_kernel_";
 
-/// Prefix of every emitted NaN-canonicalization helper symbol.
-const CANONICALIZE_PREFIX: &str = "tiler_canonicalize_nan_f32_";
+/// Prefix of every emitted binary32 NaN-canonicalization helper symbol.
+const CANONICALIZE_F32_PREFIX: &str = "tiler_canonicalize_nan_f32_";
+
+/// Prefix of every emitted `bfloat16` NaN-canonicalization helper symbol.
+///
+/// The width is part of the symbol rather than left to overload resolution.
+/// One translation unit can carry both helpers — a portfolio may hold an `f32`
+/// kernel and a `bf16` kernel — so the two must be separately nameable, and the
+/// Apple numerical probe harness spells its own helper the same way, which is
+/// what lets a module this backend emits be read by the recognizer that read
+/// the harness's. That recognizer matches the *mangled* spelling
+/// `_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b`, which encodes the identifier's
+/// length and its `bfloat` parameter, so the unmangled name has to agree
+/// character for character rather than merely contain the dtype.
+const CANONICALIZE_BF16_PREFIX: &str = "tiler_canonicalize_nan_bf16_";
 
 /// Prefix of every emitted workgroup staging allocation.
 const STAGING_PREFIX: &str = "tg";
@@ -123,6 +139,19 @@ const F32_EXPONENT_MASK: u32 = 0x7f80_0000;
 
 /// The IEEE-754 binary32 significand field.
 const F32_SIGNIFICAND_MASK: u32 = 0x007f_ffff;
+
+/// The `bfloat16` biased-exponent field.
+///
+/// Stated as its own constant rather than derived from [`F32_EXPONENT_MASK`] by
+/// a shift. `bfloat16` is binary32 truncated to its high sixteen bits, so the
+/// derivation happens to hold, but the emitted predicate would then rest on
+/// that format relationship silently — and the two formats are separate
+/// arithmetic types everywhere else in this backend precisely because they do
+/// not behave alike.
+const BF16_EXPONENT_MASK: u16 = 0x7f80;
+
+/// The `bfloat16` significand field.
+const BF16_SIGNIFICAND_MASK: u16 = 0x007f;
 
 /// Appends formatted text to an emitted buffer.
 ///
@@ -282,6 +311,14 @@ fn assemble(
         }
     }
     source.push_str("//\n");
+    // All three properties hold at every emitted width, so "f32" here is
+    // narrower than the guarantee and a `bf16` module's header says nothing
+    // about its own immediates. Widening the wording is deliberately *not* done
+    // here: the emitted source is content of the standard Metal artifact, so
+    // the wording is an identity-domain step — it moves the pinned artifact
+    // digest in `crates/tiler-build` and the cache-subject digest beside it,
+    // neither of which this backend owns.
+    // `widen-the-emitted-numerics-prologue-past-one-width` owns that step.
     source.push_str("// Carried by these operations under every math mode: every f32 immediate\n");
     source.push_str("// is its exact bit pattern, every arithmetic operation is one statement,\n");
     source.push_str("// and every NaN test is an integer test over reinterpreted bits.\n");
@@ -333,10 +370,21 @@ fn assemble(
 /// deterministic whatever order the bodies requested their helpers in.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum MetalHelper {
-    /// Replaces an arithmetic NaN with one exact canonical pattern.
+    /// Replaces an arithmetic binary32 NaN with one exact canonical pattern.
     CanonicalizeF32Nan {
         /// The canonical arithmetic-NaN payload this kernel declares.
         bits: u32,
+    },
+    /// Replaces an arithmetic `bfloat16` NaN with one exact canonical pattern.
+    ///
+    /// A separate variant rather than a width field on the one above, because
+    /// the two helpers differ in more than a payload: parameter type, carrier
+    /// type, mask widths, and the literal spelling all change together, and a
+    /// unit may need both at once.
+    CanonicalizeBf16Nan {
+        /// The canonical arithmetic-NaN payload this kernel declares, narrowed
+        /// to the width that can hold it.
+        bits: u16,
     },
     /// The IEEE 754-2019 `maximum` of two binary32 values.
     MaximumF32,
@@ -347,6 +395,7 @@ impl MetalHelper {
     fn definition(self) -> String {
         match self {
             Self::CanonicalizeF32Nan { bits } => canonicalize_helper(bits),
+            Self::CanonicalizeBf16Nan { bits } => canonicalize_bf16_helper(bits),
             Self::MaximumF32 => maximum_helper(),
         }
     }
@@ -477,7 +526,7 @@ fn canonicalize_helper(bits: u32) -> String {
 
 /// Returns the deterministic helper symbol for one canonical NaN pattern.
 fn canonicalize_symbol(bits: u32) -> String {
-    format!("{CANONICALIZE_PREFIX}{bits:08x}")
+    format!("{CANONICALIZE_F32_PREFIX}{bits:08x}")
 }
 
 /// Returns whether a bit pattern encodes an IEEE-754 binary32 NaN.
@@ -487,6 +536,90 @@ fn canonicalize_symbol(bits: u32) -> String {
 /// predicate [`canonicalize_helper`] emits, over the same two constants.
 pub(crate) const fn is_f32_nan(bits: u32) -> bool {
     bits & F32_EXPONENT_MASK == F32_EXPONENT_MASK && bits & F32_SIGNIFICAND_MASK != 0
+}
+
+/// Returns the NaN-canonicalization helper for one exact `bfloat16` pattern.
+///
+/// The reasoning is [`canonicalize_helper`]'s and is not repeated: the
+/// predicate is an integer test over the reinterpreted bit pattern, so no
+/// floating-point relaxation licence reaches it under any math mode, and the
+/// helper is still insufficient on its own because `nnan` leaves the arithmetic
+/// that produced a NaN with no defined result to canonicalize.
+///
+/// What differs is the carrier. `bfloat16` is sixteen bits wide, so the
+/// reinterpretation goes through `ushort` rather than `uint`, and the returned
+/// literal needs [`bf16_literal`]'s narrowing conversion. That carrier is the
+/// one the Apple numerical probe harness measured `bfloat` kernels through, so
+/// the emitted text is the shape those measurements were made over rather than
+/// a second spelling of the same idea.
+fn canonicalize_bf16_helper(bits: u16) -> String {
+    let symbol = canonicalize_bf16_symbol(bits);
+    let canonical = bf16_literal(bits);
+    format!(
+        "// Replaces an arithmetic NaN with the canonical pattern {bits:#06x}.\n\
+         //\n\
+         // The predicate is an integer test over the reinterpreted bit pattern rather\n\
+         // than a floating-point one, so no math-mode relaxation licence reaches it.\n\
+         static inline bfloat {symbol}(bfloat value) {{\n\
+         {INDENT}ushort pattern = as_type<ushort>(value);\n\
+         {INDENT}bool nan = (pattern & {BF16_EXPONENT_MASK:#06x}u) == {BF16_EXPONENT_MASK:#06x}u\n\
+         {INDENT}{INDENT}&& (pattern & {BF16_SIGNIFICAND_MASK:#06x}u) != 0x0000u;\n\
+         {INDENT}return nan ? {canonical} : value;\n\
+         }}\n"
+    )
+}
+
+/// Returns the deterministic helper symbol for one canonical `bfloat16` NaN.
+fn canonicalize_bf16_symbol(bits: u16) -> String {
+    format!("{CANONICALIZE_BF16_PREFIX}{bits:04x}")
+}
+
+/// Returns the MSL expression reinterpreting one exact `bfloat16` bit pattern.
+///
+/// The `ushort` conversion is load-bearing rather than decoration. An
+/// unsuffixed MSL integer literal is `uint`, and `as_type` requires its source
+/// and its result to have the same size, so a sixteen-bit pattern has to be
+/// narrowed before it can be reinterpreted — while the `f32` form must *not*
+/// carry a conversion. That is why the two spellings are written separately
+/// instead of being parameterized over a width.
+fn bf16_literal(bits: u16) -> String {
+    format!("as_type<bfloat>(ushort({bits:#06x}u))")
+}
+
+/// Returns whether a bit pattern encodes a `bfloat16` NaN.
+///
+/// The counterpart of [`is_f32_nan`] at the narrower width, over the same two
+/// fields and with the same rule: quietness belongs to the numerical contract,
+/// and emission only refuses a "canonical NaN" that is not a NaN at all. This
+/// is the predicate [`canonicalize_bf16_helper`] emits.
+pub(crate) const fn is_bf16_nan(bits: u16) -> bool {
+    bits & BF16_EXPONENT_MASK == BF16_EXPONENT_MASK && bits & BF16_SIGNIFICAND_MASK != 0
+}
+
+/// Narrows a kernel's declared canonical arithmetic NaN to `bfloat16`.
+///
+/// `NumericalRealization::canonical_arithmetic_nan_bits` is a 32-bit field
+/// while `bfloat16`'s canonical arithmetic NaN is sixteen bits, so a `bf16`
+/// region declares its pattern zero-extended. Both halves are checked: a
+/// payload with any high bit set is not a zero-extended `bfloat16` pattern at
+/// all — reading its low half would silently discard what the producer
+/// declared — and a low half that is not a NaN encoding would make the
+/// "canonicalization" produce a finite or infinite value.
+///
+/// The scheduled-region verifier already requires a `bf16` pointwise region to
+/// declare exactly `CANONICAL_BF16_ARITHMETIC_NAN_BITS`, so neither refusal is
+/// reachable through a verified kernel today. That is why this is written as a
+/// refusal rather than an `expect`, for the same reason `staging_declaration`
+/// refuses an address space the verifier already constrains: a widened producer
+/// contract must stop at this backend, which is the one that would otherwise
+/// emit a helper computing the wrong thing.
+pub(crate) fn bf16_canonical_nan(bits: u32) -> Result<u16, MetalEmitError> {
+    let narrowed = u16::try_from(bits).map_err(|_| MetalEmitError::InvalidCanonicalNan { bits })?;
+    if is_bf16_nan(narrowed) {
+        Ok(narrowed)
+    } else {
+        Err(MetalEmitError::InvalidCanonicalNan { bits })
+    }
 }
 
 /// Returns the bounded presentation digest of canonical identity bytes.
@@ -813,12 +946,43 @@ fn builtin_parameter(builtin: Builtin) -> Result<&'static str, MetalEmitError> {
 /// spelling — and the decision available at that point is a spelling *or* a
 /// refusal, which is why this is fallible rather than total.
 ///
-/// `Bf16` is refused. This backend emits no BF16 constant reinterpretation, no
-/// BF16 NaN canonicalization helper, and no BF16 dispatch route, so a spelling
-/// here would let a BF16 kernel emit source that compiles while the numerical
-/// machinery the emitted code depends on is absent — the vocabulary would look
-/// lowerable at exactly the point it is not. `lower-bf16-to-metal` replaces this
-/// refusal with a spelling together with that machinery, not ahead of it.
+/// `Bf16` spells `bfloat`, and it did not before. The arm was a refusal while
+/// this backend had no BF16 constant reinterpretation and no BF16 NaN
+/// canonicalization helper, because a spelling on its own would have let a BF16
+/// kernel emit source that compiles while the numerical machinery the emitted
+/// code depends on was absent. Both now exist — [`bf16_literal`] and
+/// [`canonicalize_bf16_helper`] — and the target vocabulary carries a measured
+/// `bf16` subnormal row of its own
+/// ([`MetalSubnormalArithmeticFacts`](crate::target::MetalSubnormalArithmeticFacts)),
+/// so a target that states nothing about `bf16` still fails the conformance
+/// claim rather than borrowing a neighbour's fact. The spelling is admissible
+/// because that machinery landed with it, not because the refusal was
+/// inconvenient.
+///
+/// This is a translation fact and not a dispatch claim. That the emitted
+/// `bfloat` module *runs* is a per-target-family measurement the profile owns:
+/// the retained Apple record dispatches `bfloat` on the measured macOS row and
+/// records the iOS Simulator compiling and linking the same module and then
+/// refusing to create a pipeline for it. Emission is the same on both, which is
+/// exactly why the refusal cannot live here.
+///
+/// **Every governed type now has a spelling, so the `Err` arm is currently
+/// vacant, and the signature stays fallible anyway.** This is the seam a
+/// widened `KernelType` lands on: the match is exhaustive over a vocabulary
+/// that is deliberately not `#[non_exhaustive]`, so adding `F16` or `F64` stops
+/// the build here, and the decision available at that point must include
+/// "refuse", which a total signature would have removed while the caller chain
+/// — `parameter_declaration`, `staging_declaration`,
+/// [`KernelEmitter::value_type`], [`KernelEmitter::emit_convert`], and the
+/// translation-unit header — was rewritten to drop the propagation.
+/// [`MetalEmitError::UnsupportedValueType`] is kept for the same reason, and
+/// `the_unspelled_value_type_refusal_keeps_its_rule_and_rendering` exercises its
+/// identifier and rendering directly, so the widening that reaches for it finds
+/// a surface something still checks.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the Err arm is the seam a widened KernelType must land on; see above"
+)]
 pub(crate) const fn msl_type(value_type: KernelType) -> Result<&'static str, MetalEmitError> {
     match value_type {
         KernelType::Bool => Ok("bool"),
@@ -826,7 +990,7 @@ pub(crate) const fn msl_type(value_type: KernelType) -> Result<&'static str, Met
         KernelType::I32 => Ok("int"),
         KernelType::Index => Ok("uint64_t"),
         KernelType::F32 => Ok("float"),
-        KernelType::Bf16 => Err(MetalEmitError::UnsupportedValueType { value_type }),
+        KernelType::Bf16 => Ok("bfloat"),
     }
 }
 
@@ -1246,6 +1410,14 @@ impl KernelEmitter<'_> {
             // The exact bit pattern is emitted, never a decimal rendering, so
             // no literal parsing can round the declared value.
             KernelConstant::F32Bits(bits) => format!("as_type<float>({bits:#010x}u)"),
+            // The same rule at the narrower width, through the carrier the
+            // width forces: an unsuffixed MSL integer literal is `uint` and
+            // `as_type` requires equal sizes, so the pattern is narrowed to
+            // `ushort` first. The declared payload is sixteen bits and is
+            // carried unchanged; nothing here widens it to `f32` and rounds
+            // back, which would be a different value at every pattern the two
+            // roundings disagree on.
+            KernelConstant::Bf16Bits(bits) => bf16_literal(bits),
             _ => {
                 return Err(MetalEmitError::UnsupportedOperation {
                     family: MetalOperationFamily::Constant,
@@ -1290,6 +1462,21 @@ impl KernelEmitter<'_> {
             // would rest the accuracy claim on a reading rather than on a
             // quotation.
             BinaryOp::F32Divide => ("/", Some(MetalFloatArithmeticType::F32)),
+            // The `bfloat` operators, carrying `Bf16` rather than `F32` as the
+            // arithmetic type. The two happen to share a measured subnormal
+            // behaviour on the macOS row, which is exactly why the distinction
+            // has to be made here rather than inferred later: a record that
+            // answered `bf16` from the `f32` entry would look right on that row
+            // and be a guess, and the third measured type disagrees with both.
+            //
+            // There is deliberately no fused form beside them. MSL provides no
+            // `bfloat` overload of `fma` — the call promotes to `float` and the
+            // compiler rejects the narrowing initialization — so a BF16
+            // contraction has nothing to lower to at the source level, and
+            // `design-the-bf16-computation-and-accumulator-contract` owns the
+            // question rather than this backend inventing a promotion.
+            BinaryOp::Bf16Add => ("+", Some(MetalFloatArithmeticType::Bf16)),
+            BinaryOp::Bf16Multiply => ("*", Some(MetalFloatArithmeticType::Bf16)),
             // The one binary construct emitted as a call rather than an
             // operator, because MSL has no operator for it and the intrinsic
             // that looks like one implements a different contract. The helper
@@ -1505,6 +1692,26 @@ impl KernelEmitter<'_> {
                 self.numerical
                     .insert(MetalNumericalRequirement::SafeMathMode);
                 canonicalize_symbol(bits)
+            }
+            ConvertOp::CanonicalizeBf16Nan => {
+                // The `bf16` sibling, and a separate arm rather than a width
+                // parameter on the one above. Reaching the `f32` helper from a
+                // `bfloat` value would canonicalize to a pattern no `bfloat`
+                // can hold, which is the mistake the region verifier's
+                // zero-extension rule exists to make checkable — so the
+                // narrowing is performed here and refuses rather than reading
+                // the low half of whatever the producer declared.
+                let bits =
+                    bf16_canonical_nan(self.kernel.numerical().canonical_arithmetic_nan_bits)?;
+                self.helpers
+                    .insert(MetalHelper::CanonicalizeBf16Nan { bits });
+                // The same operand-side requirement as the `f32` arm: the
+                // emitted predicate is integer-only and survives any math mode,
+                // but `nnan` leaves the arithmetic that produced a NaN with no
+                // defined result to canonicalize.
+                self.numerical
+                    .insert(MetalNumericalRequirement::SafeMathMode);
+                canonicalize_bf16_symbol(bits)
             }
             ConvertOp::U8ToI32 | ConvertOp::I32ToF32 => msl_type(op.result_type())?.to_owned(),
             _ => {
