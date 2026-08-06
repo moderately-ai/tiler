@@ -874,8 +874,11 @@ fn emit_guarded(
             (sole_read_buffer()?, sole_read()?),
             write_buffer,
             invocation,
-            *empty_identity_bits,
-            ReductionPrologue::None,
+            SerialFold {
+                empty_identity_bits: *empty_identity_bits,
+                prologue: ReductionPrologue::None,
+                epilogue: None,
+            },
         ),
         ScalarProgram::FusedMultiplyAddSerialSum {
             scale_bits,
@@ -888,10 +891,13 @@ fn emit_guarded(
             (sole_read_buffer()?, sole_read()?),
             write_buffer,
             invocation,
-            *empty_identity_bits,
-            ReductionPrologue::ScaleBias {
-                scale_bits: *scale_bits,
-                bias_bits: *bias_bits,
+            SerialFold {
+                empty_identity_bits: *empty_identity_bits,
+                prologue: ReductionPrologue::ScaleBias {
+                    scale_bits: *scale_bits,
+                    bias_bits: *bias_bits,
+                },
+                epilogue: None,
             },
         ),
         ScalarProgram::SquaredSerialSum {
@@ -903,8 +909,28 @@ fn emit_guarded(
             (sole_read_buffer()?, sole_read()?),
             write_buffer,
             invocation,
-            *empty_identity_bits,
-            ReductionPrologue::Square,
+            SerialFold {
+                empty_identity_bits: *empty_identity_bits,
+                prologue: ReductionPrologue::Square,
+                epilogue: None,
+            },
+        ),
+        // The same fold, and the epilogue applied to its value before the store.
+        ScalarProgram::SquaredSerialSumThenEpilogue {
+            empty_identity_bits,
+            epilogue,
+            ..
+        } => emit_reduction(
+            builder,
+            plan,
+            (sole_read_buffer()?, sole_read()?),
+            write_buffer,
+            invocation,
+            SerialFold {
+                empty_identity_bits: *empty_identity_bits,
+                prologue: ReductionPrologue::Square,
+                epilogue: Some(epilogue),
+            },
         ),
         ScalarProgram::StrictSerialMaximum { .. } => emit_maximum_reduction(
             builder,
@@ -1476,7 +1502,11 @@ const fn reduction_fold(program: &ScalarProgram) -> Option<ReductionFold> {
             prologue: ReductionPrologue::None,
             combiner: ReductionCombiner::F32Maximum,
         }),
-        ScalarProgram::PointwiseF32(_)
+        // Refused for the reason the schedule verifier refuses the topologies
+        // themselves: the epilogue applies to the complete fold, so a tile's
+        // per-participant share is not a value it may transform.
+        ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+        | ScalarProgram::PointwiseF32(_)
         | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictTensorContraction { .. } => None,
@@ -1519,6 +1549,23 @@ impl ReductionCombiner {
             Self::F32Maximum => BinaryOp::F32Maximum,
         }
     }
+}
+
+/// What one serial fold computes, as opposed to where it reads and writes.
+///
+/// Carried as one value because the three travel together at every emission
+/// site: a family's per-contributor prologue, the value it commits over an empty
+/// domain, and the chain it applies to the folded value are its *arithmetic*,
+/// while the buffers, the invocation, and the plan are its placement. Passing
+/// them separately made the emitter's argument list one no reader could scan.
+#[derive(Clone, Copy, Debug)]
+struct SerialFold<'a> {
+    /// Empty-reduction identity bit pattern the scalar program declares.
+    empty_identity_bits: u32,
+    /// Expression applied to each contributor before it is combined.
+    prologue: ReductionPrologue,
+    /// Chain applied to the folded value before it is committed, if any.
+    epilogue: Option<&'a PointwiseF32Expression>,
 }
 
 /// The elementwise expression applied to each contributor before the fold.
@@ -1800,15 +1847,35 @@ fn emit_prologue(
     }
 }
 
+/// Emits the guarded body of one serial fold, with its per-contributor prologue
+/// and — where the family carries one — the epilogue over the folded value.
+///
+/// **The epilogue is applied on every path out of the fold, including the empty
+/// one.** The program is "fold, then epilogue", so what the epilogue transforms
+/// is whatever the fold's value is: the identity constant over an empty
+/// contributor domain, the seed over a singleton, the accumulator otherwise.
+/// Applying it on two of the three paths would make the empty and singleton cases
+/// compute different functions from the general one, which no scalar program in
+/// this vocabulary states.
+///
+/// It emits no result-boundary canonicalization of its own: every node
+/// [`emit_pointwise`] emits is already followed by one, so the value the store
+/// receives carries the canonical payload — and an epilogue that computes
+/// *something* is what the schedule verifier requires, so the "no nodes at all"
+/// case where that would not hold is unreachable.
 fn emit_reduction(
     builder: &mut KernelBuilder,
     plan: &CanonicalPlan<'_>,
     read: (KernelBufferId, BoundsWitnessId),
     write_buffer: KernelBufferId,
     invocation: KernelValueId,
-    empty_identity_bits: u32,
-    prologue: ReductionPrologue,
+    fold: SerialFold<'_>,
 ) -> Result<(), KernelBuildError> {
+    let SerialFold {
+        empty_identity_bits,
+        prologue,
+        epilogue,
+    } = fold;
     let (read_buffer, read_bounds) = read;
     let addressing = plan
         .addressing
@@ -1818,6 +1885,7 @@ fn emit_reduction(
         })?;
     if plan.contributors == 0 {
         let identity = builder.constant(KernelConstant::F32Bits(empty_identity_bits))?;
+        let identity = emit_fold_epilogue(builder, identity, epilogue)?;
         return builder.store(
             write_buffer,
             invocation,
@@ -1873,6 +1941,7 @@ fn emit_reduction(
             .get(0)
             .ok_or(KernelBuildError::EmptyLoopAccumulators)?
     };
+    let total = emit_fold_epilogue(builder, total, epilogue)?;
     builder.store(
         write_buffer,
         invocation,
@@ -1880,6 +1949,24 @@ fn emit_reduction(
         plan.write_bounds,
         plan.ownership,
     )
+}
+
+/// Applies one fold's epilogue to its value, or returns the value unchanged.
+///
+/// The folded value is bound to input ordinal zero, which is the sole leaf the
+/// schedule verifier admits: this region reads one boundary tensor and the
+/// epilogue names none, so the ordinal indexes the fold's own accumulator rather
+/// than a loaded buffer. A second leaf finds no value and is reported as an
+/// invalid handle rather than reading whichever one sits beside it.
+fn emit_fold_epilogue(
+    builder: &mut KernelBuilder,
+    value: KernelValueId,
+    epilogue: Option<&PointwiseF32Expression>,
+) -> Result<KernelValueId, KernelBuildError> {
+    match epilogue {
+        Some(expression) => emit_pointwise(builder, expression, &[value]),
+        None => Ok(value),
+    }
 }
 
 /// Emits the guarded body of one strict serial `Maximum` reduction.

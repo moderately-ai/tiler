@@ -900,6 +900,7 @@ fn body_shaping_vocabulary_is_closed(
             ScalarProgram::StrictSerialSum { .. } => "strict-serial-sum",
             ScalarProgram::FusedMultiplyAddSerialSum { .. } => "fused-multiply-add-serial-sum",
             ScalarProgram::SquaredSerialSum { .. } => "squared-serial-sum",
+            ScalarProgram::SquaredSerialSumThenEpilogue { .. } => "squared-serial-sum-epilogue",
             ScalarProgram::StrictTensorContraction { .. } => "strict-tensor-contraction",
             ScalarProgram::StrictSerialMaximum { .. } => "strict-serial-maximum",
         },
@@ -3533,6 +3534,168 @@ fn the_extrema_fold_lowers_to_a_bounded_loop_combining_with_a_maximum() {
     .expect("the bare sum lowers");
     assert_eq!(binary_op_counts(&sum, BinaryOp::F32Maximum), 0);
     assert_eq!(binary_op_counts(&sum, BinaryOp::F32Add), 1);
+}
+
+/// A `[2, 3] -> [2]` squaring fold, with or without the scale epilogue.
+///
+/// Two fixtures from one constructor, so the epilogue is the *only* difference
+/// between the region the test measures and its control — a second constructor
+/// could drift in a field the assertion then attributes to the epilogue.
+fn squared_fold_region(id: RegionId, epilogue: bool) -> VerifiedScheduledRegion {
+    let input = Shape::from_dims([2, 3]);
+    let axes = [Axis::new(1)];
+    let output = input.without_axes(&axes);
+    let output_elements = crate::schedule::element_count(&output).expect("bounded fixture shape");
+    let tensor = TensorRole::Input {
+        ordinal: InputOrdinal::FIRST,
+    };
+    let scalar = if epilogue {
+        let mut chain = crate::schedule::PointwiseF32ExpressionBuilder::new();
+        let total = chain.input(InputOrdinal::FIRST).unwrap();
+        let extent = chain.constant(3.0_f32.to_bits()).unwrap();
+        let mean = chain.divide(total, extent).unwrap();
+        let bias = chain.constant(1.0e-6_f32.to_bits()).unwrap();
+        let biased = chain.add(mean, bias).unwrap();
+        let root = chain.rsqrt(biased).unwrap();
+        ScalarProgram::SquaredSerialSumThenEpilogue {
+            axes: axes.to_vec(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+            empty_identity_bits: 0.0_f32.to_bits(),
+            epilogue: chain.build(root).unwrap(),
+        }
+    } else {
+        ScalarProgram::SquaredSerialSum {
+            axes: axes.to_vec(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        }
+    };
+    let mut builder = ScheduledRegionBuilder::new(id);
+    builder.iteration_shape(output.clone()).unwrap();
+    builder
+        .push_access(Access {
+            tensor,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ReductionContributor {
+                input_shape: input.clone(),
+                output_shape: output.clone(),
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor,
+            component_role: None,
+            kind: BoundsProofKind::ReductionDomain {
+                input_shape: input,
+                output_shape: output,
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder.scalar_program(scalar).unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(KernelSchedule {
+            reduction: ReductionTopology::Serial {
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            ..linear_schedule(output_elements, OwnershipWitnessId::new(0))
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// A fold's epilogue is emitted once, after the fold and before the store.
+///
+/// **Once per output position, not once per contributor**, which is the whole
+/// reason the epilogue belongs to this region rather than to the pass that
+/// consumes its result: the division, the bias, and the reciprocal square root
+/// each appear exactly once in the body while the squaring multiply appears
+/// twice — once at the seed and once in the loop. A lowering that had put the
+/// chain inside the contributor loop would emit one of each per contributor and
+/// compute the same value `N` times per row.
+///
+/// The bare squaring fold over the same shape is the control: the identical
+/// region with the chain absent, so every count that differs is the epilogue's.
+#[test]
+fn a_folds_epilogue_is_emitted_once_after_the_fold() {
+    let scheduled = squared_fold_region(RegionId::new(34), true);
+    let kernel = lower_scheduled_region(&scheduled).expect("the epilogue-carrying region lowers");
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Divide),
+        1,
+        "the mean division is per folded row, not per contributor",
+    );
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Add),
+        2,
+        "one combine inside the loop and one bias addition after it",
+    );
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Multiply),
+        2,
+        "the squaring prologue, at the seed and in the loop",
+    );
+
+    let bare = lower_scheduled_region(&squared_fold_region(RegionId::new(34), false))
+        .expect("the bare squaring fold lowers");
+    assert_eq!(binary_op_counts(&bare, BinaryOp::F32Divide), 0);
+    assert_eq!(
+        binary_op_counts(&bare, BinaryOp::F32Add),
+        1,
+        "the combine alone, so the second addition above is the bias",
+    );
+    assert_eq!(
+        binary_op_counts(&bare, BinaryOp::F32Multiply),
+        2,
+        "the same squaring prologue, so the difference above is the epilogue alone",
+    );
+    assert_ne!(
+        kernel.canonical_identity().as_bytes(),
+        bare.canonical_identity().as_bytes(),
+    );
 }
 
 /// The appended binary tag separates kernel identity from the addition's.

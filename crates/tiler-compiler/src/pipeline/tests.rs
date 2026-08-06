@@ -2494,57 +2494,64 @@ fn every_cover_region_receives_a_proposal_or_a_typed_decline() {
     );
 }
 
-/// A registered staged family reaches its own lowering through `compile()`, and
-/// the one wall that is left is named on every region that hits it.
+/// A registered staged family's stages are both spelled by scheduled regions,
+/// and the one wall left is the kernel program's own.
 ///
-/// **This is where the recognizer half of
-/// [`admit-the-registered-elementary-families-as-recognizable-program-stages`]
-/// is measured, and the measurement has three parts.** The program is
-/// `rms_norm(value, weight) * value`: a registered elementary family as a
-/// program stage a later elementwise pass consumes.
+/// **The program is `rms_norm(value, weight) * value`**: a registered elementary
+/// family as a program stage a later elementwise pass consumes. Three facts are
+/// measured, and the third is what
+/// [`admit-a-scheduled-region-for-a-staged-elementary-family`] moved.
 ///
-/// *It is recognized.* Before, `select_supported_strategy` refused it under
-/// `operation-set` and nothing below the request boundary ran at all. Now the
-/// occurrence resolves its index-access capability and `refine_index_region`
-/// proves `GovernedRootMeanSquareScaleF32`'s emitted chain realizes it — a
-/// two-stage realization handing one value on — which is the family's own
-/// lowering reaching the compile path for the first time.
+/// *It is recognized and its own lowering runs.* The occurrence resolves its
+/// index-access capability and `refine_index_region` proves
+/// `GovernedRootMeanSquareScaleF32`'s emitted chain realizes it — a two-stage
+/// realization handing one value on.
 ///
-/// *The stage split is region formation's and the cover search sees it.* The
-/// staged occurrence enumerates one candidate per realization stage, so regions
-/// carrying one stage of it are proposed to the physical provider.
+/// *Both stages are spelled.* The producing stage is a
+/// [`ScalarProgram::SquaredSerialSumThenEpilogue`] region over the reduced
+/// domain, the consuming stage a pointwise pass reading the handed value at its
+/// kept coordinates, and both are answered with an implementation — so
+/// `region-staged-family-unspellable` no longer appears anywhere in the trace.
+/// The only regions still declining are the two that group a stage of the
+/// normalization with the consuming multiply, which no recognized partition
+/// owns.
 ///
-/// *The remaining refusal names its wall.* Every region a staged output owns
-/// declines under `region-staged-family-unspellable`, which is
-/// [`crate::physical::RegionVocabularyWall::StagedFamilyUnspellable`] and names
-/// the scheduled-region vocabulary rather than the cover. The epilogue region is
-/// answered with an implementation in the same run, which is what makes the
-/// decline a statement about the staged stages rather than about this program.
+/// *The refusal that remains belongs to program scope, not to the region
+/// vocabulary.* A complete plan is now selected and assembled, and the assembler
+/// refuses it by name: the consuming stage covers no occurrence's *first*
+/// attribution atom, and `tiler_ir::program` admits exactly two accounts for such
+/// a dispatch — a declared split's final pass and a declared publishing copy's
+/// publisher. A staged realization's later stage is a third, and no declaration
+/// states it. The class is a **missing compilation capability** naming the
+/// region, which is the honest one: the plan is valid and its cover is a verified
+/// authority; what is absent is a declaration this assembler cannot make.
+/// [`account-for-a-staged-realization-stage-in-the-kernel-program`] owns it.
 ///
-/// The check that can say no: reverting the staged arm of `spell_output` to
-/// `None` makes every one of those regions decline under
-/// `region-partial-coverage` instead, and the wall map below fails.
+/// The check that can say no: reverting `spell_staged` to answer
+/// `StagedFamilyUnspellable` for both stages puts the three walls back and no
+/// plan completes, so both the wall map and the failure class below fail.
 ///
-/// [`admit-the-registered-elementary-families-as-recognizable-program-stages`]: ../../../tickets/admit-the-registered-elementary-families-as-recognizable-program-stages.md
+/// [`admit-a-scheduled-region-for-a-staged-elementary-family`]: ../../../tickets/admit-a-scheduled-region-for-a-staged-elementary-family.md
+/// [`account-for-a-staged-realization-stage-in-the-kernel-program`]: ../../../tickets/account-for-a-staged-realization-stage-in-the-kernel-program.md
 #[test]
-fn a_staged_family_program_reaches_its_lowering_and_names_the_vocabulary_wall() {
+fn a_staged_family_program_spells_both_stages_and_names_the_program_scope_wall() {
     let semantic = staged_family_program();
-    let product = compile(CompilationRequest::governed(&semantic))
-        .expect("a target-local refusal is an ordered outcome");
-    let CompileError::Explained { source, explain } = product.targets[0]
-        .failure()
-        .expect("no scheduled region spells the staged stages, so no plan completes")
-    else {
-        panic!("target compilation failures retain their explain trace");
+    // A missing *capability* is a property of the program and this compiler
+    // rather than of one target, so it reaches the caller rather than sitting in
+    // a target slot: `compile_candidate_target` retains only a `NoFeasiblePlan`
+    // as a candidate-local failure. The trace travels with it either way.
+    let error = compile(CompilationRequest::governed(&semantic))
+        .expect_err("no program-scope account admits the consuming stage");
+    let CompileError::Explained { source, explain } = &error else {
+        panic!("an explained refusal retains its trace, observed {error:?}");
     };
     assert!(
         matches!(
             source.as_ref(),
-            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(
-                SelectionError::Structure {
-                    rule: "no-complete-plan"
-                }
-            ))
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "program-assembly",
+                rule: "realization-stage-unaccounted",
+            })
         ),
         "observed {source:?}",
     );
@@ -2573,8 +2580,8 @@ fn a_staged_family_program_reaches_its_lowering_and_names_the_vocabulary_wall() 
         "exactly one occurrence refines as a region sequence, and it has two stages",
     );
 
-    // Every region the staged output owns declined by name, and the region the
-    // vocabulary does spell was implemented.
+    // Both stages of the staged occurrence were answered with implementations,
+    // beside the epilogue that consumes their result.
     let attributions = region_attributions(explain);
     let mut answered: Vec<&str> = attributions
         .values()
@@ -2582,7 +2589,7 @@ fn a_staged_family_program_reaches_its_lowering_and_names_the_vocabulary_wall() 
         .map(|attribution| attribution.role.as_str())
         .collect();
     answered.sort_unstable();
-    assert_eq!(answered, ["epilogue"]);
+    assert_eq!(answered, ["epilogue", "staged-family", "staged-family"]);
     let walls: BTreeMap<&str, usize> = attributions
         .values()
         .filter_map(|attribution| attribution.declined_baseline.as_deref())
@@ -2593,13 +2600,13 @@ fn a_staged_family_program_reaches_its_lowering_and_names_the_vocabulary_wall() 
     assert_eq!(
         walls,
         BTreeMap::from([
-            // The fold alone, the pass alone, and the two together.
-            ("region-staged-family-unspellable", 3),
-            // Two regions grouping a stage of the normalization with the
-            // consuming multiply, which no recognized partition owns.
+            // The region carrying *both* stages, which no scheduled region
+            // computes, and the two grouping a stage of the normalization with
+            // the consuming multiply, which no recognized partition owns.
+            ("region-staged-family-unspellable", 1),
             ("region-partial-coverage", 2),
         ]),
-        "the staged regions no longer name the wall they hit",
+        "the staged stages no longer reach an implementation",
     );
     assert_eq!(
         attributions
@@ -2609,6 +2616,124 @@ fn a_staged_family_program_reaches_its_lowering_and_names_the_vocabulary_wall() 
         3,
         "three of the six candidates are regions of the staged occurrence alone",
     );
+}
+
+/// The two staged regions compute the normalization, bit for bit.
+///
+/// **The vocabulary's own measurement, and it is bit-exact rather than close.**
+/// The producing stage folds `x²` over the reduced axis and applies
+/// `Rsqrt(a / N + eps)` to the fold's value; the consuming stage reads both
+/// operands and that handed value at its kept coordinates and writes
+/// `w * (x * r)`. Interpreting the two kernels in order and comparing against
+/// `tiler-reference`'s own normalization is what says the regions realize the
+/// operation rather than something algebraically nearby — the reference divides
+/// by the extent rather than by a reciprocal and certifies its reciprocal square
+/// root against an exact rational enclosure, so a spelling that rounded a
+/// different number of times disagrees in bits.
+///
+/// **The regions come from the compile path's own builders**, driven by the same
+/// verified request `compile()` builds, and each is resubmitted through
+/// `verify_schedule` — the checked path that runs intrinsic verification, the
+/// numerical-realization comparison, the request-subject binding, and target
+/// feasibility. So this measures what the compiler would dispatch rather than a
+/// hand-built region that happens to agree.
+///
+/// It stops at the regions because the program they belong to does not assemble:
+/// [`a_staged_family_program_spells_both_stages_and_names_the_program_scope_wall`]
+/// states and owns that boundary.
+///
+/// The check that can say no: exchanging the pass expression's two multiplies —
+/// `x * (w * r)` for `w * (x * r)` — is one function in exact arithmetic and two
+/// in binary32, and the bit comparison fails on this fixture.
+#[test]
+fn the_staged_regions_compute_the_normalization_bit_for_bit() {
+    let shape = Shape::from_dims([2, 2]);
+    // Chosen so every rounding is observable: no row's sum of squares is a power
+    // of two, so `a / N + eps` is inexact and its reciprocal square root is not
+    // representable, and the two multiplies do not associate.
+    let value: Vec<f32> = vec![1.0, 3.0, 7.0, 0.5];
+    let weight: Vec<f32> = vec![0.25, 11.0, 0.125, 5.0];
+
+    let semantic = staged_norm_only_program();
+    let verified = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verified.for_target(verified.target_profiles()[0]).unwrap();
+    let staged = request
+        .sole_output()
+        .staged()
+        .expect("the declared output is the normalization occurrence");
+
+    let (fold, fold_members) = crate::physical::staged_fold_region(
+        &request,
+        staged,
+        crate::physical::RegionWrite::Materialized,
+    );
+    let fold = crate::physical::verify_schedule(fold, fold_members, &request)
+        .expect("the producing stage passes the checked verification path");
+    let (pass, pass_members) = crate::physical::staged_pass_region(
+        &request,
+        staged,
+        crate::physical::RegionWrite::ProgramOutput,
+    );
+    let pass = crate::physical::verify_schedule(pass, pass_members, &request)
+        .expect("the consuming stage passes the checked verification path");
+
+    // One invocation per folded row: the producing stage iterates the reduced
+    // domain, which is what makes its epilogue a per-row computation.
+    assert_eq!(fold.region().schedule.work_items, 2);
+    assert_eq!(pass.region().schedule.work_items, 4);
+
+    let fold_kernel = lower_structured_kernel(&fold).expect("the producing stage lowers");
+    let pass_kernel = lower_structured_kernel(&pass).expect("the consuming stage lowers");
+    let root = interpret_fused_inputs(&fold_kernel, &[&value]);
+    // The consuming stage's buffers in its own access order: the two declared
+    // inputs by ascending ordinal, then the handed value. That order is the
+    // region's rather than this test's — the assertion below is what would fail
+    // if the builder bound them differently.
+    let actual = interpret_fused_inputs(&pass_kernel, &[&value, &weight, &root]);
+
+    let value_key = InputKey::new("value").unwrap();
+    let weight_key = InputKey::new("weight").unwrap();
+    let value_tensor = f32_tensor(shape.clone(), &value);
+    let weight_tensor = f32_tensor(shape, &weight);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(
+            &semantic,
+            &[
+                InputBinding::new(&value_key, &value_tensor),
+                InputBinding::new(&weight_key, &weight_tensor),
+            ],
+        )
+        .unwrap();
+    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
+}
+
+/// `rms_norm(value, weight)` over `[2, 2]` reduced on axis one, published.
+///
+/// The normalization as the whole declared output rather than as a chain's
+/// producer, so the consuming stage writes the program output and the fixture
+/// measures the two staged regions alone.
+fn staged_norm_only_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let shape = Shape::from_dims([2, 2]);
+    let value = builder
+        .input::<F32>(InputKey::new("value").unwrap(), shape.clone())
+        .unwrap();
+    let weight = builder
+        .input::<F32>(InputKey::new("weight").unwrap(), shape)
+        .unwrap();
+    let normalized = tiler_ir::semantic::F32RmsNorm::apply(
+        &mut builder,
+        value,
+        weight,
+        Axis::new(1),
+        1.0e-6_f32.to_bits(),
+    )
+    .unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), normalized)
+        .unwrap();
+    builder.build().unwrap()
 }
 
 /// `rms_norm(value, weight) * value` over `[2, 2]` reduced on axis one.

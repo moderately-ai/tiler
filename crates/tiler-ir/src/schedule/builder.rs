@@ -439,8 +439,13 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
             };
             verify_pointwise_bf16(region, expression, reads, write)
         }
+        // A fold carrying an epilogue reads one tensor like every other fold: the
+        // epilogue's own leaf is the folded value rather than a boundary, which
+        // is why it joins this group instead of the pointwise one whose read
+        // count is its expression's leaf count.
         ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
+        | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
         | ScalarProgram::StrictSerialMaximum { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
             let [read, write] = region.index.accesses.as_slice() else {
@@ -1062,6 +1067,61 @@ fn verify_access_and_semantics(
             && input_shape.without_axes(axes) == *output_shape
             && read.tensor == FIRST_INPUT
             && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
+        // The squaring fold that carries its own epilogue. Every fold obligation
+        // above is repeated here — the arm is the `SquaredSerialSum` one, and the
+        // epilogue does not change what the *fold* reads or writes — plus the two
+        // this variant owns:
+        //
+        // - **One leaf, which is the folded value.** This region reads one
+        //   boundary tensor, so an epilogue with a second leaf would name a buffer
+        //   nothing binds; the lowering supplies the accumulator for ordinal zero
+        //   and has nothing to supply for ordinal one.
+        // - **The epilogue must transform something.** A root that *is* the input
+        //   leaf computes nothing, which is a second spelling of
+        //   `SquaredSerialSum` and would give one program two identities.
+        //
+        // `is_valid` is required beside them for the reason a pointwise region
+        // requires it: the expression arrives from a producer, and a malformed one
+        // would reach the lowering as a forward reference or an unreachable node.
+        (
+            ScalarProgram::SquaredSerialSumThenEpilogue {
+                axes,
+                order,
+                empty_identity_bits,
+                epilogue,
+                ..
+            },
+            ReductionTopology::Serial {
+                axes: scheduled_axes,
+                order: scheduled_order,
+                permits_reassociation,
+                permits_permutation,
+            },
+            LogicalAccess::ReductionContributor {
+                input_shape,
+                output_shape,
+                axes: access_axes,
+                order: access_order,
+            },
+        ) if axes == scheduled_axes
+            && axes == access_axes
+            && order == scheduled_order
+            && order == access_order
+            && *permits_reassociation == numerical.permits_reassociation()
+            && *permits_permutation == numerical.permits_permutation()
+            && *empty_identity_bits == 0.0_f32.to_bits()
+            && output_shape == &region.index.iteration_shape
+            && input_shape.without_axes(axes) == *output_shape
+            && read.tensor == FIRST_INPUT
+            && CommittedTensor::CoverAssigned.admits(write.tensor)
+            && epilogue.is_valid()
+            && epilogue.input_count() == 1
+            && !matches!(
+                epilogue
+                    .nodes()
+                    .get(usize::try_from(epilogue.root().index()).unwrap_or(usize::MAX)),
+                Some(super::pointwise::PointwiseF32Node::Input { .. })
+            ) => {}
         // The extrema fold. Every obligation the sums carry is carried here too
         // *except* the empty-domain identity, which this family has no field for
         // and no correct value of — the non-emptiness check below replaces it.
@@ -1307,8 +1367,16 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
                 ReductionPass::Final => TensorRole::Intermediate,
             }),
         }),
-        // No pointwise program folds anything, at either width.
-        ScalarProgram::PointwiseF32(_)
+        // One answer, two different reasons. **A fold carrying an epilogue admits
+        // no pass of a split**, and that refusal is the program's algebra rather
+        // than caution: the epilogue applies to the *complete* fold, so a partial
+        // pass applying it would transform a fragment and one that did not would
+        // be an ordinary `SquaredSerialSum` wearing this variant's name — a split
+        // of this family is two scalar programs rather than one partitioned,
+        // which no split this vocabulary states can express. **And no pointwise
+        // program folds anything**, at either width.
+        ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+        | ScalarProgram::PointwiseF32(_)
         | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictTensorContraction { .. } => None,
@@ -1384,8 +1452,14 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
             consumes_reassociation: false,
             read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
         }),
-        // No pointwise program folds anything, at either width.
-        ScalarProgram::PointwiseF32(_)
+        // One answer, two different reasons, as in [`multi_pass_family`]. **A fold
+        // carrying an epilogue** applies it to the complete fold, so a
+        // participant's share is not a value it may be applied to, and a tile
+        // that applied it once at the end would still have staged partials of a
+        // program this variant does not name. **And no pointwise program folds
+        // anything**, at either width.
+        ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+        | ScalarProgram::PointwiseF32(_)
         | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictTensorContraction { .. } => None,
@@ -2460,7 +2534,6 @@ mod tests {
     use std::fmt::Write as _;
 
     use crate::schedule::MAX_COOPERATIVE_PARTICIPANT_RANK;
-    use crate::schedule::PointwiseF32ExpressionBuilder;
     use crate::schedule::cooperative::{
         AntiDependencyEdge, CooperativePhase, CooperativeTile, LocalCoordinateSource,
         LocalCoordinates, ParticipantRange, ParticipantSpace, StagedElement, StagedRead,
@@ -2478,6 +2551,7 @@ mod tests {
         FencedSpaces, MemoryOrdering, SynchronizationKind, SynchronizationPlacement,
         SynchronizationPoint, SynchronizationScope, SynchronizationSubject,
     };
+    use crate::schedule::{PointwiseF32Expression, PointwiseF32ExpressionBuilder};
     use crate::shape::{Axis, Shape};
 
     /// Recorded canonical identity of the strict-`f32` pointwise test region.
@@ -3619,6 +3693,175 @@ mod tests {
         builder
     }
 
+    /// The scale a root-mean-square normalization's producing stage computes.
+    ///
+    /// `Rsqrt(a / N + eps)` over the fold's value, which is input ordinal zero.
+    /// The shipped instance of a fold epilogue, spelled here from the physical
+    /// vocabulary rather than from any law: what this module verifies is the
+    /// *schedule*, and it has no opinion on which semantic operation the chain
+    /// realizes.
+    fn scale_epilogue() -> PointwiseF32Expression {
+        let mut builder = PointwiseF32ExpressionBuilder::new();
+        let total = builder.input(InputOrdinal::FIRST).unwrap();
+        let extent = builder.constant(6.0_f32.to_bits()).unwrap();
+        let mean = builder.divide(total, extent).unwrap();
+        let bias = builder.constant(1.0e-6_f32.to_bits()).unwrap();
+        let biased = builder.add(mean, bias).unwrap();
+        let root = builder.rsqrt(biased).unwrap();
+        builder.build(root).unwrap()
+    }
+
+    /// The squaring fold carrying that epilogue, over the shared fixture shape.
+    fn squared_sum_with_epilogue(epilogue: PointwiseF32Expression) -> ScalarProgram {
+        ScalarProgram::SquaredSerialSumThenEpilogue {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+            epilogue,
+        }
+    }
+
+    /// A squaring fold carrying an epilogue verifies as a serial pass.
+    ///
+    /// The control every refusal below is stated against: the fold's own
+    /// obligations are the squaring sum's, unchanged, and the epilogue adds two
+    /// of its own without changing what the region reads or writes — one read of
+    /// the contributor domain, one owning write.
+    #[test]
+    fn a_fold_carrying_an_epilogue_verifies_as_a_serial_pass() {
+        let region = serial_reduction_builder(squared_sum_with_epilogue(scale_epilogue()))
+            .build()
+            .expect("a squaring fold with a scalar epilogue verifies");
+        assert!(matches!(
+            region.region().index.scalar_program,
+            ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+        ));
+        // One read and one write, exactly as the bare fold declares: the
+        // epilogue's leaf is the folded value, so it binds no buffer.
+        assert_eq!(region.region().index.accesses.len(), 2);
+        assert_eq!(region.requirements().buffer_bindings, 2);
+    }
+
+    /// An epilogue that computes nothing is refused rather than admitted.
+    ///
+    /// **The canonicality rule this variant owes.** An expression whose root is
+    /// its own input leaf returns the fold's value unchanged, which is exactly
+    /// what [`ScalarProgram::SquaredSerialSum`] computes — so admitting it would
+    /// give one program two spellings and two canonical identities, and a cache
+    /// holding either would miss the other for the same computation.
+    #[test]
+    fn a_fold_epilogue_that_computes_nothing_is_refused() {
+        let mut builder = PointwiseF32ExpressionBuilder::new();
+        let leaf = builder.input(InputOrdinal::FIRST).unwrap();
+        let identity = builder.build(leaf).unwrap();
+        assert_eq!(
+            serial_reduction_builder(squared_sum_with_epilogue(identity))
+                .build()
+                .unwrap_err()
+                .diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+        );
+    }
+
+    /// An epilogue naming a second input is refused rather than bound.
+    ///
+    /// A fold region reads exactly one boundary tensor, and the epilogue's sole
+    /// ordinal is the folded value rather than a buffer — so a second leaf names
+    /// an input nothing binds, and the lowering would have no value to supply for
+    /// it. Refusing it here is what keeps that from being a handle error deep in
+    /// the kernel builder.
+    #[test]
+    fn a_fold_epilogue_reading_a_second_input_is_refused() {
+        let mut builder = PointwiseF32ExpressionBuilder::new();
+        let total = builder.input(InputOrdinal::FIRST).unwrap();
+        let other = builder.input(InputOrdinal::new(1)).unwrap();
+        let sum = builder.add(total, other).unwrap();
+        let two_leaves = builder.build(sum).unwrap();
+        assert_eq!(two_leaves.input_count(), 2);
+        assert_eq!(
+            serial_reduction_builder(squared_sum_with_epilogue(two_leaves))
+                .build()
+                .unwrap_err()
+                .diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+        );
+    }
+
+    /// A fold carrying an epilogue does not share identity with the bare fold.
+    ///
+    /// The two regions differ in nothing but their scalar program — same access
+    /// relation, same contributor order, same numerical realization — so an
+    /// appended tag that had collided with `0x26` would make these equal. It is
+    /// the check behind "the schedule domain did not step": the new tag
+    /// separates, and every earlier tag keeps its meaning.
+    ///
+    /// The second pair separates two *epilogues*: a chain dividing by six and one
+    /// dividing by seven are different functions, so the expression payload has
+    /// to reach the identity bytes rather than only the tag.
+    #[test]
+    fn a_fold_epilogue_separates_scheduled_region_identity() {
+        let bare = serial_reduction_builder(ScalarProgram::SquaredSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        })
+        .build()
+        .unwrap();
+        let scaled = serial_reduction_builder(squared_sum_with_epilogue(scale_epilogue()))
+            .build()
+            .unwrap();
+        assert_ne!(
+            bare.canonical_identity().as_bytes(),
+            scaled.canonical_identity().as_bytes(),
+        );
+
+        let mut other = PointwiseF32ExpressionBuilder::new();
+        let total = other.input(InputOrdinal::FIRST).unwrap();
+        let extent = other.constant(7.0_f32.to_bits()).unwrap();
+        let mean = other.divide(total, extent).unwrap();
+        let bias = other.constant(1.0e-6_f32.to_bits()).unwrap();
+        let biased = other.add(mean, bias).unwrap();
+        let root = other.rsqrt(biased).unwrap();
+        let seventh =
+            serial_reduction_builder(squared_sum_with_epilogue(other.build(root).unwrap()))
+                .build()
+                .unwrap();
+        assert_ne!(
+            scaled.canonical_identity().as_bytes(),
+            seventh.canonical_identity().as_bytes(),
+        );
+    }
+
+    /// No parallel topology may split a fold that carries an epilogue.
+    ///
+    /// **The refusal is the family's algebra rather than caution.** The epilogue
+    /// applies to the *complete* fold, so a partial pass applying it would
+    /// transform a fragment and one that did not would be computing
+    /// [`ScalarProgram::SquaredSerialSum`] under this variant's name. Both split
+    /// admissions therefore answer `None` for it, and the topology is refused at
+    /// the same rule an unadmitted family is.
+    #[test]
+    fn a_fold_carrying_an_epilogue_admits_no_parallel_topology() {
+        let scalar = squared_sum_with_epilogue(scale_epilogue());
+        assert!(multi_pass_family(&scalar, ReductionPass::Partial).is_none());
+        assert!(multi_pass_family(&scalar, ReductionPass::Final).is_none());
+        assert!(cooperative_family(&scalar).is_none());
+
+        // Stated against a partial pass that is otherwise *correct*: the fixture
+        // is the squaring fold's own verified partial pass with its scalar
+        // program exchanged for the epilogue-carrying one, so the family is the
+        // only difference between an admitted region and this refusal.
+        let mut split = squared_partial_pass_builder(SPLIT);
+        split.scalar_program = Some(squared_sum_with_epilogue(scale_epilogue()));
+        assert_eq!(
+            split.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a fold whose epilogue applies to the whole value has no partial pass",
+        );
+    }
+
     /// The extrema fold this family embeds, over the shared fixture shape.
     fn maximum_scalar() -> ScalarProgram {
         ScalarProgram::StrictSerialMaximum {
@@ -4436,7 +4679,7 @@ mod tests {
     ///
     /// Named and returned as a population rather than asserted one family at a
     /// time, so the test below counts what it covered: a write rule that reached
-    /// three of these four would otherwise pass a spot check and leave the fourth
+    /// three of these five would otherwise pass a spot check and leave the rest
     /// silently narrower.
     fn serial_fold_families() -> Vec<(&'static str, ScalarProgram)> {
         let axes = vec![Axis::new(1)];
@@ -4451,6 +4694,10 @@ mod tests {
                     canonical_nan_bits: 0x7fc0_0000,
                     empty_identity_bits: 0.0_f32.to_bits(),
                 },
+            ),
+            (
+                "squaring prologue with an epilogue",
+                squared_sum_with_epilogue(scale_epilogue()),
             ),
             (
                 "scale-bias prologue",
@@ -4472,7 +4719,7 @@ mod tests {
     /// **The widening, and its exact width.** Where a fold's result goes is a
     /// property of the surrounding cover and not of the fold: `sum(x * x)` whose
     /// value the caller asked for and the same fold whose value an epilogue
-    /// scales are one computation committing to two boundary tensors. All four
+    /// scales are one computation committing to two boundary tensors. All five
     /// families widen together because none of their algebras distinguishes the
     /// two — admitting only the bare sum would say a squaring prologue's result
     /// is inherently the program's answer, which is false, and would leave the
@@ -4487,8 +4734,8 @@ mod tests {
         let families = serial_fold_families();
         assert_eq!(
             families.len(),
-            4,
-            "the serial match has four fold arms, and each must be driven",
+            5,
+            "the serial match has five fold arms, and each must be driven",
         );
         for (name, scalar) in families {
             assert!(

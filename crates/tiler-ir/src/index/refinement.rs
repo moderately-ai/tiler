@@ -46,10 +46,11 @@ use super::{
     CanonicalIndexRegionIdentity, CanonicalIndexRegionSequenceIdentity,
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity,
     FrozenScalarRegistry, IndexDomainPredicate, IndexDomainUnknownReason, IndexExprView,
-    IndexExtentRef, IndexInteger, MAX_BOUNDARY_TENSORS, ScalarAuthorityEvidence, ScalarOpKey,
-    ScalarRegistryError, StagedInputSource, TensorRole, UnknownIndexDomainPredicate,
-    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedIndexRegion,
-    VerifiedIndexRegionSequence, VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
+    IndexExtentRef, IndexInteger, IndexRealizationLaw, MAX_BOUNDARY_TENSORS,
+    ScalarAuthorityEvidence, ScalarOpKey, ScalarRegistryError, StagedInputSource, TensorRole,
+    UnknownIndexDomainPredicate, VerifiedDimensionId, VerifiedIndexExprId,
+    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedIndexRegionSequence,
+    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
 
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
@@ -711,6 +712,42 @@ impl FrozenIndexRealizationLawRegistry {
             .semantic
             .index_realization_law(operation)
             .is_some_and(|registered| registered.law.realizes_region_sequence())
+    }
+
+    /// Returns the law registered for one operation family, if it carries one.
+    ///
+    /// **Labelled draft.** The surface is implemented and tested; acceptance is
+    /// parked for Tom at
+    /// [`accept-the-registered-family-realization-law-query`](../../../../tickets/accept-the-registered-family-realization-law-query.md).
+    ///
+    /// **Why a caller needs the law itself and not a predicate over it.** A
+    /// physical planner spelling a staged family's stage has to know *what that
+    /// stage computes* — which axes it folds, which payload its epilogue carries —
+    /// and that is the law's content. Deriving it from the operation key instead
+    /// would key the planner to a family, so a second family registering this law
+    /// would need a second arm for one template; deriving it from the shapes is
+    /// not possible at all, because a `[2, 2]` input reduced to `[2]` names two
+    /// different reductions. Answering with the closed typed law is what lets a
+    /// consumer be written against the *vocabulary* — one arm per law, a
+    /// fail-closed wildcard for the rest — which is the same discipline this
+    /// module's own interpretation follows.
+    ///
+    /// It takes an operation key for the reason
+    /// [`Self::family_realizes_region_sequence`] does, reads the same registry row
+    /// that method and [`Self::resolve`] read, and is deliberately *not* a
+    /// resolution: it performs no contract check, no authority projection, and no
+    /// realization, so it answers what is registered rather than what a subject
+    /// may have. A caller acting on the answer still resolves.
+    ///
+    /// `None` for an operation the registry carries no law for, which is the
+    /// fail-closed direction: an occurrence with no registered law has no
+    /// realization this authority describes.
+    #[must_use]
+    pub fn family_realization_law(&self, operation: &OpKey) -> Option<&IndexRealizationLaw> {
+        self.0
+            .semantic
+            .index_realization_law(operation)
+            .map(|registered| &registered.law)
     }
 
     /// Resolves one semantic-provider-bound law from an exact subject.

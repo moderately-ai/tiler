@@ -722,6 +722,9 @@ impl CoverAssembly {
 
         let inputs = semantic.input_count();
         let mut stages: Vec<AssemblyStage> = Vec::with_capacity(stage_regions.len());
+        // The cover region each stage belongs to, so a refusal names the region
+        // rather than a flattened dispatch ordinal no reader can resolve.
+        let mut stage_region: Vec<usize> = Vec::with_capacity(stage_regions.len());
         let mut splits: Vec<AssemblySplit> = Vec::new();
         let mut copies: Vec<AssemblyPublishingCopy> = Vec::new();
         for position in &order {
@@ -864,6 +867,7 @@ impl CoverAssembly {
                     }
                 };
                 bindings.push(AssemblyBinding::Internal(written));
+                stage_region.push(*position);
                 stages.push(AssemblyStage {
                     coverage: stage_regions[stage].semantic_members().to_vec(),
                     bindings,
@@ -916,6 +920,39 @@ impl CoverAssembly {
                     partition,
                 });
             }
+        }
+
+        // **Every dispatch that covers no occurrence must be accounted for, and
+        // this profile can name only two accounts.** `tiler_ir::program` refuses
+        // an uncovering stage under `UncoveringStage` unless a declaration
+        // explains it: the final pass of a declared split, or the publisher of a
+        // declared publishing copy. A stage covers an occurrence exactly when it
+        // claims some occurrence's *first* attribution atom, because that is what
+        // whole-program coverage is keyed on — a later stage continues a
+        // realization the first stage already claimed.
+        //
+        // A staged elementary family's later stage is a third shape and has no
+        // declaration: it is one cover region of its own, so it is neither pass of
+        // a split nor either dispatch of a copy, and it claims only a non-first
+        // atom. Refusing it here is what keeps the failure a *missing compilation
+        // capability* naming the region — the plan is valid and its cover is a
+        // verified authority; what is absent is a program-scope declaration this
+        // assembler has no way to state — instead of the invalid-compiler-output
+        // the IR would report for the same program.
+        //
+        // [`account-for-a-staged-realization-stage-in-the-kernel-program`](../../../tickets/account-for-a-staged-realization-stage-in-the-kernel-program.md)
+        // owns the declaration.
+        for (stage, claimed) in stages.iter().enumerate() {
+            if claimed.coverage.iter().any(|atom| atom.is_first())
+                || splits.iter().any(|split| split.combiner == stage)
+                || copies.iter().any(|copy| copy.publisher == stage)
+            {
+                continue;
+            }
+            return Err(AssemblyRefusal::missing(
+                regions[stage_region[stage]].label(),
+                "realization-stage-unaccounted",
+            ));
         }
 
         let dependencies = derive_dependencies(&stages, internals.len())?;

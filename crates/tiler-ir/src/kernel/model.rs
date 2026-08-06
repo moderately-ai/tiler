@@ -176,6 +176,7 @@ pub(super) const fn region_element_type(program: &crate::schedule::ScalarProgram
         | crate::schedule::ScalarProgram::StrictAffineU4Dequantize { .. }
         | crate::schedule::ScalarProgram::StrictSerialSum { .. }
         | crate::schedule::ScalarProgram::SquaredSerialSum { .. }
+        | crate::schedule::ScalarProgram::SquaredSerialSumThenEpilogue { .. }
         | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. }
         | crate::schedule::ScalarProgram::StrictTensorContraction { .. }
         | crate::schedule::ScalarProgram::StrictSerialMaximum { .. } => KernelType::F32,

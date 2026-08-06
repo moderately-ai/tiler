@@ -11,9 +11,11 @@
 //! law-derived: an occurrence whose registered `IndexRealizationLaw` realizes a
 //! region *sequence* is recognized as a program stage, with no operation key
 //! named. The normalization carries `StagedRootMeanSquareScaleF32` and is
-//! therefore recognized, reaches its own lowering, and stops at the
-//! scheduled-region vocabulary
-//! (`pipeline::tests::a_staged_family_program_reaches_its_lowering_and_names_the_vocabulary_wall`).
+//! therefore recognized, reaches its own lowering, has both of its realization
+//! stages spelled by scheduled regions, and now stops one layer further out — at
+//! the kernel program's lack of an account for a dispatch that continues an
+//! occurrence's realization
+//! (`pipeline::tests::a_staged_family_program_spells_both_stages_and_names_the_program_scope_wall`).
 //! The softmax carries no law at all, so the same arm answers `false` for it and
 //! the refusal below is the recognizer's — which is why the assertions here are
 //! unchanged and are now about *this* family rather than about a class of them.
