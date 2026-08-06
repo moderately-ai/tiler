@@ -1118,11 +1118,14 @@ fn verify_access_and_semantics(
 /// What one reduction family commits when its contributor domain is empty.
 ///
 /// Two obligations rather than two values of one field. An identity-seeded family
-/// names a bit pattern it commits; an identity-less one has no value that could
-/// ever be correct, so what it owes is a *precondition on the domain* instead of
-/// a constant. A typed enum for the reason [`SplitFamily`] is a struct: the
-/// exhaustive match that decides it is what forces a family added later to state
-/// which obligation it carries rather than inherit whichever it resembles.
+/// names a bit pattern it commits; an identity-less one has no *empty-domain*
+/// value it could commit, so what it owes is a *precondition on the domain*
+/// instead of a constant — a statement about the empty case alone, and not about
+/// whether the family's algebra has a neutral element, which
+/// [`ScalarProgram::StrictSerialMaximum`] keeps apart. A typed enum for the
+/// reason [`SplitFamily`] is a struct: the exhaustive match that decides it is
+/// what forces a family added later to state which obligation it carries rather
+/// than inherit whichever it resembles.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EmptyDomainContract {
     /// The family commits these bits when the reduced domain is empty.
@@ -1189,15 +1192,25 @@ struct SplitFamily<'a> {
 /// identity-less arm requires a non-empty domain, which is what replaces the
 /// constant the family has no correct value for.
 ///
-/// **Non-emptiness of the whole sequence is non-emptiness of every partition**,
-/// which is why this needs no per-partition statement and no `has_value` flag on
-/// the partials. The split contract fixes `partitions * contributors_per_partition`
-/// (times the round count, for a tile) as *exactly* the contributor count, and
-/// refuses a zero partition count; a product of nonzero factors equalling a
-/// nonzero total forces every factor nonzero, so each partition folds at least
-/// one contributor and each staged partial is a real maximum. A carried
-/// `has_value` would be a runtime flag that is constantly true — storage in every
-/// slot and a branch in every combine, for a fact the verifier settles here.
+/// **Non-emptiness of the whole sequence is non-emptiness of every partition
+/// under an exactly covering split**, which is why this needs no per-partition
+/// statement and no `has_value` flag on the partials. The split contract fixes
+/// `partitions * contributors_per_partition` (times the round count, for a tile)
+/// as *exactly* the contributor count, and refuses a zero partition count; a
+/// product of nonzero factors equalling a nonzero total forces every factor
+/// nonzero, so each partition folds at least one contributor and each staged
+/// partial is a real maximum. A carried `has_value` would be a runtime flag that
+/// is constantly true — storage in every slot and a branch in every combine, for
+/// a fact the verifier settles here.
+///
+/// **Exact coverage is a premise of that argument, not a detail of it**, and it
+/// is what every split this vocabulary admits supplies:
+/// [`super::model::ContributorPartition::covers`] rejects anything else. A split
+/// covering a *padded* sequence has partitions whose real contributors may be
+/// none, so the factor argument does not reach it and the family's stated padding
+/// identity is what would discharge it instead — the separation
+/// [`ScalarProgram::StrictSerialMaximum`] records. Nothing here admits such a
+/// split; this notes which premise a later one would have to replace.
 const fn empty_domain_is_satisfied(contract: EmptyDomainContract, contributors: u64) -> bool {
     match contract {
         EmptyDomainContract::Identity { bits } => bits == 0.0_f32.to_bits(),
@@ -1383,9 +1396,9 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
 ///
 /// The two passes are checked together here rather than as two more arms of the
 /// serial match because every obligation they carry is stated relative to the
-/// same [`ContributorPartition`]: the partial pass proves the split covers its
-/// contributor sequence exactly, and the final pass proves it combines exactly
-/// one contributor per partition of that same split. Splitting them across
+/// same [`super::model::ContributorPartition`]: the partial pass proves the split
+/// covers its contributor sequence exactly, and the final pass proves it combines
+/// exactly one contributor per partition of that same split. Splitting them across
 /// unrelated arms would let one pass be verified against a partition the other
 /// never agreed to.
 fn verify_multi_pass_semantics(

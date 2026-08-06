@@ -1887,12 +1887,17 @@ fn emit_reduction(
 /// The same shape as [`emit_reduction`] with two deliberate differences, and both
 /// are the extrema family's rather than this lowering's.
 ///
-/// **There is no empty-domain path.** A sum commits its identity when the reduced
-/// domain is empty; `Maximum` has no identity, so there is no value to commit and
-/// the only correct answer is to refuse. The schedule verifier refuses such a
-/// region before it reaches here, and this restates the refusal where the
-/// lowering could still emit — a fold over zero contributors is exactly the empty
-/// iteration range [`KernelBuildError::InvalidLoopRange`] names.
+/// **There is no empty-domain path.** A sum commits the identity its scalar
+/// program declares when the reduced domain is empty; the extrema family declares
+/// none — what a maximum over no contributors means is a declaration no
+/// registered operation embedding this fold has made — so there is no value to
+/// commit and the only correct answer is to refuse. That is a statement about the
+/// empty case and not about the family's algebra, which
+/// [`ScalarProgram::StrictSerialMaximum`] keeps apart: `-inf` *is* neutral for
+/// this combiner, and no emission here pads with it. The schedule verifier
+/// refuses such a region before it reaches here, and this restates the refusal
+/// where the lowering could still emit — a fold over zero contributors is exactly
+/// the empty iteration range [`KernelBuildError::InvalidLoopRange`] names.
 ///
 /// **There is no prologue.** The softmax's subtraction and exponential belong to
 /// the pointwise pass that *consumes* this reduction's result, not to the fold

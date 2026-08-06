@@ -594,16 +594,38 @@ pub enum ScalarProgram {
     /// sum into a maximum.
     ///
     /// **There is deliberately no empty-domain identity, and the omission is the
-    /// contract rather than an oversight.** [Numerical
-    /// semantics](../../../../docs/numerical-semantics.md) records that an
-    /// identity-less reduction "is valid only with an explicit initial value or a
-    /// proven/runtime-validated non-empty domain", and the extrema families have
-    /// no identity: no binary32 value `i` satisfies `Maximum(i, x) == x` for every
-    /// `x`, because any candidate is itself a possible contributor. A field
-    /// carrying one would be a value that can never be correct — the same
+    /// contract rather than an oversight.** What a maximum over *no* contributors
+    /// means is a declaration the operation makes, never a schedule or a backend
+    /// ([ADR 0022](../../../../docs/decisions/0022-reduction-identities-and-initial-values.md)),
+    /// and no registered operation embedding this fold declares one — so a field
+    /// here would commit a semantic answer nothing has given, which is the same
     /// reasoning [`Self::StrictTensorContraction`] states for its unseeded fold.
-    /// The schedule verifier refuses a reduced domain with no contributors
-    /// instead, and the lowering refuses it again where it could still emit.
+    /// [Numerical semantics](../../../../docs/numerical-semantics.md) records the
+    /// standing obligation such a reduction carries — it "is valid only with an
+    /// explicit initial value or a proven/runtime-validated non-empty domain" —
+    /// and this family discharges it with the domain: the schedule verifier
+    /// refuses a reduced domain with no contributors, and the lowering refuses it
+    /// again where it could still emit.
+    ///
+    /// **That refusal is not the claim that no binary32 value is neutral for this
+    /// fold, and running the two together is what makes the family look
+    /// unpaddable.** `0xff80_0000` (`-inf`) is a two-sided identity of the pinned
+    /// family: it is the order's minimum, so every finite value, both infinities,
+    /// and — under the `-0.0 < +0.0` ordering — both zeros compare above it and
+    /// come back with their own bits; a NaN operand propagates, and the fold's
+    /// per-combine canonicalization then commits the same bits an unpadded fold
+    /// over that NaN commits. `-inf` is therefore a *padding* value proved
+    /// observably neutral, which
+    /// [ADR 0025](../../../../docs/decisions/0025-reduction-empty-results-and-padding.md)
+    /// keeps separate from an empty-domain result in both directions: proving one
+    /// neither supplies nor weakens the other, and
+    /// [ADR 0100](../../../../docs/decisions/0100-admit-the-multi-round-two-level-reduction-composition.md)
+    /// decision 7 owns the walk and the admission. **No schedule this vocabulary
+    /// states pads anything**, so the value has nowhere to sit: [`TailPolicy`]
+    /// admits `Exact` alone and [`ContributorPartition::covers`] requires a split
+    /// to cover its contributors exactly once each. A field stating a padding
+    /// identity is an unaccepted public boundary rather than an omission this type
+    /// may repair.
     ///
     /// **The `-0.0 < +0.0` ordering makes this fold order-insensitive**, which is
     /// what separates its legality from every sum in this vocabulary: the pinned
@@ -613,10 +635,13 @@ pub enum ScalarProgram {
     /// fold, the [`ReductionTopology::MultiPass`] split, and the
     /// [`ReductionTopology::CooperativeWorkgroup`] tile — and admitted *under a
     /// strict contract*, because a split of this family spends no reassociation
-    /// permission. The identity-less-ness reaches the parallel forms as the
-    /// non-emptiness precondition rather than as a staged `has_value` flag: the
-    /// split contract makes every partition's contributor count a nonzero factor
-    /// of a nonzero product, so each staged partial is a real maximum.
+    /// permission. The missing empty-domain value reaches the parallel forms as
+    /// the non-emptiness precondition rather than as a staged `has_value` flag,
+    /// and the argument is an *exactly covering* split's: that contract makes
+    /// every partition's contributor count a nonzero factor of a nonzero product,
+    /// so each staged partial is a real maximum. A split covering a padded
+    /// sequence would need the padding identity above instead, which is why the
+    /// two facts are stated apart.
     ///
     /// It carries `canonical_nan_bits` like every other reduction: a maximum
     /// selects bit patterns rather than computing values, but a NaN it selects is
