@@ -1,7 +1,7 @@
 ---
 id: read-the-serial-sum-proofs-dtype-rows-from-its-declaration
 title: Read the serial-sum runtime proof's dtype rows from the declaration it already holds
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [declare-host-dtype-dispatchability-at-the-consumer-boundary, validate-bf16-at-the-runtime-routing-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, runtime, routing, authority]
-claimed_from: todo
-assignee: agent-serial-rows
-lease_expires_at: 1786048130
 ---
 ## User-visible outcome
 
