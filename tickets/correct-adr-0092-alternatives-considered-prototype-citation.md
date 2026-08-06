@@ -1,7 +1,7 @@
 ---
 id: correct-adr-0092-alternatives-considered-prototype-citation
 title: Correct ADR 0092's alternatives-considered prototype citation
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [correct-the-sdk-apple-family-range-in-the-runtime-answer-record, close-the-serial-sum-run-gpu-family-probe-table]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [research/runtime, project/tickets]
 paths: []
 tags: [documentation, decisions, status-drift]
-claimed_from: todo
-assignee: agent-adr0092
-lease_expires_at: 1786049402
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: re-transfer-the-adr-0092-span-for-its-drifted-prototype-referent
 title: Re-transfer the ADR 0092 span for its drifted prototype referent
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [rename-the-route-resource-floor-vocabulary-for-its-corrected-relation, close-the-serial-sum-run-gpu-family-probe-table, correct-adr-0092-alternatives-considered-prototype-citation]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, runtime]
-claimed_from: todo
-assignee: agent-adr0092
-lease_expires_at: 1786049402
 ---
 ## Why this exists
 
