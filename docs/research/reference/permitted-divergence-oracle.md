@@ -55,7 +55,7 @@ returns fourteen lines at this base: eleven inside `conformance.rs` itself — t
 | Path | Entry point | Subject | Takes a contract? |
 | --- | --- | --- | --- |
 | Semantic evaluator | `ReferenceEvaluator::evaluate` (`src/evaluate.rs:129`) | a verified `SemanticProgram` | **No.** No `ReferenceNumericalConformance` appears in the module. |
-| Index-region oracle | `IndexRegionEvaluator::under` (`src/oracle.rs:1316`) | a `VerifiedIndexRegion` | **Yes**, and `from_realization` is its checked bridge, documented as such at `oracle.rs:1304`. |
+| Index-region oracle | `IndexRegionEvaluator::under` (`src/oracle.rs` — cited by name; its line drifted twice in the record's first day) | a `VerifiedIndexRegion` | **Yes**, and `from_realization` is its checked bridge, documented as such on its own definition in the same file. |
 | Declared-order reduction oracle | `strict_partitioned_sum` (`src/evaluate.rs:615`) | one reduction at one declared split | **No.** Its signature is `(input, axes, partitions, contributors_per_partition)`. |
 
 **Inference — so the refusal at `conformance.rs:166` is narrower in effect than in intent.** Its own header says an oracle returning a single value under a permissive contract "would assert a bitwise equality the contract does not promise", which is a statement about *every* oracle. It is enforced on one of the three. That is not a defect in the refusal; it is a gap in where the type is threaded, and it is filed by this record.

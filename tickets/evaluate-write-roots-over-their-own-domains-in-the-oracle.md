@@ -1,7 +1,7 @@
 ---
 id: evaluate-write-roots-over-their-own-domains-in-the-oracle
 title: Evaluate write roots over their own domains in the oracle
-status: review
+status: done
 priority: p1
 dependencies: [state-the-oracle-boundary-for-sub-domain-write-roots]
 related: [lower-the-concatenate-occurrence-through-partitioned-writes, admit-sub-range-write-domains-for-unequal-partitions, decide-the-index-region-oracle-route-past-its-step-budget]
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, oracle, indexing]
-claimed_from: todo
-assignee: agent-root-domains
-lease_expires_at: 1785997200
 ---
 ## User-visible outcome
 
