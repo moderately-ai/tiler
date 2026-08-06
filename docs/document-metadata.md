@@ -129,7 +129,7 @@ Kind-specific required fields are:
 | Portal | none | `related` |
 | Contract | `contract_status`, `implementation_status` | `evidence`, `ticket` |
 | Decision | `decision_status`, `implementation_status`, `applies_to`, `evidence` | `ticket` |
-| Research | `research_status`, `disposition`, `implementation_status`, `evidence_classes`, `informs` | `adopted_by`, `ticket` |
+| Research | `research_status`, `disposition`, `implementation_status`, `evidence_classes` | `informs`, `adopted_by`, `ticket` |
 | Experiment | `experiment_status`, `implementation_status`, `evidence_classes`, `supports` | `entrypoints`, `last_verified`, `ticket` |
 | Roadmap | `roadmap_status` | `related` |
 | Questions | `questions_status` | `related` |
@@ -147,6 +147,10 @@ successor that carries the present state is always reachable and the retained
 historical `implementation_status` stays legible rather than contradicting the
 current tree. Adopted or partially adopted research has an `informs` or
 `adopted_by` destination. `unknown` is exclusive when used as an evidence class.
+
+The adopted-and-partially-adopted sentence above is the whole rule for whether a research record carries `informs`, and the requirement is conditional on disposition rather than universal — which is why the table above lists the field in research's optional column rather than its required one, since a table of unconditionally required fields cannot express a condition. An omitted `informs` is a claim and not an unfilled field: it asserts that its author looked for a contract or decision the record bears on and found none, and the record's body is where that reason belongs. The universal requirement was the other candidate, and it is refused here for a defect the corpus already paid for. [`repair-the-four-mistyped-typed-frontmatter-edges`](../tickets/repair-the-four-mistyped-typed-frontmatter-edges.md) found `docs/research/documentation/open-ticket-audit-2026-07-27.md` carrying `informs: ["tiler.portal.status"]`, and established by reading that what that audit informs — the ticket board, `ticketsplease.toml`, and the work-tracking process in `AGENTS.md` and [`work-tracking.md`](work-tracking.md) — is one portal and a set of files carrying no `tiler-doc/v1` identity at all, none of which `informs` can reach in any spelling. A record whose subject matter sits structurally outside the typed graph cannot satisfy a universal requirement except by naming something false, so requiring the edge everywhere does not produce edges; it produces that edge, which no reading caught and the typed-edge check did.
+
+**Measurement — the research corpus at `453aef62`.** Of 101 research records, 99 carry `informs`, including 33 of the 34 whose disposition is `pending` and every one of the 63 that are `adopted` or `partially-adopted`. Two omit it: the audit above, and `tiler.research.region-search.enforcer-input-property-exclusion`, whose verdict is that the gap it closes needs no contract amendment. So this licence is narrow rather than a relaxation of practice, and naming a target remains the norm for unadopted research. Its cost is real and belongs in the same paragraph as its grant: nothing now obliges a future unadopted record to name a target it does have, and only reading will notice one that does not. Its cost is not corpus membership — all 101 records are reached by a research-catalog row, and the reconciliation check named below counts rows against records, so a record omitting `informs` is still not lost.
 
 Live ticket status and calculated backlinks never appear in document frontmatter. Ticketsplease owns workflow state. The catalog sections are checked in so they read on ordinary GitHub; they restate what the frontmatter behind them says, and they are hand-maintained, as the next section records.
 
