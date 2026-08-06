@@ -85,7 +85,7 @@ Four candidates. Each is tested against what `derive_obligations` actually does,
 
 ### What one lowering capability can emit
 
-**Fact.** `IndexAccessLoweringProvider::lower` (`capability.rs:313-321`) emits through one `IndexAccessLoweringContext` wrapping one canonical region builder. One capability therefore produces **one index region per occurrence**, which is the same limit `lower-a-two-region-occurrence-through-one-index-access-capability` owns for the normalizations.
+**Fact — restated 2026-08-06, and the restatement withdraws a premise rather than a conclusion.** At this record's base `IndexAccessLoweringProvider` had one emission method, `lower` (`capability.rs:313-321`), which emits through one `IndexAccessLoweringContext` wrapping one canonical region builder; this record read that as one capability producing **one index region per occurrence**, the same limit [`lower-a-two-region-occurrence-through-one-index-access-capability`](../../../tickets/lower-a-two-region-occurrence-through-one-index-access-capability.md) owned for the normalizations. That ticket landed and the limit is gone. The trait now carries a defaulted `lower_sequence` beside `lower`, each stage built and verified by its own canonical builder, and `GovernedRootMeanSquareScaleF32` (`crates/tiler-compiler/src/governed.rs`) is a shipped provider that overrides it to emit an ordered two-region chain for one occurrence while implementing `lower` as an explicit refusal. **One capability may therefore emit a region *sequence*, and how many regions it emits is not a fact about the trait at all.** Nothing in this record rested on the withdrawn clause: the registration cost below derives from the resolver's key, which the next paragraph states on its own.
 
 **Fact.** `resolve_index_access` (`capability.rs:1115-1144`) matches on the exact triple `(family, operation, signature)`, and `LoweringSignature` carries the exact operand and result type lists (`governed.rs:230-334`). **Inference — the concatenate needs seven registered index-access capabilities, one per admitted arity two through eight**, exactly as `MAX_CONCATENATE_OPERANDS`'s own doc comment (`concatenate.rs:69-79`) explains for the reference provider. No existing capability is variadic and nothing in the resolver is; this is a concrete registration cost nothing in the corpus had recorded.
 
@@ -150,16 +150,27 @@ The ticket requires checking, not inheriting, the matrix row's assertion that an
 Each is one command from the repository root, with the positive control that proves it can return something.
 
 ```sh
-# 1. The fusion-role table holds nine keys and no concatenate.
-grep -n 'roles.insert(' crates/tiler-compiler/src/fusion_legality.rs
+# 1. The fusion-role table holds eleven keys and the concatenate is among them.
+grep -n 'roles.insert(' -A 1 crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds reindex_f32_op and broadcast_f32_op,
-#    so a missing key is an absence from a list with members rather than an
-#    empty result.
+#    so a key is read out of a list with members rather than out of an empty
+#    result.
+#    Restated 2026-08-06: this read "nine keys and no concatenate", which was
+#    the state the elimination below ran against. The disposition it supports
+#    landed under `admit-a-fusion-role-for-the-sequence-extension-concatenate`,
+#    so what this check observes is the registration rather than its absence.
+#    `-A 1` is needed because most entries span two lines and the bare match
+#    shows no key.
 
-# 2. The coordinate-relation arm of the contraction proof is closed over two keys.
+# 2. The coordinate-relation arm of the contraction proof is closed over three
+#    exact keys, the concatenate among them.
 grep -n 'fn is_exact_governed_same_family_pointwise' -A 50 crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds the ValueSource arm's constant guard,
 #    so the match is being read rather than a comment.
+#    Restated 2026-08-06: this read "closed over two keys" — reindex and
+#    broadcast — which is what the extension proposed below started from. The
+#    extension landed with the per-key transfer this record argued for, so the
+#    arm is still closed and only its membership moved.
 
 # 3. The refusal list's current state: the subset write-domain rule, the
 #    partition path that replaced the construction-time refusals, the
@@ -179,12 +190,23 @@ grep -n 'enum ScalarValueDefinition' -A 10 crates/tiler-ir/src/index/model.rs
 #    This shows exactly two variants. Positive control: the same read finds
 #    AccessRead, so an absent Select is an absence from an enumerated list.
 
-# 5. One index-access capability emits one region, and resolution is by exact
-#    signature, so a variadic family needs one capability per arity.
-grep -n 'trait IndexAccessLoweringProvider' -A 10 crates/tiler-compiler/src/capability.rs
+# 5. Resolution is by exact signature, so a variadic family needs one
+#    capability per admitted arity. A `LoweringSignature` is the ordered
+#    operand and result type lists, compared for equality; `resolve` filters
+#    the registry on the exact (family, operation, signature) triple. Two
+#    arities of one operation are therefore two signatures and two
+#    capabilities, and the conclusion rests on this alone.
+grep -n 'pub struct LoweringSignature' -B 2 -A 5 crates/tiler-compiler/src/capability.rs
 grep -n 'fn resolve_index_access' -A 25 crates/tiler-compiler/src/capability.rs
-#    Positive control: the second read shows the MissingCapability construction,
-#    so the failure path is present rather than inferred.
+#    Positive control: the second read reaches the MissingCapability
+#    construction, so the failure path is present rather than inferred.
+#    Restated 2026-08-06: this check opened "one index-access capability emits
+#    one region, and resolution is by exact signature". The first clause is
+#    refuted — the trait carries `lower` beside a defaulted `lower_sequence`,
+#    so one capability may emit an ordered chain of regions for one occurrence
+#    — and it was never load-bearing here. The third read is what shows that,
+#    and is a control on the premise rather than on the conclusion.
+grep -n 'fn lower_sequence' -B 18 -A 6 crates/tiler-compiler/src/capability.rs
 
 # 6. The explain writer folds the fusion provider identity, not the role table.
 grep -n 'FusionNumericalCapabilities::governed().provider()' -B 8 crates/tiler-compiler/src/explain.rs
