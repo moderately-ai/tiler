@@ -1,7 +1,7 @@
 ---
 id: correct-the-numerical-contract-spelling-outside-the-restored-spike-scopes
 title: Correct the composed numerical contract's spelling in ADR 0011 and the apple-targets probe quotation
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [restore-the-spikes-against-the-composed-numerical-contract]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [maintenance, numerics, docs]
-claimed_from: todo
-assignee: agent-contract-spelling
-lease_expires_at: 1786051648
 ---
 ## User-visible outcome
 
