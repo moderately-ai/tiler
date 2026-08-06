@@ -1,7 +1,7 @@
 ---
 id: close-the-eps-exp-open-axis-in-the-rule-object-record
 title: Close the eps_exp open axis in the rule-object record
-status: todo
+status: in-progress
 priority: p3
 dependencies: [expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate]
 related: [derive-the-rewrite-rule-declaration-and-admission-shape-for-the-online-softmax-fold, connect-certified-rounding-error-bounds-to-rewrite-permissions]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, accuracy, docs]
+claimed_from: todo
+assignee: agent-eps-axis
+lease_expires_at: 1786039981
 ---
 ## User-visible outcome
 
