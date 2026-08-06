@@ -1,7 +1,7 @@
 ---
 id: move-the-structural-row-to-r6-and-retire-its-backend-residual
 title: Move the structural row to R6 and retire its backend residual
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [emit-the-structural-region-on-metal, realize-parallel-reduction-strategies-on-metal, integrate-the-contraction-vertical-into-the-runtime, admit-elementwise-epilogues-over-a-materialized-intermediate, lift-the-four-published-and-consumed-walls-together, admit-a-partitioned-write-ownership-contract, re-read-the-bf16-and-elementary-support-rows-against-source, record-the-contraction-execution-row-and-correct-the-matrix-headline]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-navigation
-lease_expires_at: 1786028995
 ---
 ## The work (maturity audit 2026-08-06, findings coordinator-verified: the IndexSubtract arm and both structural goldens exist)
 
