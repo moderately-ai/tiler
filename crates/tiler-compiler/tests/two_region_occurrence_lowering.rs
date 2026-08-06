@@ -51,10 +51,10 @@ use tiler_compiler::legality::{RefinementError, refine_index_region};
 use tiler_ir::index::{
     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexInteger,
     IndexRealizationLaw, IndexRefinementSubject, IndexRefinementVerificationError,
-    IndexRegionSequenceError, NumericalContractIdentity, ScalarArity, ScalarAttributeSchema,
-    ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
-    ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-    ScalarOperationInferencer, ScalarRegistryBuilder, StagedInputSource,
+    IndexRegionSequenceError, MAX_INDEX_REGION_SEQUENCE_STAGES, NumericalContractIdentity,
+    ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+    ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
+    ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, StagedInputSource,
     canonicalize_nan_f32_scalar_op, multiply_f32_scalar_op,
 };
 use tiler_ir::semantic::{
@@ -449,6 +449,32 @@ impl IndexAccessLoweringProvider for RefusingSequenceProvider {
         Err(LoweringEmitError::Occurrence {
             rule: "fixture-refuses-before-any-stage",
         })
+    }
+}
+
+/// Opens one stage more than the governed ceiling admits, counting each region
+/// it is actually asked to build.
+struct OverWideProvider(Arc<AtomicUsize>);
+
+impl IndexAccessLoweringProvider for OverWideProvider {
+    fn lower(
+        &self,
+        _context: &mut IndexAccessLoweringContext<'_>,
+    ) -> Result<(), LoweringEmitError> {
+        unreachable!("the host drives `lower_sequence`, which this provider overrides")
+    }
+
+    fn lower_sequence(
+        &self,
+        sequence: &mut IndexAccessSequenceContext<'_>,
+    ) -> Result<(), LoweringEmitError> {
+        for _ in 0..=MAX_INDEX_REGION_SEQUENCE_STAGES {
+            sequence.single_stage(|context| {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                emit_square(context)
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -925,6 +951,39 @@ fn a_provider_that_emits_nothing_reports_its_own_refusal() {
         RefinementError::Realization {
             source: IndexRegionSequenceError::Empty,
         }
+    );
+}
+
+/// The governed stage ceiling refuses, and refuses *before* building past it.
+///
+/// **Two separate claims, and only the second needs the host's own guard.** That
+/// an over-wide chain is refused by its named bound is
+/// `VerifiedIndexRegionSequence::try_new`'s, and it would hold with no guard here
+/// at all. That the host stops *asking* for regions once the ceiling is reached
+/// is this guard's, and it is what keeps a provider looping past the bound from
+/// building an unbounded number of verified regions before anything says no. The
+/// build counter is what separates them: without the guard it reads one more.
+#[test]
+fn the_stage_ceiling_refuses_before_building_past_it() {
+    let fixture = StagedFixture::new();
+    let built = Arc::new(AtomicUsize::new(0));
+    let error = fixture
+        .refine(Arc::new(OverWideProvider(built.clone())))
+        .expect_err("a chain wider than the governed ceiling realizes nothing");
+    assert_eq!(
+        error,
+        RefinementError::Realization {
+            source: IndexRegionSequenceError::TooManyStages {
+                actual: MAX_INDEX_REGION_SEQUENCE_STAGES + 1,
+                limit: MAX_INDEX_REGION_SEQUENCE_STAGES,
+            },
+        }
+    );
+    assert_eq!(
+        built.load(Ordering::Relaxed),
+        MAX_INDEX_REGION_SEQUENCE_STAGES,
+        "the stage past the ceiling must never be built, or the bound is a \
+         report rather than a limit"
     );
 }
 
