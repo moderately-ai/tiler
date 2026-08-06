@@ -31,7 +31,7 @@ check: fmt build lint test
 # instead of turning into a second list here.
 fmt:
 	cargo fmt --all --check
-	test $$(ls crates/tiler/tests/facade/pass/*.rs | wc -l) -eq 9
+	test $$(ls crates/tiler/tests/facade/pass/*.rs | wc -l) -eq 10
 	rustfmt --check crates/tiler/tests/facade/pass/*.rs
 
 build:

@@ -1,7 +1,7 @@
 ---
 id: accept-the-route-facts-dtype-dispatch-field
 title: Accept the RouteFacts dtype-dispatch field
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [declare-host-dtype-dispatchability-at-the-consumer-boundary]
@@ -33,3 +33,7 @@ The implementing ticket's Outcome: the end-to-end watched refusal fixture, four 
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. The implementing worker reported the field as a labelled draft with a node; the label was not in the landed code and this node was filed by the coordinator at integration.
+
+## Accepted — 2026-08-06
+
+**Tom accepted the surface as stated**, at the live session's decision round via the coordinator's presentation (AskUserQuestion, option "Accept"), witnessed first-hand by the coordinator; no exclusion was named. What was accepted is the field, the slice-of-pairs shape, the omission-encodes-non-exact convention, and the duplicate refusal at the consuming site. Acceptance is not stabilization: accepted pre-alpha vocabulary, not a published API with compatibility obligations.

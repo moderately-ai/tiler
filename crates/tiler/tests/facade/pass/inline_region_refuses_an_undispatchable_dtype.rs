@@ -217,7 +217,11 @@ impl RuntimeAdapter for Executor<'_> {
         0
     }
 
-    fn plan_dispatch(&mut self, _: &LiveExecutionContext, _: &Preflight<'_>) -> Result<(), Refused> {
+    fn plan_dispatch(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &Preflight<'_>,
+    ) -> Result<(), Refused> {
         self.record("plan-dispatch");
         Err(Refused("this consumer sizes no device storage"))
     }
@@ -313,5 +317,8 @@ fn main() {
     // safe to fail closed on.
     assert_eq!(accepted.scalar, StorageScalar::F32);
     assert_eq!(accepted.extents, vec![4]);
-    assert_eq!(refused, accepted, "a refused route returns the same declared result");
+    assert_eq!(
+        refused, accepted,
+        "a refused route returns the same declared result"
+    );
 }
