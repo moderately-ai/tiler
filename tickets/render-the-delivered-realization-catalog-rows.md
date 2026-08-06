@@ -1,7 +1,7 @@
 ---
 id: render-the-delivered-realization-catalog-rows
 title: Render the delivered-realization catalog rows
-status: todo
+status: done
 priority: p3
 dependencies: [repair-the-fifth-mistyped-supports-edge-and-its-missing-catalog-row]
 related: [reconcile-the-research-and-experiment-catalogs-with-their-frontmatter, repair-the-four-mistyped-typed-frontmatter-edges]

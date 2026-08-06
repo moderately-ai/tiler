@@ -1,7 +1,7 @@
 ---
 id: carry-the-elementary-identity-dimension-adr
 title: Carry the elementary-identity dimension ADR
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [name-the-elementary-identity-rewrite-dimension, connect-certified-rounding-error-bounds-to-rewrite-permissions, decide-whether-to-admit-an-elementary-identity-permission]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, decision, carrier]
+claimed_from: todo
+assignee: agent-identity-carrier
+lease_expires_at: 1785978598
 ---
 ## User-visible outcome
 
