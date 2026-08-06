@@ -1,7 +1,7 @@
 ---
 id: implement-stage-level-cover-atoms-for-multi-region-occurrences
 title: Implement stage-level cover atoms for multi-region occurrences
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, admit-the-registered-elementary-families-as-recognizable-program-stages, widen-the-staged-realization-law-to-the-registered-elementary-families]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner, cover, identity-domain, p1-spine]
+claimed_from: todo
+assignee: agent-stage-atoms
+lease_expires_at: 1786036406
 ---
 
 ## The decision this executes
