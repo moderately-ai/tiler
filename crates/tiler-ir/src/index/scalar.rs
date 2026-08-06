@@ -82,8 +82,6 @@ pub fn exp_f32_scalar_op() -> ScalarOpKey {
 /// implementation detail, because the key becomes part of every reached-
 /// definition projection a region carrying it derives an identity from.
 ///
-/// [`accept-the-governed-reciprocal-square-root-scalar-key`]: ../../../../tickets/accept-the-governed-reciprocal-square-root-scalar-key.md
-///
 /// The *precise* reciprocal square root, `1/sqrt(t)`. Like
 /// [`exp_f32_scalar_op`] its result is not a rational function of its operand,
 /// so what it may deliver is a resolved ADR 0042 accuracy contract rather than
@@ -102,6 +100,8 @@ pub fn exp_f32_scalar_op() -> ScalarOpKey {
 /// the substitution has nothing to name rather than being forbidden by a rule
 /// someone must remember — the argument [`divide_f32_scalar_op`] states for its
 /// own missing sibling.
+///
+/// [`accept-the-governed-reciprocal-square-root-scalar-key`]: ../../../../tickets/accept-the-governed-reciprocal-square-root-scalar-key.md
 #[must_use]
 pub fn rsqrt_f32_scalar_op() -> ScalarOpKey {
     governed_scalar_op("rsqrt-f32")
