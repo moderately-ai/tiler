@@ -52,11 +52,11 @@ use super::super::model::{
 };
 use super::super::requirement::{RouteRequirement, RouteRequirementError, RouteResourceDimension};
 use super::super::tests::{
-    ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, build_artifact,
-    declare_realization, declare_realization_over, default_artifact, formulas, fused_program,
-    lowering_provider, partial_window_artifact, payload, prepared_requirement, profile,
-    requiring_artifact, route_feature, route_resource, selection, semantic_program, spare_provider,
-    strict_affine_u4_dequantize_artifact, variant,
+    ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, bf16_pointwise_artifact,
+    build_artifact, declare_realization, declare_realization_over, default_artifact,
+    f32_pointwise_artifact, formulas, fused_program, lowering_provider, partial_window_artifact,
+    payload, prepared_requirement, profile, requiring_artifact, route_feature, route_resource,
+    selection, semantic_program, spare_provider, strict_affine_u4_dequantize_artifact, variant,
 };
 use super::super::{
     ArtifactProgramBuilder, CompilationEnvironment, MAX_ROUTE_REQUIREMENTS, MAX_VARIANT_ENTRIES,
@@ -2462,18 +2462,22 @@ fn a_bf16_carrier_is_refused_against_a_wider_access_type_and_admitted_against_it
 /// `check_target_component` refuses a binding that contradicts its component and
 /// would reject a one-sided edit before any question below could be reached.
 ///
-/// **The envelope is forged rather than built, and the reason is a boundary this
-/// crate does not own.** Nothing in the workspace can assemble a `bf16` artifact
-/// through the builder yet: `tiler_ir::index`'s `NumericalContractIdentity`
-/// wraps `F32NumericalContractKey` alone, and the standard semantic provider
-/// registers index-realization laws for nine `f32` and quantization operations
-/// and none for the registered `bf16` family — so a `bf16` semantic occurrence
-/// cannot obtain a `CoveredOccurrence`, and a stage covering nothing is refused
-/// at whole-program verification. Waiting for a producer would have left the
-/// carrier's *encoding* untested until the layer below it landed, which is the
-/// wrong order: this crate owns whether a `bf16` artifact survives its own
-/// codec and whether the carrier reaches identity, and both are answerable now.
-/// The forgery is encoded by the ordinary encoder and validated by the ordinary
+/// **The envelope is forged rather than built, and the producer wall that once
+/// forced it is gone.** The BF16 index-realization laws are registered and
+/// `Bf16NumericalContractKey` is admitted into `NumericalContractIdentity`, so a
+/// `bf16` occurrence now obtains a `CoveredOccurrence` and a pure-BF16 artifact
+/// is reachable through the ordinary builder — [`bf16_pointwise_artifact`],
+/// whose round trip and identity are asserted in
+/// [`a_producer_built_bf16_artifact_round_trips_and_re_derives_its_identity`].
+///
+/// What still needs a hand-built envelope is what a producer cannot emit. The
+/// cases below perturb *one field at a time* on an otherwise well-formed
+/// artifact — an unassigned carrier tag, an access type walked back to `F32` —
+/// and each is a state the builder refuses to construct, which is the point of
+/// the check. Forging from the `f32` fixture also keeps every other byte fixed,
+/// so a refusal is attributable to the perturbed field rather than to the many
+/// things that legitimately differ between two separately derived programs. The
+/// forgery is encoded by the ordinary encoder and validated by the ordinary
 /// decoder, so nothing below runs against test-only code.
 fn bf16_input_envelope() -> ArtifactEnvelope {
     let mut envelope = envelope_of(&default_artifact());
@@ -2557,6 +2561,75 @@ fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {
             .expect("the f32 envelope has an identity"),
         "two artifacts differing only in their carrier must not share an identity: a cache that \
          confused them would hand a consumer a kernel addressing twice the bytes it was given",
+    );
+}
+
+/// A producer-built BF16 artifact survives its own codec with its identity intact.
+///
+/// The half of the BF16 encoding evidence that could not be produced when the
+/// encoding rung landed. The artifact under test is not an `f32` envelope with
+/// two tag bytes rewritten: it is derived from a pure-BF16 semantic graph whose
+/// four occurrences each obtained refinement evidence under the `bf16` contract,
+/// so what round-trips here is a `bf16` program rather than a `bf16`-shaped
+/// reading of an `f32` one.
+///
+/// Four properties. The decoded envelope equals the model that produced it. Its
+/// identity re-derives from the decoded content and equals the identity the
+/// builder stamped — the property a cache depends on, since a hit is validated
+/// by re-deriving rather than by trusting the carried bytes. Re-encoding the
+/// decoded envelope reproduces the bytes exactly, which is the canonical-form
+/// obligation this suite holds every artifact to. And the carrier is read back
+/// off the decoded interface rather than inferred from structural equality.
+#[test]
+fn a_producer_built_bf16_artifact_round_trips_and_re_derives_its_identity() {
+    let artifact = bf16_pointwise_artifact();
+    let envelope = envelope_of(&artifact);
+    let bytes = encode(&envelope).expect("the bf16 artifact encodes");
+    let decoded = decode(&bytes).expect("its own bytes decode");
+    assert_eq!(
+        decoded, envelope,
+        "a decoded bf16 envelope must equal the model that produced it",
+    );
+    assert_eq!(
+        decoded
+            .canonical_identity()
+            .expect("the identity re-derives from decoded content"),
+        *artifact.canonical_identity(),
+        "a re-derived identity that disagreed with the stamped one would make every \
+         cache hit a different artifact than the one that was stored",
+    );
+    assert_eq!(
+        encode(&decoded).expect("the decoded envelope re-encodes"),
+        bytes,
+        "the encoding is canonical, so a round trip is byte-preserving",
+    );
+
+    let components = &decoded.inputs[0].components;
+    assert_eq!(
+        components
+            .iter()
+            .map(|component| (component.storage_scalar, component.access_type))
+            .collect::<Vec<_>>(),
+        [(StorageScalar::Bf16, KernelType::Bf16)],
+        "the carrier a consumer sizes its buffer from must survive the decode",
+    );
+
+    // The contrast with the forged pair above, and the reason the four-byte
+    // identity difference that rung recorded does not carry over to this one.
+    // There the two envelopes were one artifact with two tag bytes rewritten, so
+    // the encodings were necessarily the same length — which is what evidenced a
+    // carrier travelling as a tag rather than as a width the framing depends on.
+    // Here the two are separately derived from separately verified graphs whose
+    // operation keys, refinement evidence, and buffer sizes all differ, so the
+    // encodings are not the same length and no positional byte difference
+    // between them is defined. The lengths themselves are deliberately not
+    // pinned: an identity step would move them, and the numbers would carry no
+    // information this inequality does not.
+    let twin = encoded(&f32_pointwise_artifact());
+    assert_ne!(
+        bytes.len(),
+        twin.len(),
+        "a producer-path width change is structural, not a tag swap",
     );
 }
 

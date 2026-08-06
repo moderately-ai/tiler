@@ -29,3 +29,9 @@ Rewrite the wall clause to state the current boundary — the refinement layer a
 ## Closes when
 
 The paragraph describes the current boundary, the measurements are unchanged, and its ticket link resolves to the work that actually remains.
+
+## Trigger discharged
+
+**Fact, 2026-08-05.** The "narrowly still true" qualifier above is spent. [`carry-the-pure-bf16-producer-path-into-artifact-packaging-evidence`](carry-the-pure-bf16-producer-path-into-artifact-packaging-evidence.md) carried a pure-BF16 program from semantic construction through verified coverage, a `VerifiedKernelProgram`, a `VerifiedArtifactProgram`, its encode/decode round trip, and its identity re-derivation, with an F32 twin for the identity comparison. A producer can emit a `bf16` artifact, so the heading's own claim is now false along with the sentence beneath it, and the paragraph is rewritten rather than merely repointed.
+
+**Fact.** The four differing identity bytes recorded in that paragraph describe the *carrier-only forged* pair and remain accurate for it. They are not the producer-path pair's numbers: those two artifacts are separately derived and are not the same length, so no positional byte difference between them is defined. Preserve the measurement verbatim and keep it labelled as the forged pair's.

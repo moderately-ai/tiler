@@ -15,7 +15,8 @@ use tiler_ir::index::{
     ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
     ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
     ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder,
-    TensorRole as IndexTensorRole, VerifiedIndexRegion, add_f32_scalar_op, constant_f32_scalar_op,
+    TensorRole as IndexTensorRole, VerifiedIndexRegion, add_bf16_scalar_op, add_f32_scalar_op,
+    constant_bf16_scalar_op, constant_f32_scalar_op, multiply_bf16_scalar_op,
     multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::kernel::{
@@ -32,14 +33,16 @@ use tiler_ir::program::{
     StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
 };
 use tiler_ir::schedule::{
-    Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey,
-    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
-    MaterializationRounding, NumericalPermission, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology,
-    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    Access, AccessMode, ApproximationEnvelope, ArithmeticType, Bf16NumericalContractKey,
+    BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder, ExceptionalValueAssumption,
+    ExecutionBinding, F32NumericalContractKey, FlushedZeroSign, InputOrdinal, KernelSchedule,
+    LaunchPlan, LogicalAccess, MaterializationRounding, NumericalPermission, NumericalRealization,
+    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder,
+    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
+    AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, Bf16, Bf16Add, Bf16Constant, Bf16Multiply,
     CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView,
     F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply, FrozenSemanticRegistry,
     InputKey, NormativeDefinitionRef, OpKey, OperationArity, OperationAttributeSchema,
@@ -50,8 +53,9 @@ use tiler_ir::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
     SemanticProgram, SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
     SemanticRegistryRegistrar, StrictAffineU4, StrictSerialF32Sum, TypeDefinitionFacts, TypeKey,
-    ValueFact, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op, constant_f32_op,
-    dequantize_strict_affine_op, multiply_f32_op, strict_serial_sum_f32_op,
+    ValueFact, ValueTypeDefinition, ValueTypeDefinitionKey, add_bf16_op, add_f32_op,
+    constant_bf16_op, constant_f32_op, dequantize_strict_affine_op, multiply_bf16_op,
+    multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 
@@ -284,7 +288,12 @@ fn checked_occurrence(
     let (emitted, region) = if subject.operation() == &constant_f32_op() {
         (
             vec![constant_f32_scalar_op()],
-            constant_region(&subject, scalars),
+            constant_region(
+                &subject,
+                scalars,
+                F32_CONSTANT_BITS_ATTRIBUTE,
+                constant_f32_scalar_op(),
+            ),
         )
     } else if subject.operation() == &multiply_f32_op() {
         (
@@ -300,6 +309,26 @@ fn checked_occurrence(
         (
             vec![add_f32_scalar_op()],
             serial_sum_region(&subject, scalars),
+        )
+    } else if subject.operation() == &constant_bf16_op() {
+        (
+            vec![constant_bf16_scalar_op()],
+            constant_region(
+                &subject,
+                scalars,
+                BF16_CONSTANT_BITS_ATTRIBUTE,
+                constant_bf16_scalar_op(),
+            ),
+        )
+    } else if subject.operation() == &multiply_bf16_op() {
+        (
+            vec![multiply_bf16_scalar_op()],
+            pointwise_region(&subject, scalars, multiply_bf16_scalar_op()),
+        )
+    } else if subject.operation() == &add_bf16_op() {
+        (
+            vec![add_bf16_scalar_op()],
+            pointwise_region(&subject, scalars, add_bf16_scalar_op()),
         )
     } else {
         panic!(
@@ -378,20 +407,30 @@ fn flush_contract() -> NumericalContractIdentity {
     .into()
 }
 
+/// Builds a rank-zero constant region from one width's bits attribute and scalar.
+///
+/// Both are parameters rather than the `f32` pair spelled inline, because the two
+/// registered constant families carry *different* attribute identities and
+/// different scalar operations while sharing one law template. A helper that
+/// hardcoded either would build a region the `bf16` law's own realization does
+/// not equal, and the verifier would refuse it — which is the check working, but
+/// at the cost of a fixture that cannot express the second width at all.
 fn constant_region(
     subject: &IndexRefinementSubject,
     scalars: &FrozenScalarRegistry,
+    attribute: AttributeFieldId,
+    scalar: ScalarOpKey,
 ) -> VerifiedIndexRegion {
     let [result] = subject.results() else {
         panic!("a constant has one result")
     };
     let bits = subject
         .attributes()
-        .get(F32_CONSTANT_BITS_ATTRIBUTE)
+        .get(attribute)
         .expect("a constant carries its bits attribute")
         .clone();
     let attributes = ScalarAttributes::new(
-        CanonicalValue::record([CanonicalField::new(F32_CONSTANT_BITS_ATTRIBUTE, bits)])
+        CanonicalValue::record([CanonicalField::new(attribute, bits)])
             .expect("the scalar attribute record composes"),
     )
     .expect("scalar attributes are a record");
@@ -404,7 +443,7 @@ fn constant_region(
         )
         .expect("the constant's output tensor");
     let value = region
-        .apply(constant_f32_scalar_op(), attributes, &[])
+        .apply(scalar, attributes, &[])
         .expect("the constant scalar applies")
         .get(0)
         .expect("one constant result");
@@ -1770,8 +1809,18 @@ pub(super) fn rules() -> FeasibilityRuleSetRef {
 /// One obligation, at the computation locus of occurrence 0, so every fixture
 /// exercises a `Required` disposition and a canonical obligation range rather
 /// than only the all-`NotRequired` shape.
+///
+/// `subject` is the arithmetic the packaged program actually computes in, and it
+/// is a parameter because nothing downstream can catch it being wrong:
+/// [`validate_against_artifact`] compares the record's behaviours to each bound
+/// entry's realization and never reads the subject's arithmetic type, so a
+/// `bf16` artifact carrying the `f32` subject would build, encode, decode, and
+/// state something false about which arithmetic its delivered numerics govern.
+///
+/// [`validate_against_artifact`]: super::validate_against_artifact
 pub(crate) fn realization_record(
     profile: &TargetProfileRef,
+    subject: &ScalarArithmeticSubject,
     numerical: NumericalRealization,
     entries: u32,
 ) -> DeliveredRealizationRecord {
@@ -1794,7 +1843,7 @@ pub(crate) fn realization_record(
                 _ => DimensionBehaviour::Transform(NumericalPermission::Forbidden),
             });
     }
-    let subject = ScalarArithmeticSubject::f32().identity();
+    let subject = subject.identity();
     let mut record = DeliveredRealizationBuilder::new(profile.clone());
     record
         .declare_scalar_arithmetic(subject.clone(), resolutions)
@@ -1841,6 +1890,16 @@ pub(super) fn declare_realization_over(
     program: &VerifiedKernelProgram,
     variants: u32,
 ) {
+    declare_realization_at(draft, program, &ScalarArithmeticSubject::f32(), variants);
+}
+
+/// The same declaration for a program computing in `subject`'s arithmetic.
+fn declare_realization_at(
+    draft: &mut ArtifactProgramBuilder,
+    program: &VerifiedKernelProgram,
+    subject: &ScalarArithmeticSubject,
+    variants: u32,
+) {
     let numerical = program
         .stages()
         .next()
@@ -1849,7 +1908,12 @@ pub(super) fn declare_realization_over(
         .numerical();
     let stages = u32::try_from(program.stages().len()).expect("a bounded stage table fits u32");
     draft
-        .declare_realization(realization_record(&profile(), numerical, stages * variants))
+        .declare_realization(realization_record(
+            &profile(),
+            subject,
+            numerical,
+            stages * variants,
+        ))
         .expect("the fixture record");
 }
 
@@ -2044,6 +2108,549 @@ pub(crate) fn default_artifact() -> VerifiedArtifactProgram {
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
     build_artifact(&semantic, &program, provider.clone(), &[provider])
+}
+
+// -------------------------------------------------------------------------
+// The pointwise producer path at two widths
+// -------------------------------------------------------------------------
+//
+// `admit-a-bf16-index-realization-law-and-refinement-contract` made a pure-BF16
+// occurrence able to obtain executable coverage, so a BF16 kernel program now
+// verifies. This crate owns what that unblocked and `tiler-ir` cannot reach: the
+// packaging half, since the dependency direction is `tiler-artifact → tiler-ir`.
+//
+// The candidate index regions are still hand-built with `IndexRegionBuilder`
+// through `checked_coverage_under`, exactly as every other fixture here does —
+// `IndexRealizationLaw::realize` is `pub(crate)` to `tiler-ir` — which is the
+// stronger arrangement anyway: a caller that could ask the law for its own
+// answer and hand it straight back would turn the verifier into a rubber stamp.
+
+/// `2.0` in the ratified BF16 operand format.
+const BF16_SCALE_BITS: u16 = 0x4000;
+/// `1.0` in the same format.
+const BF16_BIAS_BITS: u16 = 0x3f80;
+
+/// The two arithmetic widths the pointwise fixture is built at.
+///
+/// One parameterized construction rather than two hand-written fixture families,
+/// because the identity comparison below is only worth making if the width is
+/// the *sole* difference between the two artifacts. Two twins written out
+/// separately drift, and a drifted pair still yields two distinct identities —
+/// for a reason no later reader could attribute to the carrier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PointwiseWidth {
+    F32,
+    Bf16,
+}
+
+impl PointwiseWidth {
+    /// Storage width of one element, in bytes.
+    const fn element_bytes(self) -> u64 {
+        match self {
+            Self::F32 => 4,
+            Self::Bf16 => 2,
+        }
+    }
+
+    const fn storage_scalar(self) -> StorageScalar {
+        match self {
+            Self::F32 => StorageScalar::F32,
+            Self::Bf16 => StorageScalar::Bf16,
+        }
+    }
+
+    const fn access_type(self) -> KernelType {
+        match self {
+            Self::F32 => KernelType::F32,
+            Self::Bf16 => KernelType::Bf16,
+        }
+    }
+
+    /// The scalar-arithmetic subject the delivered-realization record names.
+    fn subject(self) -> ScalarArithmeticSubject {
+        match self {
+            Self::F32 => ScalarArithmeticSubject::f32(),
+            Self::Bf16 => ScalarArithmeticSubject::new(ArithmeticType::Bf16, Bf16::resolved_type())
+                .expect("the governed bf16 arithmetic subject is registered"),
+        }
+    }
+
+    /// The governed strict contract for this width.
+    ///
+    /// The two keys are separate types rather than one key carrying a width,
+    /// which is what makes a contract stated for the other width a *named*
+    /// refusal at refinement rather than a silent mismatch.
+    fn contract(self) -> NumericalContractIdentity {
+        match self {
+            Self::F32 => strict_contract(),
+            Self::Bf16 => Bf16NumericalContractKey::new(
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                MaterializationRounding::NearestTiesToEven,
+            )
+            .expect("the fixture bf16 contract vector is coherent")
+            .into(),
+        }
+    }
+
+    /// The scheduled region's numerical realization for this width.
+    ///
+    /// The canonical NaN payload is this width's own: `verify_pointwise_bf16`
+    /// refuses a `bf16` region declaring any other, so the two arms cannot be
+    /// collapsed onto one constant.
+    fn numerical(self) -> NumericalRealization {
+        match self {
+            Self::F32 => strict(),
+            Self::Bf16 => NumericalRealization::new(
+                "tiler.test.strict-bf16",
+                u32::from(tiler_ir::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+            ),
+        }
+    }
+
+    /// The four-operation graph `result = input * 2.0 + 1.0` at this width.
+    ///
+    /// Constant, multiply, and add are the complete registered `bf16` semantic
+    /// vocabulary, so the `Bf16` arm is the widest pure-`bf16` program the
+    /// semantic layer can state rather than a subset chosen to be easy; the
+    /// `F32` arm states the same four operations so the two are twins.
+    fn semantic(self) -> SemanticProgram {
+        let mut draft = SemanticProgramBuilder::try_standard().expect("standard registry");
+        let key = InputKey::new("input").expect("input key");
+        let result = OutputKey::new("result").expect("output key");
+        match self {
+            Self::F32 => {
+                let input = draft.input::<F32>(key, input_shape()).expect("input");
+                let scale = F32Constant::apply(&mut draft, SCALE_BITS).expect("scale");
+                let bias = F32Constant::apply(&mut draft, BIAS_BITS).expect("bias");
+                let product = F32Multiply::apply(&mut draft, input, scale).expect("product");
+                let mapped = F32Add::apply(&mut draft, product, bias).expect("mapped");
+                draft.output(result, mapped).expect("output");
+            }
+            Self::Bf16 => {
+                let input = draft.input::<Bf16>(key, input_shape()).expect("input");
+                let scale = Bf16Constant::apply(&mut draft, BF16_SCALE_BITS).expect("scale");
+                let bias = Bf16Constant::apply(&mut draft, BF16_BIAS_BITS).expect("bias");
+                let product = Bf16Multiply::apply(&mut draft, input, scale).expect("product");
+                let mapped = Bf16Add::apply(&mut draft, product, bias).expect("mapped");
+                draft.output(result, mapped).expect("output");
+            }
+        }
+        let program = draft
+            .build()
+            .expect("a verified pointwise semantic program");
+        assert_eq!(program.operation_count(), 4);
+        program
+    }
+
+    /// The fused pointwise expression the scheduled region computes.
+    fn scalar_program(self) -> ScalarProgram {
+        match self {
+            Self::F32 => {
+                let mut expression = PointwiseF32ExpressionBuilder::new();
+                let leaf = expression.input(InputOrdinal::FIRST).expect("input");
+                let scale = expression.constant(SCALE_BITS).expect("scale");
+                let product = expression.multiply(leaf, scale).expect("product");
+                let bias = expression.constant(BIAS_BITS).expect("bias");
+                let root = expression.add(product, bias).expect("sum");
+                ScalarProgram::PointwiseF32(
+                    expression.build(root).expect("an f32 pointwise expression"),
+                )
+            }
+            Self::Bf16 => {
+                let mut expression = PointwiseBf16ExpressionBuilder::new();
+                let leaf = expression.input(InputOrdinal::FIRST).expect("input");
+                let scale = expression.constant(BF16_SCALE_BITS).expect("scale");
+                let product = expression.multiply(leaf, scale).expect("product");
+                let bias = expression.constant(BF16_BIAS_BITS).expect("bias");
+                let root = expression.add(product, bias).expect("sum");
+                ScalarProgram::PointwiseBf16(
+                    expression.build(root).expect("a bf16 pointwise expression"),
+                )
+            }
+        }
+    }
+
+    /// The one-region kernel: a whole `[2, 3]` read to a whole `[2, 3]` write.
+    fn kernel(self) -> VerifiedKernel {
+        let count = elements();
+        let owner = OwnershipWitnessId::new(0);
+        let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
+        region
+            .iteration_shape(input_shape())
+            .expect("iteration shape");
+        for (tensor, mode, bounds, ownership) in [
+            (
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+                AccessMode::Read,
+                BoundsWitnessId::new(0),
+                None,
+            ),
+            (
+                TensorRole::Output,
+                AccessMode::Write,
+                BoundsWitnessId::new(1),
+                Some(owner),
+            ),
+        ] {
+            region
+                .push_access(Access {
+                    tensor,
+                    component_role: None,
+                    mode,
+                    map: LogicalAccess::LinearIdentity,
+                    bounds,
+                    ownership,
+                })
+                .expect("a whole-tensor access");
+            region
+                .push_bounds_proof(BoundsProof {
+                    id: bounds,
+                    tensor,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: count,
+                    },
+                })
+                .expect("linear bounds");
+        }
+        region
+            .ownership_proof(OwnershipProof {
+                id: owner,
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: count,
+                },
+            })
+            .expect("output ownership");
+        region
+            .scalar_program(self.scalar_program())
+            .expect("scalar program");
+        region.numerical(self.numerical()).expect("numerical");
+        region
+            .schedule(KernelSchedule {
+                binding: ExecutionBinding::GlobalLinearInvocation,
+                work_items: count,
+                threads_per_workgroup: 1,
+                tail: TailPolicy::Exact,
+                output_owner: owner,
+                reduction: ReductionTopology::None,
+                launch: LaunchPlan {
+                    grid_threads: count,
+                    threads_per_workgroup: 1,
+                    zero_work_skips_dispatch: true,
+                },
+            })
+            .expect("schedule");
+        lower_scheduled_region(&region.build().expect("a verified pointwise region"))
+            .expect("a verified pointwise kernel")
+    }
+
+    fn value(self, origin: MaterializedOrigin, role: ValueRole) -> MaterializedValueSpec {
+        MaterializedValueSpec {
+            origin,
+            role,
+            shape: input_shape(),
+            storage_scalar: self.storage_scalar(),
+            element_type: self.access_type(),
+            encoding: StorageEncoding::Unpacked,
+            alignment: u32::try_from(self.element_bytes()).expect("a scalar width fits u32"),
+            memory_space: MemorySpace::Device,
+        }
+    }
+
+    /// The single-stage kernel program the artifact packages.
+    fn program(self, semantic: &SemanticProgram) -> VerifiedKernelProgram {
+        let kernel = self.kernel();
+        let coverage = checked_coverage_under(semantic, &self.contract());
+        let bytes = self.element_bytes() * elements();
+        let mut plan = KernelProgramBuilder::new(semantic).expect("program builder");
+        let external = plan
+            .push_allocation(AllocationSpec {
+                capacity_bytes: bytes,
+                alignment: 4,
+                memory_space: MemorySpace::Device,
+                ownership: AllocationOwnership::External,
+            })
+            .expect("input allocation");
+        let owned = plan
+            .push_allocation(AllocationSpec {
+                capacity_bytes: bytes,
+                alignment: 4,
+                memory_space: MemorySpace::Device,
+                ownership: AllocationOwnership::Program,
+            })
+            .expect("output allocation");
+        let source = plan
+            .push_value(
+                self.value(
+                    MaterializedOrigin::ProgramInput {
+                        key: InputKey::new("input").expect("input key"),
+                    },
+                    ValueRole::Input,
+                ),
+                external,
+            )
+            .expect("input value");
+        let result = plan
+            .push_value(
+                self.value(MaterializedOrigin::Internal, ValueRole::Output),
+                owned,
+            )
+            .expect("output value");
+        let read = plan.push_whole_view(source).expect("input view");
+        let write = plan.push_whole_view(result).expect("output view");
+        // Only the quantities this one stage names. Minting the byte counts the
+        // reduction fixtures share would leave an ABI expression no stage
+        // references, which the program verifier refuses by name.
+        let mut literal = |value| {
+            plan.push_abi_root(AbiRoot::UnsignedLiteral(value))
+                .expect("abi literal")
+        };
+        let value_bytes = literal(bytes);
+        let grid_threads = literal(elements());
+        let threads_per_workgroup = literal(1);
+        let guard = plan
+            .push_abi_root(AbiRoot::BooleanLiteral(true))
+            .expect("guard predicate");
+        plan.applicability_guard(guard)
+            .expect("applicability guard");
+        for (from, to, fallback_permitted) in [
+            (
+                RoutingCommitState::Preflight,
+                RoutingCommitState::Committed,
+                true,
+            ),
+            (
+                RoutingCommitState::Committed,
+                RoutingCommitState::Executing,
+                false,
+            ),
+            (
+                RoutingCommitState::Executing,
+                RoutingCommitState::Published,
+                false,
+            ),
+        ] {
+            plan.push_routing_commit_transition(RoutingCommitTransition {
+                from,
+                to,
+                fallback_permitted,
+            })
+            .expect("routing-commit transition");
+        }
+        plan.push_stage(
+            &kernel,
+            &coverage,
+            &[
+                StageAccess {
+                    view: read,
+                    mode: StageAccessMode::Read,
+                    accessible_bytes: value_bytes,
+                },
+                StageAccess {
+                    view: write,
+                    mode: StageAccessMode::Write,
+                    accessible_bytes: value_bytes,
+                },
+            ],
+            StageLaunch {
+                grid_threads,
+                threads_per_workgroup,
+            },
+        )
+        .expect("the pointwise stage covers every occurrence of its bound graph");
+        plan.push_output(OutputKey::new("result").expect("output key"), result)
+            .expect("named output");
+        plan.build().expect("a verified pointwise kernel program")
+    }
+
+    /// The one-variant artifact packaging that program.
+    fn artifact(self) -> VerifiedArtifactProgram {
+        let semantic = self.semantic();
+        let program = self.program(&semantic);
+        let provider =
+            ProviderIdentity::new("tiler-test", "pointwise-scale-bias", 1).expect("provider");
+        let environment = CompilationEnvironment::new([provider.clone()]).expect("environment");
+        let mut draft =
+            ArtifactProgramBuilder::new(&semantic, environment).expect("artifact builder");
+        draft
+            .select_provider(SelectedProvider {
+                provider,
+                capability: CapabilityKey::new("tiler.capability.pointwise-scale-bias")
+                    .expect("capability"),
+                capability_revision: 1,
+            })
+            .expect("selected provider");
+        let descriptor = draft.push_payload(payload(0xb1)).expect("payload");
+        let formulas = formulas(&mut draft);
+        draft
+            .push_variant(&program, variant(&formulas, descriptor, b"pointwise"))
+            .expect("pointwise variant");
+        declare_realization_at(&mut draft, &program, &self.subject(), 1);
+        draft.build().expect("a verified pointwise artifact")
+    }
+}
+
+/// Element count of the `[2, 3]` tensor both widths' fixtures address whole.
+fn elements() -> u64 {
+    input_shape()
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .product()
+}
+
+/// The pure-BF16 artifact reached through the ordinary producer path.
+pub(super) fn bf16_pointwise_artifact() -> VerifiedArtifactProgram {
+    PointwiseWidth::Bf16.artifact()
+}
+
+/// Its F32 twin: the same four operations, the same shape, the other width.
+pub(super) fn f32_pointwise_artifact() -> VerifiedArtifactProgram {
+    PointwiseWidth::F32.artifact()
+}
+
+/// A pure-BF16 program travels semantics to packaged artifact through the
+/// ordinary producer path.
+///
+/// The composition `carry-bf16-through-the-artifact-encoding-and-identity`
+/// recorded as unreachable, now walked end to end: every one of the four
+/// coverage records is minted by the refinement verifier from a candidate region
+/// this crate built, the program verifier accepts a stage claiming them, and the
+/// artifact builder packages the result. Nothing here forges an envelope.
+///
+/// The carrier assertions are on what a *consumer* reads — the declared
+/// interface component and the entry's binding windows — because those are what
+/// a runtime uses to size a buffer, and twelve versus twenty-four bytes over the
+/// same six-element tensor is the whole reason the width has to survive.
+#[test]
+fn a_pure_bf16_program_reaches_a_verified_artifact_through_the_builder() {
+    let semantic = PointwiseWidth::Bf16.semantic();
+    let coverage = checked_coverage_under(&semantic, &PointwiseWidth::Bf16.contract());
+    assert_eq!(
+        coverage
+            .iter()
+            .map(|covered| covered.occurrence().get())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3],
+        "the coverage partition is the graph's complete canonical occurrence run",
+    );
+    let program = PointwiseWidth::Bf16.program(&semantic);
+    assert_eq!(program.stages().count(), 1);
+
+    let artifact = PointwiseWidth::Bf16.artifact();
+    let component = artifact
+        .inputs()
+        .next()
+        .expect("one declared input")
+        .components()
+        .next()
+        .expect("one dense component");
+    assert_eq!(component.storage_scalar(), StorageScalar::Bf16);
+    assert_eq!(component.access_type(), KernelType::Bf16);
+    let entry = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    assert_eq!(
+        entry
+            .bindings()
+            .map(|binding| (
+                binding.storage_scalar(),
+                binding.access_type(),
+                binding.window().length,
+            ))
+            .collect::<Vec<_>>(),
+        [(StorageScalar::Bf16, KernelType::Bf16, 12); 2],
+        "six bf16 elements are twelve bytes on both the read and the write side",
+    );
+
+    // The delivered-realization record names the arithmetic the program
+    // computes in. Asserted because nothing downstream can: the artifact-level
+    // cross-check compares behaviours against each entry's realization and never
+    // reads the subject, so a record naming `f32` for this program would build,
+    // encode, decode, and state something false to every consumer of it.
+    let record = artifact.delivered_realization();
+    assert!(
+        record
+            .scalar_arithmetic(&PointwiseWidth::Bf16.subject().identity())
+            .is_some(),
+        "the record must carry the bf16 scalar-arithmetic subject",
+    );
+    assert!(
+        record
+            .scalar_arithmetic(&PointwiseWidth::F32.subject().identity())
+            .is_none(),
+        "and must not carry the f32 one, which no other check would catch",
+    );
+}
+
+/// The same program at the other width is a different artifact.
+///
+/// The producer-path counterpart of the encoding rung's carrier-only comparison,
+/// and it answers a strictly larger question. There the two envelopes were one
+/// artifact with two tag bytes rewritten, so the four differing identity bytes
+/// were the carrier and nothing else. Here the two are separately *derived* from
+/// separately verified semantic graphs, so the difference spans the semantic
+/// operation keys, the refinement evidence minted under each width's own
+/// contract, the scheduled expression, the canonical NaN payload, and the buffer
+/// sizes — every place the width is load-bearing rather than only the two the
+/// forgery could reach.
+#[test]
+fn the_bf16_artifact_and_its_f32_twin_are_two_artifacts() {
+    let bf16 = PointwiseWidth::Bf16.artifact();
+    let twin = PointwiseWidth::F32.artifact();
+    assert_ne!(
+        bf16.canonical_identity(),
+        twin.canonical_identity(),
+        "two artifacts differing in the arithmetic they compute in must not share an identity",
+    );
+    assert_eq!(
+        bf16.canonical_identity(),
+        PointwiseWidth::Bf16.artifact().canonical_identity(),
+        "nothing else in the fixture varies between two builds at one width",
+    );
+    let window = |artifact: &VerifiedArtifactProgram| {
+        artifact
+            .variants()
+            .next()
+            .expect("one variant")
+            .entries()
+            .next()
+            .expect("one entry")
+            .bindings()
+            .next()
+            .expect("one read binding")
+            .window()
+            .length
+    };
+    assert_eq!(
+        (window(&bf16), window(&twin)),
+        (12, 24),
+        "the twin addresses the same six elements at twice the width",
+    );
 }
 
 /// Reconstructs the historical stage-key payload: the bound kernel identity and
@@ -3252,7 +3859,12 @@ fn rejects_an_empty_portfolio() {
     // bind: what is under test is the empty portfolio, and a record naming an
     // entry this draft does not have would be refused for that instead.
     draft
-        .declare_realization(realization_record(&profile(), strict(), 0))
+        .declare_realization(realization_record(
+            &profile(),
+            &ScalarArithmeticSubject::f32(),
+            strict(),
+            0,
+        ))
         .expect("a record over no packaged entry");
     let diagnostics = draft.build().expect_err("an empty portfolio is rejected");
     assert!(
