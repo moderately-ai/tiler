@@ -59,7 +59,7 @@ The broadcast motivation above is unaffected — `Multiply(activation, Broadcast
 
 ## Non-goals
 
-A `ScalarProgram` copy variant, a standalone materializing reindex kernel, a general program-shape recognizer, and anything about the contraction family — which is blocked by the same recognizer and has its own tickets.
+A `ScalarProgram` copy variant, a standalone materializing reindex kernel, a general program-shape recognizer, and anything about the contraction family — which has its own tickets. ~~which is blocked by the same recognizer and~~ **struck 2026-08-05:** the contraction is admitted, not blocked; `crates/tiler-compiler/tests/contraction_direct_path.rs` compiles one. It remains a non-goal here because it is separate work, not because it shares this ticket's obstruction.
 
 ## Closes when
 
