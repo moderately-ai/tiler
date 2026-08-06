@@ -1,7 +1,7 @@
 ---
 id: reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller
 title: Reassess the distributivity decline against the online-softmax rescaling caller
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [connect-certified-rounding-error-bounds-to-rewrite-permissions, decide-whether-to-admit-a-distributivity-permission, decide-whether-distributivity-directions-share-one-permission, derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, optimizer, decision]
+claimed_from: todo
+assignee: agent-distrib-reassess
+lease_expires_at: 1785983286
 ---
 ## User-visible outcome
 
