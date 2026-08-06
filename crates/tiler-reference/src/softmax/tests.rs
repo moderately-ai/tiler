@@ -10,6 +10,7 @@ use crate::accuracy::{
     ConformanceDecision, EnclosurePrecision, decide_contract, exact_binary32_candidate,
     exp_enclosure,
 };
+use crate::certified_exp_f32;
 use crate::evaluate::{ReferenceEvaluator, decode_f32, f32_element, f32_elements};
 use crate::tensor::InputBinding;
 

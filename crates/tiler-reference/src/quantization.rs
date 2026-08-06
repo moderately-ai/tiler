@@ -1,4 +1,24 @@
 //! Exact reference semantics for the governed strict-affine proof profile.
+//!
+//! # Where the declared numerical conformance applies, and where the type system
+//! already discharged it
+//!
+//! `dequantize-strict-affine` and `assemble-strict-affine` reach **neither**
+//! subnormal dimension, and that is a consequence of the governed value
+//! contract rather than a property of these functions. The scale domain is
+//! `positive-normal-f32`, so no scale operand is subnormal; the code difference
+//! is an exact integer whose magnitude is either zero or at least one, so no code
+//! operand is subnormal and `|difference * scale| >= scale >= 2^-126` makes the
+//! decode's one product a normal value or an exact zero. Every operand and every
+//! produced value is outside the subnormal range by construction, so applying the
+//! modes would be applying them to nothing. [`read_scale_value`] is where that
+//! domain is enforced and is the check that would have to fail first.
+//!
+//! `quantize-strict-affine` does reach both, and applies them. Its expressed
+//! operand is an arbitrary binary32 value, and `value / scale` at a subnormal
+//! `value` and a minimal normal `scale` reaches a quotient near `1.0` — a whole
+//! code step — where a flushing unit reaches exactly zero. That is a different
+//! emitted code, not a different last bit.
 
 use std::sync::Arc;
 
@@ -9,6 +29,7 @@ use tiler_ir::semantic::{
     quantize_strict_affine_op,
 };
 
+use super::conformance::ReferenceNumericalConformance;
 use super::error::{
     ReferenceOperationError, ReferenceRegistryError, ReferenceValueError, dense_result_error,
 };
@@ -136,7 +157,9 @@ impl ReferenceOperation for StrictAffineOperation {
         reject_attributes(request.attributes())?;
         match self {
             Self::Assemble(profile) => assemble(profile, request.operands(), outputs),
-            Self::Quantize(profile) => quantize(profile, request.operands(), outputs),
+            Self::Quantize(profile) => {
+                quantize(profile, request.operands(), outputs, request.conformance())
+            }
             Self::Dequantize(profile) => dequantize(profile, request.operands(), outputs),
         }
     }
@@ -162,6 +185,7 @@ fn quantize(
     profile: &StrictAffineProfile,
     operands: &[&Tensor],
     outputs: &mut ReferenceOutputs,
+    conformance: ReferenceNumericalConformance,
 ) -> Result<(), ReferenceOperationError> {
     let [expressed, scale, zero_point] = operands else {
         return Err(ReferenceOperationError::InvalidApplication);
@@ -172,8 +196,14 @@ fn quantize(
     let mut codes = Vec::with_capacity(values.len());
     for value in values {
         codes.push(
-            ReferenceElement::new([quantize_one(value, scale_value, zero, profile.maximum)?])
-                .map_err(|_| ReferenceOperationError::InvalidApplication)?,
+            ReferenceElement::new([quantize_one(
+                value,
+                scale_value,
+                zero,
+                profile.maximum,
+                conformance,
+            )?])
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?,
         );
     }
     let codes = Tensor::dense(profile.code_type.clone(), expressed.shape().clone(), codes)
@@ -372,12 +402,18 @@ fn quantize_one(
     scale: f32,
     zero_point: u8,
     maximum: u8,
+    conformance: ReferenceNumericalConformance,
 ) -> Result<u8, ReferenceOperationError> {
     if value.is_nan() {
         return Err(ReferenceOperationError::InvalidApplication);
     }
-    let scaled = value / scale;
-    let shifted = scaled + f32::from(zero_point);
+    // The division and the shift are the two arithmetic sites; the clamp and the
+    // nearest-even rounding select and round an already-committed value and
+    // produce nothing new, so neither dimension reaches them.
+    let scaled = conformance
+        .apply_to_result(conformance.apply_to_operand(value) / conformance.apply_to_operand(scale));
+    let shifted =
+        conformance.apply_to_result(conformance.apply_to_operand(scaled) + f32::from(zero_point));
     let clamped = shifted.clamp(0.0, f32::from(maximum));
     let rounded = clamped.round_ties_even();
     #[allow(
@@ -389,6 +425,14 @@ fn quantize_one(
     Ok(code)
 }
 
+/// Returns the expressed value one code denotes.
+///
+/// Neither subnormal dimension has a site with a value in range: `scale` is a
+/// positive *normal* by the value contract [`read_scale_value`] enforces, the
+/// difference is an exact integer in `-255..=255`, and a nonzero product's
+/// magnitude is therefore at least `scale`, which is at least the minimum
+/// normal. Applying the modes here would be applying them to values the type
+/// system has already excluded from the subnormal range.
 fn dequantize_one(code: u8, scale: f32, zero_point: u8) -> f32 {
     if code == zero_point {
         return 0.0;
@@ -614,17 +658,43 @@ mod tests {
 
     #[test]
     fn strict_quantize_pins_nearest_even_and_infinity_saturation() {
-        assert_eq!(quantize_one(f32::NEG_INFINITY, 0.5, 8, 15).unwrap(), 0);
-        assert_eq!(quantize_one(0.25, 0.5, 8, 15).unwrap(), 8);
-        assert_eq!(quantize_one(0.75, 0.5, 8, 15).unwrap(), 10);
-        assert_eq!(quantize_one(f32::INFINITY, 0.5, 8, 15).unwrap(), 15);
+        assert_eq!(
+            quantize_one(
+                f32::NEG_INFINITY,
+                0.5,
+                8,
+                15,
+                ReferenceNumericalConformance::strict()
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            quantize_one(0.25, 0.5, 8, 15, ReferenceNumericalConformance::strict()).unwrap(),
+            8
+        );
+        assert_eq!(
+            quantize_one(0.75, 0.5, 8, 15, ReferenceNumericalConformance::strict()).unwrap(),
+            10
+        );
+        assert_eq!(
+            quantize_one(
+                f32::INFINITY,
+                0.5,
+                8,
+                15,
+                ReferenceNumericalConformance::strict()
+            )
+            .unwrap(),
+            15
+        );
     }
 
     #[test]
     fn strict_quantize_rejects_nan() {
         for nan in [f32::NAN, f32::from_bits(0x7f80_0001)] {
             assert_eq!(
-                quantize_one(nan, 0.5, 8, 15),
+                quantize_one(nan, 0.5, 8, 15, ReferenceNumericalConformance::strict()),
                 Err(ReferenceOperationError::InvalidApplication)
             );
         }
@@ -682,7 +752,16 @@ mod tests {
         let zero = Tensor::scalar(U8::resolved_type(), element([128])).unwrap();
         let encoded = compound_value(&profile, &codes, &scale, &zero).unwrap();
         assert!(validate_strict_affine(&encoded, &profile).is_ok());
-        assert_eq!(quantize_one(f32::INFINITY, 0.5, 128, u8::MAX), Ok(u8::MAX));
+        assert_eq!(
+            quantize_one(
+                f32::INFINITY,
+                0.5,
+                128,
+                u8::MAX,
+                ReferenceNumericalConformance::strict()
+            ),
+            Ok(u8::MAX)
+        );
         assert_eq!(
             dequantize_one(u8::MAX, 0.5, 128).to_bits(),
             63.5_f32.to_bits()

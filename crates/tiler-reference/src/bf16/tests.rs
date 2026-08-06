@@ -1124,6 +1124,10 @@ fn apply_constant(
             // A constant walks no iteration space, so this allowance is inert
             // here; it is the default one every registered occurrence receives.
             iteration_step_allowance: crate::MAX_REFERENCE_TENSOR_ELEMENTS,
+            // A BF16 constant reproduces a declared payload and performs no
+            // binary32 arithmetic, so this dimension has no site in the callback
+            // below; the strict reading is stated rather than left absent.
+            conformance: crate::ReferenceNumericalConformance::strict(),
         },
         &mut outputs,
     );

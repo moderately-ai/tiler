@@ -5,6 +5,21 @@
 //! reference registry. It is one of the crate's two independent oracles;
 //! `oracle` owns the other, over index regions, and neither reuses the
 //! other's host expressions.
+//!
+//! # The declared contract reaches every capability, and refusing to carry it
+//!
+//! An evaluator carries one [`ReferenceNumericalConformance`] and hands it to
+//! every capability through [`ReferenceEvaluationRequest::conformance`].
+//! [`ReferenceEvaluator::new`] states the strict reading and
+//! [`ReferenceEvaluator::under`] states another, exactly as
+//! [`crate::IndexRegionEvaluator`] does — the two oracles answer the same program
+//! and are told the same contract, so neither can silently answer a question the
+//! other was asked.
+//!
+//! The declared-order reduction oracle below carries it the same way:
+//! [`strict_partial_sums_under`] and [`strict_partitioned_sum_under`] take the
+//! contract, and [`strict_partial_sums`] and [`strict_partitioned_sum`] are those
+//! two at the strict reading rather than a second fold that ignores one.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -15,6 +30,7 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::{Axis, Shape};
 
+use super::conformance::ReferenceNumericalConformance;
 use super::error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceResource,
     dense_result_error,
@@ -36,22 +52,54 @@ use super::{
 pub struct ReferenceEvaluator {
     registry: FrozenReferenceRegistry,
     iteration_step_allowance: usize,
+    conformance: ReferenceNumericalConformance,
 }
 
 impl ReferenceEvaluator {
-    /// Creates an evaluator with one explicit frozen capability snapshot.
+    /// Creates an evaluator with one explicit frozen capability snapshot,
+    /// evaluating the strict reading.
     ///
     /// The iteration-step allowance is the crate's own per-window work bound,
     /// which is the number one operation could always walk, so this constructor
     /// changes no result and no refusal. Use
     /// [`Self::with_iteration_step_allowance`] to state a different one, and
     /// [`Self::iteration_step_allowance`] to read the one in force.
+    ///
+    /// The strict reading is what this evaluator computed before it could be told
+    /// a contract, so naming it here changes no value either. Use [`Self::under`]
+    /// to evaluate a program whose declared realization flushes subnormals;
+    /// [`ReferenceNumericalConformance::from_realization`] is the checked bridge
+    /// from a region's declared realization to the contract this carries.
     #[must_use]
     pub const fn new(registry: FrozenReferenceRegistry) -> Self {
+        Self::under(registry, ReferenceNumericalConformance::strict())
+    }
+
+    /// Creates an evaluator bound to one stated numerical contract.
+    ///
+    /// Every capability the walk dispatches to receives this through
+    /// [`ReferenceEvaluationRequest::conformance`]. A capability whose family can
+    /// reach a subnormal operand or produce a subnormal result applies it; one
+    /// that performs no host arithmetic documents why it cannot at its own
+    /// definition. Neither answers by omission, which is what makes a comparison
+    /// against this evaluator a comparison against the *declared* contract rather
+    /// than against the host's own subnormal behaviour.
+    #[must_use]
+    pub const fn under(
+        registry: FrozenReferenceRegistry,
+        conformance: ReferenceNumericalConformance,
+    ) -> Self {
         Self {
             registry,
             iteration_step_allowance: MAX_REFERENCE_TENSOR_ELEMENTS,
+            conformance,
         }
+    }
+
+    /// Returns the numerical contract every evaluation is performed under.
+    #[must_use]
+    pub const fn conformance(&self) -> ReferenceNumericalConformance {
+        self.conformance
     }
 
     /// Creates an evaluator using Tiler's governed initial reference profile.
@@ -100,6 +148,7 @@ impl ReferenceEvaluator {
         Self {
             registry: self.registry,
             iteration_step_allowance: allowance,
+            conformance: self.conformance,
         }
     }
 
@@ -167,6 +216,7 @@ impl ReferenceEvaluator {
                     operands: &operand_values,
                     attributes: operation.attributes(),
                     iteration_step_allowance: self.iteration_step_allowance,
+                    conformance: self.conformance,
                 },
                 &mut output_writer,
             );
@@ -339,9 +389,19 @@ pub(crate) fn reduction_axes(
         .collect()
 }
 
+/// Evaluates one governed elementwise binary32 operation under a stated contract.
+///
+/// Each decoded operand passes through
+/// [`ReferenceNumericalConformance::apply_to_operand`] before the host operation
+/// and the produced value through
+/// [`ReferenceNumericalConformance::apply_to_result`] after it, which is the
+/// scalar oracle's own composition over a tensor rather than a second reading of
+/// it. The NaN canonicalization sits between them and commutes with both: no NaN
+/// is subnormal and no subnormal is a NaN, so neither ordering is a choice.
 pub(crate) fn binary(
     left_value: &Tensor,
     right_value: &Tensor,
+    conformance: ReferenceNumericalConformance,
     operation: impl Fn(f32, f32) -> f32,
 ) -> Result<Tensor, ReferenceOperationError> {
     let left_elements = f32_elements(left_value)?;
@@ -366,14 +426,33 @@ pub(crate) fn binary(
             } else {
                 decode_f32(&right_elements[index])?
             };
-            f32_element(canonicalize_arithmetic_f32(operation(left, right)))
+            let left = conformance.apply_to_operand(left);
+            let right = conformance.apply_to_operand(right);
+            f32_element(
+                conformance.apply_to_result(canonicalize_arithmetic_f32(operation(left, right))),
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     Tensor::dense(F32::resolved_type(), result_shape.clone(), elements)
         .map_err(|source| dense_result_error(&source))
 }
 
-pub(crate) fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, ReferenceOperationError> {
+/// Evaluates the strict serial fold under a stated contract.
+///
+/// **The contract reaches the fold's arithmetic and nothing else.** Each
+/// contributor and the running accumulator pass through
+/// [`ReferenceNumericalConformance::apply_to_operand`] as they enter an addition
+/// and each sum through [`ReferenceNumericalConformance::apply_to_result`]; a
+/// partition of one contributor performs no addition, so it reaches neither and
+/// its value is committed as it was read. That boundary is not this function's
+/// invention — it is where this crate's arithmetic NaN canonicalization is
+/// already drawn, and applying a flush to a value nothing computed would model a
+/// device flushing a load rather than an arithmetic unit.
+pub(crate) fn strict_sum(
+    input: &Tensor,
+    axes: &[Axis],
+    conformance: ReferenceNumericalConformance,
+) -> Result<Tensor, ReferenceOperationError> {
     let mut reduced_mask = vec![false; input.shape().rank()];
     let mut reduced = Vec::with_capacity(axes.len());
     for requested_axis in axes {
@@ -449,7 +528,9 @@ pub(crate) fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, Refere
             let contributor = decode_f32(&input_elements[linear])?;
             accumulator = Some(match accumulator {
                 None => contributor,
-                Some(value) => canonicalize_arithmetic_f32(value + contributor),
+                Some(value) => conformance.apply_to_result(canonicalize_arithmetic_f32(
+                    conformance.apply_to_operand(value) + conformance.apply_to_operand(contributor),
+                )),
             });
         }
         elements.push(f32_element(canonicalize_arithmetic_f32(
@@ -486,6 +567,45 @@ pub fn strict_partial_sums(
     axes: &[Axis],
     partitions: u64,
     contributors_per_partition: u64,
+) -> Result<Tensor, ReferenceOperationError> {
+    strict_partial_sums_under(
+        input,
+        axes,
+        partitions,
+        contributors_per_partition,
+        ReferenceNumericalConformance::strict(),
+    )
+}
+
+/// Evaluates [`strict_partial_sums`] under one stated numerical contract.
+///
+/// **The declared order and the declared subnormal modes are independent
+/// obligations, and a plan under a permissive contract has both.**
+/// `FLUSH_AND_REASSOCIATE_F32` resolves `reassociation` to permitted *and* both
+/// subnormal dimensions to a sign-preserving flush; the split argument discharges
+/// the first and this argument discharges the second. An oracle given only the
+/// split answers the preserving reading of the flushing device's own grouping,
+/// which is a disagreement a reader attributes to the grouping because that is
+/// the only thing the call names.
+///
+/// The two are separately observable at the same shape. Over the contributors
+/// `0x00800001, 0x80800000, 0x00800001, 0x80800000` — every one of them
+/// *normal* — a two-by-two split's partials are `0x00000001` twice under a
+/// preserving contract and `0x00000000` twice under a result-flushing one, while
+/// the same contributors under a four-by-one split have no addition to flush and
+/// report the four operands back unchanged under either. So a partial sum is
+/// subnormal under one declared split and not under the other, and only the
+/// contract decides what happens to it.
+///
+/// # Errors
+///
+/// As [`strict_partial_sums`].
+pub fn strict_partial_sums_under(
+    input: &Tensor,
+    axes: &[Axis],
+    partitions: u64,
+    contributors_per_partition: u64,
+    conformance: ReferenceNumericalConformance,
 ) -> Result<Tensor, ReferenceOperationError> {
     let mut reduced_mask = vec![false; input.shape().rank()];
     let mut reduced = Vec::with_capacity(axes.len());
@@ -587,12 +707,18 @@ pub fn strict_partial_sums(
                 let contributor = decode_f32(&input_elements[linear])?;
                 accumulator = Some(match accumulator {
                     None => contributor,
-                    Some(value) => canonicalize_arithmetic_f32(value + contributor),
+                    Some(value) => conformance.apply_to_result(canonicalize_arithmetic_f32(
+                        conformance.apply_to_operand(value)
+                            + conformance.apply_to_operand(contributor),
+                    )),
                 });
             }
             // An empty partition commits the reduction identity, exactly as an
             // empty whole reduction does; a partition of one commits its single
-            // contributor through the same canonicalizing result boundary.
+            // contributor through the same canonicalizing result boundary. That
+            // boundary canonicalizes a NaN payload and applies no subnormal
+            // mode — neither dimension has a site here, because no operand
+            // entered an operation and no arithmetic produced a result.
             elements.push(f32_element(canonicalize_arithmetic_f32(
                 accumulator.unwrap_or(0.0_f32),
             ))?);
@@ -618,12 +744,44 @@ pub fn strict_partitioned_sum(
     partitions: u64,
     contributors_per_partition: u64,
 ) -> Result<Tensor, ReferenceOperationError> {
-    let partials = strict_partial_sums(input, axes, partitions, contributors_per_partition)?;
+    strict_partitioned_sum_under(
+        input,
+        axes,
+        partitions,
+        contributors_per_partition,
+        ReferenceNumericalConformance::strict(),
+    )
+}
+
+/// Evaluates [`strict_partitioned_sum`] under one stated numerical contract.
+///
+/// Both passes are performed under the same contract, because both are passes of
+/// the same declared realization: a device that flushes its first pass flushes
+/// its second, and an oracle that flushed one of them would answer for a plan
+/// nothing declared.
+///
+/// # Errors
+///
+/// Returns whatever either fold rejects.
+pub fn strict_partitioned_sum_under(
+    input: &Tensor,
+    axes: &[Axis],
+    partitions: u64,
+    contributors_per_partition: u64,
+    conformance: ReferenceNumericalConformance,
+) -> Result<Tensor, ReferenceOperationError> {
+    let partials = strict_partial_sums_under(
+        input,
+        axes,
+        partitions,
+        contributors_per_partition,
+        conformance,
+    )?;
     let partition_axis = u32::try_from(partials.shape().rank())
         .ok()
         .and_then(|rank| rank.checked_sub(1))
         .ok_or(ReferenceOperationError::InvalidApplication)?;
-    strict_sum(&partials, &[Axis::new(partition_axis)])
+    strict_sum(&partials, &[Axis::new(partition_axis)], conformance)
 }
 
 pub(crate) fn preflight_f32_output(output_count: usize) -> Result<(), ReferenceOperationError> {

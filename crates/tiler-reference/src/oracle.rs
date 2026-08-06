@@ -686,6 +686,12 @@ fn decode_scalar_u4(value: &Tensor) -> Result<u8, ReferenceOperationError> {
 /// [`canonicalize_arithmetic_f32`] deliberately does not apply: canonicalizing
 /// here would make the region unable to materialize an exact binary32 pattern
 /// the governed `tiler::constant-f32@1` definition promises to carry verbatim.
+///
+/// The request's declared conformance is not read for the same reason and at the
+/// same boundary. A constant has no operands, so nothing enters an arithmetic
+/// operation, and its result is a declared payload rather than a value arithmetic
+/// produced — so neither subnormal dimension has a site, and a subnormal constant
+/// is materialized exactly as declared under every contract.
 struct StandardScalarConstantF32;
 
 impl ScalarReferenceOperation for StandardScalarConstantF32 {
@@ -771,6 +777,14 @@ impl ScalarReferenceOperation for StandardScalarBinaryF32 {
 /// exactness is what lets a reduction realize its result-boundary
 /// canonicalization on a lone contributor without an addition, which would
 /// otherwise turn an observable `-0.0` into `+0.0`.
+///
+/// **Neither subnormal dimension applies, and that is what makes the conversion a
+/// conversion.** No operand enters an arithmetic operation and no arithmetic
+/// produces a result here, so a subnormal reaches the output exactly as it
+/// arrived — under a preserving contract and under a flushing one alike. This is
+/// the scalar counterpart of the tensor reduction committing a lone contributor
+/// without an addition: both realize a result boundary, and a flush at a boundary
+/// nothing computed would model a device flushing a move.
 struct StandardScalarCanonicalizeNanF32;
 
 impl ScalarReferenceOperation for StandardScalarCanonicalizeNanF32 {
@@ -794,6 +808,15 @@ impl ScalarReferenceOperation for StandardScalarCanonicalizeNanF32 {
 }
 
 /// Executes the atomic scalar meaning used by the strict-affine logical law.
+///
+/// The request's declared conformance has no site with a value in range, and the
+/// governed value contract is what discharges it rather than this evaluator: the
+/// scale is refused unless it is a positive *normal*, the centered code is an
+/// exact integer in `-15..=15`, and a nonzero product's magnitude is therefore at
+/// least the scale and so at least the minimum normal. No operand and no produced
+/// value can be subnormal, so both dimensions are vacuous here — which is the same
+/// argument the tensor-level `dequantize-strict-affine` reference records, read at
+/// the same contract.
 struct StandardScalarStrictAffineU4Dequantize;
 
 impl ScalarReferenceOperation for StandardScalarStrictAffineU4Dequantize {

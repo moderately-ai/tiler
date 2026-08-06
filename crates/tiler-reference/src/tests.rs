@@ -15,6 +15,7 @@ use super::evaluate::{
 use super::registry::ReferenceRegistrationBatch;
 use super::standard::StandardReferenceProvider;
 use super::*;
+use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
 use tiler_ir::semantic::{
     AttributeFieldId, Bf16Add, Bf16Constant, Bf16Multiply, BroadcastAxisMapping,
     BroadcastAxisSource, CanonicalField, CanonicalValue, CanonicalValueKind, F32, F32Add,
@@ -759,6 +760,107 @@ fn f32_arithmetic_preserves_subnormals_and_signed_zero_and_overflows_to_infinity
     assert_eq!(f32_bits(&outputs[2])[0], f32::INFINITY.to_bits());
     assert_eq!(f32_bits(&outputs[3])[0], 0x8000_0000);
     assert_eq!(f32_bits(&outputs[4])[0], CANONICAL_F32_ARITHMETIC_NAN_BITS);
+}
+
+/// The whole-program evaluator answers the contract it was told, per dimension.
+///
+/// The same five occurrences as the preserving case above, evaluated through
+/// [`ReferenceEvaluator::under`] rather than through the strict constructor. The
+/// two subnormal dimensions land on different occurrences, which is what makes
+/// this evidence that both reached the semantic path rather than that one flush
+/// did:
+///
+/// - `preserved-subnormal` is `0x00000001 * 1.0`, whose *operand* is subnormal
+///   and whose product would be subnormal too — the input dimension decides it,
+///   and under a preserving input mode the result dimension decides the same
+///   value by the other route;
+/// - `produced-subnormal` is `0x00800000 * 0.5`, whose operands are both
+///   **normal** and whose product `0x00400000` is subnormal — only the result
+///   dimension can reach it, so an input-flushing-only contract leaves it alone;
+/// - the overflow, the signed zero, and the invalid-infinity NaN are outside the
+///   subnormal range entirely and are invariant across all four columns, which is
+///   what keeps a passing row from being a flush applied indiscriminately.
+///
+/// A constant is not an arithmetic result and is never flushed, so
+/// `minimum_subnormal` reaches its multiply intact under every contract; what the
+/// modes decide is what the multiply does with it.
+#[test]
+fn the_semantic_evaluator_applies_each_declared_subnormal_dimension_it_is_told() {
+    const PRESERVE: SubnormalMode = SubnormalMode::Preserve;
+    const FLUSH: SubnormalMode = SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
+    };
+    let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+    let one = constant(&mut graph, 1.0);
+    let half = constant(&mut graph, 0.5);
+    let two = constant(&mut graph, 2.0);
+    let minimum_subnormal = constant_bits(&mut graph, 0x0000_0001);
+    let minimum_normal = constant_bits(&mut graph, 0x0080_0000);
+    let maximum_finite = constant_bits(&mut graph, 0x7f7f_ffff);
+    let negative_zero = constant_bits(&mut graph, 0x8000_0000);
+    let positive_infinity = constant_bits(&mut graph, f32::INFINITY.to_bits());
+    let negative_infinity = constant_bits(&mut graph, f32::NEG_INFINITY.to_bits());
+
+    let preserved_subnormal = multiply(&mut graph, minimum_subnormal, one);
+    let produced_subnormal = multiply(&mut graph, minimum_normal, half);
+    let overflow = multiply(&mut graph, maximum_finite, two);
+    let signed_zero = multiply(&mut graph, negative_zero, two);
+    let invalid_infinities = add(&mut graph, positive_infinity, negative_infinity);
+    for (key, value) in [
+        ("preserved-subnormal", preserved_subnormal),
+        ("produced-subnormal", produced_subnormal),
+        ("overflow", overflow),
+        ("signed-zero", signed_zero),
+        ("invalid-infinities", invalid_infinities),
+    ] {
+        graph.output(OutputKey::new(key).unwrap(), value).unwrap();
+    }
+    let program = graph.build().unwrap();
+    let registry = FrozenReferenceRegistry::standard().unwrap();
+
+    for (input_mode, result_mode, subnormal_operand, subnormal_result) in [
+        (PRESERVE, PRESERVE, 0x0000_0001_u32, 0x0040_0000_u32),
+        (FLUSH, PRESERVE, 0x0000_0000, 0x0040_0000),
+        (PRESERVE, FLUSH, 0x0000_0000, 0x0000_0000),
+        (FLUSH, FLUSH, 0x0000_0000, 0x0000_0000),
+    ] {
+        let conformance = ReferenceNumericalConformance::new(input_mode, result_mode);
+        let evaluator = ReferenceEvaluator::under(registry.clone(), conformance);
+        assert_eq!(evaluator.conformance(), conformance);
+        let outputs = evaluator.evaluate(&program, &[]).unwrap();
+        let label = format!("{input_mode:?}/{result_mode:?}");
+        assert_eq!(
+            f32_bits(&outputs[0])[0],
+            subnormal_operand,
+            "{label}: a subnormal operand entering a multiply"
+        );
+        assert_eq!(
+            f32_bits(&outputs[1])[0],
+            subnormal_result,
+            "{label}: a subnormal product of two normal operands"
+        );
+        assert_eq!(
+            f32_bits(&outputs[2])[0],
+            f32::INFINITY.to_bits(),
+            "{label}: an overflow is outside both dimensions"
+        );
+        assert_eq!(
+            f32_bits(&outputs[3])[0],
+            0x8000_0000,
+            "{label}: a signed zero is not a subnormal and is not flushed"
+        );
+        assert_eq!(
+            f32_bits(&outputs[4])[0],
+            CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            "{label}: the NaN canonicalization is unmoved by either dimension"
+        );
+    }
+    // The untold evaluator is the strict reading rather than a second one, so
+    // naming that reading changes no value the crate already produced.
+    assert_eq!(
+        ReferenceEvaluator::new(registry).conformance(),
+        ReferenceNumericalConformance::strict()
+    );
 }
 
 #[test]
@@ -1703,7 +1805,12 @@ fn late_zero_shapes_are_accepted_before_overflow_prone_work() {
     assert!(matches!(tensor.payload(), TensorPayloadView::Dense([])));
     assert_eq!(row_major_strides(tensor.shape()).unwrap(), [0, 0, 0]);
 
-    let output = strict_sum(&tensor, &[Axis::new(1), Axis::new(2)]).unwrap();
+    let output = strict_sum(
+        &tensor,
+        &[Axis::new(1), Axis::new(2)],
+        ReferenceNumericalConformance::strict(),
+    )
+    .unwrap();
     assert_eq!(output.shape(), &Shape::from_dims([0]));
     assert!(matches!(output.payload(), TensorPayloadView::Dense([])));
 }
@@ -1717,7 +1824,7 @@ fn empty_contributor_reduction_preflights_oversized_survivor() {
     )
     .unwrap();
     assert!(matches!(
-        strict_sum(&input, &[Axis::new(1)]),
+        strict_sum(&input, &[Axis::new(1)], ReferenceNumericalConformance::strict()),
         Err(ReferenceOperationError::OutputElementsExceeded {
             limit: MAX_REFERENCE_TENSOR_ELEMENTS,
             actual,
@@ -1728,7 +1835,12 @@ fn empty_contributor_reduction_preflights_oversized_survivor() {
 #[test]
 fn large_empty_contributor_domains_are_iterated_without_coordinate_materialization() {
     let input = f32_tensor(Shape::from_dims([100_000, 0]), Vec::new());
-    let output = strict_sum(&input, &[Axis::new(1)]).unwrap();
+    let output = strict_sum(
+        &input,
+        &[Axis::new(1)],
+        ReferenceNumericalConformance::strict(),
+    )
+    .unwrap();
     assert_eq!(output.shape(), &Shape::from_dims([100_000]));
     assert!(
         f32_bits(&output)
@@ -1748,15 +1860,23 @@ fn maximum_rank_reduction_classifies_many_axes_linearly() {
         .step_by(2)
         .map(|axis| Axis::new(u32::try_from(axis).unwrap()))
         .collect();
-    let output = strict_sum(&input, &axes).unwrap();
+    let output = strict_sum(&input, &axes, ReferenceNumericalConformance::strict()).unwrap();
     assert_eq!(output.shape().rank(), rank / 2);
     assert_eq!(f32_values(&output), [1.0]);
     assert_eq!(
-        strict_sum(&input, &[Axis::new(0), Axis::new(0)]),
+        strict_sum(
+            &input,
+            &[Axis::new(0), Axis::new(0)],
+            ReferenceNumericalConformance::strict()
+        ),
         Err(ReferenceOperationError::InvalidApplication)
     );
     assert_eq!(
-        strict_sum(&input, &[Axis::new(u32::try_from(rank).unwrap())]),
+        strict_sum(
+            &input,
+            &[Axis::new(u32::try_from(rank).unwrap())],
+            ReferenceNumericalConformance::strict()
+        ),
         Err(ReferenceOperationError::InvalidApplication)
     );
 }
@@ -1783,7 +1903,7 @@ fn a_single_partition_split_reproduces_the_serial_reduction_exactly() {
     ] {
         let input = f32_tensor(shape, values);
         let axes = [Axis::new(1)];
-        let serial = strict_sum(&input, &axes).unwrap();
+        let serial = strict_sum(&input, &axes, ReferenceNumericalConformance::strict()).unwrap();
         let split = strict_partitioned_sum(&input, &axes, 1, contributors).unwrap();
         assert_eq!(
             f32_bits(&split),
@@ -1821,7 +1941,7 @@ fn an_exact_split_folds_each_contributor_exactly_once() {
     // is coverage, and a dropped or repeated contributor would change the sum.
     assert_eq!(
         f32_bits(&split),
-        f32_bits(&strict_sum(&input, &axes).unwrap())
+        f32_bits(&strict_sum(&input, &axes, ReferenceNumericalConformance::strict()).unwrap())
     );
 }
 
@@ -1838,7 +1958,8 @@ fn a_split_selects_one_legal_order_the_serial_fold_does_not_produce() {
     let input = f32_tensor(Shape::from_dims([1, 4]), vec![large, 1.0, -large, 1.0]);
     let axes = [Axis::new(1)];
     // (((1e8 + 1) - 1e8) + 1): the middle term is lost to rounding.
-    let serial = f32_values(&strict_sum(&input, &axes).unwrap());
+    let serial =
+        f32_values(&strict_sum(&input, &axes, ReferenceNumericalConformance::strict()).unwrap());
     // ((1e8 + 1) + (-1e8 + 1)): both ones are lost instead.
     let split = f32_values(&strict_partitioned_sum(&input, &axes, 2, 2).unwrap());
     assert_eq!(serial, vec![1.0]);
@@ -1860,6 +1981,175 @@ fn an_inexact_split_is_refused_by_the_reference() {
     // The exact split of the same tensor is admitted, so the refusals above are
     // about coverage rather than about the fixture.
     assert!(strict_partial_sums(&input, &axes, 3, 2).is_ok());
+}
+
+/// The declared split and the declared subnormal modes are separate obligations.
+///
+/// **This is the population that proves the threading can fail.** Two rows, each
+/// four contributors at the same reduction shape, each driven under all four
+/// resolutions of the two independent subnormal dimensions. Every expected value
+/// is written out as bits rather than derived, so the case states what the two
+/// contracts *mean* instead of re-running the fold.
+///
+/// - `normal-cancelling` is `2^-126 * (1 + 2^-23)` and `-2^-126`, twice. Every
+///   one of the four operands is **normal**, and a two-by-two split's partial is
+///   their exact Sterbenz difference `0x00000001` — the least positive
+///   subnormal. A four-by-one split of the *same* contributors performs no
+///   addition in its first pass, so its partials are the four normal operands
+///   themselves. That is a partial sum subnormal under one declared split and
+///   not under another, at one shape and one operand set.
+/// - `subnormal-operands` is `2^-127` four times, which runs the same
+///   disagreement backwards: the four-by-one partials are the subnormal
+///   operands, and the two-by-two partial `0x00800000` is *normal*.
+///
+/// The two dimensions separate in opposite directions across the rows, which is
+/// what makes this evidence about both rather than about a flush in general. On
+/// `normal-cancelling` the input dimension changes nothing at the two-by-two
+/// partials — no operand is subnormal — while the result dimension flushes both
+/// to `0x00000000`. On `subnormal-operands` it is the reverse: the input
+/// dimension zeroes the partials and the result dimension leaves the normal sum
+/// alone.
+///
+/// An oracle told only the split answers the `Preserve`/`Preserve` column under
+/// every contract. Reverting the conformance threading in `strict_partial_sums`
+/// makes exactly that substitution, and the rows below refuse it.
+#[test]
+fn a_declared_split_and_the_declared_subnormal_modes_are_answered_independently() {
+    const PRESERVE: SubnormalMode = SubnormalMode::Preserve;
+    const FLUSH: SubnormalMode = SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
+    };
+    let axes = [Axis::new(1)];
+    // (row, contributors, [(input mode, result mode, 2x2 partials, 2x2 total,
+    // 4x1 partials, 4x1 total)]).
+    for (row, contributors, expectations) in [
+        (
+            "normal-cancelling",
+            [0x0080_0001_u32, 0x8080_0000, 0x0080_0001, 0x8080_0000],
+            [
+                (
+                    PRESERVE,
+                    PRESERVE,
+                    [0x0000_0001_u32, 0x0000_0001],
+                    0x0000_0002_u32,
+                    0x0000_0002_u32,
+                ),
+                // The one column where the input dimension alone is observable,
+                // and it is observable at the *four-by-one* split: no operand of
+                // the two-by-two fold is subnormal, but the four-by-one total's
+                // serial fold feeds its own `0x00000001` intermediate back in as
+                // an operand, and a flushing unit reads a zero there.
+                (
+                    FLUSH,
+                    PRESERVE,
+                    [0x0000_0001, 0x0000_0001],
+                    0x0000_0000,
+                    0x0000_0001,
+                ),
+                (
+                    PRESERVE,
+                    FLUSH,
+                    [0x0000_0000, 0x0000_0000],
+                    0x0000_0000,
+                    0x0000_0000,
+                ),
+                (
+                    FLUSH,
+                    FLUSH,
+                    [0x0000_0000, 0x0000_0000],
+                    0x0000_0000,
+                    0x0000_0000,
+                ),
+            ],
+        ),
+        (
+            "subnormal-operands",
+            [0x0040_0000_u32, 0x0040_0000, 0x0040_0000, 0x0040_0000],
+            [
+                (
+                    PRESERVE,
+                    PRESERVE,
+                    [0x0080_0000_u32, 0x0080_0000],
+                    0x0100_0000_u32,
+                    0x0100_0000_u32,
+                ),
+                (
+                    FLUSH,
+                    PRESERVE,
+                    [0x0000_0000, 0x0000_0000],
+                    0x0000_0000,
+                    0x0000_0000,
+                ),
+                // The result dimension alone changes nothing here: the sum of two
+                // subnormals is the minimum normal, so there is no subnormal
+                // result to replace.
+                (
+                    PRESERVE,
+                    FLUSH,
+                    [0x0080_0000, 0x0080_0000],
+                    0x0100_0000,
+                    0x0100_0000,
+                ),
+                (
+                    FLUSH,
+                    FLUSH,
+                    [0x0000_0000, 0x0000_0000],
+                    0x0000_0000,
+                    0x0000_0000,
+                ),
+            ],
+        ),
+    ] {
+        let input = f32_tensor(
+            Shape::from_dims([1, 4]),
+            contributors.iter().copied().map(f32::from_bits).collect(),
+        );
+        for (input_mode, result_mode, split_partials, split_total, serial_total) in expectations {
+            let conformance = ReferenceNumericalConformance::new(input_mode, result_mode);
+            let label = format!("{row} under {input_mode:?}/{result_mode:?}");
+            assert_eq!(
+                f32_bits(&strict_partial_sums_under(&input, &axes, 2, 2, conformance).unwrap()),
+                split_partials.to_vec(),
+                "{label}: the two-by-two partials"
+            );
+            assert_eq!(
+                f32_bits(&strict_partitioned_sum_under(&input, &axes, 2, 2, conformance).unwrap()),
+                vec![split_total],
+                "{label}: the two-by-two total"
+            );
+            // A partition of one performs no addition, so neither dimension has a
+            // site in the first pass and the operands are reported back verbatim
+            // under every contract. That invariance is the claim, not a fixture
+            // detail: it is what makes the partials above a property of the
+            // *split* rather than of the contract alone.
+            assert_eq!(
+                f32_bits(&strict_partial_sums_under(&input, &axes, 4, 1, conformance).unwrap()),
+                contributors.to_vec(),
+                "{label}: a one-contributor partition transports rather than computes"
+            );
+            assert_eq!(
+                f32_bits(&strict_partitioned_sum_under(&input, &axes, 4, 1, conformance).unwrap()),
+                vec![serial_total],
+                "{label}: the four-by-one total"
+            );
+        }
+        // The strict spelling is the strict reading of the same fold rather than
+        // a second one, so the untold entry point and the told-strict one agree.
+        assert_eq!(
+            f32_bits(&strict_partial_sums(&input, &axes, 2, 2).unwrap()),
+            f32_bits(
+                &strict_partial_sums_under(
+                    &input,
+                    &axes,
+                    2,
+                    2,
+                    ReferenceNumericalConformance::strict()
+                )
+                .unwrap()
+            ),
+            "{row}: the untold entry point is the strict reading and nothing else"
+        );
+    }
 }
 
 /// An empty reduction commits the identity once per partition, and sums to it.

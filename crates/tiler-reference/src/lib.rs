@@ -70,7 +70,10 @@ pub use error::{
     ReferenceResource, ReferenceValueError, StagedContractionError, UnsupportedBf16Declaration,
     UnsupportedContractionDeclaration,
 };
-pub use evaluate::{ReferenceEvaluator, strict_partial_sums, strict_partitioned_sum};
+pub use evaluate::{
+    ReferenceEvaluator, strict_partial_sums, strict_partial_sums_under, strict_partitioned_sum,
+    strict_partitioned_sum_under,
+};
 pub use oracle::{
     CanonicalScalarReferenceRegistryIdentity, FrozenScalarReferenceRegistry,
     IndexReferenceResource, IndexRegionAuthority, IndexRegionEvaluation,
@@ -85,9 +88,11 @@ pub use registry::{
     ReferenceRegistryProvider, ReferenceRegistryRegistrar, ReferenceSignature,
     ReferenceValueValidator,
 };
-pub use rms_norm::{certified_rsqrt_f32, rms_norm_f32};
-pub use silu::{certified_exp_f32, silu_f32};
-pub use softmax::softmax_f32;
+pub use rms_norm::{
+    certified_rsqrt_f32, certified_rsqrt_f32_under, rms_norm_f32, rms_norm_f32_under,
+};
+pub use silu::{certified_exp_f32, certified_exp_f32_under, silu_f32, silu_f32_under};
+pub use softmax::{softmax_f32, softmax_f32_under};
 pub use tensor::{
     FloatBitOrder, InputBinding, ReferenceComponent, ReferenceComponentRole, ReferenceElement,
     Tensor, TensorPayloadView,

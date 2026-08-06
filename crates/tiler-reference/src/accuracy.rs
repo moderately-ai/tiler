@@ -761,6 +761,16 @@ impl ConformanceDecision {
 /// candidate, taken *before* the result-subnormal and signed-zero mapping — step
 /// three of ADR 0042's composition, not step four.
 ///
+/// **So this decision takes no
+/// [`ReferenceNumericalConformance`](crate::ReferenceNumericalConformance), and
+/// the reason is that boundary rather than an omission.** Its subject is the
+/// value at step three, which is defined to be the one the subnormal mapping has
+/// not yet reached; a caller comparing a *materialized* candidate applies the
+/// declared modes at step four, where the reference evaluators apply them, and
+/// compares there. An accuracy predicate that absorbed the modes would answer for
+/// step four under a metric defined at step three, and would silently make a
+/// tolerance stand in for a dimension ADR 0101 decision 7 holds it cannot decide.
+///
 /// # The three-way comparison
 ///
 /// Both sides of `lhs <= tolerance` are bracketed. The decision is `Conforms`

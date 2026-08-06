@@ -3,6 +3,35 @@
 //! This is the one provider the crate ships. It is a *consumer* of the
 //! registry rather than part of it, so a second provider would be added
 //! beside it without touching the registration mechanism.
+//!
+//! # Which capabilities read the declared numerical contract, and which cannot
+//!
+//! Every capability registered here receives a
+//! [`ReferenceNumericalConformance`](crate::ReferenceNumericalConformance)
+//! through [`ReferenceEvaluationRequest::conformance`]. The two subnormal
+//! dimensions are functions on an *arithmetic operand* and on a *newly produced
+//! arithmetic result*, so a family reaches them exactly when it performs host
+//! binary32 arithmetic:
+//!
+//! - `tiler::multiply-f32@1`, `tiler::add-f32@1`, `tiler::strict-serial-sum-f32@1`,
+//!   and `tiler::strict-tensor-contraction-f32@1` apply it at every operand and
+//!   every produced value;
+//! - `tiler::silu-f32@1`, `tiler::rms-norm-f32@1`, and `tiler::softmax-f32@1`
+//!   apply it at each step of their pinned compositions, which their own
+//!   declared subnormal facts record as reachable;
+//! - `tiler::constant-f32@1` reproduces a declared payload and performs no
+//!   arithmetic, so it applies neither dimension — the same reason it does not
+//!   canonicalize a NaN payload;
+//! - the four structural families transport elements and the three BF16
+//!   capabilities compute in exact BF16 rationals, and each states its own
+//!   reason in its module.
+//!
+//! The list is exhaustive over what this provider registers, because a family
+//! that read nothing and said nothing would answer the strict reading under
+//! every declared contract, which is the silent single-value oracle
+//! [`ReferenceNumericalConformance::from_realization`] exists to refuse.
+//!
+//! [`ReferenceNumericalConformance::from_realization`]: crate::ReferenceNumericalConformance::from_realization
 
 use std::sync::Arc;
 
@@ -192,6 +221,15 @@ impl ReferenceValueValidator for F32ValueValidator {
     }
 }
 
+/// The exact binary32 constant, whose payload is reproduced rather than computed.
+///
+/// Neither subnormal dimension has a site here and the request's conformance is
+/// deliberately not read: a constant has no operands, so nothing enters an
+/// arithmetic operation, and its result is an exact declared payload rather than
+/// a value arithmetic produced. Flushing it would make the region unable to
+/// materialize a subnormal binary32 pattern the governed `tiler::constant-f32@1`
+/// definition promises to carry verbatim — which is the same reason
+/// `canonicalize_arithmetic_f32` does not apply here either.
 struct F32ConstantReference;
 
 impl ReferenceOperation for F32ConstantReference {
@@ -245,9 +283,10 @@ impl ReferenceOperation for F32BinaryReference {
         if !attributes.fields().is_empty() {
             return Err(ReferenceOperationError::InvalidApplication);
         }
+        let conformance = request.conformance();
         let result = match self {
-            Self::Multiply => binary(left, right, |left, right| left * right)?,
-            Self::Add => binary(left, right, |left, right| left + right)?,
+            Self::Multiply => binary(left, right, conformance, |left, right| left * right)?,
+            Self::Add => binary(left, right, conformance, |left, right| left + right)?,
         };
         outputs.push(result)
     }
@@ -266,6 +305,6 @@ impl ReferenceOperation for StrictSerialF32SumReference {
             return Err(ReferenceOperationError::InvalidApplication);
         };
         let axes = reduction_axes(request.attributes())?;
-        outputs.push(strict_sum(input, &axes)?)
+        outputs.push(strict_sum(input, &axes, request.conformance())?)
     }
 }
