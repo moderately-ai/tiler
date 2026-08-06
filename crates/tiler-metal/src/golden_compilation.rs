@@ -142,6 +142,37 @@
 //! — `crate::tests::the_verifier_refuses_a_reordered_mirror_before_emission_sees_it`
 //! is where it is pinned.
 //!
+//! **Measurement — the elementary fixture, and it is the first golden whose
+//! acceptance depends on a name.** On an Apple M4 Max under macOS 27.0 (build
+//! 26A5388g) with Xcode 27.0 (build 27A5228h), Metal 32023.921
+//! (`metalfe-32023.921`, AIR-LLD 32023.921), and macOS SDK 27.0 (build
+//! 26A5388f), all ten fixtures compile and link under the flag row above.
+//! `elementary_silu_activation.metal` links 3,779 bytes and the linked library
+//! names `tiler_kernel_b1e08c4feb69be47`. Until it was checked in, every claim
+//! this crate made about `precise::exp` and the division operator was a string
+//! match over emitted text against a compiler that had never seen either.
+//! Replacing its call with `precise::exp()` is rejected at the `metal` stage
+//! with `no matching function for call to 'exp'`, the diagnostic naming the
+//! `metal_math` overloads it resolved against, which is what makes the
+//! acceptance a binding to a declared function rather than a parse.
+//!
+//! **Measurement — which exponential the linked library actually references,
+//! on the same row.** The AIR intrinsic is named in the artifact, so the
+//! question "did the emitted spelling get the contracted function?" can be
+//! asked of the library rather than of the source. Across the two spellings and
+//! two flag rows:
+//!
+//! | | `-fmetal-math-fp32-functions=precise` | `=fast`, `-fmetal-math-mode=fast` |
+//! |---|---|---|
+//! | `precise::exp(v7)` | `air.exp.f32`, 3,779 bytes | `air.exp.f32`, 3,955 bytes |
+//! | `exp(v7)` | `air.exp.f32`, 3,779 bytes | `air.fast_exp.f32`, 3,971 bytes |
+//!
+//! Both governed-row libraries are byte-identical, so no compilation under the
+//! flags Tiler selects can distinguish the two spellings — that is the bound on
+//! every other test here. The fast column is where they diverge, and it is the
+//! measurement that the emitted namespace, not the flag, is what holds the
+//! precise selection when the flag is absent.
+//!
 //! Library size is deliberately **not** asserted. A 14,620-byte link of the
 //! four goldens was recorded at commit `59060b5`; after `e24f4c5` changed the
 //! emitted source the same command yields 14,716 bytes. A byte count is a
@@ -176,7 +207,7 @@ const REQUIRE_TOOLCHAIN: &str = "TILER_REQUIRE_METAL_TOOLCHAIN";
 /// `every_checked_in_golden_is_compiled_by_this_module` proves this list covers
 /// the whole `goldens/` directory, so a new fixture cannot be added without
 /// being compiled.
-const GOLDENS: [(&str, &str); 9] = [
+const GOLDENS: [(&str, &str); 10] = [
     (
         "pointwise_scale_bias.metal",
         include_str!("../goldens/pointwise_scale_bias.metal"),
@@ -236,6 +267,20 @@ const GOLDENS: [(&str, &str); 9] = [
     (
         "structural_widening_broadcast.metal",
         include_str!("../goldens/structural_widening_broadcast.metal"),
+    ),
+    // The one fixture whose body calls an elementary function and divides.
+    // Every other golden's arithmetic is `*`, `+`, and comparison — operators
+    // the compiler cannot fail to know — so this is the first checked-in
+    // artifact whose acceptance depends on a *name* resolving: `precise::exp`
+    // is a call into a nested standard-library namespace, declared by a header
+    // this backend never reads, and a namespace-qualified call is the class of
+    // spelling that satisfies a string assertion and still fails to translate.
+    // It is also the only fixture emitting `/` between two `float`s, which is
+    // the spelling MSL Table 8.1 states an accuracy for and therefore the one
+    // the activation contract is derived against.
+    (
+        "elementary_silu_activation.metal",
+        include_str!("../goldens/elementary_silu_activation.metal"),
     ),
 ];
 
@@ -827,6 +872,163 @@ fn the_mirrored_golden_without_its_wrap_is_rejected_when_a_toolchain_resolves() 
         }
         other => panic!("expected a metal-stage ToolFailure, got {other:?}"),
     }
+}
+
+/// The elementary golden's call stripped of its operand must be rejected.
+///
+/// The sibling of the three perturbations above at the construct they cannot
+/// reach, and it is aimed at the *call* rather than at a statement that feeds
+/// it. Deleting the operand leaves `precise::exp()`, which is rejected only if
+/// the compiler resolved the qualified name against the overload set the Metal
+/// standard library declares — the observed diagnostic names those candidates
+/// from `metal_math` — so it shows the toolchain is binding this call to a real
+/// declaration rather than parsing a plausible-looking file. That binding is
+/// the entire new fact this fixture carries: no other golden's arithmetic
+/// depends on a name resolving at all.
+///
+/// **What it deliberately does not claim.** It says nothing about *which* of
+/// the two exponentials the emitter selected. Stripping the `precise::`
+/// qualification instead of the operand leaves `exp(v7)`, which compiles — and
+/// under this request's flag row links to a byte-identical library — so no
+/// rejection test built on [`golden_request`] can reach the namespace at all.
+/// That question needs a second flag row before it becomes observable, and it
+/// is [`the_precise_namespace_survives_a_fast_row_when_a_toolchain_resolves`]
+/// that asks it.
+#[test]
+fn the_elementary_golden_without_its_operand_is_rejected_when_a_toolchain_resolves() {
+    const CALL: &str = "precise::exp(v7)";
+    const STRIPPED: &str = "precise::exp()";
+
+    let Some(toolchain) = resolved_toolchain() else {
+        return;
+    };
+    let name = "elementary_silu_activation.metal";
+    let source = GOLDENS
+        .iter()
+        .find(|(fixture, _)| *fixture == name)
+        .map(|(_, source)| *source)
+        .expect("the elementary fixture is compiled by this module");
+    assert_eq!(
+        source.matches(CALL).count(),
+        1,
+        "{name}: the fixture must carry exactly one elementary call"
+    );
+    let broken = source.replacen(CALL, STRIPPED, 1);
+    assert!(broken.contains(STRIPPED), "the perturbation must apply");
+
+    let error = toolchain
+        .compile(&golden_request(&broken))
+        .expect_err("a nullary call to a unary elementary function must not compile");
+    match error {
+        DriverError::ToolFailure { stage, stderr, .. } => {
+            assert_eq!(stage, CompileStage::Metal);
+            assert!(
+                !stderr.is_empty(),
+                "the compiler must explain the rejection"
+            );
+        }
+        other => panic!("expected a metal-stage ToolFailure, got {other:?}"),
+    }
+}
+
+/// The emitted namespace selects the precise intrinsic without the flag's help.
+///
+/// The emitter writes `precise::exp` rather than `exp` and states why: the
+/// unqualified spelling selects `air.fast_exp.f32` under the compiler's own
+/// default, which is fast math, and the fast family's accuracy is MSL Table 8.2's
+/// input-dependent bound rather than the constant the registered activation
+/// contract is derived from. Substituting it is what ADR 0076 forbids. Until
+/// this test, that reasoning was carried by an emission probe and a string
+/// assertion over emitted text; here the *linked library* is asked which
+/// intrinsic it references, which is the only artifact that actually answers.
+///
+/// It is a two-by-two because either half alone proves the wrong thing:
+///
+/// - Under the governed row the two spellings link to `air.exp.f32` alike — and
+///   on the recorded row to byte-identical libraries — so a compilation under
+///   the flags Tiler selects *cannot* distinguish them. That is the honest bound
+///   on every other test in this module, and asserting it keeps the next reader
+///   from citing the golden's compilation as evidence for the namespace.
+/// - Under a fast row the spellings diverge, and only then. That divergence is
+///   what makes the namespace a second line of defence rather than decoration:
+///   an omitted or mis-selected flag still gets the contracted intrinsic.
+///
+/// **The fast row is a perturbation, not a supported configuration.** Nothing in
+/// Tiler compiles under it; it is constructed here to observe what the flag is
+/// defending against. And the assertion is deliberately about the *current*
+/// toolchain: were a future `metal` to stop selecting the fast intrinsic for the
+/// unqualified spelling, this test would go red, and the right response is to
+/// re-derive the emitter's rationale rather than to relax the assertion, because
+/// the premise it rests on would have changed.
+#[test]
+fn the_precise_namespace_survives_a_fast_row_when_a_toolchain_resolves() {
+    /// The precise binary32 exponential AIR intrinsic, referenced by name in the
+    /// linked library. Not a substring of the fast one, so the two discriminate.
+    const PRECISE: &str = "air.exp.f32";
+    /// The fast binary32 exponential, the substitution being defended against.
+    const FAST: &str = "air.fast_exp.f32";
+
+    let Some(toolchain) = resolved_toolchain() else {
+        return;
+    };
+    let name = "elementary_silu_activation.metal";
+    let qualified = GOLDENS
+        .iter()
+        .find(|(fixture, _)| *fixture == name)
+        .map(|(_, source)| *source)
+        .expect("the elementary fixture is compiled by this module");
+    let unqualified = qualified.replacen("precise::exp(", "exp(", 1);
+    assert!(
+        !unqualified.contains("precise::"),
+        "{name}: the perturbation must remove the only qualification"
+    );
+    // The compiler's own function-selection default, which is what an omitted
+    // flag would deliver. Contraction stays `off`: it is a separate permission,
+    // and holding it fixed keeps this about the exponential.
+    let fast_row = NumericalRealization::new(MathMode::Fast, Fp32Functions::Fast, FpContract::Off);
+    let compile = |source: &str, realization| {
+        toolchain
+            .compile(&CompileRequest::new(
+                source,
+                driver_target(),
+                OptimizationLevel::Default,
+                realization,
+            ))
+            .expect("both spellings translate under both rows")
+    };
+
+    let governed = NumericalRealization::strict_baseline();
+    for (label, source) in [("qualified", qualified), ("unqualified", &unqualified)] {
+        let artifact = compile(source, governed);
+        assert!(
+            library_names(&artifact.metallib, PRECISE),
+            "{label}: the governed row must select {PRECISE}"
+        );
+        assert!(
+            !library_names(&artifact.metallib, FAST),
+            "{label}: the governed row must not reach {FAST}"
+        );
+    }
+    assert_eq!(
+        compile(qualified, governed).metallib,
+        compile(&unqualified, governed).metallib,
+        "the governed row cannot distinguish the two spellings at all, which is \
+         precisely why the namespace needs the evidence below"
+    );
+
+    let qualified_fast = compile(qualified, fast_row);
+    assert!(
+        library_names(&qualified_fast.metallib, PRECISE),
+        "the emitted namespace must hold the precise selection without the flag"
+    );
+    assert!(!library_names(&qualified_fast.metallib, FAST));
+    let unqualified_fast = compile(&unqualified, fast_row);
+    assert!(
+        library_names(&unqualified_fast.metallib, FAST),
+        "without the namespace the fast row substitutes {FAST}; if it no longer \
+         does, the emitter's stated reason for writing the namespace has changed"
+    );
+    assert!(!library_names(&unqualified_fast.metallib, PRECISE));
 }
 
 /// One golden compiles to identical library bytes twice.

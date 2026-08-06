@@ -221,15 +221,20 @@ fn silu_expression() -> PointwiseF32Expression {
         .expect("verified SiLU pointwise expression")
 }
 
-/// A `SiLU` region under the strict declared realization.
-pub(crate) fn silu_kernel() -> VerifiedKernel {
+/// The bounded `SiLU` fixture under one stated declared realization.
+fn silu_kernel_under(realization: NumericalRealization) -> VerifiedKernel {
     lower_scheduled_region(&pointwise_region_with(
         RegionId::new(21),
         &Shape::from_dims([4]),
-        numerical(NAN_BITS),
+        realization,
         ScalarProgram::PointwiseF32(silu_expression()),
     ))
     .expect("the bounded SiLU fixture lowers")
+}
+
+/// A `SiLU` region under the strict declared realization.
+pub(crate) fn silu_kernel() -> VerifiedKernel {
+    silu_kernel_under(numerical(NAN_BITS))
 }
 
 /// The `tiler::rms-norm-f32@1` epilogue as a pointwise expression.
@@ -1466,6 +1471,23 @@ fn widening_broadcast_matches_its_golden_source() {
     );
 }
 
+/// The only fixture carrying an elementary function call and a division.
+///
+/// It exists to be compiled. Every assertion this crate makes about
+/// `precise::exp` and the division operator is a string match over emitted text,
+/// and a namespace-qualified call to a header-declared overload is exactly the
+/// class of spelling that can match a string and still not translate — which is
+/// what checking the fixture in buys, since
+/// [`crate::golden_compilation`] compiles the whole `goldens/` directory.
+#[test]
+fn silu_matches_its_golden_source() {
+    assert_golden(
+        "elementary_silu_activation.metal",
+        include_str!("../goldens/elementary_silu_activation.metal"),
+        &emit_one(&silu_kernel()),
+    );
+}
+
 /// The mirrored offset emits an unsigned difference that says what carries it.
 ///
 /// Asserted on the exact statement rather than on the golden as a whole, because
@@ -1868,6 +1890,16 @@ fn the_silu_kernel_requires_the_precise_and_safe_selections() {
 /// The measured Apple row flushes `f32` subnormals, and the fixture's declared
 /// realization preserves them, so a gap is recorded. A construct that had been
 /// wired without calling the obligation recorder would report none.
+///
+/// **Both verdicts are asserted, and the second is what makes the first mean
+/// something.** A refusal on its own does not distinguish "this contract is
+/// unrealizable on this row" from "an elementary function is refused here",
+/// which would be a very different claim about the activation family. Emitting
+/// the same kernel under a declaration that accepts the flush the row delivers
+/// leaves an empty gap set and conforms, so the refusal above is a decision
+/// about the declared realization rather than about `precise::exp`. This is the
+/// shape `a_strict_bf16_contract_is_refused_on_the_measured_macos_row` takes at
+/// the other width.
 #[test]
 fn the_silu_kernel_records_the_f32_subnormal_gap() {
     let kernel = silu_kernel();
@@ -1878,6 +1910,34 @@ fn the_silu_kernel_records_the_f32_subnormal_gap() {
     );
     unit.require_declared_realization()
         .expect_err("a declared preservation on a flushing target fails closed");
+
+    // The flush the measured row actually delivers, declared. Only the two
+    // subnormal dimensions move: contraction and reassociation stay forbidden,
+    // so nothing else could account for the change in verdict.
+    let honoured_kernel = silu_kernel_under(subnormal_realization(
+        "tiler.test.flush-f32",
+        NAN_BITS,
+        flush(FlushedZeroSign::PreservesSign),
+        flush(FlushedZeroSign::PreservesSign),
+    ));
+    let honoured =
+        emit_translation_unit(&[&honoured_kernel], &target()).expect("the SiLU fixture emits");
+    assert!(honoured.numerical_gaps().is_empty());
+    assert!(
+        honoured.unstated_subnormal_arithmetic().is_empty(),
+        "an empty gap set computed while a fact is missing would be incomplete, not clean"
+    );
+    honoured.require_declared_realization().unwrap();
+    // The unit under test is still the one carrying the elementary function, so
+    // the acceptance is about a SiLU translation unit and not about arithmetic
+    // that happens to share its shape.
+    assert_eq!(honoured.source().matches("precise::exp(").count(), 1);
+    assert!(
+        honoured
+            .numerical_requirements()
+            .contains(&MetalNumericalRequirement::PreciseFp32Functions),
+        "the accepted unit still places the precise-selection obligation",
+    );
 }
 
 #[test]
