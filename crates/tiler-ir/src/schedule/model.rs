@@ -574,6 +574,12 @@ pub enum ScalarProgram {
     /// [`IndexRealizationLaw::StagedRootMeanSquareScaleF32`](crate::index::IndexRealizationLaw::StagedRootMeanSquareScaleF32)
     /// is the shipped instance, whose epilogue is `Rsqrt(a / N + eps)`.
     ///
+    /// **Accepted public surface** — by Tom on 2026-08-06 at the live session's
+    /// decision round, as-is with no exclusion;
+    /// [`accept-the-fold-with-epilogue-scheduled-region`](../../../../tickets/accept-the-fold-with-epilogue-scheduled-region.md)
+    /// records the provenance. Acceptance is not stabilization: this is accepted
+    /// pre-alpha vocabulary, not a published API with compatibility obligations.
+    ///
     /// **Why the epilogue is inside this region and not in the consuming pass.**
     /// The accepted law's own derivation: the folded row's scale is computed once
     /// per *row* and read once per *point*, so publishing the bare fold and putting

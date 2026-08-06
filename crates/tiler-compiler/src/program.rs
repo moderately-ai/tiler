@@ -404,6 +404,29 @@ pub(crate) struct AssemblyPublishingCopy {
     pub(crate) published: usize,
 }
 
+/// One staged-realization contract two dispatches of one occurrence declare.
+///
+/// Distinct from both declarations above, and for the reason the IR states: a
+/// split partitions a fold's contributors, a copy moves a value into the buffer
+/// the interface publishes, and this continues one occurrence's realization
+/// across a stage boundary. Its two dispatches belong to *different cover
+/// regions* — a staged family's stages are separate placements, unlike a split's
+/// two passes of one region — which is why it is derived over the flattened
+/// stage list rather than inside the per-region loop that mints the other two.
+///
+/// The occurrence travels as the planner's own [`SemanticMemberId`] because the
+/// assembler holds no lowering; [`build_cover_core`] projects it onto the IR's
+/// [`tiler_ir::program::SemanticOccurrence`] through the same
+/// `OccurrenceLowering` that mints the stage's coverage records, so the
+/// declaration and the coverage it continues name one receipt's occurrence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblyStagedRealization {
+    pub(crate) producer: usize,
+    pub(crate) consumer: usize,
+    pub(crate) handed: usize,
+    pub(crate) occurrence: crate::region::SemanticMemberId,
+}
+
 /// The complete structural description one retained plan's cover assembles into.
 ///
 /// **Every quantity here is read from the cover or from the semantic program,
@@ -432,6 +455,7 @@ pub(crate) struct CoverAssembly {
     dependencies: Vec<AssemblyDependency>,
     splits: Vec<AssemblySplit>,
     copies: Vec<AssemblyPublishingCopy>,
+    staged: Vec<AssemblyStagedRealization>,
     /// The ordered named program outputs, each naming the internal value that
     /// publishes it, in the semantic program's declaration order.
     outputs: Vec<(OutputKey, usize)>,
@@ -923,36 +947,123 @@ impl CoverAssembly {
         }
 
         // **Every dispatch that covers no occurrence must be accounted for, and
-        // this profile can name only two accounts.** `tiler_ir::program` refuses
-        // an uncovering stage under `UncoveringStage` unless a declaration
-        // explains it: the final pass of a declared split, or the publisher of a
-        // declared publishing copy. A stage covers an occurrence exactly when it
-        // claims some occurrence's *first* attribution atom, because that is what
-        // whole-program coverage is keyed on — a later stage continues a
-        // realization the first stage already claimed.
+        // this profile names three accounts.** `tiler_ir::program` refuses an
+        // uncovering stage under `UncoveringStage` unless a declaration explains
+        // it: the final pass of a declared split, the publisher of a declared
+        // publishing copy, or the consumer of a declared staged realization. A
+        // stage covers an occurrence exactly when it claims some occurrence's
+        // *first* attribution atom, because that is what whole-program coverage
+        // is keyed on — a later stage continues a realization the first stage
+        // already claimed.
         //
-        // A staged elementary family's later stage is a third shape and has no
-        // declaration: it is one cover region of its own, so it is neither pass of
-        // a split nor either dispatch of a copy, and it claims only a non-first
-        // atom. Refusing it here is what keeps the failure a *missing compilation
-        // capability* naming the region — the plan is valid and its cover is a
-        // verified authority; what is absent is a program-scope declaration this
-        // assembler has no way to state — instead of the invalid-compiler-output
-        // the IR would report for the same program.
+        // The third account is derived here rather than in the per-region loop
+        // above, and the region boundary is why: a staged elementary family's
+        // stages are separate cover regions, so neither region can see the other
+        // and the producer of a chain is found over the flattened stage list.
+        // The chain obligation itself is proven before any of it, by the one
+        // authority that owns the rule.
+        let mut all_claims: Vec<SemanticStage> = stages
+            .iter()
+            .flat_map(|stage| stage.coverage.iter().copied())
+            .collect();
+        let subject: Vec<SemanticStage> = (0..semantic.operation_count())
+            .map(|member| {
+                u32::try_from(member)
+                    .map(|member| SemanticStage::first(crate::region::SemanticMemberId(member)))
+                    .map_err(|_| AssemblyRefusal::missing(COVER_SUBJECT, "cover-member-ordinal"))
+            })
+            .collect::<Result<_, _>>()?;
+        // **The dispatches' claims partition the program's occurrences, with
+        // every later stage directly behind the stage it continues.** This is
+        // what the derivation below rests on: it searches for the dispatch that
+        // claims each continued atom's predecessor and takes the answer as
+        // existing and unique, which is a claim about the whole chain rather
+        // than about any one dispatch. `chain_realizes_subject` is the one place
+        // that rule is written — the physical frontier and the whole-program
+        // schedule binding owe the identical obligation, and two spellings of
+        // one rule are two rules to keep in agreement.
         //
-        // [`account-for-a-staged-realization-stage-in-the-kernel-program`](../../../tickets/account-for-a-staged-realization-stage-in-the-kernel-program.md)
-        // owns the declaration.
+        // Stated rather than presented as a live gate: `verify_cover` proves the
+        // placed regions' atoms partition the graph and every dispatch claims a
+        // subset of its own region's atoms, so no cover the boundary currently
+        // admits reaches this refusal. It is the condition rather than its
+        // consequence — a region realizing its atoms across a different number
+        // of dispatches than it claims makes it reachable — and meanwhile it is
+        // what keeps the search below a proved fact instead of an assumption.
+        if !crate::region::chain_realizes_subject(&mut all_claims, &subject) {
+            return Err(AssemblyRefusal::missing(
+                COVER_SUBJECT,
+                "dispatch-chain-unrealizing",
+            ));
+        }
+        let mut realizations: Vec<AssemblyStagedRealization> = Vec::new();
         for (stage, claimed) in stages.iter().enumerate() {
-            if claimed.coverage.iter().any(|atom| atom.is_first())
-                || splits.iter().any(|split| split.combiner == stage)
+            if splits.iter().any(|split| split.combiner == stage)
                 || copies.iter().any(|copy| copy.publisher == stage)
             {
                 continue;
             }
-            return Err(AssemblyRefusal::missing(
-                regions[stage_region[stage]].label(),
-                "realization-stage-unaccounted",
-            ));
+            for atom in claimed.coverage.iter().filter(|atom| !atom.is_first()) {
+                // The dispatch that computed the stage before this one. The
+                // chain check above already proved exactly one claims it, so
+                // this searches a proven-unique answer rather than choosing
+                // among candidates; the refusal is unreachable while that proof
+                // holds and is stated rather than asserted, so a weakened chain
+                // rule refuses by name instead of panicking or silently taking
+                // whichever dispatch happened to be first.
+                let producer = stages
+                    .iter()
+                    .position(|candidate| {
+                        candidate
+                            .coverage
+                            .iter()
+                            .any(|earlier| earlier.next_stage() == *atom)
+                    })
+                    .ok_or_else(|| {
+                        AssemblyRefusal::missing(
+                            regions[stage_region[stage]].label(),
+                            "realization-stage-unbegun",
+                        )
+                    })?;
+                // A dispatch computing both stages itself hands nothing across a
+                // boundary and needs no account: it claims the occurrence's
+                // first atom, so program-scope coverage already names it.
+                if producer == stage {
+                    continue;
+                }
+                // The value the producer hands on: the one internal value this
+                // dispatch reads that the producer's owning write defines. A
+                // dispatch reads at most one intermediate — `TensorRole`
+                // carries no ordinal for one — so there is nothing to choose
+                // between, and a dispatch that reads none continues a
+                // realization through no value at all.
+                let handed = claimed
+                    .bindings
+                    .split_last()
+                    .and_then(|(_, reads)| {
+                        reads.iter().find_map(|binding| match binding {
+                            AssemblyBinding::Internal(value)
+                                if stages[producer].bindings.last()
+                                    == Some(&AssemblyBinding::Internal(*value)) =>
+                            {
+                                Some(*value)
+                            }
+                            AssemblyBinding::Internal(_) | AssemblyBinding::Input(_) => None,
+                        })
+                    })
+                    .ok_or_else(|| {
+                        AssemblyRefusal::missing(
+                            regions[stage_region[stage]].label(),
+                            "realization-stage-unhanded",
+                        )
+                    })?;
+                realizations.push(AssemblyStagedRealization {
+                    producer,
+                    consumer: stage,
+                    handed,
+                    occurrence: atom.member(),
+                });
+            }
         }
 
         let dependencies = derive_dependencies(&stages, internals.len())?;
@@ -964,6 +1075,7 @@ impl CoverAssembly {
             dependencies,
             splits,
             copies,
+            staged: realizations,
             outputs,
         })
     }
@@ -987,6 +1099,7 @@ impl CoverAssembly {
         stages: Vec<AssemblyStage>,
         splits: Vec<AssemblySplit>,
         copies: Vec<AssemblyPublishingCopy>,
+        realizations: Vec<AssemblyStagedRealization>,
         outputs: Vec<(OutputKey, usize)>,
     ) -> Result<Self, AssemblyRefusal> {
         let internals: Vec<AssemblyValue> = internals
@@ -1002,6 +1115,7 @@ impl CoverAssembly {
             dependencies,
             splits,
             copies,
+            staged: realizations,
             outputs,
         })
     }
@@ -1493,6 +1607,35 @@ fn build_cover_core(
                 .ok_or(ProgramError::Structure {
                     rule: "assembly-publishing-copy-value",
                 })?,
+        })?;
+    }
+    for realization in &assembly.staged {
+        builder.push_staged_realization(tiler_ir::program::StagedRealization {
+            producer: *pushed
+                .get(realization.producer)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-staged-realization-stage",
+                })?,
+            consumer: *pushed
+                .get(realization.consumer)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-staged-realization-stage",
+                })?,
+            handed: *internal_values
+                .get(realization.handed)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-staged-realization-value",
+                })?,
+            // The occurrence the coverage records name, read through the same
+            // `OccurrenceLowering` that mints them, so a declaration can never
+            // continue an occurrence some other receipt is about.
+            occurrence: lowering
+                .occurrence(realization.occurrence)
+                .map(crate::lowering::OccurrenceLowering::covered_occurrence)
+                .ok_or(ProgramError::Structure {
+                    rule: "refinement-coverage-missing",
+                })?
+                .occurrence(),
         })?;
     }
     for (key, value) in &assembly.outputs {

@@ -67,6 +67,7 @@ fn materialized_assembly(
         ],
         Vec::new(),
         Vec::new(),
+        Vec::new(),
         vec![(subject.output_key.clone(), 1)],
     )
     .expect("the two-region assembly is well formed")
@@ -85,6 +86,7 @@ fn fused_assembly(
             coverage: subject.members.all(),
             bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(0)],
         }],
+        Vec::new(),
         Vec::new(),
         Vec::new(),
         vec![(subject.output_key.clone(), 0)],
@@ -501,6 +503,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
         ],
         Vec::new(),
         Vec::new(),
+        Vec::new(),
         vec![(subject.output_key.clone(), 2)],
     );
     assert_eq!(
@@ -532,6 +535,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
         ],
         Vec::new(),
         Vec::new(),
+        Vec::new(),
         vec![(subject.output_key.clone(), 1)],
     );
     assert_eq!(
@@ -558,6 +562,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
                 bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(1)],
             },
         ],
+        Vec::new(),
         Vec::new(),
         Vec::new(),
         vec![(subject.output_key.clone(), 1)],
@@ -599,6 +604,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        Vec::new(),
     )
     .expect("the description itself is well formed");
     assert_eq!(
@@ -628,6 +634,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
                 bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(1)],
             },
         ],
+        Vec::new(),
         Vec::new(),
         Vec::new(),
         vec![(subject.output_key.clone(), 1)],

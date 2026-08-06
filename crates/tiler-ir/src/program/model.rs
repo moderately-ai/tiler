@@ -6,8 +6,9 @@
 //! role, storage requirements and defining stage, byte views through which
 //! stages address those values, storage allocations with ownership, typed
 //! dependency edges that state *why* two stages are ordered, the declared split
-//! reductions and publishing copies that account for a stage covering no
-//! occurrence, an ordered list of named outputs, and the entry ABI — its
+//! reductions, publishing copies, and staged realizations that account for a
+//! stage covering no occurrence, an ordered list of named outputs, and the entry
+//! ABI — its
 //! expression arena, its applicability guard, and its routing-commit contract.
 //! Nothing here requires a consumer to reconstruct a schedule, a kernel body, an
 //! access relation, or a semantic graph.
@@ -603,6 +604,57 @@ pub struct PublishingCopy {
     pub published: MaterializedValueId,
 }
 
+/// One occurrence realized by an ordered chain of stages rather than by one.
+///
+/// **Labelled draft.** The surface is implemented and tested; acceptance is
+/// parked for Tom at `accept-the-staged-realization-program-declaration`.
+///
+/// This is the *program-scope* half of a staged realization. A registered
+/// elementary family whose index-realization law realizes a region **sequence**
+/// is computed by several dispatches: the first folds and hands one value on,
+/// each later one reads that value and continues the same operation. Only the
+/// first dispatch claims the occurrence — whole-program coverage is keyed on
+/// [`SemanticOccurrence`] and refuses one occurrence twice — so every later
+/// dispatch computes no operation the program's coverage names, and needs a
+/// declaration for
+/// [`KernelProgramDiagnostic::UncoveringStage`](super::KernelProgramDiagnostic::UncoveringStage)
+/// to admit it.
+///
+/// It is a third declaration beside [`PartialReduction`] and [`PublishingCopy`]
+/// rather than a widening of either, because it states a different fact. A split
+/// partitions one fold's contributors and combines partials, so it carries a
+/// partition count neither of the other two has; a copy moves a value into the
+/// buffer the interface publishes, so its two extents must agree. A staged
+/// realization does neither: nothing is partitioned, nothing is copied, and the
+/// consuming stage's iteration domain is its own — the shipped instance hands a
+/// `[2]` fold on to a `[2, 2]` pass — so an extent rule would refuse the very
+/// case this exists for.
+///
+/// The obligations it carries are the ones no single stage can see: which stage
+/// hands the value on, which continues from it, which value crosses the dispatch
+/// boundary, and which occurrence the chain jointly realizes. The ordering that
+/// makes the handed value visible is the ordinary
+/// [`DependencyReasonView::Data`] edge between the two stages — a staged
+/// realization needs no barrier because the stage boundary *is* the dispatch
+/// boundary.
+///
+/// Nothing here is derivable from the entities already folded into identity.
+/// Two programs alike in every stage, value, and edge can differ in whether a
+/// dispatch is *declared* to continue another's realization at all, and in
+/// which occurrence it continues — which is precisely the difference between an
+/// accounted-for dispatch and one the verifier rejects.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct StagedRealization {
+    /// Stage that computes the earlier realization stage and hands its value on.
+    pub producer: StageId,
+    /// Stage that reads the handed value and continues the same realization.
+    pub consumer: StageId,
+    /// Materialized value the producer hands to the consumer.
+    pub handed: MaterializedValueId,
+    /// Canonical occurrence the two stages jointly realize.
+    pub occurrence: SemanticOccurrence,
+}
+
 /// The declared facts of one materialized program value.
 ///
 /// The required byte count is derived from the shape, storage scalar, and
@@ -769,6 +821,15 @@ pub(super) struct PublishingCopyData {
     pub(super) published: u32,
 }
 
+/// Storage for one staged-realization contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct StagedRealizationData {
+    pub(super) producer: u32,
+    pub(super) consumer: u32,
+    pub(super) handed: u32,
+    pub(super) occurrence: u32,
+}
+
 /// Storage for one named program output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ProgramOutputData {
@@ -787,6 +848,7 @@ pub(super) struct KernelProgramData {
     pub(super) dependencies: Vec<DependencyData>,
     pub(super) partial_reductions: Vec<PartialReductionData>,
     pub(super) publishing_copies: Vec<PublishingCopyData>,
+    pub(super) staged_realizations: Vec<StagedRealizationData>,
     pub(super) outputs: Vec<ProgramOutputData>,
     /// The shared ABI expression arena, in canonical arena order.
     pub(super) abi_expressions: Vec<ExprNode>,
@@ -971,6 +1033,17 @@ impl VerifiedKernelProgram {
         (0..self.data.publishing_copies.len()).map(move |index| PublishingCopyRef {
             program: self,
             copy: index,
+        })
+    }
+
+    /// Returns the declared staged-realization contracts in declaration order.
+    ///
+    /// **Labelled draft**, on the acceptance [`StagedRealization`] records.
+    #[must_use]
+    pub fn staged_realizations(&self) -> impl ExactSizeIterator<Item = StagedRealizationRef<'_>> {
+        (0..self.data.staged_realizations.len()).map(move |index| StagedRealizationRef {
+            program: self,
+            staged: index,
         })
     }
 
@@ -1513,6 +1586,54 @@ impl<'a> PublishingCopyRef<'a> {
     }
 }
 
+/// A read-only view of one staged-realization contract.
+///
+/// **Labelled draft**, on the acceptance [`StagedRealization`] records.
+#[derive(Clone, Copy, Debug)]
+pub struct StagedRealizationRef<'a> {
+    program: &'a VerifiedKernelProgram,
+    staged: usize,
+}
+
+impl<'a> StagedRealizationRef<'a> {
+    /// Returns the stage that hands the realization's value on.
+    #[must_use]
+    pub fn producer(self) -> StageRef<'a> {
+        StageRef {
+            program: self.program,
+            stage: position(self.data().producer),
+        }
+    }
+
+    /// Returns the stage that continues the realization from it.
+    #[must_use]
+    pub fn consumer(self) -> StageRef<'a> {
+        StageRef {
+            program: self.program,
+            stage: position(self.data().consumer),
+        }
+    }
+
+    /// Returns the materialized value handed across the stage boundary.
+    #[must_use]
+    pub fn handed(self) -> MaterializedValueRef<'a> {
+        MaterializedValueRef {
+            program: self.program,
+            value: position(self.data().handed),
+        }
+    }
+
+    /// Returns the occurrence the two stages jointly realize.
+    #[must_use]
+    pub fn occurrence(self) -> SemanticOccurrence {
+        SemanticOccurrence::new(self.data().occurrence)
+    }
+
+    fn data(self) -> StagedRealizationData {
+        self.program.data.staged_realizations[self.staged]
+    }
+}
+
 /// A read-only view of one named program output.
 #[derive(Clone, Copy, Debug)]
 pub struct ProgramOutputRef<'a> {
@@ -1565,7 +1686,7 @@ const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v2\0";
 const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
-/// Program identity domain, currently `v10`.
+/// Program identity domain, currently `v11`.
 ///
 /// `v2` folded the semantic graph, bound implementations, coverage, program
 /// structure, the entry ABI, the applicability guard and the routing-commit
@@ -1657,7 +1778,21 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// section would then have to be read against a grammar whose shape depends on
 /// the content before it. Grammar determinacy is the cost that option saves, and
 /// it is the part that made the answer correct.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v10\0";
+///
+/// `v11` folds the declared staged-realization contracts, on the `v6` and `v10`
+/// precedent directly above and for the reason both recorded: a new
+/// program-scope declaration section, encoded unconditionally, so every
+/// program's bytes move and a cache or artifact holding a `v10` identity must
+/// miss rather than match. That reasoning is unchanged at this step — the
+/// conditional alternative would still leave the section's presence positionally
+/// ambiguous, and it would now do so for two adjacent optional sections rather
+/// than one. A [`StagedRealization`] is the one fact program scope cannot derive
+/// from the entities already folded here: a dispatch that reads one value and
+/// writes another is the same stage, value, and edge set whether or not the
+/// program *declares* it to continue an earlier dispatch's realization, and
+/// **which occurrence** it continues is not derivable at all, because coverage
+/// records only the occurrence's first stage.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v11\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -2097,6 +2232,23 @@ pub(super) fn encode_identity(
         push_slice(&mut bytes, &copy);
     }
 
+    // Sorted by canonical content for the reason the three sections above are: a
+    // staged-realization contract names entities rather than being named by one,
+    // so its declaration position carries no meaning identity should preserve.
+    // The occurrence it names is content and is folded with them — two programs
+    // whose chains continue *different* occurrences are two programs, and
+    // nothing else here says which one a chain is about.
+    let mut realizations: Vec<Vec<u8>> = data
+        .staged_realizations
+        .iter()
+        .map(|realization| encode_staged_realization(realization, &stages, &values))
+        .collect();
+    realizations.sort_unstable();
+    push_len(&mut bytes, realizations.len());
+    for realization in realizations {
+        push_slice(&mut bytes, &realization);
+    }
+
     // Interface order, not insertion order, and deliberately *not* sorted like
     // the two sections above: verification proves the published records are the
     // semantic subject's ordered output interface, so this sequence is content.
@@ -2213,6 +2365,19 @@ fn encode_publishing_copy(
     stages.push(&mut bytes, copy.publisher);
     values.push(&mut bytes, copy.source);
     values.push(&mut bytes, copy.published);
+    bytes
+}
+
+fn encode_staged_realization(
+    realization: &StagedRealizationData,
+    stages: &CanonicalIds,
+    values: &CanonicalIds,
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    stages.push(&mut bytes, realization.producer);
+    stages.push(&mut bytes, realization.consumer);
+    values.push(&mut bytes, realization.handed);
+    bytes.extend_from_slice(&realization.occurrence.to_be_bytes());
     bytes
 }
 
