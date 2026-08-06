@@ -6,7 +6,7 @@ title: "Proposed CPU/SIMD target profile"
 topics: ["backends", "cpu", "simd", "target-profiles"]
 contract_status: "proposed"
 implementation_status: "not-started"
-evidence: ["tiler.research.placement.device-memory-domains", "tiler.research.transfers.synchronization-lifetime", "tiler.spike.target-profiles.scalar-cpu-vertical"]
+evidence: ["tiler.research.placement.device-memory-domains", "tiler.research.transfers.synchronization-lifetime"]
 ---
 
 # Proposed CPU/SIMD target profile

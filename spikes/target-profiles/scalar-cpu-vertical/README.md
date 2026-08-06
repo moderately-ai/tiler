@@ -7,7 +7,7 @@ topics: ["target-profiles", "backends", "cpu", "artifacts", "runtime", "pluggabi
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
-supports: ["tiler.research.target-profiles.physical-feasibility-model", "tiler.contract.cpu-backend"]
+supports: ["tiler.research.target-profiles.physical-feasibility-model", "tiler.research.extensions.backend-provider-composition"]
 entrypoints: ["spikes/target-profiles/scalar-cpu-vertical/src/main.rs"]
 last_verified: "2026-08-05"
 verified_at_commit: "55d1d09f"
