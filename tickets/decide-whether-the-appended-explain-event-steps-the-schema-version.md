@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-appended-explain-event-steps-the-schema-version
 title: Decide whether the appended explain event steps the schema version
-status: review
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [explain, identity, schema, decision]
-claimed_from: todo
-assignee: agent-explain-version
-lease_expires_at: 1786038888
 ---
 
 ## The fact (doc-sweep audit 2026-08-06, coordinator-verified at source)

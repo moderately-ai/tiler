@@ -1,7 +1,7 @@
 ---
 id: remove-the-fast-honor-pragmas-variant
 title: Remove the fast-honor-pragmas variant
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [decide-whether-fpcontract-retains-the-driver-rejected-variant, record-or-validate-the-fast-honor-pragmas-selection]
@@ -9,9 +9,6 @@ scopes: [implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal-aot, surface-removal]
-claimed_from: todo
-assignee: agent-remove-fhp
-lease_expires_at: 1786039487
 ---
 
 ## The decision this executes
