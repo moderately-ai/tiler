@@ -495,12 +495,14 @@ impl Drop for Scratch {
 
 #[cfg(test)]
 mod tests {
-    use super::Toolchain;
-    use crate::diagnostic::{CompileStage, DriverError};
+    use super::{Scratch, Toolchain};
+    use crate::diagnostic::{CompileStage, DriverError, ToolOutput};
     use crate::input::{
         ApplePlatform, AppleSdk, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract,
         MathMode, MetalTarget, MslVersion, NumericalRealization, OptimizationLevel,
     };
+    use crate::record::ResolvedToolchain;
+    use std::ffi::OsString;
     use std::path::PathBuf;
 
     const TRIVIAL_MSL: &str = "#include <metal_stdlib>\n\
@@ -716,46 +718,105 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
         );
     }
 
-    /// [`FpContract::FastHonorPragmas`] is refused by the `metal` driver, and
-    /// the refusal is the typed tool-stage failure its documentation promises.
+    /// Runs the `metal` stage of the standard fixture with its `-ffp-contract`
+    /// token replaced by a value no [`FpContract`] variant spells.
     ///
-    /// This is the one place that variant's doc claim is executable. The claim
-    /// is about Apple's driver, so it can only go stale from outside this
-    /// repository; with no watcher the comment would rot silently and the next
-    /// reader would treat an unreachable selection as available. A failure here
-    /// is therefore the trigger recorded at the variant firing, not breakage.
+    /// The substitution lives here rather than on [`CompileRequest`]: that
+    /// type's flags are the exact text reaching artifact identity, so a
+    /// raw-value route through it would let an unvalidated string into a
+    /// recorded key. Every other flag still comes from `compile_flags`, so the
+    /// probe differs from an admitted row in exactly one token — which the
+    /// substitution count asserts, because a flag list that stopped carrying
+    /// `-ffp-contract` at all would otherwise leave this probe testing nothing.
+    ///
+    /// The stage runner is the driver's own, so the returned error is the same
+    /// typed value a compilation produces rather than a shelled-out exit code
+    /// this test would have to classify itself.
+    fn metal_stage_with_substituted_fp_contract(
+        resolved: &ResolvedToolchain,
+        value: &str,
+    ) -> Result<ToolOutput, DriverError> {
+        let admitted = request(
+            TRIVIAL_MSL,
+            NumericalRealization::new(MathMode::Safe, Fp32Functions::Precise, FpContract::Fast),
+        );
+        let mut substituted = 0_usize;
+        let mut args: Vec<OsString> = admitted
+            .compile_flags()
+            .iter()
+            .map(|flag| {
+                if flag.starts_with("-ffp-contract=") {
+                    substituted += 1;
+                    OsString::from(format!("-ffp-contract={value}"))
+                } else {
+                    OsString::from(flag)
+                }
+            })
+            .collect();
+        assert_eq!(
+            substituted, 1,
+            "the probe must replace exactly one contraction flag",
+        );
+
+        let scratch = Scratch::create().expect("the scratch directory is creatable");
+        let source_path = scratch.path.join("kernel.metal");
+        let air_path = scratch.path.join("kernel.air");
+        std::fs::write(&source_path, TRIVIAL_MSL).expect("the fixture source is writable");
+        args.push(OsString::from("-c"));
+        args.push(source_path.into_os_string());
+        args.push(OsString::from("-o"));
+        args.push(air_path.into_os_string());
+        Toolchain::run_stage(&resolved.metal, CompileStage::Metal, &args)
+    }
+
+    /// The `metal` driver's admitted `-ffp-contract` set is exactly
+    /// `{off, on, fast}`, which is exactly what [`FpContract`] spells.
+    ///
+    /// Both directions are watched, because the type's claim fails two ways.
+    /// Every variant compiling is what makes its selections real. A fourth
+    /// value being refused is what makes its *omissions* deliberate: clang
+    /// defines `fast-honor-pragmas`, this driver rejects it, and a release that
+    /// started accepting it would mean the enum is missing a selection a caller
+    /// could legitimately want. Either claim can only go stale from outside this
+    /// repository, so a failure here is that news arriving, not breakage.
     ///
     /// Deliberately asserts the typed error and its stage and **not** the
     /// diagnostic text, which is Apple's to reword.
     #[test]
-    fn fast_honor_pragmas_is_rejected_by_the_metal_driver() {
+    fn the_metal_driver_admits_exactly_the_three_stated_fp_contract_values() {
         let toolchain = Toolchain::system();
-        if toolchain.resolve(AppleSdk::MacOs).is_err() {
+        let Ok(resolved) = toolchain.resolve(AppleSdk::MacOs) else {
             return;
-        }
-        // The control compiles the same source under a realization differing in
-        // nothing but the contraction value, so a failure below is the flag and
-        // not the fixture.
-        let control =
-            NumericalRealization::new(MathMode::Safe, Fp32Functions::Precise, FpContract::Fast);
-        toolchain
-            .compile(&request(TRIVIAL_MSL, control))
-            .expect("the control differs only in the contraction value and must compile");
+        };
 
-        let rejected = NumericalRealization::new(
-            MathMode::Safe,
-            Fp32Functions::Precise,
-            FpContract::FastHonorPragmas,
-        );
-        match toolchain.compile(&request(TRIVIAL_MSL, rejected)) {
+        for contract in [FpContract::Off, FpContract::On, FpContract::Fast] {
+            // A match rather than a bare list: a variant added to `FpContract`
+            // fails to compile here instead of leaving the "exactly three"
+            // claim quietly covering a set it no longer names.
+            let token = match contract {
+                FpContract::Off => "off",
+                FpContract::On => "on",
+                FpContract::Fast => "fast",
+            };
+            assert_eq!(contract.token(), token);
+            let numerical =
+                NumericalRealization::new(MathMode::Safe, Fp32Functions::Precise, contract);
+            toolchain
+                .compile(&request(TRIVIAL_MSL, numerical))
+                .unwrap_or_else(|error| {
+                    panic!("`metal` refused the admitted -ffp-contract={token}: {error:?}")
+                });
+        }
+
+        match metal_stage_with_substituted_fp_contract(&resolved, "fast-honor-pragmas") {
             Err(DriverError::ToolFailure {
                 stage: CompileStage::Metal,
                 ..
             }) => {}
             Ok(_) => panic!(
-                "`metal` accepted -ffp-contract=fast-honor-pragmas, so the trigger recorded on \
-                 FpContract::FastHonorPragmas has fired: re-measure the row, correct that \
-                 variant's documentation, and decide whether the value is now a real selection"
+                "`metal` accepted -ffp-contract=fast-honor-pragmas, so this row's driver admits \
+                 more than the three values `FpContract` spells: re-measure the row and decide \
+                 whether the value is now a selection this crate should offer"
             ),
             other => panic!("expected a metal-stage ToolFailure, got {other:?}"),
         }

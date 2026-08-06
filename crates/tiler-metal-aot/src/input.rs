@@ -516,12 +516,14 @@ impl Fp32Functions {
 
 /// The `-ffp-contract` selection controlling floating-point contraction.
 ///
-/// The variants name the four values clang's `-ffp-contract` defines. Only
-/// three of them are selectable through the `metal` driver: the driver's option
-/// table admits `off`, `on`, and `fast`, and rejects everything else. The
-/// unselectable one is [`Self::FastHonorPragmas`], whose documentation records
-/// the measurement and the boundary rather than the enum quietly offering a
-/// choice the toolchain cannot deliver.
+/// The variants are exactly the values the `metal` driver's option table
+/// admits. Clang defines further values — `fast-honor-pragmas` and `on-vector`
+/// — and the driver rejects both, so neither is spellable here rather than
+/// present as a selection that cannot compile. The driver test
+/// `the_metal_driver_admits_exactly_the_three_stated_fp_contract_values`
+/// watches both halves of that claim against the real toolchain, so a row whose
+/// driver widens the admitted set reports itself instead of leaving this
+/// sentence to rot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FpContract {
     /// `off`: never form fused multiply-add contractions.
@@ -543,63 +545,11 @@ pub enum FpContract {
     /// (it carries clang's own "diectated" typo) rather than a claim about this
     /// front end.
     ///
-    /// The consequence is that this value already provides what
-    /// [`Self::FastHonorPragmas`] names, so a source emitter that wants
-    /// cross-statement contraction with a pragma-controlled opt-out selects
-    /// `fast` and writes the pragma.
+    /// The consequence is that a source emitter wanting cross-statement
+    /// contraction with a pragma-controlled opt-out selects `fast` and writes
+    /// the pragma. No separate pragma-honouring selection is needed, and the
+    /// driver admits none.
     Fast,
-    /// `fast-honor-pragmas`: contract freely except where source pragmas forbid
-    /// it.
-    ///
-    /// **This value does not compile, and it is retained as a named dead option
-    /// rather than a usable selection.** It is kept because the semantic
-    /// distinction it draws is real in clang and because deleting a variant
-    /// from this public enum is a surface decision, not because any caller
-    /// should select it. Every construction that reaches
-    /// [`Toolchain::compile`](crate::driver::Toolchain::compile) with it fails
-    /// closed at the `metal` stage with a typed
-    /// [`DriverError::ToolFailure`](crate::diagnostic::DriverError::ToolFailure);
-    /// nothing silently compiles under a different contraction setting.
-    ///
-    /// **Measurement — the driver rejects it; the front end does not.** On an
-    /// Apple M4 Max under macOS 27.0 (build 26A5388g) with Xcode 27.0
-    /// (27A5228h) and Metal 32023.921:
-    ///
-    /// ```text
-    /// $ xcrun -sdk macosx metal -target air64-apple-macos14.0 -std=metal3.1 -O2 \
-    ///     -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise \
-    ///     -ffp-contract=fast-honor-pragmas -c kernel.metal -o kernel.air
-    /// metal: error: unsupported argument 'fast-honor-pragmas' to option '-ffp-contract='
-    /// ```
-    ///
-    /// The rejection is the driver's argument parser and not a front-end
-    /// capability gap. `metal -###` shows the driver forwarding the accepted
-    /// values to `-cc1` verbatim with no remapping, and `-Xclang
-    /// -ffp-contract=fast-honor-pragmas` — which bypasses that parser — is
-    /// accepted and emits `fmul contract`, while `-Xclang -ffp-contract=off`
-    /// emits a bare `fmul`, so the `-Xclang` route is demonstrably consumed
-    /// rather than ignored. The driver rejects the value identically under
-    /// `-std=metal2.4`, `3.0`, `3.1`, `3.2`, and `4.0`, so this is not a
-    /// language-revision restriction, and it rejects clang's `on-vector` the
-    /// same way — the admitted set is exactly three values.
-    ///
-    /// The `-Xclang` route is recorded as the evidence that separates "the
-    /// driver will not spell it" from "the compiler cannot do it". It is
-    /// deliberately not offered as a selection: it bypasses the driver's own
-    /// option validation, and [`CompileRequest::compile_flags`] is the exact
-    /// text that reaches artifact identity, so an escape hatch there would put
-    /// an unvalidated front-end flag into a recorded key.
-    ///
-    /// **Trigger for reconsidering this variant.** A Metal toolchain row whose
-    /// driver accepts the value, which
-    /// `xcrun -sdk macosx metal -ffp-contract=fast-honor-pragmas -x metal -c /dev/null -o /dev/null`
-    /// answers in one line. Until that fires, the variant is unreachable
-    /// through this crate's driver *and* semantically redundant with
-    /// [`Self::Fast`], which measurably honours the pragmas this value is named
-    /// for. The unit test `fast_honor_pragmas_is_rejected_by_the_metal_driver`
-    /// watches the refusal against the real toolchain so the trigger reports
-    /// itself instead of leaving this comment to rot.
-    FastHonorPragmas,
 }
 
 impl FpContract {
@@ -610,7 +560,6 @@ impl FpContract {
             Self::Off => "off",
             Self::On => "on",
             Self::Fast => "fast",
-            Self::FastHonorPragmas => "fast-honor-pragmas",
         }
     }
 
@@ -626,17 +575,11 @@ impl FpContract {
     /// statements returns the separately rounded `0x3fc58f9e` for the operand
     /// `0x3eb97ef9` under `off` and `on`, and the fused `0x3fc58f9d` under
     /// `fast`.
-    ///
-    /// The `true` this returns for [`FpContract::FastHonorPragmas`] answers the
-    /// semantic question that variant names, not a claim that the selection
-    /// compiles — it does not, and the variant records why. A caller screening
-    /// realizations for contraction must therefore not read a `false` here as
-    /// the only way a selection can be unusable.
     #[must_use]
     pub const fn contracts_across_statements(self) -> bool {
         match self {
             Self::Off | Self::On => false,
-            Self::Fast | Self::FastHonorPragmas => true,
+            Self::Fast => true,
         }
     }
 }
@@ -1385,8 +1328,6 @@ mod tests {
         assert!(!FpContract::Off.contracts_across_statements());
         assert!(!FpContract::On.contracts_across_statements());
         assert!(FpContract::Fast.contracts_across_statements());
-        assert!(FpContract::FastHonorPragmas.contracts_across_statements());
-        assert_eq!(FpContract::FastHonorPragmas.token(), "fast-honor-pragmas");
     }
 
     /// The strictest selectable realization is still not IEEE-754 binary32.
