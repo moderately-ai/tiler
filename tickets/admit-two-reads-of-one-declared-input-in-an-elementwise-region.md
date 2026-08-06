@@ -1,7 +1,7 @@
 ---
 id: admit-two-reads-of-one-declared-input-in-an-elementwise-region
 title: Admit two reads of one declared input in an elementwise region
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [admit-elementwise-epilogues-over-a-materialized-intermediate, admit-the-structural-families-into-the-scheduled-region-vocabulary]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer]
-claimed_from: todo
-assignee: agent-two-reads
-lease_expires_at: 1786020201
 ---
 ## User-visible outcome
 
