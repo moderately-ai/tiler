@@ -131,11 +131,13 @@ fn dense_bytes(values: &[f32]) -> Vec<u8> {
 /// of what this consumer accepts, and the split is the compiler's answer to it
 /// rather than anything this file asked for.
 ///
-/// `[rows: 1, cols: 4]` is the window rather than a taste, measured on the bound
-/// macOS declaration: under this contract `[rows: 1, cols: 8]` and
-/// `[rows: 2, cols: 4]` are refused as `NoFeasiblePlan` and `[rows: 1, cols: 5]`
-/// as `InvalidCompilerOutput`. Widening it belongs to the reduction-strategy
-/// work rather than here.
+/// `[rows: 1, cols: 4]` is the window rather than a taste, measured on the
+/// declaration this run bound: at the run's date `[rows: 1, cols: 8]` and
+/// `[rows: 2, cols: 4]` were refused as `NoFeasiblePlan` and
+/// `[rows: 1, cols: 5]` as `InvalidCompilerOutput`. The grid-axis row has since
+/// widened to a retained measurement, so those refusals are dated observations
+/// and the wider windows are merely unmeasured; widening the measured window
+/// belongs to the reduction-strategy work rather than here.
 fn dispatch_region(session: &Context) -> Result<HostTensor, BindError<HostError>> {
     let x: Tensor<Metal> = Tensor::new(HostTensor::f32_dense(&[1, 4], &X), Rc::clone(session));
     tiler::tensor! {

@@ -1789,12 +1789,14 @@ impl WorkgroupTreeUnavailable {
 /// `calibrate-and-activate-parallel-reduction-selection` owns replacing it with
 /// measured evidence. Nothing here makes the tree win.
 ///
-/// That measured evidence is not currently obtainable, and the derivation is on
-/// [`governed_partition`] rather than repeated here: one shape on the
-/// authoritative profile retains all three strategies, so no crossover exists to
-/// calibrate against. The participant count is doubly fixed as a result — the
-/// one measurable shape has four contributors, which this function splits into
-/// two partitions of two, so the workgroup width does not vary either.
+/// That measured evidence is now obtainable and deliberately not gathered
+/// here: the authoritative profile's grid-axis row is a retained measurement
+/// wide enough that the comparable domain is no longer one shape, and the
+/// crossover sweep over it belongs to the calibration ticket above rather than
+/// to this function. What fixes the participant count today is not a shape:
+/// the tree and the multi-pass split both read one [`governed_partition`], so
+/// the workgroup width is fixed by that function's balanced exact split until
+/// calibration replaces it.
 ///
 /// # Errors
 ///

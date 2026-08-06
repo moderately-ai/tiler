@@ -1,17 +1,14 @@
 ---
 id: correct-the-four-thread-rationales-outside-the-corrected-scopes
 title: Correct the four-thread rationales outside the corrected scopes
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [correct-the-four-thread-grid-rationales-the-measured-row-falsified, establish-an-upper-bound-authority-for-the-metal-grid-axis-row, calibrate-and-activate-parallel-reduction-selection]
-scopes: [implementation/compiler, contracts/integrations, contracts/navigation, research/runtime]
+scopes: [implementation/compiler, contracts/integrations, contracts/navigation, research/runtime, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, defect, target-profiles]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1786043635
 ---
 ## User-visible outcome
 
@@ -58,3 +55,18 @@ Do **not** re-measure to fill a gap. Where the honest answer is that a wider sha
 ## Closes when
 
 Every site above states what is true now or is deliberately removed, no document asserts a four-thread grid capacity or a one-shape three-strategy domain for the authoritative profile, and `rg -n 'four-thread|four threads|exactly one shape|only window' crates/ prototypes/ spikes/ docs/` returns nothing that refers to the authoritative row rather than to the prototype baseline or to a dated retained record.
+
+## Outcome — 2026-08-06, executed by the coordinator (session subagent limit)
+
+**Every enumerated site states the surviving reason, and one site beyond the enumeration needed the same correction.** All at base `35ca6641`, each read in full context before editing.
+
+- `crates/tiler-compiler/src/physical.rs` (`single_workgroup_tree_region`): the doubly-fixed paragraph now states that the evidence is obtainable and deliberately not gathered here, that the crossover sweep is the calibration ticket's, and that what fixes the width today is both strategies reading one `governed_partition` — the surviving fact the filing named.
+- `crates/tiler-compiler/src/frontier.rs` (`propose_split` and `propose_workgroup_tree`): the identical pair corrected together — the preference is still unassigned, no longer for want of a domain.
+- `docs/integration/frontends.md` boundary sentence: the three refusals dated to the run's declaration, the smallest-splitting-window derivation stated, the unmeasured wider shapes owned by the calibration ticket. The `:17` "one shape it is measured at" sentence read as measurement scope in context, not capacity, and is left per the filing's own instruction.
+- `docs/open-questions.md` Q-PLAN-007: the live owners re-derived from the board — `establish-an-upper-bound-authority…` and `raise-the-metal-grid-axis-row…` are `done` and stated as the landed authority; what remains is the subgroup facts, the key-grammar reconciliation, and the calibration sweep, each `todo` and named.
+- `spikes/runtime/inline-dispatch/README.md` (both sites) and `src/multi_entry.rs`: the retained `[1, 4]` dispatch stays untouched as measurement; the present-tense refusal claims moved to dated observations with the widening stated.
+- **Beyond the enumeration:** `docs/research/program-planning/flash-class-capability-set.md:161` carried the same one-shape claim in present tense inside a dated outcome description; corrected in tense with the superseded forcing arithmetic named. Found by the Closes-when sweep.
+
+**The sweep population.** `rg -ln 'four-thread|four threads|exactly one shape|only window'` over `crates/ prototypes/ spikes/ docs/` returns 17 files; every match was read. The remainder classify as: the seven governed-prototype-baseline mentions the filing pre-cleared (the baseline deliberately keeps four); `metal_plan.rs`'s pattern precedent; four prototype/macro sites that already carry the "was … is now a measured 268,435,456" correction from the originating ticket's own sweep; the authority ledger's explicitly "superseded four-thread row" history; `docs/status.md`'s "exactly one shape" in the unrelated overlap-admission sense; and `docs/roadmap.md`'s "governed four-thread grid", which is the baseline. No re-measurement was performed; unmeasured wider shapes are named as `calibrate-and-activate-parallel-reduction-selection`'s throughout.
+
+**Checks.** `cargo fmt -p tiler-compiler -- --check`; `cargo check -p tiler-compiler --all-targets`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-compiler`; `tkt lint`; `git diff --check`; `tkt guard --base 35ca6641` from the branch. Comment-and-docs-only in crates, so the workspace gate runs at integration.
