@@ -1,7 +1,7 @@
 ---
 id: replace-the-codec-arena-content-key-with-the-existing-comparator
 title: Replace the codec arena content key with the existing comparator
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [measure-artifact-decoder-allocation-amplification]
@@ -101,6 +101,10 @@ Do that before sizing the fix, because a producer-only cost and an
 attacker-reachable one are different priorities.
 
 ## Outcome — 2026-08-06
+
+Landed at `42f0051ff38e3f9afc33a37cd004d02dca9be01e` on
+`tkt/replace-the-codec-arena-content-key-with-the-existing-comparator`, from base
+`b3d5a9ed9ded4e2348c61e5904dae9f97a789cfb`.
 
 ### The forger reach is confirmed, so this was an attacker-reachable cost
 
@@ -223,6 +227,39 @@ Two more rows moved with them, at 4,000 nodes:
 Every section-dimension row (0 / 1 MiB / 16 MiB / 64 MiB of carried object) is
 byte-identical to the retained `after` run, which is the check that this change
 touched nothing those rows measure.
+
+### The residual, checked rather than assumed
+
+An allocation the attacker chose has been replaced by a *walk* the attacker
+chooses, so the walk needs its own bound or this is a defect moved rather than
+removed. It is bounded. Once duplicates are refused, every arena node is
+pairwise structurally distinct, and `compare_expr_nodes` skips a shared position
+outright — so an expensive comparison needs two *positionally distinct* subtrees
+agreeing to depth `d`, which costs `m · d ≤ n` nodes to build. The heap does
+`O(n log m)` comparisons over an `m`-element ready set, each costing at most `d =
+n/m`, so the total is `O(n² log(m) / m)`, maximized at small `m`.
+
+**Measurement, from a scratch probe rather than a retained one.** `m` chains of
+depth `d` differing only at their seed literal, sized to `MAX_ABI_EXPRESSIONS`,
+driving `n · log2(m)` comparisons — every one at its worst-case depth, which the
+real heap does not do — on the same M4 Max under a release profile:
+
+| chains `m` | depth | nodes | comparisons | wall |
+| --- | --- | --- | --- | --- |
+| 2 | 1,998 | 3,999 | 3,999 | 33.1 ms |
+| 4 | 998 | 3,997 | 7,994 | 34.6 ms |
+| 8 | 498 | 3,993 | 11,979 | 27.1 ms |
+| 16 | 248 | 3,985 | 15,940 | 19.3 ms |
+| 64 | 61 | 3,969 | 23,814 | 8.9 ms |
+| 256 | 14 | 3,841 | 30,728 | 4.9 ms |
+
+So the worst arena the governed bound admits costs roughly 35 ms of comparison
+where it previously cost 1.5 GB of allocation. The probe is deliberately not
+retained — it measures one internal function on a shape no fixture builds, and
+the spike's own decode rows are the end-to-end evidence — but it is reproducible
+from that description, and it is why `parse_expressions` recognizes duplicates by
+hashing rather than by an `O(n log n)` comparator sort: the sort would have
+multiplied this figure by roughly `log n` for no gain.
 
 ### Records updated
 
