@@ -1421,6 +1421,59 @@ pub(crate) struct NormalizedEpilogue {
     pub(crate) elements: u64,
 }
 
+/// A verified `f32` value produced by one occurrence of a registered family
+/// whose realization law realizes a region *sequence*.
+///
+/// **The classification is the law's, not a family list's.** What makes an
+/// occurrence this shape is that
+/// [`FrozenIndexRealizationLawRegistry::family_realizes_region_sequence`]
+/// answers true for its operation key — so every family the registry carries a
+/// multi-region law for is recognized by the same arm, and a family added to the
+/// registry becomes recognizable without a line here. No operation key is named
+/// in the recognizer, which is what keeps the capability the general one.
+///
+/// **It carries the occurrence and not the stage split, because the stage split
+/// belongs to region formation.** Tom's Option A′ decision made
+/// [`crate::region::RegionGraph::with_realizations`] the authority that reads
+/// each law's realized sequence and enumerates one candidate per stage; a
+/// recognizer that also enumerated them would be a second account of one fact,
+/// and the two would have to agree about stage counts, sources, and handed
+/// values for either to mean anything. So this shape claims
+/// [`SemanticStage::first`] — the occurrence — and
+/// [`NormalizedOutput::owns_region_members`] answers for whichever stage atoms
+/// formation actually minted.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedStaged {
+    /// The registered family this occurrence belongs to.
+    pub(crate) operation: OpKey,
+    /// The occurrence's attribute record in canonical bytes.
+    ///
+    /// Carried whole rather than projected. `tiler::rms-norm-f32@1` declares its
+    /// reduced axis and its exact `eps` payload here, both of which are part of
+    /// what the occurrence computes, and a subject that dropped them would give
+    /// two different normalizations one identity.
+    pub(crate) attributes: Box<[u8]>,
+    pub(crate) input_keys: Vec<InputKey>,
+    pub(crate) output_key: OutputKey,
+    /// Declared input ordinal supplying each occurrence operand, in operand
+    /// order.
+    ///
+    /// Every operand is a declared input: see [`recognize_staged_family`]'s
+    /// `staged-operand` refusal for the boundary and its owner.
+    pub(crate) operand_inputs: Vec<u32>,
+    /// Operand shapes, in operand order.
+    pub(crate) operand_shapes: Vec<Shape>,
+    /// The published shape of the occurrence's one result.
+    pub(crate) output_shape: Shape,
+    /// The occurrence this walk claimed.
+    pub(crate) member: SemanticMemberId,
+    pub(crate) inputs: Vec<ValueId>,
+    pub(crate) output: ValueId,
+    /// Operand element counts, in operand order.
+    pub(crate) operand_elements: Vec<u64>,
+    pub(crate) output_elements: u64,
+}
+
 /// One recognized ordered named program output, and the region partition that
 /// implements it.
 ///
@@ -1445,13 +1498,19 @@ pub(crate) enum NormalizedOutput {
     /// Boxed because it carries a whole further recognized output inside it,
     /// which would otherwise make every value of this enum the size of two.
     Epilogue(Box<NormalizedEpilogue>),
+    /// One occurrence of a registered family realized as a region sequence.
+    ///
+    /// Boxed because it carries an operand-indexed shape list, an element-count
+    /// list, and the occurrence's canonical attribute bytes, none of which the
+    /// other variants pay for.
+    Staged(Box<NormalizedStaged>),
 }
 
 impl NormalizedOutput {
     pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
-            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => {
+            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => {
                 panic!("request is not a serial-sum program")
             }
         }
@@ -1460,27 +1519,29 @@ impl NormalizedOutput {
     pub(crate) const fn try_serial_sum(&self) -> Option<&NormalizedSerialSum> {
         match self {
             Self::SerialSum(normalized) => Some(normalized),
-            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => None,
+            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => None,
         }
     }
 
     pub(crate) const fn pointwise(&self) -> Option<&NormalizedPointwise> {
         match self {
-            Self::SerialSum(_) | Self::Contraction(_) | Self::Epilogue(_) => None,
+            Self::SerialSum(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => None,
             Self::Pointwise(normalized) => Some(normalized),
         }
     }
 
     pub(crate) const fn contraction(&self) -> Option<&NormalizedContraction> {
         match self {
-            Self::SerialSum(_) | Self::Pointwise(_) | Self::Epilogue(_) => None,
+            Self::SerialSum(_) | Self::Pointwise(_) | Self::Epilogue(_) | Self::Staged(_) => None,
             Self::Contraction(normalized) => Some(normalized),
         }
     }
 
     pub(crate) const fn epilogue(&self) -> Option<&NormalizedEpilogue> {
         match self {
-            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) => None,
+            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) | Self::Staged(_) => {
+                None
+            }
             Self::Epilogue(normalized) => Some(normalized),
         }
     }
@@ -1497,7 +1558,9 @@ impl NormalizedOutput {
     /// distinguishes it.
     pub(crate) fn producer_shape(&self) -> &Self {
         match self {
-            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) => self,
+            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) | Self::Staged(_) => {
+                self
+            }
             Self::Epilogue(chain) => &chain.producer,
         }
     }
@@ -1546,6 +1609,23 @@ impl NormalizedOutput {
                     (None, None) => None,
                 }
             }
+            // Every operand of a staged occurrence is a declared input, so the
+            // count is the operand's own. Agreement or nothing when one declared
+            // input supplies two operands, for the reason
+            // [`NormalizedProgram::agreed_input_elements_at`] states: two
+            // operand positions reading one tensor at different extents give a
+            // work-scaling caller no single answer.
+            Self::Staged(normalized) => {
+                let ordinal = u32::try_from(ordinal).ok()?;
+                agreed(
+                    normalized
+                        .operand_inputs
+                        .iter()
+                        .zip(&normalized.operand_elements)
+                        .filter(|(operand, _)| **operand == ordinal)
+                        .map(|(_, elements)| *elements),
+                )
+            }
         }
     }
 
@@ -1585,6 +1665,10 @@ impl NormalizedOutput {
                     .any(|(read, _)| *read == EpilogueRead::Input(ordinal))
                     || chain.producer.reads_declared_input(ordinal)
             }
+            // The recognized operand map, not the declared arity: a staged
+            // occurrence binds one read per operand and a program may declare an
+            // input it never names.
+            Self::Staged(normalized) => normalized.operand_inputs.contains(&ordinal),
         }
     }
 
@@ -1614,6 +1698,12 @@ impl NormalizedOutput {
                     0
                 },
             ),
+            Self::Staged(normalized) => normalized
+                .operand_elements
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or_default(),
         }
     }
 
@@ -1623,6 +1713,7 @@ impl NormalizedOutput {
             Self::Pointwise(normalized) => normalized.elements,
             Self::Contraction(normalized) => normalized.output_elements,
             Self::Epilogue(chain) => chain.elements,
+            Self::Staged(normalized) => normalized.output_elements,
         }
     }
 
@@ -1639,6 +1730,12 @@ impl NormalizedOutput {
                 members.dedup();
                 members
             }
+            // The occurrence, once. A staged family's realization stages are
+            // region formation's to enumerate — see [`NormalizedStaged`] — and
+            // claiming them here would state the same split twice and make
+            // [`check_output_cover`]'s per-occurrence accounting count a
+            // realization choice as program work.
+            Self::Staged(normalized) => vec![SemanticStage::first(normalized.member)],
         }
     }
 
@@ -1676,6 +1773,20 @@ impl NormalizedOutput {
             Self::Epilogue(chain) => {
                 members == chain.members || chain.producer.owns_region_members(members)
             }
+            // Every region whose atoms are all stages of this one occurrence,
+            // which is the whole partition a staged family has: region formation
+            // decided how many stages there are and which atoms exist, so asking
+            // for a stage list here would be a second account of that decision
+            // that could disagree with the candidates actually enumerated. A
+            // region mixing this occurrence's stages with another occurrence's
+            // atoms is not a part and is declined, exactly as a region
+            // straddling two outputs' walks is.
+            Self::Staged(normalized) => {
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|atom| atom.member() == normalized.member)
+            }
         }
     }
 
@@ -1683,7 +1794,7 @@ impl NormalizedOutput {
     fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
-            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => {
+            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => {
                 panic!("the fixture is a serial sum")
             }
         }
@@ -1959,6 +2070,13 @@ pub(crate) enum NormalizedOutputSubject {
     Contraction(Box<NormalizedContraction>),
     /// Boxed for the reason [`NormalizedOutput::Epilogue`] is.
     Epilogue(Box<NormalizedEpilogueSubject>),
+    /// Boxed for the reason [`NormalizedOutput::Staged`] is.
+    ///
+    /// The recognized shape is carried whole rather than projected: it holds no
+    /// graph handle a subject must not bind, because the occurrence coordinate
+    /// it does carry is the graph-local member ordinal every other arm's member
+    /// run already writes.
+    Staged(Box<NormalizedStaged>),
 }
 
 /// The subject projection of one recognized elementwise epilogue chain.
@@ -2288,15 +2406,20 @@ impl VerifiedRequestSubject {
 /// chains is not a subject this function can be handed.
 ///
 /// **Every member run below writes the occurrence ordinal of an attribution
-/// atom and not its stage, and that is complete rather than lossy.** A
-/// recognized part is minted by `plan_elementwise`, by
-/// [`RecognizedSerialSumMembers::new`], and by the contraction recognizer, and
-/// each of the three mints [`SemanticStage::first`] — no recognizer in this
-/// module can produce a partition holding a later stage, so no two subjects can
-/// differ in a stage ordinal and the ordinals alone separate them. A recognizer
-/// that admits a family realized as a region *sequence* breaks that premise and
-/// must fold the stage into these runs, which steps this domain's version and
-/// moves every pinned request qualifier with it.
+/// atom and not its stage, and that is complete rather than lossy.** Every
+/// recognized part in this module is minted at [`SemanticStage::first`] —
+/// `plan_elementwise`, [`RecognizedSerialSumMembers::new`], the contraction
+/// recognizer, and [`recognize_staged_family`] each mint one — so no two
+/// subjects can differ in a stage ordinal and the ordinals alone separate them.
+///
+/// That holds for a family realized as a region *sequence* too, and the reason
+/// is the recognizer's rather than this encoder's: a staged family's stage split
+/// is region formation's to enumerate, so the recognized partition names the
+/// occurrence and [`NormalizedOutput::owns_region_members`] answers for the
+/// atoms formation minted. A recognizer that instead enumerated stages into a
+/// partition would break the premise and would have to fold the stage into these
+/// runs, which steps this domain's version and moves every pinned request
+/// qualifier with it.
 fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubject) {
     match normalized {
         NormalizedOutputSubject::SerialSum(normalized) => {
@@ -2478,6 +2601,53 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
             }
             bytes.extend_from_slice(&normalized.elements.to_be_bytes());
             encode_output_subject(bytes, &normalized.producer);
+        }
+        // A fifth sub-tag, on the contraction and epilogue arms' argument: no
+        // existing arm's bytes move, so a subject encoded before this variant
+        // existed still encodes to exactly what it did, and a reader that
+        // reaches this tag is reading a subject the earlier vocabulary could not
+        // express. The enclosing domain therefore does not step and no pinned
+        // request qualifier moves.
+        //
+        // **The operation key and the attribute record are both identity, and
+        // neither is redundant with the other.** Two families realized as region
+        // sequences over the same shapes differ only in the key; two occurrences
+        // of *one* family differ only in the record — `tiler::rms-norm-f32@1`'s
+        // reduced axis and exact `eps` payload live there and are part of what
+        // the occurrence computes. The record is written through
+        // [`crate::region::encode_attributes`], the same canonical encoder
+        // region content identity uses, so the two never disagree about what an
+        // attribute value is.
+        NormalizedOutputSubject::Staged(normalized) => {
+            push_slice(bytes, b"staged-family.v1");
+            push_slice(bytes, normalized.operation.namespace().as_bytes());
+            push_slice(bytes, normalized.operation.name().as_bytes());
+            bytes.extend_from_slice(&normalized.operation.semantic_version().to_be_bytes());
+            push_slice(bytes, &normalized.attributes);
+            push_len(bytes, normalized.input_keys.len());
+            for key in &normalized.input_keys {
+                push_slice(bytes, key.as_str().as_bytes());
+            }
+            push_slice(bytes, normalized.output_key.as_str().as_bytes());
+            // The operand run: which declared input supplies each operand, at
+            // which shape and element count. Position is identity because the
+            // family reads its operands by position — `rms_norm(x, w)` and
+            // `rms_norm(w, x)` are different programs — and the ordinals are the
+            // program's own, which is what the ABI binds.
+            push_len(bytes, normalized.operand_inputs.len());
+            for ((ordinal, shape), elements) in normalized
+                .operand_inputs
+                .iter()
+                .zip(&normalized.operand_shapes)
+                .zip(&normalized.operand_elements)
+            {
+                bytes.extend_from_slice(&ordinal.to_be_bytes());
+                encode_explain_shape(bytes, shape);
+                bytes.extend_from_slice(&elements.to_be_bytes());
+            }
+            encode_explain_shape(bytes, &normalized.output_shape);
+            bytes.extend_from_slice(&normalized.member.0.to_be_bytes());
+            bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
         }
     }
 }
@@ -2795,18 +2965,21 @@ impl VerifiedCompilationRequest {
         program: &SemanticProgram,
         target_indexes: &[usize],
     ) -> Result<Self, RequestError> {
-        let (normalized, semantic_identity) = verify_program(program, self.budgets)?;
-        if self.capabilities.lowering.semantic_snapshot()
-            != program.semantic_registry().snapshot_identity()
-        {
-            return unsupported("capability", "semantic-authority-pairing");
-        }
+        // Authorities before recognition, for the reason [`verify_request`]
+        // states at the same pair of statements.
         let Ok(realization_laws) = FrozenIndexRealizationLawRegistry::from_semantic(
             program.semantic_registry().clone(),
             self.capabilities.scalars.clone(),
         ) else {
             return unsupported("capability", "semantic-authority-pairing");
         };
+        if self.capabilities.lowering.semantic_snapshot()
+            != program.semantic_registry().snapshot_identity()
+        {
+            return unsupported("capability", "semantic-authority-pairing");
+        }
+        let (normalized, semantic_identity) =
+            verify_program(program, self.budgets, &realization_laws)?;
         let mut target_slots = Vec::with_capacity(target_indexes.len());
         for target_index in target_indexes {
             let slot = self
@@ -2977,6 +3150,7 @@ fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputSubject {
         NormalizedOutput::Contraction(normalized) => {
             NormalizedOutputSubject::Contraction(normalized.clone())
         }
+        NormalizedOutput::Staged(normalized) => NormalizedOutputSubject::Staged(normalized.clone()),
         NormalizedOutput::Epilogue(chain) => {
             NormalizedOutputSubject::Epilogue(Box::new(NormalizedEpilogueSubject {
                 producer: Box::new(output_subject(&chain.producer)),
@@ -3413,23 +3587,32 @@ pub(crate) fn verify_request(
         ));
     }
 
-    // Recognition, then the authorities the recognized program's subject is
-    // bound to. Both keep the order they had relative to each other before the
-    // target phase was hoisted above them, so which refusal a program that fails
-    // more than one of these reports has not moved.
-    let normalized = select_supported_strategy(request.program)?;
-    let semantic_identity = request.program.semantic_identity().clone();
-    if request.capabilities.lowering.semantic_snapshot()
-        != request.program.semantic_registry().snapshot_identity()
-    {
-        return unsupported("capability", "semantic-authority-pairing");
-    }
+    // The authorities the recognized program's subject is bound to, then
+    // recognition.
+    //
+    // **The realization-law authority now precedes recognition, and it has to.**
+    // Recognition asks it whether an occurrence's registered law realizes a
+    // region *sequence*, which is what admits a staged family as a program
+    // stage, so an authority that does not cohere is not one recognition may
+    // consult. The order change is confined to a program that fails both: it
+    // used to report the recognizer's rule and now reports the pairing, which is
+    // the more specific of the two statements — recognition's answer under an
+    // incoherent authority would not be evidence about the program at all. The
+    // semantic-snapshot pairing keeps its own position between them, and both
+    // report the same rule, so a program failing only one is unmoved.
     let Ok(realization_laws) = FrozenIndexRealizationLawRegistry::from_semantic(
         request.program.semantic_registry().clone(),
         request.capabilities.scalars.clone(),
     ) else {
         return unsupported("capability", "semantic-authority-pairing");
     };
+    if request.capabilities.lowering.semantic_snapshot()
+        != request.program.semantic_registry().snapshot_identity()
+    {
+        return unsupported("capability", "semantic-authority-pairing");
+    }
+    let normalized = select_supported_strategy(request.program, &realization_laws)?;
+    let semantic_identity = request.program.semantic_identity().clone();
     let target_slots = request
         .target_profiles
         .iter()
@@ -3597,10 +3780,11 @@ fn require_compile_profile_dispatch(
 fn verify_program(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
+    laws: &FrozenIndexRealizationLawRegistry,
 ) -> Result<(NormalizedProgram, SemanticIdentity), RequestError> {
     check_program_budgets(program, budgets)?;
     Ok((
-        select_supported_strategy(program)?,
+        select_supported_strategy(program, laws)?,
         program.semantic_identity().clone(),
     ))
 }
@@ -3800,6 +3984,21 @@ fn resolve_numerical_contract(
 ///   no region to be built into, and a region for it is a `tiler-ir` widening
 ///   rather than a projection this boundary could make.
 ///
+///   **A family realized as a region *sequence* is the one shape that leaves
+///   this rule without being expressible per point, and the admitting fact is a
+///   registry row.** An occurrence whose registered
+///   [`tiler_ir::index::IndexRealizationLaw`] realizes a sequence computes
+///   several regions' worth of work, so no single per-point body was ever going
+///   to spell it; what makes it recognizable is that the law says how many
+///   regions there are and region formation enumerates one candidate per stage.
+///   [`recognize_staged_family`] is that arm and it names no operation key, so
+///   `tiler::rms-norm-f32@1` and any family registered after it are recognized
+///   by the same statement. `tiler::softmax-f32@1` still refuses here because it
+///   carries no law at all — `crates/tiler-compiler/tests/softmax_recognizer_boundary.rs`
+///   measures that — and a recognized staged family still stops one layer down,
+///   where no [`tiler_ir::schedule::ScalarProgram`] spells a stage's work
+///   ([`crate::physical::RegionVocabularyWall::StagedFamilyUnspellable`]).
+///
 ///   **Two families used to be named here and no longer are, for two different
 ///   reasons, and both distinctions are worth keeping.** `tiler::silu-f32@1` has
 ///   no node of its own, but its per-point body is expressible in the node
@@ -3916,7 +4115,10 @@ fn resolve_numerical_contract(
 /// [`crate::pipeline::conformance`]'s
 /// `a_published_and_consumed_intermediate_refuses_by_name` records the measured
 /// wall order.
-fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
+fn select_supported_strategy(
+    program: &SemanticProgram,
+    laws: &FrozenIndexRealizationLawRegistry,
+) -> Result<NormalizedProgram, RequestError> {
     // Program-wide properties first, each under the rule that names it. A
     // program failing one of these fails it for every shape below, so reporting
     // it here is both the more specific statement and the only one that does not
@@ -3930,7 +4132,7 @@ fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProg
     {
         return mismatch("dtype-f32");
     }
-    recognize_program_outputs(program)
+    recognize_program_outputs(program, laws)
 }
 
 /// Recognizes every ordered named output of one verified program.
@@ -3955,13 +4157,16 @@ fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProg
 /// program declaring none, every rule the per-output recognizers report, and the
 /// two [`check_output_cover`] states: `operation-set` for an occurrence no
 /// walk claimed, and `output-partition-overlap` for one claimed twice.
-fn recognize_program_outputs(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
+fn recognize_program_outputs(
+    program: &SemanticProgram,
+    laws: &FrozenIndexRealizationLawRegistry,
+) -> Result<NormalizedProgram, RequestError> {
     if program.output_count() == 0 {
         return unsupported("strategy", "missing-output");
     }
     let mut outputs = Vec::with_capacity(program.output_count());
     for output in program.outputs() {
-        outputs.push(recognize_output(program, &output)?);
+        outputs.push(recognize_output(program, &output, laws)?);
     }
     check_output_cover(program, &outputs)?;
     Ok(NormalizedProgram { outputs })
@@ -3971,6 +4176,7 @@ fn recognize_program_outputs(program: &SemanticProgram) -> Result<NormalizedProg
 fn recognize_output(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+    laws: &FrozenIndexRealizationLawRegistry,
 ) -> Result<NormalizedOutput, RequestError> {
     // An output that *is* a declared input computes nothing: it names no
     // operation for any region to realize. The property that was not recognized
@@ -3984,13 +4190,23 @@ fn recognize_output(
     }
     let (member, root) = producer_for_value(program, output.value())?;
     if root.key() == &strict_serial_sum_f32_op() {
-        recognize_reduction(program, output.value(), output.key().clone(), member, &root)
-            .map(NormalizedOutput::SerialSum)
+        recognize_reduction(
+            program,
+            output.value(),
+            output.key().clone(),
+            member,
+            &root,
+            laws,
+        )
+        .map(NormalizedOutput::SerialSum)
     } else if root.key() == &strict_tensor_contraction_f32_op() {
         normalize_contraction(program, output.value(), output.key().clone())
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
+    } else if laws.family_realizes_region_sequence(root.key()) {
+        recognize_staged_family(program, output.value(), output.key().clone(), member, &root)
+            .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
     } else {
-        recognize_elementwise_output(program, output)
+        recognize_elementwise_output(program, output, laws)
     }
 }
 
@@ -4018,6 +4234,7 @@ fn recognize_output(
 fn recognize_elementwise_output(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+    laws: &FrozenIndexRealizationLawRegistry,
 ) -> Result<NormalizedOutput, RequestError> {
     let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
     let shape = program
@@ -4034,11 +4251,11 @@ fn recognize_elementwise_output(
         declared: &declared,
         staged: None,
     };
-    match plan_elementwise(program, output.value(), &leaves, &shape) {
+    match plan_elementwise(program, output.value(), &leaves, &shape, laws) {
         Ok(plan) => recognize_pointwise(program, output, &declared, shape, plan)
             .map(NormalizedOutput::Pointwise),
         Err(ElementwiseRefusal::Folded(staged)) => {
-            recognize_epilogue(program, output, &declared, shape, staged)
+            recognize_epilogue(program, output, &declared, shape, staged, laws)
                 .map(|chain| NormalizedOutput::Epilogue(Box::new(chain)))
         }
         Err(ElementwiseRefusal::Refused(error)) => Err(error),
@@ -4440,6 +4657,7 @@ fn recognize_elementwise(
     root: ValueId,
     declared: &[ValueId],
     shape: &Shape,
+    laws: &FrozenIndexRealizationLawRegistry,
 ) -> Result<RecognizedElementwise, RequestError> {
     let plan = plan_elementwise(
         program,
@@ -4449,6 +4667,7 @@ fn recognize_elementwise(
             staged: None,
         },
         shape,
+        laws,
     )
     .map_err(RequestError::from)?;
     resolve_elementwise(plan, declared)
@@ -4621,6 +4840,7 @@ fn plan_elementwise(
     root: ValueId,
     leaves: &ElementwiseLeaves<'_>,
     shape: &Shape,
+    laws: &FrozenIndexRealizationLawRegistry,
 ) -> Result<ElementwisePlan, ElementwiseRefusal> {
     let mut steps: Vec<(ValueId, ElementwiseMint)> = Vec::new();
     let mut minted: Vec<ValueId> = Vec::new();
@@ -4686,7 +4906,8 @@ fn plan_elementwise(
             // staged read has nothing to attribute it to a second edge.
             if leaves.staged.is_none()
                 && (operation.key() == &strict_serial_sum_f32_op()
-                    || operation.key() == &strict_tensor_contraction_f32_op())
+                    || operation.key() == &strict_tensor_contraction_f32_op()
+                    || laws.family_realizes_region_sequence(operation.key()))
             {
                 return Err(ElementwiseRefusal::Folded(value));
             }
@@ -5260,13 +5481,14 @@ fn recognize_epilogue(
     declared: &[ValueId],
     shape: Shape,
     staged: ValueId,
+    laws: &FrozenIndexRealizationLawRegistry,
 ) -> Result<NormalizedEpilogue, RequestError> {
     let leaves = ElementwiseLeaves {
         declared,
         staged: Some(staged),
     };
-    let plan =
-        plan_elementwise(program, output.value(), &leaves, &shape).map_err(RequestError::from)?;
+    let plan = plan_elementwise(program, output.value(), &leaves, &shape, laws)
+        .map_err(RequestError::from)?;
     // The staged read, then whichever declared inputs the expression names. The
     // *declared* half is now the same rule `canonical_input_reads` states —
     // groups in declaration order, dense before mapped, an unread input
@@ -5304,7 +5526,7 @@ fn recognize_epilogue(
             Ok((read, leaf.map.clone()))
         })
         .collect::<Result<Vec<_>, RequestError>>()?;
-    let producer = recognize_epilogue_producer(program, staged, output.key().clone())?;
+    let producer = recognize_epilogue_producer(program, staged, output.key().clone(), laws)?;
     let elements = element_count_u64(&shape, "output")?;
     Ok(NormalizedEpilogue {
         producer: Box::new(producer),
@@ -5330,17 +5552,127 @@ fn recognize_epilogue_producer(
     program: &SemanticProgram,
     staged: ValueId,
     output_key: OutputKey,
+    laws: &FrozenIndexRealizationLawRegistry,
 ) -> Result<NormalizedOutput, RequestError> {
     let (member, root) = producer_for_value(program, staged)?;
     if root.key() == &strict_serial_sum_f32_op() {
-        recognize_reduction(program, staged, output_key, member, &root)
+        recognize_reduction(program, staged, output_key, member, &root, laws)
             .map(NormalizedOutput::SerialSum)
     } else if root.key() == &strict_tensor_contraction_f32_op() {
         normalize_contraction(program, staged, output_key)
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
+    } else if laws.family_realizes_region_sequence(root.key()) {
+        recognize_staged_family(program, staged, output_key, member, &root)
+            .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
     } else {
         mismatch("operation-set")
     }
+}
+
+/// Recognizes one occurrence of a registered family realized as a region
+/// sequence.
+///
+/// **The admitting fact is the registered law, and no operation key appears
+/// here.** The caller has already asked
+/// [`FrozenIndexRealizationLawRegistry::family_realizes_region_sequence`], so
+/// every family the law authority carries a multi-region law for reaches this
+/// function and a family registered tomorrow reaches it unchanged. What this
+/// function decides is whether *this occurrence* of such a family is one the
+/// boundary can describe, and it names each property it cannot.
+///
+/// **What it does not do is describe the realization.** The stage count, each
+/// stage's reads, and the handed values are the law's, read by
+/// [`crate::region::RegionGraph::with_realizations`] when it enumerates one
+/// region candidate per stage. Re-deriving them here would put a second account
+/// of one law in the boundary, which is the drift
+/// [`recognize_elementwise_output`]'s own doc argues against for the same
+/// reason.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] naming the exact property
+/// that was not recognized:
+///
+/// - `staged-result-arity` for an occurrence whose results are not exactly the
+///   recognized value. A staged realization's final stage writes the
+///   occurrence's results and every earlier stage publishes one handed value, so
+///   a second result would need a second write this boundary cannot attribute.
+/// - `staged-operand` for an operand that is not a declared program input —
+///   which is a staged family reading a value another region materializes. That
+///   is the shape [`EpilogueRead::Staged`] expresses for an elementwise
+///   consumer, and expressing it here needs the *producing* stage's read list to
+///   carry a boundary role, which no recognized staged shape has because the
+///   stage split is not this boundary's. It is refused by name rather than
+///   admitted and dropped;
+///   [`admit-a-staged-family-that-reads-a-materialized-intermediate`](../../../tickets/admit-a-staged-family-that-reads-a-materialized-intermediate.md)
+///   owns the widening.
+/// - `staged-attributes` for an attribute record the canonical encoder cannot
+///   write. The record is part of the occurrence's meaning, so a subject that
+///   could not carry it whole must refuse rather than bind a partial one.
+/// - `input-handle`/`output-handle` for a value the program holds no shape for,
+///   and every rule [`declared_ordinal`] reports.
+///
+/// Returns [`RequestError::ShapeProductOverflow`] for a domain whose extents do
+/// not multiply into a `u64`.
+fn recognize_staged_family(
+    program: &SemanticProgram,
+    result: ValueId,
+    output_key: OutputKey,
+    member: u32,
+    operation: &tiler_ir::semantic::OperationRef<'_>,
+) -> Result<NormalizedStaged, RequestError> {
+    if operation.results().collect::<Vec<_>>() != [result] {
+        return mismatch("staged-result-arity");
+    }
+    let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
+    let operands: Vec<ValueId> = operation.operands().collect();
+    let mut operand_inputs = Vec::with_capacity(operands.len());
+    let mut operand_shapes = Vec::with_capacity(operands.len());
+    let mut operand_elements = Vec::with_capacity(operands.len());
+    for operand in &operands {
+        if !declared.contains(operand) {
+            return mismatch("staged-operand");
+        }
+        operand_inputs.push(declared_ordinal(&declared, *operand)?);
+        let shape = program
+            .shape(*operand)
+            .map_err(|_| RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "input-handle",
+            })?
+            .clone();
+        operand_elements.push(element_count_u64(&shape, "input")?);
+        operand_shapes.push(shape);
+    }
+    let output_shape = program
+        .shape(result)
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "output-handle",
+        })?
+        .clone();
+    let output_elements = element_count_u64(&output_shape, "output")?;
+    let mut attributes = Vec::new();
+    crate::region::encode_attributes(&mut attributes, operation.attributes()).map_err(|_| {
+        RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "staged-attributes",
+        }
+    })?;
+    Ok(NormalizedStaged {
+        operation: operation.key().clone(),
+        attributes: attributes.into_boxed_slice(),
+        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
+        output_key,
+        operand_inputs,
+        operand_shapes,
+        output_shape,
+        member: SemanticMemberId(member),
+        inputs: declared,
+        output: result,
+        operand_elements,
+        output_elements,
+    })
 }
 
 /// Recognizes a strict serial reduction and whatever elementwise expression
@@ -5375,6 +5707,7 @@ fn recognize_reduction(
     output_key: OutputKey,
     sum_member: u32,
     sum: &tiler_ir::semantic::OperationRef<'_>,
+    laws: &FrozenIndexRealizationLawRegistry,
 ) -> Result<NormalizedSerialSum, RequestError> {
     let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
     let sum_operands: Vec<_> = sum.operands().collect();
@@ -5401,7 +5734,7 @@ fn recognize_reduction(
         return mismatch("sum-shape");
     }
 
-    let recognized = recognize_elementwise(program, *contributor, &declared, &input_shape)?;
+    let recognized = recognize_elementwise(program, *contributor, &declared, &input_shape, laws)?;
     // The walk claims an occurrence for every leaf and node it mints except one:
     // a declared input contributes the leaf that reads it and nothing else. So a
     // fold straight over a declared input arrives here with an empty member set
@@ -6226,6 +6559,171 @@ mod tests {
         builder.build().unwrap()
     }
 
+    /// A normalization over `[2, 2]` reduced on axis one, optionally scaled.
+    ///
+    /// `weighted` decides which of the two shapes the ticket names is built: the
+    /// family as the whole declared output, and the family as a program stage a
+    /// later elementwise pass consumes.
+    fn normalization_program(weighted: bool, eps_bits: u32) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let shape = Shape::from_dims([2, 2]);
+        let value = builder
+            .input::<F32>(InputKey::new("value").unwrap(), shape.clone())
+            .unwrap();
+        let weight = builder
+            .input::<F32>(InputKey::new("weight").unwrap(), shape)
+            .unwrap();
+        let normalized = tiler_ir::semantic::F32RmsNorm::apply(
+            &mut builder,
+            value,
+            weight,
+            Axis::new(1),
+            eps_bits,
+        )
+        .unwrap();
+        let root = if weighted {
+            F32Multiply::apply(&mut builder, normalized, value).unwrap()
+        } else {
+            normalized
+        };
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// A registered family whose law realizes a region sequence is a program
+    /// stage, both as the declared output and as a chain's producer.
+    ///
+    /// **The recognition is the law's and the partition is the occurrence's, and
+    /// both halves are asserted.** `tiler::rms-norm-f32@1` reaches this arm
+    /// because its registered `IndexRealizationLaw` realizes a region *sequence*
+    /// — no operation key appears in the recognizer — and what the recognized
+    /// part claims is the occurrence, once, because region formation is the
+    /// authority that enumerates the stages. `owns_region_members` therefore
+    /// answers for whichever stage atoms formation minted, which is what lets a
+    /// cover region covering one stage resolve to this output at all.
+    ///
+    /// Watched failing under a deliberate perturbation: removing the
+    /// `laws.family_realizes_region_sequence(operation.key())` disjunct from
+    /// `plan_elementwise`'s folding discovery refuses the weighted program under
+    /// `operation-set`, which is the wall this ticket moved.
+    #[test]
+    fn a_registered_staged_family_is_recognized_as_a_program_stage() {
+        let eps = 1.0e-6_f32.to_bits();
+
+        // The family as the whole declared output.
+        let whole = normalization_program(false, eps);
+        let NormalizedOutput::Staged(staged) = recognize(&whole).unwrap() else {
+            panic!("a family whose law realizes a region sequence is a staged stage")
+        };
+        assert_eq!(staged.operation, tiler_ir::semantic::rms_norm_f32_op());
+        assert_eq!(staged.member, SemanticMemberId(0));
+        assert_eq!(staged.operand_inputs, [0, 1]);
+        assert_eq!(staged.output_shape, Shape::from_dims([2, 2]));
+        assert_eq!(staged.output_elements, 4);
+        assert!(
+            !staged.attributes.is_empty(),
+            "the occurrence's axis and eps record reaches the recognized shape"
+        );
+
+        // The family as a program stage a later pass consumes: the walk names
+        // the value the chain materializes and the producer is this shape.
+        let weighted = normalization_program(true, eps);
+        let NormalizedOutput::Epilogue(chain) = recognize(&weighted).unwrap() else {
+            panic!("an elementwise pass over a staged family's result is a chain")
+        };
+        let NormalizedOutput::Staged(producer) = chain.producer.as_ref() else {
+            panic!("the chain's producer is the staged family")
+        };
+        assert_eq!(producer.member, SemanticMemberId(0));
+        assert_eq!(chain.members, [SemanticStage::first(SemanticMemberId(1))]);
+
+        // The partition: the occurrence once, and every region whose atoms are
+        // stages of it.
+        let output = NormalizedOutput::Staged(producer.clone());
+        assert_eq!(
+            output.members(),
+            [SemanticStage::first(SemanticMemberId(0))]
+        );
+        let fold = SemanticStage::first(SemanticMemberId(0));
+        let pass = fold.next_stage();
+        assert!(output.owns_region_members(&[fold]));
+        assert!(output.owns_region_members(&[pass]));
+        assert!(output.owns_region_members(&[fold, pass]));
+        assert!(
+            !output.owns_region_members(&[]),
+            "an empty member set is no region of this occurrence"
+        );
+        assert!(
+            !output.owns_region_members(&[fold, SemanticStage::first(SemanticMemberId(1))]),
+            "a region straddling the consumer belongs to no single part"
+        );
+    }
+
+    /// A staged family reading a value another region computes refuses by name.
+    ///
+    /// The wall this ticket does *not* move, named rather than dropped: the
+    /// producing stage's reads would have to carry a boundary role, and a staged
+    /// shape carries no read list because the stage split is not the
+    /// recognizer's. Watched failing under a deliberate perturbation: deleting
+    /// the `declared.contains(operand)` guard refuses the same program under
+    /// `elementwise-reads`, which is [`declared_ordinal`] complaining about a
+    /// leaf list this shape does not have — a true statement about the wrong
+    /// property, and the reason the guard states the operand rule itself.
+    #[test]
+    fn a_staged_family_reading_a_computed_value_refuses_by_name() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let shape = Shape::from_dims([2, 2]);
+        let value = builder
+            .input::<F32>(InputKey::new("value").unwrap(), shape.clone())
+            .unwrap();
+        let weight = builder
+            .input::<F32>(InputKey::new("weight").unwrap(), shape)
+            .unwrap();
+        let doubled = F32Multiply::apply(&mut builder, value, value).unwrap();
+        let normalized = tiler_ir::semantic::F32RmsNorm::apply(
+            &mut builder,
+            doubled,
+            weight,
+            Axis::new(1),
+            1.0e-6_f32.to_bits(),
+        )
+        .unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), normalized)
+            .unwrap();
+        let program = builder.build().unwrap();
+        assert_eq!(recognize(&program).unwrap_err(), "staged-operand");
+    }
+
+    /// Two occurrences differing only in `eps` bind different request subjects.
+    ///
+    /// The attribute record is what separates them: both programs declare the
+    /// same keys, the same shapes, the same operand map, the same member, and
+    /// the same element counts, so a staged subject arm that omitted the record
+    /// would give two different normalizations one identity. Watched failing
+    /// under a deliberate perturbation: dropping the attribute run from
+    /// `encode_output_subject`'s staged arm makes the two subjects equal.
+    #[test]
+    fn a_staged_subject_separates_two_occurrences_differing_only_in_eps() {
+        let subject_bytes = |eps_bits: u32| {
+            let program = normalization_program(false, eps_bits);
+            let normalized = select_supported_strategy(&program, &laws_of(&program)).unwrap();
+            let mut bytes = Vec::new();
+            for output in normalized.outputs() {
+                encode_output_subject(&mut bytes, &output_subject(output));
+            }
+            bytes
+        };
+        let first = subject_bytes(1.0e-6_f32.to_bits());
+        let second = subject_bytes(1.0e-5_f32.to_bits());
+        assert_ne!(
+            first, second,
+            "the occurrence's eps payload is part of what the staged stage computes"
+        );
+    }
+
     /// Builds the five-node `input * scale + bias` expression a forgery swaps in.
     fn affine_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
         let mut expression = PointwiseF32ExpressionBuilder::new();
@@ -6237,12 +6735,36 @@ mod tests {
         expression.build(root).unwrap()
     }
 
+    /// The realization-law authority recognition consults, for one fixture.
+    ///
+    /// Paired with the governed scalar profile, which is what the compile path
+    /// pairs. A fixture that registers its own operations has a semantic
+    /// authority the governed scalars were never frozen over, so it is paired
+    /// with the empty scalar registry built over *its* semantic authority
+    /// instead — recognition asks this registry one question, whether a family's
+    /// registered law realizes a region sequence, and that reads the semantic
+    /// law rows alone.
+    fn laws_of(program: &SemanticProgram) -> FrozenIndexRealizationLawRegistry {
+        let semantic = program.semantic_registry().clone();
+        FrozenIndexRealizationLawRegistry::from_semantic(
+            semantic.clone(),
+            governed_scalars().expect("the governed scalar profile is coherent"),
+        )
+        .or_else(|_| {
+            FrozenIndexRealizationLawRegistry::from_semantic(
+                semantic.clone(),
+                tiler_ir::index::ScalarRegistryBuilder::new(semantic).freeze(),
+            )
+        })
+        .expect("a law authority over the fixture's own semantic authority coheres")
+    }
+
     /// Recognizes one program through the whole boundary, or reports the rule.
     ///
     /// Answers with the sole recognized output, because every fixture reaching
     /// it declares one; [`recognize_outputs`] is the multi-output form.
     fn recognize(program: &SemanticProgram) -> Result<NormalizedOutput, &'static str> {
-        strategy_rule(select_supported_strategy(program)).map(|recognized| {
+        strategy_rule(select_supported_strategy(program, &laws_of(program))).map(|recognized| {
             let [output] = recognized.outputs() else {
                 panic!("the fixture declares one output");
             };
@@ -6265,7 +6787,7 @@ mod tests {
                 .all(|value| value.resolved_type() == &F32::resolved_type()),
             "the fixture is f32 throughout",
         );
-        strategy_rule(recognize_program_outputs(program))
+        strategy_rule(recognize_program_outputs(program, &laws_of(program)))
     }
 
     /// Reduces one recognition outcome to the strategy rule it refused under.
@@ -7116,7 +7638,8 @@ mod tests {
         // by whole-value equality, for the reason
         // `two_programs_differing_only_in_output_order_recognize_differently`
         // gives about `ValueId` carrying its graph.
-        let admitted = select_supported_strategy(&program).expect("the boundary admits it");
+        let admitted = select_supported_strategy(&program, &laws_of(&program))
+            .expect("the boundary admits it");
         assert_eq!(
             admitted
                 .outputs()
@@ -7960,7 +8483,12 @@ mod tests {
         // reported is therefore the check order's guarantee rather than an
         // accident, and it is the first one.
         assert_eq!(
-            verify_program(&budget_probe(19, 62, 3), governed).err(),
+            verify_program(
+                &budget_probe(19, 62, 3),
+                governed,
+                &laws_of(&budget_probe(19, 62, 3))
+            )
+            .err(),
             Some(RequestError::BudgetExceeded {
                 resource: "semantic-values",
                 limit: 80,
@@ -7969,7 +8497,12 @@ mod tests {
         );
 
         assert_eq!(
-            verify_program(&budget_probe(17, 63, 3), governed).err(),
+            verify_program(
+                &budget_probe(17, 63, 3),
+                governed,
+                &laws_of(&budget_probe(17, 63, 3))
+            )
+            .err(),
             Some(RequestError::BudgetExceeded {
                 resource: "semantic-operations",
                 limit: 62,
@@ -7983,7 +8516,12 @@ mod tests {
         // fifty-five expression nodes, and thirty-four buffers — and `regions`
         // is the one that reports, which is the check order's guarantee again.
         assert_eq!(
-            verify_program(&budget_probe(18, 62, 4), governed).err(),
+            verify_program(
+                &budget_probe(18, 62, 4),
+                governed,
+                &laws_of(&budget_probe(18, 62, 4))
+            )
+            .err(),
             Some(RequestError::BudgetExceeded {
                 resource: "regions",
                 limit: 12,
@@ -7992,7 +8530,12 @@ mod tests {
         );
 
         assert_eq!(
-            verify_program(&budget_probe(19, 18, 3), governed).err(),
+            verify_program(
+                &budget_probe(19, 18, 3),
+                governed,
+                &laws_of(&budget_probe(19, 18, 3))
+            )
+            .err(),
             Some(RequestError::BudgetExceeded {
                 resource: "host-expression-nodes",
                 limit: 51,
@@ -8013,7 +8556,12 @@ mod tests {
             ..governed
         };
         assert_eq!(
-            verify_program(&budget_probe(19, 18, 3), unshadowed).err(),
+            verify_program(
+                &budget_probe(19, 18, 3),
+                unshadowed,
+                &laws_of(&budget_probe(19, 18, 3))
+            )
+            .err(),
             Some(RequestError::BudgetExceeded {
                 resource: "buffers",
                 limit: 30,

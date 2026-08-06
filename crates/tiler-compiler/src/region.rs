@@ -419,10 +419,12 @@ pub(crate) struct RegionCandidate {
 impl RegionCandidate {
     /// Returns the region's attribution atoms in ascending graph-local order.
     ///
-    /// Every atom this stage mints is a first stage — [`assemble`] is the only
-    /// constructor and builds them from graph operation ordinals — so the list
-    /// is one atom per covered occurrence until a producer of multi-region
-    /// realizations exists.
+    /// One atom per covered *stage*, not per covered occurrence: [`assemble`] is
+    /// the only constructor and builds each atom from a formation node id, and
+    /// an occurrence whose registered law realizes a region sequence contributes
+    /// one node per stage. A program with no staged member has node ids equal to
+    /// member ordinals, so its list is one first-stage atom per occurrence
+    /// exactly as it was before stages existed.
     pub(crate) fn members(&self) -> &[SemanticStage] {
         &self.members
     }
@@ -2418,17 +2420,14 @@ fn boundary_is_internal(
 /// injective for one program. Boundary and retained values are derived from that
 /// set and are encoded as redundant, independently checkable site facts.
 ///
-/// **It encodes occurrences, not attribution atoms, and that is complete only
-/// while every candidate is single-stage.** [`assemble`] is the sole constructor
-/// of a [`RegionCandidate`] and mints [`SemanticStage::first`] for every member,
-/// so no two candidates of one program can differ in a stage ordinal and the
-/// positions below separate every distinct site. A later authority that mints a
-/// candidate covering *one* stage of a multi-stage occurrence breaks that
-/// premise — two such candidates would share these bytes — so it must fold the
-/// stage ordinal into this encoding and into [`encode_content`], which moves
-/// every region, cover, and downstream pinned identity. That step belongs to the
-/// ticket that mints the first multi-stage candidate, because the encoding it
-/// needs cannot be validated against content that does not exist yet.
+/// **The positions below name occurrences, and the stage distinction reaches
+/// these bytes through the content encoding they embed.** Two candidates over
+/// one member population that differ in any atom differ in
+/// [`encode_content`]'s stage trailer, and the embedded content bytes are
+/// length-prefixed here, so the pair is separated without an occurrence-side
+/// trailer of its own. A handed value crossing the boundary in either site group
+/// carries its own canonical tag ([`RegionGraph::canonical_value`]'s tag `3`),
+/// so it can never be read as a result or an input.
 fn encode_occurrence(
     graph: &RegionGraph,
     content: &RegionContentIdentity,
@@ -2507,7 +2506,18 @@ fn encode_value_facts(bytes: &mut Vec<u8>, value: &GraphValue) {
     }
 }
 
-fn encode_attributes(
+/// Appends one occurrence's attribute record in canonical bytes.
+///
+/// Shared with [`crate::request`] rather than restated there: a recognized
+/// occurrence whose family the region vocabulary cannot spell still has to reach
+/// the request subject with its attributes intact — `tiler::rms-norm-f32@1`'s
+/// `eps` payload is part of what the occurrence *means* — and a second encoder
+/// for the same canonical values would be a second authority over the same
+/// bytes. It stays fallible for the reason [`encode_canonical_value`] states:
+/// the canonical vocabulary is non-exhaustive, so a value this profile cannot
+/// encode must refuse rather than produce an identity that drops part of the
+/// operation's meaning.
+pub(crate) fn encode_attributes(
     bytes: &mut Vec<u8>,
     attributes: &OperationAttributes,
 ) -> Result<(), RegionError> {

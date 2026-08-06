@@ -1634,6 +1634,13 @@ fn output_region_role(
                 output_region_role(&chain.producer, members)
             }
         }
+        // One role for every region of a staged occurrence rather than one per
+        // stage. The stage a region covers is the *realization's* structure, and
+        // this role names what the region means against the recognized program;
+        // reading a stage ordinal out here would put a second account of the
+        // law's staging in the trace, where it could disagree with the
+        // candidates region formation actually enumerated.
+        crate::request::NormalizedOutput::Staged(_) => "staged-family",
     }
 }
 

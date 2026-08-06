@@ -681,6 +681,38 @@ impl FrozenIndexRealizationLawRegistry {
         self.0.scalars.snapshot_identity()
     }
 
+    /// Returns whether the law registered for one operation family realizes a
+    /// region *sequence* rather than a single region.
+    ///
+    /// **Labelled draft.** The surface is implemented and tested; acceptance is
+    /// parked for Tom at
+    /// [`accept-the-registered-family-region-sequence-query`](../../../../tickets/accept-the-registered-family-region-sequence-query.md).
+    ///
+    /// **The question is about the registered law and nothing else, which is why
+    /// it takes an operation key rather than a subject.** A caller that already
+    /// holds an [`IndexRefinementSubject`] asks
+    /// [`ResolvedIndexRealization::realizes_region_sequence`] through
+    /// [`Self::resolve`] and gets the same answer off the same registry row; a
+    /// caller classifying a *program* — deciding whether an occurrence is one
+    /// region's worth of work or a staged one — has no subject to derive,
+    /// because deriving one requires a numerical contract and the classification
+    /// does not depend on one. [`super::IndexRealizationLaw`]'s own predicate
+    /// reads the variant alone, so answering it here from the operation key is
+    /// the same fact read from the same place rather than a second derivation.
+    ///
+    /// Answers `false` for an operation the registry carries no law for. That is
+    /// the fail-closed direction and not an approximation: an occurrence with no
+    /// registered law realizes no region sequence this authority can describe,
+    /// and refinement reports the absent law by name when the occurrence is
+    /// lowered.
+    #[must_use]
+    pub fn family_realizes_region_sequence(&self, operation: &OpKey) -> bool {
+        self.0
+            .semantic
+            .index_realization_law(operation)
+            .is_some_and(|registered| registered.law.realizes_region_sequence())
+    }
+
     /// Resolves one semantic-provider-bound law from an exact subject.
     ///
     /// # Errors
@@ -5579,6 +5611,73 @@ mod tests {
             first_receipt.executable_coverage_identity(),
             second_receipt.executable_coverage_identity()
         );
+    }
+
+    /// The contract-free family query answers off the registered law row.
+    ///
+    /// **Three rows and one agreement, and the agreement is the load-bearing
+    /// half.** `tiler::rms-norm-f32@1` carries `StagedRootMeanSquareScaleF32`
+    /// and answers true; `tiler::multiply-f32@1` carries a single-region law and
+    /// answers false; `tiler::softmax-f32@1` is a registered *operation* the
+    /// standard authority carries no law for and answers false rather than
+    /// panicking. The agreement then shows the query is the same fact read from
+    /// the same row rather than a second account of it: for a derived subject,
+    /// [`ResolvedIndexRealization::realizes_region_sequence`] answers
+    /// identically for both families.
+    #[test]
+    fn the_family_region_sequence_query_agrees_with_the_resolved_law() {
+        use crate::semantic::{F32Multiply, F32RmsNorm};
+        use crate::shape::Axis;
+
+        let semantic = FrozenSemanticRegistry::standard().unwrap();
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars.clone()).unwrap();
+
+        assert!(laws.family_realizes_region_sequence(&crate::semantic::rms_norm_f32_op()));
+        assert!(!laws.family_realizes_region_sequence(&crate::semantic::multiply_f32_op()));
+        assert!(
+            !laws.family_realizes_region_sequence(&crate::semantic::softmax_f32_op()),
+            "a registered operation the authority carries no law for realizes no sequence"
+        );
+
+        // One program holding both families, so the resolved answers come from
+        // occurrences the same authority actually admits.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let shape = Shape::from_dims([4]);
+        let value = builder
+            .input::<F32>(InputKey::new("x").unwrap(), shape.clone())
+            .unwrap();
+        let weight = builder
+            .input::<F32>(InputKey::new("w").unwrap(), shape)
+            .unwrap();
+        let normalized = F32RmsNorm::apply(
+            &mut builder,
+            value,
+            weight,
+            Axis::new(0),
+            1.0e-6_f32.to_bits(),
+        )
+        .unwrap();
+        let scaled = F32Multiply::apply(&mut builder, normalized, value).unwrap();
+        builder
+            .output(OutputKey::new("y").unwrap(), scaled)
+            .unwrap();
+        let program = builder.build().unwrap();
+
+        for (position, expected) in [(0_usize, true), (1, false)] {
+            let operation = program.operations().nth(position).unwrap();
+            let key = operation.key().clone();
+            let subject =
+                IndexRefinementSubject::derive(&program, operation.id(), test_contract()).unwrap();
+            let resolved = laws.resolve(&subject).unwrap();
+            assert_eq!(resolved.realizes_region_sequence(), expected);
+            assert_eq!(
+                laws.family_realizes_region_sequence(&key),
+                resolved.realizes_region_sequence(),
+                "the contract-free query must answer what the resolved law answers for {key}"
+            );
+        }
     }
 
     /// A residual association reaches executable coverage only through proof.

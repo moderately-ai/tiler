@@ -4,10 +4,19 @@
 //! fusion role and a capability row, and carrying a structured-kernel construct
 //! and a Metal emission. It nevertheless compiles no whole program, and the
 //! reason is *not* anything about the family — it is that
-//! `select_supported_strategy` recognizes three whole-program shapes and none of
-//! them contains a softmax. That is the same ceiling holding
-//! `tiler::silu-f32@1` and `tiler::rms-norm-f32@1`, and it belongs to
-//! [`reach-a-verified-kernel-through-the-structural-families`].
+//! `select_supported_strategy` has no shape for it.
+//!
+//! **The ceiling is no longer shared with `tiler::rms-norm-f32@1`, and the
+//! difference is exactly one registry row.** The recognizer's staged arm is
+//! law-derived: an occurrence whose registered `IndexRealizationLaw` realizes a
+//! region *sequence* is recognized as a program stage, with no operation key
+//! named. The normalization carries `StagedRootMeanSquareScaleF32` and is
+//! therefore recognized, reaches its own lowering, and stops at the
+//! scheduled-region vocabulary
+//! (`pipeline::tests::a_staged_family_program_reaches_its_lowering_and_names_the_vocabulary_wall`).
+//! The softmax carries no law at all, so the same arm answers `false` for it and
+//! the refusal below is the recognizer's — which is why the assertions here are
+//! unchanged and are now about *this* family rather than about a class of them.
 //!
 //! **This file exists so that the claim is checked rather than asserted in a
 //! roadmap cell.** A ceiling stated only in prose drifts silently in both
@@ -15,20 +24,20 @@
 //! forward onto a family whose ceiling is somewhere else. The control below is
 //! what keeps the refusal from being consistent with a broken session boundary.
 //!
-//! **It also records what is deliberately *not* here.** This vertical did not
-//! widen the recognizer, and it registered no index-access lowering capability.
-//! A softmax occurrence realizes as *three* regions — a maximum fold, an
-//! exponential-and-sum pass, and a normalizing pass — and what once blocked that
-//! was `GovernedIndexAccess` emitting exactly one region per occurrence. That
-//! limit is gone: `IndexAccessLoweringProvider::lower_sequence` emits an ordered
-//! chain, and `GovernedRootMeanSquareScaleF32` is a shipped provider that does.
-//! What this family still lacks is its own `IndexRealizationLaw` — which needs a
-//! governed **maximum** scalar key that
-//! [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`] owns —
-//! and, above that, the recognizer widening this file's assertions pin.
+//! **What the softmax still lacks, in order.** A softmax occurrence realizes as
+//! *three* regions — a maximum fold, an exponential-and-sum pass, and a
+//! normalizing pass. Emitting a chain is no longer the obstacle:
+//! `IndexAccessLoweringProvider::lower_sequence` emits an ordered chain and
+//! `GovernedRootMeanSquareScaleF32` is a shipped provider that does. What is
+//! missing is the law, which needs a governed **maximum** scalar key that
+//! [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`] owns
+//! *and* a handed value with more than one reader, which
+//! [`admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence`]
+//! owns. Once the law is registered this file's refusal moves to the same
+//! vocabulary wall the normalization sits at.
 //!
-//! [`reach-a-verified-kernel-through-the-structural-families`]: ../../../tickets/reach-a-verified-kernel-through-the-structural-families.md
 //! [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`]: ../../../tickets/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md
+//! [`admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence`]: ../../../tickets/admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence.md
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
