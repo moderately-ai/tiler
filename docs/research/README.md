@@ -118,6 +118,7 @@ single weakest-to-strongest ladder.
 - [Target-neutral artifact and backend payload envelope](artifacts/target-neutral-artifact-envelope.md) — adopted; primary-source-synthesis, executable-model; informs: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Metal AOT backend](../backends/metal.md); experiments: [Artifact envelope spike](../../spikes/artifacts/README.md)
 - [The expansion cache root policy](cache/root-policy.md) — adopted; primary-source-synthesis, bounded-measurement; informs: [Frontend and proc-macro integration](../integration/frontends.md), [Metal AOT backend](../backends/metal.md), [Resolve the expansion-cache root from an override or the user cache](../decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md)
 - [The expansion cache under Cargo and rust-analyzer](cache/build-tool-exercise.md) — pending; bounded-measurement; informs: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Frontend and proc-macro integration](../integration/frontends.md); experiments: [Expansion cache crash and race spike](../../spikes/cache/README.md)
+- [Where the artifact envelope's fixed content came from](artifacts/manifest-fixed-content-growth.md) — pending; bounded-measurement, primary-source-synthesis; informs: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); experiments: [Which landings moved the artifact envelope's fixed content](../../spikes/artifacts/manifest-growth-attribution/README.md)
 
 ### Runtime, integration, and placement
 
