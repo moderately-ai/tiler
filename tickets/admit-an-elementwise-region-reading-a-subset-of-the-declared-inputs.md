@@ -1,7 +1,7 @@
 ---
 id: admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs
 title: Admit an elementwise region reading a subset of the declared inputs
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [admit-ordered-multi-output-programs-at-the-compiler-request-boundary, recognize-several-ordered-named-outputs-at-the-compiler-request-boundary, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary, admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api]
-claimed_from: todo
-assignee: agent-subset-reads
-lease_expires_at: 1786023249
 ---
 ## User-visible outcome
 
