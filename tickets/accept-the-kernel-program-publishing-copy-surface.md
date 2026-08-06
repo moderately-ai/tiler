@@ -77,3 +77,7 @@ Tom accepts, accepts with a named exclusion, or rejects the surface. Record the 
 ## Decided — accepted
 
 Accepted by Tom on 2026-08-06 at the morning decision review in the coordination session, witnessed first-hand by the coordinator, with the evidence packet this node carries. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.
+
+## Sweep correction — 2026-08-06
+
+The acceptance sweep above was executed incompletely and the gap was found by the vocabulary audit hours later: of the three draft labels the obligation names, only `PublishingCopy`'s moved — `PublishingCopyRef` (`model.rs:1464`) and `push_publishing_copy` (`builder.rs:712`) kept "Draft public surface" while pointing at a type recording acceptance, and the `docs/ir.md` paragraph was never written. Root cause: the sweep grep matched one label pattern and its single hit was treated as the population — the uniform-pass failure the process warns about. All three labels and the `docs/ir.md` paragraph are corrected in this change; the audit's finding is the evidence trail.

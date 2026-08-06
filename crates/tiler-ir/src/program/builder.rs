@@ -709,7 +709,7 @@ impl KernelProgramBuilder {
 
     /// Declares that one stage publishes a value another stage computed.
     ///
-    /// **Draft public surface**, for the reason [`PublishingCopy`] records.
+    /// **Accepted boundary**, on the acceptance [`PublishingCopy`] records.
     ///
     /// The declaration is what accounts for the publisher's dispatch: it covers
     /// no occurrence of the bound graph, because the stage that computed the

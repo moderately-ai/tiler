@@ -1461,7 +1461,7 @@ impl<'a> PartialReductionRef<'a> {
 
 /// A read-only view of one publishing-copy contract.
 ///
-/// **Draft public surface**, for the reason [`PublishingCopy`] records.
+/// **Accepted boundary**, on the acceptance [`PublishingCopy`] records.
 #[derive(Clone, Copy, Debug)]
 pub struct PublishingCopyRef<'a> {
     program: &'a VerifiedKernelProgram,
