@@ -1,7 +1,7 @@
 ---
 id: derive-the-oracle-for-a-permitted-divergence-candidate
 title: Derive the oracle for a permitted-divergence candidate
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [research-region-accuracy-contracts-and-analyzable-error-budgets, connect-certified-rounding-error-bounds-to-rewrite-permissions, register-a-flush-and-reassociate-numerical-contract, calibrate-and-activate-parallel-reduction-selection, derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
@@ -9,9 +9,6 @@ scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, reference, conformance]
-claimed_from: todo
-assignee: agent-divergence-oracle
-lease_expires_at: 1785987904
 ---
 ## User-visible outcome
 
