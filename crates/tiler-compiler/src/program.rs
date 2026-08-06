@@ -1869,6 +1869,42 @@ fn verify_host_contract(
             rule: "buffer-budget",
         });
     }
+    // The assembled region count, checked here beside its two siblings because
+    // the three bound the same object — the plan this request produced — while
+    // `check_program_budgets` can bound only what the *declaration* implies.
+    //
+    // **Defence in depth rather than a live gate, exactly as `buffer-budget`
+    // above is.** The boundary's actual is four dispatches per declared output,
+    // which is the widest chain the recognizer can spell for one output, and the
+    // outputs' chains are disjoint; so no request this boundary admits can
+    // assemble past it on a plan of this build's own making, and the check
+    // firing would mean the recognizer gained a wider chain than the derivation
+    // enumerates. That is precisely the state worth failing closed on, because
+    // this refusal reaches the caller as `InvalidCompilerOutput` — the compiler
+    // reporting its own defect, which is the right report for exactly this cause
+    // and the wrong one for an over-large request, which is why the boundary and
+    // not this site is what bounds a declaration.
+    //
+    // Proven able to refuse rather than assumed: with the boundary's `regions`
+    // check disabled and a stated budget of three, the four-dispatch chain
+    // reaches here and reports
+    // `InvalidCompilerOutput(Program(Structure { rule: "region-budget" }))`.
+    //
+    // A stage and a scheduled region are the same count by
+    // `verify_kernel_program_layers`' `cardinality` rule, which is what lets a
+    // budget named for regions be enforced against the stage list here. It is
+    // deliberately *not* the cover's `region_count()`: a split fold is one cover
+    // region and three dispatches, and it is the dispatches the budget's own
+    // derivation enumerates.
+    if program.core.stages().len()
+        > usize::try_from(request.budgets().regions).map_err(|_| ProgramError::Structure {
+            rule: "region-budget",
+        })?
+    {
+        return Err(ProgramError::Structure {
+            rule: "region-budget",
+        });
+    }
     let values = evaluate_expressions(expressions)?;
     if values.get(position(program.core.applicability_guard())) != Some(&AbiValue::Boolean(true)) {
         return Err(ProgramError::Structure {
