@@ -1,7 +1,7 @@
 ---
 id: record-the-contraction-execution-row-and-correct-the-matrix-headline
 title: Record the contraction execution row and correct the matrix headline
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [decide-whether-the-l3-ladder-rung-moves-on-the-dispatched-contraction-cell, integrate-the-contraction-vertical-into-the-runtime, publish-an-l3-contraction-cell-through-the-accepted-route, raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-navigation-2
-lease_expires_at: 1786030628
 ---
 ## The work (maturity audit 2026-08-06; integrate-the-contraction-vertical-into-the-runtime verified done since 2026-08-02)
 
