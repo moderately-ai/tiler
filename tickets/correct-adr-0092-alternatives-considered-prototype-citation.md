@@ -1,7 +1,7 @@
 ---
 id: correct-adr-0092-alternatives-considered-prototype-citation
 title: Correct ADR 0092's alternatives-considered prototype citation
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [correct-the-sdk-apple-family-range-in-the-runtime-answer-record, close-the-serial-sum-run-gpu-family-probe-table]
@@ -36,3 +36,21 @@ An accepted ADR stops citing a prototype pair table that no longer exists as evi
 ## Closes when
 
 ADR 0092:62 describes a construction that exists, or drops the prototype clause without weakening the elimination; the research record's parallel flag at `:74` is discharged in the same change; and both sentences were checked against `prototypes/serial-sum-run/src/proof.rs` as it stands rather than against the ticket that changed it.
+
+## Outcome — 2026-08-06, `67abe1da`
+
+Delivered with [`re-transfer-the-adr-0092-span-for-its-drifted-prototype-referent`](re-transfer-the-adr-0092-span-for-its-drifted-prototype-referent.md) as one act on `tkt/re-transfer-the-adr-0092-span-for-its-drifted-prototype-referent` from base `01ad1c99`, because the ADR correction and the span re-transfer are the same edit read from two sides. Docs-only: `docs/decisions/0092-…md` and `docs/research/runtime/backend-scoped-route-requirement-answers.md`.
+
+**The wording chosen, and why it is not the referent swap the sibling ticket prescribed.** The clause "which is what the existing prototype does" became "which is what both prototypes independently wrote before the walk moved into `tiler-metal`", and a positive case was added: "Neither writes such a table now: both drive the walk from `tiler-metal` over `MetalGpuFamily::ALL` and reach Apple's constant by the enumerator value both sides transcribe from `MTLDevice.h`, which is the construction decision item 3 requires."
+
+The two repairs this ticket's Boundaries left open were *drop the clause* and *cite the enumerator-value join as the positive case*. Both were taken, because they answer different halves. Dropping the present-tense clause is what makes the entry true; but the clause was carrying more than illustration — the research record's own **Inference** rests on the table having been written **twice, independently, against two bindings**, which is "measured rather than predicted" and is the strongest evidence that a published vocabulary would be mapped by hand again. Deleting it outright would have spent that evidence to fix a tense. Moving it to the past keeps it and costs nothing, since it is history and history does not drift. The positive case is then added rather than substituted, because a reader checking the elimination against the tree needs to find *something*, and what they find is decision item 3's construction — the shape the convention asks for, reached twice for the defect's own sake rather than this design's.
+
+**Fact — read from source at this commit, not from either ticket.** `prototypes/serial-sum-run/src/proof.rs:1161-1319`: `BINDING_APPLE_FAMILIES` lists the nine enumerators `metal` 0.33.0 names, `binding_apple_enumerator` finds one by comparing `enumerator as isize` against `AppleGpuFamilyConstant::value()`, `probe_apple_families` drives the walk from `observe_highest_gpu_family`, and a `const _: ()` block asserts `MetalGpuFamily::COUNT == 5` and sweeps `ALL` for nameability. `prototypes/candle-metal-adapter/src/adapter.rs:658-661`: `observed_apple_family` is `observe_highest_gpu_family(|family| raw.supportsFamily(MTLGPUFamily(family.value())))`, with the doc comment stating the pair table was the defect. **No pair table exists in either prototype**, so the sibling ticket's prescribed wording "a prototype still does" would itself have been false — the one thing that ticket said must not be applied mechanically.
+
+**The elimination was not weakened.** Convention 5b's argument is that mapping a Tiler family onto its Apple constant is a total map with no derivable wildcard value; that is a property of the map, not of anyone having written one. The 5c half — that the *table* form removes even the compile error the attribute would force — is stated exactly as before. Both sentences of the argument are untouched; only the illustration moved.
+
+**Not touched, as required:** `decision_status`, `implementation_status`, the seven unaccepted public-boundary items at `:20`, and every decision item including item 8's already-applied `RouteResourceRequirement` spelling. `git diff 01ad1c99..67abe1da -- docs/decisions/` is two hunks, both inside *Alternatives considered*.
+
+**The `:74` flag is discharged, and so are its three siblings.** The flagged sentence now records the second site as closed at `8a5e20c5` and states what replaced it. The same stale claim stood in three further places in that record and was rewritten with it, because a scan that fixes one instance of a pattern and leaves its siblings is not a discharge: the section heading (`— since closed in one of its two sites`), the b2 **Inference** (`the other is filed and open`), the question-1 elimination bullet (`what \`prototypes/serial-sum-run\` still does`), and the deferral bullet (`The identical table survives at …`). All four now say the defect is closed in both sites.
+
+A correction note recording this repair was added to the ADR's *Alternatives considered* section, outside the six transferred entries, so the span re-transfer stays byte-clean.
