@@ -1,7 +1,7 @@
 ---
 id: separate-the-rescaling-price-from-the-observed-fold-divergence
 title: Separate the rescaling price from the observed fold divergence
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [connect-certified-rounding-error-bounds-to-rewrite-permissions, derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, accuracy, reductions]
+claimed_from: todo
+assignee: agent-rescale-price
+lease_expires_at: 1786049402
 ---
 ## User-visible outcome
 
