@@ -1,7 +1,7 @@
 ---
 id: lift-the-four-published-and-consumed-walls-together
 title: Lift the four published-and-consumed walls together
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary, admit-elementwise-epilogues-over-a-materialized-intermediate]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, compiler-api]
+claimed_from: todo
+assignee: agent-four-walls
+lease_expires_at: 1786017023
 ---
 ## User-visible outcome
 
