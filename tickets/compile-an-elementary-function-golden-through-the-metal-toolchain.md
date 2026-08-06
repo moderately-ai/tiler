@@ -1,7 +1,7 @@
 ---
 id: compile-an-elementary-function-golden-through-the-metal-toolchain
 title: Compile an elementary-function golden through the Metal toolchain
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-registered-unary-families-at-the-compiler-request-boundary, admit-the-silu-activation-family, emit-the-structural-region-on-metal]
@@ -9,9 +9,6 @@ scopes: [implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, goldens, numerics, support-matrix]
-claimed_from: todo
-assignee: agent-elementary-golden
-lease_expires_at: 1786034532
 ---
 ## User-visible outcome
 
