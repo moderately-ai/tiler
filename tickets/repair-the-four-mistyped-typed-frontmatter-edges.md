@@ -1,7 +1,7 @@
 ---
 id: repair-the-four-mistyped-typed-frontmatter-edges
 title: Repair the four mistyped or dangling typed frontmatter edges
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [govern-the-three-ungoverned-spike-records, reconcile-the-research-and-experiment-catalogs-with-their-frontmatter]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/artifacts, research/documentation, resea
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, navigation, catalog, metadata]
-claimed_from: todo
-assignee: agent-fm-edges
-lease_expires_at: 1786052228
 ---
 ## User-visible outcome
 
