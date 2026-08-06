@@ -1,11 +1,11 @@
 ---
 id: carry-the-elementary-identity-dimension-adr
 title: Carry the elementary-identity dimension ADR
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [name-the-elementary-identity-rewrite-dimension, connect-certified-rounding-error-bounds-to-rewrite-permissions, decide-whether-to-admit-an-elementary-identity-permission]
-scopes: [contracts/decisions, contracts/navigation]
+scopes: [contracts/decisions, contracts/navigation, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, decision, carrier]
@@ -38,3 +38,21 @@ Accepting the ADR; editing the span's content; editing `docs/numerical-semantics
 ## Closes when
 
 The ADR file exists at `docs/decisions/` with `decision_status: proposed`, the transfer is confirmed byte-identical after the stated normalization with the perturbation watched failing, the decisions catalog carries its row, and the acceptance node is parked at `awaiting-decision`.
+
+## Outcome
+
+**Landed as [ADR 0101](../docs/decisions/0101-treat-elementary-function-identities-as-a-fourth-numerical-dimension.md), `decision_status: proposed`, on 2026-08-05.** `0100` was still the highest at the base `de377fb1` (`ls docs/decisions/01*.md` returned it alone), so the drafted number was free and was taken unchanged.
+
+**The transfer is byte-identical and the check was proved able to fail first.** The span was re-derived rather than trusted — `grep -n '^---$'` put the section's rules at `287` and `339`, giving `289,337` at the base — and the record's three stated link counts all reproduced before the transfer: span `0`, lines `1,100` → `12`, whole file → `40`. Perturbing decision 1 from "it is a fourth one" to "it is a fifth one" made the normalized `diff` report that line; with the perturbation removed, `cmp` reported the two byte-identical and the normalized `diff` reported no differences, while the raw `diff` reported exactly eight changed lines forming the four heading pairs — the sole `#### ` → `## ` transform and nothing else. The `**Title:**` and `**Frontmatter:**` directive lines were consumed into the frontmatter and H1 rather than transferred, which is the convention every landed ADR follows (`grep -ln '^\*\*Title:\*\*' docs/decisions/*.md` returns nothing); the `**Status:**` paragraph transfers as body.
+
+**Both catalog views carry the row as `proposed`**, following the ADR 0099 landing precedent at `affe281f`: the theme row under "Numerical operations" in title order beside ADR 0080, and the chronology row after ADR 0100. Reconciled by counting the population rather than by eye — 101 ADR files against 101 chronology rows and 101 theme rows, zero missing in either view, with the check's negative and positive controls both fired.
+
+**The record's carrier note was updated per its siblings' convention** and its drafted-span disclosure was kept rather than replaced: the landed-ADR pointer sits beside it, the span's line range is restated as `293,341` after the added paragraphs moved it, and the `**Frontmatter:**` line's `decision_status: proposed` is recorded as true-as-landed with a note that acceptance makes it false and that it must then be flagged rather than edited. The record's `disposition` stays `pending` and no `adopted_by` edge was added, because a `proposed` ADR adopts nothing — every record carrying `adopted_by` names an accepted ADR.
+
+**Not done here, and it is the one closing condition this branch does not satisfy: the acceptance node.** The dispatch brief assigned it to the coordinator at integration, against this ticket's own "Closes when" above. That is not a silent descope — it is a live conflict surfaced rather than resolved by the worker, and the brief's reading is corroborated in the tree by ADR 0100's own work record, which states that filing an acceptance node "is the coordinator's step under the convention every proposed record here follows". **The remainder is one ticket**: park `accept-adr-0101-elementary-identity-dimension` at `awaiting-decision`, depending on this one, so the graph blocks structurally on Tom rather than deadlocking this carrier in `review`. Until it exists, nothing in the graph is blocked on ADR 0101's status.
+
+**`research/numerics` was added to this ticket's scopes autonomously, and here is why it belongs.** Updating the source record's carrier note is part of the transfer rather than adjacent to it — the convention the sibling records set is that a drafted span stops claiming to be undrafted the moment it lands, and a record still saying "the drafted ADR body has no carrier" after the carrier ran is precisely the stale assertion the docs process exists to prevent. `ticketsplease.toml` routes `docs/research/**` to `research/numerics`, which the original declaration missed because the ticket was written as if the transfer were write-only into `docs/decisions/`. `tkt guard` caught it as `under_declared` rather than a reviewer catching it later, which is the mechanism working.
+
+**No live ticket holds `research/numerics`, checked by counting rather than by sampling.** Eighty-two tickets declare it in their `scopes:` line and **zero** are `in-progress` or `review`; the scan's control fired, correctly reporting this ticket as the sole live `contracts/decisions` holder. The one live neighbour, [`correct-the-online-single-pass-softmax-fold-legality-fact`](correct-the-online-single-pass-softmax-fold-legality-fact.md), declares `implementation/ir` alone and is scope-disjoint. Its branch has **no commits**, so the file-level check against it is **vacuous and is reported as such rather than as disjointness** — the substantive protection is not file separation but citation discipline: ADR 0101 contains zero `.rs:NNN` line citations, zero `SOFTMAX_` constant references, zero registered fact-string values, and zero references to the semantic-definition projection, so that ticket's identity step cannot fork this record's text. The one `crates/` path the ADR names is `crates/tiler-ir/src/schedule/numerics.rs` for the contract-key literals, which is a different file from the semantic registry that correction moves, and it is cited without a line number.
+
+**Non-goals held.** `docs/numerical-semantics.md` is untouched (`contracts/numerics`, and it moves only at acceptance), no permission is admitted, no span content was edited, and nothing in `crates/` changed.
