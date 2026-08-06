@@ -3,7 +3,7 @@
 //! Two independent implementations answer the same six cells here: the
 //! registered `tiler::strict-tensor-contraction-f32@1` evaluator, whose fold is
 //! staged in output slabs, and the verified index-region oracle, whose walk is
-//! staged in spans of parallel points. Each was blocked by a *different* bound
+//! staged in spans of root points. Each was blocked by a *different* bound
 //! and each is reached without moving one; the second half starts at
 //! [`contraction_region`].
 //!
@@ -98,7 +98,7 @@
 //! off the refusal rather than estimated, because the refusal's step count is
 //! exact: one span over `w_vocab_slice`'s region is declined after 16,777,216
 //! steps in 8.66 s, which is **516 ns per step** against the contraction fold's
-//! 9. Walking the same region's 8,192 parallel points in 16 spans of 512 takes
+//! 9. Walking the same region's 8,192 root points in 16 spans of 512 takes
 //! 55.6 s and reproduces the retained `direct` digest; the whole test is 64.4 s.
 //! The same run reproduced this file's other `#[ignore]`d test at its recorded
 //! per-cell times (`w_prefill_mlp_in` 4,019 ms against 3,799), so the two
@@ -866,11 +866,16 @@ fn region_elements(evaluation: &IndexRegionEvaluation) -> Vec<ReferenceElement> 
     elements.to_vec()
 }
 
-/// Walks one region in spans of `span` parallel points and returns its output.
+/// Walks one region in spans of `span` root points and returns its output.
 ///
 /// This *is* the staged procedure: stage once, then loop until the walk reports
 /// it is done. The loop is the authorization — no call inside it is allowed more
 /// steps than the whole-region path would have been.
+///
+/// A contraction region has one write root over the whole parallel dimension
+/// set, so its root points and its parallel points are the same points; the
+/// staged surface is stated in the former because a partitioned region's roots
+/// need not agree on a domain.
 fn staged_region_result(
     region: &VerifiedIndexRegion,
     scalars: &FrozenScalarRegistry,
@@ -884,17 +889,17 @@ fn staged_region_result(
         .stage(region, IndexRegionAuthority::new(scalars), &inputs)
         .expect("the governed authority admits the region");
     let expected = staged
-        .parallel_point_count()
-        .expect("a profile cell's parallel space is counted");
+        .root_point_count()
+        .expect("a profile cell's root points are counted");
     while staged
-        .evaluate_points(span)
+        .evaluate_root_points(span)
         .expect("every span of this width is under the step budget")
         > 0
     {}
     assert_eq!(
-        staged.evaluated_points(),
+        staged.evaluated_root_points(),
         expected,
-        "the spans must cover the parallel space exactly once"
+        "the spans must cover the root points exactly once"
     );
     region_elements(&staged.finish().expect("the walked region finishes"))
 }
@@ -903,7 +908,7 @@ fn staged_region_result(
 ///
 /// The executable half of the argument in `StagedIndexRegionEvaluation`'s
 /// documentation. Five partitions of one `[3, 7] x [11, 7] -> [3, 11]` region —
-/// a width of one, a width dividing the 33-point parallel space exactly, two
+/// a width of one, a width dividing the 33 root points exactly, two
 /// that do not, and one wider than the whole space — commit identical bit
 /// patterns, and the whole-region path commits them too.
 ///
@@ -939,7 +944,7 @@ fn span_boundaries_do_not_change_any_region_value() {
         assert_eq!(
             staged_region_result(&region, &scalars, &left, &right, span),
             baseline,
-            "a span of {span} parallel points changed a committed value"
+            "a span of {span} root points changed a committed value"
         );
     }
 
@@ -970,12 +975,12 @@ fn span_boundaries_do_not_change_any_region_value() {
         assert_eq!(
             staged_region_result(&region, &scalars, &left, &right, span),
             moved,
-            "a span of {span} parallel points changed a perturbed committed value"
+            "a span of {span} root points changed a perturbed committed value"
         );
     }
 }
 
-/// A staged walk that does not cover its parallel space cannot be finished.
+/// A staged walk that does not cover its root points cannot be finished.
 ///
 /// Two caller errors that would otherwise produce a partial result wearing a
 /// whole one's type. A span of no points is refused where it is asked for, and a
@@ -1001,18 +1006,18 @@ fn an_incomplete_staged_walk_is_refused_rather_than_finished() {
         .stage(&region, IndexRegionAuthority::new(&scalars), &inputs)
         .expect("the governed authority admits the region");
 
-    assert_eq!(staged.parallel_point_count(), Some(33));
+    assert_eq!(staged.root_point_count(), Some(33));
     assert_eq!(
-        staged.evaluate_points(0),
+        staged.evaluate_root_points(0),
         Err(IndexRegionEvaluationError::EmptyStagedSpan),
         "a span that walks nothing is refused at the call that asked for it"
     );
-    assert_eq!(staged.evaluate_points(30), Ok(30));
+    assert_eq!(staged.evaluate_root_points(30), Ok(30));
     assert!(!staged.is_exhausted());
     assert_eq!(
         staged
             .finish()
-            .expect_err("three parallel points remain, so there is no whole result to return"),
+            .expect_err("three root points remain, so there is no whole result to return"),
         IndexRegionEvaluationError::IncompleteStagedWalk { evaluated: 30 },
     );
 
@@ -1021,9 +1026,9 @@ fn an_incomplete_staged_walk_is_refused_rather_than_finished() {
     let mut staged = evaluator
         .stage(&region, IndexRegionAuthority::new(&scalars), &inputs)
         .expect("the governed authority admits the region");
-    assert_eq!(staged.evaluate_points(30), Ok(30));
-    assert_eq!(staged.evaluate_points(30), Ok(3));
-    assert_eq!(staged.evaluate_points(30), Ok(0));
+    assert_eq!(staged.evaluate_root_points(30), Ok(30));
+    assert_eq!(staged.evaluate_root_points(30), Ok(3));
+    assert_eq!(staged.evaluate_root_points(30), Ok(0));
     assert!(staged.is_exhausted());
     assert_eq!(
         region_elements(&staged.finish().expect("the covered walk finishes")),
@@ -1035,7 +1040,7 @@ fn an_incomplete_staged_walk_is_refused_rather_than_finished() {
 /// The staged region oracle reaches the vocabulary cell, which one span refuses.
 ///
 /// The cell this file's sibling boundary statement named as out of reach.
-/// `w_vocab_slice`'s region walks 8,192 parallel points, each folding 1,023
+/// `w_vocab_slice`'s region walks 8,192 root points, each folding 1,023
 /// contributors through separate governed scalar applications, and the whole walk
 /// costs far more than `MAX_EVALUATION_STEPS` admits in one span — so
 /// `IndexRegionEvaluator::evaluate` refuses it, and
@@ -1043,7 +1048,7 @@ fn an_incomplete_staged_walk_is_refused_rather_than_finished() {
 /// asserts that refusal on the region the governed lowering actually emits.
 ///
 /// The pairing is the content: **the same region and the same operands** are
-/// refused in one span and walked in spans of 512 parallel points to a result
+/// refused in one span and walked in spans of 512 root points to a result
 /// whose SHA-256 is the one an Apple M4 Max produced for the `direct` kernel. A
 /// frozen golden could assert the second half; only a live oracle can assert both
 /// against one region.
@@ -1061,7 +1066,7 @@ fn the_staged_index_region_oracle_reaches_the_vocabulary_cell() {
     let (left, right) = operands(cell);
 
     // The protection, watched on the cell the staging reaches: one span over the
-    // whole parallel space is still refused, under the step budget's own variant
+    // whole walk is still refused, under the step budget's own variant
     // carrying the exact step it declined at rather than another resource.
     let inputs = region_inputs(&region, &left, &right);
     let refused = Instant::now();
@@ -1094,7 +1099,7 @@ fn the_staged_index_region_oracle_reaches_the_vocabulary_cell() {
     );
     println!(
         "{}: one span refused after 16777216 steps in {} ms ({} ns/step); \
-         8192 parallel points walked in 16 spans of 512 in {} ms",
+         8192 root points walked in 16 spans of 512 in {} ms",
         cell.id,
         refusal.as_millis(),
         refusal.as_nanos() / 16_777_216,
