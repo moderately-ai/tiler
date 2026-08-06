@@ -31,7 +31,7 @@ use super::error::{
 };
 use super::expr::{
     AbiBinaryOp, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue, AvailabilityPhase, ExprNode,
-    binary_operand_type, evaluate, expr_key, node_is_interface_only, node_phase, node_type,
+    binary_operand_type, evaluate, node_is_interface_only, node_phase, node_type,
     unary_operand_type,
 };
 use super::facts::AbiFactBinder;
@@ -193,7 +193,6 @@ pub struct ArtifactProgramBuilder {
     payloads: Vec<BackendPayloadDescriptor>,
     payload_content: Vec<Option<PayloadContent>>,
     expressions: Vec<ExprNode>,
-    expression_keys: Vec<Vec<u8>>,
     /// Arena position of every node already interned, keyed by the node itself.
     interned: std::collections::HashMap<ExprNode, usize>,
     expression_types: Vec<AbiType>,
@@ -244,7 +243,6 @@ impl ArtifactProgramBuilder {
             payloads: Vec::new(),
             payload_content: Vec::new(),
             expressions: Vec::new(),
-            expression_keys: Vec::new(),
             interned: std::collections::HashMap::new(),
             expression_types: Vec::new(),
             expression_phases: Vec::new(),
@@ -912,7 +910,6 @@ impl ArtifactProgramBuilder {
             payloads: self.payloads.clone(),
             payload_content: self.payload_content.clone(),
             expressions: self.expressions.clone(),
-            expression_keys: self.expression_keys.clone(),
             expression_types: self.expression_types.clone(),
             variants: self.variants.clone(),
             realization,
@@ -935,6 +932,13 @@ impl ArtifactProgramBuilder {
     /// a chain and doubles per level on a shared DAG, so the scan was cubic in
     /// bytes. The interned arena is byte-identical either way: this changes how
     /// a duplicate is *recognized*, not which nodes are duplicates.
+    ///
+    /// No key is derived here at all. The last reader of the builder's key table
+    /// was the codec's canonical arena order, which now derives that order from
+    /// `tiler_ir::program::abi::compare_expr_nodes`, so the table itself is gone
+    /// and a producer no longer pays quadratic bytes to package an arena. The
+    /// decoder reaches the same recognizer this function does, and its
+    /// `parse_expressions` states the induction from the other side of the wire.
     fn push_node(&mut self, node: ExprNode) -> Result<AbiExprId, ArtifactBuildError> {
         if let Some(existing) = self.interned.get(&node).copied() {
             return AbiExprId::from_len(self.owner, existing).ok_or(
@@ -945,7 +949,6 @@ impl ArtifactProgramBuilder {
                 },
             );
         }
-        let key = expr_key(&node, &self.expression_keys);
         limit(
             self.expressions.len().saturating_add(1),
             MAX_ABI_EXPRESSIONS,
@@ -966,9 +969,7 @@ impl ArtifactProgramBuilder {
             &node,
             &self.expression_interface_only,
         ));
-        self.interned
-            .insert(node.clone(), self.expression_keys.len());
-        self.expression_keys.push(key);
+        self.interned.insert(node.clone(), self.expressions.len());
         self.expressions.push(node);
         Ok(id)
     }

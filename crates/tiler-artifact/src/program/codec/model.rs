@@ -24,6 +24,7 @@
 
 use std::collections::BTreeMap;
 
+use tiler_ir::program::abi::compare_expr_nodes;
 use tiler_ir::program::{DependencyReasonView, StageRef, VerifiedKernelProgram};
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, NumericalPermission, NumericalRealization, ResourceRequirements,
@@ -32,13 +33,14 @@ use tiler_ir::schedule::{
 use tiler_ir::semantic::{InputKey, OutputKey};
 
 use super::super::error::{ArtifactDiagnostic, ArtifactEntityKind};
-use super::super::expr::{ExprNode, expr_key};
+use super::super::expr::ExprNode;
 use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRef};
 use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, LaunchData,
     RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
-    VariantData, canonical_deferred_order, deferred_key, encode_identity, stage_key,
+    VariantData, canonical_deferred_order, canonical_precondition_order, deferred_key,
+    encode_identity, stage_key,
 };
 use super::super::realization::codec::{
     ArtifactCrossCheck, RealizationCodecError, validate_against_artifact,
@@ -547,7 +549,6 @@ impl ArtifactEnvelope {
             payload_content,
         } = project_carried(data);
         let (expressions, expression_of) = project_expressions(data);
-        let keys = expression_keys(&expressions);
         let mut providers = data.providers.clone();
         providers.sort_unstable_by_key(SelectedProvider::canonical_key);
 
@@ -588,8 +589,13 @@ impl ArtifactEnvelope {
                 .into_iter()
                 .map(|index| variant.route_requirements[index].clone())
                 .collect();
-            let entries =
-                project_entries(variant, &stage_keys, &expression_of, &keys, &payload_of)?;
+            let entries = project_entries(
+                variant,
+                &stage_keys,
+                &expression_of,
+                &expressions,
+                &payload_of,
+            )?;
             let execution_order = project_execution_order(variant, &entry_of);
             let dependencies = project_dependencies(variant, &entry_of);
 
@@ -878,26 +884,67 @@ impl ArtifactEnvelope {
     }
 }
 
-/// Derives every arena node's canonical content key in arena order.
-pub(crate) fn expression_keys(nodes: &[ExprNode]) -> Vec<Vec<u8>> {
-    let mut keys: Vec<Vec<u8>> = Vec::with_capacity(nodes.len());
-    for node in nodes {
-        let key = expr_key(node, &keys);
-        keys.push(key);
+/// One arena node waiting in the canonical order's ready set.
+///
+/// Ordered by [`compare_expr_nodes`], with the arena position as the tie-break
+/// the comparator cannot supply. Two positions compare equal only when their
+/// expressions are structurally identical, which both the transactional builder
+/// and [`super::decode`] refuse before an arena is ordered, so the tie-break
+/// keeps the order total rather than deciding anything reachable.
+struct ReadyNode<'a> {
+    nodes: &'a [ExprNode],
+    index: u32,
+}
+
+impl ReadyNode<'_> {
+    fn order(&self, other: &Self) -> std::cmp::Ordering {
+        compare_expr_nodes(self.nodes, self.index, other.index)
+            .then_with(|| self.index.cmp(&other.index))
     }
-    keys
+}
+
+impl PartialEq for ReadyNode<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.order(other).is_eq()
+    }
+}
+
+impl Eq for ReadyNode<'_> {}
+
+impl PartialOrd for ReadyNode<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ReadyNode<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.order(other)
+    }
 }
 
 /// Returns the canonical arena order as a list of positions in the source arena.
 ///
 /// The order is the unique topological order that always emits the smallest
-/// available node by canonical content key. Content keys are a total order and
-/// every node's operands precede it, so the result is deterministic and
-/// independent of how a producer assembled the arena.
-pub(super) fn canonical_expression_order(nodes: &[ExprNode], keys: &[Vec<u8>]) -> Vec<u32> {
+/// available node under [`compare_expr_nodes`]. That comparison is a total,
+/// content-derived order and every node's operands precede it, so the result is
+/// deterministic and independent of how a producer assembled the arena.
+///
+/// **The comparator rather than a key table, and the difference is a bound
+/// rather than a preference.** A canonical content key frames each operand's
+/// whole key inside its node's, so an arena of `d` chained nodes carries key
+/// bytes quadratic in `d` — bytes a producer, or a forger, chooses. A comparison
+/// walks both subtrees and stops at the first difference, so it never
+/// materializes one; `compare_expr_nodes` states that as its reason for
+/// existing. The two are different relations, not two spellings of one: a key
+/// compares an operand's *length* before its content through the eight-byte
+/// frame, while the comparator compares structure directly, so the switch moved
+/// `MANIFEST_SCHEMA` to `14.0`.
+pub(super) fn canonical_expression_order(nodes: &[ExprNode]) -> Vec<u32> {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
 
+    let ready_node = |index: u32| Reverse(ReadyNode { nodes, index });
     let mut dependents: Vec<Vec<u32>> = vec![Vec::new(); nodes.len()];
     let mut remaining = vec![0_usize; nodes.len()];
     for (index, node) in nodes.iter().enumerate() {
@@ -909,18 +956,18 @@ pub(super) fn canonical_expression_order(nodes: &[ExprNode], keys: &[Vec<u8>]) -
             dependents[position(operand)].push(ordinal(index));
         }
     }
-    let mut ready: BinaryHeap<Reverse<(&[u8], u32)>> = (0..nodes.len())
+    let mut ready: BinaryHeap<Reverse<ReadyNode<'_>>> = (0..nodes.len())
         .filter(|index| remaining[*index] == 0)
-        .map(|index| Reverse((keys[index].as_slice(), ordinal(index))))
+        .map(|index| ready_node(ordinal(index)))
         .collect();
     let mut order = Vec::with_capacity(nodes.len());
-    while let Some(Reverse((_, index))) = ready.pop() {
+    while let Some(Reverse(ReadyNode { index, .. })) = ready.pop() {
         order.push(index);
         for dependent in dependents[position(index)].clone() {
             let slot = &mut remaining[position(dependent)];
             *slot -= 1;
             if *slot == 0 {
-                ready.push(Reverse((keys[position(dependent)].as_slice(), dependent)));
+                ready.push(ready_node(dependent));
             }
         }
     }
@@ -1140,7 +1187,7 @@ fn project_entries(
     variant: &VariantData,
     stage_keys: &[Vec<u8>],
     expression_of: &[u32],
-    keys: &[Vec<u8>],
+    expressions: &[ExprNode],
     payload_of: &[u32],
 ) -> Result<Vec<EntryRow>, ArtifactDiagnostic> {
     let mut order: Vec<usize> = (0..variant.entries.len()).collect();
@@ -1153,13 +1200,17 @@ fn project_entries(
             .nth(entry)
             .expect("a verified entry names a stage of its own program");
         let source = &variant.entries[entry];
-        let mut preconditions: Vec<u32> = source
+        let declared: Vec<u32> = source
             .launch
             .preconditions
             .iter()
             .map(|node| expression_of[position(*node)])
             .collect();
-        preconditions.sort_unstable_by_key(|node| keys[position(*node)].clone());
+        // The shared canonical order, not a local sort: the identity encoder
+        // reaches the same function through `variant_order`, so the stored order
+        // and the order identity folds are one definition rather than two that
+        // happen to agree.
+        let preconditions = canonical_precondition_order(expressions, &declared);
         entries.push(EntryRow {
             stage: StageSubject::from_bytes(&stage_keys[entry]).map_err(|_| {
                 ArtifactDiagnostic::IdentityLimit {
@@ -1272,7 +1323,7 @@ fn project_payloads(
 
 /// Reorders the expression arena canonically and returns the remapping.
 fn project_expressions(data: &ArtifactProgramData) -> (Vec<ExprNode>, Vec<u32>) {
-    let order = canonical_expression_order(&data.expressions, &data.expression_keys);
+    let order = canonical_expression_order(&data.expressions);
     let mut remap = vec![0_u32; data.expressions.len()];
     for (canonical, declared) in order.iter().enumerate() {
         remap[position(*declared)] = ordinal(canonical);

@@ -18,6 +18,6 @@
 pub use tiler_ir::program::abi::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,
     AvailabilityPhase, ExprNode, MAX_TARGET_PROPERTY_KEY_BYTES, TargetPropertyKey,
-    TargetPropertyKeyError, binary_operand_type, evaluate, expr_key, node_is_interface_only,
-    node_phase, node_type, unary_operand_type,
+    TargetPropertyKeyError, binary_operand_type, evaluate, node_is_interface_only, node_phase,
+    node_type, unary_operand_type,
 };
