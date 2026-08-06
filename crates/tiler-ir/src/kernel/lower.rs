@@ -19,7 +19,7 @@ use crate::schedule::{
     Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, LogicalAccess, NumericalRealization,
     OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16Node, PointwiseF32Expression,
     PointwiseF32Node, ReductionPass, ReductionTopology, ResourceRequirements, ScalarProgram,
-    ScheduledRegion, TensorRole, VerifiedScheduledRegion, contributor_count,
+    ScheduledRegion, TensorRole, VerifiedScheduledRegion, contributor_count, element_count,
 };
 use crate::shape::Shape;
 
@@ -44,11 +44,18 @@ enum OffsetRoot {
 }
 
 /// One `stride * ((root / divisor) % modulus)` term of a linearized offset.
+///
+/// `mirror` replaces the decoded coordinate `c` by `extent − 1 − c` before the
+/// stride is applied, which is the one structural map that needs it: a reindex
+/// reversing an axis. It carries the axis extent rather than a bare flag because
+/// the mirror is stated against that extent and a term that had to look it up
+/// elsewhere could be emitted against the wrong one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct OffsetTerm {
     root: OffsetRoot,
     divisor: u64,
     modulus: Option<u64>,
+    mirror: Option<u64>,
     stride: u64,
 }
 
@@ -498,7 +505,81 @@ fn addressing(
             contracted_shape,
             sources,
         )?)),
+        // Both structural relations linearize identically, because both are
+        // written in the same per-operand-axis decode and differ only in the
+        // admission rule the *schedule verifier* already discharged. Sharing the
+        // emission here is not collapsing the two concepts: a bijection and a
+        // replication reach this point already proven, and what they have in
+        // common at this layer is exactly the arithmetic.
+        LogicalAccess::ReindexBijection {
+            operand_shape,
+            result_shape,
+            axes,
+        }
+        | LogicalAccess::BroadcastReplication {
+            operand_shape,
+            result_shape,
+            axes,
+        } => Ok(ReadAddressing::Linearized(linearize_axis_decodes(
+            operand_shape,
+            result_shape,
+            axes,
+        )?)),
     }
+}
+
+/// Builds the row-major linearization terms of one structural access.
+///
+/// Each operand axis contributes one term: its coordinate is decoded from the
+/// linear *result* index the global invocation carries, then scaled by the
+/// operand's own row-major stride. The wrap is omitted exactly where it is
+/// provably redundant — when the decode's window is the leading one, so the
+/// quotient is already below the modulus — which is the same convention the
+/// reduction and contraction linearizations follow.
+///
+/// A term whose operand extent is one is dropped: that coordinate is constantly
+/// zero, so it contributes nothing to the offset. A replicated result axis
+/// contributes no term at all, which is precisely what makes the read invariant
+/// in it.
+fn linearize_axis_decodes(
+    operand_shape: &Shape,
+    result_shape: &Shape,
+    axes: &[crate::schedule::AxisDecode],
+) -> Result<Vec<OffsetTerm>, KernelDiagnostic> {
+    let operand_extents: Vec<u64> = operand_shape
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    if axes.len() != operand_extents.len() {
+        return Err(KernelDiagnostic::ContributorDomain);
+    }
+    let operand_strides = suffix_products(&operand_extents);
+    let result_elements =
+        element_count(result_shape).map_err(|_| KernelDiagnostic::ElementCountOverflow)?;
+
+    let mut terms = Vec::with_capacity(axes.len());
+    for (axis, decode) in axes.iter().enumerate() {
+        let stride = operand_strides[axis];
+        if operand_extents[axis] == 1 || decode.divisor == 0 || decode.modulus == 0 || stride == 0 {
+            continue;
+        }
+        // Redundant exactly when the decode names the most significant window of
+        // the result's linear coordinate: the quotient is then already below the
+        // modulus, so the remainder is the identity.
+        let leading = decode
+            .divisor
+            .checked_mul(decode.modulus)
+            .is_some_and(|window| window == result_elements);
+        terms.push(OffsetTerm {
+            root: OffsetRoot::Output,
+            divisor: decode.divisor,
+            modulus: (!leading).then_some(decode.modulus),
+            mirror: decode.mirrored.then_some(decode.modulus),
+            stride,
+        });
+    }
+    Ok(terms)
 }
 
 /// Builds the row-major linearization terms of one contraction operand access.
@@ -562,6 +643,9 @@ fn linearize_contraction_operand(
             root,
             divisor: *divisor,
             modulus,
+            // No contraction operand axis mirrors: the family's index structure
+            // names coordinates, never reflections of them.
+            mirror: None,
             stride,
         });
     }
@@ -616,6 +700,9 @@ fn linearize(input_shape: &Shape, reduced: &[usize]) -> Vec<OffsetTerm> {
             root,
             divisor,
             modulus,
+            // No reduction contributor axis mirrors: a contributor family is a
+            // sub-shape of its input, read in ascending order.
+            mirror: None,
             stride,
         });
     }
@@ -718,8 +805,23 @@ fn emit_guarded(
     match plan.scalar {
         ScalarProgram::PointwiseF32(expression) => {
             let mut inputs = Vec::with_capacity(read_buffers.len());
-            for (buffer, read) in read_buffers.iter().zip(plan.reads) {
-                inputs.push(builder.load(*buffer, invocation, read.bounds)?);
+            for (position, (buffer, read)) in read_buffers.iter().zip(plan.reads).enumerate() {
+                // Through the read's own addressing rather than at the
+                // invocation index. Loading at the invocation directly was
+                // correct while every pointwise read was `LinearIdentity`, and
+                // it is exactly the check that keeps passing for the wrong
+                // reason once a second relation exists: a structural read would
+                // have addressed its operand densely and returned a plausible
+                // tensor that is the wrong one. `Identity` still emits the
+                // invocation itself, so every dense region's body is unchanged.
+                let addressing =
+                    plan.addressing
+                        .get(position)
+                        .ok_or(KernelBuildError::InvalidHandle {
+                            entity: super::error::KernelEntityKind::Buffer,
+                        })?;
+                let offset = emit_offset(builder, addressing, invocation, None)?;
+                inputs.push(builder.load(*buffer, offset, read.bounds)?);
             }
             let mapped = emit_pointwise(builder, expression, &inputs)?;
             builder.store(
@@ -736,8 +838,20 @@ fn emit_guarded(
         // decide what an `f32`-only node means at `bf16`.
         ScalarProgram::PointwiseBf16(expression) => {
             let mut inputs = Vec::with_capacity(read_buffers.len());
-            for (buffer, read) in read_buffers.iter().zip(plan.reads) {
-                inputs.push(builder.load(*buffer, invocation, read.bounds)?);
+            for (position, (buffer, read)) in read_buffers.iter().zip(plan.reads).enumerate() {
+                // Through the read's addressing for the reason the `f32` arm is,
+                // and not because a `bf16` region can carry a structural map
+                // today: the recognizer builds none. It is the same derivation
+                // either way, and an arm that addressed densely "because nothing
+                // reaches it yet" is one a later widening silently breaks.
+                let addressing =
+                    plan.addressing
+                        .get(position)
+                        .ok_or(KernelBuildError::InvalidHandle {
+                            entity: super::error::KernelEntityKind::Buffer,
+                        })?;
+                let offset = emit_offset(builder, addressing, invocation, None)?;
+                inputs.push(builder.load(*buffer, offset, read.bounds)?);
             }
             let mapped = emit_pointwise_bf16(builder, expression, &inputs)?;
             builder.store(
@@ -1969,6 +2083,14 @@ fn emit_offset(
         if let Some(modulus) = term.modulus {
             let modulus = builder.constant(KernelConstant::Index(modulus))?;
             value = builder.binary(BinaryOp::IndexModulo, value, modulus)?;
+        }
+        // Between the wrap and the stride, which is the only correct place: the
+        // mirror is stated on the axis coordinate, so mirroring before the wrap
+        // would reflect the wrong quantity and mirroring after the stride would
+        // reflect a scaled one.
+        if let Some(extent) = term.mirror {
+            let last = builder.constant(KernelConstant::Index(extent.saturating_sub(1)))?;
+            value = builder.binary(BinaryOp::IndexSubtract, last, value)?;
         }
         if term.stride > 1 {
             let stride = builder.constant(KernelConstant::Index(term.stride))?;

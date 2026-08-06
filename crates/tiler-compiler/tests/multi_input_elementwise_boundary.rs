@@ -370,12 +370,26 @@ fn a_family_outside_the_expression_vocabulary_refuses_with_a_typed_reason() {
             "{contract:?} refused a family whose per-point body the expression \
              vocabulary spells",
         );
+        // **The row the structural widening flipped, and it is worth being
+        // precise about what admitted it.** No `ScalarProgram` copy variant was
+        // added — the admission ticket's non-goals rule one out. What this
+        // program reaches is the region vocabulary that already existed: a
+        // `PointwiseF32Expression` whose root *is* its input leaf, carrying a
+        // reindex read map. So the reversal is realized as addressing, and the
+        // region performs no arithmetic because the expression it was given has
+        // none.
+        //
+        // A standalone reversal therefore does compile, and refusing it was
+        // considered and rejected: the region is verified, its bounds proof is
+        // discharged, and its result is the reference evaluator's — so a rule
+        // rejecting it would be a check with no correctness content behind it.
+        // What the non-goal protects against is a *copy scalar program*, and
+        // that is still unstatable.
         assert_eq!(
             compile_under(&structural, contract),
-            Err(CompileFailureClass::UnsupportedCapability {
-                rule: "operation-set"
-            }),
-            "{contract:?} admitted a family no logical access spells",
+            Ok(()),
+            "{contract:?} refused a family whose access relation the region \
+             vocabulary now spells",
         );
     }
 }

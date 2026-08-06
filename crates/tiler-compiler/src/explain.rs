@@ -4102,7 +4102,36 @@ mod tests {
                 // Recomputed by observing the failing value on the merged
                 // integration tree with the focused nextest command above,
                 // never copied from the producing branch.
-                "tiler-explain-v7 request=b2d55d5a36e0159b\n",
+                // Rebaselined from `b2d55d5a36e0159b` when the recognized
+                // region gained each read's *access relation*, admitting the two
+                // structural families. **Two sub-tags moved and the enclosing
+                // domain did not**: `pointwise-f32.v3` → `v4` and
+                // `serial-sum-f32.v2` → `v3`, both inside
+                // `tiler.compiler.request-subject.v5`, whose own framing and
+                // field order are untouched. The step was required rather than
+                // chosen — the run is written at each arm's end, so an old
+                // subject and a new one carrying no maps would differ only by a
+                // trailing framed zero and an old reader would consume the next
+                // output's tag as this arm's payload.
+                //
+                // The relation is *load-bearing for identity*, which is why it
+                // had to enter the subject at all: `a * w` with both inputs at
+                // the region's shape and `a * broadcast(w)` widening a smaller
+                // `w` encode the same input keys, result shape, expression, and
+                // element count, so a subject omitting the maps would give two
+                // different programs one identity.
+                //
+                // The schedule domain deliberately did *not* step with it: the
+                // two new `LogicalAccess` variants are appended tags under the
+                // existing per-tag framing, so no previously encodable region's
+                // bytes move — confirmed by `tiler-ir`'s pinned region identity
+                // and its `v4`/`v5` blast-radius test staying green, and by the
+                // seven Metal goldens' region digests not moving.
+                //
+                // Recomputed by observing the failing value on this branch tree
+                // with the focused nextest command above, never copied from
+                // another branch.
+                "tiler-explain-v7 request=f3244b2242ebcb5c\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

@@ -7,14 +7,16 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{FrozenIndexRealizationLawRegistry, FrozenScalarRegistry};
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
-    InputOrdinal, PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node,
-    PointwiseF32Value,
+    AxisDecode, InputOrdinal, LogicalAccess, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+    PointwiseF32Node, PointwiseF32Value,
 };
 use tiler_ir::semantic::{
-    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalIntegerWidth, CanonicalValueView,
-    ContractionIndex, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-    OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, SemanticIdentity,
-    SemanticProgram, TypeKey, ValueId, add_f32_op, constant_f32_op, multiply_f32_op, silu_f32_op,
+    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
+    CanonicalIntegerWidth, CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
+    F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey, OutputKey, ProviderIdentity,
+    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind,
+    ResolvedValueType, SemanticIdentity, SemanticProgram, TypeKey, ValueId, add_f32_op,
+    broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
     strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
@@ -1198,6 +1200,8 @@ pub(crate) struct NormalizedSerialSum {
     pub(crate) reduction_axes: Vec<Axis>,
     /// The recognized elementwise prologue the fold's contributors come from.
     pub(crate) prologue: PointwiseF32Expression,
+    /// The non-identity access map each prologue input ordinal's read carries.
+    pub(crate) prologue_access_maps: Vec<(u32, LogicalAccess)>,
     pub(crate) members: RecognizedSerialSumMembers,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) pointwise_result: ValueId,
@@ -1227,6 +1231,13 @@ pub(crate) struct NormalizedPointwise {
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) output: ValueId,
     pub(crate) elements: u64,
+    /// The non-identity access map each input ordinal's read carries.
+    ///
+    /// Ascending by ordinal, and only the ordinals a structural occurrence
+    /// interposed appear. Every absent ordinal reads
+    /// [`LogicalAccess::LinearIdentity`], which is what keeps a program with no
+    /// structural occurrence building the byte-identical region it always did.
+    pub(crate) access_maps: Vec<(u32, LogicalAccess)>,
 }
 
 /// A verified two-input, one-output binary tensor-contraction `f32` program.
@@ -1629,6 +1640,7 @@ pub(crate) struct NormalizedSerialSumSubject {
     output_shape: Shape,
     reduction_axes: Vec<Axis>,
     prologue: PointwiseF32Expression,
+    prologue_access_maps: Vec<(u32, LogicalAccess)>,
     members: RecognizedSerialSumMembers,
     input_elements: u64,
     output_elements: u64,
@@ -1878,7 +1890,16 @@ impl VerifiedRequestSubject {
         for normalized in &self.normalized.outputs {
             match normalized {
                 NormalizedOutputSubject::SerialSum(normalized) => {
-                    push_slice(&mut bytes, b"serial-sum-f32.v2");
+                    // The sub-tag steps to `v3` because the arm gained the
+                    // prologue's access relations. It is a step rather than an
+                    // append for the reason the vocabulary widening itself was
+                    // not: the run is written at the arm's end, so a `v2` subject
+                    // and a `v3` one carrying no maps would differ only by a
+                    // trailing framed zero — and a reader with the old framing
+                    // would consume the following output's tag as this arm's
+                    // payload. Stepping restores injectivity on the encoder's own
+                    // terms rather than on a claim about what callers hold.
+                    push_slice(&mut bytes, b"serial-sum-f32.v3");
                     push_len(&mut bytes, normalized.input_keys.len());
                     for key in &normalized.input_keys {
                         push_slice(&mut bytes, key.as_str().as_bytes());
@@ -1902,14 +1923,26 @@ impl VerifiedRequestSubject {
                     }
                     bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
                     bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+                    encode_access_maps(&mut bytes, &normalized.prologue_access_maps);
                 }
                 NormalizedOutputSubject::Pointwise(normalized) => {
-                    // The sub-tag steps to `v3` because this arm's shape changed
-                    // again: a fixed root family, child family, association, and
-                    // three leaves became the general expression the recognizer now
-                    // admits. A `v2` pointwise subject can never be read as a `v3`
-                    // one.
-                    push_slice(&mut bytes, b"pointwise-f32.v3");
+                    // The sub-tag steps to `v4` because the arm gained each read's
+                    // access relation, and that fact is *load-bearing for
+                    // identity*: `a * w` with both inputs declared at the region's
+                    // shape and `a * broadcast(w)` widening a smaller `w` encode
+                    // the same input keys, the same result shape, the same
+                    // expression, and the same element count. Only the access maps
+                    // separate them, so a subject that omitted them would give two
+                    // different programs one identity — and leaning on the member
+                    // list to separate them would be exactly the unstated invariant
+                    // an identity encoder must not rest on.
+                    //
+                    // `v3` stepped because a fixed root family, child family,
+                    // association, and three leaves became the general expression
+                    // the recognizer now admits. A `v2` pointwise subject can never
+                    // be read as a `v3` one, and a `v3` one can never be read as a
+                    // `v4`.
+                    push_slice(&mut bytes, b"pointwise-f32.v4");
                     push_len(&mut bytes, normalized.input_keys.len());
                     for key in &normalized.input_keys {
                         push_slice(&mut bytes, key.as_str().as_bytes());
@@ -1922,6 +1955,7 @@ impl VerifiedRequestSubject {
                         bytes.extend_from_slice(&member.0.to_be_bytes());
                     }
                     bytes.extend_from_slice(&normalized.elements.to_be_bytes());
+                    encode_access_maps(&mut bytes, &normalized.access_maps);
                 }
                 // A third sub-tag rather than a step of the enclosing
                 // `request-subject.v2` domain: neither existing arm's bytes move, so
@@ -2088,6 +2122,63 @@ fn encode_binary_node(
     bytes.push(tag);
     bytes.extend_from_slice(&lhs.index().to_be_bytes());
     bytes.extend_from_slice(&rhs.index().to_be_bytes());
+}
+
+/// Encodes the non-identity access relations one recognized region's reads carry.
+///
+/// The count leads, then each entry writes its input ordinal and its relation.
+/// An ordinal absent from the run reads `LinearIdentity`, so the empty run is
+/// the canonical spelling of "every read is dense" and every already-recognized
+/// program encodes one — which is why the arms carrying this run stepped their
+/// sub-tags rather than appending to them.
+///
+/// The relation is written through a per-variant tag and its own framed payload,
+/// so two reads differing in operand shape, result shape, or any decode differ
+/// in these bytes. The two structural relations get distinct tags for the reason
+/// they are distinct variants: a bijection and a replication are different facts
+/// about what a read consumes.
+fn encode_access_maps(output: &mut Vec<u8>, maps: &[(u32, LogicalAccess)]) {
+    push_len(output, maps.len());
+    for (ordinal, map) in maps {
+        output.extend_from_slice(&ordinal.to_be_bytes());
+        match map {
+            LogicalAccess::ReindexBijection {
+                operand_shape,
+                result_shape,
+                axes,
+            } => {
+                output.push(0x01);
+                encode_explain_shape(output, operand_shape);
+                encode_explain_shape(output, result_shape);
+                encode_explain_axis_decodes(output, axes);
+            }
+            LogicalAccess::BroadcastReplication {
+                operand_shape,
+                result_shape,
+                axes,
+            } => {
+                output.push(0x02);
+                encode_explain_shape(output, operand_shape);
+                encode_explain_shape(output, result_shape);
+                encode_explain_axis_decodes(output, axes);
+            }
+            // No other relation can be recorded here: `recognize_structural_read`
+            // is the only producer and it builds exactly these two. The arm is a
+            // refusal to encode rather than a wildcard tag, so a relation added
+            // to the run later cannot silently share one of these two tags.
+            _ => output.push(0x00),
+        }
+    }
+}
+
+/// Encodes one framed run of operand-axis coordinate decodes.
+fn encode_explain_axis_decodes(output: &mut Vec<u8>, axes: &[AxisDecode]) {
+    push_len(output, axes.len());
+    for decode in axes {
+        output.extend_from_slice(&decode.divisor.to_be_bytes());
+        output.extend_from_slice(&decode.modulus.to_be_bytes());
+        output.push(u8::from(decode.mirrored));
+    }
 }
 
 fn encode_explain_shape(output: &mut Vec<u8>, shape: &Shape) {
@@ -2298,6 +2389,7 @@ fn request_subject(
                         output_shape: normalized.output_shape.clone(),
                         reduction_axes: normalized.reduction_axes.clone(),
                         prologue: normalized.prologue.clone(),
+                        prologue_access_maps: normalized.prologue_access_maps.clone(),
                         members: normalized.members.clone(),
                         input_elements: normalized.input_elements,
                         output_elements: normalized.output_elements,
@@ -3294,6 +3386,12 @@ fn check_output_cover(
 struct RecognizedElementwise {
     expression: PointwiseF32Expression,
     members: Vec<SemanticMemberId>,
+    /// The non-identity access map each input ordinal's read carries.
+    ///
+    /// Only the ordinals a structural occurrence interposed appear; every other
+    /// read is [`LogicalAccess::LinearIdentity`] and is left implicit, which is
+    /// what keeps every already-recognized program's region byte-identical.
+    access_maps: Vec<(u32, LogicalAccess)>,
 }
 
 /// The elementwise operation families this recognizer projects.
@@ -3391,6 +3489,7 @@ fn recognize_elementwise(
     let mut minted: Vec<(ValueId, PointwiseF32Value)> = Vec::new();
     let mut members: Vec<SemanticMemberId> = Vec::new();
     let mut reads: BTreeSet<u32> = BTreeSet::new();
+    let mut access_maps: Vec<(u32, LogicalAccess)> = Vec::new();
     let mut pending = vec![(root, false)];
     while let Some((value, operands_visited)) = pending.pop() {
         if minted.iter().any(|(seen, _)| *seen == value) {
@@ -3419,6 +3518,34 @@ fn recognize_elementwise(
         if operation.key() == &constant_f32_op() {
             let (bits, _) = constant_bits(program, value)?;
             let leaf = builder.constant(bits).map_err(|_| expression_bound())?;
+            members.push(SemanticMemberId(member));
+            minted.push((value, leaf));
+            continue;
+        }
+        // A structural occurrence contributes an *access relation*, not a node.
+        // It computes nothing — the value it produces is the value it read — so
+        // it becomes the leaf that reads its operand, carrying the coordinate
+        // map the family denotes. That is what makes a fused region the
+        // deliverable rather than a materializing copy kernel: the arithmetic
+        // still comes from the neighbour, and only the addressing changes.
+        if let Some((ordinal, map)) =
+            recognize_structural_read(program, &operation, declared, shape)?
+        {
+            // One ordinal, one map. A program reading `a` directly *and* through
+            // a reindex asks one buffer parameter to carry two relations, which
+            // this region shape cannot bind — refused by name rather than
+            // resolved in favour of whichever was walked first.
+            match access_maps.iter().find(|(seen, _)| *seen == ordinal) {
+                Some((_, bound)) if bound != &map => {
+                    return mismatch("structural-access-conflict");
+                }
+                Some(_) => {}
+                None => access_maps.push((ordinal, map)),
+            }
+            let leaf = builder
+                .input(InputOrdinal::new(ordinal))
+                .map_err(|_| expression_bound())?;
+            reads.insert(ordinal);
             members.push(SemanticMemberId(member));
             minted.push((value, leaf));
             continue;
@@ -3500,10 +3627,360 @@ fn recognize_elementwise(
         })?;
     members.sort_unstable();
     members.dedup();
+    access_maps.sort_unstable_by_key(|(ordinal, _)| *ordinal);
     Ok(RecognizedElementwise {
         expression,
         members,
+        access_maps,
     })
+}
+
+/// Recognizes one structural occurrence as a mapped read of a declared input.
+///
+/// Returns the input ordinal and the access relation the occurrence denotes, or
+/// `None` when the operation is not a structural family at all — which is the
+/// caller's signal to try the elementwise projection instead. An operation that
+/// *is* structural but cannot be admitted returns a typed refusal rather than
+/// `None`, so a reindex this profile cannot bind never falls through to be
+/// reported as an unrecognized operation set.
+///
+/// **The operand must be a declared input.** A structural occurrence over a
+/// computed value would need the region to address an intermediate it also
+/// produces, which this region shape has no access to bind — and admitting it by
+/// materializing the intermediate would add the observable rounding boundary the
+/// family's admission deliberately excludes. It is refused by name.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] naming the property that was
+/// not recognized: `structural-arity`, `structural-operand` for an operand that
+/// is not a declared input, `structural-attributes` for a malformed or missing
+/// form record, `structural-shape` for a result at another domain, and
+/// `structural-relation` when the derived map is not one the region vocabulary
+/// admits.
+fn recognize_structural_read(
+    program: &SemanticProgram,
+    operation: &tiler_ir::semantic::OperationRef<'_>,
+    declared: &[ValueId],
+    shape: &Shape,
+) -> Result<Option<(u32, LogicalAccess)>, RequestError> {
+    let reindex = operation.key() == &reindex_f32_op();
+    if !reindex && operation.key() != &broadcast_f32_op() {
+        return Ok(None);
+    }
+    let operands: Vec<ValueId> = operation.operands().collect();
+    let [operand] = operands.as_slice() else {
+        return mismatch("structural-arity");
+    };
+    let Some(position) = declared.iter().position(|input| input == operand) else {
+        return mismatch("structural-operand");
+    };
+    let ordinal = u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
+        phase: "strategy",
+        rule: "input-ordinal",
+    })?;
+    let Ok(operand_shape) = program.shape(*operand) else {
+        return mismatch("structural-operand");
+    };
+    // The occurrence's result is what the region iterates, so a result at any
+    // other domain would make every derived divisor address the wrong window.
+    let results: Vec<ValueId> = operation.results().collect();
+    let [result] = results.as_slice() else {
+        return mismatch("structural-arity");
+    };
+    if program.shape(*result).ok() != Some(shape) {
+        return mismatch("structural-shape");
+    }
+    let operand_shape = operand_shape.clone();
+    let map = if reindex {
+        let Some(value) = operation.attributes().get(REINDEX_MAPPING_ATTRIBUTE) else {
+            return mismatch("structural-attributes");
+        };
+        let Ok(form) = ReindexForm::from_canonical_value(value) else {
+            return mismatch("structural-attributes");
+        };
+        // Re-derived rather than trusted: the form must produce exactly this
+        // result from exactly this operand, or the region would realize a
+        // different occurrence than the one requested — the same check the
+        // governed index-access lowering makes for the same reason.
+        if form.result_shape(&operand_shape).ok().as_ref() != Some(shape) {
+            return mismatch("structural-shape");
+        }
+        let Some(axes) = reindex_axis_decodes(&form, &operand_shape, shape) else {
+            return mismatch("structural-relation");
+        };
+        LogicalAccess::ReindexBijection {
+            operand_shape,
+            result_shape: shape.clone(),
+            axes,
+        }
+    } else {
+        let Some(value) = operation.attributes().get(BROADCAST_AXIS_MAPPING_ATTRIBUTE) else {
+            return mismatch("structural-attributes");
+        };
+        let Ok(mapping) = BroadcastAxisMapping::from_canonical_value(value) else {
+            return mismatch("structural-attributes");
+        };
+        if mapping.result_shape(&operand_shape).ok().as_ref() != Some(shape) {
+            return mismatch("structural-shape");
+        }
+        let Some(axes) = broadcast_axis_decodes(&mapping, &operand_shape, shape) else {
+            return mismatch("structural-relation");
+        };
+        LogicalAccess::BroadcastReplication {
+            operand_shape,
+            result_shape: shape.clone(),
+            axes,
+        }
+    };
+    // The region verifier will refuse a map that fails its admission rule, but
+    // refusing here reports the *program* property rather than letting a region
+    // be assembled that cannot be built. A broadcast that widens nothing lands
+    // here, which is the one case a well-formed semantic mapping can reach.
+    let admissible = match &map {
+        LogicalAccess::ReindexBijection {
+            operand_shape,
+            result_shape,
+            axes,
+        } => tiler_ir::schedule::reindex_decodes_are_bijective(operand_shape, result_shape, axes),
+        LogicalAccess::BroadcastReplication {
+            operand_shape,
+            result_shape,
+            axes,
+        } => {
+            tiler_ir::schedule::broadcast_decodes_are_replicating(operand_shape, result_shape, axes)
+        }
+        _ => false,
+    };
+    if !admissible {
+        return mismatch("structural-relation");
+    }
+    Ok(Some((ordinal, map)))
+}
+
+/// Returns the row-major suffix products of `shape`, one per axis.
+///
+/// Entry `k` is the product of every extent after axis `k`, which is the divisor
+/// that extracts axis `k`'s coordinate from a row-major linear index. `None` on
+/// overflow, so a derived divisor is never a wrapped one.
+fn shape_suffix_products(shape: &Shape) -> Option<Vec<u64>> {
+    let extents = shape.extents();
+    let mut products = vec![1_u64; extents.len()];
+    let mut running = 1_u64;
+    for (position, extent) in extents.iter().enumerate().rev() {
+        products[position] = running;
+        running = running.checked_mul(extent.get())?;
+    }
+    Some(products)
+}
+
+/// Builds one operand axis's decode, canonicalizing an extent-one axis.
+///
+/// An extent-one axis has exactly one coordinate, so its divisor and mirroring
+/// are unobservable — and [`AxisDecode::is_canonical`] requires them to be the
+/// canonical pair, because admitting any other spelling would give one access
+/// relation many identities. Routing every construction through here is what
+/// makes that a property of the derivation rather than a rule each form has to
+/// remember.
+fn axis_decode(divisor: u64, extent: u64, mirrored: bool) -> AxisDecode {
+    if extent == 1 {
+        return AxisDecode::fixed();
+    }
+    AxisDecode {
+        divisor,
+        modulus: extent,
+        mirrored,
+    }
+}
+
+/// Derives the per-operand-axis decodes one reindex form realizes.
+///
+/// The physical restatement of the same coordinate relation
+/// `reindex_operand_coordinates` emits into the index vocabulary, and it is a
+/// restatement rather than a second derivation for a reason worth stating: the
+/// index-region half is what occurrence refinement proves realizes the
+/// occurrence, and this half is what the region's identity and its kernel offset
+/// are built from. They are checked against each other by the compiled result
+/// being bit-compared with the reference evaluator, which is the only place the
+/// two can disagree and be caught.
+///
+/// Every form reduces to one decode per operand axis. Returns `None` when the
+/// form and the shapes disagree, which the caller turns into a typed refusal
+/// rather than a nearest-fit map.
+fn reindex_axis_decodes(
+    form: &ReindexForm,
+    operand: &Shape,
+    result: &Shape,
+) -> Option<Vec<AxisDecode>> {
+    use std::cmp::Ordering;
+
+    let suffix = shape_suffix_products(result)?;
+    let extents: Vec<u64> = operand
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    let rank = extents.len();
+    let position_of = |axis: &Axis| {
+        usize::try_from(axis.get())
+            .ok()
+            .filter(|index| *index < rank)
+    };
+    let mut decodes = Vec::with_capacity(rank);
+    match form.kind() {
+        // Result axis `k` reads operand axis `order[k]`, so operand axis
+        // `order[k]` takes the window of result axis `k`. Written as a scatter
+        // for the reason the index-region half is: that is the direction the
+        // attribute states.
+        ReindexFormKind::PermuteAxes => {
+            let order = form.axes();
+            if order.len() != rank {
+                return None;
+            }
+            let mut slots: Vec<Option<AxisDecode>> = vec![None; rank];
+            for (position, axis) in order.iter().enumerate() {
+                let index = position_of(axis)?;
+                let decode = axis_decode(*suffix.get(position)?, extents[index], false);
+                if slots.get_mut(index)?.replace(decode).is_some() {
+                    return None;
+                }
+            }
+            slots.into_iter().collect()
+        }
+        // The split's result axes are a *contiguous* run, and contiguous
+        // row-major axes linearize as one window: the run's combined coordinate
+        // is the window ending at its last axis, whose extent is the operand
+        // axis's own. That is why a split needs no multi-term sum here.
+        ReindexFormKind::SplitAxis => {
+            let axis = position_of(form.axes().first()?)?;
+            let factors = form.factors().len();
+            let last = axis.checked_add(factors)?.checked_sub(1)?;
+            for position in 0..rank {
+                let divisor = match position.cmp(&axis) {
+                    Ordering::Less => *suffix.get(position)?,
+                    Ordering::Equal => *suffix.get(last)?,
+                    Ordering::Greater => {
+                        *suffix.get(position.checked_add(factors)?.checked_sub(1)?)?
+                    }
+                };
+                decodes.push(axis_decode(divisor, extents[position], false));
+            }
+            Some(decodes)
+        }
+        // The merge decodes one result coordinate back into the merged run. The
+        // two-level decode collapses into one window per operand axis: the outer
+        // wrap is redundant because the merged result axis's extent is the
+        // product of the run, so the part the outer wrap would discard is
+        // already a multiple of each inner modulus.
+        ReindexFormKind::MergeAxes => {
+            let merged = form.axes();
+            let first = position_of(merged.first()?)?;
+            let count = merged.len();
+            let base = *suffix.get(first)?;
+            let mut inner = vec![1_u64; count];
+            let mut running = 1_u64;
+            for offset in (0..count).rev() {
+                inner[offset] = running;
+                running = running.checked_mul(*extents.get(first.checked_add(offset)?)?)?;
+            }
+            for position in 0..rank {
+                let divisor = if position < first {
+                    *suffix.get(position)?
+                } else if position < first.checked_add(count)? {
+                    base.checked_mul(inner[position.checked_sub(first)?])?
+                } else {
+                    *suffix.get(position.checked_sub(count)?.checked_add(1)?)?
+                };
+                decodes.push(axis_decode(divisor, extents[position], false));
+            }
+            Some(decodes)
+        }
+        // The inserted result axis has extent one and no operand axis behind it,
+        // so every operand axis reads the result axis one position later from
+        // the insertion point onward.
+        ReindexFormKind::InsertUnitAxis => {
+            let inserted = usize::try_from(form.axes().first()?.get()).ok()?;
+            for position in 0..rank {
+                let source = if position < inserted {
+                    position
+                } else {
+                    position.checked_add(1)?
+                };
+                decodes.push(axis_decode(*suffix.get(source)?, extents[position], false));
+            }
+            Some(decodes)
+        }
+        // The removed operand axis has extent one, so its only coordinate is
+        // zero and it reads no result axis at all.
+        ReindexFormKind::RemoveUnitAxis => {
+            let removed = position_of(form.axes().first()?)?;
+            for position in 0..rank {
+                let decode = match position.cmp(&removed) {
+                    Ordering::Equal => AxisDecode::fixed(),
+                    Ordering::Less => axis_decode(*suffix.get(position)?, extents[position], false),
+                    Ordering::Greater => axis_decode(
+                        *suffix.get(position.checked_sub(1)?)?,
+                        extents[position],
+                        false,
+                    ),
+                };
+                decodes.push(decode);
+            }
+            Some(decodes)
+        }
+        // The shape is preserved, so every operand axis reads its own result
+        // axis; the reversed one reads it mirrored. This is the one form the
+        // mirror flag exists for.
+        ReindexFormKind::ReverseAxis => {
+            let reversed = position_of(form.axes().first()?)?;
+            for position in 0..rank {
+                decodes.push(axis_decode(
+                    *suffix.get(position)?,
+                    extents[position],
+                    position == reversed,
+                ));
+            }
+            Some(decodes)
+        }
+    }
+}
+
+/// Derives the per-operand-axis decodes one broadcast mapping realizes.
+///
+/// Each entry of the mapping names a *result* axis. A `FromOperand` entry gives
+/// its operand axis that result axis's window; a `StretchUnit` entry names an
+/// extent-one operand axis, whose decode is the canonical fixed one; and a
+/// `Replicate` entry names no operand axis, which is exactly what leaves the
+/// read invariant in that result axis.
+fn broadcast_axis_decodes(
+    mapping: &BroadcastAxisMapping,
+    operand: &Shape,
+    result: &Shape,
+) -> Option<Vec<AxisDecode>> {
+    let suffix = shape_suffix_products(result)?;
+    let extents: Vec<u64> = operand
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    let sources = mapping.sources();
+    if sources.len() != result.rank() {
+        return None;
+    }
+    let mut slots: Vec<Option<AxisDecode>> = vec![None; extents.len()];
+    for (position, source) in sources.iter().enumerate() {
+        let Some(axis) = source.operand_axis() else {
+            continue;
+        };
+        let index = usize::try_from(axis.get())
+            .ok()
+            .filter(|index| *index < extents.len())?;
+        let decode = axis_decode(*suffix.get(position)?, extents[index], false);
+        if slots.get_mut(index)?.replace(decode).is_some() {
+            return None;
+        }
+    }
+    slots.into_iter().collect()
 }
 
 /// Returns the expression node already minted for one recognized value.
@@ -3568,6 +4045,7 @@ fn recognize_pointwise(
         inputs: declared,
         output: output.value(),
         elements,
+        access_maps: recognized.access_maps,
     })
 }
 
@@ -3646,6 +4124,7 @@ fn recognize_reduction(
         output_shape,
         reduction_axes: axes,
         prologue: prologue.expression,
+        prologue_access_maps: prologue.access_maps,
         members,
         inputs: declared,
         pointwise_result: *contributor,
@@ -4935,15 +5414,13 @@ mod tests {
             "output-partition-overlap",
         );
 
-        // `operation-set`: a registered family whose *access relation* the
-        // region vocabulary cannot spell. `tiler::reindex-f32@1` has a
-        // registered lowering capability, and `LogicalAccess` has no reindex
-        // map — so unlike the activation below, there is no projection to make.
-        //
-        // Its accepted neighbour is the activation, which is the row that
-        // changed: a registered family whose per-point body *is* expressible is
-        // projected rather than refused, so this row now proves the refusal
-        // reads the missing vocabulary and not the mere fact of being unary.
+        // **Admitted, and this row is the one the structural widening flipped.**
+        // A transposition over a declared input becomes the *read map* of the
+        // region that consumes it, so `tiler::reindex-f32@1` is recognized
+        // rather than refused. The derived relation is asserted rather than
+        // merely the admission: a recognizer that admitted the family and bound
+        // a dense read would compile the wrong tensor, which is precisely the
+        // failure a bare `is_ok()` here would not see.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), shape())
@@ -4959,7 +5436,53 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), permuted)
             .unwrap();
         let structural = builder.build().unwrap();
-        assert_eq!(recognize(&structural).unwrap_err(), "operation-set");
+        let NormalizedOutput::Pointwise(recognized) =
+            recognize(&structural).expect("a transposition of a declared input is a mapped read")
+        else {
+            panic!("a reindex over a declared input is an elementwise region");
+        };
+        // `shape()` is `[2, 3]`, so the transposed result is `[3, 2]` with
+        // suffix products `[2, 1]`. Operand axis 1 takes result axis 0's window
+        // and operand axis 0 takes result axis 1's, which is the transposition
+        // written as a decode per operand axis.
+        assert_eq!(
+            recognized.access_maps,
+            vec![(
+                0,
+                LogicalAccess::ReindexBijection {
+                    operand_shape: Shape::from_dims([2, 3]),
+                    result_shape: Shape::from_dims([3, 2]),
+                    axes: vec![AxisDecode::read(1, 2), AxisDecode::read(2, 3)],
+                },
+            )],
+        );
+
+        // `structural-operand`: the family is admitted, and what is refused is a
+        // structural occurrence over a *computed* value. The region binds one
+        // read per declared input and has no access to bind an intermediate it
+        // also produces, so this refuses by name rather than materializing the
+        // intermediate — which would add exactly the observable rounding
+        // boundary the family's admission excludes. It is the neighbour that
+        // keeps the row above attributable: both are reindexes, and only the
+        // operand differs.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), shape())
+            .unwrap();
+        let doubled = tiler_ir::semantic::F32Silu::apply(&mut builder, input)
+            .expect("the standard registry admits the silu family");
+        let permuted = tiler_ir::semantic::F32Reindex::apply(
+            &mut builder,
+            &tiler_ir::semantic::ReindexForm::permute_axes([Axis::new(1), Axis::new(0)])
+                .expect("a two-axis transposition is an admitted form"),
+            doubled,
+        )
+        .expect("the standard registry admits the reindex family");
+        builder
+            .output(OutputKey::new("result").unwrap(), permuted)
+            .unwrap();
+        let computed = builder.build().unwrap();
+        assert_eq!(recognize(&computed).unwrap_err(), "structural-operand");
 
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder

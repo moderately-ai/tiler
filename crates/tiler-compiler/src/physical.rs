@@ -606,24 +606,44 @@ pub(crate) fn pointwise_region(
     write: RegionWrite,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
     let write_tensor = write.tensor();
-    let (shape, elements, inputs, expression, members) = if let Some(pointwise) = output.pointwise()
-    {
-        (
-            pointwise.shape.clone(),
-            pointwise.elements,
-            pointwise.input_keys.len(),
-            pointwise.expression.clone(),
-            pointwise.members.clone(),
-        )
-    } else {
-        let serial = output.serial_sum();
-        (
-            serial.input_shape.clone(),
-            serial.input_elements,
-            serial.input_keys.len(),
-            serial.prologue.clone(),
-            serial.members.pointwise().to_vec(),
-        )
+    let (shape, elements, inputs, expression, members, access_maps) =
+        if let Some(pointwise) = output.pointwise() {
+            (
+                pointwise.shape.clone(),
+                pointwise.elements,
+                pointwise.input_keys.len(),
+                pointwise.expression.clone(),
+                pointwise.members.clone(),
+                pointwise.access_maps.clone(),
+            )
+        } else {
+            let serial = output.serial_sum();
+            (
+                serial.input_shape.clone(),
+                serial.input_elements,
+                serial.input_keys.len(),
+                serial.prologue.clone(),
+                serial.members.pointwise().to_vec(),
+                serial.prologue_access_maps.clone(),
+            )
+        };
+    // A read's relation and the element count its bounds proof states travel
+    // together: a structural read addresses its *operand's* range, which is a
+    // different number from the region's domain — that difference is exactly
+    // what a widening broadcast is. Deriving both from one lookup is what stops
+    // a region from binding a widened read against a domain-sized proof.
+    let relation_for = |ordinal: u32| -> (LogicalAccess, u64) {
+        let Some((_, map)) = access_maps.iter().find(|(seen, _)| *seen == ordinal) else {
+            return (LogicalAccess::LinearIdentity, elements);
+        };
+        let operand = match map {
+            LogicalAccess::ReindexBijection { operand_shape, .. }
+            | LogicalAccess::BroadcastReplication { operand_shape, .. } => {
+                tiler_ir::schedule::element_count(operand_shape).unwrap_or(elements)
+            }
+            _ => elements,
+        };
+        (map.clone(), operand)
     };
     // One read per input tensor, its ordinal fixed by its position, then the
     // owning write. The write's bounds witness follows the reads rather than
@@ -637,7 +657,7 @@ pub(crate) fn pointwise_region(
             },
             component_role: None,
             mode: AccessMode::Read,
-            map: LogicalAccess::LinearIdentity,
+            map: relation_for(ordinal).0,
             bounds: BoundsWitnessId::new(ordinal),
             ownership: None,
         })
@@ -650,7 +670,7 @@ pub(crate) fn pointwise_region(
             },
             component_role: None,
             kind: BoundsProofKind::LinearRange {
-                element_count: elements,
+                element_count: relation_for(ordinal).1,
             },
         })
         .collect();

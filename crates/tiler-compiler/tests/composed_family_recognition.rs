@@ -256,6 +256,35 @@ fn composed_region_with_an_unspellable_occurrence() -> SemanticProgram {
     builder.build().unwrap()
 }
 
+/// [`composed_region_with_an_unspellable_occurrence`] with the reversal moved
+/// behind the activation.
+///
+/// `sum(reverse(silu(a)) + c, axis 1)`: the same admitted reversal over a value
+/// the program *computes* rather than declares. The region binds one read per
+/// declared input, so there is no access for an intermediate the same region
+/// would also produce — and materializing one would add an observable rounding
+/// boundary the caller never asked for. It refuses under `structural-operand`.
+fn reversal_of_a_computed_value() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), domain())
+        .unwrap();
+    let c = builder
+        .input::<F32>(InputKey::new("c").unwrap(), domain())
+        .unwrap();
+    let activated = F32Silu::apply(&mut builder, a).unwrap();
+    let reversed = F32Reindex::apply(
+        &mut builder,
+        &ReindexForm::reverse_axis(Axis::new(1)).expect("an axis reversal is an admitted form"),
+        activated,
+    )
+    .unwrap();
+    let biased = F32Add::apply(&mut builder, reversed, c).unwrap();
+    let sum = StrictSerialF32Sum::apply(&mut builder, biased, [Axis::new(1)]).unwrap();
+    builder.output(OutputKey::new("out").unwrap(), sum).unwrap();
+    builder.build().unwrap()
+}
+
 /// The domain of the three weight-multiply fixtures below.
 ///
 /// Separate from [`domain`] because a broadcast has to actually widen: a
@@ -501,12 +530,48 @@ fn perturbing_one_occurrence_out_of_the_vocabulary_refuses_by_name() {
             "{contract:?} did not resolve the elementary neighbour as expected, so \
              the refusal below would not be evidence about the missing vocabulary",
         );
+        // **The row this ticket flipped.** The reindex no longer refuses: its
+        // axis reversal is the read map of the region its neighbour's
+        // arithmetic already fills.
+        //
+        // It compiles under *every* contract, including the
+        // contraction-permitting one the activation declines — and the
+        // difference is the point rather than an inconsistency. The activation
+        // declines because `silu`'s projected body puts a multiply adjacent to
+        // an add inside the fold's region; a reindex projects no body at all, so
+        // `reverse(a) + c` carries one add and no adjacency for that contract to
+        // decline. The two families differ in exactly what this file says they
+        // differ in: one contributes arithmetic and the other contributes
+        // addressing.
         assert_eq!(
             compile_under(&perturbed, contract),
+            Ok(()),
+            "{contract:?} did not admit the structural occurrence as a mapped read",
+        );
+    }
+}
+
+/// A structural occurrence over a *computed* value still refuses by name.
+///
+/// The neighbour that keeps the admission above attributable. Both programs
+/// reverse an axis with the same admitted form; they differ only in whether the
+/// operand is a declared input, and only the declared one has a read for the
+/// region to bind. Without this row, the flip above would be consistent with the
+/// boundary admitting every reindex — including one whose operand the region
+/// would have to materialize, adding the observable rounding boundary the
+/// family's admission exists to avoid.
+#[test]
+fn a_structural_occurrence_over_a_computed_value_refuses_by_name() {
+    let over_computed = reversal_of_a_computed_value();
+    assert_eq!(over_computed.operation_count(), 4);
+
+    for contract in CONTRACTS {
+        assert_eq!(
+            compile_under(&over_computed, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "operation-set"
+                rule: "structural-operand"
             }),
-            "{contract:?} admitted an occurrence no scalar program spells",
+            "{contract:?} admitted a structural occurrence with no declared operand to read",
         );
     }
 }
@@ -564,12 +629,16 @@ fn a_broadcast_widening_a_declared_weight_refuses_under_the_vocabulary_rule() {
             "{contract:?} did not resolve the elementary neighbour as expected, so \
              the refusal below would not be evidence about the missing relation",
         );
+        // **The row this ticket flipped, and the workload's dominant structural
+        // occurrence.** The `[2]` weight is read across the `[2, 2]` domain by a
+        // replication relation rather than refused, and it tracks the control
+        // rather than the activation: a broadcast introduces no arithmetic at
+        // all, so it carries no multiply/add adjacency for the
+        // contraction-permitting contract to decline.
         assert_eq!(
             compile_under(&widened, contract),
-            Err(CompileFailureClass::UnsupportedCapability {
-                rule: "operation-set"
-            }),
-            "{contract:?} admitted a widening no logical access spells",
+            Ok(()),
+            "{contract:?} did not admit the widening as a replication relation",
         );
     }
 }

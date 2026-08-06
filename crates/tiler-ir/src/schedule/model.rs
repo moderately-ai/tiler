@@ -123,6 +123,91 @@ pub enum ContractionAxisSource {
     },
 }
 
+/// How one operand axis's coordinate is decoded from a linear iteration
+/// coordinate.
+///
+/// The single decode form both structural access relations are written in:
+/// `mirrored` selects between `c` and `modulus − 1 − c`, where
+/// `c = (linear / divisor) % modulus`. One struct rather than two because the
+/// *arithmetic* is the same in both relations and only the admission rule
+/// differs — [`LogicalAccess::ReindexBijection`] requires the decodes to tile
+/// the iteration domain exactly, and [`LogicalAccess::BroadcastReplication`]
+/// requires them to name distinct result axes and leave at least one uncovered.
+/// Sharing the arithmetic is what keeps a single linearization in the kernel
+/// lowering; keeping the rules apart is what keeps a bijection and a replication
+/// from being one concept.
+///
+/// **Why this covers all six registered reindex mapping forms.** Every form is a
+/// single decode per operand axis, which is not obvious and is the reason the
+/// vocabulary is this small rather than one variant per form:
+///
+/// - `PermuteAxes`, `InsertUnitAxis`, and `RemoveUnitAxis` read one result axis
+///   per operand axis, so `divisor` is that axis's suffix product.
+/// - `SplitAxis` replaces one operand axis by a *contiguous* run of result axes,
+///   and contiguous row-major axes linearize as one window: the run's combined
+///   coordinate is `(linear / suffix[last]) % operand_extent`.
+/// - `MergeAxes` decodes one result coordinate into a run of operand axes. The
+///   two-level decode collapses because the outer wrap is redundant — for
+///   `E = result_extent[k]` divisible by `s * m`,
+///   `((linear / R) % E) / s % m == (linear / (R * s)) % m`, since the discarded
+///   high part is a multiple of `E / s`, itself a multiple of `m`.
+/// - `ReverseAxis` is the same decode with `mirrored` set, which is exactly the
+///   affine `i -> extent − 1 − i` D-10 admits and the one form that needs the
+///   flag at all.
+///
+/// **Do not add `#[non_exhaustive]`, and do not give it a default.** A decode is
+/// three independent facts and every one of them participates in canonical
+/// identity, so a field a producer could omit would be a map two regions could
+/// disagree about while sharing bytes.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct AxisDecode {
+    /// Divisor applied to the linear iteration coordinate before the wrap.
+    pub divisor: u64,
+    /// Wrap modulus, which is this operand axis's own extent.
+    pub modulus: u64,
+    /// Whether the decoded coordinate is mirrored to `modulus − 1 − c`.
+    pub mirrored: bool,
+}
+
+impl AxisDecode {
+    /// Returns the decode reading one whole axis whose suffix product is
+    /// `divisor` and whose extent is `modulus`.
+    #[must_use]
+    pub const fn read(divisor: u64, modulus: u64) -> Self {
+        Self {
+            divisor,
+            modulus,
+            mirrored: false,
+        }
+    }
+
+    /// Returns the decode of an extent-one axis, whose only coordinate is zero.
+    ///
+    /// Canonical by construction: an extent-one axis's coordinate does not
+    /// depend on the divisor or the mirroring, so admitting any other spelling
+    /// would give one access relation many identities.
+    #[must_use]
+    pub const fn fixed() -> Self {
+        Self {
+            divisor: 1,
+            modulus: 1,
+            mirrored: false,
+        }
+    }
+
+    /// Returns whether this decode is spelled canonically.
+    ///
+    /// The one rule: an extent-one axis reads no coordinate, so its divisor and
+    /// mirroring are unobservable and must be the canonical ones.
+    #[must_use]
+    pub const fn is_canonical(self) -> bool {
+        if self.modulus == 1 {
+            return self.divisor == 1 && !self.mirrored;
+        }
+        self.modulus != 0 && self.divisor != 0
+    }
+}
+
 /// The logical coordinate map a scheduled access realizes.
 ///
 /// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
@@ -179,6 +264,64 @@ pub enum LogicalAccess {
         sources: Vec<ContractionAxisSource>,
         /// Contributor combination order.
         order: ContributorOrder,
+    },
+    /// A structural rearrangement: each iteration coordinate reads one operand
+    /// element, and each operand element is read exactly once.
+    ///
+    /// The access relation of the registered `tiler::reindex-f32@1` family. It
+    /// computes nothing — the value written is the value read — so it never
+    /// appears as a region's scalar program; it appears as the *read map* of a
+    /// region whose arithmetic comes from a fused neighbour.
+    ///
+    /// **The bijectivity is proven, not declared.**
+    /// [`reindex_decodes_are_bijective`] requires the decodes to tile the
+    /// iteration domain's linear coordinate exactly once, which is what makes
+    /// "every operand element read exactly once" a checked fact rather than a
+    /// producer's claim — and it is what separates this from
+    /// [`Self::BroadcastReplication`], whose decodes deliberately leave part of
+    /// the domain uncovered.
+    ///
+    /// Deliberately **not** a [`Self::BroadcastReplication`] whose replication
+    /// happens to be empty. The two relations differ in what a consumer may
+    /// conclude: a bijection lets a fusion authority treat the read as consuming
+    /// its operand once, and a replication does not. Collapsing them would make
+    /// that distinction a shape computation at every consumer rather than a
+    /// variant the compiler checks.
+    ReindexBijection {
+        /// Shape of the operand being read.
+        operand_shape: Shape,
+        /// Shape of the region's result, whose linear coordinate is decoded.
+        result_shape: Shape,
+        /// One decode per operand axis, in axis order.
+        axes: Vec<AxisDecode>,
+    },
+    /// A widening replication: several iteration coordinates read one operand
+    /// element.
+    ///
+    /// The access relation of the registered `tiler::broadcast-f32@1` family
+    /// when it actually widens. It is **not** [`Self::ScalarBroadcast`], and the
+    /// difference is the whole reason it exists: `ScalarBroadcast` is a
+    /// rank-zero operand element read by every invocation, so it carries no
+    /// shape and no axis correspondence, while this relation carries both — a
+    /// `[1024]` weight read across a `[T, 1024]` activation reads a *different*
+    /// operand element per column and the same one per row, which
+    /// `ScalarBroadcast` cannot express at all.
+    ///
+    /// Each operand axis either reads one result axis of equal extent or is a
+    /// stretched extent-one axis whose coordinate is zero; a result axis no
+    /// operand axis names is replicated, and the read is invariant in it.
+    /// [`broadcast_decodes_are_replicating`] requires at least one such
+    /// uncovered coordinate, so a "broadcast" that widens nothing is refused
+    /// rather than admitted as a second spelling of [`Self::LinearIdentity`] —
+    /// the canonicality rule the reindex form vocabulary states for its own
+    /// identity mappings.
+    BroadcastReplication {
+        /// Shape of the operand being read.
+        operand_shape: Shape,
+        /// Shape of the region's result, whose linear coordinate is decoded.
+        result_shape: Shape,
+        /// One decode per operand axis, in axis order.
+        axes: Vec<AxisDecode>,
     },
 }
 
@@ -1163,6 +1306,172 @@ pub fn axes_are_canonical(axes: &[Axis], rank: usize) -> bool {
     })
 }
 
+/// Returns the row-major suffix products of `shape`, one per axis.
+///
+/// Entry `k` is the product of every extent after axis `k`, which is the divisor
+/// that extracts axis `k`'s coordinate from a row-major linear index. Returns
+/// `None` when a product overflows `u64`, so a caller never silently compares
+/// against a wrapped divisor.
+fn suffix_products(shape: &Shape) -> Option<Vec<u64>> {
+    let extents = shape.extents();
+    let mut products = vec![1_u64; extents.len()];
+    let mut running = 1_u64;
+    for (position, extent) in extents.iter().enumerate().rev() {
+        products[position] = running;
+        running = running.checked_mul(extent.get())?;
+    }
+    Some(products)
+}
+
+/// Returns whether the decodes state a bijection of `result_shape`'s linear
+/// coordinates onto `operand_shape`'s elements.
+///
+/// This is the bounds-proof obligation [`LogicalAccess::ReindexBijection`] owes,
+/// and it discharges *both* halves at once. Every decoded coordinate is in range
+/// structurally, because each is a `% modulus` whose modulus is that axis's own
+/// extent; and every operand element is reached exactly once, because the
+/// decodes with a nontrivial modulus are required to *tile* the linear
+/// coordinate — sorted by descending divisor they must telescope, so the linear
+/// index decomposes uniquely into them, exactly as a mixed-radix numeral does.
+///
+/// The telescoping check is what makes bijectivity a proven fact rather than a
+/// producer's declaration. Mirroring is irrelevant to it: `c -> modulus − 1 − c`
+/// is a bijection of any axis onto itself, so a mirrored decode tiles exactly
+/// what its unmirrored twin does.
+///
+/// Extent-one operand axes are excluded from the tiling and carry no
+/// information, which is correct — their only coordinate is zero — and canonical,
+/// because [`AxisDecode::is_canonical`] pins their spelling.
+#[must_use]
+pub fn reindex_decodes_are_bijective(
+    operand_shape: &Shape,
+    result_shape: &Shape,
+    axes: &[AxisDecode],
+) -> bool {
+    let extents = operand_shape.extents();
+    if axes.len() != extents.len() {
+        return false;
+    }
+    if axes
+        .iter()
+        .zip(extents)
+        .any(|(decode, extent)| !decode.is_canonical() || decode.modulus != extent.get())
+    {
+        return false;
+    }
+    let (Ok(operand_elements), Ok(result_elements)) =
+        (element_count(operand_shape), element_count(result_shape))
+    else {
+        return false;
+    };
+    // A bijection is onto, so the two domains have the same size. Checked before
+    // the tiling because the tiling is stated against this total.
+    if operand_elements != result_elements {
+        return false;
+    }
+    let mut carrying: Vec<AxisDecode> = axes
+        .iter()
+        .copied()
+        .filter(|decode| decode.modulus > 1)
+        .collect();
+    carrying.sort_unstable_by(|left, right| right.divisor.cmp(&left.divisor));
+    let Some(first) = carrying.first() else {
+        // No axis carries a coordinate, so the map is a bijection exactly when
+        // both domains are the single element the empty product names.
+        return operand_elements == 1;
+    };
+    if first.divisor.checked_mul(first.modulus) != Some(operand_elements) {
+        return false;
+    }
+    for pair in carrying.windows(2) {
+        let [higher, lower] = pair else {
+            return false;
+        };
+        // Telescoping: the lower digit's window must end exactly where the
+        // higher one begins. A gap would leave linear coordinates unreachable
+        // and an overlap would make two of them collide.
+        if lower.divisor.checked_mul(lower.modulus) != Some(higher.divisor) {
+            return false;
+        }
+    }
+    carrying.last().is_some_and(|decode| decode.divisor == 1)
+}
+
+/// Returns whether the decodes state a widening replication of `operand_shape`
+/// across `result_shape`.
+///
+/// The bounds-proof obligation [`LogicalAccess::BroadcastReplication`] owes.
+/// Every decoded coordinate is in range for the reason a reindex's is — the
+/// modulus is the axis's own extent — but the covering requirement is
+/// deliberately the opposite one: each operand axis reads *one whole result
+/// axis* of equal extent, and the result axes no operand axis names are the
+/// replicated ones the read is invariant in.
+///
+/// Three rules beyond that, each refusing a map that would otherwise be a second
+/// spelling of a relation this vocabulary already has:
+///
+/// - **No two operand axes may read one result axis.** That would read one
+///   result coordinate into two operand coordinates, which is a reindex-style
+///   decode and not a broadcast.
+/// - **No mirroring.** A broadcast replicates; reversing an axis is the reindex
+///   family's business, and admitting it here would let one composition be
+///   spelled two ways.
+/// - **It must actually widen.** A replication covering the whole result domain
+///   is [`LogicalAccess::LinearIdentity`], and admitting it here would give one
+///   region two identities.
+#[must_use]
+pub fn broadcast_decodes_are_replicating(
+    operand_shape: &Shape,
+    result_shape: &Shape,
+    axes: &[AxisDecode],
+) -> bool {
+    let extents = operand_shape.extents();
+    if axes.len() != extents.len() {
+        return false;
+    }
+    if axes.iter().zip(extents).any(|(decode, extent)| {
+        !decode.is_canonical() || decode.modulus != extent.get() || decode.mirrored
+    }) {
+        return false;
+    }
+    let (Ok(operand_elements), Ok(result_elements)) =
+        (element_count(operand_shape), element_count(result_shape))
+    else {
+        return false;
+    };
+    // Widening is what separates this relation from an identity read, and it is
+    // checked on element counts rather than ranks: a rank that grew by an
+    // extent-one axis widens nothing.
+    if result_elements <= operand_elements {
+        return false;
+    }
+    let Some(result_suffix) = suffix_products(result_shape) else {
+        return false;
+    };
+    let result_extents = result_shape.extents();
+    let mut claimed = vec![false; result_extents.len()];
+    for decode in axes.iter().filter(|decode| decode.modulus > 1) {
+        // The decode must name one whole result axis: its divisor is that axis's
+        // suffix product and its modulus that axis's extent. Anything else is a
+        // partial window, which this relation does not admit. Among axes of
+        // extent above one the suffix products are strictly decreasing, so the
+        // pair identifies exactly one axis.
+        let named = result_suffix
+            .iter()
+            .zip(result_extents)
+            .position(|(divisor, extent)| {
+                *divisor == decode.divisor && extent.get() == decode.modulus
+            });
+        let Some(position) = named else {
+            return false;
+        };
+        if std::mem::replace(&mut claimed[position], true) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Counts the reduction contributors a reduction-contributor access combines.
 ///
 /// Returns `0` when any reduced extent is `0` (an empty reduction).
@@ -1247,6 +1556,22 @@ const TAG_PACKED_U4_LSB_ZERO_TAIL: u8 = 0x04;
 /// deliberately does not step. A reader that reaches `0x05` is reading an access
 /// the earlier vocabulary could not express.
 const TAG_CONTRACTION_OPERAND: u8 = 0x05;
+/// Logical-access tag of a reindex's bijective coordinate map.
+///
+/// Appended exactly as `0x05` was, and with the same injectivity argument:
+/// `0x01` through `0x05` keep their tags and their field layouts, so no
+/// previously encodable region's bytes move and the schedule identity domain
+/// deliberately does not step. A reader that reaches `0x06` is reading an access
+/// the earlier vocabulary could not express, never an earlier access under a new
+/// interpretation.
+const TAG_REINDEX_BIJECTION: u8 = 0x06;
+/// Logical-access tag of a widening broadcast's replication map.
+///
+/// Appended for the same reason and with the same consequence as `0x06`. It is a
+/// tag of its own rather than a field on `0x06` because the two relations differ
+/// in what they permit a consumer to conclude, and a shared tag would make a
+/// bijection and a replication differ only in bytes a reader has to interpret.
+const TAG_BROADCAST_REPLICATION: u8 = 0x07;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
@@ -1390,6 +1715,48 @@ fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
             }
             push_order(bytes, *order);
         }
+        // Appended tags, whose payloads are framed exactly as the earlier
+        // shape-carrying arms are: two framed shapes, then a framed run of
+        // fixed-width decodes. Injective in both directions — every field of
+        // every decode reaches the bytes, so two maps differing in meaning
+        // differ here; and nothing but those fields does, so two maps equal in
+        // meaning encode identically.
+        LogicalAccess::ReindexBijection {
+            operand_shape,
+            result_shape,
+            axes,
+        } => {
+            bytes.push(TAG_REINDEX_BIJECTION);
+            push_shape(bytes, operand_shape);
+            push_shape(bytes, result_shape);
+            push_axis_decodes(bytes, axes);
+        }
+        LogicalAccess::BroadcastReplication {
+            operand_shape,
+            result_shape,
+            axes,
+        } => {
+            bytes.push(TAG_BROADCAST_REPLICATION);
+            push_shape(bytes, operand_shape);
+            push_shape(bytes, result_shape);
+            push_axis_decodes(bytes, axes);
+        }
+    }
+}
+
+/// Encodes one framed run of operand-axis coordinate decodes.
+///
+/// The count leads through [`push_len`] and exactly that many seventeen-byte
+/// records follow, so the run's end is determined before it is read. Every field
+/// is written — including the mirror flag, because a mirrored and an unmirrored
+/// decode of the same axis are different access relations that must not share
+/// identity.
+fn push_axis_decodes(bytes: &mut Vec<u8>, axes: &[AxisDecode]) {
+    push_len(bytes, axes.len());
+    for decode in axes {
+        bytes.extend_from_slice(&decode.divisor.to_be_bytes());
+        bytes.extend_from_slice(&decode.modulus.to_be_bytes());
+        bytes.push(u8::from(decode.mirrored));
     }
 }
 

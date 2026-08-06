@@ -640,13 +640,73 @@ fn verify_pointwise_region(
         || !matches!(region.schedule.reduction, ReductionTopology::None)
         || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
         || !ordinals_bind_in_order
-        || reads
+        || !reads
             .iter()
-            .any(|read| read.map != LogicalAccess::LinearIdentity)
+            .all(|read| pointwise_read_map_is_admissible(&read.map, &region.index.iteration_shape))
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     Ok(())
+}
+
+/// Returns whether one read map is admissible on a pointwise region.
+///
+/// A pointwise region evaluates one scalar program per output position, so a
+/// read may address its operand however it likes *provided* the addressing is
+/// a total function of the iteration coordinate with a discharged bounds
+/// obligation. Three maps satisfy that and no others do:
+///
+/// - [`LogicalAccess::LinearIdentity`], the dense one-to-one read.
+/// - [`LogicalAccess::ReindexBijection`], whose decodes are required to tile the
+///   iteration domain exactly, so every operand element is read once.
+/// - [`LogicalAccess::BroadcastReplication`], whose decodes are required to name
+///   distinct result axes and leave at least one replicated.
+///
+/// Both structural maps must state the region's own iteration shape as their
+/// result shape. That is what stops a region from carrying an access relation
+/// derived against some *other* domain — the decodes are divisors of this
+/// region's linear coordinate, so a result shape that disagreed with the
+/// iteration shape would make every divisor address the wrong window while still
+/// satisfying its own internal consistency.
+///
+/// The remaining maps are refused by name rather than by a wildcard, so a map
+/// added to the vocabulary later is a build error here instead of silently
+/// inheriting a pointwise admission it was never checked for.
+fn pointwise_read_map_is_admissible(
+    map: &LogicalAccess,
+    iteration_shape: &crate::shape::Shape,
+) -> bool {
+    match map {
+        LogicalAccess::LinearIdentity => true,
+        LogicalAccess::ReindexBijection {
+            operand_shape,
+            result_shape,
+            axes,
+        } => {
+            result_shape == iteration_shape
+                && super::model::reindex_decodes_are_bijective(operand_shape, result_shape, axes)
+        }
+        LogicalAccess::BroadcastReplication {
+            operand_shape,
+            result_shape,
+            axes,
+        } => {
+            result_shape == iteration_shape
+                && super::model::broadcast_decodes_are_replicating(
+                    operand_shape,
+                    result_shape,
+                    axes,
+                )
+        }
+        // A scalar broadcast reads a rank-zero parameter and belongs to the
+        // decode program; a packed carrier belongs to it too; and the two
+        // reduction relations address a contributor domain a pointwise region
+        // does not have.
+        LogicalAccess::ScalarBroadcast
+        | LogicalAccess::PackedU4LsbZeroTail { .. }
+        | LogicalAccess::ReductionContributor { .. }
+        | LogicalAccess::ContractionOperand { .. } => false,
+    }
 }
 
 fn verify_strict_affine_u4_dequantize(
@@ -1982,6 +2042,21 @@ fn bounds_proof_refines_access(
         (
             BoundsProofKind::LinearRange { element_count },
             LogicalAccess::ContractionOperand { operand_shape, .. },
+        ) => super::model::element_count(operand_shape)
+            .is_ok_and(|elements| *element_count == elements),
+        // Both structural relations prove the same domain a contraction operand
+        // does, and for the same reason: the access ranges over its operand's own
+        // contiguous element range, and *which* of those positions each iteration
+        // coordinate touches is what the map states and what
+        // `pointwise_read_map_is_admissible` proved in range. A reindex and a
+        // replication differ in how many times a position is touched, which is a
+        // fact about the map and not about the domain the proof bounds — so a
+        // separate proof structure here would carry no information the map does
+        // not already carry.
+        (
+            BoundsProofKind::LinearRange { element_count },
+            LogicalAccess::ReindexBijection { operand_shape, .. }
+            | LogicalAccess::BroadcastReplication { operand_shape, .. },
         ) => super::model::element_count(operand_shape)
             .is_ok_and(|elements| *element_count == elements),
         _ => false,
