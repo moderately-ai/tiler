@@ -1,7 +1,7 @@
 ---
 id: widen-compile-governed-s-error-to-the-target-compile-failure
 title: Widen compile_governed's error to the target compile failure
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [accept-the-public-compiler-facade-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-governed-widen
-lease_expires_at: 1785978598
 ---
 ## User-visible outcome
 
