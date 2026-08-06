@@ -22,7 +22,7 @@
 //! therefore one identity encoder, not an encoder and a codec that agree by
 //! inspection.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
 
 use tiler_ir::program::abi::compare_expr_nodes;
 use tiler_ir::program::{DependencyReasonView, StageRef, VerifiedKernelProgram};
@@ -545,7 +545,7 @@ impl ArtifactEnvelope {
             payloads,
             payload_of,
             sections,
-            section_of,
+            program_sections,
             payload_content,
         } = project_carried(data);
         let (expressions, expression_of) = project_expressions(data);
@@ -553,7 +553,7 @@ impl ArtifactEnvelope {
         providers.sort_unstable_by_key(SelectedProvider::canonical_key);
 
         let mut variants = Vec::with_capacity(data.variants.len());
-        for variant in &data.variants {
+        for (declared, variant) in data.variants.iter().enumerate() {
             let stage_keys: Vec<Vec<u8>> = variant.program.stages().map(stage_key).collect();
             if stage_keys.len() != variant.entries.len() {
                 return Err(ArtifactDiagnostic::AmbiguousCanonicalKey {
@@ -599,11 +599,8 @@ impl ArtifactEnvelope {
             let execution_order = project_execution_order(variant, &entry_of);
             let dependencies = project_dependencies(variant, &entry_of);
 
-            let content = variant.program.canonical_identity().as_bytes();
             variants.push(VariantRow {
-                program_section: *section_of
-                    .get(content)
-                    .expect("every packaged program contributed its own section"),
+                program_section: program_sections[declared],
                 guard: expression_of[position(variant.guard)],
                 profile: variant.profile.clone(),
                 feasibility_rules: variant.feasibility_rules.clone(),
@@ -1046,58 +1043,90 @@ fn project_semantic(data: &ArtifactProgramData) -> Result<SemanticSubjects, Arti
 /// `carried` supplies each canonically ordered payload's content, so the
 /// returned section references are aligned with the canonical payload table
 /// rather than with declaration order.
+///
+/// # Why the table is assembled from borrowed content
+///
+/// This is the publication path, and a carried object is the largest thing an
+/// envelope holds — up to [`MAX_SECTION_BYTES`] of compiled library per payload.
+/// The projection therefore borrows every candidate's bytes and copies only the
+/// distinct survivors, once each, into the [`Section`] values the encoder reads.
+/// [`ArtifactEnvelope::project`] takes `&ArtifactProgramData` and `Section` owns
+/// its bytes, so that one copy is the floor rather than a chosen budget.
+///
+/// The table's own canonical order is what makes a borrowed lookup possible: it
+/// is sorted and distinct, so `binary_search_by` resolves a `(purpose, content)`
+/// key without materializing it. An owned-key map would have to hold a second
+/// copy of every candidate object just to address the first.
 fn project_sections(
     data: &ArtifactProgramData,
-    carried: &[Option<PayloadContent>],
+    carried: &[Option<&PayloadContent>],
 ) -> ProjectedSections {
-    let mut contents: Vec<(u8, Vec<u8>)> = data
+    // Derived rather than borrowed, because a compilation subject is a *record*
+    // in the artifact and bytes only here. Kept alive beside the table that
+    // borrows them, and small: a subject is source, flags, and provenance.
+    let subjects: Vec<Option<Vec<u8>>> = carried
+        .iter()
+        .map(|content| content.map(|content| encode_metadata(&content.metadata)))
+        .collect();
+    let mut contents: Vec<(u8, Cow<'_, [u8]>)> = data
         .variants
         .iter()
         .map(|variant| {
             (
                 SectionKind::KernelProgramSubject.tag(),
-                variant.program.canonical_identity().as_bytes().to_vec(),
+                Cow::Borrowed(variant.program.canonical_identity().as_bytes()),
             )
         })
         .collect();
-    let encoded: Vec<Option<(Vec<u8>, Vec<u8>)>> = carried
-        .iter()
-        .map(|content| {
-            content
-                .as_ref()
-                .map(|content| (encode_metadata(&content.metadata), content.code.clone()))
-        })
-        .collect();
-    for payload in encoded.iter().flatten() {
-        contents.push((SectionKind::BackendPayloadMetadata.tag(), payload.0.clone()));
-        contents.push((SectionKind::BackendPayloadCode.tag(), payload.1.clone()));
+    for (content, subject) in carried.iter().zip(&subjects) {
+        let (Some(content), Some(subject)) = (content, subject) else {
+            continue;
+        };
+        contents.push((
+            SectionKind::BackendPayloadMetadata.tag(),
+            Cow::Borrowed(subject.as_slice()),
+        ));
+        contents.push((
+            SectionKind::BackendPayloadCode.tag(),
+            Cow::Borrowed(content.code.as_slice()),
+        ));
     }
     contents.sort_unstable();
     contents.dedup();
-    let index: BTreeMap<(u8, Vec<u8>), u32> = contents
+    let section_of = |kind: SectionKind, bytes: &[u8]| {
+        let canonical = contents
+            .binary_search_by(|(tag, content)| (*tag, &**content).cmp(&(kind.tag(), bytes)))
+            .expect("a section this projection contributed before the table was ordered");
+        ordinal(canonical)
+    };
+    let payload_content = carried
         .iter()
-        .enumerate()
-        .map(|(canonical, content)| (content.clone(), ordinal(canonical)))
-        .collect();
-    let payload_content = encoded
-        .iter()
-        .map(|payload| {
-            payload.as_ref().map(|(metadata, code)| PayloadSections {
-                metadata: index[&(SectionKind::BackendPayloadMetadata.tag(), metadata.clone())],
-                code: index[&(SectionKind::BackendPayloadCode.tag(), code.clone())],
+        .zip(&subjects)
+        .map(|(content, subject)| {
+            let (Some(content), Some(subject)) = (content, subject) else {
+                return None;
+            };
+            Some(PayloadSections {
+                metadata: section_of(SectionKind::BackendPayloadMetadata, subject),
+                code: section_of(SectionKind::BackendPayloadCode, &content.code),
             })
         })
         .collect();
-    let programs = index
+    let programs = data
+        .variants
         .iter()
-        .filter(|((kind, _), _)| *kind == SectionKind::KernelProgramSubject.tag())
-        .map(|((_, bytes), section)| (bytes.clone(), *section))
+        .map(|variant| {
+            section_of(
+                SectionKind::KernelProgramSubject,
+                variant.program.canonical_identity().as_bytes(),
+            )
+        })
         .collect();
     let sections = contents
         .into_iter()
         .map(|(kind, bytes)| Section {
             kind: SectionKind::from_tag(kind).expect("a section purpose this encoder just wrote"),
-            bytes,
+            bytes: bytes.into_owned(),
         })
         .collect();
     ProjectedSections {
@@ -1264,7 +1293,7 @@ fn project_carried(data: &ArtifactProgramData) -> ProjectedTables {
         payloads,
         payload_of,
         sections,
-        section_of: programs,
+        program_sections: programs,
         payload_content,
     }
 }
@@ -1277,8 +1306,13 @@ struct ProjectedTables {
     payload_of: Vec<u32>,
     /// The content-addressed section table in canonical order.
     sections: Vec<Section>,
-    /// Kernel-program identity bytes to the section carrying them.
-    section_of: BTreeMap<Vec<u8>, u32>,
+    /// The section carrying each variant's program identity, in declared order.
+    ///
+    /// Aligned with `data.variants` rather than keyed by identity bytes: the
+    /// caller walks the declared variants, and two variants packaging one
+    /// program name one section here because they contributed one content
+    /// address to the table.
+    program_sections: Vec<u32>,
     /// Section references of each canonically ordered payload.
     payload_content: Vec<Option<PayloadSections>>,
 }
@@ -1287,8 +1321,8 @@ struct ProjectedTables {
 struct ProjectedSections {
     /// The content-addressed section table in canonical order.
     sections: Vec<Section>,
-    /// Kernel-program identity bytes to the section carrying them.
-    programs: BTreeMap<Vec<u8>, u32>,
+    /// The section carrying each variant's program identity, in declared order.
+    programs: Vec<u32>,
     /// Section references of each canonically ordered payload.
     payload_content: Vec<Option<PayloadSections>>,
 }
@@ -1296,13 +1330,15 @@ struct ProjectedSections {
 /// Sorts payload descriptors canonically and returns the declaration remapping.
 ///
 /// The carried content travels with its descriptor, so a producer's declaration
-/// order cannot separate a payload from the object it carries.
+/// order cannot separate a payload from the object it carries. It travels as a
+/// *borrow*: this reorders payloads, and reordering is not a reason to copy a
+/// compiled library.
 fn project_payloads(
     data: &ArtifactProgramData,
 ) -> (
     Vec<BackendPayloadDescriptor>,
     Vec<u32>,
-    Vec<Option<PayloadContent>>,
+    Vec<Option<&PayloadContent>>,
 ) {
     let mut order: Vec<usize> = (0..data.payloads.len()).collect();
     order.sort_unstable_by_key(|payload| data.payloads[*payload].canonical_key());
@@ -1312,7 +1348,7 @@ fn project_payloads(
     }
     let carried = order
         .iter()
-        .map(|payload| data.payload_content[*payload].clone())
+        .map(|payload| data.payload_content[*payload].as_ref())
         .collect();
     let payloads = order
         .into_iter()

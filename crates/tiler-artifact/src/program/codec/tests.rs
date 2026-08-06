@@ -3058,6 +3058,83 @@ fn payload_identity_follows_the_compilation_subject_and_not_the_object() {
     );
 }
 
+/// Assembles a one-variant artifact delivering two payloads that carry one object.
+///
+/// The two compilation subjects differ and the two emitted objects are equal,
+/// which is the shape the section table's content addressing is *for*: the
+/// subjects must occupy two sections because they name two payloads, and the
+/// object must occupy one because a section's address is its content.
+fn twice_delivered_artifact(code: &[u8]) -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let carry = |draft: &mut ArtifactProgramBuilder, source: &[u8]| {
+        draft
+            .push_carried_payload(
+                BackendKey::new("tiler.metal").unwrap(),
+                RepresentationKey::new("metallib").unwrap(),
+                SchemaVersion::new(1, 0),
+                profile(),
+                ArtifactExecutionPolicy::NativeImage,
+                payload_content(source, code),
+            )
+            .unwrap()
+    };
+    let first = carry(&mut draft, b"kernel void fused() {}");
+    let second = carry(&mut draft, b"kernel void other() {}");
+    let formulas = formulas(&mut draft);
+    let mut spec = variant(&formulas, first, b"fused");
+    spec.entries[0].implementation.payloads = vec![first, second];
+    draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
+    draft.build().unwrap()
+}
+
+/// Two payloads carrying equal objects share exactly one section.
+///
+/// The property the section table's content addressing states, asserted rather
+/// than argued: an envelope that framed the same object twice would grow by the
+/// whole of a compiled library per delivery position, and a reader resolving
+/// either position would still reach identical bytes — so the duplication would
+/// be invisible to every other check in this suite.
+#[test]
+fn two_payloads_carrying_equal_objects_share_one_section() {
+    let artifact = twice_delivered_artifact(b"\x00metallib\xff");
+    let envelope = envelope_of(&artifact);
+    let carried: Vec<super::model::PayloadSections> = envelope
+        .payload_content()
+        .iter()
+        .map(|content| content.expect("both payloads are carried"))
+        .collect();
+    assert_eq!(carried.len(), 2, "the fixture delivers two payloads");
+    assert_eq!(
+        carried[0].code, carried[1].code,
+        "equal objects are one content address and therefore one section",
+    );
+    assert_ne!(
+        carried[0].metadata, carried[1].metadata,
+        "two compilation subjects are two content addresses",
+    );
+    let of_kind = |kind: SectionKind| {
+        envelope
+            .sections()
+            .iter()
+            .filter(|section| section.kind == kind)
+            .count()
+    };
+    assert_eq!(of_kind(SectionKind::BackendPayloadCode), 1);
+    assert_eq!(of_kind(SectionKind::BackendPayloadMetadata), 2);
+    let bytes = encode(&envelope).expect("the envelope encodes");
+    assert_eq!(
+        decode(&bytes).expect("a shared-object envelope decodes"),
+        envelope,
+        "the shared section survives the round trip",
+    );
+}
+
 #[test]
 fn carrying_a_payload_requires_the_governed_feature() {
     let carried = carried_artifact(b"kernel void fused() {}", b"link");
