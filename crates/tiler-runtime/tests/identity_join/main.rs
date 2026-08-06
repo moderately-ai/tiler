@@ -55,16 +55,19 @@ use adapter::{COMPLETE_ROUTE, ScalarHostAdapter, Stage};
 use producer::{SOUND, Transported};
 use sidecar::Sidecar;
 
+use std::collections::BTreeMap;
+
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, BackendKey, RecordedArtifactProgramIdentity, RepresentationKey,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    AbiFactBinder, AbiFacts, ArithmeticType, BackendKey, RecordedArtifactProgramIdentity,
+    RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
 use tiler_runtime::adapter::{AdapterRouteFailure, route_with_adapter};
 use tiler_runtime::load::{
-    DecodedProgram, ExecutionEnvironment, LoadRejection, TargetCompatibility, VariantIneligibility,
+    DTypeDispatch, DecodedProgram, ExecutionEnvironment, LoadRejection, TargetCompatibility,
+    VariantIneligibility,
 };
 
 /// The one delivery position every artifact here is built for.
@@ -197,6 +200,13 @@ fn environment(record: &Sidecar) -> ExecutionEnvironment {
         backend: BackendKey::new(&record.backend).expect("a governed backend key"),
         representation: RepresentationKey::new(&record.representation)
             .expect("a governed representation key"),
+        // Deliberately *not* read from the sidecar, unlike every field above.
+        // The identities above join a consumer to the artifact it was built
+        // against; which dtypes a family can dispatch is a fact about this
+        // machine, and taking it from the record would make the host agree with
+        // whatever it was handed — the exact failure this suite exists to
+        // exclude. This host interprets `f32`, and says only that.
+        dtype_dispatch: BTreeMap::from([(ArithmeticType::F32, DTypeDispatch::Dispatchable)]),
     }
 }
 

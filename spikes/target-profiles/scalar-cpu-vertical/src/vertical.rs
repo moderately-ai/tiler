@@ -37,10 +37,12 @@
 //! obvious next increment and is recorded in the README as a boundary rather
 //! than claimed.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, ApproximationEnvelope, ArtifactCodecFailure, ArtifactExecutionPolicy,
+    AbiFactBinder, AbiFacts, ApproximationEnvelope, ArithmeticType, ArtifactCodecFailure,
+    ArtifactExecutionPolicy,
     ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendKey,
     BindingKind, BindingSpec, BindingTarget, CANONICAL_DIMENSIONS, CapabilityKey,
     CompilationEnvironment, DIMENSION_COUNT, DeliveredRealizationBuilder,
@@ -68,7 +70,7 @@ use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
 use tiler_runtime::load::{
-    DecodedProgram, ExecutionEnvironment, FilteredVariant, LoadRejection, Preflight,
+    DTypeDispatch, DecodedProgram, ExecutionEnvironment, FilteredVariant, LoadRejection, Preflight,
     TargetCompatibility, VariantIneligibility,
 };
 
@@ -249,6 +251,10 @@ fn host_environment(compilation: &Compilation) -> Result<ExecutionEnvironment, V
         backend: BackendKey::new(profile::BACKEND_KEY).map_err(|_| VerticalError::HostProfile)?,
         representation: RepresentationKey::new(profile::REPRESENTATION_KEY)
             .map_err(|_| VerticalError::HostProfile)?,
+        // This vertical's own scalar CPU backend interprets `f32` and nothing
+        // else, so it declares that and stays silent about every other width —
+        // silence being the fail-closed answer rather than a permissive default.
+        dtype_dispatch: BTreeMap::from([(ArithmeticType::F32, DTypeDispatch::Dispatchable)]),
     })
 }
 
@@ -1251,6 +1257,7 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
         },
         backend: subject.environment.backend.clone(),
         representation: subject.environment.representation.clone(),
+        dtype_dispatch: subject.environment.dtype_dispatch.clone(),
     };
     outcomes.push(
         match decoded.preflight(&other_descriptor, subject.expected, subject.abi) {
@@ -1290,6 +1297,7 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
         },
         backend: subject.environment.backend.clone(),
         representation: subject.environment.representation.clone(),
+        dtype_dispatch: subject.environment.dtype_dispatch.clone(),
     };
     outcomes.push(
         match decoded.preflight(&metal_family, subject.expected, subject.abi) {
@@ -1326,6 +1334,7 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
         backend: BackendKey::new("tiler.metal").map_err(|_| VerticalError::HostProfile)?,
         representation: RepresentationKey::new("metallib")
             .map_err(|_| VerticalError::HostProfile)?,
+        dtype_dispatch: subject.environment.dtype_dispatch.clone(),
     };
     outcomes.push(
         match decoded.preflight(&metal_host, subject.expected, subject.abi) {
@@ -1363,6 +1372,7 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
         backend: subject.environment.backend.clone(),
         representation: RepresentationKey::new("tiler.cpu.scalar-image-v2")
             .map_err(|_| VerticalError::HostProfile)?,
+        dtype_dispatch: subject.environment.dtype_dispatch.clone(),
     };
     outcomes.push(
         match decoded.preflight(&other_representation, subject.expected, subject.abi) {

@@ -41,11 +41,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use candle_core::{DType, Device, Tensor, Var};
+use std::collections::BTreeMap;
+
 use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLDevice};
 
 use tiler_artifact::program::{
-    BackendKey, RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    ArithmeticType, BackendKey, RecordedArtifactIdentityError, RecordedArtifactProgramIdentity,
+    RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
 use tiler_artifact::proof::{
     DecodedProofSidecar, ProofAssociationError, ProofCodecError, decode_proof_sidecar,
@@ -57,7 +59,7 @@ use tiler_metal::applicability::{
 };
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{CompileRequest, OptimizationLevel};
-use tiler_runtime::load::ExecutionEnvironment;
+use tiler_runtime::load::{DTypeDispatch, ExecutionEnvironment};
 
 use crate::adapter::{
     SubmissionOutcome, argument_slots_agree, load_library, prepare_pipeline_with_reflection,
@@ -1008,6 +1010,18 @@ fn declared_route_environment(
         backend: BackendKey::new(BACKEND_KEY).map_err(|_| ProofError::HostProfile)?,
         representation: RepresentationKey::new(REPRESENTATION_KEY)
             .map_err(|_| ProofError::HostProfile)?,
+        // Producer-declared, exactly like the profile above and with the same
+        // caveat this function's heading states. These are the dtypes
+        // `tiler-build`'s `FIRST_MACOS_APPLE9` ledger rows declare for the bound
+        // profile, transcribed rather than measured here; nothing on this
+        // machine was asked whether it dispatches either. A host-earned dtype row
+        // beside a producer-declared profile would be two authority levels
+        // wearing one name, which is the confusion this whole function exists to
+        // avoid.
+        dtype_dispatch: BTreeMap::from([
+            (ArithmeticType::F32, DTypeDispatch::Dispatchable),
+            (ArithmeticType::Bf16, DTypeDispatch::Dispatchable),
+        ]),
     })
 }
 

@@ -65,16 +65,21 @@
 //! *variant* target profile, so a member varies the profile its **payload** was
 //! built for, which is per-payload by design.
 
+use std::collections::BTreeMap;
+
+use tiler_runtime::load::DTypeDispatch;
+
 use tiler_artifact::program::{
-    ApproximationEnvelope, ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase,
-    BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey, BindingKind,
-    BindingSpec, CANONICAL_DIMENSIONS, CapabilityKey, CompilationEnvironment, DIMENSION_COUNT,
-    DeferredPredicateSpec, DeliveredRealizationBuilder, DimensionBehaviour, EntryRealization,
-    EntrySpec, ExceptionalValueAssumption, FactSourceProvenance, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, HonouringMeans, LaunchSpec, MaterializationRounding, NumericalDimension,
-    NumericalObligationKey, NumericalPermission, PayloadContent, PayloadMetadata, PayloadPlatform,
-    PayloadProvenance, PolicyLocus, ProvenanceIdentity, RecordedArtifactProgramIdentity,
-    RepresentationKey, RouteFeatureKey, RouteRequirement, ScalarArithmeticSubject, SchemaVersion,
+    ApproximationEnvelope, ArithmeticType, ArtifactExecutionPolicy, ArtifactProgramBuilder,
+    AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey,
+    BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityKey, CompilationEnvironment,
+    DIMENSION_COUNT, DeferredPredicateSpec, DeliveredRealizationBuilder, DimensionBehaviour,
+    EntryRealization, EntrySpec, ExceptionalValueAssumption, FactSourceProvenance,
+    FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
+    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
+    PayloadContent, PayloadMetadata, PayloadPlatform, PayloadProvenance, PolicyLocus,
+    ProvenanceIdentity, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
+    RouteRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion,
     SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEvidenceDeclaration,
     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
     ToolComponent, VariantSpec, overlapping_behaviour,
@@ -110,7 +115,7 @@ use tiler_ir::schedule::{
     ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
-    CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant,
+    Bf16, CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant,
     F32Multiply, InputKey, OutputKey, ProviderIdentity, SemanticProgram, SemanticProgramBuilder,
     StrictSerialF32Sum, add_f32_op, constant_f32_op, multiply_f32_op,
 };
@@ -206,6 +211,20 @@ pub fn metal_representation() -> RepresentationKey {
     RepresentationKey::new(METAL_REPRESENTATION_KEY).expect("a governed representation key")
 }
 
+/// Returns the dtype row a family dispatching both packaged widths declares.
+///
+/// Both, and not only the width a given fixture packages: a host declares what
+/// its *family* can dispatch, which is a fact about the machine rather than
+/// about the artifact in front of it. A helper that declared only the width
+/// under test would make every positive case pass for the wrong reason.
+#[must_use]
+pub fn dispatches_f32_and_bf16() -> BTreeMap<ArithmeticType, DTypeDispatch> {
+    BTreeMap::from([
+        (ArithmeticType::F32, DTypeDispatch::Dispatchable),
+        (ArithmeticType::Bf16, DTypeDispatch::Dispatchable),
+    ])
+}
+
 /// Returns the execution environment a host of the fixture's own family states.
 #[must_use]
 pub fn scalar_host() -> ExecutionEnvironment {
@@ -213,6 +232,7 @@ pub fn scalar_host() -> ExecutionEnvironment {
         target_profile: profile(),
         backend: backend(),
         representation: representation(),
+        dtype_dispatch: dispatches_f32_and_bf16(),
     }
 }
 
@@ -228,6 +248,7 @@ pub fn metal_host() -> ExecutionEnvironment {
         target_profile: profile(),
         backend: metal_backend(),
         representation: metal_representation(),
+        dtype_dispatch: dispatches_f32_and_bf16(),
     }
 }
 
@@ -405,6 +426,33 @@ pub struct FixtureEntry {
     pub symbol: String,
     /// Backend transport slot each ABI binding occupies, in slot order.
     pub transports: Vec<u32>,
+    /// The arithmetic type the delivered-realization record binds this entry to.
+    ///
+    /// # This varies what the artifact *records*, not what its kernels compute
+    ///
+    /// The delivered-realization record's entry bindings are the only place an
+    /// artifact says which arithmetic governs an entry — an entry's own
+    /// numerical realization carries behaviour dimensions and no dtype — and
+    /// `validate_against_artifact` deliberately never reads the subject's
+    /// arithmetic type, which `tiler-artifact`'s own fixture documents as the
+    /// reason the subject is a producer parameter there too. So an entry
+    /// packaging this file's `f32` kernel under a `bf16` subject builds,
+    /// encodes, and decodes.
+    ///
+    /// That is exactly the right fixture for what this suite tests and exactly
+    /// the wrong one for what it does not. The loader reads the recorded
+    /// association and has no second dtype authority, so varying it varies the
+    /// whole of the loader's input. It does **not** make the carried payload a
+    /// BF16 program: the object is still this fixture's `f32` scalar image, and
+    /// no case here claims BF16 *executes*. `docs/dtype-support.md` records BF16
+    /// backend execution as absent, and a fixture implying otherwise would
+    /// contradict it.
+    ///
+    /// **Per entry rather than per variant**, because that is what makes a check
+    /// walking only the first entry visible: a two-entry variant whose entries
+    /// record two widths refuses on the second, and a loop that stopped at the
+    /// first would route.
+    pub arithmetic: ArithmeticType,
 }
 
 /// What an assembled fixture artifact varies.
@@ -435,6 +483,9 @@ pub struct FixtureSpec {
     /// Deferred prepared-entry predicates of the variant.
     pub deferred_predicates: Vec<DeferredPredicateSpec>,
     /// The packaged entries, in the plan's own stage order.
+    ///
+    /// Each carries the arithmetic the delivered-realization record binds it to;
+    /// see [`FixtureEntry::arithmetic`].
     pub entries: Vec<FixtureEntry>,
 }
 
@@ -481,6 +532,37 @@ impl FixtureSpec {
     /// The entry keys, symbols, transports, deferred predicates, and carried
     /// image a plan implies, in one place, so a portfolio member states only
     /// what it varies.
+    /// Returns the same member with every entry recorded at one arithmetic.
+    ///
+    /// See [`FixtureEntry::arithmetic`] for what this does and does not vary.
+    #[must_use]
+    pub fn recording(mut self, arithmetic: ArithmeticType) -> Self {
+        for entry in &mut self.entries {
+            entry.arithmetic = arithmetic;
+        }
+        self
+    }
+
+    /// Returns the same member with each entry recorded at its own arithmetic.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the widths do not match the member's entry count. A caller
+    /// stating fewer than a plan packages would leave an entry at whatever it
+    /// had, and the case would then pass for a reason it did not choose.
+    #[must_use]
+    pub fn recording_each(mut self, arithmetic: &[ArithmeticType]) -> Self {
+        assert_eq!(
+            arithmetic.len(),
+            self.entries.len(),
+            "state one width per packaged entry",
+        );
+        for (entry, width) in self.entries.iter_mut().zip(arithmetic) {
+            entry.arithmetic = *width;
+        }
+        self
+    }
+
     #[must_use]
     pub fn for_plan(plan: PackagedPlan) -> Self {
         match plan {
@@ -516,11 +598,13 @@ impl FixtureSpec {
                     key: entry_key(b"scalar-host-pointwise"),
                     symbol: POINTWISE_SYMBOL.to_owned(),
                     transports: vec![1, 0],
+                    arithmetic: ArithmeticType::F32,
                 },
                 FixtureEntry {
                     key: entry_key(b"scalar-host-reduction"),
                     symbol: REDUCTION_SYMBOL.to_owned(),
                     transports: vec![0, 1],
+                    arithmetic: ArithmeticType::F32,
                 },
             ],
             ..Self::default()
@@ -543,6 +627,7 @@ impl Default for FixtureSpec {
                 key: entry_key(b"scalar-host-fused"),
                 symbol: ENTRY_SYMBOL.to_owned(),
                 transports: vec![1, 0],
+                arithmetic: ArithmeticType::F32,
             }],
         }
     }
@@ -638,10 +723,14 @@ pub fn assemble_portfolio(members: &[FixtureSpec]) -> Fixture {
 /// realization rather than restated, so a fixture that changed its contract
 /// cannot leave a record describing the old one.
 ///
+/// One subject per distinct arithmetic the members record, and every packaged
+/// entry bound to its own member's — so a portfolio mixing widths states which
+/// entries each subject governs rather than one answer for all of them.
+///
 /// # Panics
 ///
-/// Panics when the record does not build. The fixture states one governed `f32`
-/// contract and binds every packaged entry to it, so a refusal is a defect in
+/// Panics when the record does not build. Every member's subject is governed and
+/// every packaged entry is bound to exactly one, so a refusal is a defect in
 /// this file rather than a case under test.
 fn declare_realization(draft: &mut ArtifactProgramBuilder, members: &[FixtureSpec]) {
     let entry = EntryRealization::of(strict());
@@ -665,39 +754,89 @@ fn declare_realization(draft: &mut ArtifactProgramBuilder, members: &[FixtureSpe
     // The portfolio's single profile: `push_variant` refuses a second variant
     // declaring a different one, so the first member's is every member's.
     let profile = members[0].variant_profile.clone();
-    let subject = ScalarArithmeticSubject::f32().identity();
     let mut record = DeliveredRealizationBuilder::new(profile.clone());
-    record
-        .declare_scalar_arithmetic(subject.clone(), resolutions)
-        .expect("the fixture contract");
-    record
-        .require(
-            &subject,
-            NumericalDimension::Contraction,
-            NumericalObligationKey::new(SemanticOccurrence::new(0), PolicyLocus::Computation),
-            resolutions[NumericalDimension::Contraction.index()],
-            TargetEvidenceDeclaration {
-                declared: resolutions[NumericalDimension::Contraction.index()],
-                means: HonouringMeans::SupportedExactly,
-                profile,
-                source: FactSourceProvenance::governed(
-                    ProvenanceIdentity::new(PROFILE_KEY, 1),
-                    ProvenanceIdentity::new("tiler.test.scalar-host.guarantee", 1),
-                ),
-            },
-        )
-        .expect("the fixture obligation");
+    // One declaration per *distinct* arithmetic. `declare_scalar_arithmetic`
+    // refuses a redeclared subject, so a portfolio whose members share a width
+    // must declare it once and bind both members' entries to it.
+    let mut declared: Vec<ArithmeticType> = Vec::new();
+    for arithmetic in members
+        .iter()
+        .flat_map(|spec| spec.entries.iter().map(|entry| entry.arithmetic))
+    {
+        if declared.contains(&arithmetic) {
+            continue;
+        }
+        declared.push(arithmetic);
+        let subject = subject_identity(arithmetic);
+        record
+            .declare_scalar_arithmetic(subject.clone(), resolutions)
+            .expect("the fixture contract");
+        record
+            .require(
+                &subject,
+                NumericalDimension::Contraction,
+                NumericalObligationKey::new(SemanticOccurrence::new(0), PolicyLocus::Computation),
+                resolutions[NumericalDimension::Contraction.index()],
+                TargetEvidenceDeclaration {
+                    declared: resolutions[NumericalDimension::Contraction.index()],
+                    means: HonouringMeans::SupportedExactly,
+                    profile: profile.clone(),
+                    source: FactSourceProvenance::governed(
+                        ProvenanceIdentity::new(PROFILE_KEY, 1),
+                        ProvenanceIdentity::new("tiler.test.scalar-host.guarantee", 1),
+                    ),
+                },
+            )
+            .expect("the fixture obligation");
+    }
     // The flat declared packaged-entry space: every member's entries, in the
     // order the members are pushed as variants.
-    let entries = members.iter().map(|spec| spec.entries.len()).sum::<usize>();
-    for entry in 0..u32::try_from(entries).expect("a bounded entry table fits u32") {
-        record
-            .bind_entry(entry, &subject)
-            .expect("a packaged entry");
+    let mut entry = 0_u32;
+    for spec in members {
+        for packaged in &spec.entries {
+            record
+                .bind_entry(entry, &subject_identity(packaged.arithmetic))
+                .expect("a packaged entry");
+            entry += 1;
+        }
     }
     draft
         .declare_realization(record.build().expect("the fixture record"))
         .expect("the fixture record agrees with the packaged portfolio");
+}
+
+/// Returns the governed scalar-arithmetic subject identity of one width.
+///
+/// The one place in this file that reaches `tiler_ir` to build a subject, and it
+/// is kept out of [`declare_realization`] on purpose: that function's claim is
+/// that a delivered-realization record is assemblable from
+/// `tiler_artifact::program` re-exports alone, which is what proves the record is
+/// reachable from a consumer whose dependency closure ADR 0081 item 2 fixes at
+/// `[tiler-artifact]`. A subject *identity* is one of those re-exports; only
+/// minting a `bf16` one from the semantic catalog is not, because
+/// `ResolvedValueType` deliberately does not travel with the artifact surface.
+///
+/// # Panics
+///
+/// Panics for an arithmetic type the governed catalog does not register, and for
+/// `f16`/`f64`, which this fixture packages no program at.
+fn subject_identity(arithmetic: ArithmeticType) -> ScalarArithmeticSubjectIdentity {
+    match arithmetic {
+        ArithmeticType::F32 => ScalarArithmeticSubject::f32().identity(),
+        ArithmeticType::Bf16 => {
+            ScalarArithmeticSubject::new(ArithmeticType::Bf16, Bf16::resolved_type())
+                .expect("the governed bf16 arithmetic subject is registered")
+                .identity()
+        }
+        // Named rather than a wildcard: a width this fixture grows a program for
+        // must state its subject here instead of falling into another's.
+        ArithmeticType::F16 | ArithmeticType::F64 => {
+            panic!(
+                "this fixture packages no {} program",
+                arithmetic.canonical_type_key()
+            )
+        }
+    }
 }
 
 fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, spec: &FixtureSpec) {

@@ -76,14 +76,16 @@
 //! identity, so a consumer that received damaged or foreign bytes learns it here
 //! rather than at a dispatch that does not exist yet.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, AvailabilityPhase, BackendKey, RecordedArtifactProgramIdentity,
-    RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    AbiFactBinder, AbiFacts, ArithmeticType, AvailabilityPhase, BackendKey,
+    RecordedArtifactProgramIdentity, RepresentationKey, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef,
 };
 use tiler_runtime::adapter::{AdapterRouteFailure, route_with_adapter};
-use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment, LoadRejection};
+use tiler_runtime::load::{DTypeDispatch, DecodedProgram, ExecutionEnvironment, LoadRejection};
 
 use crate::expansion::{RegionFacts, bind_region, build_result};
 use crate::value::{BindError, DispatchAdapter, RegionOperand, RegionRequest, Tensor, dense_bytes};
@@ -352,6 +354,32 @@ fn checked_length<A: DispatchAdapter>(
 }
 
 /// Restates the producer's declared environment from the emitted facts.
+///
+/// # The dtype row is the one field with no emitted fact behind it
+///
+/// Every other field is read from [`RouteFacts`], which the expansion emitted.
+/// There is no dtype-dispatchability fact in that record, so this states `f32`
+/// alone, and the derivation is worth writing down because the alternative
+/// readings are both wrong.
+///
+/// It is **not** an observation about this machine. Nothing here bound a device,
+/// and ADR 0086 is explicit that a public execution-environment row is a validity
+/// scope rather than an applicability authority.
+///
+/// It is a restatement of something the *compile* gate already proved: an
+/// expansion only produces an artifact if `tiler-compiler` admitted the request,
+/// and `RequestError::DTypeNotDispatchable` refuses one whose dtype the selected
+/// target profile does not resolve `Dispatchable` at the compile profile. So an
+/// embedded artifact is evidence that its own profile declared its dtypes
+/// dispatchable — which makes the runtime's dtype check tautological on this
+/// path, exactly as [`ExecutionEnvironment::classify`] already is here.
+///
+/// That tautology is the gap, not the design. Closing it means emitting the
+/// declared row into `RouteFacts` so this restates a fact instead of asserting
+/// one, and widening past `f32` requires it — a `bf16` region reaching this
+/// function today would be refused, correctly, for a reason this comment is the
+/// only record of. `declare-host-dtype-dispatchability-at-the-consumer-boundary`
+/// carries that work.
 fn execution_environment(route: &RouteFacts) -> Result<ExecutionEnvironment, &'static str> {
     Ok(ExecutionEnvironment {
         target_profile: TargetProfileRef {
@@ -366,6 +394,10 @@ fn execution_environment(route: &RouteFacts) -> Result<ExecutionEnvironment, &'s
             .map_err(|_| "the recorded backend family is not a governed backend key")?,
         representation: RepresentationKey::new(route.representation)
             .map_err(|_| "the recorded representation is not a governed representation key")?,
+        // `f32` alone, and deliberately not `bf16`: see this function's heading
+        // for why this is a restatement of the compile gate rather than a host
+        // observation, and why widening it needs an emitted fact first.
+        dtype_dispatch: BTreeMap::from([(ArithmeticType::F32, DTypeDispatch::Dispatchable)]),
     })
 }
 
