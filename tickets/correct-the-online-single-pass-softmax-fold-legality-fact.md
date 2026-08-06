@@ -1,11 +1,11 @@
 ---
 id: correct-the-online-single-pass-softmax-fold-legality-fact
 title: Correct the online single-pass softmax fold-legality fact
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [name-the-elementary-identity-rewrite-dimension, connect-certified-rounding-error-bounds-to-rewrite-permissions, reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller]
-scopes: [implementation/ir]
+scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, identity, correctness]
@@ -44,3 +44,13 @@ Admitting any permission; adding an elementary-identity dimension to any type; i
 ## Closes when
 
 The registered fact, its doc comment, and the module header agree with the certified-bounds derivation; every pinned identity the change moves is recomputed in the same commit and enumerated; and the retained softmax tests still assert the wall they assert today.
+
+## Outcome
+
+**The corrected fact, and what grounds each clause.** `SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM` now registers `not-a-reassociation-of-the-sum-but-a-horner-nesting-consuming-distributivity-which-no-permission-grants-and-the-subordinate-exponentials-elementary-function-identity-which-no-declared-dimension-names-so-no-reassociation-or-permutation-permission-reaches-it`. The Horner-nesting reading and the "shares no floating-point value with the two-pass contributor" step are [the certified-bounds record's](../docs/research/numerics/certified-bounds-as-rewrite-permissions.md) Part 2; that distributivity is a named dimension no permission grants is [ADR 0080](../docs/decisions/0080-treat-distributivity-as-a-third-numerical-dimension.md) plus [ADR 0095](../docs/decisions/0095-decline-a-distributivity-permission.md), both `accepted`; that the exponential's functional equation is named by *no declared dimension* is [the elementary-identity record's](../docs/research/numerics/elementary-identity-rewrite-dimension.md) Part 1, and the wording deliberately stops there rather than calling it a dimension, because that record's ADR is a draft with a live carrier and no `docs/decisions/` entry names it — checked with `grep -rln 'elementary identity' docs/decisions/`, which returns nothing. Naming both freedoms rather than one is that record's Part 7 requirement.
+
+**The identity-domain step, executed completely, and the version question settled by reading rather than assumed.** No encoding version moved, and each of the three was checked at its owning site. `tiler.semantic-definition-projection.v5` (`crates/tiler-ir/src/semantic/registry.rs:1784`) and `tiler.semantic-registry.v7` (`:2656`) count *rendering* revisions; this change adds, removes, and reorders nothing, and `CanonicalValueData::Utf8` encodes as tag `7` followed by `push_slice` (`crates/tiler-ir/src/semantic/types.rs:996`), so a payload of any length stays injective under the unchanged rendering. The standard semantic provider stays at revision 7 on its own documented rule (`registry.rs:2240-2255`): the revision moves only "for a change this registry's *content* encoding cannot already carry", the projection folds every definition's facts, and "bumping it for a change the projection already carried would invalidate every pinned provenance for an authority change that did not happen".
+
+**One pinned identity moved, and it is enumerated.** `explain::tests::deterministic_trace_is_sealed_and_rendered_separately`'s request qualifier, `45467875b9574962` → `a95ad77532352d7f`, rebaselined in `crates/tiler-compiler/src/explain.rs` in the same commit with its ledger entry. The request subject folds the frozen semantic registry snapshot, which encodes every registered definition's facts, so a fact-value change must move it. Reproduce with `cargo nextest run -p tiler-compiler -E 'test(deterministic_trace_is_sealed_and_rendered_separately)'` and read the reported `left`. The population was surveyed before editing — `grep -rnE '"[0-9a-f]{16}"|request=[0-9a-f]{16}' crates/ --include='*.rs'` and `grep -rlE '\b[0-9a-f]{64}\b' crates/ --include='*.rs'` — and the whole-workspace run (2675 tests, green) is the check that no other pin folds these bytes.
+
+**`implementation/compiler` was added to this ticket's scopes, and the reason is that the step cannot be completed without it.** The only pinned identity a registered-fact change reaches is a test expectation in `tiler-ir`'s downstream crate, so an `implementation/ir`-only claim can land the fact but not the pin, and a stepped meaning under an unmoved pin is the half-step AGENTS.md rates worse than none. **The disjointness verdict against the live holder is *vacuous*, not clear:** `widen-compile-governed-s-error-to-the-target-compile-failure` holds `implementation/compiler` exclusively and its branch has no commits, so `git diff --name-only de377fb1...tkt/widen-compile-governed-s-error-to-the-target-compile-failure` returns nothing and evidences nothing about what it will touch. The integrator sequences these two and recomputes this digest on the merged tree rather than taking either side's value.

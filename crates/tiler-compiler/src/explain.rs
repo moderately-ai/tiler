@@ -4051,7 +4051,25 @@ mod tests {
                 // reaches, every other request-subject assertion in the corpus
                 // being relational. The trace's own two record lines are
                 // unchanged; nothing about explain's content moved.
-                "tiler-explain-v7 request=45467875b9574962\n",
+                // Rebaselined from `45467875b9574962` when
+                // `tiler::softmax-f32@1`'s online-single-pass fact stopped
+                // calling the rescaling fold a reassociation of the sum and
+                // named the two freedoms the fold actually consumes. **No
+                // encoding version moved**: the fact record's rendering is
+                // unchanged, and a canonical UTF-8 payload is tag-prefixed and
+                // length-framed, so a value change stays injective inside
+                // `tiler.semantic-definition-projection.v5` and
+                // `tiler.semantic-registry.v7`, and the standard semantic
+                // provider's revision stays 7 for the reason its own
+                // documentation gives — the projection already carries this
+                // change, and bumping the revision would invalidate every
+                // pinned provenance for an authority change that did not
+                // happen. What moves is this digest alone, because the request
+                // subject folds the registry snapshot and that snapshot encodes
+                // every registered definition's facts. Recomputed by observing
+                // the failing value on this branch tree with the focused
+                // nextest command above, never copied from another branch.
+                "tiler-explain-v7 request=a95ad77532352d7f\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
