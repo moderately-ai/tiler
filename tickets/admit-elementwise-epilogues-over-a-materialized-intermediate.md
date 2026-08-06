@@ -1,7 +1,7 @@
 ---
 id: admit-elementwise-epilogues-over-a-materialized-intermediate
 title: Admit an elementwise epilogue over a materialized intermediate
-status: review
+status: blocked
 priority: p2
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary]
 related: []
