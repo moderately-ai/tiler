@@ -1,7 +1,7 @@
 ---
 id: move-the-structural-row-to-r6-and-retire-its-backend-residual
 title: Move the structural row to R6 and retire its backend residual
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-navigation
+lease_expires_at: 1786028995
 ---
 ## The work (maturity audit 2026-08-06, findings coordinator-verified: the IndexSubtract arm and both structural goldens exist)
 

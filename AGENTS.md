@@ -120,6 +120,8 @@ An acceptance is a relayed fact, and its provenance is part of the record: the a
 
 A doc comment is a claim, and it is load-bearing: the next worker reads it as fact, and an overstated one makes unreachable work look reachable. Describe what the code does now; when a comment and the source disagree, the source wins and the comment is the defect.
 
+A landing that satisfies a support-matrix rung criterion states, in its Outcome, exactly which row it moves and how far, and files the navigation note when the row's scope is not held — because the maturity ledgers share one exclusive scope no implementation ticket holds, and an audit found four rungs' worth of delivered capability that no row reported, each because the landing's worker could not edit the row and did not say so anywhere a sweep would find. The BF16 routing landing is the model: it stated the cell it supported, bounded how far, and filed the cell's ticket.
+
 Examples are design work. Prefer a small end-to-end tensor program showing inputs, typed operations, multiple values or outputs when relevant, logical properties, candidate and rejected physical plans, and the observable result — and never let an example quietly introduce semantics the normative text has not defined. The converse holds for capabilities: an example program Tom supplies (attention was the first) is novel test data exercising the general machinery, never a specialization target — a ticket or brief driven by one states the capability as the general construct with the example as its worked instance, and vocabulary that lands shaped around one example has silently narrowed the semantic space the next example will refute.
 
 ## Toolchain and environment
