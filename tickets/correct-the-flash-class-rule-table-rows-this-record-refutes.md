@@ -1,7 +1,7 @@
 ---
 id: correct-the-flash-class-rule-table-rows-this-record-refutes
 title: Correct the flash-class rule table's R1 and R3 rows
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [derive-the-rewrite-rule-declaration-and-admission-shape-for-the-online-softmax-fold, derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound, derive-the-capability-set-for-search-discovered-flash-class-attention-kernels, probe-e-graph-tractability-over-tilers-semantic-rewrite-vocabulary]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, program-planning, optimizer, numerics]
-claimed_from: todo
-assignee: agent-flash-rows
-lease_expires_at: 1786026692
 ---
 ## User-visible outcome
 
