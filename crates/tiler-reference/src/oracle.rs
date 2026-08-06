@@ -8,15 +8,15 @@
 //! lexicographic left fold over their bound dimensions. Nothing is downcast,
 //! and every unsupported or unauthorized case rejects with a typed error.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
-    AccessMode, CanonicalScalarDefinitionProjection, DomainRole, FrozenScalarRegistry,
-    IndexExprView, MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView, ReductionTraversal,
+    AccessMode, CanonicalScalarDefinitionProjection, FrozenScalarRegistry, IndexExprView,
+    MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView, ReductionTraversal,
     ScalarAttributeField, ScalarAttributes, ScalarAuthorityEvidence, ScalarOpKey,
     ScalarOperationDefinition, ScalarOperationKindRef, ScalarOperationRef, ScalarReductionRef,
     ScalarRegistryError, ScalarValueDefinitionView, SourcedExtent, TensorAccessRef, TensorRole,
@@ -60,12 +60,14 @@ use crate::{
 /// exactly why it is a running bound rather than a preflight one.
 ///
 /// The unit it bounds is **one span**: one call that walks a contiguous run of
-/// the region's parallel iteration space. [`IndexRegionEvaluator::evaluate`] is
-/// one span over the whole space, so the whole-region walk is held to this
-/// number exactly as it always was, and [`StagedIndexRegionEvaluation`] reaches
-/// a larger region by spending several bounded spans rather than by weakening
-/// the number. A span whose points cost more than this refuses whatever its
-/// point count is: a single point over the bound is refused at a span of one.
+/// the region's *root points* — one write root at one point of that root's own
+/// iteration domain, the unit [`StagedIndexRegionEvaluation`] defines and every
+/// count in this file is stated in. [`IndexRegionEvaluator::evaluate`] is one
+/// span over all of them, so the whole-region walk is held to this number
+/// exactly as it always was, and [`StagedIndexRegionEvaluation`] reaches a
+/// larger region by spending several bounded spans rather than by weakening the
+/// number. A span whose points cost more than this refuses whatever its point
+/// count is: a single point over the bound is refused at a span of one.
 const MAX_EVALUATION_STEPS: u64 = 16 * 1024 * 1024;
 
 /// Maximum combined host recursion depth of one region evaluation.
@@ -133,23 +135,6 @@ pub enum UnsupportedRegionFeature {
     ScalarValueForm,
     /// The region used a reducer-body value definition added after this oracle.
     ReducerBodyValueForm,
-    /// A write root iterates fewer than the region's parallel dimensions.
-    ///
-    /// This evaluator walks one parallel space and visits every root at every
-    /// point of it, so a root over a strict subset is one it cannot send over
-    /// its own domain. Refused by name at staging rather than left to the
-    /// coverage checks, which would report a defective region — a repeated
-    /// element as [`IndexRegionEvaluationError::DuplicateWrite`], or, when an
-    /// omitted dimension has extent zero and empties the whole product, an
-    /// unwritten one as [`IndexRegionEvaluationError::IncompleteWrite`] against
-    /// whichever root came first — for a region that is valid.
-    ///
-    /// The named access is the offending root itself, so the refusal never
-    /// blames a sibling that iterates the full domain.
-    SubDomainWriteRoot {
-        /// Write access whose iteration domain omits a parallel dimension.
-        access: VerifiedTensorAccessId,
-    },
 }
 
 impl fmt::Display for UnsupportedRegionFeature {
@@ -164,9 +149,6 @@ impl fmt::Display for UnsupportedRegionFeature {
             Self::SymbolicIndexDivisor => "symbolic index floor-division or modulo divisor",
             Self::ScalarValueForm => "unimplemented scalar value definition",
             Self::ReducerBodyValueForm => "unimplemented reducer-body value definition",
-            Self::SubDomainWriteRoot { .. } => {
-                "write root iterating a strict subset of the region's parallel dimensions"
-            }
         })
     }
 }
@@ -1162,6 +1144,18 @@ pub enum IndexRegionEvaluationError {
         /// output's first root in region order is named, because the alternative
         /// — naming whichever root the fill happened to reach last — would make
         /// the attribution an artifact of iteration order.
+        ///
+        /// Roots iterating different domains do not change that. The named root
+        /// is a stable handle on the boundary whose coverage failed, not a
+        /// claim that it is the short one, and the two alternatives are both
+        /// worse: deciding *which* root should have covered the gap means
+        /// re-deriving the partition proof this check exists to be independent
+        /// of, and naming no root at all removes the only handle a caller has
+        /// on which boundary failed. A root that owns nothing — the degenerate
+        /// zero-extent member — can be the one named, and that is honest here
+        /// in a way it was not while a sub-domain root made this fire for a
+        /// *valid* region: this refusal is now reachable only for a region
+        /// whose roots genuinely leave an element unwritten.
         access: VerifiedTensorAccessId,
     },
     /// A governed evaluation resource exceeded its limit.
@@ -1173,15 +1167,15 @@ pub enum IndexRegionEvaluationError {
         /// First rejected size.
         actual: u64,
     },
-    /// A staged span asked for no parallel points.
+    /// A staged span asked for no root points.
     ///
     /// A span that walks nothing cannot advance the evaluation, so a caller
     /// looping until exhaustion on one would never finish. Refused at the call
     /// that made it rather than diagnosed later as an incomplete walk.
     EmptyStagedSpan,
-    /// [`StagedIndexRegionEvaluation::finish`] ran with parallel points unwalked.
+    /// [`StagedIndexRegionEvaluation::finish`] ran with root points unwalked.
     IncompleteStagedWalk {
-        /// Parallel points the spans covered before finishing.
+        /// Root points the spans covered before finishing.
         evaluated: u64,
     },
     /// The region uses a feature outside this bounded oracle profile.
@@ -1270,11 +1264,11 @@ impl IndexRegionEvaluationError {
                 write!(formatter, "unsupported region feature: {feature}")
             }
             Self::EmptyStagedSpan => {
-                formatter.write_str("a staged span must walk at least one parallel point")
+                formatter.write_str("a staged span must walk at least one root point")
             }
             Self::IncompleteStagedWalk { evaluated } => write!(
                 formatter,
-                "the staged walk finished after {evaluated} parallel points, leaving the region's parallel space uncovered"
+                "the staged walk finished after {evaluated} root points, leaving some write root's own domain uncovered"
             ),
             Self::MalformedRegion => {
                 formatter.write_str("verified index region is internally malformed")
@@ -1411,7 +1405,7 @@ impl IndexRegionEvaluator {
         inputs: &[IndexRegionInput<'_>],
     ) -> Result<IndexRegionEvaluation, IndexRegionEvaluationError> {
         let mut staged = self.stage(region, authority, inputs)?;
-        staged.evaluate_points(u64::MAX)?;
+        staged.evaluate_root_points(u64::MAX)?;
         staged.finish()
     }
 
@@ -1420,7 +1414,7 @@ impl IndexRegionEvaluator {
     /// Revalidation, input binding, capability resolution, and output planning
     /// all happen here, so a region this authority cannot admit is refused
     /// before any point is walked and a caller learns the size of the walk
-    /// ([`StagedIndexRegionEvaluation::parallel_point_count`]) without paying
+    /// ([`StagedIndexRegionEvaluation::root_point_count`]) without paying
     /// for it.
     ///
     /// # Errors
@@ -1441,11 +1435,15 @@ impl IndexRegionEvaluator {
             return Err(IndexRegionEvaluationError::SemanticAuthorityMismatch);
         }
         let evaluation = RegionEvaluation::new(region, self, authority, inputs)?;
-        let walk = ParallelWalk::new(evaluation.parallel_domain()?);
         let plans = evaluation.output_plans()?;
+        // The cursor is settled at construction and after every point, so
+        // `is_exhausted` reads a field rather than searching for a root with
+        // work left — and a region whose every root is empty is exhausted
+        // before the first span, which is what makes it finishable.
+        let cursor = RootCursor::new(&plans);
         Ok(StagedIndexRegionEvaluation {
             evaluation,
-            walk,
+            cursor,
             plans,
             authority: evidence,
             failure: None,
@@ -1453,16 +1451,36 @@ impl IndexRegionEvaluator {
     }
 }
 
-/// One region evaluation walked in caller-sized spans of its parallel domain.
+/// One region evaluation walked in caller-sized spans of its **root points**.
+///
+/// # The unit this type is stated in
+///
+/// A **root point** is one write root at one point of *that root's own*
+/// iteration domain. It is the unit of [`Self::root_point_count`],
+/// [`Self::evaluate_root_points`], [`Self::evaluated_root_points`], and of the
+/// step budget's span, and by the bijection below there is exactly one root
+/// point per element the region's output boundaries retain.
+///
+/// The unit is not the parallel point, and the difference is not cosmetic. A
+/// write's iteration domain is any subset of the region's parallel dimensions,
+/// which is what makes a partition with unequally sized members expressible: two
+/// roots over one boundary declare dimensions of different extents rather than
+/// sharing one, and a root's point count is the product of the extents *it*
+/// iterates. The product of all the parallel extents is therefore a number no
+/// root walks — for three-and-five into eight it is fifteen where eight elements
+/// exist, and a zero-extent member zeroes it entirely while the region's other
+/// roots still have every one of their points to walk. A caller sizing spans
+/// against it would be dividing by a number this evaluation never counts.
 ///
 /// # What this is for
 ///
 /// `MAX_EVALUATION_STEPS` bounds one span, and a region's cost per iteration
 /// point is not computable from its extents, so a region large enough is refused
 /// by the whole-region path however well formed it is. This type reaches such a
-/// region without moving that bound: each [`Self::evaluate_points`] call is one
-/// bounded ask that passes exactly the test [`IndexRegionEvaluator::evaluate`]
-/// applies, and the total is the caller's own loop.
+/// region without moving that bound: each [`Self::evaluate_root_points`] call is
+/// one bounded ask that passes exactly the test
+/// [`IndexRegionEvaluator::evaluate`] applies, and the total is the caller's own
+/// loop.
 ///
 /// There is deliberately **no convenience that walks every remaining point in
 /// one call**. The loop is the authorization: a single call that walked an
@@ -1475,56 +1493,62 @@ impl IndexRegionEvaluator {
 /// The argument is about what a [`VerifiedIndexRegion`] *proves*, not about the
 /// shape of the loop below; the loop is what was checked against it.
 ///
-/// - **Every write root this evaluation accepts iterates exactly the region's
-///   parallel dimension set.** `IndexRegionBuilder`'s access preparation admits
-///   a write domain that is *any subset* of the parallel dimensions — that is
-///   the whole of what a partition with unequally sized members needs, and
-///   `IndexBuildError::InvalidWriteDomain` now refuses only a write over a
-///   reduction dimension. What makes the set equality below true is therefore
-///   this oracle's own refusal rather than the builder's: staging rejects a root
-///   over a strict subset with
-///   [`UnsupportedRegionFeature::SubDomainWriteRoot`] before the first point is
-///   walked. Over the roots that reach this loop, "the parallel points this walk
-///   visits" and "the domain each output is written over" are one set rather
-///   than two that happen to coincide for the regions tried so far.
-/// - **An output's writes are jointly total and injective over that domain.**
-///   Every write access carries a `WriteOwnershipProofView` in one of three
-///   forms. `CoordinatePermutation`: each coordinate *is* a distinct domain
-///   dimension whose extent the environment proves equal to the axis it indexes.
-///   `Exhaustive`: a finite enumeration set one bit per covered element and
-///   refused both a repeat and a gap. `PartitionMember`: this root is total and
-///   injective over its own partition of an output several roots share, and the
-///   joint obligation across that root set — pairwise disjoint partitions whose
-///   union is the boundary exactly — was discharged over all of them together,
-///   by interval reasoning over their rectangles or by one shared enumeration
-///   bitset.
+/// - **A write root's stored value is a function of its own domain and nothing
+///   else.** Two refusals hold this, one on each side of the root. A coordinate
+///   may not name a dimension outside its access domain
+///   (`IndexBuildError::CoordinateOutsideAccessDomain`), and — since a write
+///   domain became a subset — verification refuses a root whose stored value
+///   varies along a parallel dimension the write does not iterate
+///   (`IndexRegionDiagnostic::ValueDimensionOutsideWriteDomain`), because both
+///   readings of such a region are wrong: firing the root once per point of the
+///   omitted dimension stores several values to one element, and picking one
+///   point of it stores a value nothing in the region selected. So seeding a
+///   root's frame from its own domain alone leaves nothing undefined, and the
+///   dimensions the root omits are not merely unvisited but unmentionable.
+/// - **An output's writes are jointly total and injective over their own
+///   domains.** Every write access carries a `WriteOwnershipProofView` in one of
+///   three forms. `CoordinatePermutation`: each coordinate *is* a distinct
+///   domain dimension whose extent the environment proves equal to the axis it
+///   indexes. `Exhaustive`: a finite enumeration set one bit per covered element
+///   and refused both a repeat and a gap. `PartitionMember`: this root is total
+///   and injective over its own partition of an output several roots share, and
+///   the joint obligation across that root set — pairwise disjoint partitions
+///   whose union is the boundary exactly — was discharged over all of them
+///   together, by interval reasoning over their rectangles or by one shared
+///   enumeration bitset. Each of the three quantifies over the root's *own*
+///   domain; none of them ever quantified over the region's parallel set, which
+///   is why relaxing the write-domain rule cost the argument nothing.
 ///
 ///   The entity in bijection with an output's elements is therefore the
-///   **(root, parallel point) pair**, not the parallel point. Under the first
-///   two forms the output has one root and the two coincide, which is why the
-///   pair was invisible until partitions existed. Under the third the map is
-///   still a bijection: each root is injective over the domain by its own proof,
-///   and the joint obligation makes the roots' images pairwise disjoint and
-///   exactly covering, so distinct pairs reach distinct elements and every
-///   element is reached. Since every root that reaches this loop iterates the
-///   whole parallel domain — the first fact above, which is a stated refusal
-///   rather than a builder guarantee — splitting the points splits the pairs, so
-///   **a partition of the parallel points is a partition of each output's
-///   elements**, taken over that output's roots together, and no span can land
-///   on an element another span produced.
+///   **(root, point of that root's own domain) pair** — the root point. Under
+///   the first two forms the output has one root and the pair collapses to that
+///   root's point, which is why the pair was invisible until partitions existed.
+///   Under the third the map is still a bijection: each root is injective over
+///   its own domain by its own proof, and the joint obligation makes the roots'
+///   images pairwise disjoint and exactly covering, so distinct pairs reach
+///   distinct elements and every element is reached. A zero-extent member
+///   contributes no pair and owns no element, which is the degenerate case of
+///   the same statement rather than an exception to it. Splitting the root
+///   points therefore splits the pairs, so **a partition of the root points is a
+///   partition of each output's elements**, taken over that output's roots
+///   together, and no span can land on an element another span produced.
 /// - **No value in a region can read a boundary the region writes.** The same
 ///   access preparation refuses a read of an output tensor with
 ///   `IndexBuildError::ReadFromOutput`. The written elements are the only state
-///   spans share, and this makes them unobservable to the computation, so a
-///   point's value cannot depend on which other points have already run.
+///   spans share, and this makes them unobservable to the computation, so a root
+///   point's value cannot depend on which other root points have already run.
+///   This fact does the extra work the per-root walk needs: the walk visits the
+///   pairs root-major rather than point-major, and an order change is only sound
+///   because no root point can observe another's write.
 ///
-/// What was checked against those three facts: `RegionEvaluation::evaluate_point`
-/// builds a fresh `Frame` per point; a read resolves only against the immutable
-/// bound inputs; a reduction's state is built from its `init` values inside the
-/// point's own frame and folded through a `BodyContext` that does not outlive
-/// the point. How many reads a contributor performs never enters this — a fold
-/// taking two operand reads per contributor composes exactly as one taking a
-/// single read does.
+/// What was checked against those three facts:
+/// `RegionEvaluation::evaluate_root_point` builds a fresh `Frame` per root
+/// point, seeded from that root's own domain; a read resolves only against the
+/// immutable bound inputs; a reduction's state is built from its `init` values
+/// inside the root point's own frame and folded through a `BodyContext` that
+/// does not outlive it. How many reads a contributor performs never enters this
+/// — a fold taking two operand reads per contributor composes exactly as one
+/// taking a single read does.
 ///
 /// # What staging does not weaken
 ///
@@ -1535,16 +1559,22 @@ impl IndexRegionEvaluator {
 /// written twice, and a gap is the same `None` at [`Self::finish`]. Both checks
 /// are the oracle's own, independent of the ownership proof cited above — for a
 /// partitioned output they are this evaluator's own joint obligation, computed
-/// over the same buffer the verifier's shared bitset covered — and staging
-/// leaves them exactly where they were.
+/// over the same buffer the verifier's shared bitset covered — and neither
+/// staging nor the per-root walk moves them. Their populations stay honest under
+/// unequal roots for the reason the bijection gives: each root fires once per
+/// point of its own domain, so a strict-subset root writes its rectangle exactly
+/// once and `DuplicateWrite` is left reporting only a genuine collision between
+/// two roots' images, while a root with no points writes nothing and the gap
+/// `IncompleteWrite` reports is a gap in the boundary rather than an artifact of
+/// which product the walk happened to take.
 ///
 /// The step budget is not caller-held state. Each span is a self-contained
-/// evaluation of a *stated* run of parallel points whose result is the whole
-/// walk's result restricted to them, and the budget bounds one such ask
-/// unchanged; a caller who wants more work must write more calls, which was
-/// already true of [`IndexRegionEvaluator::evaluate`] itself. What is refused is
-/// resuming *inside* a point with a fresh budget, which would make the unit a
-/// caller pays for something no one can state.
+/// evaluation of a *stated* run of root points whose result is the whole walk's
+/// result restricted to them, and the budget bounds one such ask unchanged; a
+/// caller who wants more work must write more calls, which was already true of
+/// [`IndexRegionEvaluator::evaluate`] itself. What is refused is resuming
+/// *inside* a root point with a fresh budget, which would make the unit a caller
+/// pays for something no one can state.
 ///
 /// A span width is the caller's because nothing else can supply it: unlike a
 /// fold whose widest admissible slab divides out of a step product, a region's
@@ -1552,7 +1582,7 @@ impl IndexRegionEvaluator {
 /// the width was too large.
 pub struct StagedIndexRegionEvaluation<'a> {
     evaluation: RegionEvaluation<'a>,
-    walk: ParallelWalk,
+    cursor: RootCursor,
     plans: Vec<OutputPlan<'a>>,
     authority: ScalarAuthorityEvidence,
     failure: Option<IndexRegionEvaluationError>,
@@ -1563,9 +1593,9 @@ impl fmt::Debug for StagedIndexRegionEvaluation<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StagedIndexRegionEvaluation")
-            .field("parallel_point_count", &self.walk.point_count())
-            .field("evaluated_points", &self.walk.evaluated)
-            .field("exhausted", &self.walk.exhausted)
+            .field("root_point_count", &self.root_point_count())
+            .field("evaluated_root_points", &self.cursor.evaluated)
+            .field("exhausted", &self.cursor.exhausted)
             .field("output_count", &self.plans.len())
             .field("failed", &self.failure.is_some())
             .finish_non_exhaustive()
@@ -1573,34 +1603,48 @@ impl fmt::Debug for StagedIndexRegionEvaluation<'_> {
 }
 
 impl StagedIndexRegionEvaluation<'_> {
-    /// Returns the number of parallel points the whole walk covers.
+    /// Returns the number of root points the whole walk covers.
     ///
-    /// `None` when the product of the parallel extents exceeds `u64`. That is
-    /// not "very many": it is the case where no point count exists to report,
-    /// and a saturated one would be a number a caller could divide by. Such a
-    /// region is still walkable — and still refused by the step budget or by the
-    /// write-coverage checks long before the count would have mattered.
+    /// The sum over every root of the product of the extents *that root*
+    /// iterates, which by the bijection above is the number of elements this
+    /// region's output boundaries retain between them. A root over an empty
+    /// domain contributes one — it stores one element at constant coordinates —
+    /// and a root one of whose extents is zero contributes none.
+    ///
+    /// `None` when a root's own product, or the sum across roots, exceeds `u64`.
+    /// That is not "very many": it is the case where no point count exists to
+    /// report, and a saturated one would be a number a caller could divide by.
+    /// Such a region is still walkable — and still refused by the step budget or
+    /// by the write-coverage checks long before the count would have mattered.
     #[must_use]
-    pub fn parallel_point_count(&self) -> Option<u64> {
-        self.walk.point_count()
+    pub fn root_point_count(&self) -> Option<u64> {
+        self.plans
+            .iter()
+            .flat_map(|plan| plan.roots.iter())
+            .try_fold(0_u64, |total, root| {
+                total.checked_add(root.walk.point_count()?)
+            })
     }
 
-    /// Returns the parallel points walked so far.
+    /// Returns the root points walked so far.
     #[must_use]
-    pub const fn evaluated_points(&self) -> u64 {
-        self.walk.evaluated
+    pub const fn evaluated_root_points(&self) -> u64 {
+        self.cursor.evaluated
     }
 
-    /// Returns whether every parallel point has been walked.
+    /// Returns whether every root has been walked over its whole domain.
     #[must_use]
     pub const fn is_exhausted(&self) -> bool {
-        self.walk.exhausted
+        self.cursor.exhausted
     }
 
-    /// Walks up to `points` further parallel points under one step budget.
+    /// Walks up to `points` further root points under one step budget.
     ///
     /// Returns how many were walked, which is fewer than asked exactly when the
-    /// walk reached its end, and zero only when it had already reached it.
+    /// walk reached its end, and zero only when it had already reached it. A
+    /// span may cross from one root to the next, and from one output boundary to
+    /// the next, which is sound for the same reason it may cross between two
+    /// points of one root: no root point can observe another's write.
     ///
     /// A failed span poisons this evaluation: the outputs it had written are a
     /// partial result, and a later call returning the original failure is what
@@ -1613,7 +1657,7 @@ impl StagedIndexRegionEvaluation<'_> {
     /// failure this span reaches — including
     /// [`IndexReferenceResource::EvaluationSteps`] when the span's points cost
     /// more than `MAX_EVALUATION_STEPS` between them.
-    pub fn evaluate_points(&mut self, points: u64) -> Result<u64, IndexRegionEvaluationError> {
+    pub fn evaluate_root_points(&mut self, points: u64) -> Result<u64, IndexRegionEvaluationError> {
         if let Some(failure) = &self.failure {
             return Err(failure.clone());
         }
@@ -1621,7 +1665,7 @@ impl StagedIndexRegionEvaluation<'_> {
             return Err(IndexRegionEvaluationError::EmptyStagedSpan);
         }
         self.evaluation
-            .evaluate_span(&mut self.walk, &mut self.plans, points)
+            .evaluate_span(&mut self.cursor, &mut self.plans, points)
             .inspect_err(|failure| self.failure = Some(failure.clone()))
     }
 
@@ -1630,16 +1674,16 @@ impl StagedIndexRegionEvaluation<'_> {
     /// # Errors
     ///
     /// Returns the retained failure of a poisoned evaluation,
-    /// [`IndexRegionEvaluationError::IncompleteStagedWalk`] when parallel points
+    /// [`IndexRegionEvaluationError::IncompleteStagedWalk`] when root points
     /// remain unwalked, or the same write-coverage and value failures the
     /// whole-region path reports when it finishes its outputs.
     pub fn finish(self) -> Result<IndexRegionEvaluation, IndexRegionEvaluationError> {
         if let Some(failure) = self.failure {
             return Err(failure);
         }
-        if !self.walk.exhausted {
+        if !self.cursor.exhausted {
             return Err(IndexRegionEvaluationError::IncompleteStagedWalk {
-                evaluated: self.walk.evaluated,
+                evaluated: self.cursor.evaluated,
             });
         }
         let outputs = self
@@ -1654,23 +1698,27 @@ impl StagedIndexRegionEvaluation<'_> {
     }
 }
 
-/// Lexicographic cursor over one region's parallel iteration space.
+/// Lexicographic cursor over **one write root's own** iteration domain.
 ///
 /// Holds the position a span left off at, which is what makes a span boundary a
-/// resumption between points rather than inside one.
-struct ParallelWalk {
+/// resumption between root points rather than inside one. One per root rather
+/// than one per region, because a root's iteration space is the product of the
+/// extents it declares and two roots partitioning one boundary into unequally
+/// sized pieces declare different ones.
+struct DomainWalk {
     dimensions: Vec<(VerifiedDimensionId, u64)>,
     extents: Vec<u64>,
     point: Vec<u64>,
     exhausted: bool,
-    evaluated: u64,
 }
 
-impl ParallelWalk {
+impl DomainWalk {
     fn new(dimensions: Vec<(VerifiedDimensionId, u64)>) -> Self {
         let extents: Vec<u64> = dimensions.iter().map(|(_, extent)| *extent).collect();
-        // One empty extent makes the space empty; a rank-zero parallel domain is
-        // the one point of the empty tuple, which is what `advance_point`'s
+        // One empty extent makes *this root's* space empty, which is the
+        // degenerate partition member: it owns no element and must contribute
+        // none, without emptying any sibling's walk. A rank-zero domain is the
+        // one point of the empty tuple, which is what `advance_point`'s
         // immediate `false` on an empty slice already produced.
         let exhausted = extents.contains(&0);
         let point = vec![0_u64; extents.len()];
@@ -1679,7 +1727,6 @@ impl ParallelWalk {
             extents,
             point,
             exhausted,
-            evaluated: 0,
         }
     }
 
@@ -1693,9 +1740,56 @@ impl ParallelWalk {
     }
 
     fn advance(&mut self) {
-        self.evaluated = self.evaluated.saturating_add(1);
         if !advance_point(&mut self.point, &self.extents) {
             self.exhausted = true;
+        }
+    }
+}
+
+/// Cursor over one region's root points, in plan then root then domain order.
+///
+/// Kept **settled** by construction and after every point walked: it stands
+/// either on a root with a point left or past the last plan, never on an
+/// exhausted root. That is what lets [`StagedIndexRegionEvaluation::is_exhausted`]
+/// read a field instead of searching, and it is why a region whose every root is
+/// empty — legal, and produced by a partition all of whose members are
+/// degenerate — reports exhaustion before the first span rather than deadlocking
+/// a caller looping until [`StagedIndexRegionEvaluation::evaluate_root_points`]
+/// returns zero.
+struct RootCursor {
+    plan: usize,
+    root: usize,
+    evaluated: u64,
+    exhausted: bool,
+}
+
+impl RootCursor {
+    fn new(plans: &[OutputPlan<'_>]) -> Self {
+        let mut cursor = Self {
+            plan: 0,
+            root: 0,
+            evaluated: 0,
+            exhausted: false,
+        };
+        cursor.settle(plans);
+        cursor
+    }
+
+    /// Advances past exhausted roots and finished plans to the next root point.
+    fn settle(&mut self, plans: &[OutputPlan<'_>]) {
+        loop {
+            let Some(plan) = plans.get(self.plan) else {
+                self.exhausted = true;
+                return;
+            };
+            match plan.roots.get(self.root) {
+                Some(root) if !root.walk.exhausted => return,
+                Some(_) => self.root = self.root.saturating_add(1),
+                None => {
+                    self.plan = self.plan.saturating_add(1);
+                    self.root = 0;
+                }
+            }
         }
     }
 }
@@ -1719,10 +1813,15 @@ struct BodyContext<'a> {
     values: HashMap<VerifiedReducerBodyValueId, Tensor>,
 }
 
-/// One write root of an output boundary.
+/// One write root of an output boundary, with its own iteration cursor.
+///
+/// The cursor is per root because the domain is: a write iterates any subset of
+/// the region's parallel dimensions, so a root's point count is the product of
+/// the extents *it* declares and two roots of one boundary need not agree on it.
 struct OutputRoot<'a> {
     access: TensorAccessRef<'a>,
     value: VerifiedScalarValueId,
+    walk: DomainWalk,
 }
 
 /// One output **boundary** and every root that writes it.
@@ -2014,7 +2113,10 @@ fn admit_index(value: ExactInteger) -> Result<ExactInteger, IndexRegionEvaluatio
 
 fn finish_output(plan: OutputPlan<'_>) -> Result<Tensor, IndexRegionEvaluationError> {
     // Every plan is created from a root and only ever gains more, so an empty
-    // root list is a fail-closed floor rather than a reachable state.
+    // root list is a fail-closed floor rather than a reachable state. The first
+    // root in region order is the boundary's stable handle for a gap, not a
+    // fault attribution; `IncompleteWrite` says why that survives roots of
+    // unequal domains.
     let access = plan
         .roots
         .first()
@@ -2031,33 +2133,30 @@ fn finish_output(plan: OutputPlan<'_>) -> Result<Tensor, IndexRegionEvaluationEr
 }
 
 impl<'a> RegionEvaluation<'a> {
-    fn parallel_domain(
-        &self,
-    ) -> Result<Vec<(VerifiedDimensionId, u64)>, IndexRegionEvaluationError> {
-        self.domain(
-            self.region
-                .dimensions()
-                .filter(|dimension| dimension.role() == DomainRole::Parallel)
-                .map(tiler_ir::index::DomainDimensionRef::id),
-        )
-    }
-
-    /// Walks up to `points` parallel points from where the walk stands.
+    /// Walks up to `points` root points from where the cursor stands.
     ///
     /// The step budget starts here and nowhere else, so one span is one ask: the
     /// whole-region path calls this once with an unbounded point count and is
     /// held to exactly the number it always was.
+    ///
+    /// No parallel dimension goes unread by skipping the region's own dimension
+    /// list: a parallel dimension a reachable read or value names is in that
+    /// value's free dimensions, and verification requires an output root's free
+    /// dimensions to lie inside its write domain, so every parallel dimension a
+    /// verified region declares is in some root's domain and its extent is
+    /// resolved — and refused when symbolic — where that root's walk is built.
     fn evaluate_span(
         &mut self,
-        walk: &mut ParallelWalk,
+        cursor: &mut RootCursor,
         plans: &mut [OutputPlan<'a>],
         points: u64,
     ) -> Result<u64, IndexRegionEvaluationError> {
         self.steps = 0;
         let mut walked = 0_u64;
-        while walked < points && !walk.exhausted {
-            self.evaluate_point(&walk.dimensions, &walk.point, plans)?;
-            walk.advance();
+        while walked < points && !cursor.exhausted {
+            self.evaluate_root_point(cursor, plans)?;
+            cursor.evaluated = cursor.evaluated.saturating_add(1);
+            cursor.settle(plans);
             walked = walked.saturating_add(1);
         }
         Ok(walked)
@@ -2081,25 +2180,49 @@ impl<'a> RegionEvaluation<'a> {
             .collect()
     }
 
-    /// Admits every output root this evaluator can send over its own domain.
+    /// Plans one buffer per output boundary, carrying every root that writes it,
+    /// each with a cursor over its own iteration domain.
     ///
-    /// The set equality is compared both ways rather than tested for
-    /// subset-ness. The builder admits only a subset of the parallel dimensions,
-    /// so inequality *is* a strict subset today; comparing the sets means a root
-    /// naming something else — a dimension this region does not iterate in
-    /// parallel — refuses here too rather than reaching a walk that has no
-    /// coordinate for it.
+    /// # Which partitioned regions this admits
     ///
-    /// The extents are deliberately not read: a strict-subset root is outside
-    /// this profile whether or not every dimension has a static extent, and a
-    /// root refused for its domain should not be reported as a symbolic one.
-    fn admit_write_roots(&self) -> Result<(), IndexRegionEvaluationError> {
+    /// All of them, and the admitting boundary is a decision rather than a
+    /// fallthrough. A write's domain is any subset of the region's parallel
+    /// dimensions (`IndexBuildError::InvalidWriteDomain` now refuses the
+    /// reduction half alone), so a root's point count is the product of the
+    /// extents *it* iterates and two roots of one boundary need not agree on it
+    /// — which is the whole of what a partition with unequally sized members
+    /// needs. Giving each root its own [`DomainWalk`] reproduces every such
+    /// partition exactly: the (root, point of that root's own domain) pairs are
+    /// the elements, and evaluating all of them is evaluating the whole tensor.
+    /// There is no partition shape this evaluator can see but not reproduce, so
+    /// there is no [`UnsupportedRegionFeature`] to raise here — one would be a
+    /// refusal nothing could ever trigger, which reads as a guarantee while
+    /// checking nothing.
+    ///
+    /// What is left checked rather than assumed is the coverage. Disjointness
+    /// and totality are the oracle's own per-element obligation against this
+    /// shared buffer, independent of the verifier's joint proof:
+    /// [`IndexRegionEvaluationError::DuplicateWrite`] fires when two roots' rectangles
+    /// collide on one slot, and [`IndexRegionEvaluationError::IncompleteWrite`]
+    /// when the roots together leave one unfilled. Neither can now fire for a
+    /// valid region — a strict-subset root fires once per point of its own
+    /// domain, so it writes its rectangle once, and a root with a zero extent
+    /// writes nothing without emptying a sibling's walk.
+    ///
+    /// The two things counted here are counted over different populations, each
+    /// over the one it is about. The retained-element budget counts each
+    /// *boundary* once, because one boundary is what is retained; charging a
+    /// partitioned output once per root would refuse a program on memory it
+    /// never allocates. The walk is built per *root*, over that root's own
+    /// extents, because a root's points are what it visits; giving it the
+    /// region's parallel product would size it by points nothing walks, and the
+    /// step budget — a running count of the work a span actually does — would
+    /// then be spent on them.
+    fn output_plans(&self) -> Result<Vec<OutputPlan<'a>>, IndexRegionEvaluationError> {
         let region = self.region;
-        let parallel: BTreeSet<VerifiedDimensionId> = region
-            .dimensions()
-            .filter(|dimension| dimension.role() == DomainRole::Parallel)
-            .map(tiler_ir::index::DomainDimensionRef::id)
-            .collect();
+        let mut retained = 0_usize;
+        let mut plans: Vec<OutputPlan<'a>> = Vec::with_capacity(region.outputs().len());
+        let mut planned: HashMap<VerifiedTensorId, usize> = HashMap::new();
         for output in region.outputs() {
             let access = region
                 .access(output.access())
@@ -2107,75 +2230,12 @@ impl<'a> RegionEvaluation<'a> {
             if access.mode() != AccessMode::Write {
                 return Err(IndexRegionEvaluationError::MalformedRegion);
             }
-            if access.domain().collect::<BTreeSet<_>>() != parallel {
-                return Err(unsupported(UnsupportedRegionFeature::SubDomainWriteRoot {
-                    access: access.id(),
-                }));
-            }
-        }
-        Ok(())
-    }
-
-    /// Plans one buffer per output boundary, carrying every root that writes it.
-    ///
-    /// # Which partitioned regions this admits
-    ///
-    /// Those every one of whose write roots iterates the region's **whole**
-    /// parallel dimension set. That used to be all of them: `IndexRegionBuilder`
-    /// refused any other write domain outright, so grouping the roots onto one
-    /// buffer reproduced every partition a region could express and a refusal
-    /// here would have been one nothing could trigger — which reads as a
-    /// guarantee while checking nothing. The builder now admits any *subset* of
-    /// the parallel dimensions, because a partition whose members have unequal
-    /// extents needs roots with different point counts and a point count is the
-    /// product of the extents a root iterates. So the premise is gone and the
-    /// refusal is now the thing that can fire.
-    ///
-    /// For the roots this still admits nothing changes: every one is visited at
-    /// every parallel point this walk makes, so the (root, parallel point) pairs
-    /// are the elements and evaluating all of them is evaluating the whole
-    /// tensor. Disjoint coverage and totality are checked here per element,
-    /// against this buffer, independently of the verifier's own joint proof.
-    ///
-    /// A strict-subset root is refused explicitly, by
-    /// [`UnsupportedRegionFeature::SubDomainWriteRoot`] naming that root, rather
-    /// than left to those coverage checks — because both shapes the fallthrough
-    /// takes say something false. Such a root cannot name the omitted dimensions
-    /// in its coordinates (`IndexBuildError::CoordinateOutsideAccessDomain`), so
-    /// the full-space walk sends it to one element once per point of what it
-    /// omits and [`IndexRegionEvaluationError::DuplicateWrite`] refuses it: a
-    /// real refusal, but one that reports a duplicated write where the region
-    /// declares none. And when an omitted dimension has extent zero the whole
-    /// parallel product is zero, so no point is walked, nothing is written, and
-    /// `finish_output` reports
-    /// [`IndexRegionEvaluationError::IncompleteWrite`] against the boundary's
-    /// first root in region order — which may be a sibling that iterates the
-    /// full domain and owns no element at all. Evaluating each root over its own
-    /// domain, which supersedes this refusal, is
-    /// `evaluate-write-roots-over-their-own-domains-in-the-oracle`.
-    ///
-    /// The retained-element budget counts each boundary once, because one
-    /// boundary is what is retained; charging a partitioned output once per root
-    /// would refuse a program on memory it never allocates.
-    fn output_plans(&self) -> Result<Vec<OutputPlan<'a>>, IndexRegionEvaluationError> {
-        let region = self.region;
-        // A whole pass before the first buffer, so the refusal is a property of
-        // the region rather than of how far planning had got: sharing the loop
-        // below would let an earlier boundary's retained-element budget answer
-        // first for a region no budget could make evaluable.
-        self.admit_write_roots()?;
-        let mut retained = 0_usize;
-        let mut plans: Vec<OutputPlan<'a>> = Vec::with_capacity(region.outputs().len());
-        let mut planned: HashMap<VerifiedTensorId, usize> = HashMap::new();
-        for output in region.outputs() {
-            // `admit_write_roots` has already established that this access is a
-            // write over the whole parallel domain.
-            let access = region
-                .access(output.access())
-                .map_err(IndexRegionEvaluationError::Handle)?;
+            // Built before the boundary's own budget so a symbolic extent is
+            // reported as one wherever the root sits in region order.
             let root = OutputRoot {
                 access,
                 value: output.value(),
+                walk: DomainWalk::new(self.domain(access.domain())?),
             };
             // Ordered by each boundary's first root, so a region no partition
             // touches produces exactly the plans, in exactly the order, that one
@@ -2221,43 +2281,61 @@ impl<'a> RegionEvaluation<'a> {
         Ok(plans)
     }
 
-    fn evaluate_point(
+    /// Evaluates the root the settled cursor stands on, at that root's point.
+    ///
+    /// The frame is seeded from the root's **own** domain and from nothing else,
+    /// and that is exactly the environment its stored value needs: a coordinate
+    /// may not name a dimension outside its access domain
+    /// (`IndexBuildError::CoordinateOutsideAccessDomain`) and verification
+    /// refuses a root whose value varies along a parallel dimension the write
+    /// does not iterate (`IndexRegionDiagnostic::ValueDimensionOutsideWriteDomain`),
+    /// so no expression this reaches can ask for a dimension the frame lacks. A
+    /// reduction binds its own dimensions in an inner frame, as it always did.
+    ///
+    /// One root point contributes exactly one element to the boundary's shared
+    /// buffer, which is what makes a partitioned output whole at the end of the
+    /// walk and what makes the two coverage checks below joint over the roots
+    /// rather than per root.
+    fn evaluate_root_point(
         &mut self,
-        parallel: &[(VerifiedDimensionId, u64)],
-        point: &[u64],
+        cursor: &RootCursor,
         plans: &mut [OutputPlan<'a>],
     ) -> Result<(), IndexRegionEvaluationError> {
+        let plan = plans
+            .get_mut(cursor.plan)
+            .ok_or(IndexRegionEvaluationError::MalformedRegion)?;
+        // Destructured so the root's own cursor stays mutable while the
+        // boundary's shared buffer is written.
+        let OutputPlan {
+            roots,
+            value_type,
+            shape,
+            elements,
+        } = plan;
+        let root = roots
+            .get_mut(cursor.root)
+            .ok_or(IndexRegionEvaluationError::MalformedRegion)?;
         let mut frame = Frame::default();
-        for ((dimension, _), coordinate) in parallel.iter().zip(point) {
+        for ((dimension, _), coordinate) in root.walk.dimensions.iter().zip(&root.walk.point) {
             frame.environment.insert(*dimension, *coordinate);
         }
-        for plan in plans {
-            // Destructured so the roots stay readable while their shared buffer
-            // is written; one point contributes one element per root, which is
-            // what makes the partitioned output whole at the end of the walk.
-            let OutputPlan {
-                roots,
-                value_type,
-                shape,
-                elements,
-            } = plan;
-            for root in roots.iter() {
-                let value = self.value(&mut frame, root.value)?;
-                if value.resolved_type() != &*value_type {
-                    return Err(IndexRegionEvaluationError::MalformedRegion);
-                }
-                let element = dense_element(&value)?;
-                let offset = self.access_offset(&mut frame, root.access, shape)?;
-                let access = root.access.id();
-                let slot = elements
-                    .get_mut(offset)
-                    .ok_or(IndexRegionEvaluationError::CoordinateOutOfBounds { access })?;
-                if slot.is_some() {
-                    return Err(IndexRegionEvaluationError::DuplicateWrite { access });
-                }
-                *slot = Some(element);
-            }
+        let value = self.value(&mut frame, root.value)?;
+        if value.resolved_type() != &*value_type {
+            return Err(IndexRegionEvaluationError::MalformedRegion);
         }
+        let element = dense_element(&value)?;
+        let offset = self.access_offset(&mut frame, root.access, shape)?;
+        let access = root.access.id();
+        let slot = elements
+            .get_mut(offset)
+            .ok_or(IndexRegionEvaluationError::CoordinateOutOfBounds { access })?;
+        if slot.is_some() {
+            return Err(IndexRegionEvaluationError::DuplicateWrite { access });
+        }
+        *slot = Some(element);
+        // Advanced only on a written point, so a failed span leaves the cursor
+        // on the point that failed rather than past it.
+        root.walk.advance();
         Ok(())
     }
 

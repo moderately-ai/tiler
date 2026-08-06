@@ -602,32 +602,36 @@ fn a_partition_missing_a_root_is_refused_before_evaluation() {
 }
 
 /// Builds one `boundary`-element output whose roots each iterate a parallel
-/// dimension of their **own** extent.
+/// dimension of their **own** extent, copying an input of that same extent.
 ///
 /// This is the shape the write-domain relaxation admitted and one shared domain
 /// cannot express: a root's point count is the product of the extents it
 /// iterates, so roots sharing one domain own equal shares by construction. Each
-/// root is `(extent, offset)` and stores the constant `1.0` at `out[d + offset]`
-/// over a dimension of that extent, so its rectangle is
-/// `[offset, offset + extent)`.
+/// member is `(extent, offset)` and copies its own `[extent]`-shaped input to
+/// `out[d + offset]`, so its rectangle is `[offset, offset + extent)` and the
+/// joined output is the members' inputs concatenated in declaration order.
 ///
-/// With more than one root every domain is a strict subset of the region's
-/// parallel dimensions; with exactly one root of the full extent the sole domain
-/// *is* that set, which is the control the refusal below is measured against.
+/// The stored value *varies along the root's own dimension* — it is a read at
+/// `source[d]` rather than a constant — which is what makes the walk seed each
+/// root's frame from that root's domain rather than reach a value it could have
+/// produced from any environment at all.
+///
+/// With more than one member every domain is a strict subset of the region's
+/// parallel dimensions; with exactly one member of the full extent the sole
+/// domain *is* that set, which is the control the cases below are measured
+/// against.
 fn unequal_partition_region(
     scalars: &FrozenScalarRegistry,
     boundary: u64,
-    roots: &[(u64, i128)],
+    members: &[(u64, i128)],
 ) -> Result<VerifiedIndexRegion, Box<dyn std::error::Error>> {
     let mut builder = IndexRegionBuilder::new(scalars.clone())?;
     let out = builder.tensor(TensorRole::Output, f32_type(), Shape::from_dims([boundary]))?;
-    let value = builder
-        .apply(key("constant"), constant_attributes(1.0), &[])?
-        .get(0)
-        .ok_or("constant produces one result")?;
-    for (extent, offset) in roots {
+    for (extent, offset) in members {
         let dimension = builder.dimension(DomainRole::Parallel, Extent::new(*extent))?;
         let index = builder.dimension_expr(dimension)?;
+        let source = builder.tensor(TensorRole::Input, f32_type(), Shape::from_dims([*extent]))?;
+        let value = builder.read(source, &[dimension], &[index])?;
         let coordinate = builder.linear_combination(
             IndexInteger::from_i128(*offset),
             &[(IndexInteger::from_i128(1), index)],
@@ -646,74 +650,99 @@ fn output_accesses(region: &VerifiedIndexRegion) -> Vec<VerifiedTensorAccessId> 
         .collect()
 }
 
-/// A root over a strict subset of the parallel dimensions refuses by name,
-/// rather than reaching the walk and being refused for something else.
+/// Roots of unequal extents each walk their own domain into one joined tensor.
 ///
-/// Three and five into eight: the roots iterate dimensions of extent three and
-/// five, so the region's parallel space is the fifteen-point product of both and
-/// neither root is written over its own domain. Walking it sends root 0's
-/// coordinate `d0` to the same element once per point of `d1`, and the
-/// accidental refusal is [`IndexRegionEvaluationError::DuplicateWrite`] — which
-/// asserts the region writes one element twice, of a region the verifier admits
-/// precisely because its roots are disjoint.
+/// Three and five into eight. The roots iterate dimensions of extent three and
+/// five, so the region's parallel dimension set has a fifteen-point product —
+/// and *no root walks it*: root 0 has three points and root 1 has five. Each is
+/// sent over its own domain, so the boundary comes back as the two inputs
+/// concatenated at the offsets the roots declare.
 ///
-/// The control is the same builder with one root covering the whole boundary:
-/// there the sole domain *is* the parallel dimension set, and it evaluates.
+/// `root_point_count` is the assertion that separates this from the shared walk
+/// that preceded it. Eight is the number of elements the boundary retains, one
+/// per (root, point-of-that-root's-domain) pair; fifteen was the number the one
+/// shared parallel space reported, and dividing spans into it would have been
+/// dividing into a number nothing counts.
 #[test]
-fn a_strict_subset_write_root_is_refused_before_any_point_is_walked() {
+fn unequally_partitioned_roots_each_walk_their_own_domain() {
     let scalars = scalar_registry(1);
+    let evaluator = evaluator(&scalars);
     let region = unequal_partition_region(&scalars, 8, &[(3, 0), (5, 3)]).unwrap();
-    let accesses = output_accesses(&region);
-    let expected = IndexRegionEvaluationError::Unsupported {
-        feature: UnsupportedRegionFeature::SubDomainWriteRoot {
-            access: accesses[0],
-        },
-    };
+    let lower = f32_tensor(Shape::from_dims([3]), [1.0, 2.0, 3.0]);
+    let upper = f32_tensor(Shape::from_dims([5]), [10.0, 20.0, 30.0, 40.0, 50.0]);
+    let ids = input_ids(&region);
+    let inputs = [
+        IndexRegionInput::new(ids[0], &lower),
+        IndexRegionInput::new(ids[1], &upper),
+    ];
 
-    // Staging is where it refuses, so no walk exists to have taken a point: the
-    // whole-region path below reaches the same refusal through this one.
+    let staged = evaluator
+        .stage(&region, IndexRegionAuthority::new(&scalars), &inputs)
+        .expect("a partition into unequal members stages");
     assert_eq!(
-        evaluator(&scalars)
-            .stage(&region, IndexRegionAuthority::new(&scalars), &[])
-            .expect_err("a strict-subset root is refused at staging"),
-        expected,
-        "the refusal names the offending root and its reason",
-    );
-    assert_eq!(
-        evaluator(&scalars)
-            .evaluate(&region, IndexRegionAuthority::new(&scalars), &[])
-            .unwrap_err(),
-        expected,
+        staged.root_point_count(),
+        Some(8),
+        "the walk is one point per retained element, not the fifteen-point \
+         product of two dimensions no root iterates together",
     );
 
+    let outputs = evaluator
+        .evaluate(&region, IndexRegionAuthority::new(&scalars), &inputs)
+        .unwrap()
+        .into_outputs();
+    assert_eq!(outputs.len(), 1, "two roots, one boundary, one tensor");
+    assert_eq!(outputs[0].shape(), &Shape::from_dims([8]));
+    assert_eq!(
+        f32_values(&outputs[0]),
+        [1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 40.0, 50.0],
+        "root 0 fills [0, 3) from its own three-element input and root 1 fills \
+         [3, 8) from its own five-element one",
+    );
+
+    // The control holds the shape fixed and varies only the property under
+    // test: one root over the whole boundary, whose sole domain *is* the
+    // region's parallel dimension set.
     let whole = unequal_partition_region(&scalars, 8, &[(8, 0)]).unwrap();
-    let outputs = evaluator(&scalars)
-        .evaluate(&whole, IndexRegionAuthority::new(&scalars), &[])
+    let source = f32_tensor(
+        Shape::from_dims([8]),
+        [1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 40.0, 50.0],
+    );
+    let ids = input_ids(&whole);
+    let outputs = evaluator
+        .evaluate(
+            &whole,
+            IndexRegionAuthority::new(&scalars),
+            &[IndexRegionInput::new(ids[0], &source)],
+        )
         .unwrap()
         .into_outputs();
     assert_eq!(
         f32_values(&outputs[0]),
-        [1.0; 8],
-        "a sole root whose domain is the parallel dimension set still evaluates",
+        [1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 40.0, 50.0],
+        "a sole root whose domain is the parallel dimension set is unchanged",
     );
 }
 
-/// The refusal names the short root, never a sibling that iterates everything.
+/// A zero-extent root contributes nothing without emptying a sibling's walk.
 ///
-/// A zero-extent parallel dimension is the shape the `DuplicateWrite`
-/// fallthrough does not reach, and it is the one the concatenate lowering needs:
-/// `out` is `[2, 1]`, root 0 iterates both parallel dimensions and writes
-/// `out[d0, d1]` — owning no element, because `d1` has extent zero — and root 1
-/// iterates `d0` alone and writes `out[d0, 0]`, owning the whole boundary. The
-/// verifier admits this; the roots are disjoint and cover exactly.
+/// The degenerate partition member, and the one the concatenate lowering emits
+/// at its pinned occurrence: `out` is `[2, 1]`, root 0 iterates both parallel
+/// dimensions and writes `out[d0, d1]` — owning no element, because `d1` has
+/// extent zero — and root 1 iterates `d0` alone and writes `out[d0, 0]`, owning
+/// the whole boundary. The verifier admits this; the roots are disjoint and
+/// cover exactly.
 ///
-/// Zeroing the parallel product zeroes the walk, so no point is visited, nothing
-/// is written, and [`IndexRegionEvaluationError::IncompleteWrite`] names the
-/// boundary's first root — root 0, which left no gap because it owns nothing.
-/// The stated refusal names root 1 instead, and says why.
+/// Under one shared parallel space the zero extent zeroed the *whole* product,
+/// so no point was walked, nothing was written, and the boundary came back as an
+/// `IncompleteWrite` blaming root 0 — the sibling that owns nothing. Per-root
+/// domains leave root 0 empty and root 1's two points to walk, and the stored
+/// constants are what assert which of them landed: root 0 stores `7.0` and root
+/// 1 stores `1.0`, so a result of `[1.0, 1.0]` is reachable only by evaluating
+/// root 1 over its own domain.
 #[test]
-fn a_zero_extent_write_root_refuses_without_blaming_an_innocent_sibling() {
+fn a_zero_extent_write_root_contributes_nothing_and_empties_no_sibling() {
     let scalars = scalar_registry(1);
+    let evaluator = evaluator(&scalars);
     let mut builder = IndexRegionBuilder::new(scalars.clone()).unwrap();
     let out = builder
         .tensor(TensorRole::Output, f32_type(), Shape::from_dims([2, 1]))
@@ -727,39 +756,134 @@ fn a_zero_extent_write_root_refuses_without_blaming_an_innocent_sibling() {
     let row = builder.dimension_expr(full).unwrap();
     let column = builder.dimension_expr(empty).unwrap();
     let zero = builder.constant(IndexInteger::from_i128(0)).unwrap();
-    let value = builder
+    let unreachable = builder
+        .apply(key("constant"), constant_attributes(7.0), &[])
+        .unwrap()
+        .get(0)
+        .expect("constant produces one result");
+    let stored = builder
         .apply(key("constant"), constant_attributes(1.0), &[])
         .unwrap()
         .get(0)
         .expect("constant produces one result");
     let whole_domain = builder.write(out, &[full, empty], &[row, column]).unwrap();
-    builder.output(whole_domain, value).unwrap();
+    builder.output(whole_domain, unreachable).unwrap();
     let short_domain = builder.write(out, &[full], &[row, zero]).unwrap();
-    builder.output(short_domain, value).unwrap();
+    builder.output(short_domain, stored).unwrap();
     let region = builder.build().unwrap();
 
+    // What makes the value assertion below a claim about *which* root ran: were
+    // the two writes interned into one access, or the two constants into one
+    // value, it would hold whichever root the walk had reached.
     let accesses = output_accesses(&region);
-    // What makes naming one root a claim about attribution at all: were the two
-    // writes interned into one access, the assertion below would hold whichever
-    // root the refusal meant.
     assert_ne!(
         accesses[0], accesses[1],
         "the whole-domain root and the short root are distinct accesses",
     );
-
-    assert_eq!(
-        evaluator(&scalars)
-            .evaluate(&region, IndexRegionAuthority::new(&scalars), &[])
-            .unwrap_err(),
-        IndexRegionEvaluationError::Unsupported {
-            feature: UnsupportedRegionFeature::SubDomainWriteRoot {
-                access: accesses[1],
-            },
-        },
-        "the short root is named — not `accesses[0]`, the sibling that iterates \
-         the whole domain and owns nothing — and the reason is its domain rather \
-         than a gap",
+    assert_ne!(
+        unreachable, stored,
+        "the two roots store distinct values, so the result names one of them",
     );
+
+    let staged = evaluator
+        .stage(&region, IndexRegionAuthority::new(&scalars), &[])
+        .expect("a zero-extent member stages");
+    assert_eq!(
+        staged.root_point_count(),
+        Some(2),
+        "the empty root contributes no point and the full one contributes both",
+    );
+
+    let outputs = evaluator
+        .evaluate(&region, IndexRegionAuthority::new(&scalars), &[])
+        .unwrap()
+        .into_outputs();
+    assert_eq!(outputs.len(), 1, "two roots, one boundary, one tensor");
+    assert_eq!(outputs[0].shape(), &Shape::from_dims([2, 1]));
+    assert_eq!(
+        f32_values(&outputs[0]),
+        [1.0, 1.0],
+        "the short root filled the boundary; the empty root stored nothing, and \
+         its `7.0` appears nowhere",
+    );
+}
+
+/// Spans of root points compose to the same tensor, across a root boundary.
+///
+/// The executable half of `StagedIndexRegionEvaluation`'s span argument under
+/// roots that do not share a domain. Five widths over the three-and-five
+/// partition — one, the width that ends exactly on the root boundary, two that
+/// straddle it, and one wider than the whole walk — commit identical values, and
+/// the whole-region path commits them too.
+///
+/// The straddle is what the argument is about, so it is watched rather than left
+/// to the arithmetic of a width: a span of five walks root 0's three points and
+/// two of root 1's, and the next span finishes the remaining three. Crossing
+/// from one root to the next mid-span is sound for the same reason crossing
+/// between two points of one root is — no root point can observe another's
+/// write — and nothing else in this file would notice if it were not.
+#[test]
+fn spans_of_root_points_compose_across_a_root_boundary() {
+    let scalars = scalar_registry(1);
+    let evaluator = evaluator(&scalars);
+    let region = unequal_partition_region(&scalars, 8, &[(3, 0), (5, 3)]).unwrap();
+    let lower = f32_tensor(Shape::from_dims([3]), [1.0, 2.0, 3.0]);
+    let upper = f32_tensor(Shape::from_dims([5]), [10.0, 20.0, 30.0, 40.0, 50.0]);
+    let ids = input_ids(&region);
+    let inputs = [
+        IndexRegionInput::new(ids[0], &lower),
+        IndexRegionInput::new(ids[1], &upper),
+    ];
+
+    let baseline = f32_values(
+        &evaluator
+            .evaluate(&region, IndexRegionAuthority::new(&scalars), &inputs)
+            .unwrap()
+            .into_outputs()[0],
+    );
+    // Compared as bits, which is the comparison this oracle exists to make: a
+    // margin would admit exactly the drift the equalities below catch.
+    assert!(
+        baseline
+            .windows(2)
+            .any(|pair| pair[0].to_bits() != pair[1].to_bits()),
+        "a degenerate constant result would satisfy every equality below"
+    );
+
+    for span in [1_u64, 2, 3, 5, 64] {
+        let mut staged = evaluator
+            .stage(&region, IndexRegionAuthority::new(&scalars), &inputs)
+            .unwrap();
+        while staged
+            .evaluate_root_points(span)
+            .expect("every span of this width is under the step budget")
+            > 0
+        {}
+        assert!(staged.is_exhausted());
+        assert_eq!(
+            staged.evaluated_root_points(),
+            8,
+            "the spans must cover the root points exactly once"
+        );
+        assert_eq!(
+            f32_values(&staged.finish().unwrap().into_outputs()[0]),
+            baseline,
+            "a span of {span} root points changed a committed value"
+        );
+    }
+
+    let mut staged = evaluator
+        .stage(&region, IndexRegionAuthority::new(&scalars), &inputs)
+        .unwrap();
+    assert_eq!(
+        staged.evaluate_root_points(5),
+        Ok(5),
+        "a span of five ends two points into the second root"
+    );
+    assert!(!staged.is_exhausted());
+    assert_eq!(staged.evaluate_root_points(5), Ok(3));
+    assert!(staged.is_exhausted());
+    assert_eq!(staged.evaluate_root_points(5), Ok(0));
 }
 
 /// Builds `out[i] = source[coordinate(i)]` over one input of `extent` elements.
