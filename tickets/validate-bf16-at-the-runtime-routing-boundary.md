@@ -3,7 +3,7 @@ id: validate-bf16-at-the-runtime-routing-boundary
 title: Validate BF16 at the runtime routing boundary before the one-way commit
 status: todo
 priority: p1
-dependencies: [carry-bf16-through-the-artifact-encoding-and-identity, lower-bf16-to-metal]
+dependencies: [carry-bf16-through-the-artifact-encoding-and-identity, lower-bf16-to-metal, admit-a-bf16-index-realization-law-and-refinement-contract]
 related: [spike-bf16-through-the-second-dtype-seams, decide-per-dtype-dispatchability-as-a-target-capability]
 scopes: [implementation/runtime]
 shared_scopes: [project/tickets]

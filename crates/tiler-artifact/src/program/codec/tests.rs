@@ -47,8 +47,8 @@ use super::super::model::{
     SchemaVersion, StageDependencyData, StageDependencyReason, address_space_from_tag,
     address_space_tag, buffer_access_from_tag, buffer_access_tag, element_type_from_tag,
     element_type_tag, exceptional_assumption_from_tag, exceptional_assumption_tag,
-    permission_from_tag, permission_tag, storage_scalar_from_tag, storage_scalar_tag,
-    subnormal_from_tag, subnormal_tag,
+    permission_from_tag, permission_tag, push_component_role, push_storage_encoding,
+    storage_scalar_from_tag, storage_scalar_tag, subnormal_from_tag, subnormal_tag,
 };
 use super::super::requirement::{RouteRequirement, RouteRequirementError, RouteResourceDimension};
 use super::super::tests::{
@@ -119,6 +119,20 @@ fn reseal(bytes: &mut [u8]) {
 
 /// Returns the absolute offset of one unique byte pattern in the manifest.
 fn manifest_offset(bytes: &[u8], pattern: &[u8]) -> usize {
+    let found = manifest_occurrences(bytes, pattern);
+    assert_eq!(found.len(), 1, "the pattern must locate exactly one field");
+    found[0]
+}
+
+/// Returns every absolute offset at which one byte pattern occurs in the manifest.
+///
+/// A caller that expects one field uses [`manifest_offset`]; a caller reaching
+/// for this one owes an assertion on how many it expects and why, because the
+/// manifest legitimately restates some rows — it ends with the artifact
+/// identity, whose encoder writes several of the same fields the rows above it
+/// wrote — and an unstated count is how "the pattern moved" becomes
+/// indistinguishable from "the pattern is now somewhere else too".
+fn manifest_occurrences(bytes: &[u8], pattern: &[u8]) -> Vec<usize> {
     let manifest_len = usize::try_from(u64::from_be_bytes(
         bytes[MANIFEST_LENGTH_AT..MANIFEST_LENGTH_AT + 8]
             .try_into()
@@ -126,14 +140,12 @@ fn manifest_offset(bytes: &[u8], pattern: &[u8]) -> usize {
     ))
     .expect("the fixture manifest fits usize");
     let manifest = &bytes[HEADER_BYTES..HEADER_BYTES + manifest_len];
-    let found: Vec<usize> = manifest
+    manifest
         .windows(pattern.len())
         .enumerate()
         .filter(|(_, window)| *window == pattern)
-        .map(|(offset, _)| offset)
-        .collect();
-    assert_eq!(found.len(), 1, "the pattern must locate exactly one field");
-    HEADER_BYTES + found[0]
+        .map(|(offset, _)| HEADER_BYTES + offset)
+        .collect()
 }
 
 /// Encodes a deliberately invalid envelope and returns the decoder's rejection.
@@ -2437,6 +2449,208 @@ fn a_bf16_carrier_is_refused_against_a_wider_access_type_and_admitted_against_it
             binding.access_type = KernelType::Bf16;
         }),
         ArtifactCodecError::BindingComponentMismatch,
+    );
+}
+
+// -------------------------------------------------------------------------
+// BF16 through the encoding and the identity
+// -------------------------------------------------------------------------
+
+/// Moves the fixture's program input onto the `bf16` carrier, consistently.
+///
+/// The binding and the interface component it addresses move together, because
+/// `check_target_component` refuses a binding that contradicts its component and
+/// would reject a one-sided edit before any question below could be reached.
+///
+/// **The envelope is forged rather than built, and the reason is a boundary this
+/// crate does not own.** Nothing in the workspace can assemble a `bf16` artifact
+/// through the builder yet: `tiler_ir::index`'s `NumericalContractIdentity`
+/// wraps `F32NumericalContractKey` alone, and the standard semantic provider
+/// registers index-realization laws for nine `f32` and quantization operations
+/// and none for the registered `bf16` family — so a `bf16` semantic occurrence
+/// cannot obtain a `CoveredOccurrence`, and a stage covering nothing is refused
+/// at whole-program verification. Waiting for a producer would have left the
+/// carrier's *encoding* untested until the layer below it landed, which is the
+/// wrong order: this crate owns whether a `bf16` artifact survives its own
+/// codec and whether the carrier reaches identity, and both are answerable now.
+/// The forgery is encoded by the ordinary encoder and validated by the ordinary
+/// decoder, so nothing below runs against test-only code.
+fn bf16_input_envelope() -> ArtifactEnvelope {
+    let mut envelope = envelope_of(&default_artifact());
+    for component in &mut envelope.inputs[0].components {
+        component.storage_scalar = StorageScalar::Bf16;
+        component.access_type = KernelType::Bf16;
+    }
+    let binding = program_input_binding(&mut envelope);
+    binding.storage_scalar = StorageScalar::Bf16;
+    binding.access_type = KernelType::Bf16;
+    envelope
+}
+
+/// Returns the one binding that addresses the fixture's named program input.
+///
+/// Found by target rather than by slot, because binding order is the kernel
+/// signature's and an entry reordering would otherwise move these cases onto the
+/// output binding without any of them failing.
+fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::model::BindingData {
+    let mut bindings = envelope.variants[0].entries[0]
+        .bindings
+        .iter_mut()
+        .filter(|binding| matches!(binding.target, BindingTargetData::ProgramInput(_)));
+    let binding = bindings.next().expect("the fixture entry binds its input");
+    assert!(
+        bindings.next().is_none(),
+        "the fixture entry binds its program input exactly once",
+    );
+    binding
+}
+
+/// A `bf16` artifact survives the encoding, and its carrier is part of what it is.
+///
+/// Three properties, and the third is the one a cache is wrong about if it does
+/// not hold. The round trip says the carrier is not lost; the equal encoded
+/// lengths say the carrier travels as a *tag* rather than as a width the framing
+/// depends on, which is why widening the vocabulary moved neither
+/// `ARTIFACT_DOMAIN` nor `MANIFEST_SCHEMA`; and the identity inequality says two
+/// artifacts differing only in their carrier are two artifacts.
+#[test]
+fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {
+    let at_f32 = envelope_of(&default_artifact());
+    let at_bf16 = bf16_input_envelope();
+    assert_ne!(at_f32, at_bf16, "the two models genuinely differ");
+
+    let bytes = encode(&at_bf16).expect("the bf16 envelope encodes");
+    let decoded = decode(&bytes).expect("its own bytes decode");
+    assert_eq!(
+        decoded, at_bf16,
+        "a decoded bf16 envelope must equal the model that produced it",
+    );
+
+    let elements: u64 = at_bf16.inputs[0]
+        .shape
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .product();
+    assert_eq!(elements, 6, "the fixture input is the [2, 3] tensor");
+    let at_f32_bytes = encode(&at_f32).expect("the f32 envelope encodes");
+    assert_eq!(
+        bytes.len(),
+        at_f32_bytes.len(),
+        "a carrier is one tag byte, so no framing width moves with it",
+    );
+    assert_ne!(bytes, at_f32_bytes, "the tag byte itself did move");
+
+    let identity_at_bf16 = at_bf16
+        .canonical_identity()
+        .expect("the bf16 envelope has an identity");
+    assert_eq!(
+        decoded
+            .canonical_identity()
+            .expect("the identity re-derives from decoded content"),
+        identity_at_bf16,
+    );
+    assert_ne!(
+        identity_at_bf16,
+        at_f32
+            .canonical_identity()
+            .expect("the f32 envelope has an identity"),
+        "two artifacts differing only in their carrier must not share an identity: a cache that \
+         confused them would hand a consumer a kernel addressing twice the bytes it was given",
+    );
+}
+
+/// An unassigned carrier or access tag is refused before its width is used.
+///
+/// This is the pre-BF16 reader's situation, reproduced as exactly as it can be.
+/// That build cannot be run here, so the case is stated the only honest way it
+/// can be: a tag byte carried by a `bf16` artifact is replaced with one *this*
+/// build has not assigned, which takes the identical path `0x06` took through a
+/// reader written before `0x06` existed. Both replacements are proven
+/// unassigned first, so the day either is given a meaning this case fails rather
+/// than quietly stopping being about an unknown tag.
+///
+/// The refusal is at the tag reader, so the width the tag names is never used to
+/// frame or address a byte — which is the whole point of refusing, since a
+/// two-byte carrier read as four addresses twice the buffer the interface
+/// provides and every digest and identity check passes on the way there.
+#[test]
+fn an_unassigned_carrier_or_access_tag_is_refused_before_its_width_is_used() {
+    const UNASSIGNED_CARRIER: u8 = 0x04;
+    const UNASSIGNED_ACCESS: u8 = 0x07;
+
+    let bytes = encode(&bf16_input_envelope()).expect("the bf16 envelope encodes");
+    decode(&bytes).expect("the unperturbed bf16 envelope decodes");
+
+    // The binding row's fixed-width head, derived through the same writers the
+    // encoder uses rather than spelled as literals, so a tag that moves cannot
+    // leave this locating an unrelated run of bytes.
+    let mut head = vec![
+        BindingKind::Buffer.tag(),
+        storage_scalar_tag(StorageScalar::Bf16),
+        element_type_tag(KernelType::Bf16),
+    ];
+    push_component_role(&mut head, None);
+    push_storage_encoding(&mut head, StorageEncoding::Unpacked);
+    head.push(address_space_tag(AddressSpace::Device));
+    head.push(buffer_access_tag(BufferAccess::Read));
+    // Two occurrences, not one, and the count is asserted rather than assumed:
+    // the manifest ends with the artifact identity, and the identity encoder
+    // restates a binding's carrier and access tags in the same order the entry
+    // row writes them. The manifest's own row comes first, and it is the one to
+    // perturb — a reader frames the entry long before it reaches the identity to
+    // compare, so the refusal under test is the tag reader's rather than
+    // `ArtifactIdentityMismatch`.
+    let found = manifest_occurrences(&bytes, &head);
+    assert_eq!(
+        found.len(),
+        2,
+        "the binding row and its restatement inside the carried identity",
+    );
+    let at = found[0];
+
+    assert!(
+        storage_scalar_from_tag(UNASSIGNED_CARRIER).is_none(),
+        "the carrier vocabulary must not have grown into the tag this case perturbs to",
+    );
+    assert!(
+        element_type_from_tag(UNASSIGNED_ACCESS).is_none(),
+        "the access vocabulary must not have grown into the tag this case perturbs to",
+    );
+
+    for (offset, subject, tag) in [
+        (at + 1, TagSubject::StorageScalar, UNASSIGNED_CARRIER),
+        (at + 2, TagSubject::ElementType, UNASSIGNED_ACCESS),
+    ] {
+        let mut forged = bytes.clone();
+        forged[offset] = tag;
+        reseal(&mut forged);
+        assert_eq!(
+            decode(&forged),
+            Err(ArtifactCodecError::UnknownTag { subject, tag }),
+            "an unrecognized carrier or access tag must be refused by name with its own byte",
+        );
+    }
+}
+
+/// A `bf16` artifact read through the four-byte access type is refused.
+///
+/// The sibling case above states this pairing on an otherwise `f32` artifact,
+/// where the carrier is the only `bf16` field present. Here the artifact really
+/// is `bf16` — interface component, binding, and identity — and only the access
+/// type is walked back, which is the shape a partially updated producer would
+/// emit. `check_binding_access` runs ahead of the component check, so the
+/// refusal names the width disagreement rather than the component it also
+/// contradicts.
+#[test]
+fn a_bf16_artifact_read_through_the_f32_access_type_is_refused() {
+    let mut envelope = bf16_input_envelope();
+    program_input_binding(&mut envelope).access_type = KernelType::F32;
+    let bytes = encode(&envelope).expect("a forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::BindingAccessTypeMismatch),
+        "a two-byte carrier addressed as four must be refused, not read",
     );
 }
 
