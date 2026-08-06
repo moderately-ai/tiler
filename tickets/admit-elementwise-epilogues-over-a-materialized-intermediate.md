@@ -1,7 +1,7 @@
 ---
 id: admit-elementwise-epilogues-over-a-materialized-intermediate
 title: Admit an elementwise epilogue over a materialized intermediate
-status: todo
+status: in-progress
 priority: p2
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, optimizer]
+claimed_from: todo
+assignee: agent-epilogues
+lease_expires_at: 1785997211
 ---
 ## User-visible outcome
 
