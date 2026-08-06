@@ -140,6 +140,7 @@ mod handles;
 mod model;
 mod numerics;
 mod pointwise;
+mod pointwise_bf16;
 mod synchronization;
 
 pub use builder::ScheduledRegionBuilder;
@@ -177,6 +178,12 @@ pub use pointwise::{
     PointwiseF32ExpressionAdmissionError, PointwiseF32ExpressionBuildError,
     PointwiseF32ExpressionBuilder, PointwiseF32ExpressionDiagnostic, PointwiseF32Node,
     PointwiseF32NodeId, PointwiseF32Value,
+};
+pub use pointwise_bf16::{
+    MAX_POINTWISE_BF16_EXPRESSION_NODES, PointwiseBf16Expression,
+    PointwiseBf16ExpressionAdmissionError, PointwiseBf16ExpressionBuildError,
+    PointwiseBf16ExpressionBuilder, PointwiseBf16ExpressionDiagnostic, PointwiseBf16Node,
+    PointwiseBf16NodeId, PointwiseBf16Value,
 };
 pub use synchronization::{
     ConvergenceEvidence, FencedSpaces, MemoryOrdering, SynchronizationKind,

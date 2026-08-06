@@ -35,12 +35,18 @@ use tiler_compiler::target::{
     TargetExecutionEnvironment, TargetFactProducerIdentity, TargetMeasurementContext,
     TargetProfile, TargetProfileBuilder, TargetProfileKey, TargetRequest,
 };
+use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 use tiler_ir::schedule::{
-    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal, KernelSchedule,
+    LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology,
+    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy,
+    TensorRole, VerifiedScheduledRegion,
 };
 use tiler_ir::semantic::{
-    Bf16, Bf16Add, Bf16Constant, Bf16Multiply, F32, F32Add, F32Constant, F32Multiply, InputKey,
-    OutputKey, SemanticProgram, SemanticProgramBuilder,
+    Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CANONICAL_BF16_ARITHMETIC_NAN_BITS, F32, F32Add,
+    F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
 };
 use tiler_ir::shape::Shape;
 
@@ -392,6 +398,169 @@ fn a_flush_accepting_bf16_contract_reaches_the_recognizer_dtype_wall() {
         failure.class(),
         CompileFailureClass::UnsupportedCapability { rule: "dtype-f32" }
     );
+}
+
+/// The accepted BF16 contract's own dimensions schedule and lower a BF16 region,
+/// while the request wall above stays exactly where it is.
+///
+/// **Two claims, and their asymmetry is what this ticket produced.** The
+/// `admit-bf16-into-the-schedule-and-kernel-vocabulary` widening made a BF16
+/// scheduled region and its structured kernel constructible and verifiable; it
+/// did not touch `select_supported_strategy`, whose `dtype-f32` rule refuses
+/// every program carrying a non-`f32` value before a subject is normalized. So
+/// the flush-accepting request still stops in exactly the same place — asserted
+/// in the test above and re-asserted here beside its counterpart — while the
+/// layer beneath it now admits the region the request cannot reach.
+///
+/// The realization the region carries is *derived from the accepted contract*
+/// rather than transcribed, so a contract dimension that moved would move this
+/// region with it instead of leaving a stale copy that still passes.
+#[test]
+fn the_accepted_bf16_contract_schedules_and_lowers_a_region_the_request_cannot_reach() {
+    // Unchanged: the request boundary refuses before any region exists.
+    let failure = compile(CompileRequest::new(
+        &bf16_program(),
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
+        TargetRequest::new([profile("test.bf16-region-wall.v1", Bf16Rows::Complete)]).unwrap(),
+    ))
+    .expect_err("no strategy recognizes a bf16 program");
+    assert_eq!(
+        failure.class(),
+        CompileFailureClass::UnsupportedCapability { rule: "dtype-f32" },
+        "admitting the region vocabulary did not move the recognizer's wall",
+    );
+
+    // Changed: the same contract's dimensions now describe a region that
+    // verifies and a kernel that lowers.
+    for contract in [
+        NumericalContract::STRICT_BF16,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
+    ] {
+        assert_eq!(contract.arithmetic(), ArithmeticType::Bf16);
+        let region = bf16_region_under(contract);
+        assert_eq!(
+            region.subnormal_freedom(),
+            SubnormalFreedom::Unproven,
+            "nothing bounds a dense bf16 payload away from the subnormal range",
+        );
+        let kernel = lower_scheduled_region(&region).expect("the bf16 region lowers");
+        for buffer in kernel.buffers() {
+            assert_eq!(
+                buffer.element_type,
+                KernelType::Bf16,
+                "every boundary of a bf16 region is bf16",
+            );
+        }
+        assert_eq!(
+            kernel.numerical().input_subnormals,
+            contract.input_subnormals(),
+            "the kernel preserves the contract's own subnormal resolution",
+        );
+    }
+}
+
+/// Assembles the `(x * 3.0) + (-0.0)` BF16 region under one stated contract.
+///
+/// Every numerical dimension is read from `contract` rather than written down,
+/// so this fixture cannot drift from the accepted vector it claims to realize.
+fn bf16_region_under(contract: NumericalContract) -> VerifiedScheduledRegion {
+    const ELEMENTS: u64 = 4;
+    let mut expression = PointwiseBf16ExpressionBuilder::new();
+    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let scale = expression.constant(0x4040).unwrap();
+    let product = expression.multiply(input, scale).unwrap();
+    let bias = expression.constant(0x8000).unwrap();
+    let root = expression.add(product, bias).unwrap();
+    let expression = expression.build(root).unwrap();
+
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+    builder
+        .iteration_shape(Shape::from_dims([ELEMENTS]))
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Output),
+    ] {
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: ELEMENTS,
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: ELEMENTS,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::PointwiseBf16(expression))
+        .unwrap();
+    builder
+        .numerical(NumericalRealization::new(
+            "tiler.test.bf16-region",
+            u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+            contract.input_subnormals(),
+            contract.result_subnormals(),
+            contract.contraction(),
+            contract.reassociation(),
+            contract.permutation(),
+            contract.signed_zero(),
+            contract.nan_assumptions(),
+            contract.infinity_assumptions(),
+        ))
+        .unwrap();
+    builder
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: ELEMENTS,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: ELEMENTS,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .unwrap();
+    builder.build().unwrap()
 }
 
 /// The authoritative ledger's BF16 rows do not yet cover every consumable

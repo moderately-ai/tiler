@@ -2202,13 +2202,16 @@ fn governed_types_map_to_their_metal_spellings() {
 /// does not.
 ///
 /// **Measurement boundary.** This observes the decision site, not a whole
-/// emission. A `VerifiedKernel` carrying a BF16 buffer cannot be built at this
-/// commit: `verify.rs` derives every buffer's expected element type from the
-/// region's `ScalarProgram`, and no BF16 scalar program exists yet, so such a
-/// kernel is refused as `BufferContract` before emission is reached.
-/// `admit-bf16-into-the-schedule-and-kernel-vocabulary` is what makes one
-/// constructible, and it is blocked on this ticket. What is established here is
-/// that the type has no spelling and that every emitter that spells a type goes
+/// emission. A BF16-carrying `VerifiedKernel` *is* constructible since
+/// `admit-bf16-into-the-schedule-and-kernel-vocabulary` added
+/// `ScalarProgram::PointwiseBf16` and the BF16 constant, arithmetic, and
+/// canonicalization constructs — so what stands between such a kernel and
+/// emitted source is this refusal alone, not the absence of a subject. Driving a
+/// whole emission to it is `lower-bf16-to-metal`'s, because the same ticket that
+/// would build the fixture is the one that replaces the refusal with the
+/// `bfloat` spelling, its NaN-canonicalization helper, its constant
+/// reinterpretation, and its dispatch route. What is established here is that
+/// the type has no spelling and that every emitter that spells a type goes
 /// through this function — `parameter_declaration`, `staging_declaration`,
 /// `KernelEmitter::value_type`, `emit_convert`, and the translation-unit header
 /// each propagate its `Err` rather than substituting a spelling.

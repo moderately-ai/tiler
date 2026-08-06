@@ -1949,7 +1949,15 @@ fn verify_region_output_binding(
                 // The extrema fold could not bind here even if the recognizer
                 // admitted it: this arm's subject carries an empty-domain
                 // identity, and the identity-less family has none to compare.
+                //
+                // The BF16 pointwise program is refused here for a further
+                // reason of its own: the recognizer's `dtype-f32` rule rejects
+                // every program carrying a non-`f32` value before any subject is
+                // normalized, so no `NormalizedSerialSumSubject` can name a BF16
+                // prologue at all. Answering `false` states that rather than
+                // leaving a BF16 region able to claim an `f32` subject.
                 ScalarProgram::StrictAffineU4Dequantize { .. }
+                | ScalarProgram::PointwiseBf16(_)
                 | ScalarProgram::SquaredSerialSum { .. }
                 | ScalarProgram::StrictSerialMaximum { .. }
                 | ScalarProgram::StrictTensorContraction { .. } => false,

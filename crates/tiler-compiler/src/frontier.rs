@@ -859,6 +859,14 @@ const fn boundary_carrier(program: &ScalarProgram) -> Option<StorageScalar> {
         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
         | ScalarProgram::StrictTensorContraction { .. }
         | ScalarProgram::StrictSerialMaximum { .. } => Some(StorageScalar::F32),
+        // The physical carrier half of BF16's vertical: a two-byte carrier whose
+        // natural alignment `ByteAlignment::natural_for` derives from
+        // `StorageScalar::byte_width`, so the boundary contract this function
+        // feeds states two bytes rather than four without a second width table.
+        // `natural_access_type` pairs it with `KernelType::Bf16`, which is the
+        // element type the kernel signature independently expects — the two
+        // agree by derivation rather than by both being written down.
+        ScalarProgram::PointwiseBf16(_) => Some(StorageScalar::Bf16),
         // The one program in the vocabulary whose boundary values disagree:
         // `tiler-ir`'s `verify_signature` fixes its reads at `[U8, F32, U8]`,
         // and its code component is bit-packed rather than unpacked. The
@@ -3619,6 +3627,11 @@ mod tests {
     /// boundary value, so the derived alignment is four — but it is four because
     /// the carrier is four bytes wide, not because a profile constant said so,
     /// and this drives each variant rather than assuming they agree.
+    ///
+    /// The BF16 program is the case that makes the derivation observable rather
+    /// than merely stated: it is the only scalar program in the vocabulary whose
+    /// carrier is not `F32`, so a site that had reverted to the constant would
+    /// answer four bytes for a two-byte value and over-align every BF16 binding.
     #[test]
     fn the_boundary_carrier_is_derived_from_the_scalar_program() {
         for program in [serial_sum_program(), fused_multiply_add_program()] {
@@ -3628,6 +3641,42 @@ mod tests {
                 "{program:?} stopped reporting the f32 carrier its buffers have"
             );
         }
+
+        assert_eq!(
+            boundary_carrier(&bf16_pointwise_program()),
+            Some(StorageScalar::Bf16),
+            "a bf16 region's boundary values are carried in two bytes"
+        );
+        assert_eq!(
+            crate::boundary::ByteAlignment::natural_for(StorageScalar::Bf16).bytes(),
+            2,
+            "the bf16 carrier's natural alignment is derived from its own width"
+        );
+        // The requirement the profile states for that carrier is the derived
+        // alignment and not the `f32` neighbour's, which is the whole point of
+        // deriving it.
+        assert_eq!(
+            bounded_requirements(StorageScalar::Bf16).get(BoundaryProperty::Alignment),
+            Some(&RequiredProperty::Alignment(
+                crate::boundary::ByteAlignment::natural_for(StorageScalar::Bf16)
+            )),
+        );
+        assert_ne!(
+            crate::boundary::ByteAlignment::natural_for(StorageScalar::Bf16),
+            crate::boundary::ByteAlignment::natural_for(StorageScalar::F32),
+        );
+    }
+
+    /// The `(x * 3.0) + (-0.0)` BF16 pointwise program.
+    fn bf16_pointwise_program() -> ScalarProgram {
+        use tiler_ir::schedule::{InputOrdinal, PointwiseBf16ExpressionBuilder};
+        let mut expression = PointwiseBf16ExpressionBuilder::new();
+        let input = expression.input(InputOrdinal::FIRST).unwrap();
+        let scale = expression.constant(0x4040).unwrap();
+        let product = expression.multiply(input, scale).unwrap();
+        let bias = expression.constant(0x8000).unwrap();
+        let root = expression.add(product, bias).unwrap();
+        ScalarProgram::PointwiseBf16(expression.build(root).unwrap())
     }
 
     /// The carrier derivation can say no, and does for the one program that

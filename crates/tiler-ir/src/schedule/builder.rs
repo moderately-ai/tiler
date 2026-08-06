@@ -25,8 +25,9 @@ use super::model::{
     ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
     VerifiedScheduledRegion, contributor_count, cooperative_tile, derive_requirements,
     element_count, encode_identity, partial_reduction_axis, partial_reduction_shape,
+    region_arithmetic_type,
 };
-use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalRealization};
+use super::numerics::{ExceptionalValueAssumption, NumericalRealization};
 use super::synchronization::{ConvergenceEvidence, SynchronizationRule, required_subject};
 use super::{
     MAX_COOPERATIVE_PARTICIPANTS, MAX_COOPERATIVE_PHASE_ACCESSES, MAX_COOPERATIVE_PHASES,
@@ -347,6 +348,15 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
             };
             verify_pointwise_f32(region, expression, reads, write)
         }
+        // The same access contract at a different width, plus the one obligation
+        // that is `bf16`'s alone: the region's declared canonical arithmetic NaN
+        // payload must be its own format's.
+        ScalarProgram::PointwiseBf16(expression) => {
+            let Some((write, reads)) = region.index.accesses.split_last() else {
+                return Err(ScheduledRegionDiagnostic::AccessCount);
+            };
+            verify_pointwise_bf16(region, expression, reads, write)
+        }
         ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
         | ScalarProgram::StrictSerialMaximum { .. }
@@ -520,8 +530,67 @@ fn verify_contraction(
 
 /// Verifies an N-input physical `f32` pointwise region.
 ///
-/// The obligation that makes the widening safe is the *correspondence*: read
-/// access `i` must be `TensorRole::Input { ordinal: i }`, and there must be
+/// The whole obligation is the shared access contract below; this width states
+/// nothing of its own. Its canonical arithmetic NaN payload is *not* checked
+/// here, and that asymmetry with `bf16` is deliberate rather than an omission:
+/// an `f32` region's payload is already compared against the request's own
+/// numerical contract by `tiler-compiler`'s subject binding, whereas a 16-bit
+/// payload sitting in a 32-bit field has no such comparison anywhere and would
+/// otherwise be an unstated reading.
+fn verify_pointwise_f32(
+    region: &ScheduledRegion,
+    expression: &super::pointwise::PointwiseF32Expression,
+    reads: &[Access],
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    verify_pointwise_region(
+        region,
+        expression.input_count(),
+        expression.is_valid(),
+        reads,
+        write,
+    )
+}
+
+/// Verifies an N-input physical `bf16` pointwise region.
+///
+/// The access contract is the shared one below; what is stated here is the
+/// obligation that belongs to this width alone.
+///
+/// **The region's declared canonical arithmetic NaN payload must be `bf16`'s
+/// own, zero-extended.** [`NumericalRealization::canonical_arithmetic_nan_bits`]
+/// is a 32-bit field and `bf16`'s canonical arithmetic NaN is the 16-bit
+/// [`CANONICAL_BF16_ARITHMETIC_NAN_BITS`](crate::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+/// so which reading applies would otherwise be an unstated invariant every
+/// consumer had to guess — and the one consumer that matters guesses wrongly by
+/// default, because a lowering that canonicalized to `0x7fc0_0000` would write a
+/// pattern no `bf16` value can hold. Requiring it here makes the reading checked
+/// at the boundary that produces the region rather than assumed at the boundary
+/// that emits it.
+fn verify_pointwise_bf16(
+    region: &ScheduledRegion,
+    expression: &super::pointwise_bf16::PointwiseBf16Expression,
+    reads: &[Access],
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    if u32::from(crate::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS)
+        != region.index.numerical.canonical_arithmetic_nan_bits
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    verify_pointwise_region(
+        region,
+        expression.input_count(),
+        expression.is_valid(),
+        reads,
+        write,
+    )
+}
+
+/// The access contract every pointwise region satisfies, at any width.
+///
+/// The obligation that makes an N-input region safe is the *correspondence*:
+/// read access `i` must be `TensorRole::Input { ordinal: i }`, and there must be
 /// exactly as many reads as the expression has input leaves. Both halves are
 /// needed. Without the count, an expression could read an ordinal no access
 /// binds — a load through a buffer the signature never declares. Without the
@@ -531,13 +600,21 @@ fn verify_contraction(
 ///
 /// The expression's own verifier already proved its ordinals are the dense
 /// `0..n`, so pairing by position is exhaustive rather than a sample.
-fn verify_pointwise_f32(
+///
+/// Shared by the two width-specific verifiers above rather than written twice:
+/// the obligation is about *accesses*, and nothing in it reads an element type.
+/// The expression's own validity and input count arrive as already-derived facts
+/// so this function never has to classify which vocabulary it is looking at,
+/// which is what keeps the dispatch above exhaustive instead of pushing a second
+/// match in here.
+fn verify_pointwise_region(
     region: &ScheduledRegion,
-    expression: &super::pointwise::PointwiseF32Expression,
+    input_count: usize,
+    expression_is_valid: bool,
     reads: &[Access],
     write: &Access,
 ) -> Result<(), ScheduledRegionDiagnostic> {
-    if reads.is_empty() || reads.len() != expression.input_count() {
+    if reads.is_empty() || reads.len() != input_count {
         return Err(ScheduledRegionDiagnostic::AccessCount);
     }
     if reads
@@ -559,7 +636,7 @@ fn verify_pointwise_f32(
                 }
         })
     });
-    if !expression.is_valid()
+    if !expression_is_valid
         || !matches!(region.schedule.reduction, ReductionTopology::None)
         || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
         || !ordinals_bind_in_order
@@ -968,7 +1045,9 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
                 ReductionPass::Final => TensorRole::Intermediate,
             },
         }),
+        // No pointwise program folds anything, at either width.
         ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictTensorContraction { .. } => None,
     }
@@ -1037,7 +1116,9 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
             consumes_reassociation: false,
             read_tensor: FIRST_INPUT,
         }),
+        // No pointwise program folds anything, at either width.
         ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictTensorContraction { .. } => None,
     }
@@ -1082,10 +1163,15 @@ fn verify_multi_pass_semantics(
     if *permits_reassociation != numerical.permits_reassociation()
         || *permits_permutation != numerical.permits_permutation()
         || (family.consumes_reassociation && !*permits_reassociation)
-        // The bounded profile combines at the element width. A narrower
-        // accumulation is a different computation and is refused rather than
-        // silently accepted as equivalent.
-        || *accumulation != ArithmeticType::F32
+        // The bounded profile combines at the region's *own* element width,
+        // derived from its scalar program rather than compared against a literal
+        // `F32`. A narrower or wider accumulation is a different computation and
+        // is refused rather than silently accepted as equivalent. Every family
+        // reaching this arm is `f32` today — `multi_pass_family` refuses the
+        // pointwise programs above — so the derivation changes no outcome; what
+        // it changes is that a `bf16` reduction admitted later must state its
+        // accumulator instead of inheriting an `f32` one nobody re-checked.
+        || *accumulation != region_arithmetic_type(&region.index.scalar_program)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
@@ -1194,7 +1280,9 @@ fn verify_cooperative_semantics(
     if *permits_reassociation != numerical.permits_reassociation()
         || *permits_permutation != numerical.permits_permutation()
         || (family.consumes_reassociation && !*permits_reassociation)
-        || *accumulation != ArithmeticType::F32
+        // The region's own element width, for the reason the multi-pass gate
+        // above states.
+        || *accumulation != region_arithmetic_type(&region.index.scalar_program)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
