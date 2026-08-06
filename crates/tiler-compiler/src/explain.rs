@@ -4131,7 +4131,22 @@ mod tests {
                 // Recomputed by observing the failing value on this branch tree
                 // with the focused nextest command above, never copied from
                 // another branch.
-                "tiler-explain-v7 request=f3244b2242ebcb5c\n",
+                // Rebaselined from `f3244b2242ebcb5c` when
+                // `tiler::silu-f32@1`'s subnormal fact stopped claiming no
+                // binary32 silu result or intermediate is subnormal and named
+                // the three regions with their boundaries — near zero the
+                // reference is x/2 and every subnormal-magnitude argument has a
+                // subnormal image, and the subordinate exponential is itself
+                // subnormal across its own band. **No encoding version
+                // moved**: the fact record's rendering is unchanged and a
+                // canonical UTF-8 payload is tag-prefixed and length-framed,
+                // so the value change stays injective inside the projection
+                // and registry domains, and the standard provider stays at
+                // revision 7 on its own documented rule. Recomputed by
+                // observing the failing value on the merged integration tree
+                // with the focused nextest command above, never copied from
+                // the producing branch.
+                "tiler-explain-v7 request=6dd42be71c6745fe\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

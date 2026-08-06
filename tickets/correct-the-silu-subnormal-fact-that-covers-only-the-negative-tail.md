@@ -1,7 +1,7 @@
 ---
 id: correct-the-silu-subnormal-fact-that-covers-only-the-negative-tail
 title: Correct the SiLU subnormal fact that covers only the negative tail
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [apply-the-declared-numerical-conformance-on-every-reference-evaluation-path, derive-the-oracle-for-a-permitted-divergence-candidate, recompute-the-explain-request-qualifier-for-the-silu-subnormal-fact]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, semantics, subnormals]
-claimed_from: todo
-assignee: agent-silu-fact
-lease_expires_at: 1785991932
 ---
 ## User-visible outcome
 

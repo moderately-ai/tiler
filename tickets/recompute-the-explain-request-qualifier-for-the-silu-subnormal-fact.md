@@ -1,7 +1,7 @@
 ---
 id: recompute-the-explain-request-qualifier-for-the-silu-subnormal-fact
 title: Recompute the explain request qualifier for the SiLU subnormal fact
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [correct-the-silu-subnormal-fact-that-covers-only-the-negative-tail]
@@ -40,3 +40,7 @@ The producing branch holds `implementation/ir` only. `crates/tiler-compiler/**` 
 ## Closes when
 
 The literal is updated with its ledger paragraph and a full-workspace run is green.
+
+## Outcome
+
+Executed by the coordinator at the integration of the producing branch, exactly as filed: the pin moved `f3244b2242ebcb5c` → `6dd42be71c6745fe`, recomputed by observing the failing value on the merged tree with the ledger comment in the same commit. The compiler scope had freed when the structural R6 landing merged one step earlier in the same integration.
