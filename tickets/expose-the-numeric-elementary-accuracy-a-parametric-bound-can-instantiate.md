@@ -1,7 +1,7 @@
 ---
 id: expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate
 title: Expose the numeric elementary accuracy a parametric bound can instantiate
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [connect-certified-rounding-error-bounds-to-rewrite-permissions, derive-the-rewrite-rule-declaration-and-admission-shape-for-the-online-softmax-fold, convert-the-remaining-accuracy-predicate-shapes-to-a-relative-bound, derive-the-value-precondition-the-online-softmax-bound-needs-for-its-subnormal-clause, decide-whether-to-admit-an-elementary-identity-permission, reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, accuracy, compiler]
-claimed_from: todo
-assignee: agent-eps-exposure
-lease_expires_at: 1786026692
 ---
 ## User-visible outcome
 
