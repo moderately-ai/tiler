@@ -675,10 +675,11 @@ fn verify_pointwise_bf16(
 /// load through a buffer the signature never declares. The expression's own
 /// verifier already proved its ordinals are the dense `0..n`, so leaf `i` is
 /// served by read `i` and the pairing is exhaustive rather than a sample.
-/// **The binding**: each read must name a boundary tensor no other read names,
-/// in the canonical order [`reads_bind_boundary_tensors_in_order`] states, or a
-/// consumer that binds buffers positionally would bind the wrong one without
-/// noticing.
+/// **The binding**: each read must name a boundary tensor in the canonical order
+/// [`reads_bind_boundary_tensors_in_order`] states, or a consumer that binds
+/// buffers positionally would bind the wrong one without noticing. Two reads may
+/// name one declared input when they address it differently, which that rule
+/// states and bounds.
 ///
 /// Shared by the two width-specific verifiers above rather than written twice:
 /// the obligation is about *accesses*, and nothing in it reads an element type.
@@ -721,46 +722,69 @@ fn verify_pointwise_region(
 }
 
 /// Returns whether one pointwise region's reads bind boundary tensors in the
-/// canonical order, each tensor at most once.
+/// canonical order.
 ///
-/// **This widens a correspondence that conflated two facts, and separating them
-/// is the whole content of the change.** A read's *position* is the expression
-/// leaf it serves: `crate::kernel`'s `emit_pointwise` looks a leaf's
-/// ordinal up among the values loaded in access order, so position is what
-/// pairs a leaf with a buffer. A read's *tensor role* is which boundary tensor
-/// that buffer binds, and [`TensorRole::Input`]'s ordinal names one declared
-/// program input rather than the access position — `CoverAssembly::from_plan` in
-/// `tiler-compiler` binds it against the program's declared interface. Requiring
-/// the two to be equal made an elementwise epilogue inexpressible: a region
-/// reading a materialized intermediate and the program's third input has leaves
-/// `0` and `1`, and its second read must still say `Input { ordinal: 2 }` or
-/// name the wrong tensor.
+/// **A read's position and its boundary role are separate facts.** A read's
+/// *position* is the expression leaf it serves: `crate::kernel`'s
+/// `emit_pointwise` looks a leaf's ordinal up among the values loaded in access
+/// order, so position is what pairs a leaf with a buffer. A read's *tensor role*
+/// is which boundary tensor that buffer binds, and [`TensorRole::Input`]'s
+/// ordinal names one declared program input rather than the access position —
+/// `CoverAssembly::from_plan` in `tiler-compiler` binds it against the program's
+/// declared interface. Requiring the two to be equal made an elementwise
+/// epilogue inexpressible: a region reading a materialized intermediate and the
+/// program's third input has leaves `0` and `1`, and its second read must still
+/// say `Input { ordinal: 2 }` or name the wrong tensor.
 ///
-/// What the equality was protecting survives as three rules:
+/// What that separation protects survives as three rules:
 ///
-/// - **Declared input ordinals ascend strictly.** Two reads naming one input
-///   would bind one buffer twice while the leaf that meant another tensor went
-///   unbound, and a descending pair would be a second spelling of one
-///   computation — one region with two identities.
+/// - **Declared input ordinals never descend, and a repeat is a dense read
+///   followed by a mapped one.** A descending pair would be a second spelling of
+///   one computation — one region with two identities. A repeat is admitted
+///   because one expression may read one tensor through two different relations:
+///   `a * permute(a)` needs a dense read *and* a reindexed read of declared
+///   input `0`, and binding one access to both leaves is what once made that
+///   program compile as `permute(a) * permute(a)`. The pair carries its own
+///   canonical order rather than needing one imposed: the dense read leads, so
+///   the two encodings of the pair are not both admissible and the region keeps
+///   one spelling. Two *structural* relations on one ordinal stay refused for
+///   the same reason the order exists — nothing ranks two relations against each
+///   other, so the pair would have two spellings and no canonical one.
 /// - **At most one read binds the materialized intermediate.** The role carries
 ///   no ordinal, so a second read leaves nothing to say which materialization
-///   edge it binds. `CoverAssembly::from_plan` refuses that a layer up under
-///   `cover-intermediate-read-attribution`; stating it here is what stops an
-///   intrinsically ambiguous region from being built at all, for a producer that
-///   never passes through a cover.
+///   edge it binds — which is exactly why the repeated-read admission above
+///   cannot extend to it. `CoverAssembly::from_plan` refuses that a layer up
+///   under `cover-intermediate-read-attribution`; stating it here is what stops
+///   an intrinsically ambiguous region from being built at all, for a producer
+///   that never passes through a cover.
 /// - **A program output is never read.** Refused by name rather than under a
 ///   wildcard, so a role added to the vocabulary later is a build error here
 ///   instead of silently inheriting an admission nobody checked it for.
 fn reads_bind_boundary_tensors_in_order(reads: &[Access]) -> bool {
-    let mut highest_input: Option<u32> = None;
+    let mut previous_input: Option<(u32, &LogicalAccess)> = None;
     let mut intermediate_reads = 0_usize;
     for read in reads {
         match read.tensor {
             TensorRole::Input { ordinal } => {
-                if highest_input.is_some_and(|highest| ordinal.get() <= highest) {
-                    return false;
+                let ordinal = ordinal.get();
+                if let Some((previous_ordinal, previous_map)) = previous_input {
+                    if ordinal < previous_ordinal {
+                        return false;
+                    }
+                    // The repeat's canonical spelling, and the whole of what
+                    // separates two admissible reads of one tensor from one read
+                    // written twice: the dense read leads and the mapped one
+                    // follows. Two dense reads address identically and so serve
+                    // interchangeable leaves, and a mapped read ahead of a dense
+                    // one is the same pair reversed.
+                    if ordinal == previous_ordinal
+                        && (*previous_map != LogicalAccess::LinearIdentity
+                            || read.map == LogicalAccess::LinearIdentity)
+                    {
+                        return false;
+                    }
                 }
-                highest_input = Some(ordinal.get());
+                previous_input = Some((ordinal, &read.map));
             }
             TensorRole::Intermediate => {
                 intermediate_reads += 1;
@@ -2755,8 +2779,8 @@ mod tests {
         assert_eq!(verified.region().index.accesses.len(), 4);
     }
 
-    /// The reads must name strictly ascending declared inputs: a permuted or
-    /// repeated binding is a different program, or an ambiguous one.
+    /// The reads must name non-descending declared inputs, and two dense reads
+    /// of one input are an ambiguous binding rather than a program.
     ///
     /// Each perturbation leaves every other fact — access count, modes, proofs,
     /// expression — intact, so this isolates the binding rule from the arity
@@ -2769,7 +2793,7 @@ mod tests {
     /// elementwise epilogue reading a materialized intermediate alongside the
     /// program's later inputs cannot name a prefix at all.
     #[test]
-    fn read_accesses_must_name_strictly_ascending_declared_inputs() {
+    fn read_accesses_must_name_non_descending_declared_inputs() {
         let mut permuted = three_input_builder(4);
         permuted.accesses.swap(0, 1);
         permuted.bounds_proofs.swap(0, 1);
@@ -2778,8 +2802,10 @@ mod tests {
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
         );
 
-        // A repeated ordinal leaves one input unbound while two reads name one
-        // tensor, which the same rule refuses.
+        // A repeated ordinal whose two reads address identically: both are
+        // `LinearIdentity`, so nothing distinguishes the leaves they serve and
+        // one input is left unbound. Refused, and it is the neighbour of the
+        // admitted pair below rather than a different rule.
         let mut repeated = three_input_builder(4);
         repeated.accesses[2].tensor = TensorRole::Input {
             ordinal: InputOrdinal::new(1),
@@ -2801,6 +2827,104 @@ mod tests {
             ordinal: InputOrdinal::new(7),
         };
         assert!(sparse.build().is_ok());
+    }
+
+    /// A rank-one reindex over the whole extent, mirrored or not.
+    ///
+    /// A single decode spanning the domain tiles it, so both spellings are
+    /// bijections a pointwise region admits; neither is `LinearIdentity`, and the
+    /// two are different relations. Those are the only properties the
+    /// repeated-read cases below need.
+    fn whole_extent_reindex(elements: u64, mirrored: bool) -> LogicalAccess {
+        let shape = crate::shape::Shape::from_dims([elements]);
+        LogicalAccess::ReindexBijection {
+            operand_shape: shape.clone(),
+            result_shape: shape,
+            axes: vec![crate::schedule::AxisDecode {
+                divisor: 1,
+                modulus: elements,
+                mirrored,
+            }],
+        }
+    }
+
+    /// One declared input may be read twice when the two reads address it
+    /// differently, and the pair has exactly one canonical spelling.
+    ///
+    /// This is the region behind `a * permute(a)`: two expression leaves mean
+    /// two different tensors derived from one declared input, so they need two
+    /// reads with two relations. Binding one access to both leaves is what made
+    /// that program compile as `permute(a) * permute(a)` and return a wrong
+    /// tensor, so the admission and its bound are the same rule.
+    ///
+    /// The three refusals are what the widening must not lose. **Reversed**: the
+    /// mapped read ahead of the dense one is the same pair written the other way
+    /// round, and admitting both would give one region two identities. **Two
+    /// relations**: nothing ranks two structural relations against each other,
+    /// so that pair has no canonical order at all. **A repeated intermediate**:
+    /// the role carries no ordinal, so the attribution that makes the input pair
+    /// unambiguous is exactly what it lacks.
+    #[test]
+    fn one_declared_input_may_be_read_densely_and_through_a_relation() {
+        let control = three_input_builder(4).build().unwrap();
+
+        let mut paired = three_input_builder(4);
+        paired.accesses[1].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(0),
+        };
+        paired.accesses[1].map = whole_extent_reindex(4, true);
+        paired.bounds_proofs[1].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(0),
+        };
+        let verified = paired.build().unwrap();
+        // Three reads and a write still bind four buffers: a second read of one
+        // declared input is a second binding, not a shared one.
+        assert_eq!(verified.requirements().buffer_bindings, 4);
+        // The pair reaches the encoding, so the region that reads input `0`
+        // twice is a different region from the one that reads inputs `0` and
+        // `1` — not one region with two spellings.
+        assert_ne!(
+            verified.canonical_identity().as_bytes(),
+            control.canonical_identity().as_bytes()
+        );
+
+        let mut reversed = three_input_builder(4);
+        reversed.accesses[0].map = whole_extent_reindex(4, true);
+        reversed.accesses[1].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(0),
+        };
+        reversed.bounds_proofs[1].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(0),
+        };
+        assert_eq!(
+            reversed.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+
+        let mut two_relations = three_input_builder(4);
+        two_relations.accesses[0].map = whole_extent_reindex(4, false);
+        two_relations.accesses[1].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(0),
+        };
+        two_relations.accesses[1].map = whole_extent_reindex(4, true);
+        two_relations.bounds_proofs[1].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(0),
+        };
+        assert_eq!(
+            two_relations.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+
+        let mut two_intermediates = three_input_builder(4);
+        for position in 0..2 {
+            two_intermediates.accesses[position].tensor = TensorRole::Intermediate;
+            two_intermediates.bounds_proofs[position].tensor = TensorRole::Intermediate;
+        }
+        two_intermediates.accesses[1].map = whole_extent_reindex(4, true);
+        assert_eq!(
+            two_intermediates.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
     }
 
     /// An elementwise region may read one materialized intermediate, and only
