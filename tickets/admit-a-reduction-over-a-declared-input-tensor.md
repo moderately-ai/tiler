@@ -1,7 +1,7 @@
 ---
 id: admit-a-reduction-over-a-declared-input-tensor
 title: Admit a reduction whose contributor tensor is a declared input
-status: todo
+status: in-progress
 priority: p2
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, ir]
+claimed_from: todo
+assignee: agent-input-reduction
+lease_expires_at: 1786000442
 ---
 ## User-visible outcome
 
