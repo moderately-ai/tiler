@@ -1,7 +1,7 @@
 ---
 id: expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate
 title: Expose the numeric elementary accuracy a parametric bound can instantiate
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [connect-certified-rounding-error-bounds-to-rewrite-permissions]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, accuracy, compiler]
+claimed_from: todo
+assignee: agent-eps-exposure
+lease_expires_at: 1786026692
 ---
 ## User-visible outcome
 

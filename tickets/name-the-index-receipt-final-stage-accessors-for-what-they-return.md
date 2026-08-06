@@ -1,7 +1,7 @@
 ---
 id: name-the-index-receipt-final-stage-accessors-for-what-they-return
 title: Name the index receipt final-stage accessors for what they return
-status: deferred
+status: in-progress
 priority: p2
 dependencies: [accept-the-multi-region-index-realization-surface]
 related: [lower-a-two-region-occurrence-through-one-index-access-capability, admit-a-multi-region-index-realization-law]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [api, ir, indexing, naming]
+claimed_from: todo
+assignee: agent-accessor-rename
+lease_expires_at: 1786026692
 ---
 ## User-visible outcome
 
