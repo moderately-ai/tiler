@@ -1,7 +1,7 @@
 ---
 id: correct-the-ocp-source-status-in-adrs-0036-and-0038
 title: Correct the OCP source status in ADRs 0036 and 0038
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [acquire-and-classify-the-two-ocp-dtype-specifications, derive-dtype-family-research-tracks-from-the-mature-taxonomy]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, dtype, provenance, adr]
-claimed_from: todo
-assignee: agent-adr-fixes
-lease_expires_at: 1786050483
 ---
 ## User-visible outcome
 

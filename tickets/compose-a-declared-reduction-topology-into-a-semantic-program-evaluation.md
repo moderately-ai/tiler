@@ -1,7 +1,7 @@
 ---
 id: compose-a-declared-reduction-topology-into-a-semantic-program-evaluation
 title: Compose a declared reduction topology into a semantic program evaluation
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [decide-how-a-pinned-pointwise-grouping-becomes-evaluable, derive-the-oracle-for-a-permitted-divergence-candidate, enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle, accept-the-realization-witness-surface, accept-the-composed-realization-evaluation-surface]
@@ -9,9 +9,6 @@ scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, reference, conformance]
-claimed_from: todo
-assignee: agent-topology-oracle
-lease_expires_at: 1786050116
 ---
 ## User-visible outcome
 
