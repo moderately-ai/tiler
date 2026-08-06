@@ -47,6 +47,29 @@ Changed in `tiler_ir::index`:
 
 The deriving ticket's Outcome section carries: the per-site injectivity reasoning for law tag 9 and for both receipt domain tags, the pin survey (nothing moved; `cargo nextest run --workspace` → 2757 passed before and after), the chain-well-formedness argument mirrored from `derive_subprogram_boundary_contract`, and the watched-failing perturbations — including two that showed an assertion which looked right and was not.
 
+## Delta — the compiler-side consumer, 2026-08-06
+
+Appended rather than filed as a second node, because it is one small addition to the decision already open: the surface above has no consumer outside `tiler-ir` without it, and accepting the two separately would leave a ruling on a vocabulary with nothing that speaks it. [`lower-a-two-region-occurrence-through-one-index-access-capability`](lower-a-two-region-occurrence-through-one-index-access-capability.md) landed it as a draft; its Outcome carries the derivations and the watched-failing perturbations.
+
+**New in `tiler_compiler::capability`** — every item here is already inside that module's stated draft boundary:
+
+- **`IndexAccessLoweringProvider::lower_sequence`** — a *defaulted* method taking the realization context. The default opens one stage sourced positionally, so all twenty existing providers are untouched; `lower` stays required and unchanged. A staged provider overrides `lower_sequence` and implements `lower` as an explicit refusal, which mirrors `IndexRealizationLaw::realize` refusing for the same law rather than being a stub.
+- **`IndexAccessSequenceContext`** — `occurrence`, `stage_count`, `stage(sources, build)`, `single_stage(build)`. Each stage gets its own canonical builder and is verified before the next opens.
+- **`IndexAccessStageFailure`** — `#[non_exhaustive]`; `Emit { stage, source }`, `Build { stage, diagnostics }`, `Chain(IndexRegionSequenceError)`.
+
+**Changed in `tiler_compiler::legality`:**
+
+- `IndexRefinement` and `PendingIndexRefinement` gain `realization()` and `single_region() -> Option<&VerifiedIndexRegion>`; `region()` is **removed** from both. `PendingIndexRefinement` also gains `scalar_authorities()`.
+- `RefinementContent::region_identity` becomes `realization_identity() -> &CanonicalIndexRegionSequenceIdentity`, beside new `stage_count()` and `scalar_authorities()`.
+- `RefinementError::Emit(..)` becomes `Emit { stage, source }`, `Build` gains `stage`, and `Realization { source }` is added; `impl From<LoweringEmitError> for RefinementError` is removed because a stage ordinal cannot be recovered from the source alone.
+
+**The choices worth objecting to here:**
+
+- **A defaulted sequence method rather than one required realization method.** The unified alternative writes the same three-line adapter into twenty providers, and the host can generate it. The alternative of a second provider trait plus a second `register_*` was eliminated for forking `GovernedIndexAccess` and the resolution surface over a property of the emission, not of the registration.
+- **`single_region()` returns `None` for a chain rather than the final stage.** This is the answer to the question paragraph five of "The choices worth objecting to" left open. A chain's final stage reads a value no occurrence operand carries, so the documented "feed each input boundary the operand tensor named by `operand_bindings`" does not compose for it; returning it would let an evaluator run a third of a realization and report the result as the occurrence's. Both misreads were live in the tree before this branch.
+- **The IR-side half of that answer is a rename, not a removal, and is not taken here.** Retaining a final-stage accessor survives elimination — its writes are the occurrence's results and `bind_results` derives from it alone — but `region()` is the wrong name for it. That is `implementation/ir` and is filed at [`name-the-index-receipt-final-stage-accessors-for-what-they-return`](name-the-index-receipt-final-stage-accessors-for-what-they-return.md), deferred behind this node. The `const fn` constraint this node recorded no longer binds `region()`: after the compiler-side change nothing in `tiler-compiler` calls it (`grep -rn 'receipt\.region()' crates/tiler-compiler` returns nothing), and only `scalar_authority()` is still reached, from a `pub const fn`.
+- **Two more compiler identity domains.** `tiler.compiler.index-refinement-content.staged.v1\0` and `tiler.compiler.index-refinement-occurrence.staged.v1\0`, carrying every leading stage's reached authority and admission. A one-stage binding keeps the existing tags and encodes exactly the bytes it always did, because a one-stage sequence identity is its region's identity and a one-stage realization retains no leading stage. Surveyed rather than argued: 26 distinct 16-hex and 6 distinct 64-hex pins over `crates/tiler-compiler`, identical on the base commit and the branch.
+
 ## Closes when
 
-Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the surface is in use inside `tiler-ir` and labelled a draft.
+Tom accepts, accepts with a named exclusion, or rejects — the compiler-side delta above included, since it is part of the same surface. Nothing releases on this node meanwhile; the surface is in use inside `tiler-ir` and `tiler-compiler` and labelled a draft in both.

@@ -367,7 +367,9 @@ fn emitted_region_evaluation(
         FrozenScalarReferenceRegistry::standard().expect("the governed scalar oracle composes"),
     );
     let evaluation = evaluator.evaluate(
-        refinement.region(),
+        refinement
+            .single_region()
+            .expect("every governed family realizes its occurrence in one region"),
         IndexRegionAuthority::new(&scalars),
         &[
             IndexRegionInput::new(refinement.operand_bindings()[0].input_tensor(), left),

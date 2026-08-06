@@ -56,12 +56,12 @@ use std::sync::Arc;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
-    CanonicalIndexRegionIdentity, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry,
+    CanonicalIndexRegionSequenceIdentity, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry,
     IndexRefinementDomainProof, IndexRefinementReceipt, IndexRefinementSubject,
-    IndexRefinementVerificationError, IndexRefinementVerificationOutcome, IndexRegionBuildError,
-    IndexRegionDiagnostic, NumericalContractIdentity, OperandBinding, ResultBinding,
+    IndexRefinementVerificationError, IndexRefinementVerificationOutcome, IndexRegionDiagnostic,
+    IndexRegionSequenceError, NumericalContractIdentity, OperandBinding, ResultBinding,
     ScalarAuthorityEvidence, ScalarRegistryError, UnknownIndexDomainPredicate,
-    VerifiedIndexHandleError, VerifiedIndexRegion,
+    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedIndexRegionSequence,
 };
 use tiler_ir::semantic::{
     OpKey, OperationAttributes, OperationEffect, ProviderIdentity, ResolvedValueType,
@@ -69,14 +69,30 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::Shape;
 
 use crate::capability::{
-    IndexAccessLoweringContext, LoweringCapabilityAuthority, LoweringCapabilityRevision,
-    LoweringEmitError, LoweringFamily, ResolvedLoweringCapability,
+    IndexAccessSequenceContext, IndexAccessStageFailure, LoweringCapabilityAuthority,
+    LoweringCapabilityRevision, LoweringEmitError, LoweringFamily, ResolvedLoweringCapability,
 };
 
-/// Canonical domain-separation tag for reusable refinement content.
+/// Canonical domain-separation tag for reusable single-region refinement content.
 const CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.v2\0";
-/// Canonical domain-separation tag for one refinement occurrence binding.
+/// Canonical domain-separation tag for reusable staged refinement content.
+///
+/// A one-stage realization keeps [`CONTENT_IDENTITY_TAG`] and encodes exactly
+/// the bytes it always has, because a one-stage sequence identity *is* its
+/// region's identity and a one-stage realization retains no leading stage. Only
+/// a chain is written under this tag, and neither tag is a prefix of the other,
+/// so the two preimages are disjoint.
+const STAGED_CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.staged.v1\0";
+/// Canonical domain-separation tag for one single-region refinement occurrence.
 const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurrence.v2\0";
+/// Canonical domain-separation tag for one staged refinement occurrence binding.
+///
+/// Domain-separated for the reason [`STAGED_CONTENT_IDENTITY_TAG`] is: an
+/// occurrence binding over a chain carries every stage's provider-attributed
+/// admission provenance, and a one-stage binding carries exactly the one it
+/// always has.
+const STAGED_OCCURRENCE_IDENTITY_TAG: &[u8] =
+    b"tiler.compiler.index-refinement-occurrence.staged.v1\0";
 
 /// Collision-free identity of reusable refinement content.
 ///
@@ -119,23 +135,41 @@ impl IndexRefinementIdentity {
 /// semantic definitions. It carries no graph site and no provider selection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefinementContent {
-    region_identity: CanonicalIndexRegionIdentity,
+    realization_identity: CanonicalIndexRegionSequenceIdentity,
+    stage_count: usize,
     operation: OpKey,
     operand_interface: Vec<(u32, ResolvedValueType, Shape)>,
     result_interface: Vec<(ResolvedValueType, Shape)>,
     attributes: OperationAttributes,
     effect: OperationEffect,
     numerical_contract: NumericalContractIdentity,
+    /// Every stage's evidence except the final one's, in stage order.
+    ///
+    /// Split the way [`VerifiedIndexRegionSequence`] splits its stages: a
+    /// realization always has a final stage, and the reached scalar authority
+    /// genuinely differs between a fold and the pass consuming it, so a chain is
+    /// not the same reusable fact as either stage alone.
+    leading_scalar_authorities: Vec<ScalarAuthorityEvidence>,
     scalar_authority: ScalarAuthorityEvidence,
     index_domain_proofs: Vec<IndexRefinementDomainProof>,
     identity: RefinementContentIdentity,
 }
 
 impl RefinementContent {
-    /// Returns the structural identity of the realizing index region.
+    /// Returns the canonical identity of the whole ordered realization.
+    ///
+    /// For a one-stage realization these are the realizing region's own
+    /// canonical bytes; for a chain they are the sequence's, under its own
+    /// domain tag.
     #[must_use]
-    pub const fn region_identity(&self) -> &CanonicalIndexRegionIdentity {
-        &self.region_identity
+    pub const fn realization_identity(&self) -> &CanonicalIndexRegionSequenceIdentity {
+        &self.realization_identity
+    }
+
+    /// Returns how many ordered stages the realization retains, never zero.
+    #[must_use]
+    pub const fn stage_count(&self) -> usize {
+        self.stage_count
     }
 
     /// Returns the realized semantic operation family key.
@@ -162,14 +196,23 @@ impl RefinementContent {
         &self.numerical_contract
     }
 
-    /// Returns the checked scalar authority evidence bound to this region.
+    /// Returns the checked scalar authority evidence bound to the final stage.
     ///
     /// The receipt is bound to the exact structural region identity and keeps its
     /// provider-independent reached definitions separate from provider-attributed
-    /// admission provenance.
+    /// admission provenance. For a one-stage realization the final stage is the
+    /// only stage; [`Self::scalar_authorities`] answers the whole chain.
     #[must_use]
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
         &self.scalar_authority
+    }
+
+    /// Returns every stage's checked scalar authority evidence, in stage order.
+    #[must_use]
+    pub fn scalar_authorities(&self) -> Vec<ScalarAuthorityEvidence> {
+        let mut authorities = self.leading_scalar_authorities.clone();
+        authorities.push(self.scalar_authority.clone());
+        authorities
     }
 
     /// Returns the number of residual predicates discharged after IR verification.
@@ -202,7 +245,7 @@ pub struct IndexRefinement {
     receipt: IndexRefinementReceipt,
     provider: ProviderIdentity,
     revision: LoweringCapabilityRevision,
-    region: VerifiedIndexRegion,
+    realization: VerifiedIndexRegionSequence,
     identity: IndexRefinementIdentity,
 }
 
@@ -250,20 +293,37 @@ impl IndexRefinement {
         self.receipt.result_bindings()
     }
 
-    /// Returns the checked scalar authority evidence.
+    /// Returns the checked scalar authority evidence of the final stage.
     #[must_use]
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
         self.content.scalar_authority()
     }
 
-    /// Returns the realizing verified index region.
+    /// Returns the exact ordered realization the provider emitted.
     ///
-    /// The region can be evaluated directly by the independent
+    /// Its stages, their wiring, and every handed intermediate's shape,
+    /// ownership, and lifetime are reachable from here.
+    #[must_use]
+    pub const fn realization(&self) -> &VerifiedIndexRegionSequence {
+        &self.realization
+    }
+
+    /// Returns the one realizing region, when the realization has exactly one.
+    ///
+    /// Such a region can be evaluated directly by the independent
     /// `tiler-reference` oracle; feed each input boundary the operand tensor
     /// named by [`Self::operand_bindings`].
+    ///
+    /// **The answer is `None` for a chain rather than the final stage**, because
+    /// a chain's final stage reads a value no occurrence operand carries, so the
+    /// binding above does not compose for it. A consumer that can only evaluate
+    /// one region therefore refuses a staged realization explicitly instead of
+    /// evaluating a third of it and reporting the result as the occurrence's.
     #[must_use]
-    pub const fn region(&self) -> &VerifiedIndexRegion {
-        &self.region
+    pub fn single_region(&self) -> Option<&VerifiedIndexRegion> {
+        self.realization
+            .is_single_stage()
+            .then(|| self.realization.final_stage())
     }
 }
 
@@ -327,16 +387,34 @@ impl PendingIndexRefinement {
         self.receipt.result_bindings()
     }
 
-    /// Returns the scalar-authority receipt bound to the exact retained region.
+    /// Returns the scalar-authority receipt bound to the final retained stage.
     #[must_use]
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
         self.receipt.scalar_authority()
     }
 
-    /// Returns the exact structurally verified region awaiting discharge.
+    /// Returns every stage's scalar-authority receipt, in stage order.
     #[must_use]
-    pub const fn region(&self) -> &VerifiedIndexRegion {
-        self.receipt.region()
+    pub fn scalar_authorities(&self) -> Vec<ScalarAuthorityEvidence> {
+        self.receipt.scalar_authorities()
+    }
+
+    /// Returns the exact structurally verified realization awaiting discharge.
+    #[must_use]
+    pub const fn realization(&self) -> &VerifiedIndexRegionSequence {
+        self.receipt.realization()
+    }
+
+    /// Returns the one retained region, when the realization has exactly one.
+    ///
+    /// `None` for a chain, for the reason [`IndexRefinement::single_region`]
+    /// gives.
+    #[must_use]
+    pub fn single_region(&self) -> Option<&VerifiedIndexRegion> {
+        let realization = self.receipt.realization();
+        realization
+            .is_single_stage()
+            .then(|| realization.final_stage())
     }
 
     /// Returns every exact residual predicate in canonical region order.
@@ -431,12 +509,29 @@ pub enum RefinementError {
         /// The rejected effect class.
         effect: OperationEffect,
     },
-    /// The provider rejected emission through the canonical builder.
-    Emit(LoweringEmitError),
-    /// The emitted region failed whole-region structural verification.
+    /// The provider rejected emission of one stage through the canonical builder.
+    Emit {
+        /// Ordered realization stage that failed to emit.
+        stage: usize,
+        /// Typed emission cause.
+        source: LoweringEmitError,
+    },
+    /// One emitted stage failed whole-region structural verification.
     Build {
+        /// Ordered realization stage whose region was rejected.
+        stage: usize,
         /// Deterministic structural diagnostics.
         diagnostics: Vec<IndexRegionDiagnostic>,
+    },
+    /// The emitted stages do not compose into a well-formed ordered chain.
+    ///
+    /// Distinct from every interface refusal below: each stage verified on its
+    /// own and the disagreement is in the composition — a value handed on that
+    /// nothing reads, a handed boundary the consumer disagrees with, or a stage
+    /// population beyond the governed ceiling.
+    Realization {
+        /// Typed chain refusal.
+        source: IndexRegionSequenceError,
     },
     /// The region's scalar authority rejected revalidation.
     ScalarAuthority(Arc<ScalarRegistryError>),
@@ -526,12 +621,20 @@ impl fmt::Display for RefinementError {
                 formatter,
                 "occurrence effect {effect:?} cannot be realized as a pure index region"
             ),
-            Self::Emit(source) => write!(formatter, "provider emission failed: {source}"),
-            Self::Build { diagnostics } => write!(
+            Self::Emit { stage, source } => {
+                write!(
+                    formatter,
+                    "provider emission failed at stage {stage}: {source}"
+                )
+            }
+            Self::Build { stage, diagnostics } => write!(
                 formatter,
-                "emitted region failed verification with {} diagnostic(s)",
+                "emitted stage {stage} failed verification with {} diagnostic(s)",
                 diagnostics.len()
             ),
+            Self::Realization { source } => {
+                write!(formatter, "emitted stages do not chain: {source}")
+            }
             Self::ScalarAuthority(source) => {
                 write!(formatter, "region scalar authority failed: {source}")
             }
@@ -599,11 +702,24 @@ impl fmt::Display for RefinementError {
 impl Error for RefinementError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Emit(source) => Some(source),
+            Self::Emit { source, .. } => Some(source),
+            Self::Realization { source } => Some(source),
             Self::ScalarAuthority(source) => Some(source.as_ref()),
             Self::Handle(source) => Some(source),
             Self::IrVerifier(source) => Some(source.as_ref()),
             _ => None,
+        }
+    }
+}
+
+impl From<IndexAccessStageFailure> for RefinementError {
+    fn from(source: IndexAccessStageFailure) -> Self {
+        match source {
+            IndexAccessStageFailure::Emit { stage, source } => Self::Emit { stage, source },
+            IndexAccessStageFailure::Build { stage, diagnostics } => {
+                Self::Build { stage, diagnostics }
+            }
+            IndexAccessStageFailure::Chain(source) => Self::Realization { source },
         }
     }
 }
@@ -655,11 +771,11 @@ pub fn refine_index_region(
     let resolution = realizations
         .resolve(subject)
         .map_err(|source| map_ir_verifier_error(source, capability, subject))?;
-    let region = emit_region(capability, subject, scalars)?;
+    let realization = emit_realization(capability, subject, scalars)?;
     // Registration and a successful build are not refinement evidence. Everything
-    // below independently proves the emitted region realizes the occurrence.
+    // below independently proves the emitted realization realizes the occurrence.
     let verified = resolution
-        .verify(capability.authority().refinement(), &region)
+        .verify_sequence(capability.authority().refinement(), &realization)
         .map_err(|source| map_ir_verifier_error(source, capability, subject))?;
 
     // A residual domain obligation is not permission to skip independent
@@ -681,8 +797,8 @@ pub fn refine_index_region(
     let IndexRefinementVerificationOutcome::Verified(receipt) = verified else {
         unreachable!()
     };
-    let scalar_authority = receipt.scalar_authority().clone();
-    let content = assemble_content(subject, &region, scalar_authority, Vec::new());
+    let scalar_authorities = receipt.scalar_authorities();
+    let content = assemble_content(subject, &realization, scalar_authorities, Vec::new());
     let identity = encode_occurrence_identity(
         &content,
         capability.provider(),
@@ -696,7 +812,7 @@ pub fn refine_index_region(
         receipt: *receipt,
         provider: capability.provider().clone(),
         revision: capability.revision(),
-        region,
+        realization,
         identity,
     })))
 }
@@ -764,39 +880,51 @@ fn map_ir_verifier_error(
     }
 }
 
-/// Drives the resolved provider through the canonical builder and verifies it.
-fn emit_region(
+/// Drives the resolved provider through the canonical builders and verifies it.
+///
+/// Every stage is built and structurally verified as it is emitted, and the
+/// retained stages are then proved to compose. The provider's own result is
+/// deliberately not the last word: a stage failure recorded on the context is
+/// reported even when the provider discarded it and returned `Ok`, so a
+/// swallowed refusal cannot reach the semantic comparison as a shorter chain
+/// that happens to be well formed.
+fn emit_realization(
     capability: &ResolvedLoweringCapability,
     occurrence: &IndexRefinementSubject,
     scalars: &FrozenScalarRegistry,
-) -> Result<VerifiedIndexRegion, RefinementError> {
+) -> Result<VerifiedIndexRegionSequence, RefinementError> {
     let provider = capability
         .index_access_provider()
         .ok_or(RefinementError::MissingIndexProvider)?;
-    let mut builder = tiler_ir::index::IndexRegionBuilder::new(scalars.clone())
-        .map_err(LoweringEmitError::from)?;
-    {
-        let mut context = IndexAccessLoweringContext::new(&mut builder, occurrence);
-        provider.lower(&mut context)?;
+    let mut sequence = IndexAccessSequenceContext::new(scalars, occurrence);
+    let emitted = provider.lower_sequence(&mut sequence);
+    // Three refusals can be in play at once, and the order below is what keeps
+    // each one's diagnosis attributable. A recorded stage failure is the most
+    // specific — it names the stage and whether emission or verification
+    // refused — and it is also the one a provider can have discarded. A
+    // provider raising its own refusal without opening a stage reports it next,
+    // attributed to the stage it was about to emit, because reporting an empty
+    // chain instead would replace "this provider does not lower this
+    // occurrence" with "no stage was emitted". Only then does composition speak.
+    let pending_stage = sequence.stage_count();
+    if let Some(failure) = sequence.take_failure() {
+        return Err(failure.into());
     }
-    builder
-        .build()
-        .map_err(|error: IndexRegionBuildError| RefinementError::Build {
-            diagnostics: error.diagnostics().to_vec(),
-        })
-}
-
-impl From<LoweringEmitError> for RefinementError {
-    fn from(source: LoweringEmitError) -> Self {
-        Self::Emit(source)
-    }
+    emitted.map_err(|source| RefinementError::Emit {
+        stage: pending_stage,
+        source,
+    })?;
+    sequence.finish().map_err(RefinementError::from)
 }
 
 /// Assembles reusable content and its canonical identity.
+///
+/// `scalar_authorities` is every stage's evidence in stage order, which the IR
+/// receipt always answers with at least one entry.
 fn assemble_content(
     occurrence: &IndexRefinementSubject,
-    region: &VerifiedIndexRegion,
-    scalar_authority: ScalarAuthorityEvidence,
+    realization: &VerifiedIndexRegionSequence,
+    mut scalar_authorities: Vec<ScalarAuthorityEvidence>,
     index_domain_proofs: Vec<IndexRefinementDomainProof>,
 ) -> RefinementContent {
     let operand_interface = canonical_operand_interface(occurrence);
@@ -805,22 +933,30 @@ fn assemble_content(
         .iter()
         .map(|result| (result.value_type().clone(), result.shape().clone()))
         .collect();
-    let region_identity = region.canonical_identity().clone();
+    let realization_identity = realization.identity().clone();
+    let scalar_authority = scalar_authorities
+        .pop()
+        .expect("a verified realization retains one scalar authority per stage");
+    let leading_scalar_authorities = scalar_authorities;
     let identity = encode_content_identity(
-        &region_identity,
+        &realization_identity,
+        realization.is_single_stage(),
         occurrence,
         &operand_interface,
+        &leading_scalar_authorities,
         &scalar_authority,
         &index_domain_proofs,
     );
     RefinementContent {
-        region_identity,
+        realization_identity,
+        stage_count: realization.stage_count(),
         operation: occurrence.operation().clone(),
         operand_interface,
         result_interface,
         attributes: occurrence.attributes().clone(),
         effect: occurrence.effect(),
         numerical_contract: occurrence.numerical_contract().clone(),
+        leading_scalar_authorities,
         scalar_authority,
         index_domain_proofs,
         identity,
@@ -842,15 +978,20 @@ pub(crate) fn complete_pending_index_refinement(
         .map_err(|source| RefinementError::IrVerifier(Arc::new(source)))?;
     let index_domain_proofs = receipt.index_domain_proofs().to_vec();
     let subject = pending.subject().clone();
-    let region = pending.region().clone();
-    let scalar_authority = pending.scalar_authority().clone();
+    let realization = pending.realization().clone();
+    let scalar_authorities = pending.scalar_authorities();
     let PendingIndexRefinement {
         provider,
         revision,
         capability_authority,
         ..
     } = pending;
-    let content = assemble_content(&subject, &region, scalar_authority, index_domain_proofs);
+    let content = assemble_content(
+        &subject,
+        &realization,
+        scalar_authorities,
+        index_domain_proofs,
+    );
     let identity = encode_occurrence_identity(
         &content,
         &provider,
@@ -864,7 +1005,7 @@ pub(crate) fn complete_pending_index_refinement(
         receipt,
         provider,
         revision,
-        region,
+        realization,
         identity,
     })
 }
@@ -889,15 +1030,33 @@ fn canonical_operand_interface(
     interface
 }
 
+/// Encodes reusable refinement content.
+///
+/// **Injectivity across the two domains.** A one-stage realization is written
+/// under [`CONTENT_IDENTITY_TAG`] exactly as it always has been: a one-stage
+/// sequence identity is its region's identity byte for byte, and a one-stage
+/// realization has no leading stage, so no byte of the previous encoding moves.
+/// A chain is written under [`STAGED_CONTENT_IDENTITY_TAG`], neither tag being a
+/// prefix of the other, and carries every leading stage's reached authority
+/// length-framed after the final stage's. That block is load-bearing rather than
+/// decorative: a fold and the pass consuming it reach different scalar
+/// operations, so two chains agreeing on the final stage alone are different
+/// reusable facts.
 fn encode_content_identity(
-    region_identity: &CanonicalIndexRegionIdentity,
+    realization_identity: &CanonicalIndexRegionSequenceIdentity,
+    single_stage: bool,
     occurrence: &IndexRefinementSubject,
     operand_interface: &[(u32, ResolvedValueType, Shape)],
+    leading_scalar_authorities: &[ScalarAuthorityEvidence],
     scalar_authority: &ScalarAuthorityEvidence,
     index_domain_proofs: &[IndexRefinementDomainProof],
 ) -> RefinementContentIdentity {
-    let mut bytes = CONTENT_IDENTITY_TAG.to_vec();
-    push_slice(&mut bytes, region_identity.as_bytes());
+    let mut bytes = if single_stage {
+        CONTENT_IDENTITY_TAG.to_vec()
+    } else {
+        STAGED_CONTENT_IDENTITY_TAG.to_vec()
+    };
+    push_slice(&mut bytes, realization_identity.as_bytes());
     encode_op_key(&mut bytes, occurrence.operation());
     push_len(&mut bytes, operand_interface.len());
     for (local, value_type, shape) in operand_interface {
@@ -928,6 +1087,15 @@ fn encode_content_identity(
     push_slice(&mut bytes, scalar_authority.type_definitions().as_bytes());
     push_slice(&mut bytes, scalar_authority.semantic_snapshot().as_bytes());
     push_slice(&mut bytes, scalar_authority.scalar_snapshot().as_bytes());
+    if !single_stage {
+        push_len(&mut bytes, leading_scalar_authorities.len());
+        for authority in leading_scalar_authorities {
+            push_slice(&mut bytes, authority.definitions().as_bytes());
+            push_slice(&mut bytes, authority.type_definitions().as_bytes());
+            push_slice(&mut bytes, authority.semantic_snapshot().as_bytes());
+            push_slice(&mut bytes, authority.scalar_snapshot().as_bytes());
+        }
+    }
     push_len(&mut bytes, index_domain_proofs.len());
     for proof in index_domain_proofs {
         push_slice(&mut bytes, proof.identity().as_bytes());
@@ -935,6 +1103,13 @@ fn encode_content_identity(
     RefinementContentIdentity(bytes)
 }
 
+/// Encodes one occurrence binding, domain-separated the way content is.
+///
+/// The trailing provider-attributed admissions are per stage, because a stage's
+/// [`ScalarAuthorityEvidence`] is the authority that stage actually *reached*
+/// rather than the capability's whole declared permission. A one-stage binding
+/// carries exactly the one admission pair it always has, under the unchanged
+/// [`OCCURRENCE_IDENTITY_TAG`].
 fn encode_occurrence_identity(
     content: &RefinementContent,
     provider: &ProviderIdentity,
@@ -943,7 +1118,12 @@ fn encode_occurrence_identity(
     occurrence: &IndexRefinementSubject,
     receipt: &IndexRefinementReceipt,
 ) -> IndexRefinementIdentity {
-    let mut bytes = OCCURRENCE_IDENTITY_TAG.to_vec();
+    let single_stage = content.stage_count == 1;
+    let mut bytes = if single_stage {
+        OCCURRENCE_IDENTITY_TAG.to_vec()
+    } else {
+        STAGED_OCCURRENCE_IDENTITY_TAG.to_vec()
+    };
     push_slice(&mut bytes, content.identity.as_bytes());
     push_slice(&mut bytes, occurrence.graph().as_bytes());
     bytes.extend_from_slice(&occurrence.occurrence().get().to_be_bytes());
@@ -962,6 +1142,13 @@ fn encode_occurrence_identity(
         &mut bytes,
         content.scalar_authority.type_admission().as_bytes(),
     );
+    if !single_stage {
+        push_len(&mut bytes, content.leading_scalar_authorities.len());
+        for stage in &content.leading_scalar_authorities {
+            push_slice(&mut bytes, stage.admission().as_bytes());
+            push_slice(&mut bytes, stage.type_admission().as_bytes());
+        }
+    }
     IndexRefinementIdentity(bytes)
 }
 
@@ -1025,7 +1212,7 @@ mod tests {
     };
 
     use super::{
-        RefinementError, emit_region, map_ir_verifier_error,
+        RefinementError, emit_realization, map_ir_verifier_error,
         refine_index_region as refine_index_region_with_registry,
     };
     use crate::capability::{
@@ -1366,10 +1553,10 @@ mod tests {
         let changed = constant_subject(2.0_f32.to_bits(), numerical_contract.as_str());
         let realizations = crate::governed::governed_realization_laws(&scalars);
         let resolution = realizations.resolve(&admitted).unwrap();
-        let region = emit_region(&resolved, &changed, &scalars).unwrap();
+        let realization = emit_realization(&resolved, &changed, &scalars).unwrap();
 
         let error = resolution
-            .verify(resolved.authority().refinement(), &region)
+            .verify(resolved.authority().refinement(), realization.final_stage())
             .unwrap_err();
         assert!(matches!(
             error,
@@ -1402,7 +1589,10 @@ mod tests {
         // The scalar authority receipt is bound to the exact structural region.
         assert_eq!(
             refinement.scalar_authority().region(),
-            refinement.region().canonical_identity()
+            refinement
+                .single_region()
+                .expect("the square fixture realizes its occurrence in one region")
+                .canonical_identity()
         );
     }
 
@@ -1456,8 +1646,8 @@ mod tests {
         // Same operation, interface, and region: identical reusable content.
         assert_eq!(first.content().identity(), second.content().identity());
         assert_eq!(
-            first.content().region_identity(),
-            second.content().region_identity()
+            first.content().realization_identity(),
+            second.content().realization_identity()
         );
         // Different semantic source: distinct occurrence bindings.
         assert_ne!(first.identity(), second.identity());
@@ -1478,14 +1668,14 @@ mod tests {
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();
         let subject = square_occurrence(b"scalar-snapshot-mismatch");
-        let region = emit_region(&resolved, &subject, &lowering_scalars).unwrap();
+        let realization = emit_realization(&resolved, &subject, &lowering_scalars).unwrap();
         let realizations =
             FrozenIndexRealizationLawRegistry::from_semantic(semantic(), verifier_scalars).unwrap();
         let resolution = realizations.resolve(&subject).unwrap();
 
         assert_eq!(
             resolution
-                .verify(resolved.authority().refinement(), &region)
+                .verify(resolved.authority().refinement(), realization.final_stage())
                 .unwrap_err(),
             IndexRefinementVerificationError::ScalarSnapshotMismatch
         );
@@ -1536,7 +1726,9 @@ mod tests {
         );
         let evaluation = evaluator
             .evaluate(
-                refinement.region(),
+                refinement
+                    .single_region()
+                    .expect("the square fixture realizes its occurrence in one region"),
                 IndexRegionAuthority::new(&scalars),
                 &[IndexRegionInput::new(input_tensor, &input)],
             )

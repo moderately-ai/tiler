@@ -335,19 +335,21 @@ pub(super) fn record_refinement(
                         provider,
                     )?;
                     let subject = explain.subject(SubjectKind::Kernel, &key)?;
+                    let assessment = PredicateAssessment::proven(
+                        "kernel.index-region-refines-occurrence",
+                        EvidenceBasis::ExhaustiveFinite,
+                    )?
+                    .with_fact(ExplainFact::new(
+                        "refinement-identity",
+                        FactValue::Identity(crate::explain::SubjectKey::new(identity)?),
+                    )?)?;
+                    let assessment = with_realization_facts(assessment, refinement.realization())?;
                     Ok(explain.push_detail(
                         rule,
                         vec![subject],
                         ExplainEvent::Check {
                             stage: ExplainStage::KernelRefinement,
-                            assessment: PredicateAssessment::proven(
-                                "kernel.index-region-refines-occurrence",
-                                EvidenceBasis::ExhaustiveFinite,
-                            )?
-                            .with_fact(ExplainFact::new(
-                                "refinement-identity",
-                                FactValue::Identity(crate::explain::SubjectKey::new(identity)?),
-                            )?)?,
+                            assessment,
                             rejection: RejectionClass::IntrinsicInvalid,
                         },
                         vec![cause],
@@ -469,6 +471,65 @@ fn record_semantic_discharge_proofs(
     Ok(cause)
 }
 
+/// Names every region of an ordered realization and every value handed between
+/// them.
+///
+/// **Emitted only for a chain, and that is the whole design.** A one-stage
+/// realization's single region is already named by `refinement-identity`, whose
+/// bytes *are* that region's for a one-stage sequence, so restating it would add
+/// a fact carrying no information to every record every compilation writes. A
+/// chain is the case where a reader can otherwise only infer the shape from the
+/// dispatch count, which is exactly the inference this record exists to remove:
+/// the stage population, each stage's own region, and each handed value's
+/// producer, consumer, and element count are stated.
+///
+/// The per-stage keys are ordinal-suffixed rather than repeated, because a
+/// reader resolving "which region is stage one" must not have to depend on the
+/// order two same-named facts happen to be rendered in.
+pub(super) fn with_realization_facts(
+    assessment: PredicateAssessment,
+    realization: &tiler_ir::index::VerifiedIndexRegionSequence,
+) -> Result<PredicateAssessment, CompileError> {
+    if realization.is_single_stage() {
+        return Ok(assessment);
+    }
+    let mut assessment = assessment.with_fact(ExplainFact::new(
+        "realization-stages",
+        FactValue::Count(u64::try_from(realization.stage_count()).unwrap_or(u64::MAX)),
+    )?)?;
+    for (ordinal, stage) in realization.stages().enumerate() {
+        assessment = assessment.with_fact(ExplainFact::new(
+            format!("realization-stage-{ordinal}-region"),
+            FactValue::Identity(crate::explain::SubjectKey::new(identity_label(
+                "region",
+                stage.canonical_identity().as_bytes(),
+            ))?),
+        )?)?;
+    }
+    for (ordinal, intermediate) in realization.intermediates().iter().enumerate() {
+        assessment = assessment
+            .with_fact(ExplainFact::new(
+                format!("realization-intermediate-{ordinal}-producer"),
+                FactValue::Count(u64::try_from(intermediate.producer()).unwrap_or(u64::MAX)),
+            )?)?
+            .with_fact(ExplainFact::new(
+                format!("realization-intermediate-{ordinal}-consumer"),
+                FactValue::Count(u64::try_from(intermediate.consumer()).unwrap_or(u64::MAX)),
+            )?)?
+            .with_fact(ExplainFact::new(
+                format!("realization-intermediate-{ordinal}-elements"),
+                FactValue::Count(
+                    intermediate
+                        .shape()
+                        .element_count()
+                        .and_then(|count| u64::try_from(count).ok())
+                        .unwrap_or(u64::MAX),
+                ),
+            )?)?;
+    }
+    Ok(assessment)
+}
+
 /// Returns the stable presentation label of one refinement occurrence identity.
 ///
 /// The label is a presentation handle over the identity's trailing bytes, never
@@ -476,11 +537,18 @@ fn record_semantic_discharge_proofs(
 /// [`crate::legality::IndexRefinement`], which is what any downstream check
 /// compares.
 pub(super) fn refinement_label(refinement: &crate::legality::IndexRefinement) -> String {
+    identity_label("refinement", refinement.identity().as_bytes())
+}
+
+/// Renders one canonical identity's trailing bytes as a presentation handle.
+///
+/// A handle, never the identity: the canonical bytes stay in the retained
+/// evidence, which is what any downstream check compares.
+fn identity_label(kind: &str, bytes: &[u8]) -> String {
     use std::fmt::Write as _;
 
-    let bytes = refinement.identity().as_bytes();
     let tail = bytes.len().saturating_sub(8);
-    let mut label = String::from("refinement:");
+    let mut label = format!("{kind}:");
     for byte in &bytes[tail..] {
         let _ = write!(label, "{byte:02x}");
     }

@@ -40,9 +40,11 @@ use tiler_ir::index::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity, DimensionId,
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
     IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementSignature,
-    IndexRefinementSubject, IndexRegionBuilder, ScalarAttributes, ScalarOpKey,
+    IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder, IndexRegionDiagnostic,
+    IndexRegionSequenceError, MAX_INDEX_REGION_SEQUENCE_STAGES, ScalarAttributes, ScalarOpKey,
     ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId, SourcedExtent,
-    SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
+    StagedInputSource, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
+    VerifiedIndexRegion, VerifiedIndexRegionSequence,
 };
 use tiler_ir::semantic::{
     FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, RegistryError,
@@ -310,14 +312,288 @@ pub trait ScalarLoweringProvider: Send + Sync + 'static {
 /// The provider is trusted, deterministic, and side-effect-free. Its sole output
 /// channel is the canonical region builder wrapped by
 /// [`IndexAccessLoweringContext`]; the host verifies the region afterwards.
+///
+/// # Which method a provider implements
+///
+/// A realization is an ordered *sequence* of regions, and the two methods here
+/// mirror the two the registered semantic law exposes one layer down
+/// (`IndexRealizationLaw::realize` and `realize_sequence`):
+///
+/// - a provider whose occurrence is realized by one region implements [`lower`]
+///   alone, and the default [`lower_sequence`] wraps it as the one-stage
+///   sequence, whose canonical identity is that region's identity byte for byte;
+/// - a provider whose occurrence needs a chain — a reduction publishing a value
+///   an elementwise pass then consumes — overrides [`lower_sequence`] and
+///   implements [`lower`] as an explicit refusal, because there is no single
+///   region that realizes such an occurrence and returning one would be a
+///   truncated realization wearing the shape of a complete one.
+///
+/// The host drives [`lower_sequence`] and never [`lower`] directly, so the
+/// refusal above is the answer to "emit one region for this occurrence", not
+/// unreachable code.
+///
+/// [`lower`]: Self::lower
+/// [`lower_sequence`]: Self::lower_sequence
 pub trait IndexAccessLoweringProvider: Send + Sync + 'static {
     /// Emits the region structure through the canonical builder.
     ///
     /// # Errors
     ///
     /// Returns [`LoweringEmitError`] when the canonical builder rejects an
-    /// emission.
+    /// emission, or when this provider's realization is a region sequence and
+    /// therefore cannot be spelled as one region.
     fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError>;
+
+    /// Emits the ordered realization this provider lowers the occurrence to.
+    ///
+    /// The default emits exactly one stage, sourced positionally from the
+    /// occurrence's expanded input boundaries — the binding rule single-region
+    /// refinement has always used.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoweringEmitError`] when a stage's emission is rejected. A
+    /// structural verification failure of an emitted stage is recorded on the
+    /// context and reported by the host even if a provider discards this result,
+    /// so a swallowed failure cannot become a silently truncated chain.
+    fn lower_sequence(
+        &self,
+        sequence: &mut IndexAccessSequenceContext<'_>,
+    ) -> Result<(), LoweringEmitError> {
+        sequence.single_stage(|context| self.lower(context))
+    }
+}
+
+/// Why one stage of an ordered realization could not be retained.
+///
+/// Retained on [`IndexAccessSequenceContext`] as well as returned, because the
+/// host — not the provider — decides whether a realization is admissible: a
+/// provider that discarded a stage failure and returned `Ok` would otherwise
+/// hand back a chain missing the stage that failed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum IndexAccessStageFailure {
+    /// The provider refused, or the canonical builder rejected an emission.
+    Emit {
+        /// Ordered stage that failed to emit.
+        stage: usize,
+        /// Typed emission cause.
+        source: LoweringEmitError,
+    },
+    /// One stage's region failed whole-region structural verification.
+    Build {
+        /// Ordered stage whose region was rejected.
+        stage: usize,
+        /// Deterministic structural diagnostics.
+        diagnostics: Vec<IndexRegionDiagnostic>,
+    },
+    /// The emitted stages do not compose into a well-formed ordered chain.
+    Chain(IndexRegionSequenceError),
+}
+
+impl fmt::Display for IndexAccessStageFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Emit { stage, source } => {
+                write!(
+                    formatter,
+                    "realization stage {stage} failed to emit: {source}"
+                )
+            }
+            Self::Build { stage, diagnostics } => write!(
+                formatter,
+                "realization stage {stage} failed verification with {} diagnostic(s)",
+                diagnostics.len()
+            ),
+            Self::Chain(source) => {
+                write!(formatter, "emitted stages do not chain: {source}")
+            }
+        }
+    }
+}
+
+impl Error for IndexAccessStageFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Emit { source, .. } => Some(source),
+            Self::Chain(source) => Some(source),
+            Self::Build { .. } => None,
+        }
+    }
+}
+
+/// A narrow checked context for the ordered realization one provider emits.
+///
+/// Each stage is built by its own canonical [`IndexRegionBuilder`] and verified
+/// before the next one opens, which is how the registered law builds its own
+/// staged realization. The context never exposes a builder, an already-retained
+/// stage, or the finished sequence: the host owns composition and the chain
+/// check that goes with it.
+///
+/// Every input boundary of a stage names its source explicitly. Inference has no
+/// answer when two boundaries agree on element type and shape, which is exactly
+/// what a normalization presents, so the wiring is declared rather than guessed.
+pub struct IndexAccessSequenceContext<'a> {
+    scalars: &'a FrozenScalarRegistry,
+    occurrence: &'a IndexRefinementSubject,
+    stages: Vec<VerifiedIndexRegion>,
+    sources: Vec<Vec<StagedInputSource>>,
+    failure: Option<IndexAccessStageFailure>,
+}
+
+impl<'a> IndexAccessSequenceContext<'a> {
+    /// Binds a host-owned realization context over the exact scalar authority
+    /// every stage is built and revalidated under.
+    pub(crate) const fn new(
+        scalars: &'a FrozenScalarRegistry,
+        occurrence: &'a IndexRefinementSubject,
+    ) -> Self {
+        Self {
+            scalars,
+            occurrence,
+            stages: Vec::new(),
+            sources: Vec::new(),
+            failure: None,
+        }
+    }
+
+    /// Returns the checked facts about the occurrence being realized.
+    #[must_use]
+    pub const fn occurrence(&self) -> IndexAccessOccurrence<'_> {
+        IndexAccessOccurrence(self.occurrence)
+    }
+
+    /// Returns how many stages have been retained so far.
+    #[must_use]
+    pub fn stage_count(&self) -> usize {
+        self.stages.len()
+    }
+
+    /// Emits and retains one ordered stage with its input boundaries sourced
+    /// explicitly.
+    ///
+    /// `sources` carries one entry per input tensor boundary the stage declares,
+    /// in the stage's own boundary order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoweringEmitError`] when the canonical builder rejects an
+    /// emission. A structural verification failure of the emitted stage, a stage
+    /// population beyond the governed ceiling, and any earlier retained failure
+    /// are reported to the host through the context rather than through this
+    /// result, and surface here as the provider's own refusal only when the
+    /// provider raised one.
+    pub fn stage<F>(
+        &mut self,
+        sources: &[StagedInputSource],
+        build: F,
+    ) -> Result<(), LoweringEmitError>
+    where
+        F: FnOnce(&mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError>,
+    {
+        self.emit(Some(sources), build)
+    }
+
+    /// Emits and retains the one stage of a single-region realization.
+    ///
+    /// Its input boundaries are sourced positionally from the occurrence, which
+    /// is the binding rule single-region refinement has always used and the one
+    /// [`VerifiedIndexRegionSequence::single`] applies.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::stage`].
+    pub fn single_stage<F>(&mut self, build: F) -> Result<(), LoweringEmitError>
+    where
+        F: FnOnce(&mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError>,
+    {
+        self.emit(None, build)
+    }
+
+    fn emit<F>(
+        &mut self,
+        sources: Option<&[StagedInputSource]>,
+        build: F,
+    ) -> Result<(), LoweringEmitError>
+    where
+        F: FnOnce(&mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError>,
+    {
+        if self.failure.is_some() {
+            // A realization that has already lost a stage cannot be completed by
+            // emitting more of it; the retained failure is what the host reports.
+            return Ok(());
+        }
+        let stage = self.stages.len();
+        if stage == MAX_INDEX_REGION_SEQUENCE_STAGES {
+            self.failure = Some(IndexAccessStageFailure::Chain(
+                IndexRegionSequenceError::TooManyStages {
+                    actual: stage.saturating_add(1),
+                    limit: MAX_INDEX_REGION_SEQUENCE_STAGES,
+                },
+            ));
+            return Ok(());
+        }
+        let mut builder = match IndexRegionBuilder::new(self.scalars.clone()) {
+            Ok(builder) => builder,
+            Err(source) => return Err(self.record_emit(stage, source.into())),
+        };
+        {
+            let mut context = IndexAccessLoweringContext::new(&mut builder, self.occurrence);
+            if let Err(source) = build(&mut context) {
+                return Err(self.record_emit(stage, source));
+            }
+        }
+        let region = match builder.build() {
+            Ok(region) => region,
+            Err(error) => {
+                let error: IndexRegionBuildError = error;
+                self.failure = Some(IndexAccessStageFailure::Build {
+                    stage,
+                    diagnostics: error.diagnostics().to_vec(),
+                });
+                return Ok(());
+            }
+        };
+        let declared = match sources {
+            Some(sources) => sources.to_vec(),
+            None => region
+                .tensors()
+                .filter(|tensor| tensor.role() == TensorRole::Input)
+                .enumerate()
+                .map(|(position, _)| StagedInputSource::Occurrence(position))
+                .collect(),
+        };
+        self.stages.push(region);
+        self.sources.push(declared);
+        Ok(())
+    }
+
+    fn record_emit(&mut self, stage: usize, source: LoweringEmitError) -> LoweringEmitError {
+        self.failure = Some(IndexAccessStageFailure::Emit {
+            stage,
+            source: source.clone(),
+        });
+        source
+    }
+
+    /// Removes and returns the retained stage failure, when one was recorded.
+    pub(crate) fn take_failure(&mut self) -> Option<IndexAccessStageFailure> {
+        self.failure.take()
+    }
+
+    /// Composes the retained stages into one checked ordered realization.
+    ///
+    /// # Errors
+    ///
+    /// Returns the retained stage failure, or the chain refusal when the emitted
+    /// stages do not compose.
+    pub(crate) fn finish(self) -> Result<VerifiedIndexRegionSequence, IndexAccessStageFailure> {
+        if let Some(failure) = self.failure {
+            return Err(failure);
+        }
+        VerifiedIndexRegionSequence::try_new(self.stages, self.sources)
+            .map_err(IndexAccessStageFailure::Chain)
+    }
 }
 
 /// Ordered scalar result values one scalar-lowering provider produced.
