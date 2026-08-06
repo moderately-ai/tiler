@@ -94,6 +94,35 @@ pub fn strict_affine_u4_dequantize_scalar_op() -> ScalarOpKey {
     governed_scalar_op("strict-affine-u4-dequantize")
 }
 
+/// Returns the governed per-point `bf16` constant scalar operation key.
+///
+/// A separate key beside [`constant_f32_scalar_op`] rather than one constant
+/// parameterized by its payload's format, for the reason
+/// [`crate::semantic::constant_bf16_op`] gives at the tensor layer: operand and
+/// result type are part of an operation's identity, and one key meaning two
+/// formats would mean two payload widths and two roundings under one identity.
+#[must_use]
+pub fn constant_bf16_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("constant-bf16")
+}
+
+/// Returns the governed per-point `bf16` multiplication scalar operation key.
+#[must_use]
+pub fn multiply_bf16_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("multiply-bf16")
+}
+
+/// Returns the governed per-point `bf16` addition scalar operation key.
+///
+/// There is deliberately no `bf16` division, exponential, or NaN-canonicalization
+/// key beside these three: the semantic layer registers exactly the constant,
+/// multiply, and add for this width, and a scalar with no registered operation
+/// above it is one a law could emit into a region nothing means.
+#[must_use]
+pub fn add_bf16_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("add-bf16")
+}
+
 fn governed_scalar_op(name: &str) -> ScalarOpKey {
     ScalarOpKey::new("tiler.scalar", name, 1).expect("the governed scalar key is valid")
 }
@@ -1029,6 +1058,54 @@ fn canonicalize_nan_f32_facts() -> Result<CanonicalValue, ScalarRegistryError> {
     ])
 }
 
+/// Facts of the governed per-point `bf16` constant.
+///
+/// It rounds nothing — the declared payload is already the exact `bf16`
+/// encoding — and preserves the payload it was given, which is why it states no
+/// canonical arithmetic NaN and no contraction permission. This restates, in the
+/// scalar fact vocabulary, what [`crate::semantic::constant_bf16_facts`]
+/// declares at the tensor layer; the two records are checked against each other
+/// rather than derived from one another, as the `f32` pair already are.
+fn constant_bf16_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> {
+    scalar_facts([
+        (SCALAR_FACT_ROUNDING, utf8_fact("exact-bf16-bits")?),
+        (
+            SCALAR_FACT_NAN_RESULT_RULE,
+            utf8_fact(DECLARED_PAYLOAD_PRESERVED)?,
+        ),
+    ])
+}
+
+/// Facts shared by the governed binary `bf16` arithmetic scalars.
+///
+/// The canonical NaN payload is `bf16`'s own sixteen-bit pattern, not binary32's
+/// zero-extended: a scalar declaring the wider payload would name a value this
+/// format cannot hold. Contraction is stated `false` for the same reason the
+/// tensor family states it — `metal` admits no `fma(bfloat, bfloat, bfloat)`, so
+/// there is no fused primitive to permit.
+fn arithmetic_bf16_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> {
+    scalar_facts([
+        (
+            SCALAR_FACT_ROUNDING,
+            utf8_fact("bf16-round-to-nearest-ties-even")?,
+        ),
+        (
+            SCALAR_FACT_NAN_RESULT_RULE,
+            utf8_fact(CANONICAL_ARITHMETIC_NAN_PROFILE)?,
+        ),
+        (
+            SCALAR_FACT_CANONICAL_NAN_BITS,
+            crate::semantic::canonical_bf16_bits(
+                crate::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS,
+            ),
+        ),
+        (
+            SCALAR_FACT_CONTRACTION_PERMITTED,
+            CanonicalValue::boolean(false),
+        ),
+    ])
+}
+
 fn utf8_fact(value: &str) -> Result<CanonicalValue, ScalarRegistryError> {
     CanonicalValue::utf8(value)
         .map_err(|source| ScalarRegistryError::CanonicalAttributes(Arc::new(source)))
@@ -1108,6 +1185,17 @@ fn constant_attribute_schema() -> Result<ScalarAttributeSchema, ScalarRegistryEr
     )])
 }
 
+fn constant_bf16_attribute_schema() -> Result<ScalarAttributeSchema, ScalarRegistryError> {
+    // The governed `bf16` family's own payload field, not the `f32` one. The two
+    // identifiers are record-local and happen to number alike; naming this one
+    // explicitly is what keeps the agreement a decision rather than a
+    // coincidence a renumbering would silently break.
+    ScalarAttributeSchema::new([ScalarAttributeField::required(
+        crate::semantic::BF16_CONSTANT_BITS_ATTRIBUTE,
+        CanonicalValueKind::FloatBits,
+    )])
+}
+
 /// Infers the governed `f32` result of a nullary scalar constant.
 struct StandardF32Constant;
 
@@ -1151,6 +1239,97 @@ impl ScalarOperationInferencer for StandardF32Homogeneous {
         }
         outputs.try_push(f32_type)
     }
+}
+
+/// Infers the governed `bf16` result of a nullary scalar constant.
+///
+/// The payload's declared format and width are checked here rather than left to
+/// the schema's `FloatBits` kind alone. A binary32 pattern wearing the `bf16`
+/// field would otherwise reach a region whose canonical identity claims a `bf16`
+/// constant while carrying a value the format cannot hold, and the refusal
+/// naming that is cheaper here than anywhere downstream.
+struct StandardBf16Constant {
+    payload_bytes: usize,
+}
+
+impl ScalarOperationInferencer for StandardBf16Constant {
+    fn infer(
+        &self,
+        request: ScalarInferenceRequest<'_>,
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        let CanonicalValueView::Record(fields) = request.attributes().value().view() else {
+            return Err(bf16_scalar_error(
+                "tiler.scalar.bf16-constant-bits",
+                "the governed bf16 scalar constant requires a canonical attribute record",
+            ));
+        };
+        let Some(CanonicalValueView::FloatBits(bits)) = fields
+            .iter()
+            .find(|field| field.id() == crate::semantic::BF16_CONSTANT_BITS_ATTRIBUTE)
+            .map(|field| field.value().view())
+        else {
+            return Err(bf16_scalar_error(
+                "tiler.scalar.bf16-constant-bits",
+                "the governed bf16 scalar constant requires exact FloatBits in its payload field",
+            ));
+        };
+        // Format before width, so a binary32 payload and a bf16-format payload
+        // of the wrong width are two distinct refusals rather than one hiding
+        // the other.
+        let bf16_format = crate::semantic::TypeKey::new("tiler", "bf16", 1)
+            .expect("the governed bf16 key is valid");
+        if bits.format() != &bf16_format {
+            return Err(bf16_scalar_error(
+                "tiler.scalar.bf16-constant-format",
+                "the governed bf16 scalar constant admits no payload of another float format",
+            ));
+        }
+        if bits.bits().len() != self.payload_bytes {
+            return Err(bf16_scalar_error(
+                "tiler.scalar.bf16-constant-width",
+                "the governed bf16 scalar constant payload must be the registered bf16 width",
+            ));
+        }
+        outputs.try_push(crate::semantic::Bf16::resolved_type())
+    }
+}
+
+/// Infers the shared operand type of a governed homogeneous `bf16` scalar.
+///
+/// Operands must be `bf16` rather than merely numeric, for the reason the `f32`
+/// sibling states: this family declares no mixed precision and no implicit
+/// promotion, so an application needing either is rejected instead of silently
+/// resolving to the first operand's type.
+struct StandardBf16Homogeneous;
+
+impl ScalarOperationInferencer for StandardBf16Homogeneous {
+    fn infer(
+        &self,
+        request: ScalarInferenceRequest<'_>,
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        let bf16_type = crate::semantic::Bf16::resolved_type();
+        if request
+            .operands()
+            .iter()
+            .any(|operand| operand != &bf16_type)
+        {
+            return Err(bf16_scalar_error(
+                "tiler.scalar.operand-type",
+                "governed bf16 scalars require bf16 operands",
+            ));
+        }
+        outputs.try_push(bf16_type)
+    }
+}
+
+fn bf16_scalar_error(code: &str, message: &str) -> ScalarInferenceError {
+    ScalarInferenceError::new(
+        ProviderDiagnosticCode::new(code).expect("the governed diagnostic code is valid"),
+        message,
+    )
+    .expect("the governed diagnostic message is bounded")
 }
 
 /// Infers the dense F32 result of the governed strict-affine U4 scalar.
@@ -1343,11 +1522,16 @@ impl ScalarRegistryBuilder {
     /// exact per-point scalar operations the governed semantic families lower
     /// to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`],
     /// [`add_f32_scalar_op`], [`divide_f32_scalar_op`], [`exp_f32_scalar_op`],
-    /// [`canonicalize_nan_f32_scalar_op`], and
-    /// [`strict_affine_u4_dequantize_scalar_op`]. NaN canonicalization and the
-    /// strict-affine decode are conversion operations rather than homogeneous
-    /// F32 arithmetic. An extension composes with this profile by registering
-    /// further definitions on the returned builder.
+    /// [`canonicalize_nan_f32_scalar_op`],
+    /// [`strict_affine_u4_dequantize_scalar_op`], [`constant_bf16_scalar_op`],
+    /// [`multiply_bf16_scalar_op`], and [`add_bf16_scalar_op`]. NaN
+    /// canonicalization and the strict-affine decode are conversion operations
+    /// rather than homogeneous F32 arithmetic. The `bf16` triple is the complete
+    /// per-point vocabulary of the registered `bf16` families and nothing wider:
+    /// there is no `bf16` division, elementary function, or NaN canonicalization
+    /// here because no `bf16` semantic operation states one. An extension
+    /// composes with this profile by registering further definitions on the
+    /// returned builder.
     ///
     /// # Errors
     ///
@@ -1430,7 +1614,7 @@ impl ScalarRegistryBuilder {
             )?,
         )?;
         builder.register(
-            provider,
+            provider.clone(),
             standard_definition(
                 strict_affine_u4_dequantize_scalar_op(),
                 "strict affine U4-to-F32 decode: widen code and zero point to i32, subtract, \
@@ -1440,6 +1624,50 @@ impl ScalarRegistryBuilder {
                 ScalarArity::exact(3)?,
                 arithmetic_f32_scalar_facts()?,
                 Arc::new(StandardStrictAffineU4Dequantize),
+            )?,
+        )?;
+        // The three per-point `bf16` scalars the governed `tiler::constant-bf16@1`,
+        // `tiler::multiply-bf16@1`, and `tiler::add-bf16@1` families realize.
+        // Registering them widens this snapshot's identity and therefore every
+        // whole-snapshot provenance derived from it; it leaves reached-only
+        // projections alone, which is what keeps an existing `f32` occurrence's
+        // executable coverage — and so its kernel-program and artifact
+        // identity — byte-identical.
+        let payload_bytes = crate::semantic::registered_bf16_payload_bytes();
+        builder.register(
+            provider.clone(),
+            standard_definition(
+                constant_bf16_scalar_op(),
+                "exact BF16 constant in the ratified RISC-V BF16 operand format; \
+                 tiler.scalar::constant-bf16@1",
+                constant_bf16_attribute_schema()?,
+                ScalarArity::exact(0)?,
+                constant_bf16_scalar_facts()?,
+                Arc::new(StandardBf16Constant { payload_bytes }),
+            )?,
+        )?;
+        builder.register(
+            provider.clone(),
+            standard_definition(
+                multiply_bf16_scalar_op(),
+                "separate multiplication over the ratified RISC-V BF16 operand format; \
+                 tiler.scalar::multiply-bf16@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(2)?,
+                arithmetic_bf16_scalar_facts()?,
+                Arc::new(StandardBf16Homogeneous),
+            )?,
+        )?;
+        builder.register(
+            provider,
+            standard_definition(
+                add_bf16_scalar_op(),
+                "separate addition over the ratified RISC-V BF16 operand format; \
+                 tiler.scalar::add-bf16@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(2)?,
+                arithmetic_bf16_scalar_facts()?,
+                Arc::new(StandardBf16Homogeneous),
             )?,
         )?;
         Ok(builder)

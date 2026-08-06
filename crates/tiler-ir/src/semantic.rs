@@ -32,6 +32,7 @@ mod softmax;
 mod standard_operations;
 mod types;
 
+pub(crate) use bf16::registered_bf16_payload_bytes;
 pub use bf16::{
     BF16_CONSTANT_BITS_ATTRIBUTE, BF16_CONSTANT_FACT_PAYLOAD_RULE, BF16_FACT_ACCUMULATOR_TYPE,
     BF16_FACT_ARITHMETIC_CONTRACTION_PERMITTED, BF16_FACT_CANONICAL_NAN_BITS,

@@ -13,13 +13,13 @@ use crate::schedule::{
     MaterializationRounding, NumericalPermission, SubnormalMode,
 };
 use crate::semantic::{
-    AttributeFieldId, BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
-    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
-    CanonicalValueView, ContractionIndex, ContractionIndexStructure, EncodedComponentRole,
-    F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes, REDUCTION_AXES_ATTRIBUTE,
-    REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType,
-    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
-    StrictAffineU4, TypeKey,
+    AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE,
+    BroadcastAxisMapping, BroadcastAxisSource, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
+    CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, ContractionIndex,
+    ContractionIndexStructure, EncodedComponentRole, F32_CONSTANT_BITS_ATTRIBUTE,
+    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
+    ReindexFormKind, ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey,
 };
 use crate::shape::{Axis, Extent, Shape};
 
@@ -27,9 +27,10 @@ use super::{
     DimensionId, DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
     IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder, ScalarAttributes,
     ScalarOpKey, ScalarReducerBodyBuilder, ScalarValueId, SourcedExtent, SymbolicExtentError,
-    TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion, add_f32_scalar_op,
-    canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
-    exp_f32_scalar_op, multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion, add_bf16_scalar_op,
+    add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op,
+    constant_f32_scalar_op, divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op,
+    multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 
 /// A bounded semantic template for one canonical logical index realization.
@@ -91,10 +92,7 @@ pub enum IndexRealizationLaw {
 }
 
 impl IndexRealizationLaw {
-    pub(crate) fn accepts_numerical_contract(
-        &self,
-        contract: &super::NumericalContractIdentity,
-    ) -> bool {
+    pub(crate) fn accepts_numerical_contract(&self, subject: &IndexRefinementSubject) -> bool {
         match self {
             Self::StrictAffineU4Dequantize { .. } => {
                 let strict = F32NumericalContractKey::new(
@@ -111,7 +109,7 @@ impl IndexRealizationLaw {
                     MaterializationRounding::NearestTiesToEven,
                 )
                 .expect("the governed strict F32 contract is coherent");
-                contract.as_str() == strict.as_str()
+                subject.numerical_contract().as_str() == strict.as_str()
             }
             Self::ConstantFromFloatBits { .. }
             | Self::PointwiseBinary { .. }
@@ -119,9 +117,7 @@ impl IndexRealizationLaw {
             | Self::StrictSerialSumF32 { .. }
             | Self::Reindex { .. }
             | Self::Broadcast { .. }
-            | Self::StrictTensorContractionF32 { .. } => {
-                matches!(contract.arithmetic(), crate::schedule::ArithmeticType::F32)
-            }
+            | Self::StrictTensorContractionF32 { .. } => governs_result_arithmetic(subject),
         }
     }
 
@@ -147,6 +143,36 @@ impl IndexRealizationLaw {
     pub fn add_f32() -> Self {
         Self::PointwiseBinary {
             scalar: add_f32_scalar_op(),
+        }
+    }
+
+    /// Standard constant-bf16 law.
+    ///
+    /// The same template the `f32` constant uses, carrying this family's own
+    /// attribute and its own scalar. Neither the template nor its encoding tag
+    /// is new: what distinguishes the two rows is the payload they carry, which
+    /// is exactly the distinction the semantic keys already draw.
+    #[must_use]
+    pub fn constant_bf16() -> Self {
+        Self::ConstantFromFloatBits {
+            attribute: BF16_CONSTANT_BITS_ATTRIBUTE,
+            scalar: constant_bf16_scalar_op(),
+        }
+    }
+
+    /// Standard multiply-bf16 law.
+    #[must_use]
+    pub fn multiply_bf16() -> Self {
+        Self::PointwiseBinary {
+            scalar: multiply_bf16_scalar_op(),
+        }
+    }
+
+    /// Standard add-bf16 law.
+    #[must_use]
+    pub fn add_bf16() -> Self {
+        Self::PointwiseBinary {
+            scalar: add_bf16_scalar_op(),
         }
     }
 
@@ -291,6 +317,39 @@ impl IndexRealizationLaw {
             }
         }
     }
+}
+
+/// Whether the contract is stated for the arithmetic this law's result carries.
+///
+/// **Derived from the verified semantic subject, never declared on the law.**
+/// Every template that reaches here builds its output tensor with the subject's
+/// own result type, so that type *is* the arithmetic the expected region will
+/// emit; restating it as law data would be a second authority over one fact, and
+/// the two could disagree. The comparison goes through
+/// [`ArithmeticType::canonical_type_key`], which is the single durable spelling
+/// of a dtype identity, so a contract stated for a width the result is not
+/// produced in — an `f32` program under a `bf16` contract, or the reverse — is
+/// refused rather than governed by a contract about another format's subnormals
+/// and rounding.
+///
+/// A result type that is not nominal names no arithmetic and is refused, which
+/// is strictly tighter than the `f32`-only test this replaced.
+fn governs_result_arithmetic(subject: &IndexRefinementSubject) -> bool {
+    let [result] = subject.results() else {
+        // Not a single-result subject. Every template here refuses one by its
+        // own arity rule, which names the defect precisely; answering `false`
+        // would replace that diagnostic with a contract complaint about a
+        // subject no law was ever going to accept.
+        return true;
+    };
+    let expected = subject
+        .numerical_contract()
+        .arithmetic()
+        .canonical_type_key();
+    result
+        .value_type()
+        .nominal_key()
+        .is_some_and(|key| key.to_string() == expected)
 }
 
 fn encode_scalar(output: &mut Vec<u8>, scalar: &ScalarOpKey) {
@@ -483,7 +542,7 @@ fn realize_constant(
     if field.id() != attribute {
         return Err(unsupported("constant-attribute-key"));
     }
-    let attributes = scalar_attributes(field.value().clone())?;
+    let attributes = scalar_attributes(attribute, field.value().clone())?;
     let output = context.tensor(
         TensorRole::Output,
         result.value_type().clone(),
@@ -631,12 +690,25 @@ fn scalar_constant(
         bits.to_be_bytes(),
     )
     .map_err(|_| unsupported("scalar-constant"))?;
-    let values = context.apply(constant_f32_scalar_op(), scalar_attributes(value)?, &[])?;
+    let values = context.apply(
+        constant_f32_scalar_op(),
+        scalar_attributes(F32_CONSTANT_BITS_ATTRIBUTE, value)?,
+        &[],
+    )?;
     single_result(&values, "scalar-constant")
 }
 
-fn scalar_attributes(bits: CanonicalValue) -> Result<ScalarAttributes, IndexRealizationLawError> {
-    let record = CanonicalValue::record([CanonicalField::new(F32_CONSTANT_BITS_ATTRIBUTE, bits)])
+/// Wraps one exact payload in the attribute record its scalar constant declares.
+///
+/// The field is a parameter rather than the `f32` constant's own identifier
+/// because attribute field IDs are record-local: the `f32` and `bf16` constants
+/// number their payload field alike, and a writer hard-coding one of them would
+/// build the other family's record correctly only by that coincidence.
+fn scalar_attributes(
+    field: AttributeFieldId,
+    bits: CanonicalValue,
+) -> Result<ScalarAttributes, IndexRealizationLawError> {
+    let record = CanonicalValue::record([CanonicalField::new(field, bits)])
         .map_err(|_| unsupported("scalar-constant-attributes"))?;
     ScalarAttributes::new(record).map_err(|_| unsupported("scalar-constant-attributes"))
 }

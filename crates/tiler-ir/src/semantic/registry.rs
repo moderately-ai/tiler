@@ -2415,6 +2415,23 @@ impl SemanticRegistryProvider for StandardSemantics {
                 super::quantization::dequantize_strict_affine_op(),
                 IndexRealizationLaw::strict_affine_u4_dequantize(),
             ),
+            // The `bf16` family's three rows. They reuse the constant and
+            // pointwise templates rather than introducing law variants, so no
+            // encoding tag is added and every existing row's payload is
+            // untouched; what makes these rows distinct is the attribute and
+            // scalar they name. Their arrival moves the sidecar — and therefore
+            // `FrozenIndexRealizationLawRegistry`'s identity — because the
+            // sidecar is a count-prefixed run over every registered law, which
+            // is the intended meaning of that identity rather than a cost.
+            (
+                super::bf16::constant_bf16_op(),
+                IndexRealizationLaw::constant_bf16(),
+            ),
+            (
+                super::bf16::multiply_bf16_op(),
+                IndexRealizationLaw::multiply_bf16(),
+            ),
+            (super::bf16::add_bf16_op(), IndexRealizationLaw::add_bf16()),
         ] {
             registrar.register_index_realization_law(operation, 1, law)?;
         }

@@ -1,7 +1,7 @@
 ---
 id: admit-a-bf16-index-realization-law-and-refinement-contract
 title: Admit a BF16 index-realization law and refinement contract
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [carry-bf16-through-the-artifact-encoding-and-identity, conform-the-bf16-vertical-end-to-end, lower-bf16-to-metal, state-and-check-a-bf16-numerical-contract]
@@ -52,3 +52,31 @@ A pure-BF16 program reaches a verified artifact through the ordinary producer pa
 - Blocks `conform-the-bf16-vertical-end-to-end`, whose end-to-end run needs exactly this composition, and unblocks the producer half of `carry-bf16-through-the-artifact-encoding-and-identity`'s outcome. Related to `lower-bf16-to-metal`, which needs a BF16 kernel program to lower.
 - `admit-bf16-into-the-schedule-and-kernel-vocabulary` and `state-and-check-a-bf16-numerical-contract` are both `done` and are the layers this one sits between; neither is reopened.
 - Touching the law sidecar is an identity-domain risk. Survey the pin population before editing, as the artifact ticket's own report did.
+
+## Outcome
+
+**The wall is gone because the refinement layer now derives the width instead of assuming it.** All three of the ticket's Facts held at the current tree, and the fix is one design decision plus two registrations.
+
+**Fact — how a BF16 contract reaches refinement identity.** `NumericalContractIdentity` is now an opaque newtype over a *private* `enum NumericalContractKey { F32(F32NumericalContractKey), Bf16(Bf16NumericalContractKey) }` (`crates/tiler-ir/src/index/refinement.rs`). The sum is private deliberately: every consumer discriminates through `arithmetic()`, whose `ArithmeticType` is not `#[non_exhaustive]`, so a third admitted width is a build error at each such site rather than a match written before it existed falling through. A public enum was the rejected alternative for exactly that reason. The public delta is additive only — one `From<Bf16NumericalContractKey>` impl, and `try_from_key` now dispatching on the rendered domain.
+
+**Fact — no f32 receipt moved.** The identity bytes are the key spelling with no width tag: the two governed domains render mutually closed preimages, so the spelling already determines the width, and `push_slice(subject.numerical_contract.as_bytes())` produces byte-identical output for every `f32` contract. `try_from_key` routes everything not rendered under `tiler.contract.bf16.v1` to the `f32` parser unchanged, so no previously admitted key and no previously reported refusal moved.
+
+**Fact — the law derives its arithmetic rather than declaring it.** `accepts_numerical_contract` now takes the `IndexRefinementSubject` and, for the seven general templates, requires the contract's `canonical_type_key()` to equal the subject's single result type's nominal key (`governs_result_arithmetic`, `crates/tiler-ir/src/index/law.rs`). Every one of those templates builds its output tensor from the subject's own result type, so the result type *is* the arithmetic the region will emit; declaring it on the law would be a second authority over one fact. The check is strictly tighter than the `f32`-only test it replaced — a non-nominal result type now names no arithmetic and is refused — and a non-single-result subject is left to the law's own arity rule so no existing diagnostic changed.
+
+**Fact — registration.** Three `bf16` scalar operations (`tiler.scalar::constant-bf16@1`, `multiply-bf16@1`, `add-bf16@1`) in `crates/tiler-ir/src/index/scalar.rs`, and three law rows reusing the existing `ConstantFromFloatBits` and `PointwiseBinary` templates. **No law encoding tag was added**, so every existing row's payload is untouched. `realize_constant` now keys the scalar attribute record by the law's own `AttributeFieldId` rather than `F32_CONSTANT_BITS_ATTRIBUTE`; both spell field 1, so the bytes are identical, but the `bf16` path is now correct by derivation rather than by that coincidence. The `bf16` payload width is read from `registered_bf16_payload_bytes`, the same function the semantic constant uses, so the two cannot drift.
+
+**Measurement — evidence.** `crates/tiler-ir/src/program/tests.rs`: a pure-BF16 constant/multiply/add program obtains verified coverage for all four occurrences and builds a `VerifiedKernelProgram` over a `PointwiseBf16` region; a candidate region realizing a *different* occurrence is refused `SemanticRealizationMismatch`; and both cross-width pairings are refused `NumericalContractNotGoverned`. Each refusal test carries a positive control — the honest candidate and the native contract each verify — so a refusal is caused by the perturbation rather than by a broken fixture.
+
+**Measurement — the checks can say no.** Three deliberate perturbations, each watched failing and reverted. Neutering the contract gate to `true`: a BF16 program **verified under an `f32` contract**. Restoring the previous `f32`-only gate: three of the four new tests fail `NumericalContractNotGoverned`. Removing the three law rows: both reachability tests fail on the missing registered law.
+
+**Measurement — pin survey.** `cargo nextest run --workspace` → `2707 tests run: 2706 passed, 1 failed, 7 skipped`, twice, with the identical failure. Exactly one pinned identity moved: `crates/tiler-compiler/src/explain.rs:4090`, `8e06e11fdc3a2889` → `b2d55d5a36e0159b`. The request subject binds `FrozenIndexRealizationLawRegistry::identity()`, which folds the scalar snapshot and the whole law sidecar, so both halves of this change land in that one field. The *semantic* snapshot did not move — it is computed over definitions and operations only, and the three `bf16` operation families were already registered.
+
+**Fact — artifact identity did not move.** `tiler-build`'s `the_standard_metal_path_publishes_its_recorded_identities` passed unchanged, pinning the standard Metal artifact identity and cache subject by SHA-256. That is the empirical form of the design argument: `CoveredOccurrence` retains the *reached-only* executable-coverage identity, which restates no whole-registry snapshot, so growing the registries beneath an `f32` occurrence leaves its kernel-program and artifact identity byte-identical.
+
+**Boundary — two halves of the required evidence are out of this ticket's scope.** The branch holds `implementation/ir` only.
+
+- The moved pin is `implementation/compiler`. Filed as `recompute-the-explain-request-qualifier-for-the-bf16-realization-rows` with the new value, the derivation, and the reproduction command. **This branch leaves the workspace gate red at that one assertion and nowhere else.**
+- `VerifiedArtifactProgram` lives in `tiler-artifact`, and `tiler-ir` declares no workspace crate dependencies, so no `tiler-ir` test can reach it. Filed as `carry-the-pure-bf16-producer-path-into-artifact-packaging-evidence`, which also carries the now-false justification comment on `bf16_input_envelope`.
+- `docs/artifact-abi.md`'s producer-wall paragraph is falsified and is `contracts/artifacts`. Filed as `correct-the-artifact-abi-contracts-bf16-producer-wall-paragraph`.
+
+The stale "nine laws" claim in `lower-the-concatenate-occurrence-through-partitioned-writes` was corrected in place under this ticket's shared `project/tickets` scope.
