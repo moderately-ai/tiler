@@ -339,6 +339,49 @@ impl ContributorTensor {
     }
 }
 
+/// Which boundary tensor one fold's owning write is required to commit to.
+///
+/// The write counterpart of [`ContributorTensor`], and it splits on a different
+/// fact. A read's tensor is decided by the *scalar program*: a family carrying its
+/// own prologue reads the original input, and a pass folding staged partials reads
+/// the intermediate holding them. A write's tensor is decided by neither the
+/// scalar program nor the family — no fold's algebra says whether its result is
+/// the caller's answer or a value a later region consumes. That is a property of
+/// the surrounding cover, so the vocabulary must let the region's own access state
+/// it rather than fix it per family.
+///
+/// What *is* fixed is the write of a pass that exists only to stage. A split's
+/// partial pass produces partials its final pass folds; they are not any output,
+/// and a partial pass committing one to a declared program output would publish
+/// an unfolded fragment as the program's answer. That pass therefore carries
+/// [`Self::Exactly`] and every committing pass carries [`Self::CoverAssigned`],
+/// which is the asymmetry a reader should be able to derive rather than discover.
+///
+/// Neither variant admits [`TensorRole::Input`]. A region writing a declared input
+/// would mutate a tensor the caller owns, whatever it folded to get there.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommittedTensor {
+    /// This boundary tensor and no other, because the pass's role in a split
+    /// decides it rather than the cover.
+    Exactly(TensorRole),
+    /// Whichever of the two internal boundary tensors the cover assigned this
+    /// region: a declared program output when the region publishes one, or a
+    /// materialized intermediate when a later region consumes the value.
+    CoverAssigned,
+}
+
+impl CommittedTensor {
+    /// Returns whether one write's boundary tensor discharges this obligation.
+    fn admits(self, tensor: TensorRole) -> bool {
+        match self {
+            Self::Exactly(required) => tensor == required,
+            Self::CoverAssigned => {
+                matches!(tensor, TensorRole::Intermediate | TensorRole::Output)
+            }
+        }
+    }
+}
+
 /// Runs the intrinsic schedule verifier over an assembled region.
 fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagnostic> {
     let iteration_count = element_count(&region.index.iteration_shape)
@@ -875,6 +918,16 @@ fn verify_access_and_semantics(
         return verify_cooperative_semantics(region, read, write);
     }
     let numerical = &region.index.numerical;
+    // Every arm below differs in what it reads and agrees on what it writes.
+    // The read obligation is per family, because a family's scalar program is
+    // what decides which tensor holds its contributors — three of these four
+    // carry a prologue that reads the original input, and the bare sum carries
+    // none. The write obligation is [`CommittedTensor::CoverAssigned`] at all
+    // four, because no fold's algebra distinguishes committing the caller's
+    // answer from committing a value a later region reads, so widening one arm
+    // and not its siblings would state a difference between them that does not
+    // exist — and would drop the *fused* alternative for every reduction whose
+    // result an epilogue consumes while keeping the materialized-prologue one.
     match (
         &region.index.scalar_program,
         &region.schedule.reduction,
@@ -913,7 +966,7 @@ fn verify_access_and_semantics(
             && output_shape == &region.index.iteration_shape
             && input_shape.without_axes(axes) == *output_shape
             && ContributorTensor::DeclaredDomain.admits(read.tensor)
-            && write.tensor == TensorRole::Output => {}
+            && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
         (
             ScalarProgram::FusedMultiplyAddSerialSum {
                 axes,
@@ -945,7 +998,7 @@ fn verify_access_and_semantics(
             && output_shape == &region.index.iteration_shape
             && input_shape.without_axes(axes) == *output_shape
             && read.tensor == FIRST_INPUT
-            && write.tensor == TensorRole::Output => {}
+            && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
         // The squaring prologue reads the *original* input, exactly as the
         // scale-bias one does, so its read binds the first input tensor rather
         // than an intermediate. Its obligations are otherwise the strict serial
@@ -980,7 +1033,7 @@ fn verify_access_and_semantics(
             && output_shape == &region.index.iteration_shape
             && input_shape.without_axes(axes) == *output_shape
             && read.tensor == FIRST_INPUT
-            && write.tensor == TensorRole::Output => {}
+            && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
         // The extrema fold. Every obligation the sums carry is carried here too
         // *except* the empty-domain identity, which this family has no field for
         // and no correct value of — the non-emptiness check below replaces it.
@@ -1016,7 +1069,7 @@ fn verify_access_and_semantics(
             && output_shape == &region.index.iteration_shape
             && input_shape.without_axes(axes) == *output_shape
             && read.tensor == FIRST_INPUT
-            && write.tensor == TensorRole::Output => {}
+            && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
         _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
     }
     // The one precondition the extrema fold has and no sum does. The family is
@@ -1088,6 +1141,15 @@ struct SplitFamily<'a> {
     /// however the fold behaves.
     consumes_reassociation: bool,
     /// Boundary-tensor obligation this pass's single read must discharge.
+    ///
+    /// There is deliberately no write counterpart on this struct, and the
+    /// absence is the claim: a read's tensor varies by *family*, because a
+    /// family's prologue is what decides whether it reads the original input,
+    /// while a write's varies only by *pass* — every committing pass carries
+    /// [`CommittedTensor::CoverAssigned`] and a split's staging pass carries
+    /// [`CommittedTensor::Exactly`], identically for every family. Carrying it
+    /// here would let a family declare a write target it has no authority over,
+    /// and would invite two families to disagree about one cover's decision.
     read_tensor: ContributorTensor,
 }
 
@@ -1376,19 +1438,32 @@ fn verify_multi_pass_semantics(
     let admitted = match pass {
         // The partial pass proves the split covers its own contributor
         // sequence exactly once each, and stages one partial per partition.
+        //
+        // Its write is the one fold write in this module the cover does not
+        // choose, for the reason [`CommittedTensor::Exactly`] states: a partial
+        // is an unfolded fragment of the reduction, so committing one to a
+        // declared program output would publish a value that is not the fold's
+        // result under any cover.
         ReductionPass::Partial => {
             partition.covers(contributors)
                 && region.index.iteration_shape == partial_shape
-                && write.tensor == TensorRole::Intermediate
+                && CommittedTensor::Exactly(TensorRole::Intermediate).admits(write.tensor)
         }
         // The final pass proves it combines exactly one contributor per
         // partition of that same split, reading the staged partial tensor.
+        //
+        // It commits the *reduction's* result, so where that result goes is the
+        // cover's decision exactly as it is for the serial fold this split
+        // replaces. Fixing it to the program output would leave a split
+        // alternative unspellable for every reduction whose result an epilogue
+        // consumes — the alternative silently lost, since nothing else in the
+        // pipeline would report a strategy the vocabulary cannot express.
         ReductionPass::Final => {
             partial_reduction_axis(output_shape).is_some_and(|axis| axes == [axis].as_slice())
                 && *input_shape == partial_shape
                 && contributors == partition.partitions
                 && region.index.iteration_shape == *output_shape
-                && write.tensor == TensorRole::Output
+                && CommittedTensor::CoverAssigned.admits(write.tensor)
         }
     };
     if admitted {
@@ -1482,7 +1557,12 @@ fn verify_cooperative_semantics(
         || family.order != access_order
         || input_shape.without_axes(axes) != *output_shape
         || !family.read_tensor.admits(read.tensor)
-        || write.tensor != TensorRole::Output
+        // A tile is both halves of a split in one dispatch, so its single write
+        // is the fold's committing write and the cover decides where it lands —
+        // there is no staging pass here whose target the split structure fixes,
+        // because a tile stages in workgroup memory rather than a boundary
+        // tensor.
+        || !CommittedTensor::CoverAssigned.admits(write.tensor)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
@@ -4193,6 +4273,165 @@ mod tests {
         );
     }
 
+    /// Rebinds a region's owning write to another boundary tensor.
+    ///
+    /// The write access, its bounds proof, and the ownership proof move together
+    /// because [`verify_proof_records`] requires all three to name one tensor:
+    /// moving fewer would report the proof reference and prove nothing about the
+    /// boundary role under test. The write is the last access by the same
+    /// convention [`verify_intrinsic`] destructures it under.
+    fn write_to(builder: &mut ScheduledRegionBuilder, tensor: TensorRole) {
+        let write = builder.accesses.len() - 1;
+        builder.accesses[write].tensor = tensor;
+        builder.bounds_proofs[write].tensor = tensor;
+        builder.ownership_proof.as_mut().unwrap().tensor = tensor;
+    }
+
+    /// Every serial fold family, over the shared serial fixture's reduced axis.
+    ///
+    /// Named and returned as a population rather than asserted one family at a
+    /// time, so the test below counts what it covered: a write rule that reached
+    /// three of these four would otherwise pass a spot check and leave the fourth
+    /// silently narrower.
+    fn serial_fold_families() -> Vec<(&'static str, ScalarProgram)> {
+        let axes = vec![Axis::new(1)];
+        vec![
+            ("strict serial sum", bare_sum(axes.clone())),
+            ("extrema fold", maximum_scalar()),
+            (
+                "squaring prologue",
+                ScalarProgram::SquaredSerialSum {
+                    axes: axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+            ),
+            (
+                "scale-bias prologue",
+                ScalarProgram::FusedMultiplyAddSerialSum {
+                    scale_bits: 1.0_f32.to_bits(),
+                    bias_bits: 0.0_f32.to_bits(),
+                    axes,
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                    contraction: false,
+                },
+            ),
+        ]
+    }
+
+    /// Every serial fold may commit its result to a materialized intermediate.
+    ///
+    /// **The widening, and its exact width.** Where a fold's result goes is a
+    /// property of the surrounding cover and not of the fold: `sum(x * x)` whose
+    /// value the caller asked for and the same fold whose value an epilogue
+    /// scales are one computation committing to two boundary tensors. All four
+    /// families widen together because none of their algebras distinguishes the
+    /// two — admitting only the bare sum would say a squaring prologue's result
+    /// is inherently the program's answer, which is false, and would leave the
+    /// *fused* alternative unspellable for every reduction an epilogue consumes
+    /// while the materialized-prologue alternative compiled.
+    ///
+    /// What the widening is *not* is "any tensor": a write to a declared input
+    /// stays refused, because a region committing there would mutate a tensor the
+    /// caller owns whatever it folded to get there.
+    #[test]
+    fn every_serial_fold_family_may_commit_to_a_materialized_intermediate() {
+        let families = serial_fold_families();
+        assert_eq!(
+            families.len(),
+            4,
+            "the serial match has four fold arms, and each must be driven",
+        );
+        for (name, scalar) in families {
+            assert!(
+                serial_reduction_builder(scalar.clone()).build().is_ok(),
+                "the output-writing control for the {name} must verify, \
+                 or neither case below is evidence",
+            );
+
+            let mut staged = serial_reduction_builder(scalar.clone());
+            write_to(&mut staged, TensorRole::Intermediate);
+            assert!(
+                staged.build().is_ok(),
+                "the {name} has a producer region for the value an epilogue reads",
+            );
+
+            let mut into_input = serial_reduction_builder(scalar);
+            write_to(&mut into_input, FIRST_INPUT);
+            assert_eq!(
+                into_input.build().unwrap_err().diagnostics(),
+                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+                "no fold commits its result into a tensor the caller owns ({name})",
+            );
+        }
+    }
+
+    /// Committing to an intermediate is a distinct region, not a free relabel.
+    ///
+    /// The write role reaches `encode_identity` through the access list, the
+    /// write's bounds proof, and the ownership proof, so a staged fold and a
+    /// published one are different canonical regions. Without this, a plan that
+    /// materialized a fold's result and one that published it could share a
+    /// cache entry and one would be served for the other.
+    #[test]
+    fn the_committed_tensor_separates_scheduled_region_identity() {
+        let published = serial_reduction_builder(bare_sum(vec![Axis::new(1)]))
+            .build()
+            .unwrap();
+        let mut builder = serial_reduction_builder(bare_sum(vec![Axis::new(1)]));
+        write_to(&mut builder, TensorRole::Intermediate);
+        let staged = builder.build().unwrap();
+        assert_ne!(
+            published.canonical_identity().as_bytes(),
+            staged.canonical_identity().as_bytes(),
+        );
+    }
+
+    /// A split's committing pass chooses its write tensor; its staging pass does not.
+    ///
+    /// **The asymmetry is the assertion, and it is the write counterpart of the
+    /// read asymmetry [`only_the_partial_pass_of_a_split_may_fold_a_declared_input`]
+    /// pins.** The final pass commits the reduction's own result, so the cover
+    /// decides where it lands exactly as it does for the serial fold this split
+    /// replaces — which is what keeps a split alternative available for a
+    /// reduction whose result an epilogue consumes. The partial pass commits an
+    /// unfolded fragment, which is no cover's output;
+    /// [`a_partial_pass_may_not_write_the_program_output`] is the narrow pin for
+    /// that half and is unchanged by this widening.
+    #[test]
+    fn only_the_committing_pass_of_a_split_chooses_its_write_tensor() {
+        assert!(
+            final_pass_builder(SPLIT).build().is_ok(),
+            "the output-writing control must verify, or neither case below is evidence",
+        );
+
+        let mut staged = final_pass_builder(SPLIT);
+        write_to(&mut staged, TensorRole::Intermediate);
+        assert!(
+            staged.build().is_ok(),
+            "a split fold whose result an epilogue reads stages it from its final pass",
+        );
+
+        let mut into_input = final_pass_builder(SPLIT);
+        write_to(&mut into_input, FIRST_INPUT);
+        assert_eq!(
+            into_input.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "no pass commits its result into a tensor the caller owns",
+        );
+
+        let mut partial = partial_pass_builder(SPLIT);
+        write_to(&mut partial, TensorRole::Output);
+        assert_eq!(
+            partial.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a partial is an unfolded fragment and is no cover's declared output",
+        );
+    }
+
     /// A split's partial pass may fold a declared input; its final pass may not.
     ///
     /// **The asymmetry is the assertion.** The partial pass folds the region's
@@ -4248,6 +4487,39 @@ mod tests {
         assert_eq!(
             second.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+        );
+    }
+
+    /// A cooperative tile may commit its result to a materialized intermediate.
+    ///
+    /// A tile is both halves of a split in one dispatch, so its single write is
+    /// the fold's committing write and carries the same cover-assigned obligation
+    /// the serial fold and the split's final pass carry. It has no staging pass
+    /// whose target the split structure fixes, because it stages in workgroup
+    /// memory rather than in a boundary tensor — which is why it needs no pass
+    /// distinction here, exactly as it needs none for its read.
+    #[test]
+    fn a_cooperative_tile_may_commit_to_a_materialized_intermediate() {
+        assert!(
+            cooperative_builder(cooperative_tile_fixture())
+                .build()
+                .is_ok(),
+            "the output-writing control must verify, or neither case below is evidence",
+        );
+
+        let mut staged = cooperative_builder(cooperative_tile_fixture());
+        write_to(&mut staged, TensorRole::Intermediate);
+        assert!(
+            staged.build().is_ok(),
+            "a tiled fold whose result an epilogue reads stages it from its commit",
+        );
+
+        let mut into_input = cooperative_builder(cooperative_tile_fixture());
+        write_to(&mut into_input, FIRST_INPUT);
+        assert_eq!(
+            into_input.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "no tile commits its result into a tensor the caller owns",
         );
     }
 

@@ -19,7 +19,7 @@
 //! | Region | Needs | Admitted by `tiler-ir` |
 //! | --- | --- | --- |
 //! | elementwise epilogue | read `TensorRole::Intermediate` | yes — [`a_pointwise_region_may_read_a_materialized_intermediate`] |
-//! | serial-sum producer | write `TensorRole::Intermediate` | **no** — [`a_strict_serial_sum_region_cannot_write_a_materialized_intermediate`] |
+//! | serial-sum producer | write `TensorRole::Intermediate` | yes — [`a_strict_serial_sum_region_may_write_a_materialized_intermediate`] |
 //! | contraction producer | write `TensorRole::Intermediate` | yes — [`a_contraction_region_can_already_write_a_materialized_intermediate`] |
 //!
 //! **The first row was `no` when this file was written, and
@@ -32,14 +32,23 @@
 //! region is expressible and a region with two intermediate reads, which nothing
 //! could attribute to materialization edges, is still refused.
 //!
-//! The remaining refusal lives in `crates/tiler-ir/src/schedule/builder.rs`:
-//! `verify_access_and_semantics` admits a `ScalarProgram::StrictSerialSum` under
-//! a `ReductionTopology::Serial` only when `write.tensor == TensorRole::Output`.
-//! It is not reachable from `tiler-compiler`, so `sum(x * x) * scale` still
-//! needs a `tiler-ir` widening —
-//! `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate` owns it
-//! — while `contract(a, b) * 2.0` and the published-and-consumed copy stage need
-//! only the read this file now records as admitted.
+//! **The second row was `no` too, and
+//! `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate` flipped
+//! it.** `verify_access_and_semantics` admitted a fold under a
+//! `ReductionTopology::Serial` only when `write.tensor == TensorRole::Output`,
+//! which stated as a family fact something no family decides: where a fold's
+//! result goes is a property of the surrounding cover, not of the fold. The rule
+//! is now `CommittedTensor::CoverAssigned` at every committing pass — the four
+//! serial arms, the split's final pass, and the cooperative tile — while the
+//! split's *partial* pass keeps `CommittedTensor::Exactly(Intermediate)`, because
+//! a partial is an unfolded fragment and is no cover's declared output.
+//!
+//! **With all three rows open, every region the chain needs is expressible in
+//! `tiler-ir`.** What remains for
+//! `admit-elementwise-epilogues-over-a-materialized-intermediate` is entirely
+//! compiler-side: recognizing the epilogue shape, threading `RegionWrite` into
+//! the reduction spellings that still hard-code `TensorRole::Output`, and
+//! assembling the chain.
 //!
 //! **The compiler still cannot route around the write by binding differently.** A
 //! region cannot declare `TensorRole::Input { ordinal }` for a read and let
@@ -57,8 +66,9 @@
 //! Both epilogue shapes the ticket names still refuse at the request boundary
 //! under `operation-set`, which is the elementwise walk reporting that the
 //! operand it reached is produced by a family its expression vocabulary has no
-//! node for. The schedule vocabulary now has regions for the contraction shape;
-//! building them from a recognized program is
+//! node for. The schedule vocabulary now has regions for *both* shapes, so the
+//! two refusals below are the recognizer's alone; building the chain from a
+//! recognized program is
 //! `admit-elementwise-epilogues-over-a-materialized-intermediate`'s own work.
 //! Each shape travels with the bare producer as a control, so a refusal here is
 //! evidence about the epilogue rather than about the profile.
@@ -519,16 +529,22 @@ fn a_pointwise_region_may_read_a_materialized_intermediate() {
     }
 }
 
-/// A strict serial fold may not write a materialized intermediate.
+/// A strict serial fold may write a materialized intermediate.
 ///
-/// The second wall, and independent of the first: even if a pointwise region
-/// could read an intermediate, `sum(x * x) * scale` would still have no chain,
-/// because `verify_access_and_semantics` admits a `ScalarProgram::StrictSerialSum`
-/// under a `ReductionTopology::Serial` only when the owning write targets
-/// `TensorRole::Output`. The multi-pass partial arm is the one place a fold
-/// writes an intermediate, and it is a different topology declaring a split.
+/// The second wall, and it stood until
+/// `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate` lifted
+/// it. `verify_access_and_semantics` admitted a `ScalarProgram::StrictSerialSum`
+/// under a `ReductionTopology::Serial` only when the owning write targeted
+/// `TensorRole::Output`, so `sum(x * x) * scale` had no producer region for the
+/// value its epilogue reads even after the pointwise read opened. Both roles
+/// verify now, and the region proves its ownership and bounds identically under
+/// each — only which boundary tensor receives the committed value moves.
+///
+/// The write into a declared input travels with them, because the widening's
+/// width is the assertion: a fold commits to one of the two *internal* boundary
+/// tensors, never to a tensor the caller owns.
 #[test]
-fn a_strict_serial_sum_region_cannot_write_a_materialized_intermediate() {
+fn a_strict_serial_sum_region_may_write_a_materialized_intermediate() {
     let input_shape = Shape::from_dims([1, 4]);
     let axes = vec![Axis::new(1)];
     let output_shape = input_shape.without_axes(&axes);
@@ -611,13 +627,19 @@ fn a_strict_serial_sum_region_cannot_write_a_materialized_intermediate() {
     assert_eq!(
         verify(fold(TensorRole::Output)),
         Ok(()),
-        "the output-writing control must verify, or the refusal below is not \
+        "the output-writing control must verify, or the admission below is not \
          about the write's boundary role",
     );
-    let diagnostics = verify(fold(TensorRole::Intermediate)).expect_err(
-        "a strict serial sum writing a materialized intermediate must be \
-         refused by the intrinsic schedule verifier",
+    assert_eq!(
+        verify(fold(TensorRole::Intermediate)),
+        Ok(()),
+        "a strict serial sum staging its result is the producer region \
+         `sum(x * x) * scale` needs",
     );
+    let diagnostics = verify(fold(TensorRole::Input {
+        ordinal: InputOrdinal::FIRST,
+    }))
+    .expect_err("a fold committing into a declared input must be refused");
     assert!(
         diagnostics.contains(&ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
         "expected the access-refinement diagnostic, got {diagnostics:?}",
