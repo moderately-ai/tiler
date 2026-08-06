@@ -1,7 +1,7 @@
 ---
 id: lower-a-two-region-occurrence-through-one-index-access-capability
 title: Lower a two-region occurrence through one index-access capability
-status: blocked
+status: todo
 priority: p1
 dependencies: [admit-a-multi-region-index-realization-law]
 related: [admit-the-rms-normalization-family, admit-the-softmax-family, reach-a-verified-kernel-through-the-structural-families]
@@ -57,3 +57,7 @@ Widening `select_supported_strategy`, which [`reach-a-verified-kernel-through-th
 **Fact — what was deliberately not built.** No public boundary was changed. `crates/tiler-compiler/src/capability.rs` and `src/legality.rs` are untouched; the branch adds one integration test and ticket-graph edits. Identity-pin survey (`grep -rnoE '\b[0-9a-f]{16}\b'` and the `{64}` form over `crates/tiler-compiler`): 21 distinct 16-hex pins — 1 live at `explain.rs:4090` (`request=8e06e11fdc3a2889`) plus 20 historical values in its ledger comment — and 6 distinct 64-hex pins. None moved: the live pin hashes the request subject, and this branch adds no program shape to a request and no registry entry.
 
 **Remaining reachable work in this scope.** None until the dependency lands. When it does, closes-when 1–4 are reachable from `implementation/compiler` as written, and the explain slot for closes-when 4 is already identified: the `capability.index-access-resolution.v1` record in `crates/tiler-compiler/src/pipeline/trace.rs` currently carries zero `ExplainFact`s, and `crates/tiler-compiler/src/pipeline/tests.rs` holds a rule census that a new record or changed count fails first.
+
+## Unparked — 2026-08-06
+
+The blocking dependency (`admit-a-multi-region-index-realization-law`) is done: `StagedStrictSerialSumThenPointwiseF32` and `VerifiedIndexRegionSequence` exist with domain-separated identity, and the wall tests in `crates/tiler-compiler/tests/two_region_occurrence_lowering_wall.rs` pin exactly what this ticket now flips. Two items travel with the unparking: the acceptance node `accept-the-multi-region-index-realization-surface` is parked for Tom (this ticket's work is a draft consumer until he rules), and the law worker put the open accessor question — whether a staged receipt should expose a single-region accessor at all — to this ticket to answer at its own boundary.
