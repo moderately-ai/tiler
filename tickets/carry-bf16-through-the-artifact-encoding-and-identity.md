@@ -1,7 +1,7 @@
 ---
 id: carry-bf16-through-the-artifact-encoding-and-identity
 title: Carry BF16 through the artifact encoding, ABI, and program identity
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-bf16-into-the-schedule-and-kernel-vocabulary, redesign-the-delivered-realization-record-from-typed-evidence]
 related: [spike-bf16-through-the-second-dtype-seams, accept-the-delivered-realization-artifact-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, artifact, abi, identity]
+claimed_from: todo
+assignee: agent-bf16-artifact
+lease_expires_at: 1785982711
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: admit-a-fusion-role-for-the-sequence-extension-concatenate
 title: Admit a fusion role for the sequence-extension concatenate
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [scope-the-concatenate-fusion-role-and-lowering, admit-a-fusion-role-for-the-tensor-contraction, reach-a-verified-kernel-through-the-structural-families]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, fusion, concatenate]
+claimed_from: todo
+assignee: agent-concat-role
+lease_expires_at: 1785982711
 ---
 ## User-visible outcome
 

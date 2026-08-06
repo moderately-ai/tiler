@@ -1,7 +1,7 @@
 ---
 id: lower-bf16-to-metal
 title: Lower a BF16 kernel to Metal and dispatch it on the measured macOS row
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-bf16-into-the-schedule-and-kernel-vocabulary, declare-the-bf16-rows-on-the-authoritative-metal-profile]
 related: [spike-bf16-through-the-second-dtype-seams, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, widen-the-f16-operation-vocabulary-to-contraction-and-reassociation]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, metal, lowering, apple-targets]
+claimed_from: todo
+assignee: agent-bf16-metal
+lease_expires_at: 1785982711
 ---
 ## User-visible outcome
 
