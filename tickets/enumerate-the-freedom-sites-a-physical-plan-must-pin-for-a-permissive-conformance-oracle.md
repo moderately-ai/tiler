@@ -1,7 +1,7 @@
 ---
 id: enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle
 title: Enumerate the freedom sites a physical plan must pin for a permissive conformance oracle
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [derive-the-oracle-for-a-permitted-divergence-candidate, apply-the-declared-numerical-conformance-on-every-reference-evaluation-path]
@@ -9,9 +9,6 @@ scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, reference, conformance, scheduling]
-claimed_from: todo
-assignee: agent-freedom-sites
-lease_expires_at: 1786029868
 ---
 ## User-visible outcome
 

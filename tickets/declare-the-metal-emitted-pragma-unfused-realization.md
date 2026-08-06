@@ -1,7 +1,7 @@
 ---
 id: declare-the-metal-emitted-pragma-unfused-realization
 title: Declare the Metal emitted-pragma unfused realization
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [probe-the-bf16-contraction-pragma-on-the-metal-runtime-path, design-the-bf16-computation-and-accumulator-contract, declare-metal-numerical-honourability]
@@ -9,9 +9,6 @@ scopes: [contracts/numerics, contracts/decisions, research/numerics, contracts/a
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, bf16, contraction, apple-targets, contract]
-claimed_from: todo
-assignee: agent-pragma-realization
-lease_expires_at: 1786029868
 ---
 ## User-visible outcome
 
