@@ -1,7 +1,7 @@
 ---
 id: decide-how-a-pinned-pointwise-grouping-becomes-evaluable
 title: Decide how a pinned pointwise grouping becomes evaluable
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle, derive-the-oracle-for-a-permitted-divergence-candidate, accept-the-realization-witness-surface, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation]
@@ -9,9 +9,6 @@ scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, reference, conformance]
-claimed_from: todo
-assignee: agent-grouping-fork
-lease_expires_at: 1786031369
 ---
 ## User-visible outcome
 
