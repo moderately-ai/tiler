@@ -716,6 +716,51 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
         );
     }
 
+    /// [`FpContract::FastHonorPragmas`] is refused by the `metal` driver, and
+    /// the refusal is the typed tool-stage failure its documentation promises.
+    ///
+    /// This is the one place that variant's doc claim is executable. The claim
+    /// is about Apple's driver, so it can only go stale from outside this
+    /// repository; with no watcher the comment would rot silently and the next
+    /// reader would treat an unreachable selection as available. A failure here
+    /// is therefore the trigger recorded at the variant firing, not breakage.
+    ///
+    /// Deliberately asserts the typed error and its stage and **not** the
+    /// diagnostic text, which is Apple's to reword.
+    #[test]
+    fn fast_honor_pragmas_is_rejected_by_the_metal_driver() {
+        let toolchain = Toolchain::system();
+        if toolchain.resolve(AppleSdk::MacOs).is_err() {
+            return;
+        }
+        // The control compiles the same source under a realization differing in
+        // nothing but the contraction value, so a failure below is the flag and
+        // not the fixture.
+        let control =
+            NumericalRealization::new(MathMode::Safe, Fp32Functions::Precise, FpContract::Fast);
+        toolchain
+            .compile(&request(TRIVIAL_MSL, control))
+            .expect("the control differs only in the contraction value and must compile");
+
+        let rejected = NumericalRealization::new(
+            MathMode::Safe,
+            Fp32Functions::Precise,
+            FpContract::FastHonorPragmas,
+        );
+        match toolchain.compile(&request(TRIVIAL_MSL, rejected)) {
+            Err(DriverError::ToolFailure {
+                stage: CompileStage::Metal,
+                ..
+            }) => {}
+            Ok(_) => panic!(
+                "`metal` accepted -ffp-contract=fast-honor-pragmas, so the trigger recorded on \
+                 FpContract::FastHonorPragmas has fired: re-measure the row, correct that \
+                 variant's documentation, and decide whether the value is now a real selection"
+            ),
+            other => panic!("expected a metal-stage ToolFailure, got {other:?}"),
+        }
+    }
+
     /// A launcher whose `--find` answer differs from what its tool branch runs.
     ///
     /// This is the selection change the defect turned into a misattribution,
