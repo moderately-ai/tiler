@@ -1,14 +1,17 @@
 ---
 id: re-derive-the-measured-envelope-band-the-cache-hot-path-sweeps
 title: Re-derive the measured envelope band the cache hot-path sweeps
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [wire-the-delivered-realization-record-into-the-artifact]
 scopes: [research/cache, research/embedding]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [research, cache, measurement]
+claimed_from: todo
+assignee: agent-envelope-band
+lease_expires_at: 1786051056
 ---
 `spikes/cache/hot-path-efficiency` sweeps two envelope lengths, `SIZES = [32_136, 47_803]`, and its own comment says why those and not round numbers: they are the exact endpoints of the envelope band `docs/research/embedding/self-contained-embedding.md` measured, and measuring at a measured band's endpoints is what lets a reader put a cost against sizes the corpus already claims are realistic.
 

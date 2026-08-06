@@ -1,14 +1,17 @@
 ---
 id: admit-a-scheduled-region-for-a-staged-elementary-family
 title: Admit a scheduled region for a staged elementary family
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages, accept-the-root-mean-square-scale-realization-law]
-scopes: [implementation/ir, implementation/compiler]
+scopes: [implementation/ir, implementation/compiler, implementation/metal, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, scheduling, identity-domain]
+claimed_from: todo
+assignee: agent-staged-region
+lease_expires_at: 1786051056
 ---
 ## User-visible outcome
 
