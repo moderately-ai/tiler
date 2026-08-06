@@ -2494,6 +2494,152 @@ fn every_cover_region_receives_a_proposal_or_a_typed_decline() {
     );
 }
 
+/// A registered staged family reaches its own lowering through `compile()`, and
+/// the one wall that is left is named on every region that hits it.
+///
+/// **This is where the recognizer half of
+/// [`admit-the-registered-elementary-families-as-recognizable-program-stages`]
+/// is measured, and the measurement has three parts.** The program is
+/// `rms_norm(value, weight) * value`: a registered elementary family as a
+/// program stage a later elementwise pass consumes.
+///
+/// *It is recognized.* Before, `select_supported_strategy` refused it under
+/// `operation-set` and nothing below the request boundary ran at all. Now the
+/// occurrence resolves its index-access capability and `refine_index_region`
+/// proves `GovernedRootMeanSquareScaleF32`'s emitted chain realizes it — a
+/// two-stage realization handing one value on — which is the family's own
+/// lowering reaching the compile path for the first time.
+///
+/// *The stage split is region formation's and the cover search sees it.* The
+/// staged occurrence enumerates one candidate per realization stage, so regions
+/// carrying one stage of it are proposed to the physical provider.
+///
+/// *The remaining refusal names its wall.* Every region a staged output owns
+/// declines under `region-staged-family-unspellable`, which is
+/// [`crate::physical::RegionVocabularyWall::StagedFamilyUnspellable`] and names
+/// the scheduled-region vocabulary rather than the cover. The epilogue region is
+/// answered with an implementation in the same run, which is what makes the
+/// decline a statement about the staged stages rather than about this program.
+///
+/// The check that can say no: reverting the staged arm of `spell_output` to
+/// `None` makes every one of those regions decline under
+/// `region-partial-coverage` instead, and the wall map below fails.
+///
+/// [`admit-the-registered-elementary-families-as-recognizable-program-stages`]: ../../../tickets/admit-the-registered-elementary-families-as-recognizable-program-stages.md
+#[test]
+fn a_staged_family_program_reaches_its_lowering_and_names_the_vocabulary_wall() {
+    let semantic = staged_family_program();
+    let product = compile(CompilationRequest::governed(&semantic))
+        .expect("a target-local refusal is an ordered outcome");
+    let CompileError::Explained { source, explain } = product.targets[0]
+        .failure()
+        .expect("no scheduled region spells the staged stages, so no plan completes")
+    else {
+        panic!("target compilation failures retain their explain trace");
+    };
+    assert!(
+        matches!(
+            source.as_ref(),
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(
+                SelectionError::Structure {
+                    rule: "no-complete-plan"
+                }
+            ))
+        ),
+        "observed {source:?}",
+    );
+
+    // The family's own lowering ran, and the realization it proved is staged.
+    let stages = explain
+        .records()
+        .iter()
+        .filter_map(|record| {
+            let ExplainEvent::Check { assessment, .. } = record.event() else {
+                return None;
+            };
+            if assessment.predicate().as_str() != "kernel.index-region-refines-occurrence" {
+                return None;
+            }
+            assessment
+                .facts()
+                .iter()
+                .find(|fact| fact.key().as_str() == "realization-stages")
+                .map(ExplainFact::value)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stages,
+        [&FactValue::Count(2)],
+        "exactly one occurrence refines as a region sequence, and it has two stages",
+    );
+
+    // Every region the staged output owns declined by name, and the region the
+    // vocabulary does spell was implemented.
+    let attributions = region_attributions(explain);
+    let mut answered: Vec<&str> = attributions
+        .values()
+        .filter(|attribution| attribution.admitted > 0)
+        .map(|attribution| attribution.role.as_str())
+        .collect();
+    answered.sort_unstable();
+    assert_eq!(answered, ["epilogue"]);
+    let walls: BTreeMap<&str, usize> = attributions
+        .values()
+        .filter_map(|attribution| attribution.declined_baseline.as_deref())
+        .fold(BTreeMap::new(), |mut counts, reason| {
+            *counts.entry(reason).or_insert(0) += 1;
+            counts
+        });
+    assert_eq!(
+        walls,
+        BTreeMap::from([
+            // The fold alone, the pass alone, and the two together.
+            ("region-staged-family-unspellable", 3),
+            // Two regions grouping a stage of the normalization with the
+            // consuming multiply, which no recognized partition owns.
+            ("region-partial-coverage", 2),
+        ]),
+        "the staged regions no longer name the wall they hit",
+    );
+    assert_eq!(
+        attributions
+            .values()
+            .filter(|attribution| attribution.role == "staged-family")
+            .count(),
+        3,
+        "three of the six candidates are regions of the staged occurrence alone",
+    );
+}
+
+/// `rms_norm(value, weight) * value` over `[2, 2]` reduced on axis one.
+///
+/// The extents are two so that the consuming pass fits the governed profile's
+/// grid: at `[2, 4]` the epilogue region is refused by `target.grid-axis` and
+/// the run would prove nothing about the staged stages.
+fn staged_family_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let shape = Shape::from_dims([2, 2]);
+    let value = builder
+        .input::<F32>(InputKey::new("value").unwrap(), shape.clone())
+        .unwrap();
+    let weight = builder
+        .input::<F32>(InputKey::new("weight").unwrap(), shape)
+        .unwrap();
+    let normalized = tiler_ir::semantic::F32RmsNorm::apply(
+        &mut builder,
+        value,
+        weight,
+        Axis::new(1),
+        1.0e-6_f32.to_bits(),
+    )
+    .unwrap();
+    let scaled = F32Multiply::apply(&mut builder, normalized, value).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), scaled)
+        .unwrap();
+    builder.build().unwrap()
+}
+
 /// **Fourteen region subjects share one role and are fourteen explain
 /// subjects.**
 ///

@@ -354,6 +354,25 @@ pub(crate) enum RegionVocabularyWall {
     /// silently: [`fused_region`] answers `None` for every prologue that is not
     /// the affine one, and the materialized cover still realizes the program.
     FusedPrologueUnspellable,
+    /// The region realizes a stage of an occurrence whose registered law
+    /// realizes a region *sequence*, and no scheduled region spells it.
+    ///
+    /// **A wall of its own rather than [`Self::PartialCoverage`], because the
+    /// two say opposite things about the cover.** Partial coverage means the
+    /// cover grouped occurrences no recognized partition owns — the cover is
+    /// wrong for this program. This means the cover is *right*: the region
+    /// covers exactly the stages one recognized occurrence realizes as, region
+    /// formation enumerated it from the family's own law, and what is missing is
+    /// a [`ScalarProgram`] for the work that stage does. `tiler::rms-norm-f32@1`
+    /// is the shipped instance — its `StagedRootMeanSquareScaleF32` law folds
+    /// each contributor's square and then applies `/N`, `+eps`, and `Rsqrt`
+    /// inside the producing stage, and
+    /// [`ScalarProgram::SquaredSerialSum`](tiler_ir::schedule::ScalarProgram::SquaredSerialSum)
+    /// carries no epilogue, deliberately.
+    ///
+    /// [`admit-a-scheduled-region-for-a-staged-elementary-family`](../../../tickets/admit-a-scheduled-region-for-a-staged-elementary-family.md)
+    /// owns the vocabulary.
+    StagedFamilyUnspellable,
 }
 
 impl RegionVocabularyWall {
@@ -365,6 +384,7 @@ impl RegionVocabularyWall {
             // The rule `build_fused_scheduled_region` already names for the same
             // condition, so one code covers both spellings of the fact.
             Self::FusedPrologueUnspellable => "fused-prologue-unspellable",
+            Self::StagedFamilyUnspellable => "region-staged-family-unspellable",
         }
     }
 }
@@ -514,6 +534,17 @@ fn spell_output(
             }
             spell_output(&chain.producer, position, members, write, partial_fused)
         }
+        // A decision, not a fall-through: the ownership test is the recognized
+        // partition's own, so a region this output owns is one whose atoms are
+        // all stages of this occurrence, and every such region hits the same
+        // vocabulary wall. Answering `None` would let the scan continue and
+        // report partial coverage, which names the cover instead of the missing
+        // scheduled region.
+        NormalizedOutput::Staged(normalized) => (!members.is_empty()
+            && members
+                .iter()
+                .all(|atom| atom.member() == normalized.member))
+        .then_some(Err(RegionVocabularyWall::StagedFamilyUnspellable)),
     }
 }
 
@@ -2302,6 +2333,7 @@ fn published_shape(normalized: &NormalizedOutputSubject) -> &Shape {
         NormalizedOutputSubject::SerialSum(normalized) => normalized.output_shape(),
         NormalizedOutputSubject::Contraction(normalized) => &normalized.output_shape,
         NormalizedOutputSubject::Epilogue(normalized) => normalized.shape(),
+        NormalizedOutputSubject::Staged(normalized) => &normalized.output_shape,
     }
 }
 
@@ -2351,13 +2383,29 @@ fn verify_region_output_binding(
                 && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
                 && contraction_accesses_match(&region.index.accesses, normalized)
         }
-        // Either whole-program subject paired with any other scalar program is a
-        // forged pairing: each is bound above against the one program its
-        // recognizer produces, so answering `false` here is the fail-closed
-        // answer rather than a deferral.
-        (NormalizedOutputSubject::Pointwise(_) | NormalizedOutputSubject::Contraction(_), _) => {
-            false
-        }
+        // One fail-closed answer for three subjects, and the reason differs by
+        // subject rather than the answer.
+        //
+        // Either whole-program subject paired with any other scalar program is
+        // a forged pairing: each is bound above against the one program its
+        // recognizer produces, so `false` is the fail-closed answer rather than
+        // a deferral.
+        //
+        // A *staged* subject binds no scheduled region at all, and `false` is
+        // the statement of that rather than an unfinished arm. No region reaches
+        // here today — [`spell_region`] declines every region a staged output
+        // owns under [`RegionVocabularyWall::StagedFamilyUnspellable`], so
+        // nothing is proposed to bind — and when the scheduled vocabulary gains
+        // the stage's scalar program, this is where the binding it must satisfy
+        // is written. Until then a region claiming a staged occurrence is a
+        // forged pairing by the whole-program arms' own argument, which is why
+        // the same answer serves.
+        (
+            NormalizedOutputSubject::Pointwise(_)
+            | NormalizedOutputSubject::Contraction(_)
+            | NormalizedOutputSubject::Staged(_),
+            _,
+        ) => false,
         // A chain binds either its epilogue region or a region of its producer's
         // partition, and the *members* are what separate the two: an epilogue's
         // region and a fold's prologue are both `PointwiseF32` regions, so the
