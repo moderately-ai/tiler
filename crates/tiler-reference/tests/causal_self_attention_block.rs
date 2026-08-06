@@ -1357,6 +1357,16 @@ fn c1_extents() -> BlockExtents {
     BlockExtents::resolve(&environment, C1_HIDDEN).expect("both symbols are pinned and bounded")
 }
 
+/// The block's ordered interface and its occurrence census, counted by key.
+///
+/// A program's ordered inputs and ordered named outputs are part of its contract,
+/// and its occurrence count is a measurement of the graph rather than of the
+/// prose that describes it — a *step* of exposition may be one occurrence, three,
+/// or ten. Counting by key rather than in total is what makes a step that
+/// silently became a different family fail here instead of passing on arithmetic,
+/// and the output shapes are the families' own derivations, which no caller
+/// declared. The worked instance is the L4 design's twenty-two steps, which
+/// verify as forty-eight occurrences over eight registered keys and no ninth.
 #[test]
 fn the_block_verifies_at_the_c1_prefill_shape() {
     let extents = c1_extents();
@@ -1435,6 +1445,14 @@ fn the_block_verifies_at_the_c1_prefill_shape() {
     );
 }
 
+/// One keyed family carries every contraction, with its structure as an attribute.
+///
+/// `tiler::strict-tensor-contraction-f32@1` is a single key whose occurrences
+/// differ by the index structure they declare, so reading that attribute back off
+/// each occurrence is how a program's contractions are told apart — and an
+/// unrecognized structure is a panic rather than an uncounted occurrence, so the
+/// census cannot silently omit one. The worked instance is this block, the first
+/// program in the corpus to exercise all three structures at once.
 #[test]
 fn all_three_contraction_index_structures_occur_exactly_once_or_four_times() {
     // The block is the first program in the corpus exercising every structure the
@@ -1544,6 +1562,17 @@ fn a_longer_row_changes_no_occurrence() {
     assert_eq!(context_shape(&longer), block_shape([GROUPS, 18, HEAD_DIM]));
 }
 
+/// An explicit broadcast mapping is the only attribute a row moves — and all move.
+///
+/// This is the complement of [`a_longer_row_changes_no_occurrence`], so neither is
+/// a claim the other's formulation quietly widened. A mapping states the shape it
+/// produces, so its declared result extents are a function of the binding and
+/// reach canonical identity; every other family's attributes are extent-free — a
+/// reindex form names axes and factors, a contraction structure names indices, a
+/// reduction names an axis. Counted rather than asserted as "some": the worked
+/// instance is this block's ten mappings, every one of which widens to a shape
+/// with the position axis in it, so a mapping that stopped depending on the row,
+/// or an eleventh that appeared, is visible here.
 #[test]
 fn the_broadcast_mappings_are_the_only_row_dependent_attributes() {
     // The complement of the check above, so neither is a claim the other's
@@ -1624,6 +1653,15 @@ fn a_context_wider_than_the_new_positions_is_refused_at_prefill() {
     assert!(build_block_with(c1_extents(), HeadReading::Interleave).is_ok());
 }
 
+/// Two extent symbols pinned to the same value are still two symbols.
+///
+/// An interval constraint is a fact about one symbol in isolation, so an
+/// environment does not join two symbols' equality classes merely because a row
+/// binds them to the same number — proving each positive and pinned is not
+/// proving them equal. The worked instance is `T` and `S` at batch-1 prefill,
+/// where `S = T` is therefore a coincidence of the binding rather than a fact of
+/// the program: were it ever proved, a decode step would need a different graph
+/// rather than a different binding.
 #[test]
 fn the_two_extent_symbols_are_never_proved_equal() {
     // Both are pinned to ten at prefill and they are still two symbols: an
@@ -1659,6 +1697,16 @@ fn refusal_code(error: &BuildError) -> String {
     rejection.source_error().code().as_str().to_owned()
 }
 
+/// A one-to-one mapping axis refuses an operand extent that disagrees.
+///
+/// `FromOperand` states a correspondence and not a resize, so an operand whose
+/// extent differs from the result axis it supplies is refused under
+/// `broadcast.mapping.extent-disagreement` rather than truncated, padded, or
+/// stretched to fit — the widening a broadcast performs is confined to the axes
+/// that declare it. The worked instance is a causal mask one key position too
+/// wide: identically ranked, plausibly shaped, and unable to index the score
+/// tensor it would be added to. The block's own mask follows as the admitted
+/// neighbour, so the refusal discriminates the operand rather than the mapping.
 #[test]
 fn a_mask_against_the_wrong_key_extent_refuses_by_name() {
     let extents = c1_extents();
@@ -1703,6 +1751,18 @@ fn a_mask_against_the_wrong_key_extent_refuses_by_name() {
     );
 }
 
+/// A weight of the wrong width is refused twice, because nothing widens implicitly.
+///
+/// The IR admits no implicit broadcasting, and both halves of that are checked
+/// because together they say there is no route around. A family that takes a
+/// weight already carrying its value's shape refuses a narrower one directly —
+/// `rms-norm.f32.weight-shape` — rather than tiling it; and the explicit
+/// broadcast a caller would reach for to widen it refuses first under its own
+/// `broadcast.mapping.extent-disagreement`. The worked instance is the 128-wide
+/// per-head normalization weight presented to the 1,024-wide input
+/// normalization, which an implicit broadcast would have tiled eight times across
+/// the model dimension. The block's own hidden-width weight is widened and
+/// normalized afterwards, so both refusals discriminate the operand.
 #[test]
 fn a_per_head_norm_weight_against_the_hidden_axis_refuses_by_name() {
     let extents = c1_extents();
@@ -1772,6 +1832,18 @@ fn a_per_head_norm_weight_against_the_hidden_axis_refuses_by_name() {
     );
 }
 
+/// A split's factors must exhaust the axis exactly, and both misses are named.
+///
+/// `split-axis` admits a factorization only when the product is the axis extent,
+/// and it distinguishes the two ways of missing rather than reporting one
+/// invalidity: a product short of the extent reads a prefix and is refused as
+/// `reindex.split.not-surjective`, a product past it as
+/// `reindex.split.not-total`. That is what keeps a head split from silently
+/// becoming a slice or an over-read. The worked instances are the checkpoint's own
+/// traps — `hidden_size / num_attention_heads` is 64 here, so sixteen heads of it
+/// account for half of a 2,048-wide projection, and sixteen heads of 128 read
+/// past the end of a 1,024-wide one. The block's two admitted splits follow, so
+/// the refusals discriminate.
 #[test]
 fn a_head_split_whose_factors_do_not_multiply_out_refuses_by_name() {
     let extents = c1_extents();
@@ -1813,6 +1885,16 @@ fn a_head_split_whose_factors_do_not_multiply_out_refuses_by_name() {
     assert!(F32Reindex::apply(&mut builder, &projection_split(GROUPS), key_flat).is_ok());
 }
 
+/// A summed index appearing in one operand is refused at construction.
+///
+/// Whether an index structure is admissible is a property of its tuples alone, so
+/// `contraction.rule.summed-index-in-one-operand` fires before any operand
+/// exists. The rule earns itself because such a structure is a projection dressed
+/// as a contraction, and nothing downstream would notice: the worked instance
+/// drops the head dimension from the score structure's key operand and still
+/// produces a correctly shaped `[8, 2, T, S]` result from operands that never
+/// pair. The block's own score structure — the same tuples with `d` restored — is
+/// the admitted neighbour.
 #[test]
 fn a_contracted_index_in_one_operand_refuses_by_name() {
     // The score structure with the head dimension dropped from the key operand.
@@ -1846,6 +1928,20 @@ fn a_contracted_index_in_one_operand_refuses_by_name() {
     );
 }
 
+/// An extent that is not a proved single point refuses rather than compiling.
+///
+/// A semantic value fact carries a *static* extent, so resolution has two
+/// distinct refusals and not one: a symbol with no proved upper bound cannot be
+/// proved against any axis — the L4 record's fourth feasibility predicate — while
+/// a symbol bounded to a range is genuinely symbolic and the static shape
+/// vocabulary cannot carry it. Which condition to test is not a matter of taste:
+/// the decision procedure seeds every symbol at the whole extent domain and
+/// narrows from there, so "the environment says nothing" reads as an upper bound
+/// still at the ceiling and a caller testing for a missing interval would never
+/// fire. The worked instances are a declared and bound but unconstrained `S`, and
+/// a context bounded to `2..=8`; the statically bound symbol in the same
+/// environment resolves, so the refusal discriminates the constraint rather than
+/// every symbol.
 #[test]
 fn an_unbounded_extent_symbol_refuses_rather_than_compiling_a_generic_program() {
     // A symbol declared and bound but never constrained. The decision procedure

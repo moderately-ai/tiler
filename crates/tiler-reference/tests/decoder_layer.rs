@@ -1646,6 +1646,18 @@ fn sorted(mut counts: Vec<(OpKey, usize)>) -> Vec<(OpKey, usize)> {
     counts
 }
 
+/// The layer's ordered interface and its occurrence census, measured by key.
+///
+/// A program's ordered inputs and ordered named outputs are part of its contract,
+/// and its occurrence and value counts are measurements of the graph rather than
+/// figures derived from a description of it — which is why they replace the
+/// record's floors of "at least fifty-one occurrences over at least twenty-one
+/// boundary values" rather than confirming them. Counting by key rather than in
+/// total is what makes a step that silently became a different family fail here
+/// instead of passing on arithmetic. The output shapes are the families' own
+/// derivations, and the worked instance shows what an empty cache contributes:
+/// at `C = 0` the two retained outputs are the new rows alone, which is the
+/// concatenation's zero-extent rule.
 #[test]
 fn the_layer_verifies_at_the_c1_prefill_row() {
     let extents = c1_prefill_extents();
@@ -1731,6 +1743,18 @@ fn the_layer_verifies_at_the_c1_prefill_row() {
     );
 }
 
+/// The same layer at a single new position is a different graph, and it verifies.
+///
+/// A row that degenerates an axis to extent one is not automatically a rebinding:
+/// the widenings that duplicated something at `T >= 2` duplicate nothing at
+/// `T = 1` and must be respelled, so the occurrence count moves while the
+/// interface does not. Here that is four occurrences more than the prefill row,
+/// all unit-axis insertions, and the count is a consequence of a refusal rather
+/// than a style choice — [`a_single_new_position_changes_six_widenings`] accounts
+/// for them and [`a_rank_pad_onto_a_single_position_refuses`] watches the rule.
+/// The retained outputs carry the whole context rather than the new position,
+/// because what a KV seam publishes is the extension's result and not its
+/// operand.
 #[test]
 fn the_layer_verifies_at_the_c1_decode_row() {
     let extents = c1_decode_extents();
@@ -1773,6 +1797,14 @@ fn the_layer_verifies_at_the_c1_decode_row() {
     );
 }
 
+/// One keyed family carries every contraction, with its structure as an attribute.
+///
+/// Structurally different contractions are structure *values* under
+/// `tiler::strict-tensor-contraction-f32@1` rather than separate keys, so reading
+/// the attribute back off each occurrence is how a program's contractions are
+/// told apart, and an unrecognized structure is a panic rather than an uncounted
+/// occurrence. The worked instance is what the MLP adds: no fourth structure, only
+/// more occurrences of the projection structure at different widths.
 #[test]
 fn all_three_contraction_index_structures_occur() {
     // Seven structure-1 projections rather than the attention block's four: the

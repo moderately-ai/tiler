@@ -274,6 +274,13 @@ fn assert_total_bijection(values: &[u32], count: usize, map: &str) {
 
 // --- the derived shapes -----------------------------------------------------
 
+/// A form chain's result shape is derived from its operand, never declared.
+///
+/// [`ReindexForm::result_shape`] decides each occurrence against the shape it
+/// actually receives, so a chain's final shape is the composition of those
+/// derivations and nothing a caller stated. The four head-layout maps are the
+/// worked instance: this file's header tabulates what each produces, and this is
+/// where that table is checked rather than believed.
 #[test]
 fn each_map_derives_its_declared_result_shape() {
     let shape_after = |operand: [usize; 2], forms: &[ReindexForm]| -> Shape {
@@ -310,6 +317,15 @@ fn each_map_derives_its_declared_result_shape() {
 
 // --- the maps, element for element ------------------------------------------
 
+/// A split's factor order is semantics, and a shape check cannot see it.
+///
+/// `split-axis` is normatively a row-major factorization with the major factor
+/// first, so the *order* of the two extents decides which operand element every
+/// result coordinate reads while leaving the result shape untouched. The worked
+/// instance is the query projection's sixteen-head axis split `(8, 2)`, which
+/// means `h = 2g + r`; the identically shaped `(2, 8)` reading is evaluated
+/// beside it and differs at fourteen of the sixteen heads, so the element
+/// comparison discriminates the two readings and the extents never could.
 #[test]
 fn the_query_layout_reads_head_two_g_plus_r_at_every_coordinate() {
     let operand = profile_shape([T, QUERY_WIDTH]);
@@ -380,6 +396,15 @@ fn the_query_layout_reads_head_two_g_plus_r_at_every_coordinate() {
     );
 }
 
+/// A split composed with a permutation is a total bijection onto the operand.
+///
+/// A `Reindex` moves coordinates and neither invents nor drops an element, so a
+/// distinct-payload operand returns as a permutation of its own indices at the
+/// derived length — totality over the result domain and bijectivity onto the
+/// operand's are one check on such a fixture. The worked instance is the key and
+/// value projections' `[S, 1024] -> [8, S, 128]` map, whose per-coordinate
+/// expectation is written from the profile's own statement rather than from a
+/// second run of the forms.
 #[test]
 fn the_key_layout_gives_one_row_per_group() {
     let operand = profile_shape([S, KEY_VALUE_WIDTH]);
@@ -402,6 +427,15 @@ fn the_key_layout_gives_one_row_per_group() {
     assert_total_bijection(&values, S * KEY_VALUE_WIDTH, "the key/value head layout");
 }
 
+/// Two edges carrying the same layout are one map, decided by canonical encoding.
+///
+/// A form's identity is its canonical encoding, so "these two edges share a
+/// coordinate map" is a decidable fact rather than a reader's impression of two
+/// identical bodies — and the evaluated results are compared too, so the claim
+/// covers what the maps denote and not only how they are spelled. The worked
+/// instance is the key and the value projection, which have the same width and
+/// the same target layout; were the value edge ever to need its own spelling,
+/// this is what would fail.
 #[test]
 fn the_key_and_value_edges_are_one_map() {
     // The two projections have the same width and the same target layout, so the
@@ -420,6 +454,14 @@ fn the_key_and_value_edges_are_one_map() {
     assert_eq!((key_values, key_shape), (value_values, value_shape));
 }
 
+/// A layout composed with its inverse is the identity, on payload and on shape.
+///
+/// `merge-axes` inverts `split-axis` and a permutation inverts its own order, so
+/// a chain followed by its reverse returns the operand exactly — which is the
+/// property anything that rebuilds a flat width from a structured layout depends
+/// on. The worked instance is `[8, 2, T, 128] -> [T, 2048]`, checked first
+/// coordinate by coordinate against a hand-derived decomposition and then as the
+/// round trip the attention output takes.
 #[test]
 fn the_output_merge_inverts_the_query_layout() {
     let operand = profile_shape([GROUPS, REPEATS, T, HEAD_DIM]);
@@ -488,6 +530,17 @@ fn interleave_head_split() -> Vec<ReindexForm> {
     ]
 }
 
+/// A repetition constant along an axis is a layout rather than an operation.
+///
+/// When a materialized tensor holds the same element at every coordinate of an
+/// axis, a `Reindex` reaches it without computing anything — that is the general
+/// sense in which such a repetition is free, and it is a claim about the
+/// coordinate map rather than about a storage decision. Which of two candidate
+/// maps denotes the materialization has to be settled by counting differing
+/// elements, because both produce the identical `[8, 2, S, 128]` shape. The
+/// worked instance is `repeat_kv` recomputed here from the repeat-interleave rule
+/// alone: `h = 2g + r` differs at zero of the 20,480 elements and the `h % 8`
+/// reading at 17,920 across fourteen heads.
 #[test]
 fn the_head_split_reproduces_repeat_kv_and_the_tile_reading_does_not() {
     // `repeat_kv` recomputed here from the repeat-interleave rule alone: head `h`
@@ -574,6 +627,14 @@ fn the_head_split_reproduces_repeat_kv_and_the_tile_reading_does_not() {
     );
 }
 
+/// A coordinate map's index table is recoverable by evaluating the map itself.
+///
+/// Driving an operand of distinct ascending payloads through a chain and reading
+/// back where each landed derives the table the map denotes, so the mapping is
+/// *observed* rather than restated beside the forms that produce it. The worked
+/// instance is the query-head-to-key-head table, which comes back as
+/// `0 0 1 1 … 7 7` — floor division — for the group-major split, against `h % 8`
+/// for the tile reading.
 #[test]
 fn the_query_head_to_key_head_table_is_floor_division() {
     // The mapping table the probe records, derived from the maps themselves: a
@@ -628,6 +689,19 @@ fn refusal_code(error: &BuildError) -> String {
     rejection.source_error().code().as_str().to_owned()
 }
 
+/// A split whose factors do not exhaust the axis fails closed, under its own code.
+///
+/// `split-axis` admits a factorization only when the product is the axis extent
+/// exactly, and it distinguishes the two ways of missing: a product short of the
+/// extent reads a prefix and is refused as `reindex.split.not-surjective`, a
+/// product past it is refused as `reindex.split.not-total`. Neither is
+/// reinterpreted as a slice or a pad, and the code is asserted rather than only
+/// the failure, so each refusal is evidence about the rule it names. The worked
+/// instances are the divide this checkpoint refutes — sixteen heads of
+/// `hidden_size / num_attention_heads = 64` against a 2,048-wide projection — and
+/// the query head count applied to a 1,024-wide key projection. Both admitted
+/// neighbours follow, so the refusals discriminate rather than reject every split
+/// the profile presents.
 #[test]
 fn a_split_whose_factors_miss_the_axis_extent_refuses_by_name() {
     let mut builder = SemanticProgramBuilder::try_standard().expect("the standard builder opens");
@@ -672,6 +746,18 @@ fn a_split_whose_factors_miss_the_axis_extent_refuses_by_name() {
     assert!(F32Reindex::apply(&mut builder, &key_value_head_layout()[0], key).is_ok());
 }
 
+/// An axis order that is not a permutation fails closed, wherever it is decidable.
+///
+/// Which point refuses is decided by what the rule depends on, and both are
+/// exercised. A repeated axis is a property of the order alone, so it never
+/// reaches an occurrence and is refused at construction under
+/// `reindex.permute.not-a-permutation`; an axis the operand does not have needs
+/// the operand and is refused at the occurrence under the same rule; and a
+/// well-formed order of the wrong length is refused under `reindex.permute.rank`,
+/// which is its own reason rather than the same one. The worked instances are the
+/// head-layout permutation with its group axis typed twice, an axis 4 against a
+/// rank-four operand, and the key layout's rank-three order against the rank-four
+/// query layout — with the profile's own permutation as the admitted neighbour.
 #[test]
 fn an_axis_order_that_is_not_a_permutation_refuses_by_name() {
     // A repeated axis is a property of the order alone, so it never reaches an
@@ -717,6 +803,16 @@ fn an_axis_order_that_is_not_a_permutation_refuses_by_name() {
     assert!(F32Reindex::apply(&mut builder, &query_head_group_layout()[1], grouped).is_ok());
 }
 
+/// `merge-axes` requires an adjacent run, and decides that without an operand.
+///
+/// Adjacency is a property of the named axes alone, so a merge over a gap is
+/// refused at construction under `reindex.merge.non-adjacent-axes` rather than
+/// deferred to an occurrence: merging across an intervening axis is a permutation
+/// composed with a merge, and the family makes the caller spell it as one. The
+/// worked instance is the output inverse written without first moving the
+/// position axis out from between the group and repetition axes, with the
+/// profile's own merge — the same axes after the permutation — as the admitted
+/// neighbour.
 #[test]
 fn a_merge_over_non_adjacent_axes_refuses_by_name() {
     // The output inverse spelled without first moving the position axis out from
