@@ -1,7 +1,7 @@
 ---
 id: accept-the-registered-family-realization-law-query
 title: Accept the registered-family realization-law query
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [admit-a-scheduled-region-for-a-staged-elementary-family, accept-the-registered-family-region-sequence-query, accept-the-root-mean-square-scale-realization-law]
@@ -46,3 +46,7 @@ Answering with the closed typed law is what lets a consumer be written against t
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, rejects, or takes the collapse named above. Nothing releases on this node meanwhile; the method is in use from `tiler-compiler` and labelled a draft at its definition.
+
+## Outcome — accepted
+
+**Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** Both methods stand: the previously accepted `family_realizes_region_sequence` for recognition and this law query for physical planning — the collapse was presented as the live alternative and declined in favour of keeping the recognizer's minimal dependency; it remains available later if the duplication warrants it. The in-code draft label rewrite rides with [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md)'s branch, which holds `implementation/ir`.

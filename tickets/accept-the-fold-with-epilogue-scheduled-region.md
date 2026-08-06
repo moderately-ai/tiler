@@ -1,7 +1,7 @@
 ---
 id: accept-the-fold-with-epilogue-scheduled-region
 title: Accept the fold-with-epilogue scheduled region
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [admit-a-scheduled-region-for-a-staged-elementary-family, accept-the-root-mean-square-scale-realization-law, accept-the-registered-family-realization-law-query]
@@ -59,3 +59,7 @@ Bit-for-bit evidence that the vocabulary computes the right function is `the_sta
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the variant is in use from `tiler-compiler` and labelled a draft at its definition.
+
+## Outcome — accepted
+
+**Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** The variant, its sibling-per-combiner grain, the identity-epilogue and one-leaf refusals, and the no-split refusal are accepted public surface exactly as landed. The in-code draft label rewrite rides with [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md)'s branch, which holds `implementation/ir`.
