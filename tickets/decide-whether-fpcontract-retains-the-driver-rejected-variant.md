@@ -1,7 +1,7 @@
 ---
 id: decide-whether-fpcontract-retains-the-driver-rejected-variant
 title: Decide whether FpContract retains the driver-rejected variant
-status: awaiting-decision
+status: done
 priority: p3
 dependencies: []
 related: [record-or-validate-the-fast-honor-pragmas-selection]
@@ -20,3 +20,7 @@ tags: [public-boundary, metal-aot, decision]
 ## Closes when
 
 Tom names keep-documented or remove; either way the variant's doc or its removal commit cites this decision with provenance.
+
+## Decided 2026-08-06 — remove
+
+**Tom decided at the live session's decision round, relayed and executed by the coordinator:** the variant is removed. Grounds: pre-alpha with no consumers removes dead paths once understood; a public enum offering an impossible selection fails the extensible-is-not-unknown-behaviour bar; `contracts_across_statements` answering `true` for an uncompilable value is a standing misread risk. The measurement and provenance survive in git history and the recording ticket; the watcher retargets to assert the driver's admitted-set size so a future fourth value still fires. Implementation: [`remove-the-fast-honor-pragmas-variant`](remove-the-fast-honor-pragmas-variant.md).

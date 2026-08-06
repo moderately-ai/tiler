@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0102-conversion-pair-decomposition
 title: Accept or reject the conversion-pair decomposition ADR
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [land-the-conversion-pair-decomposition-adr]
 related: [test-the-directional-conversion-pair-generalization]
@@ -58,3 +58,7 @@ Rejecting the record outright is a deletion of one file, its two catalog rows, t
 ## Closes when
 
 Tom accepts or rejects it.
+
+## Accepted 2026-08-06
+
+**Tom accepted ADR 0102 at the live session's decision round, relayed and executed by the coordinator**, with the three flagged items presented and weighed (the RQ-OP-04 refutation, the five-layout population bound, the clause-2 validator obligation). The acceptance sweep — decision_status flip, both catalog-row suffixes, the roadmap cell sentence, the numerical-semantics section and evidence array, and the stale RQ-OP-04 clause in the minimum-profile record — executes as one change under [`execute-the-adr-0102-acceptance-sweep`](execute-the-adr-0102-acceptance-sweep.md), held on the live contracts/navigation claim and dispatching the moment it frees, because an acceptance applied in halves is how a draft gets read as settled.
