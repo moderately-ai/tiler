@@ -9,7 +9,7 @@
 #	Provenance for each id — owner, edition, retrieval URL and date, licence, verdict — is in README.md.
 #	`verify-sources.sh` enforces the row count, the per-classification counts, id uniqueness, every
 #	vendored digest, and that no file on disk escapes this manifest.
-ieee-754-2019	metadata-only	-	-
+ieee-754-2019	metadata-only	-	2fe5f245fa6fd027a64067e2d91d9000f51e9c61ad23fe1914d8cae41f2b0fb4
 ocp-ofp8-v1.0	metadata-only	-	1e1ebad11388cdc1cdb4afa7e226b78f18d4049c6f39c36ecacd747e9ca3c08b
 ocp-mx-v1.0	metadata-only	-	d195d6a36dd4a0c89064af0c479bcaad5c0fe29d63f628502ea6d7c4b4279421
 posit-standard-2022	metadata-only	-	ac844cb993d74af29b0fd5eed3e4e2b60240d77b3df348dec3a9574e00c0026b
@@ -105,7 +105,7 @@ real2float-arxiv-1507.03331v7	metadata-only	-	13d242c343122e493f504091a760365056
 acta-numerica-fp-2023	vendored	acta-numerica-fp-2023/floating-point-arithmetic.pdf	4b12427f7d52c2794d9fe7bea1647f8ea1300fa6d697bd9593e6edf212777c46
 jeannerod-rump-simax-2013	metadata-only	-	cc33fbf15279936b2fb14cd925bcaa08f8996eaf6a4d454de72b51f1e092e51f
 online-softmax-arxiv-1805.02867v2	metadata-only	-	722747b3a32eb90f5f0255d6b59f8bb0e1bc2257702ab7915e684c15275d44d7
-higham-asna-2002	pending-acquisition	-	-
+higham-asna-2002	metadata-only	-	7f7b3e32f946563830e2999e614fd3cba75d3694817da5fb36bbbdb80c7a4a75
 #	Sixth wave: the float-to-integer conversion precedents, cited by the record behind ADRs 0010 and
 #	0041 for what a conversion *operation* means. Three of that record's seven citations were already
 #	re-derivable from rows above — `llvm-langref-llvmorg-22.1.8` carries both LLVM claims,

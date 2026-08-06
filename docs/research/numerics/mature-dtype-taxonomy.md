@@ -202,7 +202,7 @@ Primary sources: [IEEE 754-2019](https://standards.ieee.org/ieee/754/6210/),
 [StableHLO element types](https://openxla.org/stablehlo/spec#element-types),
 and [MLIR built-in types](https://mlir.llvm.org/docs/Dialects/Builtin/).
 Preserved as `stablehlo-spec-v1.18.0` and `mlir-builtin-types-llvmorg-22.1.8`.
-IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy and no digest. Both OCP specifications, `ocp-ofp8-v1.0` and `ocp-mx-v1.0`, became metadata-only on 2026-07-31: they were acquired by hand, their own licence sections were reviewed document by document, and their exact bytes were digested and then discarded, because neither carries a self-contained redistribution grant. Re-deriving those value sets today needs the acquisition routes in the [preservation record](sources/README.md), and a re-acquired copy is checkable against the digests recorded there.
+IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy. It carried no digest either until 2026-08-06, when the standard was purchased, digested, and read: its Table 3.5 defines binary16, binary32, binary64, and binary128 with `p` = 11, 24, 53, 113 and `emax` = 15, 127, 1023, 16383, which is what this section pins. The bytes stayed outside the repository, as IEEE copyright requires. Both OCP specifications, `ocp-ofp8-v1.0` and `ocp-mx-v1.0`, became metadata-only on 2026-07-31: they were acquired by hand, their own licence sections were reviewed document by document, and their exact bytes were digested and then discarded, because neither carries a self-contained redistribution grant. Re-deriving those value sets today needs the acquisition routes in the [preservation record](sources/README.md), and a re-acquired copy is checkable against the digests recorded there.
 
 Suffixes are naming conventions, not a universally compositional grammar. The
 full nominal format definition is authoritative. In particular, `FN` formats
@@ -260,7 +260,9 @@ the same logical decimal format.
 
 Primary sources: [IEEE 754-2019](https://standards.ieee.org/ieee/754/6210/)
 and [GCC decimal floating types](https://gcc.gnu.org/onlinedocs/gcc/Decimal-Float.html).
-IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy. The GCC
+IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy, and since 2026-08-06 with a digest over a purchased one. Both claims above were read in it on that date: Table 3.6 gives decimal32, decimal64, and decimal128 at `p` = 7, 16, 34 digits, and §3.5.2 defines one value, `v = (−1)^S × 10^(E−bias) × C`, whose significand "encoding within these fields depends on whether the implementation uses the decimal or the binary encoding" — which is exactly why storage encoding must stay explicit while the logical format does not split.
+
+The GCC
 manual is preserved as `gcc-manual-16.1.0` — the complete GFDL manual rather
 than the single linked page, because the licence permits verbatim copying of
 the whole document only. It records a compiler's exposure of `_Decimal32`,
