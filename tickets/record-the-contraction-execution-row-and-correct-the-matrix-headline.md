@@ -1,7 +1,7 @@
 ---
 id: record-the-contraction-execution-row-and-correct-the-matrix-headline
 title: Record the contraction execution row and correct the matrix headline
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-navigation-2
+lease_expires_at: 1786030628
 ---
 ## The work (maturity audit 2026-08-06; integrate-the-contraction-vertical-into-the-runtime verified done since 2026-08-02)
 
