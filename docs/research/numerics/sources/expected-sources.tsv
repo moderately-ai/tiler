@@ -106,3 +106,16 @@ acta-numerica-fp-2023	vendored	acta-numerica-fp-2023/floating-point-arithmetic.p
 jeannerod-rump-simax-2013	metadata-only	-	cc33fbf15279936b2fb14cd925bcaa08f8996eaf6a4d454de72b51f1e092e51f
 online-softmax-arxiv-1805.02867v2	metadata-only	-	722747b3a32eb90f5f0255d6b59f8bb0e1bc2257702ab7915e684c15275d44d7
 higham-asna-2002	pending-acquisition	-	-
+#	Sixth wave: the float-to-integer conversion precedents, cited by the record behind ADRs 0010 and
+#	0041 for what a conversion *operation* means. Three of that record's seven citations were already
+#	re-derivable from rows above — `llvm-langref-llvmorg-22.1.8` carries both LLVM claims,
+#	`stablehlo-spec-v1.18.0` the StableHLO one, `nvidia-ptx-isa-cuda-13.3.0` the PTX one — so this wave
+#	adds only the three that had no identity at all. The C++ working draft is metadata-only because
+#	ISO/IEC holds its copyright and its source repository states no grant.
+wasm-core-numerics-wg-3.0	vendored	webassembly-spec-wg-3.0/numerics.rst	ef38c74e0d16214f47e20d537e2dffcc4b9170f2c534ca2692899e5cd74ab115
+wasm-core-instructions-wg-3.0	vendored	webassembly-spec-wg-3.0/instructions.rst	d106744919a13208a3e8da6ee18fb066e89111b4886d89b2dfc2cb7c920b2aea
+wasm-document-license-wg-3.0	vendored	webassembly-spec-wg-3.0/LICENSE	0fc6687d64adc265adc788b39dfd8f24e1e2946fc726591faf59b0bfccff093c
+rust-reference-operator-expr-rust-1.97.1	vendored	rust-reference-rust-1.97.1/operator-expr.md	66f8f6ab40f441395c8cbeafc90bc68fac85c99bb003413655c2cd231ff32939
+rust-reference-mit-license-rust-1.97.1	vendored	rust-reference-rust-1.97.1/LICENSE-MIT	0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720
+rust-reference-apache-license-rust-1.97.1	vendored	rust-reference-rust-1.97.1/LICENSE-APACHE	a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
+iso-cpp-working-draft-n5054	metadata-only	-	411333f37f938fa7ca3c7a7e85b9825fadad5b90fd6d936c9307627210d24086
