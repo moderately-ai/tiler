@@ -202,6 +202,33 @@ impl MaxEntryAge {
     ///   completely cold cache on their first build back, which is a visible
     ///   cost the shorter end buys nothing for.
     ///
+    /// **Corrected 2026-08-06 — the band the second ground cites has moved, and
+    /// the window itself is not re-decided here.** Re-running that note's own
+    /// producer over the same members against the current artifact encoding
+    /// gives **141,532–159,037 bytes** per envelope. Every carried `metallib` is
+    /// byte-identical to the 2026-07-31 record, so the growth is entirely
+    /// artifact encoding rather than backend output, compiler flags, or a Metal
+    /// toolchain difference. The second ground therefore projects roughly
+    /// **0.9–1.6 GB** where it says 200–400 MB, and the 200–400 MB it names is
+    /// now roughly **1,300–2,800 entries**. Its 2026-07-31 figures are left
+    /// above rather than overwritten, because they are what this choice was
+    /// argued from; `docs/research/cache/hot-path-efficiency.md`'s Section 9
+    /// carries the re-derivation and the attribution, and the collection design
+    /// carries the matching correction to the same ground.
+    ///
+    /// **The projection still supports thirty days, at roughly a quarter of the
+    /// margin it had.** Three of the four grounds do not depend on per-entry
+    /// size at all — the eviction asymmetry, the re-keying that drives growth,
+    /// and the cold first build a shorter window buys — and the second one's
+    /// comparison survives in kind rather than by a hair: 0.9–1.6 GB is still
+    /// well under the Cargo output a single gate of this workspace produces,
+    /// which `AGENTS.md` puts at 7–15 GB. What is gone is the order of
+    /// magnitude between them. **One further growth the size of the one just
+    /// measured would put the steady state at 4–7 GB**, and the second ground
+    /// would then state the opposite of what it is cited for; that is this
+    /// window's reconsideration trigger from the disk side, and firing it is a
+    /// product decision rather than one this crate makes.
+    ///
     /// **What would replace it with a derived number:** a measurement of how
     /// long an entry stays useful — working-set lifetime, not the per-entry size
     /// that exists today. `measure-the-expansion-cache-hot-path-efficiency` is
