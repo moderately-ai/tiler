@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use tiler_ir::index::{
     DimensionId, DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, IndexRegionBuilder,
-    ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
-    ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
-    ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-    ScalarRegistryBuilder, ScalarValueId, SourcedExtent, TensorRole, VerifiedIndexRegion,
-    VerifiedTensorId,
+    IndexRegionDiagnostic, ScalarArity, ScalarAttributeField, ScalarAttributeSchema,
+    ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
+    ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
+    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarValueId, SourcedExtent, TensorRole,
+    VerifiedIndexRegion, VerifiedTensorId,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
@@ -465,6 +465,140 @@ fn empty_reduction_and_parallel_domains_keep_their_documented_results() {
         .into_outputs();
     assert_eq!(outputs[0].shape(), &Shape::from_dims([0]));
     assert!(f32_values(&outputs[0]).is_empty());
+}
+
+/// Builds the concatenate shape: `roots` inputs of `points` elements each,
+/// written into one `boundary`-element output at disjoint contiguous offsets.
+///
+/// Root `r` writes `out[r * points + i] = source_r[i]` over the region's one
+/// parallel dimension, so with `boundary == roots * points` the roots tile the
+/// output exactly and none of them produces it alone. Returns the builder rather
+/// than the region so a case can watch verification refuse.
+fn concatenated_output_region(
+    scalars: &FrozenScalarRegistry,
+    points: u64,
+    roots: u64,
+    boundary: u64,
+) -> Result<IndexRegionBuilder, Box<dyn std::error::Error>> {
+    let mut builder = IndexRegionBuilder::new(scalars.clone())?;
+    let i = builder.dimension(DomainRole::Parallel, Extent::new(points))?;
+    let out = builder.tensor(TensorRole::Output, f32_type(), Shape::from_dims([boundary]))?;
+    let index = builder.dimension_expr(i)?;
+    for root in 0..roots {
+        let source = builder.tensor(TensorRole::Input, f32_type(), Shape::from_dims([points]))?;
+        let value = builder.read(source, &[i], &[index])?;
+        let offset = i128::from(
+            root.checked_mul(points)
+                .ok_or("the offset is representable")?,
+        );
+        let coordinate = builder.linear_combination(
+            IndexInteger::from_i128(offset),
+            &[(IndexInteger::from_i128(1), index)],
+        )?;
+        let write = builder.write(out, &[i], &[coordinate])?;
+        builder.output(write, value)?;
+    }
+    Ok(builder)
+}
+
+/// An output two roots partition evaluates to the one tensor they fill jointly.
+///
+/// One buffer per root would leave each root's copy filled only where that root
+/// wrote — no part of the program produces such a tensor, and the evaluation
+/// would report two of them where the region declares one boundary.
+#[test]
+fn partitioned_output_roots_fill_one_joined_tensor() {
+    let scalars = scalar_registry(1);
+    let region = concatenated_output_region(&scalars, 3, 2, 6)
+        .unwrap()
+        .build()
+        .unwrap();
+    let lower = f32_tensor(Shape::from_dims([3]), [1.0, 2.0, 3.0]);
+    let upper = f32_tensor(Shape::from_dims([3]), [10.0, 20.0, 30.0]);
+    let ids = input_ids(&region);
+
+    let outputs = evaluator(&scalars)
+        .evaluate(
+            &region,
+            IndexRegionAuthority::new(&scalars),
+            &[
+                IndexRegionInput::new(ids[0], &lower),
+                IndexRegionInput::new(ids[1], &upper),
+            ],
+        )
+        .unwrap()
+        .into_outputs();
+
+    assert_eq!(
+        outputs.len(),
+        1,
+        "two roots partition one boundary, and one boundary is one tensor"
+    );
+    assert_eq!(outputs[0].shape(), &Shape::from_dims([6]));
+    // Root 0 writes `out[i] = lower[i]` and root 1 writes
+    // `out[i + 3] = upper[i]`, so the joined tensor is `lower` then `upper`.
+    assert_eq!(
+        f32_values(&outputs[0]),
+        [1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
+        "each root's contribution lands in its own half of the one output"
+    );
+}
+
+/// An empty partitioned boundary is one output tensor, not one per root.
+///
+/// The one partition shape whose per-root planning produced a *result* rather
+/// than a refusal: with no elements to fill, each root's own buffer was already
+/// complete, so the evaluation succeeded and reported two tensors where the
+/// region declares one boundary. Retained because it is the case where the
+/// wrong answer was silent.
+#[test]
+fn an_empty_partitioned_boundary_is_one_output_tensor() {
+    let scalars = scalar_registry(1);
+    let region = concatenated_output_region(&scalars, 0, 2, 0)
+        .unwrap()
+        .build()
+        .unwrap();
+    let empty = f32_tensor(Shape::from_dims([0]), []);
+    let ids = input_ids(&region);
+
+    let outputs = evaluator(&scalars)
+        .evaluate(
+            &region,
+            IndexRegionAuthority::new(&scalars),
+            &[
+                IndexRegionInput::new(ids[0], &empty),
+                IndexRegionInput::new(ids[1], &empty),
+            ],
+        )
+        .unwrap()
+        .into_outputs();
+
+    assert_eq!(outputs.len(), 1, "two roots, one boundary, one tensor");
+    assert_eq!(outputs[0].shape(), &Shape::from_dims([0]));
+}
+
+/// Dropping one root's contribution is refused rather than quietly evaluated.
+///
+/// The same shape with a single root over the same six-element boundary covers
+/// half of it. The refusal is the verifier's, which is what lets the oracle fill
+/// a partitioned buffer from several roots without re-deriving coverage: a
+/// region that would leave a gap does not reach it. The oracle's own
+/// `IncompleteWrite` check remains as the independent floor beneath that.
+#[test]
+fn a_partition_missing_a_root_is_refused_before_evaluation() {
+    let scalars = scalar_registry(1);
+    let diagnostics = concatenated_output_region(&scalars, 3, 1, 6)
+        .unwrap()
+        .build()
+        .unwrap_err();
+    assert!(
+        diagnostics.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::WriteOwnershipNotProven { .. }
+        )),
+        "one root covering three of six elements owns no boundary: {:?}",
+        diagnostics.diagnostics()
+    );
 }
 
 /// Builds `out[i] = source[coordinate(i)]` over one input of `extent` elements.
