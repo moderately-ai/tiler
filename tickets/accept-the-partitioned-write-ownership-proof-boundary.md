@@ -1,7 +1,7 @@
 ---
 id: accept-the-partitioned-write-ownership-proof-boundary
 title: Accept the partitioned write-ownership proof boundary
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -20,3 +20,7 @@ tags: []
 - **Added** three `IndexRegionDiagnostic` variants: `OutputPartitionUncovered`, `OutputPartitionRangesOverlap`, `OutputPartitionDoubleWritten` — additive, each observed firing.
 
 The evidence: the joint obligation is decided exactly (separating-axis disjointness, coverage derived from disjoint volumes) or by one shared-bitset walk; all three refusals watched failing under perturbation; no pinned identity moved (proof forms are outside canonical region identity by construction, verified at `encode_region`); full gate green on the branch (2683 tests). A tested implementation is a concrete draft, not approval of its spelling.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator: all four parts — the `PartitionMember` variant, the `JointPartitionProofView` type, the `DuplicateOutputTensor` removal, and the three partition diagnostics. The surface is settled vocabulary (pre-alpha, acceptance is not stabilization), and the concatenate lowering chain proceeds against it once its sub-range dependency lands.

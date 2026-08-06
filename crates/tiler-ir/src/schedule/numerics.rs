@@ -230,10 +230,11 @@ pub struct NumericalRealization {
     /// program is refused instead of reaching a lowering that would canonicalize
     /// to a pattern the format cannot hold.
     ///
-    /// `carry-bf16-through-the-artifact-encoding-and-identity` reaches the same
-    /// question at the artifact's own delivered-realization record and defers it
-    /// to `redesign-the-delivered-realization-record-from-typed-evidence`; this
-    /// answer is the one that layer must stay consistent with.
+    /// The artifact layer reached the same question and resolved it against
+    /// this field on 2026-08-06: the projection stays `u32`, zero-extended
+    /// (`0x0000_7fc0` for bf16), with the derivation recorded in the artifact
+    /// ABI contract's canonical-NaN paragraph. This answer is the one that
+    /// layer stays consistent with.
     pub canonical_arithmetic_nan_bits: u32,
     /// Treatment of subnormal inputs.
     pub input_subnormals: SubnormalMode,
