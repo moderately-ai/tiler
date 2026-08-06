@@ -1,7 +1,7 @@
 ---
 id: admit-the-registered-elementary-families-as-recognizable-program-stages
 title: Admit the registered elementary families as recognizable program stages
-status: in-progress
+status: review
 priority: p1
 dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, implement-stage-level-cover-atoms-for-multi-region-occurrences, resolve-which-authority-mints-a-multi-stage-region-candidate, enumerate-region-candidates-over-realization-stages]
 related: [accept-the-governed-reciprocal-square-root-scalar-key]
