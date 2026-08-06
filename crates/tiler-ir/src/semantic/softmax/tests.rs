@@ -323,12 +323,25 @@ fn the_empty_reduced_axis_fact_places_the_case_outside_the_reduction_rules() {
     );
 }
 
-/// The online single-pass form is declared a reassociation rather than a choice.
+/// The online single-pass form names both freedoms it consumes, and refuses the
+/// reassociation reading in its first clause.
+///
+/// The wall is that a scheduler reading this fact cannot spend a permission that
+/// does not reach the rewrite. Two properties carry it and both are asserted: the
+/// string refuses the reassociation reading before it says anything else, and it
+/// names *both* missing freedoms — a fact naming one of two would imply that
+/// granting that one admits the rewrite.
 #[test]
-fn the_online_single_pass_form_is_declared_a_reassociation() {
+fn the_online_single_pass_form_names_both_freedoms_it_consumes() {
     let text = fact_text(SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM);
-    assert!(text.starts_with("a-reassociation-of-the-sum"), "{text}");
-    assert!(text.contains("not-a-free-implementation-choice"), "{text}");
+    assert!(text.starts_with("not-a-reassociation-of-the-sum"), "{text}");
+    assert!(text.contains("horner-nesting"), "{text}");
+    assert!(text.contains("consuming-distributivity"), "{text}");
+    assert!(text.contains("elementary-function-identity"), "{text}");
+    assert!(
+        text.contains("no-reassociation-or-permutation-permission-reaches-it"),
+        "{text}"
+    );
 }
 
 /// The accumulator type is stated explicitly rather than left to the element type.

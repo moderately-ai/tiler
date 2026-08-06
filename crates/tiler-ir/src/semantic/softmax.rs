@@ -142,12 +142,32 @@
 //! [`SOFTMAX_F32_FACT_SUM_FOLD_ORDER`] are two facts rather than one for that
 //! reason.
 //!
-//! **The online single-pass form is a reassociation, which is a legality question
-//! and not a cost one.** Rescaling a running sum whenever the maximum changes
-//! regroups the contributor sequence of the *sum*, so it is legal exactly where
-//! reassociation is granted — never as a free implementation choice.
-//! [`SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM`] states it so that a scheduler
-//! reaching for it has to consume the permission.
+//! **The online single-pass form is *not* a reassociation, and the difference is
+//! the whole legality question.** Rescaling a running sum whenever the maximum
+//! changes yields a Horner nesting rather than a re-parenthesized sum: unrolled,
+//! its contributors are `exp(x_j - m_j) * prod_{k>j} exp(m_{k-1} - m_k)`, which
+//! share no binary32 value with the two-pass fold's `exp(x_j - m_V)`. No
+//! contributor sequence has both folds as groupings and neither permutes to the
+//! other, so **no reassociation permission and no permutation permission reaches
+//! this rewrite** — the sum-fold permissions above answer a question it never
+//! asks. What reaching the nesting from the sum does consume is *distributivity*,
+//! because each rescale factor multiplies through a partial sum: [ADR
+//! 0080](../../../../docs/decisions/0080-treat-distributivity-as-a-third-numerical-dimension.md)
+//! names that dimension and [ADR
+//! 0095](../../../../docs/decisions/0095-decline-a-distributivity-permission.md)
+//! declines a permission for it. The telescoping step
+//! `exp(x_j - m_j) * exp(m_j - m_V) = exp(x_j - m_V)` consumes a second freedom,
+//! the exponential's own functional equation, which is false in binary32 and which
+//! no declared dimension names at all. [The certified-bounds
+//! record](../../../../docs/research/numerics/certified-bounds-as-rewrite-permissions.md)
+//! derives both, and [the elementary-identity
+//! record](../../../../docs/research/numerics/elementary-identity-rewrite-dimension.md)
+//! is where the second one is named.
+//!
+//! [`SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM`] states **both** freedoms, so that a
+//! scheduler reaching for the form cannot spend a permission that does not reach
+//! it. Naming one of two missing freedoms would imply that granting that one
+//! suffices, which is the false inference ADR 0080 item 5 exists to prevent.
 
 use std::sync::Arc;
 
@@ -295,12 +315,16 @@ pub const SOFTMAX_F32_FACT_FULLY_MASKED_ROW: AttributeFieldId = AttributeFieldId
 /// the shape rule is what makes that case unreachable rather than merely
 /// undefined.
 pub const SOFTMAX_F32_FACT_EMPTY_REDUCED_AXIS: AttributeFieldId = AttributeFieldId::new(12);
-/// Fact field naming what the online single-pass realization requires.
+/// Fact field naming what the online single-pass realization consumes.
 ///
-/// Reassociation. Fusing the maximum and the sum into one pass over the row means
-/// rescaling a running sum whenever the maximum changes, which regroups the sum's
-/// contributor sequence — a legality question rather than a cost one, and the
-/// reason the alternative is named here rather than assumed available.
+/// Distributivity and the subordinate exponential's own functional equation —
+/// never reassociation. Fusing the maximum and the sum into one pass over the row
+/// means rescaling a running sum whenever the maximum changes, and the result is a
+/// Horner nesting whose contributors share no binary32 value with the two-pass
+/// fold's, so neither the reassociation nor the permutation permission reaches it.
+/// Both consumed freedoms are named, because naming one of two would imply that
+/// granting that one admits the rewrite. The module header carries the derivation
+/// and the two records it is read from.
 pub const SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM: AttributeFieldId = AttributeFieldId::new(13);
 /// Fact field naming the operation's behaviour on binary32 subnormals.
 ///
@@ -576,7 +600,12 @@ pub fn softmax_f32_facts() -> CanonicalValue {
         ),
         CanonicalField::new(
             SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM,
-            fact("a-reassociation-of-the-sum-and-not-a-free-implementation-choice"),
+            fact(
+                "not-a-reassociation-of-the-sum-but-a-horner-nesting-consuming-distributivity-\
+                 which-no-permission-grants-and-the-subordinate-exponentials-elementary-function-\
+                 identity-which-no-declared-dimension-names-so-no-reassociation-or-permutation-\
+                 permission-reaches-it",
+            ),
         ),
         CanonicalField::new(
             SOFTMAX_F32_FACT_SUBNORMALS,
