@@ -1,7 +1,7 @@
 ---
 id: admit-a-partitioned-write-ownership-contract
 title: Admit a partitioned write-ownership contract for one output
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [scope-the-concatenate-fusion-role-and-lowering, scope-an-in-place-append-into-a-caller-retained-allocation, scope-the-scatter-and-indexed-update-family]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, indexing, write-ownership, public-boundary]
-claimed_from: todo
-assignee: agent-partition-proof
-lease_expires_at: 1785982711
 ---
 ## User-visible outcome
 
