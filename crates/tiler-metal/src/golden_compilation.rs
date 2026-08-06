@@ -119,6 +119,29 @@
 //! emits, rather than only the flat per-invocation bodies it emitted before.
 //! Recorded on the same host and toolchain as the row above.
 //!
+//! **Measurement — the two structural fixtures, on the toolchain row above.**
+//! On an Apple M4 Max under macOS 27.0 (build 26A5388g) with Xcode 27.0 (build
+//! 27A5228h), Metal 32023.921 (`metalfe-32023.921`, AIR-LLD 32023.921), and
+//! macOS SDK 27.0 (build 26A5388f), all nine fixtures compile and link under
+//! `-target air64-apple-macos14.0 -std=metal3.1 -O2 -fmetal-math-mode=safe
+//! -fmetal-math-fp32-functions=precise -ffp-contract=off`.
+//! `structural_mirrored_reindex.metal` links 3,555 bytes and names
+//! `tiler_kernel_c757efe9a62e2e41`; `structural_widening_broadcast.metal` links
+//! 3,555 bytes and names `tiler_kernel_27edf18e107d5dde`. This is the run that
+//! turns "the emitter writes an unsigned mirrored difference" into "the Apple
+//! offline toolchain accepts the `uint64_t` divide/wrap/subtract/scale/add chain
+//! a reindex mirror emits" — no earlier fixture emits a subtraction in the index
+//! role at all.
+//!
+//! **What that measurement is not, stated because this construct invites the
+//! confusion.** It says the mirrored offset chain translates and links. It says
+//! nothing about the *values* the chain produces on a device, and in particular
+//! nothing about the wrap: `c - (extent - 1)` compiles and links just as
+//! cleanly, and computes an index near `2^64`. The defence against that form is
+//! the structured kernel verifier's body-refinement check, not this compilation
+//! — `crate::tests::the_verifier_refuses_a_reordered_mirror_before_emission_sees_it`
+//! is where it is pinned.
+//!
 //! Library size is deliberately **not** asserted. A 14,620-byte link of the
 //! four goldens was recorded at commit `59060b5`; after `e24f4c5` changed the
 //! emitted source the same command yields 14,716 bytes. A byte count is a
@@ -153,7 +176,7 @@ const REQUIRE_TOOLCHAIN: &str = "TILER_REQUIRE_METAL_TOOLCHAIN";
 /// `every_checked_in_golden_is_compiled_by_this_module` proves this list covers
 /// the whole `goldens/` directory, so a new fixture cannot be added without
 /// being compiled.
-const GOLDENS: [(&str, &str); 7] = [
+const GOLDENS: [(&str, &str); 9] = [
     (
         "pointwise_scale_bias.metal",
         include_str!("../goldens/pointwise_scale_bias.metal"),
@@ -192,6 +215,27 @@ const GOLDENS: [(&str, &str); 7] = [
     (
         "cooperative_workgroup_reduction.metal",
         include_str!("../goldens/cooperative_workgroup_reduction.metal"),
+    ),
+    // The two structural fixtures, and the pair is deliberate. The mirror is the
+    // only one whose body emits `BinaryOp::IndexSubtract`, so compiling it is
+    // what turns "the emitter writes an unsigned difference" into "the Metal
+    // compiler accepts the mirrored offset chain this backend now emits". The
+    // broadcast is the only fixture whose *read* and *write* buffers declare
+    // different element counts on a one-read entry point, which is the
+    // signature shape a widening read needs.
+    //
+    // They are also the first goldens carrying no arithmetic at all — a
+    // structural family computes nothing — so they are the only checked-in
+    // artifacts whose provenance block states an *empty* unrealizable-obligation
+    // list beside a non-empty one everywhere else. That makes the "none" wording
+    // reachable evidence rather than an unexercised branch of `assemble`.
+    (
+        "structural_mirrored_reindex.metal",
+        include_str!("../goldens/structural_mirrored_reindex.metal"),
+    ),
+    (
+        "structural_widening_broadcast.metal",
+        include_str!("../goldens/structural_widening_broadcast.metal"),
     ),
 ];
 
@@ -714,6 +758,65 @@ fn a_cooperative_golden_without_its_staging_is_rejected_when_a_toolchain_resolve
     let error = toolchain
         .compile(&golden_request(&broken))
         .expect_err("a staged access to an undeclared allocation must not compile");
+    match error {
+        DriverError::ToolFailure { stage, stderr, .. } => {
+            assert_eq!(stage, CompileStage::Metal);
+            assert!(
+                !stderr.is_empty(),
+                "the compiler must explain the rejection"
+            );
+        }
+        other => panic!("expected a metal-stage ToolFailure, got {other:?}"),
+    }
+}
+
+/// The mirrored golden stripped of its wrap must be rejected.
+///
+/// The sibling of the two perturbations above at the construct they cannot
+/// reach, and it is deliberately aimed at the *bound* rather than at the
+/// subtraction. `emit::binary_realization` records that the mirror's
+/// non-negativity rests on `c < extent`, and that in this fixture the bound is
+/// the emitted `%` two statements above the difference. Deleting that statement
+/// leaves the difference referring to an undeclared identifier, so the compiler
+/// reports it — which shows the bound-establishing statement is load-bearing
+/// emitted text that the toolchain actually reads, not a comment about one.
+///
+/// **What it deliberately does not claim.** The exchanged form
+/// `c - (extent - 1)` compiles perfectly well and computes a wrapped index; no
+/// compile-stage test can catch it, which is why that perturbation lives in
+/// `crate::tests` against the structured kernel verifier instead of here.
+#[test]
+fn the_mirrored_golden_without_its_wrap_is_rejected_when_a_toolchain_resolves() {
+    const WRAP: &str = "        uint64_t v8 = v0 % v7;\n";
+
+    let Some(toolchain) = resolved_toolchain() else {
+        return;
+    };
+    let name = "structural_mirrored_reindex.metal";
+    let source = GOLDENS
+        .iter()
+        .find(|(fixture, _)| *fixture == name)
+        .map(|(_, source)| *source)
+        .expect("the mirrored fixture is compiled by this module");
+    assert!(
+        source.contains(WRAP),
+        "{name}: the fixture must emit the decode's own wrap"
+    );
+    let uses = source.matches("v8").count();
+    assert!(
+        uses > 1,
+        "{name}: the wrapped coordinate must be defined and then mirrored"
+    );
+    let broken = source.replacen(WRAP, "", 1);
+    assert_eq!(
+        broken.matches("v8").count(),
+        uses - 1,
+        "only the wrap may be removed, so the mirrored difference stays undefined"
+    );
+
+    let error = toolchain
+        .compile(&golden_request(&broken))
+        .expect_err("a difference over an undefined coordinate must not compile");
     match error {
         DriverError::ToolFailure { stage, stderr, .. } => {
             assert_eq!(stage, CompileStage::Metal);
