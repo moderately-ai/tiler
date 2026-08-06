@@ -1,7 +1,7 @@
 ---
 id: admit-elementwise-epilogues-over-a-materialized-intermediate
 title: Admit an elementwise epilogue over a materialized intermediate
-status: blocked
+status: todo
 priority: p2
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary]
 related: [admit-a-strict-serial-fold-that-writes-a-materialized-intermediate]
@@ -111,3 +111,7 @@ Written by the worker on [`admit-a-strict-serial-fold-that-writes-a-materialized
 **Fact — the budget consequence is now live rather than hypothetical.** This ticket's own "Corrected budget facts" section derived that a `prologue -> fold -> epilogue` chain is three regions and fits, while the same chain *with the fold split* is four and would be dropped silently by the `check_budget("regions", budgets.regions, 3)` literal. That is no longer a hypothetical: the split's final pass can now stage its result, so the four-region alternative is genuinely spellable and the literal is what would drop it. Move the literal and `budgets.regions` together, or record the lost alternative deliberately — the choice that section already framed, with the vocabulary half now settled.
 
 **Fact — `ValueRole::fills` is unchanged and needs no change.** A fold's staged result binds a `Temporary` value, and `(Temporary, Intermediate)` is already `true`. `a_published_output_value_cannot_fill_an_intermediate_buffer` passes unchanged.
+
+## Unparked whole — 2026-08-06
+
+Both discovered prerequisites are done: the Intermediate-read widening and the cover-assigned fold commit. The superseding note above stands — no narrowing, all three shapes deliverable, with the compiler-side threading map (RegionWrite into the three reduction region builders, partial pass excluded) and the now-live regions-budget concern recorded there for the dispatch brief.
