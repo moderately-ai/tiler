@@ -1,7 +1,7 @@
 ---
 id: move-the-elementary-activation-row-to-r6
 title: Move the elementary activation row to R6 and restate its golden-count claims
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [compile-an-elementary-function-golden-through-the-metal-toolchain, move-the-structural-row-to-r6-and-retire-its-backend-residual, re-read-the-bf16-and-elementary-support-rows-against-source]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, support-matrix, metal]
-claimed_from: todo
-assignee: agent-navigation-4
-lease_expires_at: 1786036406
 ---
 ## The work
 
