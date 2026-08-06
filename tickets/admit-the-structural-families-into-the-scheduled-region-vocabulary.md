@@ -1,7 +1,7 @@
 ---
 id: admit-the-structural-families-into-the-scheduled-region-vocabulary
 title: Admit the structural families into the scheduled-region vocabulary
-status: review
+status: done
 priority: p1
 dependencies: [admit-the-registered-unary-families-at-the-compiler-request-boundary]
 related: [reach-a-verified-kernel-through-the-structural-families, admit-the-reindex-and-broadcast-operation-families]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, compiler, structural]
-claimed_from: todo
-assignee: agent-structural-vocab
-lease_expires_at: 1785988645
 ---
 ## User-visible outcome
 

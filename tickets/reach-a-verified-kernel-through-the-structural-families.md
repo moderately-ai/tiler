@@ -1,7 +1,7 @@
 ---
 id: reach-a-verified-kernel-through-the-structural-families
 title: Reach a verified kernel through the structural families
-status: blocked
+status: todo
 priority: p1
 dependencies: [admit-the-reindex-and-broadcast-operation-families, admit-the-structural-families-into-the-scheduled-region-vocabulary]
 related: [prototype-optimizer-conformance-gate, admit-the-contraction-semantic-profile, own-operation-family-support-matrix, compose-rotary-position-embedding-from-reindex-and-broadcast]
@@ -84,3 +84,7 @@ Every `operation-set` refusal carries no explain trace, i.e. it precedes any tar
 **Inference — the support-matrix row does not move.** The ticket's `Required delivery` conditions the R6 move on a backend actually emitting the fused region. No region is emitted, so the row stays at R5 and the reason is now pinned by a test rather than asserted in prose.
 
 **Verification.** `cargo fmt --check`; `cargo check --workspace --all-targets`; `cargo clippy -p tiler-compiler --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-compiler --no-deps`; `cargo nextest run --workspace`; `cargo test --workspace --doc`; `make full`. Each of the four new assertions was perturbed and observed failing: replacing the broadcast with `F32Silu` (refusal assertion returns `Ok(())`), renaming the expected rule to `reduction-prologue`, substituting a refusing program for the control, and flattening the neighbour's contract branch. Identity-pin survey: 21 real 16-hex pins and 8 64-hex pins in `crates/tiler-compiler`; none moved, including `explain.rs`'s `request=8e06e11fdc3a2889`, because the change adds no program shape to the request subject and no registry entry.
+
+## Unparked — 2026-08-06
+
+The blocking dependency (`admit-the-structural-families-into-the-scheduled-region-vocabulary`) is done: `LogicalAccess` carries `ReindexBijection` and `BroadcastReplication`, the pinned wall tests were flipped by that landing, and a standalone reindex already compiles bit-compared end-to-end. What this ticket still owes, per that landing's own boundary statement: the broadcast's reference-oracle bit comparison (the workload occurrence is two-input and the KIR test interpreter binds one buffer) and the R6 rung's remaining evidence.
