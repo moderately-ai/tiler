@@ -1,7 +1,7 @@
 ---
 id: stop-copying-the-carried-payload-through-the-envelope-projection
 title: Stop copying the carried payload through the envelope projection
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [measure-artifact-decoder-allocation-amplification]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: []
 paths: []
 tags: [artifact, codec, performance]
+claimed_from: todo
+assignee: agent-payload-copy
+lease_expires_at: 1786051648
 ---
 `VerifiedArtifactProgram::encode` peaks at **4.99x** the envelope it produces —
 335,609,762 bytes for a 67,222,947-byte envelope carrying a 64 MiB object, and

@@ -1,7 +1,7 @@
 ---
 id: accept-the-composed-realization-evaluation-surface
 title: Accept the composed realization evaluation surface
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [compose-a-declared-reduction-topology-into-a-semantic-program-evaluation, accept-the-realization-witness-surface, decide-how-a-pinned-pointwise-grouping-becomes-evaluable, implement-the-realization-witness-vocabulary]
