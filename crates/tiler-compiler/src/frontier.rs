@@ -873,6 +873,10 @@ const fn boundary_carrier(program: &ScalarProgram) -> Option<StorageScalar> {
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
+        // The epilogue computes at the region's own arithmetic width and commits
+        // its result, so the boundary this region writes carries the same `f32`
+        // payload the bare fold's does.
+        | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
         | ScalarProgram::StrictTensorContraction { .. }
         | ScalarProgram::StrictSerialMaximum { .. } => Some(StorageScalar::F32),
@@ -3175,6 +3179,54 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
                     .expect("a fused spelling is decided before the region is built")
                     .0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
+            ),
+            // The producing stage of a staged family. No split and no tile: the
+            // epilogue applies to the complete fold, so `tiler-ir`'s own split
+            // admissions answer `None` for this program and a proposal carrying
+            // either topology would be rejected as invalid compiler output rather
+            // than costed against the serial one.
+            //
+            // Its launched threads are its *own* iteration count rather than the
+            // request's widest output, because a staged fold's domain is neither:
+            // it is one point per folded row, which is smaller than the published
+            // domain whenever the fold removes an axis. The staging bytes are the
+            // request-wide bound the other materializing arms use.
+            crate::physical::RegionSpellingKind::StagedFold => {
+                let region = crate::physical::staged_fold_region(
+                    request,
+                    producer
+                        .staged()
+                        .expect("a staged spelling resolves to a staged output"),
+                    subject.write(),
+                )
+                .0;
+                let threads =
+                    tiler_ir::schedule::element_count(&region.index.iteration_shape).unwrap_or(0);
+                (
+                    region,
+                    PhysicalCostEstimate::structural(1, threads, intermediate_bytes),
+                )
+            }
+            // The consuming stage, costed like any other elementwise pass over
+            // the published domain.
+            crate::physical::RegionSpellingKind::StagedPass(write) => (
+                crate::physical::staged_pass_region(
+                    request,
+                    producer
+                        .staged()
+                        .expect("a staged spelling resolves to a staged output"),
+                    write,
+                )
+                .0,
+                match write {
+                    crate::physical::RegionWrite::ProgramOutput => {
+                        PhysicalCostEstimate::structural(1, output_elements, 0)
+                    }
+                    crate::physical::RegionWrite::Materialized
+                    | crate::physical::RegionWrite::MaterializedAndPublished => {
+                        PhysicalCostEstimate::structural(1, output_elements, intermediate_bytes)
+                    }
+                },
             ),
             // The consumer half of a chain, costed like any other elementwise
             // pass: one dispatch over its own domain, staging bytes only when

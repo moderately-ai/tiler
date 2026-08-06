@@ -4,7 +4,9 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use tiler_ir::identity::{push_len, push_slice};
-use tiler_ir::index::{FrozenIndexRealizationLawRegistry, FrozenScalarRegistry};
+use tiler_ir::index::{
+    FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexRealizationLaw,
+};
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
     AxisDecode, InputOrdinal, LogicalAccess, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
@@ -13,7 +15,7 @@ use tiler_ir::schedule::{
 use tiler_ir::semantic::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
     CanonicalIntegerWidth, CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
-    F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey, OutputKey, ProviderIdentity,
+    F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey, OperationAttributes, OutputKey, ProviderIdentity,
     REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind,
     ResolvedValueType, SemanticIdentity, SemanticProgram, TypeKey, ValueId, add_f32_op,
     broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
@@ -1446,6 +1448,23 @@ pub(crate) struct NormalizedEpilogue {
 pub(crate) struct NormalizedStaged {
     /// The registered family this occurrence belongs to.
     pub(crate) operation: OpKey,
+    /// The law the registry carries for that family.
+    ///
+    /// **Read once, here, from the same registry row the admission above reads.**
+    /// A scheduled region for one of these stages has to know what the stage
+    /// computes — which axes it folds, which payload its epilogue carries — and
+    /// that is the law's content rather than the occurrence's shape: a `[2, 2]`
+    /// operand reduced to `[2]` names two different reductions, so no derivation
+    /// from shapes can recover it. Carrying the law is what lets the physical
+    /// layer be written against the closed law vocabulary — one arm per law, a
+    /// fail-closed wildcard for the rest — instead of against a family list.
+    ///
+    /// It is *not* a second account of the realization. The stage count, each
+    /// stage's reads, and the handed values stay
+    /// [`crate::region::RegionGraph::with_realizations`]'s, read off the law's own
+    /// realized sequence; this field is the law itself, which is one value with
+    /// one owner however many readers it has.
+    pub(crate) law: IndexRealizationLaw,
     /// The occurrence's attribute record in canonical bytes.
     ///
     /// Carried whole rather than projected. `tiler::rms-norm-f32@1` declares its
@@ -1453,6 +1472,14 @@ pub(crate) struct NormalizedStaged {
     /// what the occurrence computes, and a subject that dropped them would give
     /// two different normalizations one identity.
     pub(crate) attributes: Box<[u8]>,
+    /// The same record, typed.
+    ///
+    /// Beside the canonical bytes rather than instead of them, because the two
+    /// serve different readers and neither derives the other cheaply: identity
+    /// binds the bytes, and the law names the *fields* it interprets by
+    /// identifier, which only the typed record can answer. They cannot disagree —
+    /// the bytes are this record's own canonical encoding.
+    pub(crate) attribute_record: OperationAttributes,
     pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
     /// Declared input ordinal supplying each occurrence operand, in operand
@@ -1543,6 +1570,15 @@ impl NormalizedOutput {
                 None
             }
             Self::Epilogue(normalized) => Some(normalized),
+        }
+    }
+
+    pub(crate) const fn staged(&self) -> Option<&NormalizedStaged> {
+        match self {
+            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => {
+                None
+            }
+            Self::Staged(normalized) => Some(normalized),
         }
     }
 
@@ -4203,8 +4239,15 @@ fn recognize_output(
         normalize_contraction(program, output.value(), output.key().clone())
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
     } else if laws.family_realizes_region_sequence(root.key()) {
-        recognize_staged_family(program, output.value(), output.key().clone(), member, &root)
-            .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
+        recognize_staged_family(
+            program,
+            laws,
+            output.value(),
+            output.key().clone(),
+            member,
+            &root,
+        )
+        .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
     } else {
         recognize_elementwise_output(program, output, laws)
     }
@@ -5562,7 +5605,7 @@ fn recognize_epilogue_producer(
         normalize_contraction(program, staged, output_key)
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
     } else if laws.family_realizes_region_sequence(root.key()) {
-        recognize_staged_family(program, staged, output_key, member, &root)
+        recognize_staged_family(program, laws, staged, output_key, member, &root)
             .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
     } else {
         mismatch("operation-set")
@@ -5616,6 +5659,7 @@ fn recognize_epilogue_producer(
 /// not multiply into a `u64`.
 fn recognize_staged_family(
     program: &SemanticProgram,
+    laws: &FrozenIndexRealizationLawRegistry,
     result: ValueId,
     output_key: OutputKey,
     member: u32,
@@ -5659,8 +5703,21 @@ fn recognize_staged_family(
             rule: "staged-attributes",
         }
     })?;
+    // The same registry row the caller's admission read. `None` is unreachable
+    // through that admission — a family with no law realizes no region sequence —
+    // and is refused by name rather than unwrapped, because this function is the
+    // one that would otherwise carry an invented law into every later stage.
+    let law = laws
+        .family_realization_law(operation.key())
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "staged-law",
+        })?
+        .clone();
     Ok(NormalizedStaged {
         operation: operation.key().clone(),
+        law,
+        attribute_record: operation.attributes().clone(),
         attributes: attributes.into_boxed_slice(),
         input_keys: program.inputs().map(|input| input.key().clone()).collect(),
         output_key,

@@ -253,6 +253,9 @@ fn verify_signature(
         | crate::schedule::ScalarProgram::PointwiseBf16(_) => vec![element_type; reads.len()],
         crate::schedule::ScalarProgram::StrictSerialSum { .. }
         | crate::schedule::ScalarProgram::SquaredSerialSum { .. }
+        // One read, like every other fold: the epilogue's leaf is the folded
+        // value rather than a boundary tensor, so it adds no buffer.
+        | crate::schedule::ScalarProgram::SquaredSerialSumThenEpilogue { .. }
         | crate::schedule::ScalarProgram::StrictSerialMaximum { .. }
         | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
             vec![element_type]

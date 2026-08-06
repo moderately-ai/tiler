@@ -456,6 +456,7 @@ pub struct OwnershipProof {
 ///         ScalarProgram::StrictAffineU4Dequantize { .. } => false,
 ///         ScalarProgram::StrictSerialSum { .. }
 ///         | ScalarProgram::SquaredSerialSum { .. }
+///         | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
 ///         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
 ///         | ScalarProgram::StrictTensorContraction { .. }
 ///         | ScalarProgram::StrictSerialMaximum { .. } => true,
@@ -546,10 +547,14 @@ pub enum ScalarProgram {
     ///
     /// The squaring rounds once per contributor and the fold rounds once per
     /// combine, exactly as the semantic reference states. There is deliberately no
-    /// epilogue field: the division by the extent, the `eps` addition, the
-    /// reciprocal square root, and the two multiplies belong to the pointwise pass
-    /// that consumes this reduction's result, and folding them in here would make
-    /// one region carry two different iteration domains.
+    /// epilogue field: this variant is the fold *alone*, and a family that
+    /// transforms the folded value before committing it carries
+    /// [`Self::SquaredSerialSumThenEpilogue`] instead. Which of the two a program
+    /// needs is decided by where the transform belongs, and that is the operation's
+    /// question rather than a schedule's — `tiler::rms-norm-f32@1` computes its
+    /// scale once per folded row and reads it once per point, so its epilogue is
+    /// inside the fold's region; a family whose transform is genuinely per point
+    /// leaves it to the pass that consumes this reduction's result.
     SquaredSerialSum {
         /// Reduced axes in canonical ascending order.
         axes: Vec<Axis>,
@@ -559,6 +564,79 @@ pub enum ScalarProgram {
         canonical_nan_bits: u32,
         /// Empty-reduction identity bit pattern.
         empty_identity_bits: u32,
+    },
+    /// A squared serial fold whose value a scalar epilogue then transforms.
+    ///
+    /// The producing stage of a staged elementary family: one fold per kept
+    /// coordinate, then a chain of governed scalar operations applied to *the
+    /// fold's value*, and the chain's result is what the region commits.
+    /// `tiler::rms-norm-f32@1`'s
+    /// [`IndexRealizationLaw::StagedRootMeanSquareScaleF32`](crate::index::IndexRealizationLaw::StagedRootMeanSquareScaleF32)
+    /// is the shipped instance, whose epilogue is `Rsqrt(a / N + eps)`.
+    ///
+    /// **Why the epilogue is inside this region and not in the consuming pass.**
+    /// The accepted law's own derivation: the folded row's scale is computed once
+    /// per *row* and read once per *point*, so publishing the bare fold and putting
+    /// the transform in the pointwise pass evaluates it `N` times per row. That is
+    /// a different scalar program, not a different schedule for this one — the
+    /// arithmetic count differs — so the vocabulary must be able to state which
+    /// one a region performs. It is not two iteration domains in one region: the
+    /// fold's contributor loop and the epilogue are both per output position of
+    /// *this* region's domain, exactly as a prologue is per contributor.
+    ///
+    /// **The epilogue is general and the fold is not, deliberately.** The epilogue
+    /// is a whole verified [`PointwiseF32Expression`] over one input — the fold's
+    /// value, read as ordinal zero — so any chain the physical `f32` vocabulary
+    /// spells is expressible without a further variant: a mean is `a / N`, this
+    /// family's scale is `Rsqrt(a / N + eps)`, and a reciprocal-sum normalizer
+    /// would be `c / a`. The *fold* stays one variant per (prologue, combiner)
+    /// pair, which is the grain [`Self::SquaredSerialSum`] and
+    /// [`Self::StrictSerialMaximum`] already set. The consequence is named rather
+    /// than hidden: the softmax's shifting stage folds a *maximum* and would need
+    /// its own sibling here, exactly as `StrictSerialMaximum` is a sibling of
+    /// `Self::StrictSerialSum`; what it inherits unchanged is this epilogue field
+    /// and every derivation threaded for it — the verifier's rules, the identity
+    /// payload, the lowering's epilogue hook, and the split refusal below.
+    ///
+    /// **The epilogue must transform something.** An epilogue whose root is its own
+    /// input leaf computes nothing, and admitting it would give one program two
+    /// spellings — this variant and [`Self::SquaredSerialSum`] — which is the
+    /// canonicality rule [`broadcast_decodes_are_replicating`] states for its own
+    /// degenerate case. The schedule verifier refuses it.
+    ///
+    /// **No parallel topology may split it**, and the refusal is the family's
+    /// algebra rather than caution: the epilogue applies to the *complete* fold, so
+    /// a partial pass that applied it would transform a fragment and one that did
+    /// not would be computing [`Self::SquaredSerialSum`] under this variant's name.
+    /// A split of this family therefore needs a *pair* of programs rather than a
+    /// partition of one, which no cover states; `multi_pass_family` and
+    /// `cooperative_family` answer `None` and the topology is refused.
+    ///
+    /// `empty_identity_bits` is the value the *fold* commits over an empty
+    /// contributor domain, and the epilogue transforms that value like any other:
+    /// the program is "fold, then epilogue", so the empty case differs only in
+    /// where the fold's value came from. Nothing in the shipped law reaches it —
+    /// `rms-scale-empty-fold` refuses an empty fold a layer up — and stating it
+    /// here is what keeps the variant's meaning total rather than conditional on
+    /// its one producer.
+    SquaredSerialSumThenEpilogue {
+        /// Reduced axes in canonical ascending order.
+        axes: Vec<Axis>,
+        /// Contributor combination order.
+        order: ContributorOrder,
+        /// Canonical arithmetic NaN bit pattern.
+        canonical_nan_bits: u32,
+        /// Empty-reduction identity bit pattern the fold commits.
+        empty_identity_bits: u32,
+        /// The chain applied to the fold's value before it is committed.
+        ///
+        /// A one-input expression whose sole leaf, ordinal zero, *is* the folded
+        /// value. The ordinal names no boundary tensor here — this region reads
+        /// exactly one, its contributor domain — so the schedule verifier requires
+        /// the expression to hold exactly one leaf and the lowering supplies the
+        /// accumulator for it. A second leaf would name a buffer no reduction
+        /// region binds.
+        epilogue: PointwiseF32Expression,
     },
     /// A strict tensor contraction of two operands over a shared index space.
     ///
@@ -1216,6 +1294,10 @@ pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFr
         | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
+        // An epilogue over the fold's value bounds nothing either: its own
+        // arithmetic is `f32` over a dense payload, and a reciprocal square root
+        // reaches the subnormal range from below like any other division.
+        | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
         | ScalarProgram::StrictTensorContraction { .. }
         // A maximum performs no arithmetic, so it produces no *new* subnormal —
@@ -1249,6 +1331,7 @@ pub(super) const fn region_arithmetic_type(program: &ScalarProgram) -> Arithmeti
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
+        | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
         | ScalarProgram::StrictTensorContraction { .. }
         | ScalarProgram::StrictSerialMaximum { .. } => ArithmeticType::F32,
@@ -1673,6 +1756,30 @@ const TAG_SCALAR_SERIAL_MAXIMUM: u8 = 0x28;
 /// reachable from one another. Sharing one encoder would instead couple two
 /// vocabularies whose widenings are independent.
 const TAG_SCALAR_POINTWISE_BF16: u8 = 0x29;
+/// Scalar-program tag of the squared fold carrying a scalar epilogue.
+///
+/// Appended for the same reason and with the same consequence as `0x26` through
+/// `0x29`: `0x22` through `0x29` keep their meanings and their field positions,
+/// so no previously encodable region's bytes move and the schedule identity
+/// domain does not step.
+///
+/// **Injectivity at this tag, in both directions.** The leading byte
+/// discriminates, so no earlier program's bytes can be read as this one. Within
+/// the tag the payload is the four fields `0x26` writes — a framed axis run, a
+/// tag-per-order byte, and two fixed-width payloads — followed by the epilogue
+/// written exactly as `TAG_SCALAR_POINTWISE_F32` writes an expression: a framed
+/// node count, that many self-delimiting nodes, and the framed root ordinal. Each
+/// field is therefore recoverable at a position the frames determine, so two
+/// programs differing in *any* of them — including two epilogues differing only
+/// in their root, or in one node's operand order — differ in these bytes. And
+/// nothing else reaches them, so two programs equal in meaning encode
+/// identically: the expression's own canonicalization gives one node order per
+/// meaning, which is what makes the second direction hold rather than be hoped
+/// for.
+///
+/// The node run cannot be confused with `0x24`'s: a run is read only inside the
+/// scalar-program variant that framed it, exactly as the `bf16` node space is.
+const TAG_SCALAR_SQUARED_SUM_EPILOGUE: u8 = 0x2A;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 /// Reduction-topology tag of a split, multi-dispatch reduction pass.
@@ -1984,6 +2091,27 @@ fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
             push_order(bytes, *order);
             bytes.extend_from_slice(&canonical_nan_bits.to_be_bytes());
             bytes.extend_from_slice(&empty_identity_bits.to_be_bytes());
+        }
+        // The fold's four fields exactly as `0x26` writes them, then the
+        // epilogue in the framing `TAG_SCALAR_POINTWISE_F32` uses. See
+        // `TAG_SCALAR_SQUARED_SUM_EPILOGUE` for the injectivity argument.
+        ScalarProgram::SquaredSerialSumThenEpilogue {
+            axes,
+            order,
+            canonical_nan_bits,
+            empty_identity_bits,
+            epilogue,
+        } => {
+            bytes.push(TAG_SCALAR_SQUARED_SUM_EPILOGUE);
+            push_axes(bytes, axes);
+            push_order(bytes, *order);
+            bytes.extend_from_slice(&canonical_nan_bits.to_be_bytes());
+            bytes.extend_from_slice(&empty_identity_bits.to_be_bytes());
+            push_len(bytes, epilogue.nodes().len());
+            for node in epilogue.nodes() {
+                push_pointwise_f32_node(bytes, node);
+            }
+            push_slice(bytes, &epilogue.root().index().to_be_bytes());
         }
         // Appended for the same reason as `0x26`, and with no empty-domain
         // identity to encode: the family refuses an empty contracted domain

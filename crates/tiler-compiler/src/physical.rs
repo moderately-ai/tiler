@@ -1,8 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
-use tiler_ir::semantic::F32;
-use tiler_ir::shape::Shape;
+use tiler_ir::index::IndexRealizationLaw;
+use tiler_ir::semantic::{AttributeFieldId, CanonicalIntegerWidth, CanonicalValueView, F32};
+use tiler_ir::shape::{Axis, Shape};
 
 // The target-neutral scheduled-region IR and the backend-consumable structured
 // kernel IR, with their intrinsic verifiers and canonical identities, live in
@@ -14,9 +15,9 @@ use tiler_ir::shape::Shape;
 use tiler_ir::kernel::KernelType;
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
-    ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion, InputOrdinal,
-    KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
+    Access, AccessMode, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContractionAxisSource, ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion,
+    InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
     OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32Node,
     ReductionTopology, RegionId, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy,
     TensorRole,
@@ -28,8 +29,8 @@ use tiler_ir::schedule::{
 use crate::region::SemanticStage;
 use crate::request::{
     NormalizedContraction, NormalizedEpilogue, NormalizedOutput, NormalizedOutputSubject,
-    NormalizedSerialSum, NumericalPermission, StrictF32NumericalContract, TargetProfile,
-    VerifiedRequestSubject, VerifiedTargetRequest,
+    NormalizedSerialSum, NormalizedStaged, NumericalPermission, StrictF32NumericalContract,
+    TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -193,6 +194,313 @@ fn affine_prologue(expression: &PointwiseF32Expression) -> Option<(u32, u32)> {
         .then_some((*scale, *bias))
 }
 
+/// The physical shape of one staged family's realization, derived from its law.
+///
+/// **Derived from the *law*, never from the family.** The occurrence's operation
+/// key appears nowhere here: what says which axes stage zero folds, what its
+/// epilogue computes, and what its consuming pass evaluates is the closed typed
+/// [`IndexRealizationLaw`] the registry carries for the family, so a second family
+/// registering one of these laws is spelled by the same arm and a family
+/// registered tomorrow with a law this vocabulary has no arm for is refused by
+/// name rather than mis-spelled. Nothing else could serve: the shapes do not
+/// determine the axes — a `[2, 2]` operand handed a `[2]` value names two
+/// different reductions — and the attribute record does not interpret itself.
+///
+/// Every field is a *physical* statement about a scheduled region, and the
+/// derivation is the one place the law's meaning is translated into this
+/// vocabulary. What the law's own realized region sequence proves about the same
+/// occurrence stays `tiler-ir`'s: refinement compares a provider's emission
+/// against it byte for byte, and this plan is checked against nothing — it is
+/// checked *by* being resubmitted through the ordinary verification path, whose
+/// request-subject binding re-derives this plan and requires the region to match
+/// it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StagedPlan {
+    /// Reduced axes of the producing stage, canonical ascending.
+    axes: Vec<Axis>,
+    /// Boundary tensor the producing stage folds.
+    contributor: TensorRole,
+    /// Shape of the operand that stage folds.
+    input_shape: Shape,
+    /// Shape of the value the producing stage hands on: the folded operand's
+    /// shape without the folded axes.
+    handed_shape: Shape,
+    /// Element count of that handed value, which is the producing stage's
+    /// iteration count.
+    handed_elements: u64,
+    /// The chain the producing stage applies to its fold's value.
+    fold_epilogue: PointwiseF32Expression,
+    /// The consuming stage's reads, in access order.
+    pass_reads: Vec<(TensorRole, LogicalAccess)>,
+    /// The consuming stage's per-point expression.
+    pass_expression: PointwiseF32Expression,
+}
+
+/// Derives the physical plan of one staged occurrence, or declines.
+///
+/// `None` is "this vocabulary has no scheduled region for this law", which the
+/// caller reports as [`RegionVocabularyWall::StagedFamilyUnspellable`]. It is the
+/// answer for a law with no arm here *and* for an occurrence whose own facts the
+/// arm refuses — a folded extent no binary32 value equals, an empty fold, an
+/// attribute record that does not decode — so the refusal set is exactly the
+/// law's own, restated where a region would otherwise be built from facts the law
+/// would not have realized.
+pub(crate) fn staged_plan(normalized: &NormalizedStaged) -> Option<StagedPlan> {
+    match &normalized.law {
+        IndexRealizationLaw::StagedRootMeanSquareScaleF32 {
+            axes_attribute,
+            eps_attribute,
+        } => root_mean_square_scale_plan(normalized, *axes_attribute, *eps_attribute),
+        // Fail-closed over a `#[non_exhaustive]` vocabulary: a law this profile
+        // has no arm for is unspellable rather than approximated by whichever arm
+        // it resembles. The single-region laws reach here too and are refused for
+        // the same reason — an occurrence realized by one region is not a staged
+        // stage, and no cover reaches this derivation for one.
+        _ => None,
+    }
+}
+
+/// Derives the plan of one root-mean-square scale occurrence.
+///
+/// The law's two stages, in physical terms:
+///
+/// - **Stage zero** folds `x_i * x_i` over the named axes into one value per kept
+///   coordinate, then applies `Rsqrt(a / N + eps)` to it and hands the result on.
+///   `N` is the folded contributor count as an exact binary32 payload, and the
+///   epilogue divides by it rather than multiplying by a reciprocal, because the
+///   two round a different number of times and the reference divides.
+/// - **Stage one** reads the two operands and that handed value and writes
+///   `w * (x * r)` pointwise, with the handed value read at its kept coordinates.
+///
+/// Both are the law's own steps in the law's own order, which is what makes the
+/// region a realization of the occurrence rather than an algebraically equal
+/// alternative.
+///
+/// Every refusal below is one the law itself makes, restated here because this
+/// derivation runs *before* any realization is built:
+///
+/// - a folded extent no binary32 value equals (`rms-scale-extent-not-exact`),
+///   because the emitted division would then be a different function;
+/// - an empty fold (`rms-scale-empty-fold`), which has no first contributor to
+///   seed at;
+/// - operand or result shapes that disagree, an attribute record that does not
+///   decode, or axes that are not a canonical in-range set.
+///
+/// And one refusal that is this layer's rather than the law's: **the two operands
+/// must be distinct declared inputs.** `rms_norm(x, x)` is a legal occurrence
+/// whose consuming pass would read one declared input twice, densely, which
+/// `tiler_ir::schedule`'s own read-ordering rule refuses as two spellings of one
+/// computation. Declining here loses that program rather than proposing a region
+/// the verifier would reject as invalid compiler output.
+fn root_mean_square_scale_plan(
+    normalized: &NormalizedStaged,
+    axes_attribute: AttributeFieldId,
+    eps_attribute: AttributeFieldId,
+) -> Option<StagedPlan> {
+    let [value_shape, weight_shape] = normalized.operand_shapes.as_slice() else {
+        return None;
+    };
+    let [value_input, weight_input] = normalized.operand_inputs.as_slice() else {
+        return None;
+    };
+    if value_shape != &normalized.output_shape
+        || weight_shape != &normalized.output_shape
+        || value_input == weight_input
+    {
+        return None;
+    }
+    let axes = canonical_axes(&normalized.attribute_record, axes_attribute, value_shape)?;
+    let eps_bits = float_bits(&normalized.attribute_record, eps_attribute)?;
+    let handed_shape = value_shape.without_axes(&axes);
+    let handed_elements = tiler_ir::schedule::element_count(&handed_shape).ok()?;
+    let extent_bits = folded_extent_bits(value_shape, &axes)?;
+
+    let mut fold = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
+    let total = fold.input(InputOrdinal::FIRST).ok()?;
+    let extent = fold.constant(extent_bits).ok()?;
+    let mean = fold.divide(total, extent).ok()?;
+    let bias = fold.constant(eps_bits).ok()?;
+    let biased = fold.add(mean, bias).ok()?;
+    let root = fold.rsqrt(biased).ok()?;
+    let fold_epilogue = fold.build(root).ok()?;
+
+    // The reads in the canonical order a pointwise region requires: declared
+    // inputs by ascending ordinal, then the handed value. Which of the two
+    // operands leads is therefore the caller's declaration order rather than the
+    // law's operand order, and the expression below binds each leaf to the read
+    // that actually serves it.
+    let value_leads = value_input < weight_input;
+    let handed_map = if handed_shape == normalized.output_shape {
+        // A fold over no axis hands one value per point, read densely. Not a
+        // replication at all — `broadcast_decodes_are_replicating` refuses a map
+        // that widens nothing, which is the canonicality rule that keeps one read
+        // from having two spellings.
+        LogicalAccess::LinearIdentity
+    } else {
+        LogicalAccess::BroadcastReplication {
+            operand_shape: handed_shape.clone(),
+            result_shape: normalized.output_shape.clone(),
+            axes: kept_axis_decodes(&normalized.output_shape, &axes)?,
+        }
+    };
+    let input_read = |ordinal: u32| {
+        (
+            TensorRole::Input {
+                ordinal: InputOrdinal::new(ordinal),
+            },
+            LogicalAccess::LinearIdentity,
+        )
+    };
+    let pass_reads = vec![
+        input_read(if value_leads {
+            *value_input
+        } else {
+            *weight_input
+        }),
+        input_read(if value_leads {
+            *weight_input
+        } else {
+            *value_input
+        }),
+        (TensorRole::Intermediate, handed_map),
+    ];
+
+    let mut pass = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
+    let value_leaf = pass
+        .input(InputOrdinal::new(u32::from(!value_leads)))
+        .ok()?;
+    let weight_leaf = pass.input(InputOrdinal::new(u32::from(value_leads))).ok()?;
+    let root_leaf = pass.input(InputOrdinal::new(2)).ok()?;
+    let scaled = pass.multiply(value_leaf, root_leaf).ok()?;
+    let weighted = pass.multiply(weight_leaf, scaled).ok()?;
+    let pass_expression = pass.build(weighted).ok()?;
+
+    Some(StagedPlan {
+        axes,
+        contributor: TensorRole::Input {
+            ordinal: InputOrdinal::new(*value_input),
+        },
+        input_shape: value_shape.clone(),
+        handed_shape,
+        handed_elements,
+        fold_epilogue,
+        pass_reads,
+        pass_expression,
+    })
+}
+
+/// Decodes one attribute's axis sequence, or declines.
+///
+/// Canonical means what the scheduled-region vocabulary means by it: strictly
+/// ascending and in range for the shape being folded. The semantic inferencer has
+/// its own rules, and this does not rely on them — a region built from a
+/// non-canonical axis list would be refused by the schedule verifier as invalid
+/// compiler output rather than declined as an unspellable one.
+fn canonical_axes(
+    attributes: &tiler_ir::semantic::OperationAttributes,
+    attribute: AttributeFieldId,
+    shape: &Shape,
+) -> Option<Vec<Axis>> {
+    let CanonicalValueView::Sequence(values) = attributes.get(attribute)?.view() else {
+        return None;
+    };
+    let axes = values
+        .iter()
+        .map(|value| match value.view() {
+            CanonicalValueView::Unsigned {
+                width: CanonicalIntegerWidth::Bits32,
+                bits,
+            } => u32::try_from(bits).ok().map(Axis::new),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    tiler_ir::schedule::axes_are_canonical(&axes, shape.rank()).then_some(axes)
+}
+
+/// Decodes one attribute's exact binary32 payload, or declines.
+///
+/// The declared format is checked rather than assumed: the payload is carried as
+/// bytes beside a nominal format key, so a record naming another width would
+/// otherwise be reinterpreted as four `f32` bytes and reach the epilogue as a
+/// different constant.
+fn float_bits(
+    attributes: &tiler_ir::semantic::OperationAttributes,
+    attribute: AttributeFieldId,
+) -> Option<u32> {
+    let CanonicalValueView::FloatBits(payload) = attributes.get(attribute)?.view() else {
+        return None;
+    };
+    if Some(payload.format()) != F32::resolved_type().nominal_key() {
+        return None;
+    }
+    payload.bits().try_into().ok().map(u32::from_be_bytes)
+}
+
+/// Returns the exact binary32 payload of one fold's contributor count.
+///
+/// The law's own `rms-scale-extent-not-exact` and `rms-scale-empty-fold`
+/// refusals, restated: the reference divides by the extent itself, so a count
+/// whose nearest binary32 is not the count would make the emitted division a
+/// different function; and an empty fold has no first contributor to seed at. The
+/// representability test is integer-only, so it does not depend on the rounding
+/// it exists to detect.
+fn folded_extent_bits(shape: &Shape, axes: &[Axis]) -> Option<u32> {
+    let points = axes
+        .iter()
+        .map(|axis| {
+            usize::try_from(axis.get())
+                .ok()
+                .and_then(|position| shape.extents().get(position))
+                .map(|extent| extent.get())
+        })
+        .try_fold(1_u64, |points, extent| {
+            extent.and_then(|extent| points.checked_mul(extent))
+        })?;
+    if points == 0 || points >> points.trailing_zeros() >= 1 << 24 {
+        return None;
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the odd-part test above proved this count is an exact binary32 value"
+    )]
+    Some((points as f32).to_bits())
+}
+
+/// Returns the decode of each kept axis against the published result shape.
+///
+/// One decode per axis of the handed value, in axis order: the kept axis at
+/// result position `p` reads that whole result axis, so its divisor is `p`'s
+/// row-major suffix product and its modulus that axis's extent. The folded result
+/// axes are named by no decode at all, which is exactly what makes the read a
+/// replication invariant in them.
+fn kept_axis_decodes(result_shape: &Shape, axes: &[Axis]) -> Option<Vec<AxisDecode>> {
+    let extents = result_shape.extents();
+    let mut suffix = vec![1_u64; extents.len()];
+    let mut running = 1_u64;
+    for position in (0..extents.len()).rev() {
+        suffix[position] = running;
+        running = running.checked_mul(extents[position].get())?;
+    }
+    Some(
+        (0..extents.len())
+            .filter(|position| {
+                u32::try_from(*position).is_ok_and(|axis| !axes.contains(&Axis::new(axis)))
+            })
+            .map(|position| {
+                let extent = extents[position].get();
+                if extent == 1 {
+                    // An extent-one axis reads no coordinate, so its divisor and
+                    // mirroring are unobservable and must carry the canonical
+                    // spelling `AxisDecode::is_canonical` pins.
+                    AxisDecode::fixed()
+                } else {
+                    AxisDecode::read(suffix[position], extent)
+                }
+            })
+            .collect(),
+    )
+}
+
 /// Stable name of the serial-or-direct baseline every cover region is offered.
 ///
 /// Named beside the two parallel reduction strategies because it is withheld
@@ -277,6 +585,23 @@ pub(crate) enum RegionSpellingKind {
     /// declaration order, and an epilogue's are the recognized read list, whose
     /// positions and boundary roles are independent.
     Epilogue(RegionWrite),
+    /// The producing stage of a staged family: a fold carrying its own epilogue,
+    /// handing one value per kept coordinate to the stage that follows.
+    ///
+    /// It carries no [`RegionWrite`], and the absence is the claim: the value it
+    /// writes exists only inside the law's realization, so no cover can publish it
+    /// and [`spell_staged`] refuses a write role that says otherwise.
+    StagedFold,
+    /// The consuming stage of a staged family: a pointwise pass over the
+    /// occurrence's operands and the value the producing stage handed it.
+    ///
+    /// Distinct from [`Self::Epilogue`] although both build a
+    /// [`ScalarProgram::PointwiseF32`] region, for the reason that variant is
+    /// distinct from [`Self::Pointwise`]: this one's reads and expression are
+    /// derived from the occurrence's *law*, not from a recognized walk, so a
+    /// region built by the epilogue path would be spelling a chain the program
+    /// does not contain.
+    StagedPass(RegionWrite),
 }
 
 /// One cover region's spelling, together with the ordered named output whose
@@ -354,24 +679,30 @@ pub(crate) enum RegionVocabularyWall {
     /// silently: [`fused_region`] answers `None` for every prologue that is not
     /// the affine one, and the materialized cover still realizes the program.
     FusedPrologueUnspellable,
-    /// The region realizes a stage of an occurrence whose registered law
-    /// realizes a region *sequence*, and no scheduled region spells it.
+    /// The region covers stages of one staged occurrence that no scheduled
+    /// region computes together, or a law this profile has no spelling for.
     ///
     /// **A wall of its own rather than [`Self::PartialCoverage`], because the
     /// two say opposite things about the cover.** Partial coverage means the
     /// cover grouped occurrences no recognized partition owns — the cover is
     /// wrong for this program. This means the cover is *right*: the region
-    /// covers exactly the stages one recognized occurrence realizes as, region
-    /// formation enumerated it from the family's own law, and what is missing is
-    /// a [`ScalarProgram`] for the work that stage does. `tiler::rms-norm-f32@1`
-    /// is the shipped instance — its `StagedRootMeanSquareScaleF32` law folds
-    /// each contributor's square and then applies `/N`, `+eps`, and `Rsqrt`
-    /// inside the producing stage, and
-    /// [`ScalarProgram::SquaredSerialSum`](tiler_ir::schedule::ScalarProgram::SquaredSerialSum)
-    /// carries no epilogue, deliberately.
+    /// covers exactly stages one recognized occurrence realizes as, region
+    /// formation enumerated them from the family's own law, and the refusal is
+    /// about the region rather than the grouping.
     ///
-    /// [`admit-a-scheduled-region-for-a-staged-elementary-family`](../../../tickets/admit-a-scheduled-region-for-a-staged-elementary-family.md)
-    /// owns the vocabulary.
+    /// **Two conditions raise it, and neither is the vocabulary gap this variant
+    /// was introduced for.** That gap is closed: `tiler::rms-norm-f32@1`'s two
+    /// stages are spelled by [`RegionSpellingKind::StagedFold`] and
+    /// [`RegionSpellingKind::StagedPass`]. What remains is
+    ///
+    /// - **a region carrying more than one stage.** No scheduled region folds a
+    ///   contributor domain *and* evaluates a per-point expression over the
+    ///   fold's result, because those are two iteration domains — which is why
+    ///   the law realizes such an occurrence as a sequence at all.
+    /// - **a staged law with no arm in [`staged_plan`]**, or an occurrence whose
+    ///   own facts that arm refuses. The wildcard there is fail-closed, so a
+    ///   family registered tomorrow under a law this profile cannot spell is
+    ///   declined by name rather than mis-spelled.
     StagedFamilyUnspellable,
 }
 
@@ -536,16 +867,60 @@ fn spell_output(
         }
         // A decision, not a fall-through: the ownership test is the recognized
         // partition's own, so a region this output owns is one whose atoms are
-        // all stages of this occurrence, and every such region hits the same
-        // vocabulary wall. Answering `None` would let the scan continue and
-        // report partial coverage, which names the cover instead of the missing
-        // scheduled region.
+        // all stages of this occurrence. Answering `None` would let the scan
+        // continue and report partial coverage, which names the cover instead of
+        // the region's own answer.
         NormalizedOutput::Staged(normalized) => (!members.is_empty()
             && members
                 .iter()
                 .all(|atom| atom.member() == normalized.member))
-        .then_some(Err(RegionVocabularyWall::StagedFamilyUnspellable)),
+        .then(|| spell_staged(normalized, position, members, write)),
     }
+}
+
+/// Decides which scheduled region spells one stage of a staged occurrence.
+///
+/// Called only for a member set every atom of which is a stage of `normalized`,
+/// so the question left is *which* stages, and there are exactly three answers:
+/// the producing stage alone, the consuming stage alone, or something no
+/// scheduled region computes.
+///
+/// **A region carrying both stages is a wall rather than a spelling**, and the
+/// reason is the vocabulary's rather than the cover's: no scheduled region folds a
+/// contributor domain and evaluates a per-point expression over the fold's result,
+/// because those are two iteration domains. That is the same fact
+/// [`RegionSpellingKind::Epilogue`]'s own chain states — a fold and an expression
+/// over its result are two regions — and it is why the law realizes the occurrence
+/// as a sequence in the first place.
+///
+/// **The producing stage must be materializing**, and the refusal is derived: the
+/// value it writes is law-internal, so it is no declared output and no cover can
+/// publish it. A write role saying otherwise is a cover this profile cannot
+/// assemble, and naming it here is what stops a region being built for one.
+fn spell_staged(
+    normalized: &NormalizedStaged,
+    position: usize,
+    members: &[SemanticStage],
+    write: RegionWrite,
+) -> Result<RegionSpelling, RegionVocabularyWall> {
+    if staged_plan(normalized).is_none() {
+        return Err(RegionVocabularyWall::StagedFamilyUnspellable);
+    }
+    let fold = SemanticStage::first(normalized.member);
+    let pass = fold.next_stage();
+    if members == [fold] && write == RegionWrite::Materialized {
+        return Ok(RegionSpelling::new(
+            position,
+            RegionSpellingKind::StagedFold,
+        ));
+    }
+    if members == [pass] {
+        return Ok(RegionSpelling::new(
+            position,
+            RegionSpellingKind::StagedPass(write),
+        ));
+    }
+    Err(RegionVocabularyWall::StagedFamilyUnspellable)
 }
 
 /// Stable candidate identity used when assessing one scheduled region.
@@ -1030,6 +1405,154 @@ pub(crate) fn epilogue_region(
         write,
     );
     (region, chain.members.clone())
+}
+
+/// The region identifier every staged family's producing stage carries.
+///
+/// Distinct for the reason [`EPILOGUE_REGION`] is distinct: the request-subject
+/// binding matches on it, so a region claiming a staged occurrence's fold stage
+/// must be that stage's region and not some other fold that happens to carry an
+/// equal scalar program.
+const STAGED_FOLD_REGION: RegionId = RegionId::new(7);
+
+/// The region identifier every staged family's consuming stage carries.
+const STAGED_PASS_REGION: RegionId = RegionId::new(8);
+
+/// Builds the producing stage of one staged occurrence.
+///
+/// The reduction region's shape with two differences, both the law's: the fold
+/// carries its own epilogue, so the scalar program is
+/// [`ScalarProgram::SquaredSerialSumThenEpilogue`] rather than a bare sum; and its
+/// iteration domain is the *handed* value's shape, which is the folded operand's
+/// shape without the folded axes and is no occurrence boundary. Everything else is
+/// the fold every reduction region states — one contributor read over the reduced
+/// domain, one owning write, a serial topology carrying the contract's own
+/// permissions.
+///
+/// Like the other builders this returns the raw region and its members; every gate
+/// is applied when the frontier resubmits it through the ordinary checked path.
+///
+/// # Panics
+///
+/// Panics when the occurrence has no plan, which is invalid compiler output rather
+/// than a caller error: [`spell_staged`] decides the plan exists before this
+/// region is built.
+pub(crate) fn staged_fold_region(
+    request: &VerifiedTargetRequest,
+    normalized: &NormalizedStaged,
+    write: RegionWrite,
+) -> (ScheduledRegion, Vec<SemanticStage>) {
+    let plan = staged_plan(normalized).expect("a staged spelling is decided before it is built");
+    let write_tensor = write.tensor();
+    let region = ScheduledRegion {
+        index: IndexRegion {
+            id: STAGED_FOLD_REGION,
+            iteration_shape: plan.handed_shape.clone(),
+            accesses: vec![
+                Access {
+                    tensor: plan.contributor,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map: LogicalAccess::ReductionContributor {
+                        input_shape: plan.input_shape.clone(),
+                        output_shape: plan.handed_shape.clone(),
+                        axes: plan.axes.clone(),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                    bounds: BoundsWitnessId::new(0),
+                    ownership: None,
+                },
+                Access {
+                    tensor: write_tensor,
+                    component_role: None,
+                    mode: AccessMode::Write,
+                    map: LogicalAccess::LinearIdentity,
+                    bounds: BoundsWitnessId::new(1),
+                    ownership: Some(OwnershipWitnessId::new(0)),
+                },
+            ],
+            bounds_proofs: vec![
+                BoundsProof {
+                    id: BoundsWitnessId::new(0),
+                    tensor: plan.contributor,
+                    component_role: None,
+                    kind: BoundsProofKind::ReductionDomain {
+                        input_shape: plan.input_shape.clone(),
+                        output_shape: plan.handed_shape.clone(),
+                        axes: plan.axes.clone(),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                },
+                BoundsProof {
+                    id: BoundsWitnessId::new(1),
+                    tensor: write_tensor,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: plan.handed_elements,
+                    },
+                },
+            ],
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: write_tensor,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: plan.handed_elements,
+                },
+            },
+            scalar_program: ScalarProgram::SquaredSerialSumThenEpilogue {
+                axes: plan.axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                empty_identity_bits: 0.0_f32.to_bits(),
+                epilogue: plan.fold_epilogue.clone(),
+            },
+            numerical: request.numerical_contract().realization(),
+        },
+        schedule: KernelSchedule {
+            reduction: ReductionTopology::Serial {
+                axes: plan.axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: request.numerical_contract().reassociation
+                    != NumericalPermission::Forbidden,
+                permits_permutation: false,
+            },
+            ..linear_schedule(plan.handed_elements, OwnershipWitnessId::new(0))
+        },
+    };
+    (region, vec![SemanticStage::first(normalized.member)])
+}
+
+/// Builds the consuming stage of one staged occurrence.
+///
+/// An ordinary elementwise region, built from the *law's* read list and
+/// expression rather than from a recognized walk — the pass reads the occurrence's
+/// operands and the value the producing stage handed it, and the handed value is
+/// read at its kept coordinates, which is a replication whenever the fold removed
+/// an axis.
+///
+/// # Panics
+///
+/// Panics when the occurrence has no plan, for the reason
+/// [`staged_fold_region`] does.
+pub(crate) fn staged_pass_region(
+    request: &VerifiedTargetRequest,
+    normalized: &NormalizedStaged,
+    write: RegionWrite,
+) -> (ScheduledRegion, Vec<SemanticStage>) {
+    let plan = staged_plan(normalized).expect("a staged spelling is decided before it is built");
+    let region = elementwise_region(
+        request,
+        STAGED_PASS_REGION,
+        normalized.output_shape.clone(),
+        normalized.output_elements,
+        &plan.pass_reads,
+        plan.pass_expression.clone(),
+        write,
+    );
+    (
+        region,
+        vec![SemanticStage::first(normalized.member).next_stage()],
+    )
 }
 
 /// The region identifier every publishing copy carries.
@@ -2383,29 +2906,67 @@ fn verify_region_output_binding(
                 && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
                 && contraction_accesses_match(&region.index.accesses, normalized)
         }
-        // One fail-closed answer for three subjects, and the reason differs by
-        // subject rather than the answer.
+        // A staged subject binds one of exactly two regions, and *which* stage a
+        // region claims is decided by its members before anything else is
+        // compared: both stages belong to one occurrence, so the scalar program
+        // alone would not separate a fold that claims the pass's atom from one
+        // that claims its own.
         //
-        // Either whole-program subject paired with any other scalar program is
-        // a forged pairing: each is bound above against the one program its
-        // recognizer produces, so `false` is the fail-closed answer rather than
-        // a deferral.
+        // Every quantity is re-derived from the subject through the same
+        // [`staged_plan`] the builder used and compared, which is what makes this
+        // a binding rather than a resemblance: the epilogue chain is compared
+        // whole — node topology, ordered operands, constant bits, and the explicit
+        // root — so a provider cannot substitute an algebraically similar chain
+        // with a different rounding count, and the pass's read list is compared
+        // tensor by tensor and relation by relation, so a region reading the
+        // handed value densely where the law replicates it is refused.
         //
-        // A *staged* subject binds no scheduled region at all, and `false` is
-        // the statement of that rather than an unfinished arm. No region reaches
-        // here today — [`spell_region`] declines every region a staged output
-        // owns under [`RegionVocabularyWall::StagedFamilyUnspellable`], so
-        // nothing is proposed to bind — and when the scheduled vocabulary gains
-        // the stage's scalar program, this is where the binding it must satisfy
-        // is written. Until then a region claiming a staged occurrence is a
-        // forged pairing by the whole-program arms' own argument, which is why
-        // the same answer serves.
-        (
-            NormalizedOutputSubject::Pointwise(_)
-            | NormalizedOutputSubject::Contraction(_)
-            | NormalizedOutputSubject::Staged(_),
-            _,
-        ) => false,
+        // An occurrence with no plan reaches here only from a forged proposal —
+        // [`spell_staged`] declines it — and answers `false` through the `else`,
+        // which is the fail-closed direction.
+        (NormalizedOutputSubject::Staged(normalized), scalar) => {
+            let fold = SemanticStage::first(normalized.member);
+            match (staged_plan(normalized), scalar) {
+                (
+                    Some(plan),
+                    ScalarProgram::SquaredSerialSumThenEpilogue {
+                        axes,
+                        canonical_nan_bits,
+                        empty_identity_bits,
+                        epilogue,
+                        ..
+                    },
+                ) => {
+                    semantic_members == [fold]
+                        && region.index.id == STAGED_FOLD_REGION
+                        && region.index.iteration_shape == plan.handed_shape
+                        && element_count(&plan.handed_shape, region.index.id)?
+                            == plan.handed_elements
+                        && axes == &plan.axes
+                        && epilogue == &plan.fold_epilogue
+                        && *canonical_nan_bits
+                            == subject.numerical_contract().canonical_arithmetic_nan_bits
+                        && *empty_identity_bits == 0.0_f32.to_bits()
+                        && staged_fold_access_matches(&region.index.accesses, &plan)
+                }
+                (Some(plan), ScalarProgram::PointwiseF32(expression)) => {
+                    semantic_members == [fold.next_stage()]
+                        && region.index.id == STAGED_PASS_REGION
+                        && region.index.iteration_shape == normalized.output_shape
+                        && element_count(&normalized.output_shape, region.index.id)?
+                            == normalized.output_elements
+                        && expression == &plan.pass_expression
+                        && staged_pass_reads_match(&region.index.accesses, &plan)
+                }
+                _ => false,
+            }
+        }
+        // One fail-closed answer for two subjects: either whole-program subject
+        // paired with any other scalar program is a forged pairing, because each
+        // is bound above against the one program its recognizer produces.
+        (NormalizedOutputSubject::Pointwise(_) | NormalizedOutputSubject::Contraction(_), _) => {
+            false
+        }
         // A chain binds either its epilogue region or a region of its producer's
         // partition, and the *members* are what separate the two: an epilogue's
         // region and a fold's prologue are both `PointwiseF32` regions, so the
@@ -2577,6 +3138,12 @@ fn verify_region_output_binding(
                 ScalarProgram::StrictAffineU4Dequantize { .. }
                 | ScalarProgram::PointwiseBf16(_)
                 | ScalarProgram::SquaredSerialSum { .. }
+                // The squaring fold *with* an epilogue is refused here for the
+                // sharper reason: it is the producing stage of a staged
+                // occurrence, which binds against the staged subject arm above.
+                // A serial-sum subject claiming one would be a recognized
+                // reduction wearing another occurrence's realization.
+                | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
                 | ScalarProgram::StrictSerialMaximum { .. }
                 | ScalarProgram::StrictTensorContraction { .. } => false,
             }
@@ -2622,6 +3189,39 @@ fn elementwise_reads_match(accesses: &[Access], recognized: &[(u32, LogicalAcces
                     }
                     && access.map == *map
             })
+}
+
+/// Returns whether one staged fold's contributor read is the plan's.
+///
+/// The read the law's producing stage performs: the folded operand, addressed
+/// over the reduced domain the plan derived. A region folding another declared
+/// input, or the same one over other axes, computes a different value under a
+/// region the intrinsic verifier cannot fault — which is exactly what this
+/// separates.
+fn staged_fold_access_matches(accesses: &[Access], plan: &StagedPlan) -> bool {
+    let [read, _write] = accesses else {
+        return false;
+    };
+    read.tensor == plan.contributor
+        && matches!(
+            &read.map,
+            LogicalAccess::ReductionContributor { input_shape, output_shape, axes, .. }
+                if input_shape == &plan.input_shape
+                    && output_shape == &plan.handed_shape
+                    && axes == &plan.axes
+        )
+}
+
+/// Returns whether one staged pass's reads are the plan's, in order.
+fn staged_pass_reads_match(accesses: &[Access], plan: &StagedPlan) -> bool {
+    let Some((_, reads)) = accesses.split_last() else {
+        return false;
+    };
+    reads.len() == plan.pass_reads.len()
+        && reads
+            .iter()
+            .zip(&plan.pass_reads)
+            .all(|(access, (tensor, map))| access.tensor == *tensor && access.map == *map)
 }
 
 fn epilogue_accesses_match(
