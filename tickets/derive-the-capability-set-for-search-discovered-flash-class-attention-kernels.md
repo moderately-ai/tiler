@@ -1,7 +1,7 @@
 ---
 id: derive-the-capability-set-for-search-discovered-flash-class-attention-kernels
 title: Derive the capability set for search-discovered flash-class attention kernels
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode, calibrate-and-activate-parallel-reduction-selection, accept-adr-0100-multi-round-reduction-composition, derive-the-rewrite-rule-declaration-and-admission-shape-for-the-online-softmax-fold, derive-the-oracle-for-a-permitted-divergence-candidate, derive-the-rescaled-cross-round-accumulator-a-streaming-attention-schedule-carries, probe-e-graph-tractability-over-tilers-semantic-rewrite-vocabulary, calibrate-device-cost-models, admit-a-fusion-role-for-the-tensor-contraction, admit-elementwise-epilogues-over-a-materialized-intermediate]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-flash-capability
-lease_expires_at: 1785986516
 ---
 ## User-visible outcome
 
