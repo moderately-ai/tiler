@@ -104,3 +104,7 @@ Named `GridWidthUnrepresentable` rather than `PrecisionUnrepresentable` because 
 ## Landed — the surface is the decided shape
 
 The delta (`EnclosurePrecision::new` fallible + `EnclosureError::GridWidthUnrepresentable`) implements Tom's defence-in-depth decision verbatim; it returns at the next decision round as a confirmation item rather than a new question.
+
+## Surface confirmed
+
+Confirmed by Tom on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator: the fallible `EnclosurePrecision::new` returning `Result<Self, EnclosureError>` with `EnclosureError::GridWidthUnrepresentable` and the `MAX_GRID_FRACTION_BITS` bound is the accepted spelling of the defence-in-depth decision. The last open item from that decision closes.
