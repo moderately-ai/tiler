@@ -119,3 +119,9 @@ rust-reference-operator-expr-rust-1.97.1	vendored	rust-reference-rust-1.97.1/ope
 rust-reference-mit-license-rust-1.97.1	vendored	rust-reference-rust-1.97.1/LICENSE-MIT	0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720
 rust-reference-apache-license-rust-1.97.1	vendored	rust-reference-rust-1.97.1/LICENSE-APACHE	a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
 iso-cpp-working-draft-n5054	metadata-only	-	411333f37f938fa7ca3c7a7e85b9825fadad5b90fd6d936c9307627210d24086
+#	Seventh addition: the eighth claim of that same conversion record — that PyTorch documents
+#	platform variation — which the sixth wave's stated population of seven citations did not cover,
+#	and which none of the three PyTorch rows above carries, since all three are dtype spelling and
+#	exposure evidence. Same `pytorch/pytorch` revision as those rows, so it joins
+#	`pytorch-license-v2.13.0` and `pytorch-notice-v2.13.0` rather than pinning PyTorch twice.
+pytorch-tensor-docs-v2.13.0	vendored	pytorch-v2.13.0/_tensor_docs.py	b1a46e328a74e39383dbecf04fb48620af70c7780467cf923864d1b5cf992e99
