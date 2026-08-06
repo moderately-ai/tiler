@@ -1,7 +1,7 @@
 ---
 id: account-for-a-staged-realization-stage-in-the-kernel-program
 title: Account for a staged realization stage in the kernel program
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-a-scheduled-region-for-a-staged-elementary-family, admit-the-registered-elementary-families-as-recognizable-program-stages, accept-the-root-mean-square-scale-realization-law]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, program, identity-domain]
+claimed_from: todo
+assignee: agent-stage-account
+lease_expires_at: 1786055517
 ---
 ## User-visible outcome
 

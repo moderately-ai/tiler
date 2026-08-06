@@ -685,9 +685,10 @@ impl FrozenIndexRealizationLawRegistry {
     /// Returns whether the law registered for one operation family realizes a
     /// region *sequence* rather than a single region.
     ///
-    /// **Labelled draft.** The surface is implemented and tested; acceptance is
-    /// parked for Tom at
-    /// [`accept-the-registered-family-region-sequence-query`](../../../../tickets/accept-the-registered-family-region-sequence-query.md).
+    /// **Accepted public surface** — by Tom on 2026-08-06 at the live session's
+    /// decision round, as-is with no exclusion;
+    /// [`accept-the-registered-family-region-sequence-query`](../../../../tickets/accept-the-registered-family-region-sequence-query.md)
+    /// records the provenance.
     ///
     /// **The question is about the registered law and nothing else, which is why
     /// it takes an operation key rather than a subject.** A caller that already
