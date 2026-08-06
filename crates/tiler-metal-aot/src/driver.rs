@@ -577,9 +577,77 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
         assert!(matches!(error, DriverError::ToolchainUnavailable { .. }));
     }
 
-    // The following tests exercise the real Apple toolchain. They self-skip when
-    // no qualified toolchain is present so the repository gate passes on hosts
-    // and CI runners without one.
+    // A test that reaches the real Apple tools decides whether it can run
+    // through `resolved_system_toolchain` and through nothing else. The tests
+    // built on shim launchers supply their own tools and so never skip.
+
+    /// The ambient input that turns an absent toolchain into a failure.
+    const REQUIRE_TOOLCHAIN: &str = "TILER_REQUIRE_METAL_TOOLCHAIN";
+
+    /// Resolves the system offline toolchain, or returns `None` on a host
+    /// without one.
+    ///
+    /// A test that reaches the real Apple tools self-skips so the repository
+    /// gate passes on a host or CI runner without Xcode. Routing every such
+    /// test through this function is what makes that skip one deliberate
+    /// decision rather than a condition each test restates.
+    ///
+    /// The absent-toolchain classification is narrow on purpose: only
+    /// [`DriverError::ToolchainUnavailable`] and [`DriverError::SdkUnavailable`]
+    /// mean no toolchain is installed. Every other variant means resolution
+    /// reached the tools and something else went wrong, which is a defect these
+    /// tests report rather than skip. The match is exhaustive, so a new variant
+    /// must be classified deliberately.
+    ///
+    /// Two mechanisms keep a skip from being mistaken for a pass:
+    ///
+    /// - Each branch announces itself on standard error. `cargo nextest run -p
+    ///   tiler-metal-aot --no-capture -E 'test(driver::tests)'` prints either
+    ///   the resolved `metal`, `metallib`, and SDK identities or the exact
+    ///   reason resolution failed, so a reader can tell the toolchain-dependent
+    ///   half ran from a run in which it did not.
+    /// - Setting `TILER_REQUIRE_METAL_TOOLCHAIN` turns the skip into a failure
+    ///   carrying the resolution error. This is the one supported ambient input
+    ///   here, and it can only make these tests stricter; nothing in this module
+    ///   lets an environment variable weaken a check.
+    ///
+    /// The resolved observation is returned beside the toolchain because a
+    /// caller that needs both would otherwise resolve a second time, and two
+    /// resolutions can disagree.
+    fn resolved_system_toolchain() -> Option<(Toolchain, ResolvedToolchain)> {
+        let toolchain = Toolchain::system();
+        match toolchain.resolve(AppleSdk::MacOs) {
+            Ok(resolved) => {
+                eprintln!(
+                    "driver: compiling with metal {} / metallib {} (SDK {} build {})",
+                    resolved.metal.version,
+                    resolved.metallib.version,
+                    resolved.sdk.version,
+                    resolved.sdk.build,
+                );
+                Some((toolchain, resolved))
+            }
+            Err(
+                error @ (DriverError::ToolchainUnavailable { .. }
+                | DriverError::SdkUnavailable { .. }),
+            ) => {
+                assert!(
+                    std::env::var_os(REQUIRE_TOOLCHAIN).is_none(),
+                    "{REQUIRE_TOOLCHAIN} is set, but no qualified Apple Metal toolchain \
+                     resolved: {error}"
+                );
+                eprintln!("driver: skipped, no qualified Apple Metal toolchain resolved: {error}");
+                None
+            }
+            Err(
+                error @ (DriverError::ToolFailure { .. }
+                | DriverError::Host { .. }
+                | DriverError::EmptyArtifact { .. }),
+            ) => panic!(
+                "toolchain resolution failed for a reason that is not an absent toolchain: {error}"
+            ),
+        }
+    }
 
     /// The real Apple front end warns, exits zero, and its words survive.
     ///
@@ -601,10 +669,9 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
     int unused_local = 3;\n\
     out[gid] = in[gid];\n\
 }\n";
-        let toolchain = Toolchain::system();
-        if toolchain.resolve(AppleSdk::MacOs).is_err() {
+        let Some((toolchain, _)) = resolved_system_toolchain() else {
             return;
-        }
+        };
 
         let quiet = toolchain
             .compile(&macos_request(TRIVIAL_MSL))
@@ -630,8 +697,7 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
 
     #[test]
     fn compiles_trivial_kernel_when_toolchain_available() {
-        let toolchain = Toolchain::system();
-        let Ok(resolved) = toolchain.resolve(AppleSdk::MacOs) else {
+        let Some((toolchain, resolved)) = resolved_system_toolchain() else {
             return;
         };
         assert!(!resolved.metal.version.is_empty());
@@ -670,10 +736,9 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
     /// measurement in the ticket outcome.
     #[test]
     fn the_integer_nan_predicate_compiles_under_every_realization() {
-        let toolchain = Toolchain::system();
-        if toolchain.resolve(AppleSdk::MacOs).is_err() {
+        let Some((toolchain, _)) = resolved_system_toolchain() else {
             return;
-        }
+        };
         let mut artifacts = Vec::new();
         for mode in [MathMode::Safe, MathMode::Relaxed, MathMode::Fast] {
             for contract in [FpContract::Off, FpContract::On, FpContract::Fast] {
@@ -699,10 +764,9 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
 
     #[test]
     fn rejects_invalid_source_when_toolchain_available() {
-        let toolchain = Toolchain::system();
-        if toolchain.resolve(AppleSdk::MacOs).is_err() {
+        let Some((toolchain, _)) = resolved_system_toolchain() else {
             return;
-        }
+        };
         let error = toolchain
             .compile(&macos_request("this is not valid Metal Shading Language;"))
             .unwrap_err();
@@ -784,8 +848,7 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
     /// diagnostic text, which is Apple's to reword.
     #[test]
     fn the_metal_driver_admits_exactly_the_three_stated_fp_contract_values() {
-        let toolchain = Toolchain::system();
-        let Ok(resolved) = toolchain.resolve(AppleSdk::MacOs) else {
+        let Some((toolchain, resolved)) = resolved_system_toolchain() else {
             return;
         };
 
