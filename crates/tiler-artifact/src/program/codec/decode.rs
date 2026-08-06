@@ -71,8 +71,8 @@ use super::super::{
 use super::digest::{Digest, DigestAlgorithm};
 use super::encode::{
     CANONICAL_ENCODING, ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN,
-    MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES, MAX_MANIFEST_BYTES, encode_with_identity,
-    section_digest,
+    MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES, MAX_MANIFEST_BYTES,
+    matches_canonical_encoding, section_digest,
 };
 use super::error::{
     ArtifactCodecError, CodecLimitKind, ComponentSchemaKind, OrderedSubject, ReferenceSubject,
@@ -131,11 +131,17 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ArtifactEnvelope, ArtifactCodecErro
     if derived.as_bytes() != parsed.identity {
         return Err(ArtifactCodecError::ArtifactIdentityMismatch);
     }
-    // The manifest is fully understood, so re-encoding it must reproduce the
-    // exact bytes that were read. This is the backstop that makes one artifact
-    // have one byte identity: any well-formed but non-canonical spelling a
-    // named check did not already catch fails here rather than being silently
-    // normalized on the way in.
+    // The manifest is fully understood, so re-deriving the canonical encoding
+    // must reproduce the exact bytes that were read. This is the backstop that
+    // makes one artifact have one byte identity: any well-formed but
+    // non-canonical spelling a named check did not already catch fails here
+    // rather than being silently normalized on the way in.
+    //
+    // The derivation is compared against the bytes run by run rather than
+    // accumulated and compared whole. The claim is identical — the same encoder
+    // over the same envelope — and the difference is the peak: a decode that
+    // built the second copy owned two envelopes at once, which for a carried
+    // payload is twice the object.
     //
     // **What it uniquely covers is the manifest's wire-only fields**, measured
     // rather than argued — see the per-form table on
@@ -152,7 +158,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ArtifactEnvelope, ArtifactCodecErro
     // constant by `parse_component_schemas` and caught by nothing else at all.
     // That last one is unreachable only because every governed component minor
     // is zero today; it becomes live the moment one is raised.
-    if encode_with_identity(&envelope, &derived, &section_digests)? != bytes {
+    if !matches_canonical_encoding(&envelope, &derived, &section_digests, bytes)? {
         return Err(ArtifactCodecError::NonCanonicalManifest);
     }
     Ok(envelope)
@@ -227,6 +233,8 @@ fn read_header(
 /// canonicity backstop needs the same values and deriving them is the single
 /// most expensive thing a decode does; see [`encode_with_identity`] for why
 /// handing them on is a memoization rather than a weakened check.
+///
+/// [`encode_with_identity`]: super::encode::encode_with_identity
 fn read_sections(
     cursor: &mut Cursor<'_>,
     descriptors: &[SectionDescriptor],

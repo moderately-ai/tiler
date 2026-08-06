@@ -139,11 +139,11 @@ pub(crate) fn encode(envelope: &ArtifactEnvelope) -> Result<Vec<u8>, ArtifactCod
 /// **Both are parameters because deriving them is not cheap and the one caller
 /// that needs this already holds them.** `decode` derives the identity to
 /// compare against the manifest's and digests every section to compare against
-/// its descriptor, and then re-encodes the envelope as its canonicity backstop —
-/// which derived the very same identity and the very same digests a second time,
-/// from the same values, on every decode and therefore on every cache hit.
-/// Section content is 31% of the bytes a decode drives through SHA-256, and the
-/// governed digest is where a decode spends most of its time.
+/// its descriptor, and then re-derives the canonical encoding as its canonicity
+/// backstop — which derived the very same identity and the very same digests a
+/// second time, from the same values, on every decode and therefore on every
+/// cache hit. Section content is 31% of the bytes a decode drives through
+/// SHA-256, and the governed digest is where a decode spends most of its time.
 ///
 /// **Reusing the section digests does not weaken the backstop, and reusing the
 /// *manifest* digest would.** A section digest is a pure function of the
@@ -152,6 +152,10 @@ pub(crate) fn encode(envelope: &ArtifactEnvelope) -> Result<Vec<u8>, ArtifactCod
 /// The manifest digest is different in kind: it covers the manifest bytes this
 /// function is *rebuilding*, and whether those reproduce the ones on the wire is
 /// the very question the backstop asks — so it is derived here, every time.
+///
+/// The backstop itself does not call this. It calls
+/// [`matches_canonical_encoding`], which runs the same derivation against the
+/// bytes it is checking instead of into a buffer nobody keeps.
 ///
 /// # Panics
 ///
@@ -163,6 +167,134 @@ pub(crate) fn encode_with_identity(
     identity: &crate::program::CanonicalArtifactProgramIdentity,
     section_digests: &[Digest],
 ) -> Result<Vec<u8>, ArtifactCodecError> {
+    let EncodedHead {
+        header,
+        manifest,
+        total,
+    } = encode_head(envelope, identity, section_digests)?;
+
+    let mut bytes = Vec::with_capacity(total);
+    bytes.extend_from_slice(&header);
+    bytes.extend_from_slice(&manifest);
+    // Released before the sections are appended. Holding it would make the
+    // encoder's peak one whole envelope *plus* one manifest, and its content is
+    // already copied.
+    drop(manifest);
+    for (position, section) in envelope.sections().iter().enumerate() {
+        push_section_framing(&mut bytes, position, section);
+        bytes.extend_from_slice(&section.bytes);
+    }
+    debug_assert_eq!(
+        bytes.len(),
+        total,
+        "the derived total length is the encoding's length",
+    );
+    Ok(bytes)
+}
+
+/// Proves `bytes` is the exact canonical encoding of `envelope`.
+///
+/// The same derivation [`encode_with_identity`] performs, compared against the
+/// bytes in hand run by run rather than accumulated into a second buffer. The
+/// two are equivalent by construction — both drive [`encode_head`] and
+/// [`push_section_framing`], and the section stream is the same slices in the
+/// same order — and the difference is what a decode peaks at: comparing costs
+/// one manifest, where accumulating cost one whole additional envelope, every
+/// section byte of it, on every decode.
+///
+/// # Errors
+///
+/// Returns the typed [`ArtifactCodecError`] when the envelope cannot be encoded
+/// at all — an exhausted budget or an unencodable table. A well-formed envelope
+/// whose bytes simply are not canonical returns `Ok(false)`; the caller names
+/// that rejection, because it is the caller's check rather than this one's.
+///
+/// # Panics
+///
+/// Panics under the same condition [`encode_with_identity`] does.
+pub(super) fn matches_canonical_encoding(
+    envelope: &ArtifactEnvelope,
+    identity: &crate::program::CanonicalArtifactProgramIdentity,
+    section_digests: &[Digest],
+    bytes: &[u8],
+) -> Result<bool, ArtifactCodecError> {
+    let EncodedHead {
+        header,
+        manifest,
+        total,
+    } = encode_head(envelope, identity, section_digests)?;
+    if bytes.len() != total {
+        return Ok(false);
+    }
+    let Some(rest) = bytes.strip_prefix(header.as_slice()) else {
+        return Ok(false);
+    };
+    let Some(mut rest) = rest.strip_prefix(manifest.as_slice()) else {
+        return Ok(false);
+    };
+    drop(manifest);
+
+    let mut framing: Vec<u8> = Vec::with_capacity(SECTION_FRAMING_BYTES);
+    for (position, section) in envelope.sections().iter().enumerate() {
+        framing.clear();
+        push_section_framing(&mut framing, position, section);
+        let Some(after_framing) = rest.strip_prefix(framing.as_slice()) else {
+            return Ok(false);
+        };
+        let Some(after_content) = after_framing.strip_prefix(section.bytes.as_slice()) else {
+            return Ok(false);
+        };
+        rest = after_content;
+    }
+    // Implied by the length agreement above, and checked rather than argued:
+    // a section stream that consumed less than the whole remainder would mean
+    // the derived total and the derived runs disagree.
+    Ok(rest.is_empty())
+}
+
+/// The fixed framing header, the canonical manifest, and the exact total length.
+///
+/// The two runs are kept apart rather than concatenated because the comparing
+/// caller never needs them adjacent, and joining them would cost it a copy of
+/// the manifest it is about to compare against.
+struct EncodedHead {
+    /// The fixed-width framing header, exactly [`HEADER_BYTES`] long.
+    header: Vec<u8>,
+    /// The canonical manifest the header digests.
+    manifest: Vec<u8>,
+    /// Exact byte length of the complete encoding.
+    total: usize,
+}
+
+/// Exact width of the framing that precedes one section's bytes.
+const SECTION_FRAMING_BYTES: usize = size_of::<u32>() + size_of::<u64>();
+
+/// Writes the framing that introduces one section's exact bytes.
+///
+/// One function rather than a written form and a compared form, so the two
+/// callers cannot drift into two spellings of the same framing.
+fn push_section_framing(bytes: &mut Vec<u8>, position: usize, section: &Section) {
+    let before = bytes.len();
+    bytes.extend_from_slice(&ordinal(position).to_be_bytes());
+    push_len(bytes, section.bytes.len());
+    debug_assert_eq!(
+        bytes.len() - before,
+        SECTION_FRAMING_BYTES,
+        "the section framing is fixed width",
+    );
+}
+
+/// Derives the framing header, the canonical manifest, and the total length.
+///
+/// The total is computed from the manifest and the section table before any of
+/// it is written, which is what lets the header carry it as a derived field
+/// rather than a value patched in afterwards — and lets an envelope that cannot
+/// fit the governed bound be refused before it is assembled.
+fn encode_head(
+    envelope: &ArtifactEnvelope,
+    identity: &crate::program::CanonicalArtifactProgramIdentity,
+    section_digests: &[Digest],
+) -> Result<EncodedHead, ArtifactCodecError> {
     assert_eq!(
         section_digests.len(),
         envelope.sections().len(),
@@ -177,50 +309,49 @@ pub(crate) fn encode_with_identity(
         CodecLimitKind::ManifestBytes,
     )?;
 
-    let mut bytes = Vec::with_capacity(HEADER_BYTES + manifest.len());
-    bytes.extend_from_slice(&MAGIC);
-    bytes.extend_from_slice(&ENVELOPE_FORMAT.0.to_be_bytes());
-    bytes.extend_from_slice(&ENVELOPE_FORMAT.1.to_be_bytes());
-    bytes.extend_from_slice(&CANONICAL_ENCODING.0.to_be_bytes());
-    bytes.extend_from_slice(&CANONICAL_ENCODING.1.to_be_bytes());
-    bytes.push(algorithm.tag());
-    // The total length is written once the framing is complete; it is a
-    // derived field of the exact encoding and never a producer claim.
-    let total_length_at = bytes.len();
-    bytes.extend_from_slice(&0_u64.to_be_bytes());
-    push_len(&mut bytes, manifest.len());
+    // Saturating rather than checked, because saturation is already past the
+    // governed bound the next line rejects against: a sum that could not be
+    // represented is refused as the exhausted envelope budget it is.
+    let mut total = HEADER_BYTES.saturating_add(manifest.len());
+    for section in envelope.sections() {
+        total = total.saturating_add(SECTION_FRAMING_BYTES.saturating_add(section.bytes.len()));
+    }
+    codec_limit(total, MAX_ENVELOPE_BYTES, CodecLimitKind::EnvelopeBytes)?;
+
+    let mut header = Vec::with_capacity(HEADER_BYTES);
+    header.extend_from_slice(&MAGIC);
+    header.extend_from_slice(&ENVELOPE_FORMAT.0.to_be_bytes());
+    header.extend_from_slice(&ENVELOPE_FORMAT.1.to_be_bytes());
+    header.extend_from_slice(&CANONICAL_ENCODING.0.to_be_bytes());
+    header.extend_from_slice(&CANONICAL_ENCODING.1.to_be_bytes());
+    header.push(algorithm.tag());
+    header.extend_from_slice(
+        &u64::try_from(total)
+            .expect("supported usize fits u64")
+            .to_be_bytes(),
+    );
+    push_len(&mut header, manifest.len());
     // Four bytes rather than the eight framed on the line above, and not
     // `tiler_ir::identity` framing at all: a fixed-width header field that
     // `decode.rs` reads back as `cursor.u32()`, sized by the `u32` ordinal space
     // the envelope's section and expression tables are indexed in. Widening it
     // would change the artifact ABI rather than remove a duplicate.
-    bytes.extend_from_slice(&ordinal(envelope.sections().len()).to_be_bytes());
-    bytes.extend_from_slice(
+    header.extend_from_slice(&ordinal(envelope.sections().len()).to_be_bytes());
+    header.extend_from_slice(
         algorithm
             .digest(MANIFEST_DIGEST_DOMAIN, &manifest)
             .as_bytes(),
     );
     debug_assert_eq!(
-        bytes.len(),
+        header.len(),
         HEADER_BYTES,
         "the framing header is fixed width"
     );
-    bytes.extend_from_slice(&manifest);
-
-    for (position, section) in envelope.sections().iter().enumerate() {
-        bytes.extend_from_slice(&ordinal(position).to_be_bytes());
-        push_len(&mut bytes, section.bytes.len());
-        bytes.extend_from_slice(&section.bytes);
-    }
-
-    codec_limit(
-        bytes.len(),
-        MAX_ENVELOPE_BYTES,
-        CodecLimitKind::EnvelopeBytes,
-    )?;
-    let total = u64::try_from(bytes.len()).expect("supported usize fits u64");
-    bytes[total_length_at..total_length_at + 8].copy_from_slice(&total.to_be_bytes());
-    Ok(bytes)
+    Ok(EncodedHead {
+        header,
+        manifest,
+        total,
+    })
 }
 
 /// Derives the external digest over one complete encoded envelope.
@@ -497,6 +628,10 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
 /// disagree. The content digest is the one field the caller supplies, having
 /// derived it from these same sections — see [`encode_with_identity`] for why
 /// that is a memoized derivation rather than a claim this function trusts.
+///
+/// This is the *descriptor* table inside the manifest, not the framing that
+/// introduces a section's bytes in the stream; that is
+/// [`push_section_framing`].
 fn encode_section_descriptors(
     bytes: &mut Vec<u8>,
     envelope: &ArtifactEnvelope,
