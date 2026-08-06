@@ -24,12 +24,14 @@ A BF16 program encodes to an artifact and decodes back to the same program, with
 
 **Fact.** The canonical NaN field is `u32`-shaped and a BF16 canonical NaN is 16 bits. Whether it widens, becomes width-tagged, or moves into the realization record is a real design question, and `redesign-the-delivered-realization-record-from-typed-evidence` is already redesigning the record that owns delivered numerical evidence.
 
+**Fact — the redesign has since landed, and the width question survived it unresolved (2026-08-06, read on `main` after the merge).** The record is now `EntryRealization` at artifact version 15 and manifest schema 13.0, and the field it projects from is unchanged: `NumericalRealization.canonical_arithmetic_nan_bits: u32` (`crates/tiler-ir/src/schedule/numerics.rs:237`), encoded big-endian into the artifact at `crates/tiler-artifact/src/program/model.rs:2245`. The dependency below is satisfied and the ordering concern it protected is discharged; the width question is now resolved against the landed record rather than coordinated with an in-flight redesign. Note the kernel IR already carries `CanonicalizeBf16Nan`, so a 16-bit canonical NaN value exists in the vocabulary this record describes.
+
 ## Implementation keys
 
 - **The tag tables and `check_binding_access` are no longer this ticket's work** — they land in `admit-the-bf16-type-and-carrier-into-every-total-map`. **Measurement, 2026-08-02 at `3990f9d`, `cargo check --workspace --all-targets`.** `element_type_tag` (`program/model.rs:1737`), `storage_scalar_tag` (`:1758`), and `check_binding_access` (`codec/validate.rs:369`) are exhaustive matches over two deliberately non-`#[non_exhaustive]` vocabularies, so `crates/tiler-artifact` stops compiling the moment `KernelType::Bf16` and `StorageScalar::Bf16` exist. The tags therefore cannot wait for this ticket. On arrival, *verify* that both tables and their `*_from_tag` decoders already carry BF16 with every earlier tag value unchanged, rather than adding them a second time.
 - What stays here is everything the tags are *for*: the round trip, the identity, and the refusals below. An artifact encoded before that widening must still decode to the identical program after it.
 - The dtype participates in program identity, so a BF16 program and an otherwise identical F32 program have different identities. Assert this directly; it is the property a cache is wrong about if it does not hold.
-- Resolve the `canonical_arithmetic_nan_bits` width question rather than widening the field by reflex. Coordinate with the delivered-realization redesign instead of introducing a second numerical record.
+- Resolve the `canonical_arithmetic_nan_bits` width question rather than widening the field by reflex, against the landed `EntryRealization` record rather than by introducing a second numerical record.
 - Decoder refusal for an unknown tag stays a typed refusal at decode time, before any byte is interpreted.
 
 ## Required evidence
