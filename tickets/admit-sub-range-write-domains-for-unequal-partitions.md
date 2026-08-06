@@ -1,7 +1,7 @@
 ---
 id: admit-sub-range-write-domains-for-unequal-partitions
 title: Admit sub-range write domains for partitions of unequal extent
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [admit-a-partitioned-write-ownership-contract, lower-the-concatenate-occurrence-through-partitioned-writes, scope-the-concatenate-fusion-role-and-lowering, state-the-oracle-boundary-for-sub-domain-write-roots, evaluate-write-roots-over-their-own-domains-in-the-oracle, accept-the-sub-domain-write-domain-surface, prove-partition-coverage-for-symbolic-extents, correct-the-write-domain-rule-in-the-indexing-corpus]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, indexing, write-ownership]
-claimed_from: todo
-assignee: agent-subrange
-lease_expires_at: 1785994006
 ---
 ## User-visible outcome
 
