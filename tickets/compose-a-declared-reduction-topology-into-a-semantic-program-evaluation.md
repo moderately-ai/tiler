@@ -61,7 +61,7 @@ The composition question has a derived answer with its evaluated population and 
 
 **Measurement boundary.** Nothing ran, nothing compiled, no device. Every repository claim is a source reading at `b9146836` with a file and a line; the four-corner table is exact binary32 arithmetic reproducible by the quoted command on any host.
 
-**Commit:** `11c7ad63` carries the whole derivation, written at base `b9146836`. This paragraph is the only content after it, recorded in a follow-up commit because a hash cannot name the commit that contains it; the branch tip is what the coordinator integrates.
+**Commits:** three, on `tkt/compose-a-declared-reduction-topology-into-a-semantic-program-evaluation` from base `b9146836`. `11c7ad63` is the derivation; `842838ae` records this hash on the ticket, because a hash cannot name the commit containing it; `f6b98a39` sharpens one elimination ground after rereading the sum's attribute schema. **Integrate the branch tip**, which this paragraph is the last edit before.
 
 **Files changed:** `docs/research/reference/composed-realization-evaluation.md` (new), `docs/research/reference/plan-freedom-sites.md` (forward pointer in Part 7.4), `tickets/compose-a-declared-reduction-topology-into-a-semantic-program-evaluation.md`, `tickets/accept-the-composed-realization-evaluation-surface.md` (new). Nothing outside `docs/research/reference/` and `tickets/`.
 
