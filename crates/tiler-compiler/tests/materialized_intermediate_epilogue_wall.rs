@@ -27,7 +27,7 @@
 //! flipped it.** `verify_pointwise_region` required read access `i` to be
 //! `TensorRole::Input { ordinal: i }` for every `i`, which conflated the access
 //! *position* — the expression leaf it serves — with the *declared input* its
-//! role names. The two are separate now: the reads must name strictly ascending
+//! role names. The two are separate now: the reads must name non-descending
 //! declared inputs and at most one materialized intermediate, so the epilogue's
 //! region is expressible and a region with two intermediate reads, which nothing
 //! could attribute to materialization edges, is still refused.
@@ -503,7 +503,7 @@ fn verify(region: ScheduledRegion) -> Result<(), Vec<ScheduledRegionDiagnostic>>
 /// lifted it: `verify_pointwise_region` required read access `i` to be
 /// `TensorRole::Input { ordinal: i }` at every position, conflating the access
 /// position with the declared input the role names. It now requires the reads to
-/// name strictly ascending declared inputs and at most one intermediate. The
+/// name non-descending declared inputs and at most one intermediate. The
 /// control is the identical region reading input ordinal zero, so the admission
 /// is not evidence that the verifier stopped refusing things.
 ///
@@ -571,7 +571,8 @@ fn a_pointwise_region_may_read_a_materialized_intermediate() {
                     ordinal: InputOrdinal::new(1),
                 },
             ],
-            "declared input ordinals must ascend across the whole read list",
+            "declared input ordinals must not descend across the whole read \
+             list",
         ),
         (
             vec![TensorRole::Output],

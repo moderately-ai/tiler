@@ -1228,8 +1228,14 @@ pub(crate) struct NormalizedSerialSum {
     /// the absence would let a cover spell a copy kernel whose materialization —
     /// and whose rounding boundary — the caller's program never asked for.
     pub(crate) prologue: Option<PointwiseF32Expression>,
-    /// The non-identity access map each prologue input ordinal's read carries.
-    pub(crate) prologue_access_maps: Vec<(u32, LogicalAccess)>,
+    /// The prologue region's reads, in access order, or empty when there is no
+    /// prologue.
+    ///
+    /// Empty exactly when `prologue` is `None`, for the reason that field is
+    /// `None`: a fold over a declared input has no prologue region, so there is
+    /// no read list to state and an inhabited one would describe a region no
+    /// cover places.
+    pub(crate) prologue_reads: Vec<(u32, LogicalAccess)>,
     pub(crate) members: RecognizedSerialSumMembers,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) pointwise_result: ValueId,
@@ -1272,13 +1278,14 @@ pub(crate) struct NormalizedPointwise {
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) output: ValueId,
     pub(crate) elements: u64,
-    /// The non-identity access map each input ordinal's read carries.
+    /// The region's reads, in access order.
     ///
-    /// Ascending by ordinal, and only the ordinals a structural occurrence
-    /// interposed appear. Every absent ordinal reads
-    /// [`LogicalAccess::LinearIdentity`], which is what keeps a program with no
-    /// structural occurrence building the byte-identical region it always did.
-    pub(crate) access_maps: Vec<(u32, LogicalAccess)>,
+    /// One entry per expression input leaf, naming the declared input ordinal it
+    /// binds and the relation it addresses that tensor with. Ordinals do not
+    /// descend and one may appear twice — once densely and once through a
+    /// relation — which is how `a * permute(a)` is spelled: two leaves meaning
+    /// two different tensors derived from one declared input.
+    pub(crate) reads: Vec<(u32, LogicalAccess)>,
 }
 
 /// A verified two-input, one-output binary tensor-contraction `f32` program.
@@ -1869,7 +1876,7 @@ pub(crate) struct NormalizedSerialSumSubject {
     output_shape: Shape,
     reduction_axes: Vec<Axis>,
     prologue: Option<PointwiseF32Expression>,
-    prologue_access_maps: Vec<(u32, LogicalAccess)>,
+    prologue_reads: Vec<(u32, LogicalAccess)>,
     members: RecognizedSerialSumMembers,
     input_elements: u64,
     output_elements: u64,
@@ -2263,7 +2270,7 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
             }
             bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
             bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
-            encode_access_maps(bytes, &normalized.prologue_access_maps);
+            encode_elementwise_reads(bytes, &normalized.prologue_reads);
         }
         NormalizedOutputSubject::Pointwise(normalized) => {
             // The sub-tag steps to `v4` because the arm gained each read's
@@ -2295,7 +2302,7 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
                 bytes.extend_from_slice(&member.0.to_be_bytes());
             }
             bytes.extend_from_slice(&normalized.elements.to_be_bytes());
-            encode_access_maps(bytes, &normalized.access_maps);
+            encode_elementwise_reads(bytes, &normalized.reads);
         }
         // A third sub-tag rather than a step of the enclosing
         // `request-subject.v2` domain: neither existing arm's bytes move, so
@@ -2472,22 +2479,50 @@ fn encode_binary_node(
     bytes.extend_from_slice(&rhs.index().to_be_bytes());
 }
 
-/// Encodes the non-identity access relations one recognized region's reads carry.
+/// Encodes one whole-program or prologue region's read list.
 ///
-/// The count leads, then each entry writes its input ordinal and its relation.
-/// An ordinal absent from the run reads `LinearIdentity`, so the empty run is
-/// the canonical spelling of "every read is dense" and every already-recognized
-/// program encodes one — which is why the arms carrying this run stepped their
-/// sub-tags rather than appending to them.
+/// The count leads, then each written entry gives its input ordinal and its
+/// relation. **One read of an ordinal, addressing densely, is written as
+/// nothing**: the ordinal's absence from the run is that read's canonical
+/// spelling, so the empty run means "every declared input is read once, densely"
+/// and every already-recognized program encodes one.
+///
+/// **The projection is injective, and stating why is what holds the sub-tags
+/// where they are.** The declared input count is written earlier in the same
+/// arm, and the read list is recovered from the run against it: an ordinal
+/// absent from the run has one dense read, and an ordinal present `k` times has
+/// exactly those `k` reads in run order. The one byte string that would be
+/// ambiguous — a lone entry writing `LinearIdentity` — is the one this
+/// projection never emits.
+///
+/// **And it moves no already-encodable subject's bytes.** Before a region could
+/// read one declared input twice, a run held exactly the ordinals a structural
+/// occurrence interposed, which is what this projection still writes for such a
+/// program. A run reaches [`LogicalAccess::LinearIdentity`]'s tag only for a
+/// repeated ordinal, and no subject encodable before could produce that tag
+/// here at all — so per-tag injectivity closes over the widened domain, and
+/// `pointwise-f32.v4` and `serial-sum-f32.v3` hold rather than step.
 ///
 /// The relation is written through a per-variant tag and its own framed payload,
 /// so two reads differing in operand shape, result shape, or any decode differ
 /// in these bytes. The two structural relations get distinct tags for the reason
 /// they are distinct variants: a bijection and a replication are different facts
 /// about what a read consumes.
-fn encode_access_maps(output: &mut Vec<u8>, maps: &[(u32, LogicalAccess)]) {
-    push_len(output, maps.len());
-    for (ordinal, map) in maps {
+fn encode_elementwise_reads(output: &mut Vec<u8>, reads: &[(u32, LogicalAccess)]) {
+    let written = || {
+        reads
+            .iter()
+            .enumerate()
+            .filter(|(position, (ordinal, map))| {
+                *map != LogicalAccess::LinearIdentity
+                    || reads
+                        .iter()
+                        .enumerate()
+                        .any(|(other, (seen, _))| other != *position && seen == ordinal)
+            })
+    };
+    push_len(output, written().count());
+    for (_, (ordinal, map)) in written() {
         output.extend_from_slice(&ordinal.to_be_bytes());
         encode_access_relation(output, map);
     }
@@ -2495,18 +2530,15 @@ fn encode_access_maps(output: &mut Vec<u8>, maps: &[(u32, LogicalAccess)]) {
 
 /// Appends one read's access relation under its canonical per-variant tag.
 ///
-/// Split out of [`encode_access_maps`] because an epilogue's read list states a
-/// relation per *access position* rather than per input ordinal, so it needs the
-/// relation without the ordinal framing. One definition is what keeps the two
-/// spellings from drifting into two tag vocabularies.
+/// Split out of [`encode_elementwise_reads`] because an epilogue's read list
+/// writes every position unconditionally, so it needs the relation without that
+/// run's canonical omission. One definition is what keeps the two spellings from
+/// drifting into two tag vocabularies.
 ///
 /// [`LogicalAccess::LinearIdentity`] carries its own tag rather than falling
-/// through the wildcard. It is unreachable from [`encode_access_maps`] — the
-/// run there records only the ordinals a structural occurrence interposed — and
-/// an epilogue read that interposes none reaches it directly, so naming it is
-/// what keeps the dense read distinguishable from a relation this encoder
-/// refuses. No already-encodable subject's bytes move: the byte it now writes
-/// was never written before.
+/// through the wildcard, which is what keeps the dense read distinguishable from
+/// a relation this encoder refuses. Both callers reach it: an epilogue read that
+/// interposes no relation, and the dense half of a declared input read twice.
 fn encode_access_relation(output: &mut Vec<u8>, map: &LogicalAccess) {
     match map {
         LogicalAccess::ReindexBijection {
@@ -2569,6 +2601,11 @@ impl NormalizedSerialSumSubject {
     /// `None` when the fold's operand is a declared input tensor.
     pub(crate) const fn prologue(&self) -> Option<&PointwiseF32Expression> {
         self.prologue.as_ref()
+    }
+    /// The prologue region's reads, in access order; empty when there is no
+    /// prologue.
+    pub(crate) fn prologue_reads(&self) -> &[(u32, LogicalAccess)] {
+        &self.prologue_reads
     }
     pub(crate) const fn members(&self) -> &RecognizedSerialSumMembers {
         &self.members
@@ -2779,7 +2816,7 @@ fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputSubject {
                 output_shape: normalized.output_shape.clone(),
                 reduction_axes: normalized.reduction_axes.clone(),
                 prologue: normalized.prologue.clone(),
-                prologue_access_maps: normalized.prologue_access_maps.clone(),
+                prologue_reads: normalized.prologue_reads.clone(),
                 members: normalized.members.clone(),
                 input_elements: normalized.input_elements,
                 output_elements: normalized.output_elements,
@@ -3615,7 +3652,7 @@ fn resolve_numerical_contract(
 ///   `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
 ///   separated the access position from the declared input the role names, and a
 ///   pointwise region may now read one materialized intermediate alongside
-///   strictly ascending declared inputs. `verify_access_and_semantics` then
+///   non-descending declared inputs. `verify_access_and_semantics` then
 ///   admitted a fold only when its owning write targeted `TensorRole::Output`,
 ///   and `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate`
 ///   replaced that with a cover-assigned obligation at every committing pass. A
@@ -3969,12 +4006,13 @@ fn published_and_consumed_overlap(
 struct RecognizedElementwise {
     expression: PointwiseF32Expression,
     members: Vec<SemanticMemberId>,
-    /// The non-identity access map each input ordinal's read carries.
+    /// One entry per expression input leaf, in access order.
     ///
-    /// Only the ordinals a structural occurrence interposed appear; every other
-    /// read is [`LogicalAccess::LinearIdentity`] and is left implicit, which is
-    /// what keeps every already-recognized program's region byte-identical.
-    access_maps: Vec<(u32, LogicalAccess)>,
+    /// Parallel to the region's reads: leaf `i` is served by entry `i`, which
+    /// names the declared input ordinal it binds and the relation it addresses
+    /// that tensor with. An ordinal appears twice when one declared input is
+    /// read both densely and through a relation.
+    reads: Vec<(u32, LogicalAccess)>,
 }
 
 /// Which values one elementwise walk *reads* rather than computes.
@@ -4005,19 +4043,35 @@ impl ElementwiseLeaves<'_> {
     }
 }
 
+/// One tensor a walk reads, and the relation it addresses it with.
+///
+/// **The relation is part of the leaf's identity, not an annotation on it.** One
+/// expression may name a tensor twice meaning two different things — `a *
+/// permute(a)` reads declared input `0` densely *and* through a transposition —
+/// and those two leaves need two reads with two relations. Keying leaves by
+/// value alone made them one leaf, so the region bound one access for both and
+/// `a * permute(a)` compiled as `permute(a) * permute(a)`. Two reads of one
+/// tensor under the *same* relation address identically and stay one leaf, which
+/// is what keeps `(a * a) + b` one read of `a`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LeafRead {
+    value: ValueId,
+    map: LogicalAccess,
+}
+
 /// What one step of a planned elementwise walk mints.
 ///
 /// The steps are in mint order, so a node's operands are always already minted
 /// when it is reached — which is the property that lets [`mint_elementwise`]
 /// replay a plan against any leaf ordering without re-deciding anything.
 enum ElementwiseMint {
-    /// A read of one leaf tensor value.
+    /// A read of one leaf tensor value under one relation.
     ///
-    /// The leaf is the step's own value for a direct read, and the structural
+    /// The leaf's value is the step's own for a direct read, and the structural
     /// occurrence's *operand* when one interposed: a structural occurrence
     /// computes nothing, so the value it produces is minted as the leaf that
-    /// reads the tensor behind it.
-    Read { leaf: ValueId },
+    /// reads the tensor behind it under the relation the family denotes.
+    Read { leaf: LeafRead },
     /// An exact `f32` constant leaf.
     Constant(u32),
     /// One node of the recognized vocabulary over already-minted operands.
@@ -4068,13 +4122,8 @@ impl From<ElementwiseRefusal> for RequestError {
 struct ElementwisePlan {
     /// Each value the walk mints, in mint order.
     steps: Vec<(ValueId, ElementwiseMint)>,
-    /// The distinct leaf tensor values, in first-mint order.
-    leaves: Vec<ValueId>,
-    /// The non-identity access map each leaf's read carries.
-    ///
-    /// Keyed by the leaf value rather than by an ordinal, because the ordinal is
-    /// exactly what this plan does not yet know.
-    access_maps: Vec<(ValueId, LogicalAccess)>,
+    /// The distinct leaf reads, in first-mint order.
+    leaves: Vec<LeafRead>,
     members: Vec<SemanticMemberId>,
     root: ValueId,
 }
@@ -4186,60 +4235,138 @@ fn recognize_elementwise(
 /// Resolves one planned whole-program or prologue expression against the
 /// declared inputs.
 ///
-/// Declaration order *is* the leaf order here: the region binds one buffer per
-/// declared input in the order the ABI binds them, so leaf `i` is served by the
-/// read of declared input `i` and the two indices coincide. An epilogue is where
-/// they come apart, and [`recognize_epilogue`] states its own order rather than
-/// relaxing this one.
+/// Declaration order is the *group* order here: the region's reads walk the
+/// declared inputs in the order the ABI binds them. It is no longer a
+/// one-to-one correspondence with the leaves, because one declared input may be
+/// read twice — [`canonical_input_reads`] states the order the pair takes. An
+/// epilogue additionally reads a staged value, and [`recognize_epilogue`] states
+/// its own order rather than relaxing this one.
 ///
 /// # Errors
 ///
 /// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads` for
-/// a walk that did not read every declared input, and every rule
+/// a walk that did not read every declared input, `input-ordinal` for a
+/// declaration position no expression ordinal can hold, and every rule
 /// [`mint_elementwise`] reports.
 fn resolve_elementwise(
     plan: ElementwisePlan,
     declared: &[ValueId],
 ) -> Result<RecognizedElementwise, RequestError> {
-    // Every declared input must be read. One that is not would bind a buffer the
-    // kernel never loads, and the expression's own dense-ordinal rule would
-    // refuse the assembled expression anyway — this reports the property rather
-    // than the consequence.
-    if plan.leaves.len() != declared.len() {
-        return mismatch("elementwise-reads");
-    }
-    let expression = mint_elementwise(&plan, declared)?;
-    let mut access_maps: Vec<(u32, LogicalAccess)> = plan
-        .access_maps
+    let order = canonical_input_reads(&plan.leaves, declared)?;
+    let expression = mint_elementwise(&plan, &order)?;
+    let reads = order
         .iter()
-        .map(|(leaf, map)| {
-            let position = declared.iter().position(|input| input == leaf).ok_or(
-                RequestError::UnsupportedCapability {
-                    phase: "strategy",
-                    rule: "structural-operand",
-                },
-            )?;
-            let ordinal =
-                u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
-                    phase: "strategy",
-                    rule: "input-ordinal",
-                })?;
-            Ok((ordinal, map.clone()))
-        })
-        .collect::<Result<_, RequestError>>()?;
-    access_maps.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+        .map(|leaf| Ok((declared_ordinal(declared, leaf.value)?, leaf.map.clone())))
+        .collect::<Result<Vec<_>, RequestError>>()?;
     Ok(RecognizedElementwise {
         expression,
         members: plan.members,
-        access_maps,
+        reads,
     })
 }
 
-/// Records one leaf tensor value at its first sighting.
-fn record_leaf(leaves: &mut Vec<ValueId>, value: ValueId) {
-    if !leaves.contains(&value) {
-        leaves.push(value);
+/// Orders one walk's leaf reads into the read list a whole-program or prologue
+/// region binds.
+///
+/// **Declared inputs in declaration order, and each input's reads dense-first.**
+/// The group order is the ABI's. The order *within* a group is the canonical
+/// spelling `tiler_ir::schedule`'s `reads_bind_boundary_tensors_in_order`
+/// admits, and it has to be decided here rather than left to the walk: the two
+/// reads of `a` in `a * permute(a)` are popped in whichever order the operands
+/// happened to be visited, and a read list in walk order would give one program
+/// two spellings — and one of them would be refused by the region verifier for
+/// no property of the program.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads`
+/// when some declared input is read by no leaf, or some leaf reads a value that
+/// is not a declared input. The first would bind a buffer the kernel never
+/// loads; the second is unreachable for these walks, whose leaf set is the
+/// declared inputs by construction, and is refused rather than assumed away.
+fn canonical_input_reads(
+    leaves: &[LeafRead],
+    declared: &[ValueId],
+) -> Result<Vec<LeafRead>, RequestError> {
+    let mut order: Vec<LeafRead> = Vec::with_capacity(leaves.len());
+    for input in declared {
+        let group = order.len();
+        for dense in [true, false] {
+            order.extend(
+                leaves
+                    .iter()
+                    .filter(|leaf| {
+                        leaf.value == *input && (leaf.map == LogicalAccess::LinearIdentity) == dense
+                    })
+                    .cloned(),
+            );
+        }
+        if order.len() == group {
+            return mismatch("elementwise-reads");
+        }
     }
+    if order.len() != leaves.len() {
+        return mismatch("elementwise-reads");
+    }
+    Ok(order)
+}
+
+/// Returns the expression input ordinal one declared input value occupies.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads` for
+/// a value the declaration does not name and `input-ordinal` for a declaration
+/// position no expression ordinal can hold.
+fn declared_ordinal(declared: &[ValueId], value: ValueId) -> Result<u32, RequestError> {
+    let position = declared.iter().position(|input| *input == value).ok_or(
+        RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "elementwise-reads",
+        },
+    )?;
+    u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
+        phase: "strategy",
+        rule: "input-ordinal",
+    })
+}
+
+/// Records one leaf read at its first sighting, or refuses a second read of one
+/// tensor that nothing could attribute.
+///
+/// **Two reads of one tensor are admitted exactly when a region can tell them
+/// apart and order them.** A dense read and a mapped read of one declared input
+/// are two different tensors as far as the expression is concerned, and
+/// `tiler_ir::schedule`'s `reads_bind_boundary_tensors_in_order` binds the pair
+/// in one canonical order — dense first — so the region has one spelling.
+///
+/// The two refusals are that admission's own boundary rather than separate
+/// rules. A *staged* value read twice would need two `TensorRole::Intermediate`
+/// accesses, and that role carries no ordinal, so nothing says which
+/// materialization edge each binds — the very attribution that makes the input
+/// pair unambiguous is what it lacks. Two *structural* relations on one tensor
+/// have no canonical order between them, so the pair would have two encodings
+/// and the region two identities.
+fn record_leaf(
+    leaves: &mut Vec<LeafRead>,
+    staged: Option<ValueId>,
+    read: LeafRead,
+) -> Result<(), ElementwiseRefusal> {
+    if leaves.contains(&read) {
+        return Ok(());
+    }
+    let already_read = |mapped_only: bool| {
+        leaves.iter().any(|leaf| {
+            leaf.value == read.value && (!mapped_only || leaf.map != LogicalAccess::LinearIdentity)
+        })
+    };
+    let unattributable = staged == Some(read.value) && already_read(false);
+    let unordered = read.map != LogicalAccess::LinearIdentity && already_read(true);
+    if unattributable || unordered {
+        return refused("structural-access-conflict");
+    }
+    leaves.push(read);
+    Ok(())
 }
 
 /// Validates and linearizes the elementwise expression rooted at one value.
@@ -4266,12 +4393,7 @@ fn plan_elementwise(
     let mut steps: Vec<(ValueId, ElementwiseMint)> = Vec::new();
     let mut minted: Vec<ValueId> = Vec::new();
     let mut members: Vec<SemanticMemberId> = Vec::new();
-    let mut leaf_values: Vec<ValueId> = Vec::new();
-    let mut access_maps: Vec<(ValueId, LogicalAccess)> = Vec::new();
-    // Leaves this walk reads *without* a relation interposed, retained so the
-    // conflict below can be decided over the whole walk rather than in the order
-    // the two spellings happened to be popped.
-    let mut dense_leaves: Vec<ValueId> = Vec::new();
+    let mut leaf_reads: Vec<LeafRead> = Vec::new();
     let mut pending = vec![(root, false)];
     while let Some((value, operands_visited)) = pending.pop() {
         if minted.contains(&value) {
@@ -4281,9 +4403,12 @@ fn plan_elementwise(
             if program.shape(value).ok() != Some(shape) {
                 return refused("elementwise-shape");
             }
-            record_leaf(&mut leaf_values, value);
-            record_leaf(&mut dense_leaves, value);
-            steps.push((value, ElementwiseMint::Read { leaf: value }));
+            let leaf = LeafRead {
+                value,
+                map: LogicalAccess::LinearIdentity,
+            };
+            record_leaf(&mut leaf_reads, leaves.staged, leaf.clone())?;
+            steps.push((value, ElementwiseMint::Read { leaf }));
             minted.push(value);
             continue;
         }
@@ -4305,21 +4430,14 @@ fn plan_elementwise(
         // map the family denotes. That is what makes a fused region the
         // deliverable rather than a materializing copy kernel: the arithmetic
         // still comes from the neighbour, and only the addressing changes.
-        if let Some((leaf, map)) = recognize_structural_read(program, &operation, leaves, shape)
+        if let Some((operand, map)) = recognize_structural_read(program, &operation, leaves, shape)
             .map_err(ElementwiseRefusal::Refused)?
         {
-            // One leaf, one map. A program reading `a` directly *and* through
-            // a reindex asks one buffer parameter to carry two relations, which
-            // this region shape cannot bind — refused by name rather than
-            // resolved in favour of whichever was walked first.
-            match access_maps.iter().find(|(seen, _)| *seen == leaf) {
-                Some((_, bound)) if bound != &map => {
-                    return refused("structural-access-conflict");
-                }
-                Some(_) => {}
-                None => access_maps.push((leaf, map)),
-            }
-            record_leaf(&mut leaf_values, leaf);
+            let leaf = LeafRead {
+                value: operand,
+                map,
+            };
+            record_leaf(&mut leaf_reads, leaves.staged, leaf.clone())?;
             members.push(SemanticMemberId(member));
             steps.push((value, ElementwiseMint::Read { leaf }));
             minted.push(value);
@@ -4383,32 +4501,11 @@ fn plan_elementwise(
         steps.push((value, ElementwiseMint::Node(family, operands)));
         minted.push(value);
     }
-    // **One leaf, one relation — including the identity one.** A program reading
-    // `a` directly *and* through a reindex asks the single read this region binds
-    // for that leaf to carry two relations at once. The region has one access per
-    // leaf and the expression's two `Input` nodes share its ordinal, so admitting
-    // it made the *mapped* read serve both: `a * permute(a)` compiled as
-    // `permute(a) * permute(a)` and returned a wrong tensor with nothing
-    // reporting it. The pair is refused by name here, under the rule that
-    // already refuses two *different* structural relations on one leaf, because
-    // it is the same conflict with `LinearIdentity` as one of the two.
-    //
-    // Admitting it instead — binding two reads to one declared input — is a
-    // widening rather than a repair, because the region's read list and the
-    // program's declared interface stop being the same list;
-    // `admit-two-reads-of-one-declared-input-in-an-elementwise-region` owns it.
-    if access_maps
-        .iter()
-        .any(|(leaf, _)| dense_leaves.contains(leaf))
-    {
-        return refused("structural-access-conflict");
-    }
     members.sort_unstable();
     members.dedup();
     Ok(ElementwisePlan {
         steps,
-        leaves: leaf_values,
-        access_maps,
+        leaves: leaf_reads,
         members,
         root,
     })
@@ -4431,7 +4528,7 @@ fn plan_elementwise(
 /// `elementwise-expression` for an assembled expression no region can bind.
 fn mint_elementwise(
     plan: &ElementwisePlan,
-    order: &[ValueId],
+    order: &[LeafRead],
 ) -> Result<PointwiseF32Expression, RequestError> {
     let mut builder = PointwiseF32ExpressionBuilder::new();
     let mut minted: Vec<(ValueId, PointwiseF32Value)> = Vec::new();
@@ -4894,7 +4991,7 @@ fn recognize_pointwise(
         inputs: declared.to_vec(),
         output: output.value(),
         elements,
-        access_maps: recognized.access_maps,
+        reads: recognized.reads,
     })
 }
 
@@ -4903,20 +5000,19 @@ fn recognize_pointwise(
 /// **The read order is canonical rather than the order the walk minted leaves
 /// in, and that is a correctness requirement rather than tidiness.**
 /// `tiler_ir::schedule`'s pointwise access contract requires a region's declared
-/// input ordinals to ascend strictly across its read list, so a read list in
-/// walk order would make `staged * (b + a)` admissible and `staged * (a + b)`
-/// not — the same computation refused for the order its operands happened to be
-/// popped in. The staged read leads because exactly one read binds it and it
-/// carries no ordinal to interleave with; the declared inputs follow in
-/// declaration order.
+/// input ordinals not to descend across its read list, so a read list in walk
+/// order would make `staged * (b + a)` admissible and `staged * (a + b)` not —
+/// the same computation refused for the order its operands happened to be popped
+/// in. The staged read leads because exactly one read binds it and it carries no
+/// ordinal to interleave with; the declared inputs follow in declaration order,
+/// each input's own reads in the dense-first order that contract states.
 ///
 /// # Errors
 ///
 /// Returns [`RequestError::UnsupportedCapability`] naming the property that was
-/// not recognized: every rule [`plan_elementwise`] and [`mint_elementwise`]
-/// report for the epilogue's own walk, `input-ordinal` for a declaration
-/// position no expression ordinal can hold, and every rule the producing
-/// family's recognizer reports.
+/// not recognized: every rule [`plan_elementwise`], [`mint_elementwise`], and
+/// [`declared_ordinal`] report for the epilogue's own walk, and every rule the
+/// producing family's recognizer reports.
 fn recognize_epilogue(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
@@ -4930,42 +5026,39 @@ fn recognize_epilogue(
     };
     let plan =
         plan_elementwise(program, output.value(), &leaves, &shape).map_err(RequestError::from)?;
-    let mut order = vec![staged];
-    order.extend(
-        declared
-            .iter()
-            .copied()
-            .filter(|input| plan.leaves.contains(input)),
-    );
+    // The staged read, then whichever declared inputs the expression names. Only
+    // the inputs it reads appear, which is what an epilogue's read list differs
+    // in from a whole-program one — so the group walk is spelled here rather
+    // than through `canonical_input_reads`, whose `elementwise-reads` refusal is
+    // exactly the rule an epilogue does not owe.
+    let mut order: Vec<LeafRead> = plan
+        .leaves
+        .iter()
+        .filter(|leaf| leaf.value == staged)
+        .cloned()
+        .collect();
+    for input in declared {
+        for dense in [true, false] {
+            order.extend(
+                plan.leaves
+                    .iter()
+                    .filter(|leaf| {
+                        leaf.value == *input && (leaf.map == LogicalAccess::LinearIdentity) == dense
+                    })
+                    .cloned(),
+            );
+        }
+    }
     let expression = mint_elementwise(&plan, &order)?;
     let reads = order
         .iter()
         .map(|leaf| {
-            let read = if *leaf == staged {
+            let read = if leaf.value == staged {
                 EpilogueRead::Staged
             } else {
-                let position = declared.iter().position(|input| input == leaf).ok_or(
-                    RequestError::UnsupportedCapability {
-                        phase: "strategy",
-                        rule: "elementwise-reads",
-                    },
-                )?;
-                EpilogueRead::Input(u32::try_from(position).map_err(|_| {
-                    RequestError::UnsupportedCapability {
-                        phase: "strategy",
-                        rule: "input-ordinal",
-                    }
-                })?)
+                EpilogueRead::Input(declared_ordinal(declared, leaf.value)?)
             };
-            // Every read carries its relation explicitly, because the access
-            // position no longer indexes the map run: an absent entry would have
-            // to be resolved against an ordinal this list does not have.
-            let map = plan
-                .access_maps
-                .iter()
-                .find(|(seen, _)| seen == leaf)
-                .map_or(LogicalAccess::LinearIdentity, |(_, map)| map.clone());
-            Ok((read, map))
+            Ok((read, leaf.map.clone()))
         })
         .collect::<Result<Vec<_>, RequestError>>()?;
     let producer = recognize_epilogue_producer(program, staged, output.key().clone())?;
@@ -5073,6 +5166,14 @@ fn recognize_reduction(
     // rather than a prologue any region computes — which is why the condition
     // tested is the operand itself and not the emptiness that follows from it.
     let prologue = (!declared.contains(contributor)).then_some(recognized.expression);
+    // The read list belongs to the prologue *region*, so a fold that has no
+    // prologue states none. The walk still returns the fold's own contributor
+    // read, and recording it here would describe a region no cover places.
+    let prologue_reads = if prologue.is_some() {
+        recognized.reads
+    } else {
+        Vec::new()
+    };
     let members = RecognizedSerialSumMembers::new(recognized.members, sum_member);
 
     let input_elements = element_count_u64(&input_shape, "input")?;
@@ -5084,7 +5185,7 @@ fn recognize_reduction(
         output_shape,
         reduction_axes: axes,
         prologue,
-        prologue_access_maps: recognized.access_maps,
+        prologue_reads,
         members,
         inputs: declared,
         pointwise_result: *contributor,
@@ -6255,7 +6356,7 @@ mod tests {
             panic!("a fold over a declared input is recognized as a serial sum");
         };
         assert_eq!(recognized.prologue, None);
-        assert_eq!(recognized.prologue_access_maps, []);
+        assert_eq!(recognized.prologue_reads, []);
         // One part, not two: the empty prologue part is not a member set a cover
         // region may match, which is what `prologue_members` states.
         assert_eq!(recognized.prologue_members(), None);
@@ -6432,7 +6533,7 @@ mod tests {
         // and operand axis 0 takes result axis 1's, which is the transposition
         // written as a decode per operand axis.
         assert_eq!(
-            recognized.access_maps,
+            recognized.reads,
             vec![(
                 0,
                 LogicalAccess::ReindexBijection {
@@ -6470,44 +6571,115 @@ mod tests {
         let computed = builder.build().unwrap();
         assert_eq!(recognize(&computed).unwrap_err(), "structural-operand");
 
-        // `structural-access-conflict`: one declared input read *both* densely
-        // and through a relation. **This refusal replaced a silently wrong
-        // result**, measured on this program at `912b6058`: the region binds one
-        // read per declared input and the expression's two `Input { ordinal: 0 }`
-        // nodes share it, so the mapped relation served both leaves and
-        // `a * permute(a)` over `[[1, 2], [4, 8]]` compiled to
-        // `[1, 16, 4, 64]` — `permute(a) * permute(a)` — where the reference
-        // evaluator gives `[1, 8, 8, 64]`. Its accepted neighbour is the same
-        // program with the dense read removed, which differs by exactly the
-        // second spelling of that read.
-        let mixed = |dense: bool| {
+        // **Admitted, and this row moved here from the refusal inventory.** One
+        // declared input read *both* densely and through a relation was refused
+        // under `structural-access-conflict`, because the region bound one read
+        // per declared input and the expression's two `Input { ordinal: 0 }`
+        // nodes shared it — so the mapped relation served both leaves and
+        // `a * permute(a)` over `[[1, 2], [4, 8]]` compiled to `[1, 16, 4, 64]`,
+        // which is `permute(a) * permute(a)`, where the reference evaluator
+        // gives `[1, 8, 8, 64]`. The region now binds two reads of ordinal `0`,
+        // and the read list is asserted rather than the admission: a recognizer
+        // that admitted the program and bound one read would compile exactly the
+        // wrong tensor that a bare `is_ok()` would not see.
+        //
+        // What still refuses is the pair with no canonical order between its two
+        // members — two *structural* relations on one input — which is the
+        // neighbour that keeps the admission attributable.
+        let mixed = |second_dense: bool| {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
             let a = builder
                 .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
                 .unwrap();
-            let permuted = tiler_ir::semantic::F32Reindex::apply(
+            let reindex = |builder: &mut SemanticProgramBuilder,
+                           form: &tiler_ir::semantic::ReindexForm| {
+                tiler_ir::semantic::F32Reindex::apply(builder, form, a)
+                    .expect("the standard registry admits the reindex family")
+            };
+            let transposed = reindex(
                 &mut builder,
                 &tiler_ir::semantic::ReindexForm::permute_axes([Axis::new(1), Axis::new(0)])
                     .expect("a two-axis transposition is an admitted form"),
-                a,
-            )
-            .expect("the standard registry admits the reindex family");
-            let root = if dense {
-                F32Multiply::apply(&mut builder, a, permuted).unwrap()
+            );
+            let second = if second_dense {
+                a
             } else {
-                F32Multiply::apply(&mut builder, permuted, permuted).unwrap()
+                reindex(
+                    &mut builder,
+                    &tiler_ir::semantic::ReindexForm::reverse_axis(Axis::new(0))
+                        .expect("an axis reversal is an admitted form"),
+                )
             };
+            let root = F32Multiply::apply(&mut builder, second, transposed).unwrap();
+            builder
+                .output(OutputKey::new("result").unwrap(), root)
+                .unwrap();
+            builder.build().unwrap()
+        };
+        let NormalizedOutput::Pointwise(recognized) = recognize(&mixed(true))
+            .expect("one declared input may be read densely and through a relation")
+        else {
+            panic!("an elementwise output recognizes as an elementwise program");
+        };
+        // The dense read leads and the mapped one follows, which is the pair's
+        // canonical order and the only one the region verifier admits.
+        assert_eq!(
+            recognized.reads,
+            vec![
+                (0, LogicalAccess::LinearIdentity),
+                (
+                    0,
+                    LogicalAccess::ReindexBijection {
+                        operand_shape: Shape::from_dims([2, 2]),
+                        result_shape: Shape::from_dims([2, 2]),
+                        axes: vec![AxisDecode::read(1, 2), AxisDecode::read(2, 2)],
+                    },
+                ),
+            ],
+        );
+        assert_eq!(recognized.expression.input_count(), 2);
+        assert_eq!(
+            recognize(&mixed(false)).unwrap_err(),
+            "structural-access-conflict",
+        );
+
+        // `structural-access-conflict` again, and this is the *other* half of the
+        // widening's boundary: the twice-read tensor is the value an earlier
+        // region staged rather than a declared input. What admits the pair above
+        // is the ordinal saying which tensor each read binds, and
+        // `TensorRole::Intermediate` carries none — so a second staged read has
+        // nothing to attribute it to a second materialization edge. Its accepted
+        // neighbour is `s * s`, which reads the staged value once and differs by
+        // exactly the read that would have no attribution.
+        let staged = |mapped: bool| {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let a = builder
+                .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+                .unwrap();
+            let folded = StrictSerialF32Sum::apply(&mut builder, a, [Axis::new(1)]).unwrap();
+            let second = if mapped {
+                tiler_ir::semantic::F32Reindex::apply(
+                    &mut builder,
+                    &tiler_ir::semantic::ReindexForm::reverse_axis(Axis::new(0))
+                        .expect("an axis reversal is an admitted form"),
+                    folded,
+                )
+                .expect("the standard registry admits the reindex family")
+            } else {
+                folded
+            };
+            let root = F32Multiply::apply(&mut builder, folded, second).unwrap();
             builder
                 .output(OutputKey::new("result").unwrap(), root)
                 .unwrap();
             builder.build().unwrap()
         };
         assert!(matches!(
-            recognize(&mixed(false)),
-            Ok(NormalizedOutput::Pointwise(_)),
+            recognize(&staged(false)),
+            Ok(NormalizedOutput::Epilogue(_)),
         ));
         assert_eq!(
-            recognize(&mixed(true)).unwrap_err(),
+            recognize(&staged(true)).unwrap_err(),
             "structural-access-conflict",
         );
 

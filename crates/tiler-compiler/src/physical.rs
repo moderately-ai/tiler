@@ -83,6 +83,17 @@ fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
 /// admitting one here would bind an unproved reassociation to the request's
 /// occurrences.
 ///
+/// **And the prologue's read must be dense, which is a correctness condition
+/// rather than a narrowing.** The fused region has no prologue read of its own:
+/// it addresses the declared input through a [`LogicalAccess::ReductionContributor`]
+/// relation and applies the affine body to each contributor. A prologue whose
+/// read carries a structural relation — `sum(permute(a) * 2.0 + 1.0)` — has that
+/// relation nowhere to go in the fused spelling, so fusing would silently fold
+/// `a` where the program said `permute(a)` and return a wrong tensor. The
+/// expression alone cannot report it: `permute(a) * 2.0 + 1.0` and `a * 2.0 +
+/// 1.0` are the same [`PointwiseF32Expression`], and only the read list
+/// separates them.
+///
 /// Returning `None` loses a candidate and never a program — the materialized
 /// two-region plan realizes every recognized prologue, and it is what a general
 /// prologue compiles through.
@@ -99,7 +110,15 @@ fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
 /// it, so "a fused alternative exists" and "the fused equivalence proof is
 /// claimed" cannot disagree.
 pub(crate) fn fused_prologue_constants(output: &NormalizedOutput) -> Option<(u32, u32)> {
-    affine_prologue(output.try_serial_sum()?.prologue.as_ref()?)
+    let serial = output.try_serial_sum()?;
+    if serial
+        .prologue_reads
+        .iter()
+        .any(|(_, map)| *map != LogicalAccess::LinearIdentity)
+    {
+        return None;
+    }
+    affine_prologue(serial.prologue.as_ref()?)
 }
 
 /// Recovers the scale and bias one recognized expression spells, or declines.
@@ -749,42 +768,39 @@ pub(crate) fn pointwise_region(
     output: &NormalizedOutput,
     write: RegionWrite,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
-    let (shape, elements, inputs, expression, members, access_maps) =
+    let (shape, elements, expression, members, recognized_reads) =
         if let Some(pointwise) = output.pointwise() {
             (
                 pointwise.shape.clone(),
                 pointwise.elements,
-                pointwise.input_keys.len(),
                 pointwise.expression.clone(),
                 pointwise.members.clone(),
-                pointwise.access_maps.clone(),
+                pointwise.reads.clone(),
             )
         } else {
             let serial = output.serial_sum();
             (
                 serial.input_shape.clone(),
                 serial.input_elements,
-                serial.input_keys.len(),
                 serial
                     .prologue
                     .clone()
                     .expect("a prologue region is spelled only for a fold that has a prologue"),
                 serial.members.pointwise().to_vec(),
-                serial.prologue_access_maps.clone(),
+                serial.prologue_reads.clone(),
             )
         };
-    // One read per declared input tensor, its ordinal fixed by its position.
-    let reads: Vec<(TensorRole, LogicalAccess)> = (0..u32::try_from(inputs).unwrap_or(u32::MAX))
-        .map(|ordinal| {
-            let map = access_maps
-                .iter()
-                .find(|(seen, _)| *seen == ordinal)
-                .map_or(LogicalAccess::LinearIdentity, |(_, map)| map.clone());
+    // The recognized read list, not the declared arity: one declared input may be
+    // read twice — once densely and once through a relation — so the read count
+    // and the interface width are different numbers.
+    let reads: Vec<(TensorRole, LogicalAccess)> = recognized_reads
+        .iter()
+        .map(|(ordinal, map)| {
             (
                 TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
+                    ordinal: InputOrdinal::new(*ordinal),
                 },
-                map,
+                map.clone(),
             )
         })
         .collect();
@@ -911,11 +927,10 @@ const EPILOGUE_REGION: RegionId = RegionId::new(5);
 
 /// Builds the canonical elementwise epilogue region for one recognized chain.
 ///
-/// **Its reads come from the recognized read list, not from the declared input
-/// arity**, which is the whole difference from [`pointwise_region`]: exactly one
-/// read binds the materialization edge the cover hands this region, and the
-/// declared inputs the expression names bind their own ordinals at whatever
-/// access positions the expression's leaves occupy.
+/// **Exactly one read binds the materialization edge the cover hands this
+/// region**, which is the whole difference from [`pointwise_region`]: both build
+/// from a recognized read list, and only this one's list can name a tensor that
+/// is not a declared input.
 ///
 /// Like [`pointwise_region`], this is the raw region and its recognized members;
 /// every gate is applied when the frontier resubmits it through the ordinary
@@ -2242,6 +2257,7 @@ fn verify_region_output_binding(
                 // and the explicit root, so a provider cannot substitute an
                 // algebraically similar but unproved expression for it.
                 && expression == &normalized.expression
+                && elementwise_reads_match(&region.index.accesses, &normalized.reads)
         }
         (
             NormalizedOutputSubject::Contraction(normalized),
@@ -2368,6 +2384,10 @@ fn verify_region_output_binding(
                         && semantic_members == normalized.members().pointwise()
                         && region.index.id == RegionId::new(0)
                         && region.index.iteration_shape == *normalized.input_shape()
+                        && elementwise_reads_match(
+                            &region.index.accesses,
+                            normalized.prologue_reads(),
+                        )
                 }
                 ScalarProgram::StrictSerialSum {
                     axes,
@@ -2449,6 +2469,33 @@ fn verify_region_output_binding(
 /// notice. The staged read's position is checked by this pairing too: two
 /// regions whose reads bind the same tensors in a different order serve
 /// different expression leaves from the same buffers.
+/// Requires one whole-program or prologue region's reads to be the recognized
+/// ones, position by position.
+///
+/// **This binds the read list itself, which the expression cannot.** A region
+/// reading declared input `0` twice and one reading inputs `0` and `1` carry the
+/// same three-leaf expression, and so do a dense read and a transposed one of
+/// the same tensor — so a provider substituting either would compute a different
+/// tensor over the same buffers while every other fact in this arm agreed. The
+/// intrinsic verifier sees only the region and cannot notice, which is the same
+/// argument the contraction and epilogue arms make for their own access checks.
+fn elementwise_reads_match(accesses: &[Access], recognized: &[(u32, LogicalAccess)]) -> bool {
+    let Some((_, reads)) = accesses.split_last() else {
+        return false;
+    };
+    reads.len() == recognized.len()
+        && reads
+            .iter()
+            .zip(recognized)
+            .all(|(access, (ordinal, map))| {
+                access.tensor
+                    == TensorRole::Input {
+                        ordinal: InputOrdinal::new(*ordinal),
+                    }
+                    && access.map == *map
+            })
+}
+
 fn epilogue_accesses_match(
     accesses: &[Access],
     normalized: &crate::request::NormalizedEpilogueSubject,
@@ -3314,6 +3361,31 @@ mod tests {
                 region.semantic_members().to_vec(),
                 &request,
             ),
+            Err(PhysicalError::Intrinsic {
+                rule: "request-binding",
+                ..
+            })
+        ));
+
+        // A read addressed through a relation the recognition did not derive.
+        // The region stays *intrinsically* well formed — a whole-extent
+        // transposition of `[2, 2]` is an admissible pointwise map and its bounds
+        // proof still bounds the same four elements — so nothing below the
+        // subject binding can notice, and the tensor it computes is a
+        // transposition of the one the program declared. Only comparing the read
+        // list against the recognized one refuses it, which is why that
+        // comparison exists.
+        let mut forged_map = region.region().clone();
+        forged_map.index.accesses[0].map = LogicalAccess::ReindexBijection {
+            operand_shape: Shape::from_dims([2, 2]),
+            result_shape: Shape::from_dims([2, 2]),
+            axes: vec![
+                tiler_ir::schedule::AxisDecode::read(1, 2),
+                tiler_ir::schedule::AxisDecode::read(2, 2),
+            ],
+        };
+        assert!(matches!(
+            verify_schedule(forged_map, region.semantic_members().to_vec(), &request),
             Err(PhysicalError::Intrinsic {
                 rule: "request-binding",
                 ..

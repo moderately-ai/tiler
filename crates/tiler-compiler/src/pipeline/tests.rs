@@ -637,8 +637,10 @@ pub(super) fn interpret_fused(kernel: &VerifiedKernel, input: &[f32]) -> Vec<f32
 /// Interprets one `f32` kernel over one payload per declared read buffer.
 ///
 /// `inputs` is in the kernel's own buffer declaration order, which the region
-/// builder fixes as ascending input ordinal followed by the owning write — so a
-/// caller binds its program's declared inputs in the order it declared them.
+/// builder fixes as the recognized read list followed by the owning write. For
+/// almost every program that is the declared inputs in declaration order; a
+/// program reading one input both densely and through a relation has two entries
+/// for it, and binds the same payload twice.
 pub(super) fn interpret_fused_inputs(kernel: &VerifiedKernel, inputs: &[&[f32]]) -> Vec<f32> {
     let payloads: Vec<KirElements<'_>> = inputs.iter().copied().map(KirElements::F32).collect();
     match KirMachine::run(kernel, &payloads, Bf16Canonicalization::Applied) {
@@ -1691,6 +1693,167 @@ fn a_reindexed_operand_feeding_a_multiply_matches_the_reference_evaluator() {
     // elementwise by `3, 5, 7, 11`. Without the permutation the product would be
     // `3, 10, 28, 88`, which is what makes this literal discriminating.
     assert_eq!(actual, bits_of(&[3.0, 20.0, 14.0, 88.0]));
+}
+
+/// `out = a * permute(a)` reaches a kernel matching the reference evaluator, bit
+/// for bit — one declared input read twice, densely and through a relation.
+///
+/// **This is the regression for a measured silently wrong result.** At
+/// `912b6058` this program compiled and returned `[1, 16, 4, 64]`, which is
+/// `permute(a) * permute(a)`: the region bound one read per declared input, the
+/// expression's two `Input { ordinal: 0 }` leaves shared it, and the mapped
+/// relation served both. The reference gives `[1, 8, 8, 64]`.
+/// `admit-elementwise-epilogues-over-a-materialized-intermediate` closed it
+/// fail-closed under `structural-access-conflict`; this is the widening that
+/// admits the program instead, so the assertion is the *value*, not the
+/// admission.
+///
+/// **The fixture is deliberately asymmetric under transposition**, so the wrong
+/// answer is a different tensor rather than coincidentally the right one: `a` is
+/// `[[1, 2], [4, 8]]` and its transpose is `[[1, 4], [2, 8]]`. Every product is a
+/// power of two and exactly representable, so a bit comparison is the whole
+/// comparison and no tolerance can hide a wrong element.
+///
+/// The region binds *two* read buffers to the one declared input, which is why
+/// the payload is passed twice: the kernel's buffer list is the region's read
+/// list, and two reads of one tensor are two bindings rather than one shared.
+#[test]
+fn one_input_read_densely_and_through_a_permutation_matches_the_reference_evaluator() {
+    let domain = Shape::from_dims([2, 2]);
+    let values: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), domain.clone())
+        .unwrap();
+    let transposed = tiler_ir::semantic::F32Reindex::apply(
+        &mut builder,
+        &tiler_ir::semantic::ReindexForm::permute_axes([Axis::new(1), Axis::new(0)])
+            .expect("an axis permutation is an admitted form"),
+        a,
+    )
+    .expect("the standard registry admits the reindex family");
+    let product = F32Multiply::apply(&mut builder, a, transposed).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), product)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let compiled = compile(CompilationRequest::governed(&semantic))
+        .expect("one declared input may be read densely and through a relation");
+    let fused = alternative(&compiled, ProgramAlternativeKind::Fused);
+    assert_eq!(fused.scheduled_regions.len(), 1);
+    // Two reads of declared input `0`, dense first, then the write. Asserted
+    // because it is the fact the value comparison below depends on: a region
+    // that bound one read could not spell this program at all.
+    let accesses = &fused.scheduled_regions[0].region().index.accesses;
+    assert_eq!(accesses.len(), 3);
+    let first_input = TensorRole::Input {
+        ordinal: InputOrdinal::FIRST,
+    };
+    assert_eq!(accesses[0].tensor, first_input);
+    assert_eq!(
+        accesses[0].map,
+        tiler_ir::schedule::LogicalAccess::LinearIdentity
+    );
+    assert_eq!(accesses[1].tensor, first_input);
+    assert!(matches!(
+        accesses[1].map,
+        tiler_ir::schedule::LogicalAccess::ReindexBijection { .. }
+    ));
+    assert!(fused.plan.cover().materializations().is_empty());
+
+    let actual = interpret_fused_inputs(&fused.kernels[0], &[&values, &values]);
+
+    let key = InputKey::new("a").unwrap();
+    let tensor = f32_tensor(domain, &values);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&semantic, &[InputBinding::new(&key, &tensor)])
+        .unwrap();
+    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
+    // Stated independently of the oracle, and stated as the *pair*: the measured
+    // wrong answer is named beside the right one, so a regression that reinstated
+    // the shared read fails on a value this test already knows the meaning of.
+    assert_eq!(actual, vec![1.0, 8.0, 8.0, 64.0]);
+    assert_ne!(actual, vec![1.0, 16.0, 4.0, 64.0]);
+}
+
+/// `sum(permute(a) * 2.0 + 1.0)` withholds the affine-fused fold and compiles
+/// through the materialized pair, matching the reference bit for bit.
+///
+/// **The fused single-region alternative would drop the permutation, and only
+/// the read list can report it.** `ScalarProgram::FusedMultiplyAddSerialSum`
+/// applies `scale * x + bias` to each contributor of a
+/// [`LogicalAccess::ReductionContributor`] read of the declared input — it has no
+/// place to put a structural relation. The prologue expression it is recovered
+/// from is `input(0) * 2.0 + 1.0` whether the read is dense or transposed, so
+/// every fact `affine_prologue` inspects agrees for both programs, and fusing
+/// would fold `a` where the caller wrote `permute(a)`.
+///
+/// Found while widening the read list, and fixed rather than filed: the
+/// alternative returned a wrong tensor, which the architectural contract does
+/// not admit deferring. `fused_prologue_constants` declines the candidate, and
+/// declining loses a candidate rather than a program — the materialized pair
+/// below realizes it.
+///
+/// The fixture is asymmetric under transposition, so the dropped permutation is
+/// a different tensor rather than the same one: over `[[1, 2], [4, 8]]` the
+/// correct rows are `[12, 22]` and the unpermuted fold gives `[8, 26]`.
+#[test]
+fn an_affine_prologue_read_through_a_relation_declines_the_fused_fold() {
+    let domain = Shape::from_dims([2, 2]);
+    let values: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), domain.clone())
+        .unwrap();
+    let transposed = tiler_ir::semantic::F32Reindex::apply(
+        &mut builder,
+        &tiler_ir::semantic::ReindexForm::permute_axes([Axis::new(1), Axis::new(0)])
+            .expect("an axis permutation is an admitted form"),
+        a,
+    )
+    .expect("the standard registry admits the reindex family");
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, transposed, two).unwrap();
+    let one = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+    let biased = F32Add::apply(&mut builder, scaled, one).unwrap();
+    let sum = StrictSerialF32Sum::apply(&mut builder, biased, [Axis::new(1)]).unwrap();
+    builder.output(OutputKey::new("out").unwrap(), sum).unwrap();
+    let semantic = builder.build().unwrap();
+
+    let product = compile(CompilationRequest::governed(&semantic))
+        .expect("a structurally read affine prologue compiles through the materialized pair");
+    // No single-region alternative at all: the fused fold is the only one this
+    // program could have, and it is withheld rather than offered and rejected.
+    assert!(
+        product.targets[0]
+            .portfolio
+            .alternatives
+            .iter()
+            .all(|retained| retained.kind != ProgramAlternativeKind::Fused),
+        "the affine fusion must be withheld for a prologue read through a relation",
+    );
+
+    let chain = alternative_dispatching(&product, 2);
+    let staged = interpret_fused(&chain.kernels[0], &values);
+    let actual = interpret_fused(&chain.kernels[1], &staged);
+
+    let key = InputKey::new("a").unwrap();
+    let tensor = f32_tensor(domain, &values);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&semantic, &[InputBinding::new(&key, &tensor)])
+        .unwrap();
+    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
+    // Independently of the oracle, and naming the wrong answer beside the right
+    // one: `a` transposed is `[[1, 4], [2, 8]]`, scaled and biased to
+    // `[[3, 9], [5, 17]]`, folded on axis 1. Dropping the permutation would fold
+    // `[[3, 5], [9, 17]]` instead.
+    assert_eq!(actual, vec![12.0, 22.0]);
+    assert_ne!(actual, vec![8.0, 26.0]);
 }
 
 fn assert_fused_matches_reference(shape: Shape, values: Vec<f32>, scale_bits: u32, bias_bits: u32) {
