@@ -3,19 +3,19 @@ schema: "tiler-doc/v1"
 id: "tiler.spike.apple-targets"
 kind: "experiment"
 title: "Apple Metal target compatibility and numerical spikes"
-topics: ["apple-targets", "metal", "compatibility", "numerics", "subnormals", "runtime-compilation", "quantization"]
+topics: ["apple-targets", "metal", "compatibility", "numerics", "subnormals", "reassociation", "runtime-compilation", "quantization"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
-supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour", "tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger"]
-entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh", "spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py", "spikes/apple-targets/contraction-pragma-runtime-probe/pragma_probe.py"]
-last_verified: "2026-08-02"
+supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour", "tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger", "tiler.research.reference.permitted-divergence-oracle"]
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh", "spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py", "spikes/apple-targets/contraction-pragma-runtime-probe/pragma_probe.py", "spikes/apple-targets/evaluation-order-probe/order_probe.py"]
+last_verified: "2026-08-06"
 ticket: "apple-artifact-compatibility"
 ---
 
 # Apple Metal target compatibility and numerical spikes
 
-Five independent probes share this directory because they share a host row. The
+Six independent probes share this directory. The
 compatibility probe answers which artifact families and deployment minima
 produce which bytes. The numerical probe answers what Apple GPU scalar
 arithmetic actually does to subnormals, signed zero, and contraction — and, since
@@ -27,7 +27,42 @@ strict-affine `u8` decode computes the contract's value over its complete finite
 code domain. The contraction-pragma runtime probe asks whether a source-level
 contraction pragma survives to the runtime compiler — the one question the
 numerical probe's byte-identical pairing structurally forbids it from asking.
-None downloads or installs a toolchain component.
+The evaluation-order probe asks whether an emitted floating-point evaluation
+*order* survives either compiler, which is the property a plan's pinned reduction
+grouping rests on. None downloads or installs a toolchain component.
+
+**Five of the six share a host row and the evaluation-order probe does not.** It
+was measured after this host's `xcode-select` moved to Xcode 27.0 and an offline
+`metalfe-32023.921`, where every other retained record here names Xcode 26.6 and
+an offline `metalfe-32023.883`. Its rows and theirs are not rows of one table,
+and a difference between them is not evidence of drift until one is re-run on the
+other's toolchain.
+
+## Evaluation-order probe
+
+The [sibling harness](evaluation-order-probe/README.md) dispatches a
+four-contributor add chain whose written order and a legal alternative order
+differ by one ULP — the seed [the permitted-divergence
+oracle](../../docs/research/reference/permitted-divergence-oracle.md)'s Part 6
+works through — at every `-fmetal-math-mode` × `-ffp-contract` × optimization
+level the offline driver accepts and every `mathMode` × `MTLLibraryOptimizationLevel`
+pair `MTLCompileOptions` exposes, 72 cases in one host invocation. Its 2026-08-06
+retained record finds a written two-by-two split `(a+b)+(c+d)` **re-emitted as a
+left-deep chain** and returning the serial value under `relaxed` and `fast` — two
+offline cells and four runtime ones — while every `safe` cell on both paths
+returns the order its own source names. The offline half reads the rewritten add
+tree out of the emitted LLVM IR, so the change is attributable to the front end
+rather than to the AIR-to-ISA stage below it.
+
+**Its separation is what makes it evidence.** The fold kernels contain adds and
+nothing else, measured rather than argued: their emitted operation list is
+`fadd;fadd;fadd` in all 36 offline cases, so contraction has no pair to act on.
+An `a*b+c` control is dispatched in the same run and the same matrix and fuses in
+10 of its 24 cases, so the contraction axis is demonstrably live beside them; if
+it fused nowhere the producer publishes nothing, and that refusal was watched
+firing. An opcode count could not have found the reordering at all — three adds
+rearranged are still three adds — which is why the emitted tree is a separate
+reading.
 
 ## Contraction-pragma runtime probe
 
