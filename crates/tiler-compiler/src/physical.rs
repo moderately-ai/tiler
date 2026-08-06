@@ -147,6 +147,15 @@ pub(crate) const SERIAL_BASELINE_STRATEGY: &str = "tiler.region.serial-baseline"
 /// recognized as an elementwise one or as a reduction prologue — answers a
 /// question about the program where a question about the region belongs, and
 /// gives every region a cover places the same answer.
+///
+/// **A cover may assign both, and that is a region of two dispatches rather than
+/// a write of two tensors.** [`tiler_ir::program::ValueRole`] is exclusive and a
+/// dispatch owns one write, so a region whose value is published *and* consumed
+/// stages the value its consumer reads across and publishes a copy of it from a
+/// second dispatch — structurally a split reduction's final pass, one fold up.
+/// [`Self::tensor`] therefore answers for the region's *first* dispatch;
+/// [`publishing_copy_region`] builds the second, and nothing else may read the
+/// third variant as if it named one write.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RegionWrite {
     /// The cover assigns this region a declared program output.
@@ -154,15 +163,28 @@ pub(crate) enum RegionWrite {
     /// A materialization edge names this region as the producer of a value
     /// another region reads.
     Materialized,
+    /// A materialization edge names this region as producer *and* the cover
+    /// assigns it a declared program output: the value is both published and
+    /// consumed.
+    MaterializedAndPublished,
 }
 
 impl RegionWrite {
-    /// Returns the boundary tensor role the region's owning write carries.
+    /// Returns the boundary tensor role the region's *first* dispatch writes.
+    ///
+    /// A published-and-consumed region's first dispatch stages the value, which
+    /// is why it answers the same as [`Self::Materialized`] here: the
+    /// publication is the second dispatch's write and is built separately.
     pub(crate) const fn tensor(self) -> TensorRole {
         match self {
             Self::ProgramOutput => TensorRole::Output,
-            Self::Materialized => TensorRole::Intermediate,
+            Self::Materialized | Self::MaterializedAndPublished => TensorRole::Intermediate,
         }
+    }
+
+    /// Returns whether this region needs a second dispatch to publish a copy.
+    pub(crate) const fn publishes_a_copy(self) -> bool {
+        matches!(self, Self::MaterializedAndPublished)
     }
 }
 
@@ -302,10 +324,27 @@ impl RegionVocabularyWall {
 ///
 /// **The search is over every recognized output, not over one whole-program
 /// partition.** The recognizer produces one partition per ordered named output
-/// and the walks are proved disjoint, so at most one output owns any member set
-/// and the first match is the only match. A region straddling two outputs' walks
-/// matches none of them and is refused as partial coverage, which is the right
-/// answer: no scheduled region computes two published results.
+/// and a region straddling two outputs' walks matches none of them, so it is
+/// refused as partial coverage — the right answer, since no scheduled region
+/// computes two published results.
+///
+/// **The first match is no longer the only match, and declaration order is the
+/// decided tie-break.** `check_output_cover` admits exactly one overlap: a walk
+/// that is one whole *part* of a longer walk's partition and publishes the value
+/// that part hands across the boundary. Both outputs then own that member set,
+/// so the scan finds two claimants. Taking the first is correct rather than
+/// arbitrary, because the two claimants are recognitions of *one value over one
+/// occurrence set* — the admitted overlap requires exactly that — so they spell
+/// the same expression over the same domain and differ only in which
+/// [`crate::request::NormalizedOutput`] arm the walk was recorded under.
+/// `both_claimants_of_a_published_and_consumed_part_spell_one_region` holds it,
+/// because an argument that the choice is immaterial is worth less than a check
+/// that says no when it stops being.
+///
+/// The resolved position still matters downstream — it is what
+/// [`crate::request::VerifiedTargetRequest::output_at`] resolves the region's
+/// shapes from — which is exactly why the equivalence is asserted rather than
+/// assumed.
 pub(crate) fn spell_region(
     request: &VerifiedTargetRequest,
     members: &[SemanticMemberId],
@@ -901,6 +940,69 @@ pub(crate) fn epilogue_region(
         write,
     );
     (region, chain.members.clone())
+}
+
+/// The region identifier every publishing copy carries.
+///
+/// Distinct from the epilogue's and the whole-program region's, for the reason
+/// [`EPILOGUE_REGION`] is distinct: the request-subject binding matches on it, so
+/// a region claiming to be the copy must be the copy and not an epilogue that
+/// happens to read one intermediate and write one output.
+pub(crate) const PUBLISHING_COPY_REGION: RegionId = RegionId::new(6);
+
+/// The identity expression one publishing copy evaluates per point.
+///
+/// A copy reads one tensor and writes what it read. Spelling it as an ordinary
+/// [`ScalarProgram::PointwiseF32`] whose single node is the first input's leaf is
+/// what keeps the copy inside the vocabulary the schedule verifier already
+/// checks — it is not a new region family, it is the smallest member of one.
+///
+/// # Panics
+///
+/// Panics only if a one-node expression violates the pointwise builder's own
+/// grammar, which is invalid compiler output rather than a caller error.
+fn identity_expression() -> PointwiseF32Expression {
+    let mut builder = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
+    let leaf = builder
+        .input(InputOrdinal::FIRST)
+        .expect("a single leaf is inside the governed expression limit");
+    builder
+        .build(leaf)
+        .expect("a lone reachable input leaf is a valid pointwise expression")
+}
+
+/// Builds the second dispatch that publishes a value the first one staged.
+///
+/// **It covers no occurrence, and that is the point.** The dispatch before it
+/// already claims every occurrence that computed the value; this one moves those
+/// bytes into the [`tiler_ir::program::ValueRole::Output`] buffer the interface
+/// publishes, because that role is exclusive of the temporary the value's other
+/// consumer reads across. `tiler_ir::program`'s publishing-copy declaration is
+/// what accounts for the resulting uncovering stage, exactly as a split's
+/// declaration accounts for its final pass.
+///
+/// `shape` and `elements` are the *staged* value's, not the request's: the copy
+/// iterates the domain the first dispatch wrote, and the two extents agreeing is
+/// an obligation whole-program verification proves rather than one this builder
+/// may assume.
+///
+/// Like every other constructor here this is the raw region; the frontier
+/// resubmits it through the ordinary checked verification path.
+pub(crate) fn publishing_copy_region(
+    request: &VerifiedTargetRequest,
+    shape: Shape,
+    elements: u64,
+) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+    let region = elementwise_region(
+        request,
+        PUBLISHING_COPY_REGION,
+        shape,
+        elements,
+        &[(TensorRole::Intermediate, LogicalAccess::LinearIdentity)],
+        identity_expression(),
+        RegionWrite::ProgramOutput,
+    );
+    (region, Vec::new())
 }
 
 /// Derives one contraction operand's coordinate map from the index structure.
@@ -2032,6 +2134,13 @@ fn verify_region_subject_binding(
     semantic_members: &[SemanticMemberId],
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
+    // A publishing copy claims no occurrence, so no recognized partition's
+    // member comparison can admit it and every arm below would answer `false`.
+    // It binds against the *interface* instead, which is what it realizes: it
+    // iterates one declared output's published domain and copies into it.
+    if region.index.id == PUBLISHING_COPY_REGION {
+        return verify_publishing_copy_binding(region, semantic_members, subject);
+    }
     let mut first = None;
     for normalized in subject.normalized().outputs() {
         match verify_region_output_binding(region, semantic_members, normalized, subject) {
@@ -2043,6 +2152,74 @@ fn verify_region_subject_binding(
         rule: "request-binding",
         region: region.index.id,
     }))
+}
+
+/// Binds one publishing copy to the declared output it publishes.
+///
+/// **Every fact the copy carries is checked, and the check is against the
+/// request rather than against the proposal.** The scalar program must be
+/// exactly the identity — a provider substituting any other expression would be
+/// computing something under a declaration that says it copies — the accesses
+/// must be exactly one linear read of a materialized intermediate followed by the
+/// owning write of a program output, and the iteration domain must be some
+/// declared output's published domain, because publishing into a domain no
+/// declared output has is publishing into a buffer the interface never named.
+///
+/// What it deliberately does not check is *which* output, or that the value read
+/// is the one that output names. Neither is knowable from a region: the copy's
+/// source is a materialization edge the cover chose, and the pairing of edge to
+/// publication is program scope. `tiler_ir::program`'s publishing-copy
+/// obligations prove exactly that, and the assembler's `publishing-copy-pass-
+/// count` refusal is what keeps a copy from being assembled without one.
+fn verify_publishing_copy_binding(
+    region: &ScheduledRegion,
+    semantic_members: &[SemanticMemberId],
+    subject: &VerifiedRequestSubject,
+) -> Result<(), PhysicalError> {
+    let bound = semantic_members.is_empty()
+        && matches!(
+            &region.index.scalar_program,
+            ScalarProgram::PointwiseF32(expression) if *expression == identity_expression()
+        )
+        && matches!(
+            region.index.accesses.as_slice(),
+            [
+                Access {
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map: LogicalAccess::LinearIdentity,
+                    ..
+                },
+                Access {
+                    tensor: TensorRole::Output,
+                    component_role: None,
+                    mode: AccessMode::Write,
+                    map: LogicalAccess::LinearIdentity,
+                    ..
+                },
+            ]
+        )
+        && subject
+            .normalized()
+            .outputs()
+            .iter()
+            .any(|normalized| published_shape(normalized) == &region.index.iteration_shape);
+    if bound {
+        Ok(())
+    } else {
+        intrinsic("publishing-copy-binding", region.index.id)
+    }
+}
+
+/// Returns the domain one recognized output publishes.
+fn published_shape(normalized: &NormalizedOutputSubject) -> &Shape {
+    match normalized {
+        NormalizedOutputSubject::Pointwise(normalized) => &normalized.shape,
+        NormalizedOutputSubject::SerialSum(normalized) => normalized.output_shape(),
+        NormalizedOutputSubject::Contraction(normalized) => &normalized.output_shape,
+        NormalizedOutputSubject::Epilogue(normalized) => normalized.shape(),
+    }
 }
 
 fn verify_region_output_binding(

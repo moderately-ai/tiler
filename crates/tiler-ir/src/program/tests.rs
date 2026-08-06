@@ -34,9 +34,9 @@ use super::{
     AbiExprId, AllocationId, AllocationOwnership, AllocationSpec, ByteWindow, CoveredOccurrence,
     KernelProgramBuildError, KernelProgramBuilder, KernelProgramDiagnostic,
     MaterializedComponentSpec, MaterializedOrigin, MaterializedValueId, MaterializedValueSpec,
-    MemorySpace, PartialReduction, ProgramAbiUse, ProgramEntityKind, RoutingCommitState,
-    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode, StageId,
-    StageLaunch, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
+    MemorySpace, PartialReduction, ProgramAbiUse, ProgramEntityKind, PublishingCopy,
+    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
+    StageId, StageLaunch, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
 };
 
 const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
@@ -1029,31 +1029,41 @@ fn canonical_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
 /// `v6`, `v7`, or `v8` reader handed these bytes would recover records under a
 /// meaning this layer no longer holds, which is why each tag stepped.
 ///
-/// `v9` is a different kind of step and is included here for the same reason:
-/// it *adds* framed refinement evidence inside the stage section, so the
-/// historical spellings below are not merely reinterpretations of the current
-/// payload — they are shorter encodings this test cannot reconstruct. What the
-/// loop still proves is the property that matters at every step: no historical
-/// separator over these bytes is the current identity.
+/// `v9` and `v10` are a different kind of step and are included here for the
+/// same reason: `v9` *adds* framed refinement evidence inside the stage section
+/// and `v10` *adds* a publishing-copy declaration section, so the historical
+/// spellings below are not merely reinterpretations of the current payload —
+/// they are shorter encodings this test cannot reconstruct. What the loop still
+/// proves is the property that matters at every step: no historical separator
+/// over these bytes is the current identity.
+///
+/// The separators are not all the same length, so the spliced spelling is
+/// compared by inequality alone where the lengths differ. Padding it back to a
+/// common length would compare a byte string no encoder produces.
 #[test]
 fn the_program_domain_separator_is_what_distinguishes_the_reinterpreting_steps() {
     const V6: &[u8] = b"tiler.kernel-program.v6\0";
     const V7: &[u8] = b"tiler.kernel-program.v7\0";
     const V8: &[u8] = b"tiler.kernel-program.v8\0";
     const V9: &[u8] = b"tiler.kernel-program.v9\0";
+    const V10: &[u8] = b"tiler.kernel-program.v10\0";
     let semantic = serial_sum_program(SCALE_BITS);
     let program = canonical_program(&semantic);
     // One record: the v8 encoding and the v7 sort agree on this payload.
     assert_eq!(program.outputs().len(), 1);
     let current = program.canonical_identity().as_bytes();
-    assert!(current.starts_with(V9));
+    assert!(current.starts_with(V10));
 
-    for historical in [V6, V7, V8] {
+    for historical in [V6, V7, V8, V9] {
         let mut spelling = historical.to_vec();
-        spelling.extend_from_slice(&current[V9.len()..]);
-        assert_eq!(spelling.len(), current.len());
+        spelling.extend_from_slice(&current[V10.len()..]);
         assert_ne!(current, spelling.as_slice());
     }
+    // The check can say no about the separator rather than about the length: the
+    // current separator over the current payload *is* the current identity.
+    let mut rebuilt = V10.to_vec();
+    rebuilt.extend_from_slice(&current[V10.len()..]);
+    assert_eq!(current, rebuilt.as_slice());
 }
 
 /// Byte offsets at which `needle` occurs in `haystack`.
@@ -1899,9 +1909,12 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
 struct TwoChain {
     builder: KernelProgramBuilder,
     first_map: StageId,
+    first_temporary: MaterializedValueId,
+    second_map: StageId,
     second_reduce: StageId,
     first_output: MaterializedValueId,
     second_output: MaterializedValueId,
+    second_temporary: MaterializedValueId,
     shared: AllocationId,
 }
 
@@ -1978,9 +1991,12 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
     TwoChain {
         builder,
         first_map,
+        first_temporary: storage.first_temporary,
+        second_map,
         second_reduce,
         first_output: storage.first_output,
         second_output: storage.second_output,
+        second_temporary: storage.second_temporary,
         shared: storage.shared,
     }
 }
@@ -3193,6 +3209,188 @@ fn an_uncovering_stage_is_admitted_only_as_a_declared_splits_combiner() {
     assert!(
         program.stages().any(|stage| stage.coverage().is_empty()),
         "the combiner is retained as the uncovering stage the split accounts for"
+    );
+}
+
+/// Declares one publishing copy over the two-stage fixture and builds.
+fn program_with_copy(
+    semantic: &SemanticProgram,
+    amend: impl FnOnce(&TwoStage, PublishingCopy) -> PublishingCopy,
+) -> Result<VerifiedKernelProgram, KernelProgramDiagnostic> {
+    let wired = two_stage(semantic, TwoStageShape::UncoveringSecondStage);
+    let copy = amend(
+        &wired,
+        PublishingCopy {
+            source_stage: wired.pointwise,
+            publisher: wired.reduction,
+            source: wired.temporary,
+            published: wired.output,
+        },
+    );
+    let mut builder = wire_two_stage_structure(wired);
+    builder
+        .push_publishing_copy(copy)
+        .expect("a well-formed copy declaration");
+    declare_program_contract(&mut builder);
+    builder
+        .build()
+        .map_err(|error| *error.diagnostics().first().expect("one diagnostic"))
+}
+
+/// An uncovering stage is admitted by a declared copy, and refused without one.
+///
+/// **The two directions differ by exactly the declaration.** The undeclared
+/// program has a dispatch it cannot account for; the declared one has the
+/// publisher of a copy whose source stage already claims every occurrence. That
+/// is the same shape a split's final pass has, one fold up, and it is why the
+/// arm is a second *account* rather than a relaxation of the rule.
+///
+/// **Measurement boundary, and it bounds two claims rather than one.** This
+/// drives the coverage arm alone: no fixture in this module can state a copy
+/// whose obligations *all* hold, because a copy publishes what it read and every
+/// fixture here writes its output at a reduced extent — the two-stage
+/// temporary is `[2, 3]` against a `[2]` output, and both chains of the
+/// two-chain fixture are the same shape. So the declared program below is
+/// structurally a copy in every respect but its extents, and it is refused by
+/// the extent obligation rather than admitted.
+///
+/// The complete admitting path is exercised end to end by `tiler-compiler`'s
+/// `pipeline::conformance::a_published_and_consumed_intermediate_compiles_and_agrees`,
+/// which asserts the declared copy, the single uncovering stage, and bit
+/// agreement for both published outputs. The identity claim is bounded the same
+/// way: that the declaration section is folded is evidenced by the domain step
+/// this change carries and by
+/// [`the_program_domain_separator_is_what_distinguishes_the_reinterpreting_steps`],
+/// while *injectivity against an otherwise identical program* rests on the
+/// section being length-framed and written unconditionally, and has no fixture
+/// here that could state the pair. Building one would need a third kernel
+/// writing an output at the temporary's extent, which would re-state the
+/// compiler's evidence rather than add any.
+#[test]
+fn an_undeclared_uncovering_stage_still_refuses_by_name() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let undeclared = complete_two_stage(two_stage(&semantic, TwoStageShape::UncoveringSecondStage));
+    assert_eq!(
+        undeclared
+            .build()
+            .map_err(|error| *error.diagnostics().first().expect("one diagnostic")),
+        Err(KernelProgramDiagnostic::UncoveringStage)
+    );
+    // With the declaration, the coverage arm no longer fires: the program now
+    // fails on the copy's own extent obligation, which is a later phase and a
+    // different rule.
+    assert_eq!(
+        program_with_copy(&semantic, |_, copy| copy),
+        Err(KernelProgramDiagnostic::PublishedCopyExtentMismatch)
+    );
+}
+
+/// Declares one publishing copy over the two-chain fixture and builds.
+fn two_chain_copy(
+    semantic: &SemanticProgram,
+    state: impl FnOnce(&TwoChain) -> PublishingCopy,
+) -> Result<VerifiedKernelProgram, KernelProgramDiagnostic> {
+    let chains = two_chain(semantic, true);
+    let copy = state(&chains);
+    let mut builder = publish_two_chain(chains);
+    builder
+        .push_publishing_copy(copy)
+        .expect("a well-formed copy declaration");
+    builder
+        .build()
+        .map_err(|error| *error.diagnostics().first().expect("one diagnostic"))
+}
+
+/// Each publishing-copy obligation is driven against a case that must fail.
+///
+/// **Two fixtures, and which rows each carries is forced by their shapes rather
+/// than chosen.** The two-stage fixture has an uncovering second stage, so its
+/// publisher must be that stage for the coverage arm not to fire first — which
+/// fixes what its rows can perturb. The two-chain fixture has four stages and
+/// two independently published outputs, which is what a row naming *another*
+/// stage's value needs. Every row differs from a well-formed declaration by
+/// exactly one named entity.
+#[test]
+fn the_publishing_copy_obligations_can_each_say_no() {
+    let semantic = serial_sum_program(SCALE_BITS);
+
+    // The named source is written by the publisher rather than by the named
+    // source stage, so the publisher would copy values that stage never
+    // produced.
+    assert_eq!(
+        program_with_copy(&semantic, |wired, copy| PublishingCopy {
+            source: wired.output,
+            ..copy
+        }),
+        Err(KernelProgramDiagnostic::CopiedSourceNotInitializedBySourceStage)
+    );
+
+    // The published value is an internal temporary. A declaration naming one has
+    // nothing to publish whichever stage wrote it, which is why the role is
+    // checked before the writer.
+    assert_eq!(
+        program_with_copy(&semantic, |wired, copy| PublishingCopy {
+            published: wired.temporary,
+            ..copy
+        }),
+        Err(KernelProgramDiagnostic::PublishedCopyNotOutput)
+    );
+
+    let chained = two_chain_program();
+
+    // The publisher never reads the value it claims to copy: the first chain's
+    // temporary is defined by the first chain's map stage and read only by the
+    // first chain's reduction.
+    assert_eq!(
+        two_chain_copy(&chained, |chains| PublishingCopy {
+            source_stage: chains.first_map,
+            publisher: chains.second_reduce,
+            source: chains.first_temporary,
+            published: chains.second_output,
+        }),
+        Err(KernelProgramDiagnostic::CopiedSourceNotReadByPublisher)
+    );
+
+    // The published value is a genuine output written by a *different* stage.
+    assert_eq!(
+        two_chain_copy(&chained, |chains| PublishingCopy {
+            source_stage: chains.second_map,
+            publisher: chains.second_reduce,
+            source: chains.second_temporary,
+            published: chains.first_output,
+        }),
+        Err(KernelProgramDiagnostic::PublishedCopyNotWrittenByPublisher)
+    );
+}
+
+/// One stage cannot be both halves, and one value cannot be published twice.
+#[test]
+fn a_malformed_publishing_copy_declaration_is_rejected_at_insertion() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let wired = two_stage(&semantic, TwoStageShape::UncoveringSecondStage);
+    let copy = PublishingCopy {
+        source_stage: wired.pointwise,
+        publisher: wired.reduction,
+        source: wired.temporary,
+        published: wired.output,
+    };
+    let mut builder = wire_two_stage_structure(wired);
+    assert_eq!(
+        builder.push_publishing_copy(PublishingCopy {
+            publisher: copy.source_stage,
+            ..copy
+        }),
+        Err(KernelProgramBuildError::SelfDependency)
+    );
+    builder
+        .push_publishing_copy(copy)
+        .expect("the first declaration is well formed");
+    assert_eq!(
+        builder.push_publishing_copy(PublishingCopy {
+            source: copy.published,
+            ..copy
+        }),
+        Err(KernelProgramBuildError::DuplicatePublishingCopy)
     );
 }
 

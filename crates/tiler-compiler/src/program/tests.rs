@@ -66,6 +66,7 @@ fn materialized_assembly(
             },
         ],
         Vec::new(),
+        Vec::new(),
         vec![(subject.output_key.clone(), 1)],
     )
     .expect("the two-region assembly is well formed")
@@ -84,6 +85,7 @@ fn fused_assembly(
             coverage: subject.members.all(),
             bindings: vec![AssemblyBinding::Input(0), AssemblyBinding::Internal(0)],
         }],
+        Vec::new(),
         Vec::new(),
         vec![(subject.output_key.clone(), 0)],
     )
@@ -498,6 +500,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
             },
         ],
         Vec::new(),
+        Vec::new(),
         vec![(subject.output_key.clone(), 2)],
     );
     assert_eq!(
@@ -528,6 +531,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
             },
         ],
         Vec::new(),
+        Vec::new(),
         vec![(subject.output_key.clone(), 1)],
     );
     assert_eq!(
@@ -554,6 +558,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
                 bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(1)],
             },
         ],
+        Vec::new(),
         Vec::new(),
         vec![(subject.output_key.clone(), 1)],
     )
@@ -593,6 +598,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
         ],
         Vec::new(),
         Vec::new(),
+        Vec::new(),
     )
     .expect("the description itself is well formed");
     assert_eq!(
@@ -622,6 +628,7 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
                 bindings: vec![AssemblyBinding::Internal(0), AssemblyBinding::Internal(1)],
             },
         ],
+        Vec::new(),
         Vec::new(),
         vec![(subject.output_key.clone(), 1)],
     )
@@ -954,11 +961,16 @@ fn named_output_attribution_can_say_no_in_every_direction() {
         Err(AttributionFailure::Shared { region: 0 }),
     );
 
-    // The region retaining `sum` also materializes an edge, so its owning write
-    // is already spoken for.
+    // The region retaining `sum` also materializes an edge. That is admitted
+    // now: its value is published *and* consumed, so it is a region of two
+    // dispatches — the first stages the edge, the second publishes a copy — and
+    // the attribution it earns is the same one it would earn publishing alone.
+    // The row is retained rather than deleted because it is the exact input the
+    // retired `MaterializesAndPublishes` refusal was about, and a reader
+    // reconciling that refusal needs to see what replaced it.
     assert_eq!(
         attribute_named_outputs(&program, &[&[sum], &[product]], &[true, false]),
-        Err(AttributionFailure::MaterializesAndPublishes { region: 0 }),
+        Ok(vec![1, 0]),
     );
 
     // A third region materializes nothing and publishes nothing, so its owning

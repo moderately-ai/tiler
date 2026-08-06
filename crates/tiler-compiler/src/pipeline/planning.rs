@@ -255,18 +255,26 @@ pub(super) fn enumerate_complete_plans(
             // The tensor this region's owning write targets, decided by the
             // cover that placed it: a region another region reads from writes
             // the intermediate that edge materializes, and one no edge names as
-            // producer writes a declared program output. `verify_cover` already
-            // proved each ordered named output is produced by exactly one
-            // region, so "produces no edge" is "produces an output" for the
-            // single-output programs the request boundary admits.
-            let write = if cover
-                .materializations()
-                .iter()
-                .any(|edge| edge.producer() == region.occurrence())
-            {
-                crate::physical::RegionWrite::Materialized
-            } else {
-                crate::physical::RegionWrite::ProgramOutput
+            // producer writes a declared program output.
+            //
+            // A region may be *both*, and that is a region of two dispatches
+            // rather than one write of two tensors: its value is published and
+            // consumed, so the first dispatch stages what the consumer reads
+            // across and a second publishes a copy of it. `named_results` is the
+            // authority for the publication half — `verify_cover` proved each
+            // ordered named output is produced by exactly one placed region, so
+            // a non-empty list is that region's publication and not a guess from
+            // execution order.
+            let write = match (
+                cover
+                    .materializations()
+                    .iter()
+                    .any(|edge| edge.producer() == region.occurrence()),
+                !region.named_results().is_empty(),
+            ) {
+                (true, true) => crate::physical::RegionWrite::MaterializedAndPublished,
+                (true, false) => crate::physical::RegionWrite::Materialized,
+                (false, _) => crate::physical::RegionWrite::ProgramOutput,
             };
             // The subject additionally states the sizes of the intermediates
             // *this cover* hands this region, so a work scaling stated per

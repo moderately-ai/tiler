@@ -95,6 +95,8 @@ pub enum ProgramLimitKind {
     Dependencies,
     /// Split-reduction contract count of one program.
     PartialReductions,
+    /// Publishing-copy contract count of one program.
+    PublishingCopies,
     /// Named-output count of one program.
     Outputs,
     /// Access count of one stage.
@@ -339,6 +341,11 @@ pub enum KernelProgramBuildError {
     DuplicateDependency,
     /// A partial tensor is already split by another declared reduction.
     DuplicatePartialReduction,
+    /// A published value is already written by another declared publishing copy.
+    ///
+    /// Two copies naming one published value would leave each unprovable against
+    /// the other, exactly as two splits over one partial tensor would.
+    DuplicatePublishingCopy,
     /// A named output used a key the bound semantic program does not declare.
     UnknownOutputKey {
         /// Rejected interface key.
@@ -521,12 +528,18 @@ pub enum KernelProgramDiagnostic {
     /// whole subtree, so a node no use site reaches would be retained bytes
     /// that identity does not cover.
     UnreferencedAbiExpression,
-    /// A stage covers no semantic occurrence and combines no declared split.
+    /// A stage covers no semantic occurrence and has no declared account.
     ///
-    /// A split reduction's final pass legitimately computes no operation of its
+    /// Two accounts exist, and both are declarations rather than relaxations. A
+    /// split reduction's final pass legitimately computes no operation of its
     /// own: the pass it combines already claims the reduction, and claiming it
-    /// twice would double-cover the graph. Any *other* uncovering stage is a
-    /// dispatch the program cannot account for.
+    /// twice would double-cover the graph. A publishing copy's publisher is the
+    /// same shape one fold up — the stage that computed the value already claims
+    /// the occurrences, and the copy exists because [`ValueRole::Output`] is
+    /// exclusive of the temporary a consumer reads across. Any *other*
+    /// uncovering stage is a dispatch the program cannot account for.
+    ///
+    /// [`ValueRole::Output`]: super::ValueRole::Output
     UncoveringStage,
     /// A split reduction's partial value is not initialized by its producer.
     ///
@@ -548,6 +561,30 @@ pub enum KernelProgramDiagnostic {
     PartialExtentMismatch,
     /// A split reduction covers no contributors, or its coverage overflows `u64`.
     PartialCoverageUnrepresentable,
+    /// A publishing copy's source value is not initialized by the stage it names.
+    ///
+    /// Either no stage writes it, or the writer is not the source stage the
+    /// contract names — so the publisher would copy values some other stage
+    /// produced, or none at all.
+    CopiedSourceNotInitializedBySourceStage,
+    /// A publishing copy's publisher never reads the source value it names.
+    CopiedSourceNotReadByPublisher,
+    /// A publishing copy's published value is not written by its publisher.
+    PublishedCopyNotWrittenByPublisher,
+    /// A publishing copy publishes a value whose role is not [`ValueRole::Output`].
+    ///
+    /// The declaration exists to account for a dispatch that writes the program's
+    /// *interface*; one writing a temporary is an ordinary covered pass and has
+    /// no copy to declare.
+    ///
+    /// [`ValueRole::Output`]: super::ValueRole::Output
+    PublishedCopyNotOutput,
+    /// A publishing copy's two values do not carry the same element count.
+    ///
+    /// A copy publishes what it read. Two extents that disagree describe a
+    /// reshape, a slice, or a reduction — none of which this declaration
+    /// accounts for, and each of which is an operation some stage must cover.
+    PublishedCopyExtentMismatch,
     /// The routing-commit transitions do not span the whole ordered lifecycle.
     IncompleteRoutingCommitContract {
         /// Transitions the program declares.
@@ -599,6 +636,13 @@ impl KernelProgramDiagnostic {
             Self::PartialNotMaterialized => "partial-not-materialized",
             Self::PartialExtentMismatch => "partial-extent-mismatch",
             Self::PartialCoverageUnrepresentable => "partial-coverage-unrepresentable",
+            Self::CopiedSourceNotInitializedBySourceStage => {
+                "copied-source-not-initialized-by-source-stage"
+            }
+            Self::CopiedSourceNotReadByPublisher => "copied-source-not-read-by-publisher",
+            Self::PublishedCopyNotWrittenByPublisher => "published-copy-not-written-by-publisher",
+            Self::PublishedCopyNotOutput => "published-copy-not-output",
+            Self::PublishedCopyExtentMismatch => "published-copy-extent-mismatch",
             Self::IncompleteRoutingCommitContract { .. } => "incomplete-routing-commit-contract",
             Self::IdentityLimit { .. } => "identity-limit",
         }

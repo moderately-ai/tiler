@@ -561,6 +561,44 @@ pub struct PartialReduction {
     pub contributors_per_partition: u64,
 }
 
+/// One published copy of a value another stage computed.
+///
+/// **Draft public surface.** It lands labelled a draft and its acceptance is
+/// parked for Tom; nothing outside this crate may treat the exact spelling as
+/// settled.
+///
+/// This is the *program-scope* half of a published-and-consumed value. A program
+/// that both publishes a value and feeds it to a later stage cannot express that
+/// with one write: [`ValueRole`] is exclusive, so the producing stage's owning
+/// write goes to the temporary its consumer reads across, and a second dispatch
+/// writes the [`ValueRole::Output`] value the interface publishes. That second
+/// dispatch computes no operation of the bound graph — it copies — so, exactly
+/// like a split reduction's final pass, it needs a declaration for
+/// [`KernelProgramDiagnostic::UncoveringStage`](super::KernelProgramDiagnostic::UncoveringStage)
+/// to admit it.
+///
+/// It states a contract rather than inferring one from the stage count: which
+/// stage defines the copied value, which stage publishes it, and which two values
+/// the copy relates. The ordering that makes the source visible is the ordinary
+/// [`DependencyReasonView::Data`] edge between the two stages — a copy needs no
+/// barrier because the dispatch boundary is the visibility transition.
+///
+/// Nothing here is derivable from the entities already folded into identity. Two
+/// programs alike in every stage, value, and edge can differ in whether a
+/// publishing dispatch is *declared* to be a copy at all, which is precisely the
+/// difference between an accounted-for dispatch and one the verifier rejects.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PublishingCopy {
+    /// Stage that fully initializes the copied value.
+    pub source_stage: StageId,
+    /// Stage that reads it and writes the published value.
+    pub publisher: StageId,
+    /// Materialized value the publisher copies from.
+    pub source: MaterializedValueId,
+    /// Materialized value the publisher writes, published as a named output.
+    pub published: MaterializedValueId,
+}
+
 /// The declared facts of one materialized program value.
 ///
 /// The required byte count is derived from the shape, storage scalar, and
@@ -718,6 +756,15 @@ pub(super) struct PartialReductionData {
     pub(super) contributors_per_partition: u64,
 }
 
+/// Storage for one publishing-copy contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PublishingCopyData {
+    pub(super) source_stage: u32,
+    pub(super) publisher: u32,
+    pub(super) source: u32,
+    pub(super) published: u32,
+}
+
 /// Storage for one named program output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ProgramOutputData {
@@ -735,6 +782,7 @@ pub(super) struct KernelProgramData {
     pub(super) allocations: Vec<AllocationData>,
     pub(super) dependencies: Vec<DependencyData>,
     pub(super) partial_reductions: Vec<PartialReductionData>,
+    pub(super) publishing_copies: Vec<PublishingCopyData>,
     pub(super) outputs: Vec<ProgramOutputData>,
     /// The shared ABI expression arena, in canonical arena order.
     pub(super) abi_expressions: Vec<ExprNode>,
@@ -910,6 +958,15 @@ impl VerifiedKernelProgram {
         (0..self.data.partial_reductions.len()).map(move |index| PartialReductionRef {
             program: self,
             reduction: index,
+        })
+    }
+
+    /// Returns the declared publishing-copy contracts in declaration order.
+    #[must_use]
+    pub fn publishing_copies(&self) -> impl ExactSizeIterator<Item = PublishingCopyRef<'_>> {
+        (0..self.data.publishing_copies.len()).map(move |index| PublishingCopyRef {
+            program: self,
+            copy: index,
         })
     }
 
@@ -1401,6 +1458,57 @@ impl<'a> PartialReductionRef<'a> {
     }
 }
 
+/// A read-only view of one publishing-copy contract.
+///
+/// **Draft public surface**, for the reason [`PublishingCopy`] records.
+#[derive(Clone, Copy, Debug)]
+pub struct PublishingCopyRef<'a> {
+    program: &'a VerifiedKernelProgram,
+    copy: usize,
+}
+
+impl<'a> PublishingCopyRef<'a> {
+    /// Returns the stage that fully initializes the copied value.
+    #[must_use]
+    pub fn source_stage(self) -> StageRef<'a> {
+        StageRef {
+            program: self.program,
+            stage: position(self.data().source_stage),
+        }
+    }
+
+    /// Returns the stage that reads it and writes the published value.
+    #[must_use]
+    pub fn publisher(self) -> StageRef<'a> {
+        StageRef {
+            program: self.program,
+            stage: position(self.data().publisher),
+        }
+    }
+
+    /// Returns the materialized value the publisher copies from.
+    #[must_use]
+    pub fn source(self) -> MaterializedValueRef<'a> {
+        MaterializedValueRef {
+            program: self.program,
+            value: position(self.data().source),
+        }
+    }
+
+    /// Returns the materialized value the publisher writes.
+    #[must_use]
+    pub fn published(self) -> MaterializedValueRef<'a> {
+        MaterializedValueRef {
+            program: self.program,
+            value: position(self.data().published),
+        }
+    }
+
+    fn data(self) -> PublishingCopyData {
+        self.program.data.publishing_copies[self.copy]
+    }
+}
+
 /// A read-only view of one named program output.
 #[derive(Clone, Copy, Debug)]
 pub struct ProgramOutputRef<'a> {
@@ -1453,7 +1561,7 @@ const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v2\0";
 const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
-/// Program identity domain, currently `v9`.
+/// Program identity domain, currently `v10`.
 ///
 /// `v2` folded the semantic graph, bound implementations, coverage, program
 /// structure, the entry ABI, the applicability guard and the routing-commit
@@ -1527,7 +1635,25 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// `an_unused_semantic_provider_revision_does_not_change_identity` holds. Nor is
 /// the bound graph restated per record: the program encoding writes its one
 /// `SemanticGraphIdentity` above, and the builder proves every record names it.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v9\0";
+///
+/// `v10` folds the declared publishing-copy contracts, on the `v6` precedent
+/// directly above: a new program-scope declaration section, encoded
+/// unconditionally, so every program's bytes move and a cache or artifact
+/// holding a `v9` identity must miss rather than match. A [`PublishingCopy`] is
+/// the one fact program scope cannot derive from the entities already folded
+/// here — a dispatch that reads one value and writes another is the same stage,
+/// value, and edge set whether or not the program *declares* it to be the
+/// publication of a consumed value, and that declaration is exactly what
+/// distinguishes an accounted-for dispatch from one the verifier rejects.
+///
+/// An appended-only conditional section — written only by programs that declare
+/// a copy, leaving every zero-copy program byte-identical — was rejected. It is
+/// injective today, because the section it would follow is length-framed, but it
+/// leaves the section's presence positionally ambiguous: every future appended
+/// section would then have to be read against a grammar whose shape depends on
+/// the content before it. Grammar determinacy is the cost that option saves, and
+/// it is the part that made the answer correct.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v10\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -1953,6 +2079,20 @@ pub(super) fn encode_identity(
         push_slice(&mut bytes, &split);
     }
 
+    // Sorted by canonical content for the reason the two sections above are: a
+    // publishing-copy contract names entities rather than being named by one,
+    // so its declaration position carries no meaning identity should preserve.
+    let mut copies: Vec<Vec<u8>> = data
+        .publishing_copies
+        .iter()
+        .map(|copy| encode_publishing_copy(copy, &stages, &values))
+        .collect();
+    copies.sort_unstable();
+    push_len(&mut bytes, copies.len());
+    for copy in copies {
+        push_slice(&mut bytes, &copy);
+    }
+
     // Interface order, not insertion order, and deliberately *not* sorted like
     // the two sections above: verification proves the published records are the
     // semantic subject's ordered output interface, so this sequence is content.
@@ -2056,6 +2196,19 @@ fn encode_partial_reduction(
     values.push(&mut bytes, split.result);
     bytes.extend_from_slice(&split.partitions.to_be_bytes());
     bytes.extend_from_slice(&split.contributors_per_partition.to_be_bytes());
+    bytes
+}
+
+fn encode_publishing_copy(
+    copy: &PublishingCopyData,
+    stages: &CanonicalIds,
+    values: &CanonicalIds,
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    stages.push(&mut bytes, copy.source_stage);
+    stages.push(&mut bytes, copy.publisher);
+    values.push(&mut bytes, copy.source);
+    values.push(&mut bytes, copy.published);
     bytes
 }
 

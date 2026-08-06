@@ -5921,6 +5921,7 @@ fn materialized_assembly(
             },
         ],
         Vec::new(),
+        Vec::new(),
         vec![(subject.output_key.clone(), 1)],
     )
     .expect("the two-region assembly is well formed")
@@ -5977,6 +5978,7 @@ fn split_assembly(
             result: 2,
             partition,
         }],
+        Vec::new(),
         vec![(subject.output_key.clone(), 2)],
     )
     .expect("the split assembly is well formed")
@@ -6009,7 +6011,7 @@ fn split_regions(
     regions
 }
 
-fn f32_tensor(shape: Shape, values: &[f32]) -> Tensor {
+pub(super) fn f32_tensor(shape: Shape, values: &[f32]) -> Tensor {
     Tensor::dense(
         F32::resolved_type(),
         shape,
@@ -6027,7 +6029,7 @@ fn f32_tensor(shape: Shape, values: &[f32]) -> Tensor {
     .unwrap()
 }
 
-fn tensor_bits(tensor: &Tensor) -> Vec<u32> {
+pub(super) fn tensor_bits(tensor: &Tensor) -> Vec<u32> {
     match tensor.payload() {
         TensorPayloadView::Dense(elements) => elements
             .iter()
@@ -6037,7 +6039,7 @@ fn tensor_bits(tensor: &Tensor) -> Vec<u32> {
     }
 }
 
-fn bits_of(values: &[f32]) -> Vec<u32> {
+pub(super) fn bits_of(values: &[f32]) -> Vec<u32> {
     values.iter().map(|value| value.to_bits()).collect()
 }
 

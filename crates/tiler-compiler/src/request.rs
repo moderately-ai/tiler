@@ -1667,6 +1667,15 @@ impl NormalizedProgram {
     /// covering occurrences from two outputs' walks, or covering part of one
     /// part, has no recognized implementation and is refused by name rather than
     /// spelled against whichever partition happened to be first.
+    ///
+    /// **Two outputs may own one member set, and declaration order decides.**
+    /// [`check_output_cover`] admits exactly one overlap — a walk that is one
+    /// whole part of a longer walk's partition, publishing the value that part
+    /// hands across the boundary — and both claimants are then recognitions of
+    /// the same value over the same occurrences, so they resolve to the same
+    /// region. [`crate::physical::spell_region`] carries the derivation and
+    /// `both_claimants_of_a_published_and_consumed_part_spell_one_region` is the
+    /// check that says no if that ever stops holding.
     pub(crate) fn output_for_region(
         &self,
         members: &[SemanticMemberId],
@@ -3828,31 +3837,26 @@ fn recognize_elementwise_output(
 /// unchanged, which is why widening it rather than removing it is what keeps the
 /// uncovered case refused.
 ///
-/// *No occurrence is claimed by two walks* (`output-partition-overlap`). Two
-/// outputs whose walks share an occurrence are the shape where one value is both
-/// published and consumed: the region owning that occurrence's write would have
-/// to serve a materialization edge and a publication at once, or contain the
-/// consumer and publish two named results from one write.
-/// [`tiler_ir::program::ValueRole`] is exclusive and a region writes one owning
-/// tensor, so both are refused a layer down — and refusing here instead is what
-/// keeps the boundary from admitting a program that dies mid-pipeline.
-/// The copy stage that would lift it reads `TensorRole::Intermediate` and writes
-/// `TensorRole::Output`, which the schedule vocabulary admits and this crate now
-/// builds for every epilogue chain. What it does not have is an *account*: it
-/// publishes a value another region computed, so it claims no occurrence, and
-/// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
-/// only as the declared combiner of a split.
+/// *Every occurrence claimed twice is claimed by the one admitted overlap*
+/// (`output-partition-overlap`). Two outputs whose walks share an occurrence are
+/// the shape where one value is both published and consumed, and exactly one
+/// spelling of it is admitted — [`published_and_consumed_overlap`] is the
+/// predicate and states what it proves. Everything else still refuses here,
+/// including two output keys naming one value, because
+/// [`tiler_ir::program::ValueRole`] is exclusive and a dispatch owns one write,
+/// so a cover the boundary let through would die mid-pipeline instead.
 ///
-/// **Lifting this refusal is nevertheless not only a widening a crate down.**
-/// Disabling this arm against a governed spelling of the fixture reaches
-/// [`crate::program`]'s `cover-named-output-attribution` and then its
-/// `internal-unwritten`, both of which are widenings *here*: the cover legally
-/// places one region as both the edge's producer and the publication's retainer,
-/// and that region needs a second dispatch to write the publication. The
-/// `tiler-ir` account is the fourth and last wall, not the first.
-/// [`crate::pipeline::conformance`]'s
-/// `a_published_and_consumed_intermediate_refuses_by_name` records the measured
-/// order.
+/// **What lifted the admitted case was four walls, and only the last was a crate
+/// down.** Measured by disabling each in turn against a governed spelling of the
+/// fixture: this rule; then [`crate::program`]'s `cover-named-output-attribution`
+/// and its `internal-unwritten`, both widenings *here*, because the cover legally
+/// places one region as both the edge's producer and the publication's retainer
+/// and that region needs a *second dispatch* to write the publication; and only
+/// then `tiler_ir::program`'s `UncoveringStage`, which its publishing-copy
+/// declaration now accounts for. [`crate::pipeline::conformance`]'s
+/// `a_published_and_consumed_intermediate_compiles_and_agrees` is the compiling
+/// assertion and `an_output_key_pair_naming_one_value_still_refuses_by_name` is
+/// the neighbour that must keep refusing.
 ///
 /// Claimed counts are taken over the deduplicated per-output member sets, so one
 /// constant shared by two operands of the *same* walk contributes one member
@@ -3864,16 +3868,101 @@ fn check_output_cover(
     let claimed: Vec<Vec<SemanticMemberId>> =
         outputs.iter().map(NormalizedOutput::members).collect();
     let total: usize = claimed.iter().map(Vec::len).sum();
-    let mut distinct: Vec<SemanticMemberId> = claimed.into_iter().flatten().collect();
+    let mut distinct: Vec<SemanticMemberId> = claimed.iter().flatten().copied().collect();
     distinct.sort_unstable();
     distinct.dedup();
-    if total != distinct.len() {
+    if total != distinct.len()
+        && published_and_consumed_overlap(program, outputs, &claimed).is_none()
+    {
         return mismatch("output-partition-overlap");
     }
     if program.operation_count() != distinct.len() {
         return mismatch("operation-set");
     }
     Ok(())
+}
+
+/// Recognizes the one overlap between two recognized walks this boundary admits,
+/// as `(published output, consuming output)` declaration positions.
+///
+/// **The predicate is not "any overlap", and each conjunct is load-bearing.**
+///
+/// *Exactly one pair of walks overlaps.* A value published and consumed by two
+/// different downstream outputs, or two independent published-and-consumed
+/// values, would need a cover shape nothing below here expresses — the first
+/// because `cover-region-multiple-materializations` refuses a region producing
+/// two edges, the second because both would have to be the same region's second
+/// dispatch. They are unsupported cases that reject explicitly rather than being
+/// approximated.
+///
+/// *One walk's member set is a strict subset of the other's.* Two walks that
+/// merely intersect share work neither wholly owns, which is the shape where one
+/// region's write would have to serve two publications.
+///
+/// *The shorter walk is one whole **part** of the longer walk's recognized
+/// partition*, asked through [`NormalizedOutput::owns_region_members`] — the same
+/// authority [`crate::physical::spell_region`] resolves a region against. A
+/// subset that is not a part has no scheduled region of its own, so nothing could
+/// publish it without splitting a region the recognizer did not split.
+///
+/// *The published value is the one crossing the part boundary*: some occurrence
+/// of the longer walk **outside** the part reads it. That is what makes the
+/// publication and the materialization edge the same value, and it is the
+/// conjunct that distinguishes this from a subset walk publishing some *other*
+/// value the part happens to compute.
+///
+/// What it does not prove is that a cover placing the part as one region exists;
+/// that is the cover search's answer, and a program admitted here whose cover
+/// cannot be assembled is refused by name at the assembler.
+fn published_and_consumed_overlap(
+    program: &SemanticProgram,
+    outputs: &[NormalizedOutput],
+    claimed: &[Vec<SemanticMemberId>],
+) -> Option<(usize, usize)> {
+    let mut overlapping = None;
+    for short in 0..claimed.len() {
+        for long in (short + 1)..claimed.len() {
+            if !claimed[short]
+                .iter()
+                .any(|member| claimed[long].contains(member))
+            {
+                continue;
+            }
+            if overlapping.is_some() {
+                return None;
+            }
+            overlapping = Some((short, long));
+        }
+    }
+    let (first, second) = overlapping?;
+    // Orient the pair by containment rather than by declaration order: which
+    // output publishes the consumed value is a fact about the walks, and the
+    // caller may declare them either way round.
+    let (published, consuming) = if claimed[first].len() < claimed[second].len() {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    if claimed[published].len() >= claimed[consuming].len()
+        || !claimed[published]
+            .iter()
+            .all(|member| claimed[consuming].contains(member))
+    {
+        return None;
+    }
+    if !outputs[consuming].owns_region_members(&claimed[published]) {
+        return None;
+    }
+    let staged = program.outputs().nth(published)?.value();
+    let crosses = program
+        .operations()
+        .enumerate()
+        .filter(|(ordinal, _)| {
+            u32::try_from(*ordinal)
+                .is_ok_and(|ordinal| !claimed[published].contains(&SemanticMemberId(ordinal)))
+        })
+        .any(|(_, operation)| operation.operands().any(|operand| operand == staged));
+    crosses.then_some((published, consuming))
 }
 
 /// One recognized elementwise expression and the occurrences it covers.
@@ -6677,27 +6766,37 @@ mod tests {
         );
     }
 
-    /// Two ordered outputs the same region would have to publish are refused.
+    /// Two output keys naming one value still refuse under the partition rule.
     ///
-    /// Both shapes of the "inside the walk" branch, each observed refusing under
-    /// the partition rule rather than being admitted and dropped a layer down:
+    /// **This is the neighbour of the admitted overlap, and it differs from it
+    /// by exactly the property [`published_and_consumed_overlap`] requires.**
+    /// Three shapes, each observed refusing under the partition rule rather than
+    /// being admitted and dropped a layer down:
     ///
-    /// - Two output keys naming *one* value. Whichever region owns that value's
-    ///   write publishes once, and `tiler_ir::program::KernelProgramBuilder`
-    ///   refuses a second publication of one buffer.
-    /// - A published intermediate that is also consumed — the epilogue shape the
-    ///   conformance fixture has. Its publication and the materialization edge
-    ///   its consumer reads across would be the same owning write, and
-    ///   `ValueRole` is exclusive.
+    /// - Two output keys naming *one* value. The two walks are equal rather than
+    ///   one being a strict subset of the other, so there is no shorter walk to
+    ///   publish and no boundary to publish at. Whichever region owns that
+    ///   value's write publishes once, and
+    ///   `tiler_ir::program::KernelProgramBuilder` refuses a second publication
+    ///   of one buffer.
+    /// - A publication *inside* one recognized part. `product` is consumed by
+    ///   the add that `biased` names, and a pointwise walk fusing the multiply
+    ///   and the add has no region boundary between them — the subset is not a
+    ///   *part*, which is the conjunct `owns_region_members` decides.
+    /// - A published value nothing outside the part reads. This one is stated
+    ///   against [`published_and_consumed_overlap`] directly rather than as a
+    ///   program, and that is a fact worth recording rather than a convenience:
+    ///   for every program the recognizer admits, the value a part publishes
+    ///   *is* the value crossing its boundary, so the conjunct is defence in
+    ///   depth against a future recognizer rather than a live gate. Stating the
+    ///   member sets is what makes it drivable at all.
     ///
-    /// Their accepted neighbour is the independent two-output program above,
-    /// which differs from both by exactly the sharing. The copy stage that would
-    /// lift the second is now a region this crate builds — an epilogue reading a
-    /// materialized intermediate is exactly it — and what it still lacks is a
-    /// program-scope account: it claims no occurrence, and `tiler_ir::program`
-    /// admits an uncovering stage only as a declared split's combiner.
+    /// Their admitted neighbour is the published-and-consumed program that
+    /// `crate::pipeline::conformance`'s
+    /// `a_published_and_consumed_intermediate_compiles_and_agrees` compiles,
+    /// which differs from each by exactly one of those conjuncts.
     #[test]
-    fn two_outputs_sharing_one_walk_refuse_rather_than_publish_twice() {
+    fn an_output_key_pair_naming_one_value_still_refuses_by_name() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let first = builder
             .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
@@ -6722,6 +6821,30 @@ mod tests {
 
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let other = builder
+            .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let product = F32Multiply::apply(&mut builder, input, other).unwrap();
+        let biased = F32Add::apply(&mut builder, product, other).unwrap();
+        builder
+            .output(OutputKey::new("biased").unwrap(), biased)
+            .unwrap();
+        builder
+            .output(OutputKey::new("product").unwrap(), product)
+            .unwrap();
+        let mid_walk = builder.build().unwrap();
+        assert_eq!(
+            recognize_outputs(&mid_walk).unwrap_err(),
+            "output-partition-overlap",
+        );
+
+        // The admitted neighbour, at this same boundary: `scaled` is a strict
+        // subset of the fold's walk, is exactly its recognized prologue part,
+        // and is the value the fold reads across the boundary.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
             .unwrap();
         let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
@@ -6733,12 +6856,96 @@ mod tests {
         builder
             .output(OutputKey::new("scaled").unwrap(), scaled)
             .unwrap();
-        let epilogue = builder.build().unwrap();
-        assert_eq!(epilogue.output_count(), 2);
+        let published_and_consumed = builder.build().unwrap();
+        let recognized =
+            recognize_outputs(&published_and_consumed).expect("the overlap is admitted");
+        let claimed: Vec<Vec<SemanticMemberId>> = recognized
+            .outputs()
+            .iter()
+            .map(NormalizedOutput::members)
+            .collect();
         assert_eq!(
-            recognize_outputs(&epilogue).unwrap_err(),
-            "output-partition-overlap",
+            published_and_consumed_overlap(&published_and_consumed, recognized.outputs(), &claimed),
+            Some((1, 0)),
         );
+
+        // The crossing conjunct, driven against a stated member set: the shorter
+        // walk is the fold's *reduction* part rather than its prologue part — a
+        // part in its own right, and still a strict subset — but the value the
+        // second output publishes is the multiply's, which no occurrence outside
+        // that part reads. Every other conjunct is unchanged.
+        let reduction_part = vec![claimed[0].last().copied().expect("the fold claims members")];
+        assert_eq!(
+            published_and_consumed_overlap(
+                &published_and_consumed,
+                recognized.outputs(),
+                &[claimed[0].clone(), reduction_part],
+            ),
+            None,
+        );
+    }
+
+    /// Both claimants of a published-and-consumed part resolve to one region.
+    ///
+    /// **This is the check behind the decided tie-break.**
+    /// [`NormalizedProgram::output_for_region`] scans in declaration order and
+    /// takes the first match, and the admitted overlap makes two outputs own one
+    /// member set — so "first" is only correct because the two claimants are
+    /// recognitions of one value over one occurrence set and therefore spell the
+    /// same region. That argument is worth less than a check that says no when
+    /// it stops holding, which is what this is: the same member set is resolved
+    /// against each claimant in turn, and the two regions the physical layer
+    /// builds from those resolutions are compared whole.
+    ///
+    /// The two spellings are reached through different arms — the fold's
+    /// prologue part and the pointwise output's own walk — so an agreement here
+    /// is about the recognitions rather than about one code path being called
+    /// twice.
+    #[test]
+    fn both_claimants_of_a_published_and_consumed_part_spell_one_region() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let scaled = F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let reduced = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("reduced").unwrap(), reduced)
+            .unwrap();
+        builder
+            .output(OutputKey::new("scaled").unwrap(), scaled)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let recognized = recognize_outputs(&program).expect("the overlap is admitted");
+        let [fold, publication] = recognized.outputs() else {
+            panic!("one recognized partition per declared output");
+        };
+        let shared = publication.members();
+
+        // Both own it, which is the state the tie-break exists for.
+        assert!(fold.owns_region_members(&shared));
+        assert!(publication.owns_region_members(&shared));
+        assert_eq!(
+            recognized.output_for_region(&shared).map(|(at, _)| at),
+            Some(0),
+            "the first declared claimant is the one the scan returns",
+        );
+
+        // And they spell one region. Compared through the request the physical
+        // layer actually reads, at the write the cover assigns a published-and-
+        // consumed region.
+        let request = verify_planned_request(CompilationRequest::governed(&program))
+            .unwrap()
+            .for_target(0)
+            .unwrap();
+        let staging = crate::physical::RegionWrite::MaterializedAndPublished;
+        let (from_fold, fold_members) = crate::physical::pointwise_region(&request, fold, staging);
+        let (from_publication, publication_members) =
+            crate::physical::pointwise_region(&request, publication, staging);
+        assert_eq!(from_fold, from_publication);
+        assert_eq!(fold_members, publication_members);
+        assert_eq!(fold_members, shared);
     }
 
     /// Output order reaches the recognized program, not only the semantic graph.
