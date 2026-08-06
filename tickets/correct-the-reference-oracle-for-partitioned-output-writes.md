@@ -1,7 +1,7 @@
 ---
 id: correct-the-reference-oracle-for-partitioned-output-writes
 title: Correct the reference oracle for partitioned output writes
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-a-partitioned-write-ownership-contract]
 related: [admit-sub-range-write-domains-for-unequal-partitions, lower-the-concatenate-occurrence-through-partitioned-writes]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, indexing, write-ownership]
+claimed_from: todo
+assignee: agent-oracle-partition
+lease_expires_at: 1785985179
 ---
 ## User-visible outcome
 
