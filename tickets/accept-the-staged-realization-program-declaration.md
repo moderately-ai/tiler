@@ -1,7 +1,7 @@
 ---
 id: accept-the-staged-realization-program-declaration
 title: Accept the staged-realization program declaration
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [account-for-a-staged-realization-stage-in-the-kernel-program, admit-a-scheduled-region-for-a-staged-elementary-family, accept-the-fold-with-epilogue-scheduled-region]
@@ -71,3 +71,7 @@ Landed with six tests in `crates/tiler-ir/src/program/tests.rs` and the end-to-e
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the declaration is in use from `tiler-compiler` and labelled a draft at its definition.
+
+## Outcome — accepted
+
+**Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** The declaration, its builder route, view, limit, and diagnostics are accepted public surface exactly as landed, three-vocabulary consequence included. The in-code draft label rewrites (the `StagedRealization` struct, `staged_realizations()`, and `StagedRealizationRef`) ride with the identity-campaign branch, which holds `implementation/ir`.
