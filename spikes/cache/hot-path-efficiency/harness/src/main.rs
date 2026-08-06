@@ -60,13 +60,30 @@ use envelope::EnvelopeFactory;
 
 /// Envelope lengths the sweep reports, in bytes.
 ///
-/// Not round numbers, deliberately: these are the exact endpoints of the
-/// envelope band `docs/research/embedding/self-contained-embedding.md` measured
-/// and `MaxEntryAge::DEFAULT`'s ground cites — 32,136 to 47,803 bytes. Measuring
-/// at the band's own endpoints is what lets a reader put a cost against the
-/// sizes the corpus already claims are realistic, instead of against a round
-/// number nothing produced.
-const SIZES: [usize; 2] = [32_136, 47_803];
+/// Not round numbers, deliberately, and the derivation is the one
+/// `docs/research/embedding/self-contained-embedding.md` used for the
+/// 32,136–47,803 band these endpoints replace: run
+/// `prototypes/serial-sum-compile`, and take the minimum and the maximum of the
+/// envelope lengths of the members it publishes. Measuring at a producer's own
+/// endpoints is what lets a reader put a cost against sizes the corpus already
+/// claims are realistic, instead of against a round number nothing produced.
+///
+/// Re-derived 2026-08-06 at this spike's base commit `8bd720b8`, with
+/// `MANIFEST_SCHEMA` at `14.0`. That producer's six reduction-class members —
+/// three reduced extents times the selected and materialized plan roles, the
+/// exact population the original band was taken over — now span **141,532 to
+/// 159,037 bytes**. Its compiled objects are byte-identical to the ones the
+/// 2026-07-31 record lists, 3,491 to 7,158 bytes of `metallib`, so none of the
+/// growth is backend output and all of it is artifact encoding.
+///
+/// The producer has since gained two contraction members, at 89,250 and 90,737
+/// bytes, and they are excluded here for a measured reason rather than by
+/// oversight: [`EnvelopeFactory`] compiles the same scale-then-reduce program,
+/// and one of its envelopes carries **114,043 bytes** of fixed content before a
+/// single object byte, so an 89,250-byte envelope is not a length this harness
+/// can synthesize at all. The endpoints below are the band of the program family
+/// this harness actually produces.
+const SIZES: [usize; 2] = [141_532, 159_037];
 
 /// Populated entry counts the sweep measures at, cumulative in one cache root.
 const DEFAULT_POPULATIONS: [u64; 4] = [10, 100, 1_000, 10_000];

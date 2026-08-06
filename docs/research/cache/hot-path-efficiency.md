@@ -18,6 +18,8 @@ ticket: "measure-the-expansion-cache-hot-path-efficiency"
 
 Status: Tom asked on 2026-08-04, alongside the eviction decision, that "the cache's efficiency is to be verified separately" ([the collection design](bounded-collection.md) records the relay). This note is that verification. Everything below comes from [`spikes/cache/hot-path-efficiency/`](../../../spikes/cache/hot-path-efficiency/README.md), which drives the **public** [`ExpansionCache`](../../../crates/tiler-cache/src/expansion/store.rs) with every hit validated by the real [`decode_artifact`](../../../crates/tiler-artifact/src/program/codec/decode.rs). Quoted figures are from the first of two retained runs at this commit; Section 1 states what the second reproduced and what it did not.
 
+**Sections 2 to 8 quote the 2026-08-04 runs at 32,136 and 47,803 bytes, and those are not the lengths this producer emits any more.** The envelope band was re-derived on 2026-08-06 and the sweep re-run at its new endpoints, 141,532 and 159,037 bytes; **[Section 9](#9-the-re-run-at-the-re-derived-band-2026-08-06) is that run, and states figure by figure what reproduced and what moved**. Everything before it is retained unedited as the evidence of its own commit — the 2026-08-04 numbers are not wrong, they are measurements of a smaller envelope.
+
 ## The headline, before the evidence
 
 **Measurement.** A validated cache hit costs **55.5 µs** at a 32,136-byte envelope and **67.2 µs** at a 47,803-byte one, and that cost is **flat across a thousandfold change in cache population** — over 10, 100, 1,000, and 10,000 stored entries the four minima span 0.6% and 0.3% respectively, and the second run agrees with the first to within 0.6%. The build closure the hit spares, measured in the same process at the start of each run, is 3.6–5.4 ms, so the cache returns a validated artifact **65–97× cheaper** than producing one, before any external backend compiler is involved at all.
@@ -28,7 +30,7 @@ Status: Tom asked on 2026-08-04, alongside the eviction decision, that "the cach
 
 **Measurement, and the answer to a question the corpus had left explicitly open.** [The collection design](bounded-collection.md) says "whether the per-eviction scan is cheap enough to run on a long-lived `rust-analyzer` server that expands continuously is `measure-the-expansion-cache-hot-path-efficiency`'s, and it is a measurement this note does not have". It has it now, and the answer is **no**: a full-namespace scan of a 10,000-entry cache costs **29.1–32.6 ms**, which is **460–590× one hit**. An eviction triggered once per expansion would turn a 56 µs hit into a 33 ms one. The trigger has to amortize, which is exactly what [`wire-the-env-configured-eviction-policy-through-the-deliver-path`](../../../tickets/wire-the-env-configured-eviction-policy-through-the-deliver-path.md) already requires of itself; this note supplies the number that requirement has to be sized against.
 
-**Inference.** "Properly efficient at the measured scales" is therefore **supported**, with the boundary in Section 8. No inefficiency inside `tiler-cache` was located. One narrow question the measurement raises — whether the bundle's own envelope-section digest is redundant with what `decode_artifact` already proves about the same bytes, worth 19.4–24.0% of a hit — was filed as [`decide-whether-the-bundle-envelope-section-digest-is-redundant`](../../../tickets/decide-whether-the-bundle-envelope-section-digest-is-redundant.md) rather than acted on, because it is a validation contract and the shortcut is exactly the shape this repository refuses to take on argument. **It has since been answered, and the digest is retained on evidence** — see Section 9's third outcome.
+**Inference.** "Properly efficient at the measured scales" is therefore **supported**, with the boundary in Section 8. No inefficiency inside `tiler-cache` was located. One narrow question the measurement raises — whether the bundle's own envelope-section digest is redundant with what `decode_artifact` already proves about the same bytes, worth 19.4–24.0% of a hit — was filed as [`decide-whether-the-bundle-envelope-section-digest-is-redundant`](../../../tickets/decide-whether-the-bundle-envelope-section-digest-is-redundant.md) rather than acted on, because it is a validation contract and the shortcut is exactly the shape this repository refuses to take on argument. **It has since been answered, and the digest is retained on evidence** — see Section 10's third outcome.
 
 ## 1. Environment and procedure
 
@@ -52,7 +54,7 @@ Two runs of that command, back to back, are retained: [`…-2026-08-04.tsv`](../
 
 **Measurement — one defect found in this harness by these runs, and fixed before they were taken.** The contended-hit row read 5–10% above the uncontended one until the lock-holding child stopped busy-waiting on its release marker. The child is alive for the whole of that measurement, so a spin loop was a second process competing for a core and for the filesystem with the thing being timed. It now sleeps between polls; ordering still comes from the marker's existence and from nothing else. The row it produces is the one quoted in Section 4, and the 5–10% it used to carry was the harness measuring itself.
 
-**Measurement boundary — envelope sizes and populations.** Envelopes are 32,136 and 47,803 bytes, the exact endpoints of the band [the self-contained embedding note](../embedding/self-contained-embedding.md) measured and [`MaxEntryAge::DEFAULT`](../../../crates/tiler-cache/src/expansion/collect.rs)'s ground cites. Populations are 10, 100, 1,000, and 10,000, filled cumulatively into one root per size. The remaining boundaries — synthetic object bytes, the stand-in artifact-program subject facet, "cold" meaning cold in process state rather than in storage, and one shared envelope across a population — are stated exactly in [the spike's own record](../../../spikes/cache/hot-path-efficiency/README.md#measurement-boundary) and are not repeated here.
+**Measurement boundary — envelope sizes and populations.** Envelopes are 32,136 and 47,803 bytes, the exact endpoints of the band [the self-contained embedding note](../embedding/self-contained-embedding.md) measured on 2026-07-31 and [`MaxEntryAge::DEFAULT`](../../../crates/tiler-cache/src/expansion/collect.rs)'s ground cites; [Section 9](#9-the-re-run-at-the-re-derived-band-2026-08-06) re-derives that band and re-runs this sweep at 141,532 and 159,037. Populations are 10, 100, 1,000, and 10,000, filled cumulatively into one root per size. The remaining boundaries — synthetic object bytes, the stand-in artifact-program subject facet, "cold" meaning cold in process state rather than in storage, and one shared envelope across a population — are stated exactly in [the spike's own record](../../../spikes/cache/hot-path-efficiency/README.md#measurement-boundary) and are not repeated here.
 
 ## 2. What a hit costs
 
@@ -172,16 +174,144 @@ Each control names the population it covers, because a uniform pass over a heter
 
 **Measurement boundary.** Every figure qualifies this host, this filesystem, this toolchain, and this procedure. None of it is a portable guarantee, and none of it is evidence about an unmeasured platform. Nothing here licenses a universal claim that the expansion cache is efficient; what it licenses is that on the supported development profile, at the entry sizes and populations the corpus already calls realistic, it is — and that the dominant cost is the validation the contract requires rather than anything incidental.
 
-## 9. Outcomes
+## 9. The re-run at the re-derived band, 2026-08-06
 
-1. **Bounded experiment, preserved.** [`spikes/cache/hot-path-efficiency/`](../../../spikes/cache/hot-path-efficiency/README.md), with its controls, its stated boundary, and its two retained runs — [the 2026-08-04 result](../../../spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-04.tsv) and [its reproduction](../../../spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-04-reproduction.tsv).
-2. **A fact a live ticket needs.** The scan and removal costs above size the amortization `wire-the-env-configured-eviction-policy-through-the-deliver-path` requires of itself. That ticket is in progress and its body is not edited from here; Section 6 is where the number lives.
+Sections 2 to 8 measure envelopes of 32,136 and 47,803 bytes. Those endpoints were the band [the self-contained embedding note](../embedding/self-contained-embedding.md) measured on 2026-07-31, and by 2026-08-05 the spike could not reach either of them: one envelope of its own fixture carried more fixed content than the whole of the smaller one, so `EnvelopeFactory::exactly` refused rather than reporting a length it had not produced. [`re-derive-the-measured-envelope-band-the-cache-hot-path-sweeps`](../../../tickets/re-derive-the-measured-envelope-band-the-cache-hot-path-sweeps.md) re-derived the band by re-running the producer that set it, and this section is the sweep re-run at the new endpoints. **The 2026-08-04 figures above are retained unedited**: they are measurements of a smaller envelope at their own commit, not errors.
+
+**Measurement — procedure, identical but for the two lengths.** Base commit `8bd720b8`, `MANIFEST_SCHEMA` `14.0`. Same host, same filesystem, same toolchain as Section 1: Apple M4 Max, 14 logical cores, macOS 27.0 (Darwin 27.0.0), APFS under `$TMPDIR`, `rustc 1.99.0-nightly (eff8269f7 2026-07-18)` from the `nightly-2026-07-19` pin, release profile. Two runs back to back, 35.5 s each, retained as [`…-2026-08-06.tsv`](../../../spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-06.tsv) — quoted here — and [`…-2026-08-06-reproduction.tsv`](../../../spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-06-reproduction.tsv), in brackets. Load average was `6.71 6.09 8.22` at the start of the first and `5.59 5.93 7.99` at the end of the second: the host was carrying other agents' builds throughout, exactly as in Section 1, and the response is the same one — the minimum is the estimator and the sample counts are the raised ones.
+
+```sh
+cd spikes/cache/hot-path-efficiency
+cargo build --release
+./target/release/cache-hot-path-efficiency \
+  --repeats 8000 --scan-repeats 15 --publish-rounds 128 --cold-children 48 \
+  --record macos-27.0-2026-08-06
+```
+
+### 9.1 Why the envelope moved, measured at both ends
+
+**Measurement.** The same fixture's fixed overhead — one envelope of this harness's program carrying zero object bytes — is **28,527 bytes at `194744e6`** (the commit the 2026-08-04 results were taken and retained at) and **114,043 bytes at `8bd720b8`**. Both were produced by building that commit's own harness and reading the `envelope fixed overhead` line it prints. Parsing the framing header and section table of each attributes every byte of the difference:
+
+| Part of the envelope | 2026-08-04 (`194744e6`) | 2026-08-06 (`8bd720b8`) | Change |
+| --- | ---: | ---: | ---: |
+| Framing header | 69 | 69 | — |
+| Canonical manifest | 22,698 | 88,061 | **+65,363** |
+| `KernelProgramSubject` section | 2,750 | 22,903 | **+20,153** |
+| `BackendPayloadMetadata` section | 2,974 | 2,974 | — |
+| Section framing (3 × 12) | 36 | 36 | — |
+| **Fixed overhead** | **28,527** | **114,043** | **+85,516** |
+
+**Inference.** Three quarters of the growth is canonical manifest and the remaining quarter is the packaged kernel program's canonical identity, which grew 8.3×. The payload metadata section is **byte-identical** across the two commits, which is the control that makes the other two rows readable: the parts of the encoding that did not change did not change. The delivered-realization record `MANIFEST_SCHEMA` `13.0` requires is inside the manifest row and is a small part of it — roughly 4.9 KB of the 65,363, on the 2,453-byte canonical measurement `wire-the-delivered-realization-record-into-the-artifact` recorded, carried once inside the folded identity and once as its own framed run. The schema itself only moved `12.0` → `14.0` in this interval, and the `14.0` step re-orders without changing any length, so **the growth is in what the manifest describes rather than in how the codec frames it**. Attributing it to individual changes is not done here and is not this note's question.
+
+**Measurement — the band the sweep now uses.** 141,532 and 159,037 bytes, the minimum and maximum envelope length of the six reduction-class members `prototypes/serial-sum-compile` publishes at this commit — the same population and the same derivation the 32,136–47,803 band came from. That producer's compiled objects are byte-identical to the ones recorded on 2026-07-31, so none of this is backend output. The two contraction members it has since gained, at 89,250 and 90,737 bytes, are **below this harness's own 114,043-byte fixed overhead** and are therefore not lengths it can synthesize; [the embedding note's re-derivation](../embedding/self-contained-embedding.md#the-band-re-derived-2026-08-06--the-envelope-column-moved-and-the-metallib-column-did-not) carries the full eight-member table.
+
+### 9.2 What a hit costs — reproduced in shape, moved in level
+
+**Measurement.** Minimum nanoseconds, 8,000 samples per warm cell and 48 per cold cell. Reproduction run in brackets.
+
+| Population | 141,532 B warm | 141,532 B cold process | 159,037 B warm | 159,037 B cold process |
+| --- | --- | --- | --- | --- |
+| 10 | 159,500 [159,292] | 239,333 [256,625] | 172,000 [172,083] | 266,459 [259,958] |
+| 100 | 159,459 [159,334] | 242,083 [235,083] | 171,875 [171,833] | 263,500 [262,542] |
+| 1,000 | 159,417 [159,125] | 246,333 [247,416] | 171,875 [171,875] | 263,417 [269,333] |
+| 10,000 | 159,250 [159,375] | 248,792 [243,875] | 171,916 [172,041] | 265,958 [255,792] |
+
+**Reproduced — flatness, and more sharply than before.** Across a thousandfold population change the four minima span **0.16%** at 141,532 bytes and **0.07%** at 159,037, against 0.6% and 0.3% at the old lengths, and the two runs agree to within 0.16%. The first run's largest 141,532-byte value is at population 10 and the second run's is at population 10,000, which a population effect cannot do. A hit still touches one key path.
+
+**Moved — the level, by 2.9×.** A validated hit is **159.3 µs** at 141,532 bytes and **172.0 µs** at 159,037, against 55.5 and 67.2 µs at the old band. The cold-process column is 235–270 µs against 105–140 µs, and it is still the noisier row with 48 samples and no monotone trend. The cold-to-warm ratio narrowed from roughly 2× to roughly **1.5×**: the per-process cost that column adds is fixed while the hit it wraps got larger.
+
+**Moved — the margin over the work a hit replaces.** The build closure measured in the same process is 4.71 ms [4.47 ms], inside the 3.6–5.4 ms Section 8 quotes, so the closure did **not** change. The hit did, which makes the cache **26–30× cheaper** than producing an artifact rather than 65–97×. It is still an accelerator and the comparison is still a floor — no external backend compiler is in it — but the ratio is the number in this note that the encoding growth cost the most.
+
+### 9.3 What dominates a hit — the same components, a more validation-bound hit
+
+**Measurement.** One hit at population 10,000, attributed. Minimum nanoseconds, 2,000 samples per component. Reproduction in brackets.
+
+| Component | 141,532 B | share | 159,037 B | share |
+| --- | ---: | ---: | ---: | ---: |
+| `decode_artifact` | 94,959 [94,750] | 59.6% | 101,333 [101,750] | 58.9% |
+| Bundle section digests | 47,708 [47,666] | 30.0% | 53,583 [53,583] | 31.2% |
+| Open and read the entry | 14,334 [14,500] | 9.0% | 14,709 [14,625] | 8.6% |
+| Key derivations (two per hit) | 166 [125] | 0.1% | 125 [125] | 0.1% |
+| Path formation and parse | 291 [250] | 0.2% | 208 [250] | 0.1% |
+| Residual | 1,834 [2,043] | 1.2% | 2,042 [1,667] | 1.2% |
+| **Whole hit** | **159,292 [159,334]** | | **172,000 [172,000]** | |
+| *of which fail-closed integrity* | *142,667 [142,416]* | *89.6%* | *154,916 [155,333]* | *90.1%* |
+
+**Reproduced — the digest rate, to three digits.** The bundle section digests are **0.337 ns/B** at both lengths, against 0.338 and 0.337 on 2026-08-04. That is the same 2.97 GB/s governed SHA-256, measured over envelopes 4.4× larger, and it is the strongest single reproduction in this re-run.
+
+**Reproduced — the read is syscall-bound.** Opening and reading the entry is 14.3–14.7 µs against 12.2–12.9 µs, a 15% rise for **4.4× the bytes**. Section 3's claim that this component does not scale with envelope size at these lengths survives a much harder test than the one that produced it.
+
+**Reproduced — keying, path work, and the residual.** Key derivation is 125–166 ns, identical to 2026-08-04's 125–166 ns; path work is 208–333 ns against 292–333 ns; the residual is **1.0–1.3%** against 0.3–3.3%. The residual matters beyond its size: the decomposition restates `tiler-cache`'s bundle framing constants, and a framing change under `MANIFEST_SCHEMA` `14.0` would have shown up here as a large residual or as the `bundle_spans` assertion failing. Neither happened.
+
+**Moved — the validation share, upward.** Fail-closed integrity is **89.4–90.3%** of a hit against 73.5–79.3%. The cache is not merely validation-bound now; validation is nearly all of it. The reason is structural rather than a regression: the envelope's fixed content grew from 28,527 to 114,043 bytes and every one of those bytes is digested and decoded, while the file read stayed a fixed ~14 µs of syscall.
+
+**Moved — the fits, and what they are fits of.** `decode_artifact`'s marginal cost is **0.364 [0.400] ns per object byte** against 0.391, and the whole hit's is **0.726 [0.723] ns/B** against 0.74 — both reproduced. The intercepts moved, from ~17.8 µs to 38–43 µs for decode and from ~32.0 µs to ~57 µs for the whole hit, which is what an 85,516-byte increase in fixed content has to do. **The slope is a per-*object*-byte slope**, and always was: both endpoints of a sweep share one fixed content and differ only in carried object, which is exactly what makes the length exact. Dividing decode's intercept by the fixed content gives 0.33–0.38 ns per fixed byte, within the marginal rate — so at this band decode is close to purely per-byte with no significant constant term. As before, these are fits through two points and are not a basis for extrapolating to an envelope an order of magnitude larger.
+
+### 9.4 What a hit does not cost — every control reproduced
+
+**Reproduced — the lock is not on the hit path.** An uncontended acquire-and-release is **13.7–15.2 µs**, against 13.9–15.3 µs: unchanged, and now 8–9% of a hit rather than 21–27%. With a separate process holding the probe key's lock — a non-blocking acquisition **required to be refused** before anything is timed, in all four size-by-run combinations — a hit costs 159,292 against 159,250 uncontended at 141,532 bytes and 172,084 against 171,916 at 159,037, agreeing to within 0.5% in every combination.
+
+**Reproduced — the oracle refuses.** Every configuration returned the exact published bytes; a single flipped byte was refused with `cache bundle section 'artifact-envelope' does not match its declared digest` at both sizes in both runs; restoring the byte restored the hit. Every population was counted back from the namespace with `account` and asserted against the fill, and the destructive collection accounted for its whole selection.
+
+**Moved, slightly — the caller's copy.** An owned `Vec` costs 1,250–1,333 ns at 141,532 bytes and 1,625–1,666 at 159,037, against 208–833 and 583–708. It grew with the buffer, as a copy must, and is **0.8–1.0%** of a hit — still under the 1.5% Section 4 bounds it at.
+
+### 9.5 What a publication costs — the durability ratio holds
+
+**Measurement.** Minimum nanoseconds over 128 rounds on fresh cache roots. Reproduction in brackets.
+
+| Envelope | `ProcessCrash` | `Fsync` | ratio | bare `rename` of the same length |
+| --- | --- | --- | --- | --- |
+| 141,532 B | 709,542 [762,000] | 8,242,833 [8,244,000] | 11.6× [10.8×] | 52,167 [61,125] |
+| 159,037 B | 744,958 [756,792] | 8,276,708 [8,184,916] | 11.1× [10.8×] | 58,750 [65,708] |
+
+**Reproduced, and this is the sharpest test the claim has had.** `Fsync` is **8.18–8.28 ms** here and was 8.17–8.36 ms at the old band. Section 5 inferred from a 49% size increase that what `Fsync` buys is a fixed number of synchronization round-trips rather than durable bytes proportional to the entry; the same figure across envelopes **4.4× larger** is that inference tested at four times the range and passing. The multiplier is **10.8–11.6×**, still inside the 6.5×–18.7× band [ADR 0083](../../decisions/0083-keep-process-crash-as-the-default-cache-durability.md) measured, so that decision's shape is unchanged.
+
+**Moved — the asymmetry between publication and a hit narrowed.** A default publication is **~4.5× a hit** and an `Fsync` publication **~52×**, against ~10× and ~150×. Publication itself grew only 31–37% for 4.4× the bytes; the hit grew 2.9×. The conclusion is unaffected — publication happens once per key and a hit on every subsequent expansion — but the gap it rests on is smaller.
+
+### 9.6 What an eviction pass costs — unchanged, which is the point
+
+**Measurement.** Minimum nanoseconds over 15 scans, `account`. Reproduction in brackets.
+
+| Population | 141,532 B | 159,037 B | 2026-08-04, both sizes |
+| --- | --- | --- | --- |
+| 10 | 155,166 [159,542] | 156,042 [167,917] | 150,084 / 161,250 |
+| 100 | 1,519,084 [1,519,875] | 1,508,833 [1,519,917] | 1,503,042 / 1,497,250 |
+| 1,000 | 6,036,291 [6,600,458] | 6,453,458 [6,660,833] | 7,061,917 / 6,499,583 |
+| 10,000 | 33,916,959 [32,693,166] | 32,262,000 [30,878,959] | 32,600,625 / 30,965,666 |
+
+**Reproduced — the scan does not read bytes.** Every population is within roughly 7% of its 2026-08-04 value across a 4.4× increase in stored bytes, which is the observation behind "the scan reads metadata and never bytes" measured rather than restated. The marginal cost between 1,000 and 10,000 is **2.7–3.1 µs per entry** against 2.5–2.8 µs. The three collect variants agree within 5% at the small populations and within 15% at 10,000, so the selector is still not what to look at.
+
+**Reproduced — removal is per key, not per byte.** A destructive collection of 10,000 entries costs 718.2–801.3 ms, reclaiming **1,418,628,890** and **1,593,678,890** bytes against 324.7 MB and 481.3 MB, at **71.8–80.1 µs per removed entry** against 73–86 µs. Three to five times the bytes at the same per-entry cost is the clearest possible statement that a removal is a non-blocking lock acquisition, a re-`stat`, an unlink, and a close.
+
+**Moved — the ratio the eviction schedule is sized against.** A full-namespace scan of a 10,000-entry cache is **178–213× one hit**, against 460–590×. The scan did not get cheaper; the hit got more expensive. **Section 6's conclusion is unchanged and its number is not**: an eviction on every expansion would still turn a 159 µs hit into a 33 ms one, which is still absurd, and `wire-the-env-configured-eviction-policy-through-the-deliver-path` still has to amortize. What a re-reader must not do is carry the 460–590× figure forward.
+
+**Inference — a consequence for a sibling record, not resolved here.** [The collection design](bounded-collection.md)'s 30-day default cites 32,136–47,803 bytes per envelope to project a 200–400 MB steady state. At 141,532–159,037 bytes the same entry count is roughly **0.9–1.6 GB**, and the same 200–400 MB is roughly 1,300–2,800 entries. The 30-day figure is a product choice under Tom's decision and is not re-decided from here; the arithmetic under it has moved, and [`re-price-the-envelope-band-consumers-against-the-re-derived-band`](../../../tickets/re-price-the-envelope-band-consumers-against-the-re-derived-band.md) owns the sites that quote the old band, including [`MaxEntryAge::DEFAULT`](../../../crates/tiler-cache/src/expansion/collect.rs)'s own ground.
+
+### 9.7 The verdict, re-checked
+
+**Inference.** *"Efficient at the measured scales"* remains **supported**, and every load-bearing part of Section 8 survives with one number replaced:
+
+1. A hit is 159.3–172.0 µs and still does not degrade with cache size — the population minima span 0.16% and 0.07%, tighter than before, reproduced.
+2. The closure a hit spares is unchanged at 4.5–4.7 ms, so the accelerator is **26–30×** cheaper than the work it replaces rather than 65–97×.
+3. Nine tenths of a hit is contract-required integrity, and every remaining component is still at its floor: the read is syscall-bound at ~14 µs across 4.4× the bytes, keying and path work are under 0.3%, no lock is taken, and nothing is copied.
+4. Publication is ~4.5× a hit and is paid once per key; the `Fsync` multiplier is unchanged.
+5. Nothing on the hit path scales with the namespace.
+
+**Inference — what the re-run actually found, which is not about the cache.** No inefficiency inside `tiler-cache` was located this time either, and none of its components regressed: the digest rate, the read cost, the key derivations, the lock, and the scan all reproduced. What moved is the size of the object the cache validates, and with it the cache's margin over the work it replaces. **The cost of a cache hit is now set almost entirely by how large an artifact envelope is**, and Section 9.1 says that three quarters of the recent growth is canonical manifest. If the hit path is ever worth attacking again, the lever is the encoding, not this crate.
+
+**Measurement boundary.** Unchanged from Section 8, with the band restated: one host, one filesystem, one toolchain, one release profile, one envelope shape, two lengths — now 141,532 and 159,037 bytes — and four populations.
+
+## 10. Outcomes
+
+1. **Bounded experiment, preserved.** [`spikes/cache/hot-path-efficiency/`](../../../spikes/cache/hot-path-efficiency/README.md), with its controls, its stated boundary, and now **four** retained runs: the [2026-08-04 result](../../../spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-04.tsv) and [its reproduction](../../../spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-04-reproduction.tsv) at 32,136 and 47,803 bytes, and the [2026-08-06 result](../../../spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-06.tsv) and [its reproduction](../../../spikes/cache/hot-path-efficiency/results/hot-path-efficiency-macos-27.0-2026-08-06-reproduction.tsv) at the re-derived 141,532 and 159,037. The first pair is kept rather than replaced: a run is evidence at the commit it was taken at, and the 2026-08-04 pair is the only measurement of this cache at a 32 KB envelope.
+2. **A fact a live ticket needs.** The scan and removal costs above size the amortization `wire-the-env-configured-eviction-policy-through-the-deliver-path` requires of itself. That ticket is in progress and its body is not edited from here; Section 6 is where the number lives, and **Section 9.6 is the one to read** — the scan cost is unchanged, and the scan-to-hit ratio it has to beat fell from 460–590× to 178–213×.
 3. **One narrow question filed rather than acted on, and since answered.** [`decide-whether-the-bundle-envelope-section-digest-is-redundant`](../../../tickets/decide-whether-the-bundle-envelope-section-digest-is-redundant.md) carried the 19.4–24.0% measurement and the reasons the answer is not obvious — a digest and a re-encode comparison refuse *different* corruptions with *different* typed reasons, and the cache's rejection and quarantine classification is built on which one fired.
 
    **Answered 2026-08-05: the digest is retained on evidence.** [`spikes/cache/envelope-digest-coverage/`](../../../spikes/cache/envelope-digest-coverage/README.md) drove thirty-five named corruption classes and every byte position of a real 113,303-byte envelope under two perturbations — 226,606 decodes — through both the public hit path and `decode_artifact`, and re-ran the whole table against a build with the comparison genuinely removed. Every single-byte corruption is caught by the artifact decoder too. What only the bundle digest catches is whole-run substitution: replace the envelope span with a *different valid envelope* and `decode_artifact` accepts it, because the cache's key is a function of the compilation subject alone and the artifact decoder validates an envelope against itself — so with the digest gone the cache serves an artifact that was never published under that key, as a validated hit. **This note's cost figures are unchanged**; what moved is that the 19.4–24.0% is now a priced guarantee rather than an open question. The per-byte cost it buys is the same governed SHA-256 that [`decide-whether-the-canonicity-re-encode-is-redundant`](../../../tickets/decide-whether-the-canonicity-re-encode-is-redundant.md) found running at roughly a quarter of achievable speed, which is where the saving actually is.
 4. **One defect found in a retained experiment.** [`spikes/cache/build-tool-exercise/envelope`](../../../spikes/cache/build-tool-exercise/) no longer compiles at this note's base commit; [`restore-the-cache-build-tool-exercise-against-the-current-artifact-api`](../../../tickets/restore-the-cache-build-tool-exercise-against-the-current-artifact-api.md) carries the two drifts and the re-run its README's evidence claim needs.
 5. **One wording sharpened in place.** Section 4 records what [the collection design](bounded-collection.md)'s racing-a-reader position said about a copy, what the code actually does, why the position's conclusion is unaffected, and why the identical wording in `collect.rs` is deliberately left alone.
 6. **Two catalog entries this branch's scopes cannot reach.** This record and the spike's record each need a line in a `contracts/navigation` catalog; [`catalog-the-cache-hot-path-efficiency-records`](../../../tickets/catalog-the-cache-hot-path-efficiency-records.md) carries the exact text of both.
+7. **The band re-derived, and the sites that quote the old one filed.** Section 9 replaces the sweep's endpoints with a band re-derived from the producer that set the original, and records the fixed-overhead growth attributed at both ends. The corpus sites that quote 32,136–47,803 as a live figure and sit outside this branch's scopes — [`MaxEntryAge::DEFAULT`](../../../crates/tiler-cache/src/expansion/collect.rs)'s ground and `docs/open-questions.md`'s Q-ART-003 headroom, which now reads 15.17% of the per-invocation ceiling rather than 4.56% — are carried by [`re-price-the-envelope-band-consumers-against-the-re-derived-band`](../../../tickets/re-price-the-envelope-band-consumers-against-the-re-derived-band.md).
 
 ## Traceability
 

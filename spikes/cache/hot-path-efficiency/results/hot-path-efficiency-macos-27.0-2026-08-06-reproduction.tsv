@@ -1,0 +1,99 @@
+# cache-hot-path-efficiency; host=Darwin 27.0.0; cpus=14; rustc=rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+# cpu=Apple M4 Max
+# scratch root=/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-cache-hot-path-efficiency-89322-1786048080739473000
+# load average at start={ 6.44 6.08 8.13 }
+# repeats=8000 warmup=64 cold-children=48 publish-rounds=128 scan-repeats=15 populations=[10, 100, 1000, 10000]
+# envelope fixed overhead=114043 bytes; compiled in 4.467708ms
+# load average at end={ 5.59 5.93 7.99 }
+# total wall clock=35.564433917s
+kind	section	size_bytes	population	variant	samples	min_ns	p50_ns	p90_ns	max_ns	note
+fact	oracle	141532	1	returned-bytes-equal-published	-	-	-	-	-	publication and hit both returned the exact published bytes
+fact	oracle	141532	1	one-flipped-byte-refused	-	-	-	-	-	cache bundle refused: cache bundle section `artifact-envelope` does not match its declared digest
+fact	oracle	141532	1	restored-byte-restores-hit	-	-	-	-	-	the same byte restored returns the exact published bytes
+fact	oracle	159037	1	returned-bytes-equal-published	-	-	-	-	-	publication and hit both returned the exact published bytes
+fact	oracle	159037	1	one-flipped-byte-refused	-	-	-	-	-	cache bundle refused: cache bundle section `artifact-envelope` does not match its declared digest
+fact	oracle	159037	1	restored-byte-restores-hit	-	-	-	-	-	the same byte restored returns the exact published bytes
+timing	publish	141532	1	process-crash	128	762000	818792	942083	1081166	-
+timing	publish	141532	1	fsync	128	8244000	9172334	9444875	17037458	-
+timing	publish	141532	1	bare-rename	128	61125	87916	117875	157458	-
+timing	publish	159037	1	process-crash	128	756792	862083	986958	1222583	-
+timing	publish	159037	1	fsync	128	8184916	9053500	9411583	15859083	-
+timing	publish	159037	1	bare-rename	128	65708	84666	100584	208708	-
+timing	hit-warm	141532	10	lookup	8000	159292	166333	203958	436542	-
+timing	hit-cold	141532	10	lookup	48	256625	280000	326875	395750	-
+timing	scan	141532	10	account	15	159542	169667	171959	247042	-
+timing	scan	141532	10	collect-unbounded	15	153417	173459	208334	300958	-
+timing	scan	141532	10	collect-age-retaining-all	15	170375	177750	190834	269833	-
+timing	hit-warm	141532	100	lookup	8000	159334	164834	199667	501375	-
+timing	hit-cold	141532	100	lookup	48	235083	287959	332875	368959	-
+timing	scan	141532	100	account	15	1519875	1738375	1833875	1987625	-
+timing	scan	141532	100	collect-unbounded	15	1530417	1677208	1796458	2168875	-
+timing	scan	141532	100	collect-age-retaining-all	15	1518625	1672959	1851250	1996458	-
+timing	hit-warm	141532	1000	lookup	8000	159125	165167	200458	528042	-
+timing	hit-cold	141532	1000	lookup	48	247416	285167	366291	577250	-
+timing	scan	141532	1000	account	15	6600458	7170750	7355208	7821917	-
+timing	scan	141532	1000	collect-unbounded	15	6317000	6812708	7114459	7441292	-
+timing	scan	141532	1000	collect-age-retaining-all	15	5986667	6662708	7151416	7328667	-
+timing	hit-warm	141532	10000	lookup	8000	159375	168792	198458	543667	-
+timing	hit-cold	141532	10000	lookup	48	243875	288000	330666	373625	-
+timing	scan	141532	10000	account	15	32693166	33332542	34247875	34909000	-
+timing	scan	141532	10000	collect-unbounded	15	31855708	33250458	33677958	34302791	-
+timing	scan	141532	10000	collect-age-retaining-all	15	31174291	33266167	35091333	38216875	-
+timing	decompose	141532	10000	whole-lookup	2000	159334	165166	204167	418000	-
+timing	decompose	141532	10000	open-and-read	2000	14500	16334	17750	118792	-
+timing	decompose	141532	10000	bundle-section-digests	2000	47666	47792	57334	320125	-
+timing	decompose	141532	10000	key-derivations	2000	125	167	209	9500	-
+timing	decompose	141532	10000	path-form-and-parse	2000	250	292	375	37416	-
+timing	decompose	141532	10000	decode-artifact	2000	94750	97083	115250	287917	-
+fact	decompose	141532	10000	residual	-	-	-	-	-	whole minimum 159334 ns; components sum to 157291 ns; residual 2043 ns (1.3% of the whole)
+fact	decompose	141532	10000	share	-	-	-	-	-	open-and-read: 14500 ns, 9.1% of the whole hit
+fact	decompose	141532	10000	share	-	-	-	-	-	bundle-section-digests: 47666 ns, 29.9% of the whole hit
+fact	decompose	141532	10000	share	-	-	-	-	-	key-derivations: 125 ns, 0.1% of the whole hit
+fact	decompose	141532	10000	share	-	-	-	-	-	path-form-and-parse: 250 ns, 0.2% of the whole hit
+fact	decompose	141532	10000	share	-	-	-	-	-	decode-artifact: 94750 ns, 59.5% of the whole hit
+fact	decompose	141532	10000	validation-share	-	-	-	-	-	fail-closed integrity (bundle section digests + decode_artifact) costs 142416 ns, 89.4% of the whole hit
+timing	decompose	141532	10000	caller-owned-copy	2000	1333	1541	1750	45417	-
+timing	lock	141532	10000	acquire-release-uncontended	2000	13708	15583	17084	167083	-
+fact	lock	141532	10000	held-by-another-process	-	-	-	-	-	a non-blocking acquisition was refused while the child held the lock
+timing	lock	141532	10000	hit-while-key-lock-held	2000	159458	165666	200917	346667	-
+timing	scan	141532	10000	collect-age-removing-all	1	739272458	739272458	739272458	739272458	-
+fact	scan	141532	10000	removal-cost-per-entry	-	-	-	-	-	739272458 ns over 10000 entries, 73927 ns each, 1418628890 bytes reclaimed
+timing	hit-warm	159037	10	lookup	8000	172083	180750	217916	529916	-
+timing	hit-cold	159037	10	lookup	48	259958	299500	338500	449417	-
+timing	scan	159037	10	account	15	167917	171125	187167	298250	-
+timing	scan	159037	10	collect-unbounded	15	166333	167708	171542	181125	-
+timing	scan	159037	10	collect-age-retaining-all	15	153792	168333	174667	349333	-
+timing	hit-warm	159037	100	lookup	8000	171833	180333	215666	450209	-
+timing	hit-cold	159037	100	lookup	48	262542	310625	344791	399417	-
+timing	scan	159037	100	account	15	1519917	1654542	1859750	2148792	-
+timing	scan	159037	100	collect-unbounded	15	1536708	1669833	1756334	2120667	-
+timing	scan	159037	100	collect-age-retaining-all	15	1535625	1635375	1782458	1965833	-
+timing	hit-warm	159037	1000	lookup	8000	171875	188250	214666	567834	-
+timing	hit-cold	159037	1000	lookup	48	269333	303750	361584	448125	-
+timing	scan	159037	1000	account	15	6660833	7100291	7352750	10051750	-
+timing	scan	159037	1000	collect-unbounded	15	6492625	6956916	7282500	7545500	-
+timing	scan	159037	1000	collect-age-retaining-all	15	6571541	6917166	7270584	10012750	-
+timing	hit-warm	159037	10000	lookup	8000	172041	181709	218250	513333	-
+timing	hit-cold	159037	10000	lookup	48	255792	309666	350292	398458	-
+timing	scan	159037	10000	account	15	30878959	33128875	33966625	34631459	-
+timing	scan	159037	10000	collect-unbounded	15	27203500	30638625	32677125	34261209	-
+timing	scan	159037	10000	collect-age-retaining-all	15	26949875	30567708	32071291	33441875	-
+timing	decompose	159037	10000	whole-lookup	2000	172000	185750	195625	309917	-
+timing	decompose	159037	10000	open-and-read	2000	14625	16500	16958	337042	-
+timing	decompose	159037	10000	bundle-section-digests	2000	53583	53667	59875	78667	-
+timing	decompose	159037	10000	key-derivations	2000	125	167	208	459	-
+timing	decompose	159037	10000	path-form-and-parse	2000	250	292	334	2417	-
+timing	decompose	159037	10000	decode-artifact	2000	101750	109250	119125	242625	-
+fact	decompose	159037	10000	residual	-	-	-	-	-	whole minimum 172000 ns; components sum to 170333 ns; residual 1667 ns (1.0% of the whole)
+fact	decompose	159037	10000	share	-	-	-	-	-	open-and-read: 14625 ns, 8.5% of the whole hit
+fact	decompose	159037	10000	share	-	-	-	-	-	bundle-section-digests: 53583 ns, 31.2% of the whole hit
+fact	decompose	159037	10000	share	-	-	-	-	-	key-derivations: 125 ns, 0.1% of the whole hit
+fact	decompose	159037	10000	share	-	-	-	-	-	path-form-and-parse: 250 ns, 0.1% of the whole hit
+fact	decompose	159037	10000	share	-	-	-	-	-	decode-artifact: 101750 ns, 59.2% of the whole hit
+fact	decompose	159037	10000	validation-share	-	-	-	-	-	fail-closed integrity (bundle section digests + decode_artifact) costs 155333 ns, 90.3% of the whole hit
+timing	decompose	159037	10000	caller-owned-copy	2000	1666	1916	1959	11542	-
+timing	lock	159037	10000	acquire-release-uncontended	2000	15167	15459	15792	35250	-
+fact	lock	159037	10000	held-by-another-process	-	-	-	-	-	a non-blocking acquisition was refused while the child held the lock
+timing	lock	159037	10000	hit-while-key-lock-held	2000	172875	188250	200084	544541	-
+timing	scan	159037	10000	collect-age-removing-all	1	718214750	718214750	718214750	718214750	-
+fact	scan	159037	10000	removal-cost-per-entry	-	-	-	-	-	718214750 ns over 10000 entries, 71821 ns each, 1593678890 bytes reclaimed
