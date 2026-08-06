@@ -322,7 +322,7 @@ fn assert_complete_partition(cover: &RegionCover, operation_count: u32) {
     let mut members: Vec<u32> = cover
         .regions()
         .iter()
-        .flat_map(|region| region.members().iter().map(|member| member.0))
+        .flat_map(|region| region.members().iter().map(|atom| atom.member().0))
         .collect();
     members.sort_unstable();
     let distinct = members

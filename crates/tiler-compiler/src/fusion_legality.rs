@@ -1137,15 +1137,23 @@ pub(crate) fn verify_fusion_legality(
 }
 
 /// Orders the candidate's members by content-derived canonical position.
+///
+/// **Projected from attribution atoms onto occurrences.** Fusion legality is
+/// derived from operation facts — family key, proven purity, canonical operand
+/// and result type encodings — none of which a stage of an occurrence refines,
+/// so a candidate covering two stages of one occurrence contributes that
+/// occurrence once rather than twice.
 fn ordered_members(
     graph: &RegionGraph,
     candidate: &RegionCandidate,
 ) -> Result<Vec<SemanticMemberId>, FusionLegalityError> {
     let mut keyed = Vec::with_capacity(candidate.members().len());
-    for member in candidate.members() {
-        keyed.push((graph.member_canonical_position(*member)?, *member));
+    for atom in candidate.members() {
+        let member = atom.member();
+        keyed.push((graph.member_canonical_position(member)?, member));
     }
     keyed.sort_by_key(|(position, _)| *position);
+    keyed.dedup_by_key(|(position, _)| *position);
     Ok(keyed.into_iter().map(|(_, member)| member).collect())
 }
 

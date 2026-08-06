@@ -63,7 +63,7 @@
 //! occupancy model exist. Folding bytes into a component whose unit is
 //! `Registers` would have been a unit lie, and units here are contract.
 
-use crate::region::SemanticMemberId;
+use crate::region::SemanticStage;
 use crate::selection::SelectedPlan;
 use core::fmt;
 use std::collections::BTreeSet;
@@ -363,7 +363,7 @@ impl AnalyticalPlanCost {
 fn repeated_work<'a>(
     stages: impl IntoIterator<Item = &'a crate::physical::VerifiedScheduledRegion>,
 ) -> Option<u64> {
-    let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
+    let mut seen: BTreeSet<SemanticStage> = BTreeSet::new();
     stages.into_iter().try_fold(0_u64, |total, verified| {
         let points = element_count(&verified.region().index.iteration_shape).ok()?;
         let repeated = verified

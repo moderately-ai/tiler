@@ -1595,7 +1595,7 @@ fn target_axis(error: &PhysicalError) -> &'static str {
 /// partition, which is the whole program exactly when one output is declared.
 fn region_role(
     request: &crate::request::VerifiedTargetRequest,
-    members: &[crate::region::SemanticMemberId],
+    members: &[crate::region::SemanticStage],
 ) -> &'static str {
     let Some((_, output)) = request.output_for_region(members) else {
         return "unrecognized";
@@ -1612,7 +1612,7 @@ fn region_role(
 /// only what happens after it differs.
 fn output_region_role(
     output: &crate::request::NormalizedOutput,
-    members: &[crate::region::SemanticMemberId],
+    members: &[crate::region::SemanticStage],
 ) -> &'static str {
     match output {
         crate::request::NormalizedOutput::Pointwise(_)

@@ -155,7 +155,7 @@ fn stage_coverage_uses_verified_canonical_receipt_occurrences() {
     let lowering = crate::lowering::resolve_lowering(&semantic, &request).unwrap();
     let member = crate::region::SemanticMemberId(0);
     let occurrence = lowering.occurrence(member).unwrap();
-    let covered = covered(&[member], &lowering).unwrap();
+    let covered = covered(&[crate::region::SemanticStage::first(member)], &lowering).unwrap();
     let [record] = covered.as_slice() else {
         panic!("one member covers one occurrence")
     };

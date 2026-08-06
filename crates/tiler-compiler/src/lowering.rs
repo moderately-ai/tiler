@@ -346,7 +346,7 @@ pub(crate) fn resolve_lowering(
     let contract = NumericalContractIdentity::try_from_key(request.numerical_contract().key)
         .expect("verified compiler contract keys satisfy the IR bound");
     let mut occurrences = Vec::new();
-    for member in request.normalized().all_members() {
+    for member in request.normalized().all_occurrences() {
         let occurrence = project_occurrence(semantic, member, &contract)?;
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
         let provider = LoweringProviderIdentity::new(
@@ -391,7 +391,7 @@ pub(crate) fn resolve_capabilities(
     let contract = NumericalContractIdentity::try_from_key(request.numerical_contract().key)
         .expect("verified compiler contract keys satisfy the IR bound");
     let mut providers = Vec::new();
-    for member in request.normalized().all_members() {
+    for member in request.normalized().all_occurrences() {
         let occurrence = project_occurrence(semantic, member, &contract)?;
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
         providers.push(LoweringProviderIdentity::new(

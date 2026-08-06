@@ -25,7 +25,7 @@ use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
 };
 
-use crate::region::SemanticMemberId;
+use crate::region::SemanticStage;
 use crate::request::{
     NormalizedContraction, NormalizedEpilogue, NormalizedOutput, NormalizedOutputSubject,
     NormalizedSerialSum, NumericalPermission, StrictF32NumericalContract, TargetProfile,
@@ -410,7 +410,7 @@ impl RegionVocabularyWall {
 /// assumed.
 pub(crate) fn spell_region(
     request: &VerifiedTargetRequest,
-    members: &[SemanticMemberId],
+    members: &[SemanticStage],
     write: RegionWrite,
 ) -> Result<RegionSpelling, RegionVocabularyWall> {
     // Retained across the walk rather than returned immediately, so a region
@@ -442,7 +442,7 @@ pub(crate) fn spell_region(
 fn spell_output(
     output: &NormalizedOutput,
     position: usize,
-    members: &[SemanticMemberId],
+    members: &[SemanticStage],
     write: RegionWrite,
     partial_fused: &mut Option<RegionVocabularyWall>,
 ) -> Option<Result<RegionSpelling, RegionVocabularyWall>> {
@@ -533,7 +533,7 @@ const CONTRACT_PROPOSAL_CANDIDATE: &str = "tiler.prototype.numerical-contract";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedScheduledRegion {
     verified: tiler_ir::schedule::VerifiedScheduledRegion,
-    semantic_members: Vec<SemanticMemberId>,
+    semantic_members: Vec<SemanticStage>,
     target_profile: TargetProfile,
     request_subject: VerifiedRequestSubject,
     admission: AdmissionEvidence,
@@ -573,7 +573,7 @@ impl VerifiedScheduledRegion {
     /// These are graph-local operation ordinals of the verified program, not a
     /// fixed role vocabulary, so a schedule cannot claim coverage of operations
     /// the request boundary did not actually recognize.
-    pub(crate) fn semantic_members(&self) -> &[SemanticMemberId] {
+    pub(crate) fn semantic_members(&self) -> &[SemanticStage] {
         &self.semantic_members
     }
     pub(crate) fn matches_request(&self, request: &VerifiedTargetRequest) -> bool {
@@ -811,7 +811,7 @@ pub(crate) fn pointwise_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
     write: RegionWrite,
-) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+) -> (ScheduledRegion, Vec<SemanticStage>) {
     let (shape, elements, expression, members, recognized_reads) =
         if let Some(pointwise) = output.pointwise() {
             (
@@ -983,7 +983,7 @@ pub(crate) fn epilogue_region(
     request: &VerifiedTargetRequest,
     chain: &NormalizedEpilogue,
     write: RegionWrite,
-) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+) -> (ScheduledRegion, Vec<SemanticStage>) {
     let reads: Vec<(TensorRole, LogicalAccess)> = chain
         .reads
         .iter()
@@ -1051,7 +1051,7 @@ pub(crate) fn publishing_copy_region(
     request: &VerifiedTargetRequest,
     shape: Shape,
     elements: u64,
-) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+) -> (ScheduledRegion, Vec<SemanticStage>) {
     let region = elementwise_region(
         request,
         PUBLISHING_COPY_REGION,
@@ -1124,7 +1124,7 @@ pub(crate) fn contraction_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
     write: RegionWrite,
-) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+) -> (ScheduledRegion, Vec<SemanticStage>) {
     let normalized = output
         .contraction()
         .expect("a contraction region is built only for a contraction output");
@@ -1235,7 +1235,7 @@ pub(crate) fn reduction_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
     write: RegionWrite,
-) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+) -> (ScheduledRegion, Vec<SemanticStage>) {
     let serial = output.serial_sum();
     let contributor = contributor_tensor(serial);
     let write_tensor = write.tensor();
@@ -1335,7 +1335,7 @@ pub(crate) fn fused_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
     write: RegionWrite,
-) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
+) -> Option<(ScheduledRegion, Vec<SemanticStage>)> {
     let (scale_bits, bias_bits) = fused_prologue_constants(output)?;
     let serial = output.serial_sum();
     // The declared input the prologue read, which `fused_prologue_constants`
@@ -1524,7 +1524,7 @@ pub(crate) fn partial_reduction_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
     partition: ContributorPartition,
-) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
+) -> Option<(ScheduledRegion, Vec<SemanticStage>)> {
     let subject = output.serial_sum();
     let contributor = contributor_tensor(subject);
     let partial_shape =
@@ -1611,12 +1611,21 @@ pub(crate) fn partial_reduction_region(
 /// It reduces the single partition axis of the staged partial tensor, so its
 /// axes are deliberately not the request's reduction axes: those were already
 /// consumed by the partial pass.
+///
+/// **It claims the reduction occurrence's *second* stage, and that is the fact
+/// the attribution atom exists to carry.** The two passes realize one recognized
+/// fold between them; the partial pass claims stage zero and this one claims the
+/// stage after it, so "which part of the occurrence does this dispatch compute"
+/// is stated rather than left to the shape of the chain. While the atom was a
+/// bare occurrence the only expressible answer was the empty set, which says the
+/// pass computes nothing at all — true of a publishing copy, false of a combine,
+/// and indistinguishable from a provider that claimed nothing by mistake.
 pub(crate) fn final_reduction_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
     partition: ContributorPartition,
     write: RegionWrite,
-) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
+) -> Option<(ScheduledRegion, Vec<SemanticStage>)> {
     let subject = output.serial_sum();
     let write_tensor = write.tensor();
     let partial_shape =
@@ -1697,7 +1706,13 @@ pub(crate) fn final_reduction_region(
             ..linear_schedule(subject.output_elements, OwnershipWitnessId::new(3))
         },
     };
-    Some((region, Vec::new()))
+    let combined = subject
+        .members
+        .reduction()
+        .iter()
+        .map(|atom| atom.next_stage())
+        .collect();
+    Some((region, combined))
 }
 
 /// The stable name of the single-workgroup tree strategy in explain output.
@@ -1790,7 +1805,7 @@ pub(crate) fn single_workgroup_tree_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
     write: RegionWrite,
-) -> Result<(ScheduledRegion, Vec<SemanticMemberId>), WorkgroupTreeUnavailable> {
+) -> Result<(ScheduledRegion, Vec<SemanticStage>), WorkgroupTreeUnavailable> {
     if request.numerical_contract().reassociation == NumericalPermission::Forbidden {
         return Err(WorkgroupTreeUnavailable::ReassociationForbidden);
     }
@@ -1972,7 +1987,7 @@ pub(crate) struct GovernedSplit {
     /// How the contributor sequence is split, retained for cost and identity.
     pub(crate) partition: ContributorPartition,
     /// The partial pass, then the final pass, each with its claimed members.
-    pub(crate) stages: Vec<(ScheduledRegion, Vec<SemanticMemberId>)>,
+    pub(crate) stages: Vec<(ScheduledRegion, Vec<SemanticStage>)>,
 }
 
 /// Chooses and builds the governed multi-pass split of one request's reduction.
@@ -2106,7 +2121,7 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
 )]
 pub(crate) fn verify_schedule(
     region: ScheduledRegion,
-    semantic_members: Vec<SemanticMemberId>,
+    semantic_members: Vec<SemanticStage>,
     request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
     verify_schedule_with_feasibility(region, semantic_members, request)
@@ -2127,7 +2142,7 @@ pub(crate) fn verify_schedule(
 /// provider emitted invalid IR.
 pub(crate) fn verify_schedule_with_feasibility(
     region: ScheduledRegion,
-    semantic_members: Vec<SemanticMemberId>,
+    semantic_members: Vec<SemanticStage>,
     request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
     let id = region.index.id;
@@ -2197,7 +2212,7 @@ fn map_schedule_build_error(error: &ScheduledRegionBuildError, region: RegionId)
 /// exact realization of one recognized partition rather than a plausible one.
 fn verify_region_subject_binding(
     region: &ScheduledRegion,
-    semantic_members: &[SemanticMemberId],
+    semantic_members: &[SemanticStage],
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
     // A publishing copy claims no occurrence, so no recognized partition's
@@ -2239,7 +2254,7 @@ fn verify_region_subject_binding(
 /// count` refusal is what keeps a copy from being assembled without one.
 fn verify_publishing_copy_binding(
     region: &ScheduledRegion,
-    semantic_members: &[SemanticMemberId],
+    semantic_members: &[SemanticStage],
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
     let bound = semantic_members.is_empty()
@@ -2290,7 +2305,7 @@ fn published_shape(normalized: &NormalizedOutputSubject) -> &Shape {
 
 fn verify_region_output_binding(
     region: &ScheduledRegion,
-    semantic_members: &[SemanticMemberId],
+    semantic_members: &[SemanticStage],
     normalized: &NormalizedOutputSubject,
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
@@ -2575,14 +2590,16 @@ fn epilogue_accesses_match(
 
 /// Binds one pass of a split reduction to the request subject it refines.
 ///
-/// The partial pass claims the reduction occurrence, exactly as the
-/// materialized strategy's single reduction region does; the final pass claims
-/// none, because that occurrence is already covered and claiming it again would
-/// double-cover the graph. That asymmetry is what lets the two passes together
-/// contribute the same coverage the one region they replace contributed.
+/// The partial pass claims the reduction occurrence's first stage, exactly as
+/// the materialized strategy's single reduction region does; the final pass
+/// claims the stage after it. The two atoms are distinct, so the passes together
+/// realize the one occurrence the region they replace realized without either
+/// claiming the other's work — and the *exact* stage is required here rather
+/// than merely "something later", because a chain that skipped a stage would
+/// leave part of a longer realization unattributed and still bind.
 fn verify_multi_pass_subject_binding(
     region: &ScheduledRegion,
-    semantic_members: &[SemanticMemberId],
+    semantic_members: &[SemanticStage],
     normalized: &crate::request::NormalizedSerialSumSubject,
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
@@ -2619,7 +2636,13 @@ fn verify_multi_pass_subject_binding(
                 ScalarProgram::StrictSerialSum { canonical_nan_bits, .. }
                     if *canonical_nan_bits
                         == subject.numerical_contract().canonical_arithmetic_nan_bits
-            ) && semantic_members.is_empty()
+            ) && semantic_members
+                == normalized
+                    .members()
+                    .reduction()
+                    .iter()
+                    .map(|atom| atom.next_stage())
+                    .collect::<Vec<_>>()
                 && region.index.id == RegionId::new(3)
                 && region.index.iteration_shape == *normalized.output_shape()
         }
@@ -2648,7 +2671,7 @@ fn verify_multi_pass_subject_binding(
 /// thing a subject binding exists to stop.
 fn verify_workgroup_tree_subject_binding(
     region: &ScheduledRegion,
-    semantic_members: &[SemanticMemberId],
+    semantic_members: &[SemanticStage],
     normalized: &crate::request::NormalizedSerialSumSubject,
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
@@ -3104,6 +3127,7 @@ fn intrinsic<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError
 
 #[cfg(test)]
 mod tests {
+    use crate::region::SemanticMemberId;
 
     /// A fold's contributor tensor is its recognized ordinal, not the first.
     ///
@@ -3470,10 +3494,10 @@ mod tests {
             pointwise_region(&request, request.sole_output(), RegionWrite::ProgramOutput);
         let region = verify_schedule(raw, members, &request).unwrap();
         let expected = [
-            SemanticMemberId(0),
-            SemanticMemberId(1),
-            SemanticMemberId(2),
-            SemanticMemberId(3),
+            SemanticStage::first(SemanticMemberId(0)),
+            SemanticStage::first(SemanticMemberId(1)),
+            SemanticStage::first(SemanticMemberId(2)),
+            SemanticStage::first(SemanticMemberId(3)),
         ];
         assert_eq!(region.semantic_members(), expected);
 
@@ -3526,7 +3550,7 @@ mod tests {
                 expected[1],
                 expected[2],
                 expected[3],
-                SemanticMemberId(4),
+                SemanticStage::first(SemanticMemberId(4)),
             ],
         ] {
             assert!(matches!(
@@ -3536,6 +3560,86 @@ mod tests {
                     ..
                 })
             ));
+        }
+    }
+
+    /// The same program as [`request`], under a contract that admits a split.
+    ///
+    /// Four contributors is the smallest extent [`governed_partition`] splits,
+    /// and reassociation is the one permission the split consumes.
+    fn split_request() -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 4]))
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, product, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request = verify_planned_request(CompilationRequest::governed_under(
+            &program,
+            StrictF32NumericalContract::governed_relaxed(),
+        ))
+        .unwrap();
+        request.for_target(0).unwrap()
+    }
+
+    /// A split's two passes are told apart by the stage, not by the member set.
+    ///
+    /// **The one observation the attribution atom exists to make.** Both passes
+    /// realize the *same* recognized fold occurrence, so as member sets their
+    /// claims are `{reduction}` and `{reduction}` — indistinguishable, and one
+    /// of the two would have to double-cover the graph. The spelling that
+    /// survived under a bare-occurrence atom was for the combine to claim the
+    /// empty set, which says it computes nothing at all: true of a publishing
+    /// copy, false here, and equal to what a provider that claimed nothing by
+    /// mistake would have said. With the stage in the atom each pass names the
+    /// part of the occurrence it computes, and every other claim the member set
+    /// alone could express is refused — including the empty one this check
+    /// watched pass before the change.
+    #[test]
+    fn a_splits_two_passes_are_distinguished_by_stage_rather_than_member_set() {
+        let request = split_request();
+        let output = request.sole_output();
+        let split = split_reduction_regions(&request, output, RegionWrite::ProgramOutput)
+            .expect("a four-contributor relaxed request admits the split");
+        let [(partial, partial_claim), (combine, combine_claim)] =
+            <[_; 2]>::try_from(split.stages).expect("the governed split has two passes");
+
+        // One occurrence, two stages: the member sets agree exactly, and only
+        // the ordinal separates the claims.
+        assert_eq!(partial_claim.len(), 1);
+        assert_eq!(combine_claim.len(), 1);
+        assert_eq!(partial_claim[0].member(), combine_claim[0].member());
+        assert!(partial_claim[0].is_first());
+        assert_eq!(combine_claim[0], partial_claim[0].next_stage());
+
+        // Each pass binds under its own stage.
+        verify_schedule(partial.clone(), partial_claim.clone(), &request)
+            .expect("the partial pass claims the occurrence's first stage");
+        verify_schedule(combine.clone(), combine_claim.clone(), &request)
+            .expect("the combine claims the stage after it");
+
+        // And under nothing else. The empty claim is the pre-atom spelling of
+        // the combine; the other pass's claim is the only remaining set of this
+        // occurrence a member-keyed model could name.
+        for (region, forged) in [
+            (&combine, Vec::new()),
+            (&combine, partial_claim.clone()),
+            (&partial, Vec::new()),
+            (&partial, combine_claim.clone()),
+        ] {
+            assert_eq!(
+                verify_schedule(region.clone(), forged, &request),
+                Err(PhysicalError::Intrinsic {
+                    rule: "request-binding",
+                    region: region.index.id,
+                }),
+                "a pass bound against a claim that is not its own stage"
+            );
         }
     }
 

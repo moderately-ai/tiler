@@ -90,7 +90,7 @@ use crate::physical::{
     AdmissionEvidence, PhysicalError, ResourceVerdict, VerifiedScheduledRegion,
     verify_schedule_with_feasibility,
 };
-use crate::region::SemanticMemberId;
+use crate::region::SemanticStage;
 use crate::request::{TargetProfile, TargetProfileKey, VerifiedTargetRequest};
 use crate::target::feasibility::{
     FeasibilityError, RejectionCause, ResolvedPredicate, UnrealizableSynchronization,
@@ -153,11 +153,11 @@ impl fmt::Display for PhysicalProposalKind {
 
 /// One stage of a proposed kernel subprogram.
 ///
-/// The provider states the region *and* the semantic occurrences that stage
-/// claims, because a subprogram's stages do not claim the subject uniformly: a
-/// split reduction's partial pass claims the reduction occurrence and its final
-/// pass claims none, since that occurrence is already covered and claiming it
-/// twice would double-cover the graph.
+/// The provider states the region *and* the attribution atoms that stage claims,
+/// because a subprogram's stages do not claim the subject uniformly: a split
+/// reduction's partial pass claims the reduction occurrence's first stage and
+/// its final pass claims the stage after it, so each names the part of the
+/// occurrence it computes instead of one of them naming nothing.
 ///
 /// Neither field is believed. Each region is resubmitted through
 /// [`verify_schedule_with_feasibility`] with the members declared here, and that
@@ -167,15 +167,12 @@ impl fmt::Display for PhysicalProposalKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SubprogramStage {
     region: ScheduledRegion,
-    semantic_members: Vec<SemanticMemberId>,
+    semantic_members: Vec<SemanticStage>,
 }
 
 impl SubprogramStage {
     /// Builds one proposed stage from its region and the members it claims.
-    pub(crate) const fn new(
-        region: ScheduledRegion,
-        semantic_members: Vec<SemanticMemberId>,
-    ) -> Self {
+    pub(crate) const fn new(region: ScheduledRegion, semantic_members: Vec<SemanticStage>) -> Self {
         Self {
             region,
             semantic_members,
@@ -1146,7 +1143,7 @@ pub(crate) enum StrategyDeclineCause {
     ///
     /// **Which occurrences those are is the region's canonical occurrence
     /// identity, which the frontier record is keyed by, and it is deliberately
-    /// not restated here as a member ordinal.** A [`SemanticMemberId`] is a
+    /// not restated here as a member ordinal.** A [`SemanticStage`]'s member is a
     /// graph-local *authoring* coordinate: the two spellings of the governed
     /// program that `product_is_deterministic_and_preserves_the_materialized_boundary`
     /// compares number the same occurrence `0` and `1`, so a cause carrying one
@@ -1284,7 +1281,7 @@ pub(crate) trait PhysicalImplementationProvider {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FrontierRegionSubject {
     role: &'static str,
-    semantic_members: Vec<SemanticMemberId>,
+    semantic_members: Vec<SemanticStage>,
     /// Element counts of the cover-materialized intermediates this region reads,
     /// deduplicated and ascending.
     ///
@@ -1318,7 +1315,7 @@ impl FrontierRegionSubject {
     )]
     pub(crate) fn new(
         role: &'static str,
-        semantic_members: Vec<SemanticMemberId>,
+        semantic_members: Vec<SemanticStage>,
         write: crate::physical::RegionWrite,
     ) -> Self {
         Self {
@@ -1336,7 +1333,7 @@ impl FrontierRegionSubject {
     /// share one enumeration.
     pub(crate) fn reading_intermediates(
         role: &'static str,
-        semantic_members: Vec<SemanticMemberId>,
+        semantic_members: Vec<SemanticStage>,
         intermediate_elements: impl IntoIterator<Item = u64>,
         write: crate::physical::RegionWrite,
     ) -> Self {
@@ -1362,7 +1359,7 @@ impl FrontierRegionSubject {
     }
 
     /// Returns the exact recognized semantic occurrences the region covers.
-    pub(crate) fn semantic_members(&self) -> &[SemanticMemberId] {
+    pub(crate) fn semantic_members(&self) -> &[SemanticStage] {
         &self.semantic_members
     }
 
@@ -1515,7 +1512,7 @@ pub(crate) struct AdmittedImplementation {
     /// `RegisteredCall` cannot hold them: a call is registered once and admitted
     /// per region and per target, so one registration would need different
     /// members per admission.
-    semantic_members: Vec<SemanticMemberId>,
+    semantic_members: Vec<SemanticStage>,
     /// The target profile this admission is for.
     ///
     /// Here for the same reason as the members: *for where*, which both bodies
@@ -1540,7 +1537,7 @@ impl AdmittedImplementation {
 
     /// Returns the verified scheduled region backing this implementation.
     /// The semantic members this admission implements.
-    pub(crate) fn semantic_members(&self) -> &[SemanticMemberId] {
+    pub(crate) fn semantic_members(&self) -> &[SemanticStage] {
         &self.semantic_members
     }
 
@@ -2746,10 +2743,11 @@ fn admit_verified(
 /// that stage claims, so a provider can neither smuggle an unverified region nor
 /// let one pass claim occurrences the request-subject binding does not grant it.
 /// On top of that per-stage check the subprogram carries one obligation no stage
-/// can see: the occurrences its stages claim between them must be exactly the
-/// subject's, each once. A chain covering less would silently drop work the
-/// cover assigned to this region, and a chain covering more would compute an
-/// occurrence another region also computes.
+/// can see: the atoms its stages claim between them must realize exactly the
+/// subject's occurrences, each once, which
+/// [`crate::region::chain_realizes_subject`] decides. A chain covering less
+/// would silently drop work the cover assigned to this region, and a chain
+/// covering more would compute an occurrence another region also computes.
 ///
 /// The feasibility verdict is the **subprogram's**, taken once over the peak
 /// requirement across its stages, rather than a merge of per-stage evidences: a
@@ -2777,12 +2775,11 @@ fn admit_subprogram(
     if subprogram.stages.len() < 2 {
         return Err(malformed(SUBPROGRAM_NOT_CHAINED_RULE));
     }
-    let mut claimed: Vec<SemanticMemberId> = Vec::new();
+    let mut claimed: Vec<SemanticStage> = Vec::new();
     for stage in &subprogram.stages {
         claimed.extend_from_slice(&stage.semantic_members);
     }
-    claimed.sort_unstable();
-    if claimed != subject.semantic_members {
+    if !crate::region::chain_realizes_subject(&mut claimed, &subject.semantic_members) {
         return Err(malformed("subprogram-coverage"));
     }
     let mut verified = Vec::with_capacity(subprogram.stages.len());

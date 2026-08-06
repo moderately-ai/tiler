@@ -122,9 +122,149 @@ impl Error for RegionError {}
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SemanticMemberId(pub(crate) u32);
 
+/// Ordinal of one realization stage within a single semantic occurrence.
+///
+/// Zero is the occurrence's first stage and is the only ordinal an occurrence
+/// realized by one region ever carries. A family whose realization is a region
+/// *sequence* — a fold then a normalization, a split reduction's partial pass
+/// then its combine — numbers its regions from zero in execution order.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct StageOrdinal(pub(crate) u32);
+
+impl StageOrdinal {
+    /// The stage every single-region occurrence carries.
+    pub(crate) const FIRST: Self = Self(0);
+
+    /// Returns the ordinal as a plain number for reporting and encoding.
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Returns the stage immediately after this one.
+    ///
+    /// Saturating rather than wrapping: a stage count that reached `u32::MAX`
+    /// is not a chain any profile builds, and wrapping to zero would make a
+    /// later stage indistinguishable from the first one.
+    pub(crate) const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+/// The planner's attribution atom: one realization stage of one occurrence.
+///
+/// **The atom is a pair rather than a bare occurrence, and the second component
+/// is what makes a multi-region realization statable at all.** Region
+/// attribution is decided by comparing the exact set an entity claims —
+/// [`crate::request::NormalizedOutput::owns_region_members`] against a
+/// recognized partition's parts, [`crate::physical::spell_region`] against the
+/// region vocabulary, [`crate::cover::verify_cover`]'s duplication accounting
+/// against a cover's placements — and with a bare occurrence as the atom, two
+/// regions realizing one occurrence in sequence claim *the same set*. The first
+/// comparison then answers for both, the second region is unreachable, and a
+/// repeated occurrence has no reading other than deliberate duplication. ADR
+/// fork `resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage`
+/// records the derivation and Tom's decision (2026-08-06) to make the atom a
+/// pair.
+///
+/// `Ord` is member-major by field order, so a set of first-stage atoms sorts
+/// exactly as its member ordinals did and an occurrence's stages stay adjacent.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct SemanticStage {
+    member: SemanticMemberId,
+    stage: StageOrdinal,
+}
+
+impl SemanticStage {
+    /// Binds the first — and, for a single-region occurrence, only — stage.
+    pub(crate) const fn first(member: SemanticMemberId) -> Self {
+        Self {
+            member,
+            stage: StageOrdinal::FIRST,
+        }
+    }
+
+    /// Returns the occurrence this atom is a stage of.
+    pub(crate) const fn member(self) -> SemanticMemberId {
+        self.member
+    }
+
+    /// Returns which realization stage of that occurrence this atom is.
+    pub(crate) const fn stage(self) -> StageOrdinal {
+        self.stage
+    }
+
+    /// Returns whether this is the occurrence's first stage.
+    ///
+    /// The one predicate that distinguishes an atom which *computes* an
+    /// occurrence from one which continues it: whole-program coverage, lowering
+    /// receipts, and duplication accounting are all obligations of the
+    /// occurrence, discharged once by its first stage.
+    pub(crate) const fn is_first(self) -> bool {
+        self.stage.0 == StageOrdinal::FIRST.0
+    }
+
+    /// Returns the atom of the stage immediately after this one.
+    pub(crate) const fn next_stage(self) -> Self {
+        Self {
+            member: self.member,
+            stage: self.stage.next(),
+        }
+    }
+}
+
 /// Graph-local ordinal of one semantic value.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SemanticValueId(pub(crate) u32);
+
+/// Returns whether an ordered chain of dispatch claims realizes one subject.
+///
+/// The obligation a multi-dispatch realization owes and no single dispatch can
+/// see: the dispatches between them must compute the subject's occurrences,
+/// each exactly once, and nothing else. Two conditions decide it, and the claims
+/// are sorted first so both are adjacency tests over one pass.
+///
+/// - **Every later stage sits directly behind the stage it continues.** A claim
+///   of stage `k > 0` requires the element before it to be stage `k - 1` of the
+///   same occurrence, which is where it lands once the atoms are sorted. A chain
+///   skipping a stage would leave part of a longer realization computed by
+///   nobody, and a chain repeating a later stage would compute one part twice —
+///   the repeat's predecessor is the identical atom, whose stage is not one
+///   less, so it fails here.
+/// - **The first stages are exactly the subject.** The subject is ascending and
+///   duplicate-free, so a claim outside it, a subject occurrence no dispatch
+///   claims, and a first stage claimed twice each break the equality.
+///
+/// The two together are what the retired comparison against the concatenated
+/// claims used to state, restored for an atom that carries a stage: that
+/// comparison required the claims to *equal* the subject, which a chain whose
+/// later passes name their own stage can no longer satisfy, and whose only
+/// alternative spelling was a pass claiming nothing.
+pub(crate) fn chain_realizes_subject(
+    claims: &mut [SemanticStage],
+    subject: &[SemanticStage],
+) -> bool {
+    claims.sort_unstable();
+    for (position, atom) in claims.iter().enumerate() {
+        if atom.is_first() {
+            continue;
+        }
+        let continues = position
+            .checked_sub(1)
+            .and_then(|previous| claims.get(previous))
+            .is_some_and(|previous| {
+                previous.member() == atom.member()
+                    && previous.stage().get().checked_add(1) == Some(atom.stage().get())
+            });
+        if !continues {
+            return false;
+        }
+    }
+    claims
+        .iter()
+        .copied()
+        .filter(|atom| atom.is_first())
+        .eq(subject.iter().copied())
+}
 
 /// Returns the graph-local ordinal one verified program gives a value.
 ///
@@ -250,7 +390,7 @@ impl RegionOccurrenceIdentity {
 /// One proposed connected convex region over a verified semantic DAG.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RegionCandidate {
-    members: Vec<SemanticMemberId>,
+    members: Vec<SemanticStage>,
     boundary_inputs: Vec<SemanticValueId>,
     retained_outputs: Vec<RetainedOutput>,
     duplication: DuplicationPolicy,
@@ -263,8 +403,13 @@ pub(crate) struct RegionCandidate {
 }
 
 impl RegionCandidate {
-    /// Returns the region's members in ascending graph-local order.
-    pub(crate) fn members(&self) -> &[SemanticMemberId] {
+    /// Returns the region's attribution atoms in ascending graph-local order.
+    ///
+    /// Every atom this stage mints is a first stage — [`assemble`] is the only
+    /// constructor and builds them from graph operation ordinals — so the list
+    /// is one atom per covered occurrence until a producer of multi-region
+    /// realizations exists.
+    pub(crate) fn members(&self) -> &[SemanticStage] {
         &self.members
     }
 
@@ -1055,13 +1200,36 @@ struct FormedRegions {
 ///
 /// A stored candidate is never trusted structurally: identity, boundaries,
 /// retained outputs, and duplication policy are all rederived from the graph.
+///
+/// **A non-first attribution stage is refused here rather than rebuilt.** The
+/// rebuild reads occurrences alone, and [`encode_occurrence`] states why that is
+/// complete only for single-stage candidates: two candidates differing in a
+/// stage ordinal would recompute to one identity, so verification would confirm
+/// a candidate against another candidate's bytes. Refusing by name is the
+/// fail-closed direction and is what the ticket minting the first multi-stage
+/// candidate must lift together with the encoding.
 pub(crate) fn verify_candidate(
     graph: &RegionGraph,
     budgets: DeterministicBudgets,
     numerical_contract: StrictF32NumericalContract,
     candidate: &RegionCandidate,
 ) -> Result<(), RegionError> {
-    let members: Vec<u32> = candidate.members.iter().map(|member| member.0).collect();
+    if let Some(staged) = candidate.members.iter().find(|atom| !atom.is_first()) {
+        return Err(RegionError::Invalid {
+            region: format!(
+                "{} member {} stage {}",
+                candidate.label,
+                staged.member().0,
+                staged.stage().get()
+            ),
+            rule: "unencoded-member-stage",
+        });
+    }
+    let members: Vec<u32> = candidate
+        .members
+        .iter()
+        .map(|atom| atom.member().0)
+        .collect();
     if members.is_empty() || members.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(RegionError::Invalid {
             region: candidate.label.to_string(),
@@ -1232,8 +1400,10 @@ impl Formation<'_> {
     fn finish(self) -> Result<FormedRegions, RegionError> {
         let mut keyed = Vec::with_capacity(self.candidates.len());
         for candidate in self.candidates {
-            let key =
-                canonical_positions(self.graph, candidate.members.iter().map(|member| member.0))?;
+            let key = canonical_positions(
+                self.graph,
+                candidate.members.iter().map(|atom| atom.member().0),
+            )?;
             keyed.push((key, candidate));
         }
         keyed.sort_by(|left, right| (&left.0, &left.1.members).cmp(&(&right.0, &right.1.members)));
@@ -1420,9 +1590,15 @@ fn assemble(
     let occurrence = encode_occurrence(graph, &content, members, &shape)?;
     let label = occurrence.label();
     Ok(RegionCandidate {
+        // One first-stage atom per covered operation. This stage observes the
+        // semantic DAG alone, where an occurrence is one operation and its
+        // realization has not been chosen, so it has nothing to number stages
+        // from; a family whose law realizes an occurrence as a region sequence
+        // is what mints a second stage, and `encode_occurrence` states what
+        // that will require of identity.
         members: members
             .iter()
-            .map(|member| SemanticMemberId(*member))
+            .map(|member| SemanticStage::first(SemanticMemberId(*member)))
             .collect(),
         boundary_inputs: shape
             .boundary_inputs
@@ -1683,6 +1859,18 @@ fn boundary_is_internal(
 /// The member set determines the site, so encoding its canonical positions is
 /// injective for one program. Boundary and retained values are derived from that
 /// set and are encoded as redundant, independently checkable site facts.
+///
+/// **It encodes occurrences, not attribution atoms, and that is complete only
+/// while every candidate is single-stage.** [`assemble`] is the sole constructor
+/// of a [`RegionCandidate`] and mints [`SemanticStage::first`] for every member,
+/// so no two candidates of one program can differ in a stage ordinal and the
+/// positions below separate every distinct site. A later authority that mints a
+/// candidate covering *one* stage of a multi-stage occurrence breaks that
+/// premise — two such candidates would share these bytes — so it must fold the
+/// stage ordinal into this encoding and into [`encode_content`], which moves
+/// every region, cover, and downstream pinned identity. That step belongs to the
+/// ticket that mints the first multi-stage candidate, because the encoding it
+/// needs cannot be validated against content that does not exist yet.
 fn encode_occurrence(
     graph: &RegionGraph,
     content: &RegionContentIdentity,
@@ -1928,6 +2116,67 @@ mod tests {
     };
     use tiler_ir::shape::{Axis, Shape};
 
+    /// Every way a chain of claims can fail to realize its subject.
+    ///
+    /// The rule's arms are otherwise driven only by the one chain this profile
+    /// builds — a split reduction's two passes — which exercises the accepting
+    /// path and none of the refusing ones. Each case below is a chain whose
+    /// stages would each verify individually, so nothing but this rule can say
+    /// no to any of them.
+    #[test]
+    fn a_chain_realizes_its_subject_only_when_every_stage_is_accounted_for() {
+        let first = SemanticStage::first(SemanticMemberId(1));
+        let second = SemanticStage::first(SemanticMemberId(2));
+        let subject = [first, second];
+
+        // The single-dispatch case and the split's shape: one claim per subject
+        // occurrence, plus any number of later stages sitting behind theirs.
+        for claims in [
+            vec![first, second],
+            vec![second, first],
+            vec![first, second, second.next_stage()],
+            vec![
+                first,
+                first.next_stage(),
+                first.next_stage().next_stage(),
+                second,
+            ],
+        ] {
+            let mut claims = claims;
+            assert!(
+                chain_realizes_subject(&mut claims, &subject),
+                "a chain claiming every occurrence once must realize its subject"
+            );
+        }
+
+        for (claims, why) in [
+            (vec![first], "an occurrence no stage claims"),
+            (
+                vec![first, second, SemanticStage::first(SemanticMemberId(3))],
+                "an occurrence outside the subject",
+            ),
+            (vec![first, first, second], "one first stage claimed twice"),
+            (
+                vec![first, second, second.next_stage(), second.next_stage()],
+                "one later stage claimed twice",
+            ),
+            (
+                vec![first, second, second.next_stage().next_stage()],
+                "a later stage continuing a stage nothing computed",
+            ),
+            (
+                vec![first, second, first.next_stage().next_stage()],
+                "a skipped stage on an occurrence that is claimed",
+            ),
+        ] {
+            let mut claims = claims;
+            assert!(
+                !chain_realizes_subject(&mut claims, &subject),
+                "the rule admitted a chain with {why}"
+            );
+        }
+    }
+
     /// A retained root record the stage chain hangs from.
     ///
     /// The real pipeline always has one — the request-verification receipt —
@@ -2040,7 +2289,13 @@ mod tests {
         outcome
             .candidates()
             .iter()
-            .map(|candidate| candidate.members().iter().map(|member| member.0).collect())
+            .map(|candidate| {
+                candidate
+                    .members()
+                    .iter()
+                    .map(|atom| atom.member().0)
+                    .collect()
+            })
             .collect()
     }
 
@@ -2267,7 +2522,13 @@ mod tests {
         let whole = outcome
             .candidates()
             .iter()
-            .find(|candidate| candidate.members().iter().map(|m| m.0).eq([1, 2, 3]))
+            .find(|candidate| {
+                candidate
+                    .members()
+                    .iter()
+                    .map(|atom| atom.member().0)
+                    .eq([1, 2, 3])
+            })
             .expect("the multi-output region is legal");
 
         let retained: Vec<(u32, bool, bool)> = whole
@@ -2288,7 +2549,13 @@ mod tests {
         let split = outcome
             .candidates()
             .iter()
-            .find(|candidate| candidate.members().iter().map(|m| m.0).eq([1, 2]))
+            .find(|candidate| {
+                candidate
+                    .members()
+                    .iter()
+                    .map(|atom| atom.member().0)
+                    .eq([1, 2])
+            })
             .expect("the partial region is legal");
         let retained: Vec<(u32, bool, bool)> = split
             .retained_outputs()
@@ -2328,7 +2595,13 @@ mod tests {
             let candidate = outcome
                 .candidates()
                 .iter()
-                .find(|candidate| candidate.members().iter().map(|m| m.0).eq(members.clone()))
+                .find(|candidate| {
+                    candidate
+                        .members()
+                        .iter()
+                        .map(|atom| atom.member().0)
+                        .eq(members.clone())
+                })
                 .expect("overlapping candidates are retained");
             assert_eq!(candidate.duplication(), DuplicationPolicy::Disabled);
         }
@@ -2341,17 +2614,35 @@ mod tests {
         let left = outcome
             .candidates()
             .iter()
-            .find(|candidate| candidate.members().iter().map(|m| m.0).eq([2]))
+            .find(|candidate| {
+                candidate
+                    .members()
+                    .iter()
+                    .map(|atom| atom.member().0)
+                    .eq([2])
+            })
             .unwrap();
         let right = outcome
             .candidates()
             .iter()
-            .find(|candidate| candidate.members().iter().map(|m| m.0).eq([3]))
+            .find(|candidate| {
+                candidate
+                    .members()
+                    .iter()
+                    .map(|atom| atom.member().0)
+                    .eq([3])
+            })
             .unwrap();
         let shared = outcome
             .candidates()
             .iter()
-            .find(|candidate| candidate.members().iter().map(|m| m.0).eq([1]))
+            .find(|candidate| {
+                candidate
+                    .members()
+                    .iter()
+                    .map(|atom| atom.member().0)
+                    .eq([1])
+            })
             .unwrap();
 
         // `left` multiplies its two boundary reads; `shared` does too, at a
@@ -2397,7 +2688,13 @@ mod tests {
             outcome
                 .candidates()
                 .iter()
-                .find(|candidate| candidate.members().iter().map(|m| m.0).eq([member]))
+                .find(|candidate| {
+                    candidate
+                        .members()
+                        .iter()
+                        .map(|atom| atom.member().0)
+                        .eq([member])
+                })
                 .unwrap()
                 .clone()
         };
@@ -2606,13 +2903,28 @@ mod tests {
             })
         ));
 
+        // A candidate carrying a later attribution stage is refused rather than
+        // rebuilt: the rebuild reads occurrences alone, so it would confirm this
+        // candidate against the bytes of the one covering the same occurrence's
+        // first stage. `encode_occurrence` records what lifting the refusal
+        // requires of identity.
+        let mut staged = whole.clone();
+        staged.members[0] = staged.members[0].next_stage();
+        assert!(matches!(
+            verify_candidate(outcome.graph(), budgets, contract, &staged),
+            Err(RegionError::Invalid {
+                rule: "unencoded-member-stage",
+                ..
+            })
+        ));
+
         let diamond = diamond_program();
         let diamond_outcome = form(&diamond);
         let mut nonconvex = diamond_outcome.candidates()[0].clone();
         nonconvex.members = vec![
-            SemanticMemberId(1),
-            SemanticMemberId(2),
-            SemanticMemberId(4),
+            SemanticStage::first(SemanticMemberId(1)),
+            SemanticStage::first(SemanticMemberId(2)),
+            SemanticStage::first(SemanticMemberId(4)),
         ];
         assert!(matches!(
             verify_candidate(diamond_outcome.graph(), budgets, contract, &nonconvex),
