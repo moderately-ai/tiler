@@ -3666,18 +3666,27 @@ fn resolve_numerical_contract(
 /// publication: two keys naming one value, and a published intermediate that is
 /// also consumed. [`tiler_ir::program::ValueRole`] is exclusive and a region
 /// writes one owning tensor, so both are refused a layer down.
-/// The copy stage that would lift the second is blocked in `tiler-ir`, one layer
-/// below where it is observed: a stage publishing a value another region
+/// The copy stage that would lift the second is blocked in four places, and only
+/// the last of them is in `tiler-ir`. A stage publishing a value another region
 /// computed claims no occurrence of its own, and
 /// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
-/// only as the declared combiner of a split. That is a program-scope vocabulary
-/// widening rather than a schedule-vocabulary one — the *region* it needs is
-/// expressible, and `materialized_intermediate_epilogue_wall.rs` measures that —
-/// which is why admitting the epilogue chain did not lift it.
+/// only as the declared combiner of a split — but that refusal is never reached
+/// today. Measured by disabling each wall in turn against a governed spelling of
+/// the published-and-consumed fixture, the order is: this rule; then
+/// `crate::program`'s `cover-named-output-attribution`, because the cover places
+/// the producing region as both the edge's producer and the publication's
+/// retainer; then `crate::program`'s `internal-unwritten`, because that region's
+/// one owning write goes to the edge and nothing writes the published value; and
+/// only then `UncoveringStage`. The third is the copy stage's real absence and it
+/// is a *physical and frontier* widening in this crate — the region needs a
+/// second dispatch, exactly as a split reduction has one — so each individual
+/// region being expressible, which `materialized_intermediate_epilogue_wall.rs`
+/// measures, is necessary rather than sufficient.
 /// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence for
 /// where that boundary now is, and
-/// `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
-/// holds the evidence for which layer the remaining wall belongs to.
+/// [`crate::pipeline::conformance`]'s
+/// `a_published_and_consumed_intermediate_refuses_by_name` records the measured
+/// wall order.
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
     // Program-wide properties first, each under the rule that names it. A
     // program failing one of these fails it for every shape below, so reporting
@@ -3832,8 +3841,18 @@ fn recognize_elementwise_output(
 /// builds for every epilogue chain. What it does not have is an *account*: it
 /// publishes a value another region computed, so it claims no occurrence, and
 /// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
-/// only as the declared combiner of a split. Lifting this refusal is therefore a
-/// program-scope vocabulary widening a crate down, not a recognizer change here.
+/// only as the declared combiner of a split.
+///
+/// **Lifting this refusal is nevertheless not only a widening a crate down.**
+/// Disabling this arm against a governed spelling of the fixture reaches
+/// [`crate::program`]'s `cover-named-output-attribution` and then its
+/// `internal-unwritten`, both of which are widenings *here*: the cover legally
+/// places one region as both the edge's producer and the publication's retainer,
+/// and that region needs a second dispatch to write the publication. The
+/// `tiler-ir` account is the fourth and last wall, not the first.
+/// [`crate::pipeline::conformance`]'s
+/// `a_published_and_consumed_intermediate_refuses_by_name` records the measured
+/// order.
 ///
 /// Claimed counts are taken over the deduplicated per-output member sets, so one
 /// constant shared by two operands of the *same* walk contributes one member

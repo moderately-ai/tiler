@@ -600,11 +600,41 @@ fn ordered_multi_output_programs_compile_through_the_ordinary_path() {
 /// measures it. What that stage still has no account for is its *coverage*: it
 /// publishes a value another region computed, so it claims no occurrence, and
 /// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
-/// only as the declared combiner of a split. Lifting this row is therefore a
-/// program-scope vocabulary widening in `tiler-ir`, filed as
-/// `admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary`, and not a
-/// recognizer change — which is why the epilogue landing left this refusal
-/// unchanged and still naming the request boundary.
+/// only as the declared combiner of a split.
+///
+/// **That program-scope account is the last of four walls, not the only one, and
+/// the earlier three are all in this crate.** An earlier revision of this comment
+/// said lifting the row was "a program-scope vocabulary widening in `tiler-ir`
+/// … and not a recognizer change". That was measured wrong by disabling each wall
+/// in turn against a `SemanticProgramBuilder::try_standard` spelling of this
+/// fixture and reading the next refusal:
+///
+/// 1. `check_output_cover`'s `output-partition-overlap`, which this test asserts;
+/// 2. `crate::program`'s `cover-named-output-attribution`
+///    ([`AttributionFailure::MaterializesAndPublishes`]) — recognition, region
+///    formation, cover enumeration, selection and planning all *succeed*, and the
+///    cover places the scaling region as both the producer of the edge the fold
+///    reads and the retainer of `scaled`;
+/// 3. `crate::program`'s `internal-unwritten` — with that attribution admitted,
+///    the scaling region's one owning write goes to the materialization edge and
+///    nothing writes `scaled`. This is the copy stage's absence stated by the
+///    assembler, and closing it is a *physical and frontier* widening here: the
+///    region needs a second dispatch, exactly as a split reduction has one;
+/// 4. only then `tiler_ir::program`'s `UncoveringStage` — inferred from the
+///    verifier rather than measured, because rows 1 to 3 stop the program first.
+///
+/// All four are owned together by
+/// `lift-the-four-published-and-consumed-walls-together`, because lifting row 1
+/// alone would move this refusal from `strategy` to `program-assembly`, which is
+/// later and less specific than what the caller is told today.
+///
+/// **This fixture also cannot be turned into the compiling assertion the row
+/// wants without changing how it is built.** It registers [`ExternalSemantics`],
+/// and `externally_registered_operations_require_their_own_realization_authority`
+/// pins that such a program refuses under `capability` / `semantic-authority-pairing`
+/// — which is exactly what wall 1 was masking. A published-and-consumed program
+/// that is meant to compile has to be spelled with
+/// `SemanticProgramBuilder::try_standard`, like [`governed_program`].
 #[test]
 fn a_published_and_consumed_intermediate_refuses_by_name() {
     let mut registry = SemanticRegistryBuilder::new();
