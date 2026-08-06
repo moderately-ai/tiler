@@ -41,18 +41,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use candle_core::{DType, Device, Tensor, Var};
-use std::collections::BTreeMap;
 
 use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLDevice};
 
 use tiler_artifact::program::{
-    ArithmeticType, BackendKey, RecordedArtifactIdentityError, RecordedArtifactProgramIdentity,
-    RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    BackendKey, RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
 use tiler_artifact::proof::{
     DecodedProofSidecar, ProofAssociationError, ProofCodecError, decode_proof_sidecar,
 };
-use tiler_build::{BoundMetalCompileDeclaration, BoundMetalDeclarationError};
+use tiler_build::{BoundMetalCompileDeclaration, BoundMetalDeclarationError, DTypeDispatchability};
 use tiler_metal::applicability::{
     MetalGpuFamilySupport, MetalHostApplicabilityPolicy, MetalHostApplicabilityRefusal,
     MetalHostObservation, evaluate_metal_host_applicability,
@@ -995,6 +994,24 @@ fn decode_f32_bits(
 /// [`ExecutionEnvironment::classify`] therefore answers a real question — does
 /// this artifact name the profile the producer declared, under the same exact
 /// descriptor — and does not answer the question ADR 0086 gates.
+///
+/// # The dtype rows are read, not transcribed, and the gap that leaves
+///
+/// Every field here comes from `declaration`, the dtype rows included:
+/// [`BoundMetalCompileDeclaration::dtype_dispatchability_rows`] answers from the
+/// same `TargetProfile` the compile gate consults, so a widened, narrowed, or
+/// retracted measurement moves this environment with it. The literal that used
+/// to stand here could not — it named `f32` and `bf16` on the strength of a
+/// comment, and would have gone on naming them through a retraction.
+///
+/// **That removes a copy and not the authority gap.** These rows remain
+/// *producer-declared*: this binary holds a real `MTLDevice` and asks it nothing
+/// about either dtype, so what is stated is what the declaration measured on the
+/// ledger's host, not what this one does. Earning a host row would need a
+/// per-dtype observation on this device, and [`offer_the_declared_profile`] is
+/// the reason that is not merely unwritten — ADR 0086 refuses the applicability
+/// receipt on every macOS row currently observable, so no observation this
+/// binary could take would make the profile this host's to offer.
 fn declared_route_environment(
     declaration: &BoundMetalCompileDeclaration,
 ) -> Result<ExecutionEnvironment, ProofError> {
@@ -1011,18 +1028,31 @@ fn declared_route_environment(
         representation: RepresentationKey::new(REPRESENTATION_KEY)
             .map_err(|_| ProofError::HostProfile)?,
         // Producer-declared, exactly like the profile above and with the same
-        // caveat this function's heading states. These are the dtypes
-        // `tiler-build`'s `FIRST_MACOS_APPLE9` ledger rows declare for the bound
-        // profile, transcribed rather than measured here; nothing on this
-        // machine was asked whether it dispatches either. A host-earned dtype row
-        // beside a producer-declared profile would be two authority levels
-        // wearing one name, which is the confusion this whole function exists to
-        // avoid.
-        dtype_dispatch: BTreeMap::from([
-            (ArithmeticType::F32, DTypeDispatch::Dispatchable),
-            (ArithmeticType::Bf16, DTypeDispatch::Dispatchable),
-        ]),
+        // caveat this function's heading states. A dtype the declaration states
+        // nothing about produces no row at all, which is what keeps silence
+        // fail-closed here: the loader refuses an undeclared dtype rather than
+        // reading an absence as permission.
+        dtype_dispatch: declaration
+            .dtype_dispatchability_rows()
+            .into_iter()
+            .map(|(arithmetic, verdict)| (arithmetic, host_dtype_dispatch(verdict)))
+            .collect(),
     })
+}
+
+/// Restates one declared dispatchability verdict in the host's own vocabulary.
+///
+/// An exhaustive match rather than a conversion helper, so a verdict added to
+/// the compile-profile vocabulary stops this binary compiling instead of
+/// reaching a wildcard that guesses. The two vocabularies are deliberately
+/// separate: the compiler's is what a *profile* declares and the runtime's is
+/// what a *host* states, and this function is the one place this consumer turns
+/// the first into the second.
+const fn host_dtype_dispatch(verdict: DTypeDispatchability) -> DTypeDispatch {
+    match verdict {
+        DTypeDispatchability::Dispatchable => DTypeDispatch::Dispatchable,
+        DTypeDispatchability::Unsupported => DTypeDispatch::Unsupported,
+    }
 }
 
 /// Reads one `sw_vers` field, or nothing when the tool does not answer.

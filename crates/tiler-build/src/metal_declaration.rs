@@ -86,14 +86,14 @@ use tiler_artifact::program::{
     TargetProfileKey as ArtifactTargetProfileKey, TargetProfileRef,
 };
 use tiler_compiler::target::{
-    DTypeDispatchability, IndexArithmeticSupport, ScalarArithmetic, ScalarSupport,
-    SynchronizationSupport, TargetCompileProfileMeasurementSource, TargetCompilerBuild,
-    TargetCompilerRole, TargetCompilerRoleIdentity, TargetExecutionEnvironment,
-    TargetFactProducerIdentity, TargetFactSource, TargetMeasurementContext,
-    TargetNormativeReferenceIdentity, TargetProfile, TargetProfileBuildError, TargetProfileBuilder,
-    TargetProfileKey, TargetProfileKeyError,
+    DTypeDispatchability, DTypeDispatchabilityResolution, IndexArithmeticSupport, ScalarArithmetic,
+    ScalarSupport, SynchronizationSupport, TargetCompileProfileMeasurementSource,
+    TargetCompilerBuild, TargetCompilerRole, TargetCompilerRoleIdentity,
+    TargetExecutionEnvironment, TargetFactProducerIdentity, TargetFactSource,
+    TargetMeasurementContext, TargetNormativeReferenceIdentity, TargetProfile,
+    TargetProfileBuildError, TargetProfileBuilder, TargetProfileKey, TargetProfileKeyError,
 };
-use tiler_ir::numerics::ScalarArithmeticSubjectError;
+use tiler_ir::numerics::{ScalarArithmeticSubjectError, registered_arithmetic_value_type};
 use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
@@ -493,6 +493,67 @@ impl BoundMetalCompileDeclaration {
     #[must_use]
     pub const fn numerical_realization(&self) -> NumericalRealization {
         self.numerical
+    }
+
+    /// Returns the dtype-dispatchability verdicts [`Self::profile`] declares, in
+    /// [`ArithmeticType`]'s canonical order.
+    ///
+    /// # Why a consumer reads this instead of transcribing the ledger
+    ///
+    /// A consumer that states which dtypes it can dispatch has to get the rows
+    /// from somewhere, and the two candidates are not equivalent. Transcribing
+    /// this module's `FIRST_MACOS_APPLE9` rows into a call-site literal makes the consumer a
+    /// second authority over rows this declaration already owns, so a widened,
+    /// narrowed, or retracted measurement leaves the copy stating a verdict the
+    /// profile no longer holds. Reading them here cannot drift: the answer comes
+    /// from the same [`TargetProfile`] the compile gate consults, through the
+    /// same lookup.
+    ///
+    /// # Silence is omitted rather than defaulted
+    ///
+    /// Only an exact declaration produces a row. A dtype the profile resolves
+    /// `Unknown` — `f16`, which this ledger deliberately does not measure — and
+    /// one it resolves `Deferred` are both **absent** from the result, never
+    /// present with a permissive verdict. That keeps a consumer's fail-closed
+    /// rule intact: a row it never receives is a dtype it never claims, and the
+    /// runtime's own `Unknown` refuses exactly as `Unsupported` does.
+    ///
+    /// `Deferred` is dropped rather than reported for the reason the runtime
+    /// vocabulary has no spelling for it: an answer that only resolves after a
+    /// later phase is one this consumer cannot hold *now*, and stating it as a
+    /// verdict would offer a fact the phase it names has not yet produced.
+    ///
+    /// # The phase is the compile profile, and that is the whole of its authority
+    ///
+    /// [`AvailabilityPhase::CompileProfile`] is the phase
+    /// `tiler_compiler`'s own request admission resolves this fact at, so a row
+    /// returned here is exactly the row that decided whether a program in that
+    /// dtype could be compiled for this target at all. It is **not** an
+    /// observation about any host: nothing here binds a device, and ADR 0086
+    /// keeps the applicability question a host would have to answer refused on
+    /// every macOS row.
+    #[must_use]
+    pub fn dtype_dispatchability_rows(&self) -> Vec<(ArithmeticType, DTypeDispatchability)> {
+        ArithmeticType::ALL
+            .into_iter()
+            .filter_map(|arithmetic| {
+                let resolved_type = registered_arithmetic_value_type(arithmetic)?;
+                let verdict = match self
+                    .profile
+                    .dtype_dispatchability(&resolved_type, AvailabilityPhase::CompileProfile)
+                {
+                    DTypeDispatchabilityResolution::Dispatchable => {
+                        DTypeDispatchability::Dispatchable
+                    }
+                    DTypeDispatchabilityResolution::Unsupported => {
+                        DTypeDispatchability::Unsupported
+                    }
+                    DTypeDispatchabilityResolution::Deferred { .. }
+                    | DTypeDispatchabilityResolution::Unknown => return None,
+                };
+                Some((arithmetic, verdict))
+            })
+            .collect()
     }
 
     /// Returns the total projection of [`Self::metal_facts`] onto the AOT driver.
@@ -1357,6 +1418,59 @@ mod tests {
         assert_ne!(
             unsupported.profile().canonical_descriptor(),
             baseline.profile().canonical_descriptor(),
+        );
+    }
+
+    /// The published rows are the profile's own declarations and nothing else.
+    ///
+    /// Both halves matter and neither implies the other: the two measured dtypes
+    /// appear with the verdict the ledger states, and the two the ledger does not
+    /// declare are **absent** rather than present with a default. An accessor
+    /// that returned a row per [`ArithmeticType`] would hand a consumer a verdict
+    /// for `f16`, which nothing on this profile measured.
+    #[test]
+    fn the_published_dispatchability_rows_are_the_declared_ones_only() {
+        assert_eq!(
+            declared().dtype_dispatchability_rows(),
+            vec![
+                (ArithmeticType::Bf16, DTypeDispatchability::Dispatchable),
+                (ArithmeticType::F32, DTypeDispatchability::Dispatchable),
+            ],
+            "the rows must be exactly the ledger's two measured dtypes, in canonical order",
+        );
+    }
+
+    /// Every ledger dispatchability perturbation reaches the published rows.
+    ///
+    /// The accessor's whole purpose is that a consumer reading it cannot state a
+    /// verdict this declaration stopped holding, so each way a row can move is
+    /// driven separately: retracting it must remove the row, and refuting it must
+    /// change the verdict in place. A single case would pass for an accessor that
+    /// only noticed one of the two.
+    #[test]
+    fn a_moved_ledger_dispatchability_row_moves_the_published_rows() {
+        let rows = |ledger: &LedgerRows| {
+            BoundMetalCompileDeclaration::declare(ledger)
+                .expect("the perturbed rows still assemble")
+                .dtype_dispatchability_rows()
+        };
+        let mut retracted = FIRST_MACOS_APPLE9;
+        retracted.bf16_dispatchability = None;
+        assert_eq!(
+            rows(&retracted),
+            vec![(ArithmeticType::F32, DTypeDispatchability::Dispatchable)],
+            "a retracted measurement must leave silence, not a stale verdict",
+        );
+
+        let mut refuted = FIRST_MACOS_APPLE9;
+        refuted.bf16_dispatchability = Some(DTypeDispatchability::Unsupported);
+        assert_eq!(
+            rows(&refuted),
+            vec![
+                (ArithmeticType::Bf16, DTypeDispatchability::Unsupported),
+                (ArithmeticType::F32, DTypeDispatchability::Dispatchable),
+            ],
+            "a refuted measurement is a stated negative, distinct from silence",
         );
     }
 

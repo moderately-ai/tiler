@@ -206,14 +206,15 @@
 use core::fmt;
 
 use tiler_build::{
-    BoundMetalCompileDeclaration, BoundMetalDeclarationError, MetalAssemblyError,
-    MetalPlanBuildError, accept_or_publish_metal_plan,
+    BoundMetalCompileDeclaration, BoundMetalDeclarationError, DTypeDispatchability,
+    MetalAssemblyError, MetalPlanBuildError, accept_or_publish_metal_plan,
 };
 use tiler_cache::expansion::{ExpansionCache, Resolution};
 use tiler_compiler::session::{
     CompileFailure, CompileFailureClass, CompileRequest, TargetCompileFailure, compile,
 };
 use tiler_compiler::target::{TargetRequest, TargetRequestError};
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::SemanticProgram;
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::family::{ArtifactFamilySelection, SelectedFamily};
@@ -264,6 +265,7 @@ pub(crate) struct RouteFacts {
     target_profile_descriptor: Vec<u8>,
     backend: String,
     representation: String,
+    dtype_dispatch: Vec<(ArithmeticType, DTypeDispatchability)>,
 }
 
 impl RouteFacts {
@@ -274,10 +276,23 @@ impl RouteFacts {
     /// byte-string literal and the `#[cfg]` selector that decides the position,
     /// and restating either here would embed the bytes twice.
     pub(crate) fn source(&self, artifact_binding: &str, payload_binding: &str) -> String {
+        let dtype_dispatch = self
+            .dtype_dispatch
+            .iter()
+            .map(|(arithmetic, verdict)| {
+                format!(
+                    "({}, {})",
+                    arithmetic_type_path(*arithmetic),
+                    dtype_dispatch_path(*verdict),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "::tiler::__private::RouteFacts {{ artifact: {artifact_binding}, payload: \
              {payload_binding}, artifact_identity: {}, target_profile_key: {:?}, \
-             target_profile_descriptor: {}, backend: {:?}, representation: {:?} }}",
+             target_profile_descriptor: {}, backend: {:?}, representation: {:?}, dtype_dispatch: \
+             &[{dtype_dispatch}] }}",
             crate::delivery::byte_string_literal(&self.artifact_identity),
             self.target_profile_key,
             crate::delivery::byte_string_literal(&self.target_profile_descriptor),
@@ -290,6 +305,43 @@ impl RouteFacts {
     #[cfg(test)]
     pub(crate) fn artifact_identity(&self) -> &[u8] {
         &self.artifact_identity
+    }
+
+    /// Returns the dtype-dispatchability rows these facts carry.
+    #[cfg(test)]
+    pub(crate) fn dtype_dispatch(&self) -> &[(ArithmeticType, DTypeDispatchability)] {
+        &self.dtype_dispatch
+    }
+}
+
+/// Renders one arithmetic type as the path generated code names it.
+///
+/// Exhaustive, for `storage_scalar_path`'s reason applied to a second
+/// vocabulary: widening the arithmetic set must be a build error here rather
+/// than a verdict this frontend silently cannot spell. The path is the facade's
+/// re-export of the artifact vocabulary, because that is the one an expansion's
+/// consumer already depends on.
+const fn arithmetic_type_path(arithmetic: ArithmeticType) -> &'static str {
+    match arithmetic {
+        ArithmeticType::F16 => "::tiler::artifact::program::ArithmeticType::F16",
+        ArithmeticType::Bf16 => "::tiler::artifact::program::ArithmeticType::Bf16",
+        ArithmeticType::F32 => "::tiler::artifact::program::ArithmeticType::F32",
+        ArithmeticType::F64 => "::tiler::artifact::program::ArithmeticType::F64",
+    }
+}
+
+/// Renders one dispatchability verdict as the path generated code names it.
+///
+/// The *runtime's* two-valued vocabulary rather than the compiler's, because the
+/// value being emitted is a field of a host's `ExecutionEnvironment` and that is
+/// the vocabulary a host states. The compiler's third and fourth resolutions
+/// never arrive here: `BoundMetalCompileDeclaration::dtype_dispatchability_rows`
+/// omits an `Unknown` or `Deferred` dtype rather than reporting one, so a row
+/// this frontend emits is always an exact declaration.
+const fn dtype_dispatch_path(verdict: DTypeDispatchability) -> &'static str {
+    match verdict {
+        DTypeDispatchability::Dispatchable => "::tiler::runtime::load::DTypeDispatch::Dispatchable",
+        DTypeDispatchability::Unsupported => "::tiler::runtime::load::DTypeDispatch::Unsupported",
     }
 }
 
@@ -639,6 +691,14 @@ pub(crate) fn deliver(
         target_profile_descriptor: payload.compatibility.descriptor.as_bytes().to_vec(),
         backend: payload.backend.as_str().to_owned(),
         representation: payload.representation.as_str().to_owned(),
+        // Read off the declaration this artifact was compiled under, which is
+        // the only other field here whose source is the declaration rather than
+        // the produced envelope — and for the same reason the envelope-read
+        // fields have theirs: the artifact carries no dtype-dispatchability row
+        // of its own, so a consumer that needs one either receives the profile's
+        // or receives nothing and refuses. `require_buildable` already proved
+        // this declaration is the one every stated family compiles against.
+        dtype_dispatch: declaration.dtype_dispatchability_rows(),
     };
 
     // The envelope is read from the resolution rather than re-encoded from the

@@ -93,3 +93,11 @@ pub use payload_cache::{
     DeliveredPayloadProtocolError, accept_or_publish_delivered_payload_artifact,
 };
 pub use plan_artifact::{BackendEntryDeclaration, PlanArtifactError, assemble_plan_artifact};
+// The verdict half of [`BoundMetalCompileDeclaration::dtype_dispatchability_rows`],
+// re-exported rather than restated. A consumer of that accessor must match the
+// verdict to state anything about it, and the two that do — the frontend
+// expansion and the Candle prototype — carry no `tiler-compiler` edge of their
+// own. A second two-valued enum minted here would be a third spelling of a fact
+// only the compiler profile produces, which is the drift the accessor exists to
+// remove.
+pub use tiler_compiler::target::DTypeDispatchability;
