@@ -1,7 +1,7 @@
 ---
 id: execute-the-doc-drift-sweep-the-audit-enumerated
 title: Execute the doc drift sweep the audit enumerated
-status: review
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, implementation/reference, i
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-doc-sweep
-lease_expires_at: 1786029055
 ---
 ## The work (drift audit 2026-08-06; A4/A1/B spot-verified by the coordinator)
 

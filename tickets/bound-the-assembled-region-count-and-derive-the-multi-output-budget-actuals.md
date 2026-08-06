@@ -1,14 +1,17 @@
 ---
 id: bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals
 title: Bound the assembled region count and derive the multi-output budget actuals
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-budgets
+lease_expires_at: 1786031910
 ---
 ## User-visible outcome
 

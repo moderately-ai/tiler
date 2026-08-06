@@ -1,7 +1,7 @@
 ---
 id: conform-the-bf16-vertical-end-to-end
 title: Conform the BF16 vertical end to end against the exact reference corpus
-status: todo
+status: in-progress
 priority: p2
 dependencies: [validate-bf16-at-the-runtime-routing-boundary]
 related: [spike-bf16-through-the-second-dtype-seams, evaluate-bf16-reference-semantics, own-the-dtype-support-maturity-matrix]
@@ -9,6 +9,9 @@ scopes: [implementation/reference, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, conformance, testing]
+claimed_from: todo
+assignee: agent-bf16-vertical
+lease_expires_at: 1786031910
 ---
 ## User-visible outcome
 
