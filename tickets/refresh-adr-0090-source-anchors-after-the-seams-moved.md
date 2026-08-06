@@ -1,7 +1,7 @@
 ---
 id: refresh-adr-0090-source-anchors-after-the-seams-moved
 title: Refresh ADR 0090's source anchors after the seams moved
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [audit-backend-authoring-against-all-thirteen-responsibilities, specify-the-consumer-neutral-backend-provider-composition-contract]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, backend-providers]
+claimed_from: todo
+assignee: agent-adr-fixes
+lease_expires_at: 1786050483
 ---
 ## User-visible outcome
 
