@@ -370,6 +370,15 @@ pub enum BinaryOp {
     IndexDivide,
     /// Index remainder by a positive constant.
     IndexModulo,
+    /// Index subtraction whose result is proven non-negative.
+    ///
+    /// Admitted for the one coordinate map that needs it: a reindex mirroring an
+    /// axis reads `extent − 1 − c`, where `c` is a `% extent` result and the
+    /// left operand is the constant `extent − 1`, so the difference is in
+    /// `0..extent` by construction. There is deliberately no wrapping or
+    /// saturating spelling beside it — an index that could go negative is a
+    /// defect in the map that produced it, not a case to define behaviour for.
+    IndexSubtract,
     /// IEEE-754 binary32 addition.
     F32Add,
     /// IEEE-754 binary32 multiplication.
@@ -457,6 +466,13 @@ impl BinaryOp {
             // express — no earlier kernel could hold a `bf16` operand at all.
             Self::Bf16Add => 0x0a,
             Self::Bf16Multiply => 0x0b,
+            // Appended for the same reason and with the same consequence: `0x01`
+            // through `0x0b` keep their meanings and every field keeps its
+            // position, so no previously encodable kernel's bytes move and the
+            // kernel identity domain does not step. A reader that reaches `0x0c`
+            // is reading a kernel the earlier vocabulary could not express — no
+            // earlier kernel could mirror a coordinate.
+            Self::IndexSubtract => 0x0c,
         }
     }
 
@@ -464,9 +480,11 @@ impl BinaryOp {
     #[must_use]
     pub const fn operand_type(self) -> KernelType {
         match self {
-            Self::IndexAdd | Self::IndexMultiply | Self::IndexDivide | Self::IndexModulo => {
-                KernelType::Index
-            }
+            Self::IndexAdd
+            | Self::IndexMultiply
+            | Self::IndexDivide
+            | Self::IndexModulo
+            | Self::IndexSubtract => KernelType::Index,
             Self::F32Add | Self::F32Multiply | Self::F32Divide | Self::F32Maximum => {
                 KernelType::F32
             }

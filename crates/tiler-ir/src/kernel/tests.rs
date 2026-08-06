@@ -876,6 +876,8 @@ fn body_shaping_vocabulary_is_closed(
             LogicalAccess::PackedU4LsbZeroTail { .. } => "packed-u4-lsb-zero-tail",
             LogicalAccess::ReductionContributor { .. } => "reduction-contributor",
             LogicalAccess::ContractionOperand { .. } => "contraction-operand",
+            LogicalAccess::ReindexBijection { .. } => "reindex-bijection",
+            LogicalAccess::BroadcastReplication { .. } => "broadcast-replication",
         },
         match topology {
             ReductionTopology::None => "none",

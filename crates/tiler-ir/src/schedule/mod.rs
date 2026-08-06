@@ -158,13 +158,13 @@ pub use handles::{
 };
 pub(crate) use model::subnormal_freedom_of;
 pub use model::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
+    Access, AccessMode, AxisDecode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ContractionAxisSource, ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion,
     KernelSchedule, LaunchPlan, LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass,
     ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy,
-    TensorRole, VerifiedScheduledRegion, axes_are_canonical, contributor_count,
-    cooperative_local_memory_bytes, cooperative_tile, element_count, partial_reduction_axis,
-    partial_reduction_shape,
+    TensorRole, VerifiedScheduledRegion, axes_are_canonical, broadcast_decodes_are_replicating,
+    contributor_count, cooperative_local_memory_bytes, cooperative_tile, element_count,
+    partial_reduction_axis, partial_reduction_shape, reindex_decodes_are_bijective,
 };
 pub use numerics::{
     ApproximationEnvelope, ArithmeticType, BF16_NUMERICAL_CONTRACT_KEY_DOMAIN,

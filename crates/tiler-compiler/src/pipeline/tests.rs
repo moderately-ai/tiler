@@ -391,6 +391,20 @@ impl<'a> KirMachine<'a> {
                         BinaryOp::IndexModulo => {
                             KirValue::Index(self.get(lhs).index() % self.get(rhs).index())
                         }
+                        // Asserted rather than wrapped. The operation's contract
+                        // is that its result is proven non-negative — a reindex
+                        // mirror subtracts a `% extent` result from `extent - 1`
+                        // — so an underflow here is a defect in the map that
+                        // produced it, and a machine that wrapped would model a
+                        // behaviour the kernel vocabulary does not define.
+                        BinaryOp::IndexSubtract => {
+                            let (lhs, rhs) = (self.get(lhs).index(), self.get(rhs).index());
+                            assert!(
+                                lhs >= rhs,
+                                "an index subtraction underflowed: {lhs} - {rhs}",
+                            );
+                            KirValue::Index(lhs - rhs)
+                        }
                         BinaryOp::F32Add => {
                             KirValue::F32(self.get(lhs).float() + self.get(rhs).float())
                         }
@@ -797,6 +811,93 @@ fn rule_counts(trace: &VerifiedExplainTrace) -> BTreeMap<&str, usize> {
             *counts.entry(record.rule().key().as_str()).or_insert(0) += 1;
             counts
         })
+}
+
+/// A reindex reaches a kernel whose result is the reference evaluator's, bit for bit.
+///
+/// **The ticket's closing condition for the structural vocabulary.** The program
+/// is `out = reverse(a)` on a `[2, 3]` operand, reversing axis 1 — the one
+/// admitted within-axis coordinate permutation, and the only reindex form whose
+/// decode needs the mirror. It exercises the whole vertical the widening
+/// opened: the request boundary derives the coordinate map, the schedule
+/// verifier discharges its bijectivity, the region's identity encodes it under
+/// an appended tag, and the kernel lowering emits `extent - 1 - c` as real
+/// offset arithmetic.
+///
+/// Bit-compared rather than approximately compared, which a reindex makes an
+/// exact claim: the family computes nothing, so every output element must be an
+/// input element unchanged. A tolerance here would hide the only way this can be
+/// wrong — reading the *wrong* element.
+#[test]
+fn a_reindex_reaches_a_kernel_matching_the_reference_evaluator() {
+    // Four elements, which is the governed baseline profile's declared grid
+    // axis: a wider domain would decline for a launch reason and stop being
+    // evidence about the access relation.
+    let shape = Shape::from_dims([2, 2]);
+    // Distinct, exactly representable, and deliberately not symmetric: a
+    // palindromic row would make a reversal indistinguishable from an identity
+    // read, which is exactly the defect this test exists to catch.
+    let values: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), shape.clone())
+        .unwrap();
+    let reversed = tiler_ir::semantic::F32Reindex::apply(
+        &mut builder,
+        &tiler_ir::semantic::ReindexForm::reverse_axis(Axis::new(1))
+            .expect("an axis reversal is an admitted form"),
+        input,
+    )
+    .expect("the standard registry admits the reindex family");
+    builder
+        .output(OutputKey::new("result").unwrap(), reversed)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let product = compile(CompilationRequest::governed(&semantic))
+        .expect("a reindex of a declared input compiles");
+    let fused = alternative(&product, ProgramAlternativeKind::Fused);
+    let actual = interpret_fused(&fused.kernels[0], &values);
+
+    let key = InputKey::new("input").unwrap();
+    let tensor = Tensor::dense(
+        F32::resolved_type(),
+        shape,
+        values
+            .iter()
+            .map(|value| {
+                ReferenceElement::from_float_bits(
+                    value.to_bits().to_be_bytes(),
+                    FloatBitOrder::MostSignificantByteFirst,
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+    .unwrap();
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&semantic, &[InputBinding::new(&key, &tensor)])
+        .unwrap();
+    let expected_bits = match expected[0].payload() {
+        TensorPayloadView::Dense(elements) => elements
+            .iter()
+            .map(|element| u32::from_be_bytes(<[u8; 4]>::try_from(element.as_bytes()).unwrap()))
+            .collect::<Vec<_>>(),
+        _ => panic!("expected dense f32 reference output"),
+    };
+    assert_eq!(
+        actual
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>(),
+        expected_bits,
+    );
+    // Stated independently of the oracle as well, so a reference evaluator that
+    // agreed with a wrong compiler would still be caught here. Row-major `[2, 2]`
+    // reversed on axis 1 is each row read backwards.
+    assert_eq!(actual, vec![2.0, 1.0, 8.0, 4.0]);
 }
 
 fn assert_fused_matches_reference(shape: Shape, values: Vec<f32>, scale_bits: u32, bias_bits: u32) {
