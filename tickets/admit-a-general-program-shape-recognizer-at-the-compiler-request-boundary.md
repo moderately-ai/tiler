@@ -66,3 +66,11 @@ A semantic program that no current normalization matches — minimally, one comp
 **Public items.** None. Every type, function, and rule touched is `pub(crate)` or test-local; the two new integration tests drive only the existing public `tiler_compiler::session` and `tiler_compiler::target` boundaries.
 
 **Not this ticket's.** The roadmap's attribution of the whole-program recognizer at `docs/roadmap.md:409-411` is `correct-the-roadmap-rows-falsified-by-the-contraction-and-accuracy-landings`'s under `contracts/navigation`, and is handed to it unchanged.
+
+## Correction 2026-08-06 — one of the three wall attributions above was wrong
+
+The "Where a wall is genuinely below the boundary" paragraph classifies `admit-elementwise-epilogues-over-a-materialized-intermediate` as "a `tiler-compiler` gap, *not* a schedule-IR one, because `TensorRole::Intermediate` is a per-region role". The premise is true; the conclusion is not. What forbids an elementwise region reading a materialized intermediate is not the role but the access contract the scalar-program family declares around it: `verify_pointwise_region` requires read access `i` to be `TensorRole::Input { ordinal: i }` at every position, and `verify_access_and_semantics` admits a `StrictSerialSum` under a `ReductionTopology::Serial` only when its owning write targets `TensorRole::Output`. A contraction may already write an intermediate, so exactly one third of the chain was expressible.
+
+Measured at base `fd1716c4` and retained as `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`; reproduce with `cargo nextest run -p tiler-compiler --test materialized_intermediate_epilogue_wall`. [`admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`](admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary.md) now owns the widening and the epilogue ticket is its dependent — so the paragraph's count is unchanged at three walls below the boundary, but the epilogue one belongs in the same class as the `sum(x)` wall beside it rather than in a class of its own.
+
+The sibling attributions were re-checked and both stand: `admit-a-reduction-over-a-declared-input-tensor`'s citation of `verify_access_and_semantics` is exact, and the unary-families one names a `ScalarProgram`/`LogicalAccess` absence rather than a layer.
