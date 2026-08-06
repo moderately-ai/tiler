@@ -51,30 +51,69 @@ impl IndexRegionBuilder {
             )
             .flatten()
             .collect();
+        // One pass over each root's stored value, because the two ways a value
+        // can name a dimension its root cannot supply are the same defect seen
+        // from two roles. The role decides which is reported, and it decides
+        // exclusively: a reduction dimension is never in a write's domain, so
+        // testing membership first would rename every unreduced value.
         for output in &self.outputs {
+            let domain = &self.accesses[output.access as usize].domain;
             for dimension in &self.values[output.value as usize].free_dimensions {
+                let value = ScalarValueId {
+                    owner: self.owner,
+                    index: output.value,
+                };
+                let named = DimensionId {
+                    owner: self.owner,
+                    index: *dimension,
+                };
                 if self.dimensions[*dimension as usize].role == DomainRole::Reduction {
                     diagnostics.push(IndexRegionDiagnostic::FreeReductionDimension {
-                        value: ScalarValueId {
+                        value,
+                        dimension: named,
+                    });
+                } else if !domain.contains(dimension) {
+                    // Only reachable since a write may iterate a subset of the
+                    // parallel dimensions. The value has no single value at a
+                    // point this root visits, so there is nothing to store.
+                    diagnostics.push(IndexRegionDiagnostic::ValueDimensionOutsideWriteDomain {
+                        access: TensorAccessId {
                             owner: self.owner,
-                            index: output.value,
+                            index: output.access,
                         },
-                        dimension: DimensionId {
-                            owner: self.owner,
-                            index: *dimension,
-                        },
+                        value,
+                        dimension: named,
                     });
                 }
             }
         }
-        for (i, _dimension) in self
-            .dimensions
+        // A parallel dimension is used by being iterated or by being one a
+        // reachable value varies along; a reduction dimension is used only by
+        // being bound by a reachable reduction, which is a stronger demand and
+        // stays exactly as it was — appearing in a read's domain is not what
+        // makes a reduction dimension reduced.
+        //
+        // The parallel half exists because the subset write domain is what
+        // first lets a parallel dimension go unmentioned. Compaction retains
+        // every declared dimension, so an unmentioned one would sit in the
+        // canonical identity of a region whose meaning does not include it, and
+        // two regions that mean the same thing would not share an identity.
+        let used_parallel: BTreeSet<u32> = reachable_accesses
             .iter()
-            .enumerate()
-            .filter(|(_, d)| d.role == DomainRole::Reduction)
-        {
+            .flat_map(|access| self.accesses[*access as usize].domain.iter().copied())
+            .chain(
+                reachable_values
+                    .iter()
+                    .flat_map(|value| self.values[*value as usize].free_dimensions.iter().copied()),
+            )
+            .collect();
+        for (i, dimension) in self.dimensions.iter().enumerate() {
             let index = bounded_index(i);
-            if !used_reductions.contains(&index) {
+            let used = match dimension.role {
+                DomainRole::Parallel => used_parallel.contains(&index),
+                DomainRole::Reduction => used_reductions.contains(&index),
+            };
+            if !used {
                 diagnostics.push(IndexRegionDiagnostic::UnusedDomainDimension {
                     dimension: DimensionId {
                         owner: self.owner,
@@ -993,6 +1032,27 @@ impl IndexRegionBuilder {
     /// map is injective and the rectangle's volume *is* the number of distinct
     /// elements this root writes. Coverage arithmetic downstream depends on
     /// that equality, so it cannot be left to the enumeration that does not run.
+    ///
+    /// **Both halves of that argument are root-local, and re-deriving them is
+    /// what admits roots over unequal sub-domains.** Every quantifier above
+    /// ranges over `access.domain` — the dimensions *this* root iterates — and
+    /// none over the region's parallel set. Injectivity needs the two distinct
+    /// points to differ somewhere in `consumed`, which the equal-cardinality
+    /// check makes exactly `access.domain`; and the volume is the product of
+    /// each axis's span, which is `extent(d)` for a consumed `d` and `1` for a
+    /// constant axis, hence the product of the extents of `access.domain` —
+    /// which is that domain's point count. The premise the write contract used
+    /// to carry, that every root iterates every parallel dimension, appears in
+    /// neither derivation. What it bought was the *global* corollary that all
+    /// roots have one point count and so own equal shares; dropping it drops
+    /// only that corollary.
+    ///
+    /// A zero-extent dimension is the degenerate case rather than an excluded
+    /// one: its axis's span is zero, the rectangle is empty, its volume is zero,
+    /// and the root writes no element — which is what the injective map over an
+    /// empty domain says. The emptiness has to be carried into the disjointness
+    /// test rather than left to the ranges, and
+    /// [`Self::decide_partition_by_interval`] states why.
     fn write_partition_box(
         &self,
         access: &AccessData,
@@ -1043,6 +1103,18 @@ impl IndexRegionBuilder {
     /// double-covers one element and leaves another bare, which is why
     /// coverage is derived from disjointness rather than checked beside it.
     ///
+    /// **An empty rectangle is separated from everything, and it is checked
+    /// before the axes rather than left to them.** `[a, b)` and `[c, d)` meet
+    /// exactly when `max(a, c) < min(b, d)`, which needs both ranges nonempty;
+    /// the per-axis test below decides `b > c && d > a`, which is that
+    /// condition only once `a < b` and `c < d` hold. A root over a zero-extent
+    /// dimension has a range with `a == b`, and such a root writes nothing, so
+    /// reading the axes alone would refuse a legal partition whenever its empty
+    /// member sits strictly inside a sibling's range rather than at its edge.
+    /// The volume identity is untouched by the case: an empty rectangle
+    /// contributes zero, which is exactly the element count of a root that
+    /// visits no point.
+    ///
     /// Containment also makes the summed volume an upper bound, so an inequality
     /// can only be a shortfall — which is what lets the mismatch be reported as
     /// an uncovered boundary rather than as an unexplained arithmetic
@@ -1065,13 +1137,16 @@ impl IndexRegionBuilder {
             };
             boxes.push(placed);
         }
+        let empty = |placed: &[(u64, u64)]| placed.iter().any(|(start, end)| start == end);
         for (position, left) in boxes.iter().enumerate() {
             for right in &boxes[position.saturating_add(1)..] {
-                let separated = left.iter().zip(right).any(
-                    |((left_start, left_end), (right_start, right_end))| {
-                        left_end <= right_start || right_end <= left_start
-                    },
-                );
+                let separated = empty(left)
+                    || empty(right)
+                    || left.iter().zip(right).any(
+                        |((left_start, left_end), (right_start, right_end))| {
+                            left_end <= right_start || right_end <= left_start
+                        },
+                    );
                 if !separated {
                     diagnostics.push(IndexRegionDiagnostic::OutputPartitionRangesOverlap {
                         tensor: TensorId {
