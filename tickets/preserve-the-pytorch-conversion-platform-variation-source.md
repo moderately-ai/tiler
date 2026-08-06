@@ -1,7 +1,7 @@
 ---
 id: preserve-the-pytorch-conversion-platform-variation-source
 title: Preserve the PyTorch float-to-integer platform-variation source
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [preserve-the-float-to-integer-conversion-precedent-sources]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 tags: [research, numerics, conversion, sources, preservation]
 paths: []
+claimed_from: todo
+assignee: agent-pytorch-source
+lease_expires_at: 1786039087
 ---
 ## User-visible outcome
 
