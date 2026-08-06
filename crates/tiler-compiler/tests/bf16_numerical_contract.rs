@@ -26,8 +26,8 @@
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileRefusal,
-    TargetNumericalDeclaredMeans, TargetNumericalHonouredBehaviour,
-    TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
+    TargetDTypeRefusalDisposition, TargetNumericalDeclaredMeans, TargetNumericalHonouredBehaviour,
+    TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile, compile_governed,
 };
 use tiler_compiler::target::{
     DTypeDispatchability, DeviceAddressWidth, IndexArithmeticSupport, ScalarArithmetic,
@@ -680,5 +680,81 @@ fn a_bf16_contract_neither_shares_an_f32_key_nor_moves_an_f32_outcome() {
         compilation.resolved_numerical_contract_key(),
         NumericalContract::STRICT_F32.key(),
         "the f32 program compiled under the f32 contract's own unchanged key",
+    );
+}
+
+/// The convenience entry reports the refusal the general path reports.
+///
+/// **The claim is the typed detail, not the class.** `compile_governed` composes
+/// the governed singleton target request and calls `compile`, so the two paths
+/// below are the same compilation stated twice — and the assertion is that both
+/// hand back the same `TargetCompileRefusal`, not merely the same
+/// `CompileFailureClass`. A convenience entry that projected the target failure
+/// onto its inner class-and-trace pair would satisfy every class assertion in
+/// this file while telling a caller nothing about *which* dtype could not
+/// dispatch on *which* profile.
+///
+/// **Why a BF16 request is what reaches it.** `TargetProfile::governed` declares
+/// dispatchability for `f32` and for nothing else, so a pure-BF16 program is
+/// refused at dtype dispatch before any trace is sealed — the refusal shape that
+/// carries recoverable typed detail and nothing else does. Every other test in
+/// this file states its own profile; this one deliberately does not, because the
+/// built-in governed profile is the target `compile_governed` bakes in and the
+/// entry point cannot be exercised against any other.
+#[test]
+fn the_governed_convenience_entry_carries_the_same_typed_refusal_as_the_general_path() {
+    let program = bf16_program();
+
+    let batch = compile(CompileRequest::new(
+        &program,
+        NumericalContract::STRICT_BF16,
+        TargetRequest::new([TargetProfile::governed()]).unwrap(),
+    ))
+    .expect("a target-local dtype refusal is a batch outcome, not a request error");
+    let general = batch
+        .targets()
+        .next()
+        .expect("one requested target")
+        .outcome()
+        .expect_err("the governed profile dispatches f32 alone");
+
+    let convenience = compile_governed(&program, NumericalContract::STRICT_BF16)
+        .expect_err("the governed profile dispatches f32 alone");
+
+    assert_eq!(convenience.class(), general.class());
+    assert!(
+        convenience.explain().is_none() && general.explain().is_none(),
+        "a dtype-dispatch refusal precedes the trace boundary on both paths",
+    );
+
+    let TargetCompileRefusal::DTypeDispatch(refusal) = convenience
+        .refusal()
+        .expect("the convenience entry retains the pre-trace refusal detail")
+    else {
+        panic!(
+            "the governed profile's bf16 refusal is a dispatch refusal, got {:?}",
+            convenience.refusal(),
+        );
+    };
+    assert_eq!(
+        refusal.resolved_type(),
+        &Bf16::resolved_type(),
+        "the refusal names the exact type that could not dispatch",
+    );
+    assert_eq!(
+        refusal.disposition(),
+        TargetDTypeRefusalDisposition::Unknown,
+        "the governed profile names no bf16 row at all, which is Unknown rather than Unsupported",
+    );
+    assert_eq!(
+        refusal.target_profile(),
+        TargetProfile::governed().profile_key(),
+        "the refusal names the profile the convenience entry selected",
+    );
+
+    assert_eq!(
+        convenience.refusal(),
+        general.refusal(),
+        "the two entries report one refusal, not two summaries of it",
     );
 }

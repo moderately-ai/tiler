@@ -688,13 +688,41 @@ pub enum TargetCompileRefusal {
 }
 
 /// A refusal scoped to one otherwise valid target-profile slot.
+///
+/// Every value [`CompilationBatch`] carries is exactly that: one slot's own
+/// refusal, with the other slots' outcomes untouched beside it. [`compile`]
+/// reports a failure that precedes slot construction as a [`CompileFailure`]
+/// instead, because such a failure loses every requested target rather than
+/// one. [`compile_governed`] requests exactly one target and so has no second
+/// outcome to lose; it reports both in this type, and its documentation states
+/// what that means for [`Self::refusal`].
+///
+/// The detail is boxed because it is both large and rare: a
+/// [`TargetCompileRefusal`] is 128 bytes against the 80 of the failure that
+/// always accompanies it, and only a refusal preceding the trace boundary
+/// carries one at all. Inline, this type is 208 bytes in every slot of every
+/// batch and in the `Err` of every `Result` that returns one; boxed it is 88,
+/// inside the width `clippy::result_large_err` admits in a returned `Err`.
+/// [`Self::refusal`] hands out the same borrow either way.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetCompileFailure {
     failure: CompileFailure,
-    refusal: Option<TargetCompileRefusal>,
+    refusal: Option<Box<TargetCompileRefusal>>,
 }
 
 impl TargetCompileFailure {
+    /// Reports a failure raised before any target slot was constructed.
+    ///
+    /// [`Self::refusal`] is `None` by construction rather than by omission: the
+    /// typed detail is minted from a per-target rejection, and there is no
+    /// rejected target here to mint it from.
+    const fn before_any_target(failure: CompileFailure) -> Self {
+        Self {
+            failure,
+            refusal: None,
+        }
+    }
+
     /// Returns which compiler boundary refused this target.
     #[must_use]
     pub const fn class(&self) -> CompileFailureClass {
@@ -712,7 +740,10 @@ impl TargetCompileFailure {
     /// Post-verification planning failures are explained by [`Self::explain`].
     #[must_use]
     pub const fn refusal(&self) -> Option<&TargetCompileRefusal> {
-        self.refusal.as_ref()
+        match &self.refusal {
+            Some(refusal) => Some(refusal),
+            None => None,
+        }
     }
 }
 
@@ -2131,17 +2162,38 @@ pub fn compile(request: CompileRequest<'_>) -> Result<CompilationBatch, CompileF
 
 /// Compiles one semantic program under a stated numerical contract.
 ///
-/// # Errors
-///
-/// Returns a [`CompileFailure`] naming the class of boundary that refused. An
-/// unsupported program, an infeasible target, an exhausted budget, and invalid
-/// compiler output are kept distinct: the first three are statements about the
-/// request, and the last is a defect in Tiler.
 /// It is the bounded convenience profile and not a second compile path: it
 /// composes the same [`CompileRequest`] a caller would and calls the same
 /// [`compile`]. One path rather than two is what stops the convenient one and
 /// the general one from drifting, and expressing this wrapper through the
 /// general surface is the cheapest proof that surface is usable at all.
+///
+/// The convenience is the *success* shape. Because the composed request names
+/// exactly one target, the returned [`CompilationBatch`] has exactly one slot,
+/// and this function unwraps it to that slot's [`Compilation`] rather than
+/// making every caller destructure a batch it did not compose. That unwrapping
+/// does not extend to the refusal, which is returned whole.
+///
+/// # Errors
+///
+/// Returns the single governed target's [`TargetCompileFailure`], so a refusal
+/// arriving here carries what the same refusal carries through [`compile`]:
+/// [`class`](TargetCompileFailure::class), the sealed
+/// [`explain`](TargetCompileFailure::explain) trace when the refusal followed
+/// the trace boundary, and the typed pre-trace
+/// [`refusal`](TargetCompileFailure::refusal) detail when it preceded it — a
+/// numerical-contract or dtype-dispatch rejection naming its exact subject.
+///
+/// A failure raised before the target slot exists — a request the compiler
+/// refuses as a whole, or this function's own governed-cardinality check — is
+/// reported in the same type carrying no refusal detail. One target is
+/// requested, so there is no distinction left for a second error type to draw:
+/// either way the governed compilation did not happen, and the class names
+/// which boundary said so.
+///
+/// The classes stay distinct as [`compile`] mints them: an unsupported program,
+/// an infeasible target, and an exhausted budget are statements about the
+/// request, while invalid compiler output is a defect in Tiler.
 ///
 /// # Panics
 ///
@@ -2150,24 +2202,28 @@ pub fn compile(request: CompileRequest<'_>) -> Result<CompilationBatch, CompileF
 pub fn compile_governed(
     program: &SemanticProgram,
     contract: NumericalContract,
-) -> Result<Compilation, CompileFailure> {
+) -> Result<Compilation, TargetCompileFailure> {
     let targets = TargetRequest::new([TargetProfile::governed()])
         .expect("the governed singleton target request is valid");
-    let mut batch = compile(CompileRequest::new(program, contract, targets))?.into_targets();
+    let mut batch = compile(CompileRequest::new(program, contract, targets))
+        .map_err(TargetCompileFailure::before_any_target)?
+        .into_targets();
     if batch.len() != 1 {
-        return Err(CompileFailure::from(CompileError::InvalidCompilerOutput(
-            crate::pipeline::CompilerOutputError::Program(
-                crate::program::ProgramError::Structure {
-                    rule: "public-governed-target-cardinality",
-                },
-            ),
-        )));
+        return Err(TargetCompileFailure::before_any_target(
+            CompileFailure::from(CompileError::InvalidCompilerOutput(
+                crate::pipeline::CompilerOutputError::Program(
+                    crate::program::ProgramError::Structure {
+                        rule: "public-governed-target-cardinality",
+                    },
+                ),
+            )),
+        ));
     }
     let (_, outcome) = batch
         .pop()
         .expect("the governed target cardinality was checked")
         .into_parts();
-    outcome.map_err(|failure| failure.failure)
+    outcome
 }
 
 fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, CompileError> {
@@ -2233,7 +2289,7 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
     };
     Ok(TargetCompileFailure {
         failure: CompileFailure::from(error),
-        refusal,
+        refusal: refusal.map(Box::new),
     })
 }
 
