@@ -4203,7 +4203,33 @@ mod tests {
                 // of any subject and reaches no pin. Recomputed by observing the
                 // failing value on this branch tree with the focused nextest
                 // command above, never copied from another branch.
-                "tiler-explain-v7 request=8966151e455093ea\n",
+                // Rebaselined from `8966151e455093ea` when the drafted
+                // `tiler.scalar::rsqrt-f32@1` key entered the standard scalar
+                // profile. The mechanism is the BF16 step's, four entries up:
+                // the request subject binds
+                // `FrozenIndexRealizationLawRegistry::identity()`, which folds
+                // `CanonicalScalarRegistrySnapshotIdentity`, and that snapshot
+                // is a count-prefixed run over *every* registered definition —
+                // so an eleventh governed scalar moves this qualifier for every
+                // governed compilation including this fixture's multiply, which
+                // reaches no reciprocal square root at all. **No encoding
+                // version moved**: `tiler.scalar-registry-snapshot.v1`'s framing
+                // and field order are untouched and a definition is
+                // self-delimiting through its canonical key, normative text, and
+                // length-framed fact and conformance records, so adding a row
+                // stays injective inside the existing domain. Unlike the BF16
+                // step, *no* law sidecar row moved with it — no registered law
+                // names this key yet, which is
+                // `widen-the-staged-realization-law-to-the-registered-elementary-families`'
+                // work — and the semantic snapshot did not move either, because
+                // `tiler::rms-norm-f32@1` was already registered. Reached-only
+                // projections are likewise untouched: no existing occurrence
+                // reaches the new key, so every executable coverage, kernel-
+                // program, and artifact identity in the corpus is byte-identical,
+                // which is why this is the single pin the change moves. Recomputed
+                // by observing the failing value on this branch tree with the
+                // focused nextest command above, never copied from another branch.
+                "tiler-explain-v7 request=ce6f9106c1c5933b\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
