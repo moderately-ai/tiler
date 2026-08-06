@@ -8,7 +8,7 @@
 //! lexicographic left fold over their bound dimensions. Nothing is downcast,
 //! and every unsupported or unauthorized case rejects with a typed error.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
@@ -133,6 +133,23 @@ pub enum UnsupportedRegionFeature {
     ScalarValueForm,
     /// The region used a reducer-body value definition added after this oracle.
     ReducerBodyValueForm,
+    /// A write root iterates fewer than the region's parallel dimensions.
+    ///
+    /// This evaluator walks one parallel space and visits every root at every
+    /// point of it, so a root over a strict subset is one it cannot send over
+    /// its own domain. Refused by name at staging rather than left to the
+    /// coverage checks, which would report a defective region — a repeated
+    /// element as [`IndexRegionEvaluationError::DuplicateWrite`], or, when an
+    /// omitted dimension has extent zero and empties the whole product, an
+    /// unwritten one as [`IndexRegionEvaluationError::IncompleteWrite`] against
+    /// whichever root came first — for a region that is valid.
+    ///
+    /// The named access is the offending root itself, so the refusal never
+    /// blames a sibling that iterates the full domain.
+    SubDomainWriteRoot {
+        /// Write access whose iteration domain omits a parallel dimension.
+        access: VerifiedTensorAccessId,
+    },
 }
 
 impl fmt::Display for UnsupportedRegionFeature {
@@ -147,6 +164,9 @@ impl fmt::Display for UnsupportedRegionFeature {
             Self::SymbolicIndexDivisor => "symbolic index floor-division or modulo divisor",
             Self::ScalarValueForm => "unimplemented scalar value definition",
             Self::ReducerBodyValueForm => "unimplemented reducer-body value definition",
+            Self::SubDomainWriteRoot { .. } => {
+                "write root iterating a strict subset of the region's parallel dimensions"
+            }
         })
     }
 }
@@ -1455,11 +1475,18 @@ impl IndexRegionEvaluator {
 /// The argument is about what a [`VerifiedIndexRegion`] *proves*, not about the
 /// shape of the loop below; the loop is what was checked against it.
 ///
-/// - **A write's iteration domain is exactly the region's parallel dimension
-///   set.** `IndexRegionBuilder`'s access preparation refuses any other write
-///   domain with `IndexBuildError::InvalidWriteDomain`. So "the parallel points
-///   this walk visits" and "the domain each output is written over" are one set
-///   rather than two that happen to coincide for the regions tried so far.
+/// - **Every write root this evaluation accepts iterates exactly the region's
+///   parallel dimension set.** `IndexRegionBuilder`'s access preparation admits
+///   a write domain that is *any subset* of the parallel dimensions — that is
+///   the whole of what a partition with unequally sized members needs, and
+///   `IndexBuildError::InvalidWriteDomain` now refuses only a write over a
+///   reduction dimension. What makes the set equality below true is therefore
+///   this oracle's own refusal rather than the builder's: staging rejects a root
+///   over a strict subset with
+///   [`UnsupportedRegionFeature::SubDomainWriteRoot`] before the first point is
+///   walked. Over the roots that reach this loop, "the parallel points this walk
+///   visits" and "the domain each output is written over" are one set rather
+///   than two that happen to coincide for the regions tried so far.
 /// - **An output's writes are jointly total and injective over that domain.**
 ///   Every write access carries a `WriteOwnershipProofView` in one of three
 ///   forms. `CoordinatePermutation`: each coordinate *is* a distinct domain
@@ -1479,11 +1506,12 @@ impl IndexRegionEvaluator {
 ///   still a bijection: each root is injective over the domain by its own proof,
 ///   and the joint obligation makes the roots' images pairwise disjoint and
 ///   exactly covering, so distinct pairs reach distinct elements and every
-///   element is reached. Since every root of an output iterates the whole
-///   parallel domain, splitting the points splits the pairs, so **a partition of
-///   the parallel points is a partition of each output's elements**, taken over
-///   that output's roots together, and no span can land on an element another
-///   span produced.
+///   element is reached. Since every root that reaches this loop iterates the
+///   whole parallel domain — the first fact above, which is a stated refusal
+///   rather than a builder guarantee — splitting the points splits the pairs, so
+///   **a partition of the parallel points is a partition of each output's
+///   elements**, taken over that output's roots together, and no span can land
+///   on an element another span produced.
 /// - **No value in a region can read a boundary the region writes.** The same
 ///   access preparation refuses a read of an output tensor with
 ///   `IndexBuildError::ReadFromOutput`. The written elements are the only state
@@ -2053,40 +2081,25 @@ impl<'a> RegionEvaluation<'a> {
             .collect()
     }
 
-    /// Plans one buffer per output boundary, carrying every root that writes it.
+    /// Admits every output root this evaluator can send over its own domain.
     ///
-    /// # Which partitioned regions this admits
+    /// The set equality is compared both ways rather than tested for
+    /// subset-ness. The builder admits only a subset of the parallel dimensions,
+    /// so inequality *is* a strict subset today; comparing the sets means a root
+    /// naming something else — a dimension this region does not iterate in
+    /// parallel — refuses here too rather than reaching a walk that has no
+    /// coordinate for it.
     ///
-    /// All of them, and the admitting boundary is a decision rather than a
-    /// fallthrough. `IndexRegionBuilder` refuses any write whose iteration
-    /// domain is not exactly the region's parallel dimension set
-    /// (`IndexBuildError::InvalidWriteDomain`), so every root of an output is
-    /// visited at every parallel point this walk makes. Grouping the roots onto
-    /// one buffer therefore reproduces a partitioned output exactly: the (root,
-    /// parallel point) pairs are the elements, and evaluating all of them is
-    /// evaluating the whole tensor. There is no partition shape this evaluator
-    /// can see but not reproduce, so there is no
-    /// [`UnsupportedRegionFeature`] to raise here — one would be a refusal
-    /// nothing could ever trigger, which reads as a guarantee while checking
-    /// nothing.
-    ///
-    /// What guards the premise is that violating it fails closed rather than
-    /// silently. A root whose domain were a strict subset of the parallel
-    /// dimensions could not name the missing dimensions in its coordinates
-    /// (`IndexBuildError::CoordinateOutsideAccessDomain`), so walking the full
-    /// parallel space would send it to one element repeatedly and
-    /// [`IndexRegionEvaluationError::DuplicateWrite`] would refuse it. Disjoint
-    /// coverage and totality are likewise checked here per element, against this
-    /// buffer, independently of the verifier's own joint proof.
-    ///
-    /// The retained-element budget counts each boundary once, because one
-    /// boundary is what is retained; charging a partitioned output once per root
-    /// would refuse a program on memory it never allocates.
-    fn output_plans(&self) -> Result<Vec<OutputPlan<'a>>, IndexRegionEvaluationError> {
+    /// The extents are deliberately not read: a strict-subset root is outside
+    /// this profile whether or not every dimension has a static extent, and a
+    /// root refused for its domain should not be reported as a symbolic one.
+    fn admit_write_roots(&self) -> Result<(), IndexRegionEvaluationError> {
         let region = self.region;
-        let mut retained = 0_usize;
-        let mut plans: Vec<OutputPlan<'a>> = Vec::with_capacity(region.outputs().len());
-        let mut planned: HashMap<VerifiedTensorId, usize> = HashMap::new();
+        let parallel: BTreeSet<VerifiedDimensionId> = region
+            .dimensions()
+            .filter(|dimension| dimension.role() == DomainRole::Parallel)
+            .map(tiler_ir::index::DomainDimensionRef::id)
+            .collect();
         for output in region.outputs() {
             let access = region
                 .access(output.access())
@@ -2094,6 +2107,72 @@ impl<'a> RegionEvaluation<'a> {
             if access.mode() != AccessMode::Write {
                 return Err(IndexRegionEvaluationError::MalformedRegion);
             }
+            if access.domain().collect::<BTreeSet<_>>() != parallel {
+                return Err(unsupported(UnsupportedRegionFeature::SubDomainWriteRoot {
+                    access: access.id(),
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Plans one buffer per output boundary, carrying every root that writes it.
+    ///
+    /// # Which partitioned regions this admits
+    ///
+    /// Those every one of whose write roots iterates the region's **whole**
+    /// parallel dimension set. That used to be all of them: `IndexRegionBuilder`
+    /// refused any other write domain outright, so grouping the roots onto one
+    /// buffer reproduced every partition a region could express and a refusal
+    /// here would have been one nothing could trigger — which reads as a
+    /// guarantee while checking nothing. The builder now admits any *subset* of
+    /// the parallel dimensions, because a partition whose members have unequal
+    /// extents needs roots with different point counts and a point count is the
+    /// product of the extents a root iterates. So the premise is gone and the
+    /// refusal is now the thing that can fire.
+    ///
+    /// For the roots this still admits nothing changes: every one is visited at
+    /// every parallel point this walk makes, so the (root, parallel point) pairs
+    /// are the elements and evaluating all of them is evaluating the whole
+    /// tensor. Disjoint coverage and totality are checked here per element,
+    /// against this buffer, independently of the verifier's own joint proof.
+    ///
+    /// A strict-subset root is refused explicitly, by
+    /// [`UnsupportedRegionFeature::SubDomainWriteRoot`] naming that root, rather
+    /// than left to those coverage checks — because both shapes the fallthrough
+    /// takes say something false. Such a root cannot name the omitted dimensions
+    /// in its coordinates (`IndexBuildError::CoordinateOutsideAccessDomain`), so
+    /// the full-space walk sends it to one element once per point of what it
+    /// omits and [`IndexRegionEvaluationError::DuplicateWrite`] refuses it: a
+    /// real refusal, but one that reports a duplicated write where the region
+    /// declares none. And when an omitted dimension has extent zero the whole
+    /// parallel product is zero, so no point is walked, nothing is written, and
+    /// `finish_output` reports
+    /// [`IndexRegionEvaluationError::IncompleteWrite`] against the boundary's
+    /// first root in region order — which may be a sibling that iterates the
+    /// full domain and owns no element at all. Evaluating each root over its own
+    /// domain, which supersedes this refusal, is
+    /// `evaluate-write-roots-over-their-own-domains-in-the-oracle`.
+    ///
+    /// The retained-element budget counts each boundary once, because one
+    /// boundary is what is retained; charging a partitioned output once per root
+    /// would refuse a program on memory it never allocates.
+    fn output_plans(&self) -> Result<Vec<OutputPlan<'a>>, IndexRegionEvaluationError> {
+        let region = self.region;
+        // A whole pass before the first buffer, so the refusal is a property of
+        // the region rather than of how far planning had got: sharing the loop
+        // below would let an earlier boundary's retained-element budget answer
+        // first for a region no budget could make evaluable.
+        self.admit_write_roots()?;
+        let mut retained = 0_usize;
+        let mut plans: Vec<OutputPlan<'a>> = Vec::with_capacity(region.outputs().len());
+        let mut planned: HashMap<VerifiedTensorId, usize> = HashMap::new();
+        for output in region.outputs() {
+            // `admit_write_roots` has already established that this access is a
+            // write over the whole parallel domain.
+            let access = region
+                .access(output.access())
+                .map_err(IndexRegionEvaluationError::Handle)?;
             let root = OutputRoot {
                 access,
                 value: output.value(),

@@ -12,7 +12,7 @@ use tiler_ir::index::{
     ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
     ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
     ScalarOperationInferencer, ScalarRegistryBuilder, ScalarValueId, SourcedExtent, TensorRole,
-    VerifiedIndexRegion, VerifiedTensorId,
+    VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
@@ -598,6 +598,167 @@ fn a_partition_missing_a_root_is_refused_before_evaluation() {
         )),
         "one root covering three of six elements owns no boundary: {:?}",
         diagnostics.diagnostics()
+    );
+}
+
+/// Builds one `boundary`-element output whose roots each iterate a parallel
+/// dimension of their **own** extent.
+///
+/// This is the shape the write-domain relaxation admitted and one shared domain
+/// cannot express: a root's point count is the product of the extents it
+/// iterates, so roots sharing one domain own equal shares by construction. Each
+/// root is `(extent, offset)` and stores the constant `1.0` at `out[d + offset]`
+/// over a dimension of that extent, so its rectangle is
+/// `[offset, offset + extent)`.
+///
+/// With more than one root every domain is a strict subset of the region's
+/// parallel dimensions; with exactly one root of the full extent the sole domain
+/// *is* that set, which is the control the refusal below is measured against.
+fn unequal_partition_region(
+    scalars: &FrozenScalarRegistry,
+    boundary: u64,
+    roots: &[(u64, i128)],
+) -> Result<VerifiedIndexRegion, Box<dyn std::error::Error>> {
+    let mut builder = IndexRegionBuilder::new(scalars.clone())?;
+    let out = builder.tensor(TensorRole::Output, f32_type(), Shape::from_dims([boundary]))?;
+    let value = builder
+        .apply(key("constant"), constant_attributes(1.0), &[])?
+        .get(0)
+        .ok_or("constant produces one result")?;
+    for (extent, offset) in roots {
+        let dimension = builder.dimension(DomainRole::Parallel, Extent::new(*extent))?;
+        let index = builder.dimension_expr(dimension)?;
+        let coordinate = builder.linear_combination(
+            IndexInteger::from_i128(*offset),
+            &[(IndexInteger::from_i128(1), index)],
+        )?;
+        let write = builder.write(out, &[dimension], &[coordinate])?;
+        builder.output(write, value)?;
+    }
+    Ok(builder.build()?)
+}
+
+/// Returns the write access of each output root in region order.
+fn output_accesses(region: &VerifiedIndexRegion) -> Vec<VerifiedTensorAccessId> {
+    region
+        .outputs()
+        .map(tiler_ir::index::OutputRef::access)
+        .collect()
+}
+
+/// A root over a strict subset of the parallel dimensions refuses by name,
+/// rather than reaching the walk and being refused for something else.
+///
+/// Three and five into eight: the roots iterate dimensions of extent three and
+/// five, so the region's parallel space is the fifteen-point product of both and
+/// neither root is written over its own domain. Walking it sends root 0's
+/// coordinate `d0` to the same element once per point of `d1`, and the
+/// accidental refusal is [`IndexRegionEvaluationError::DuplicateWrite`] — which
+/// asserts the region writes one element twice, of a region the verifier admits
+/// precisely because its roots are disjoint.
+///
+/// The control is the same builder with one root covering the whole boundary:
+/// there the sole domain *is* the parallel dimension set, and it evaluates.
+#[test]
+fn a_strict_subset_write_root_is_refused_before_any_point_is_walked() {
+    let scalars = scalar_registry(1);
+    let region = unequal_partition_region(&scalars, 8, &[(3, 0), (5, 3)]).unwrap();
+    let accesses = output_accesses(&region);
+    let expected = IndexRegionEvaluationError::Unsupported {
+        feature: UnsupportedRegionFeature::SubDomainWriteRoot {
+            access: accesses[0],
+        },
+    };
+
+    // Staging is where it refuses, so no walk exists to have taken a point: the
+    // whole-region path below reaches the same refusal through this one.
+    assert_eq!(
+        evaluator(&scalars)
+            .stage(&region, IndexRegionAuthority::new(&scalars), &[])
+            .expect_err("a strict-subset root is refused at staging"),
+        expected,
+        "the refusal names the offending root and its reason",
+    );
+    assert_eq!(
+        evaluator(&scalars)
+            .evaluate(&region, IndexRegionAuthority::new(&scalars), &[])
+            .unwrap_err(),
+        expected,
+    );
+
+    let whole = unequal_partition_region(&scalars, 8, &[(8, 0)]).unwrap();
+    let outputs = evaluator(&scalars)
+        .evaluate(&whole, IndexRegionAuthority::new(&scalars), &[])
+        .unwrap()
+        .into_outputs();
+    assert_eq!(
+        f32_values(&outputs[0]),
+        [1.0; 8],
+        "a sole root whose domain is the parallel dimension set still evaluates",
+    );
+}
+
+/// The refusal names the short root, never a sibling that iterates everything.
+///
+/// A zero-extent parallel dimension is the shape the `DuplicateWrite`
+/// fallthrough does not reach, and it is the one the concatenate lowering needs:
+/// `out` is `[2, 1]`, root 0 iterates both parallel dimensions and writes
+/// `out[d0, d1]` — owning no element, because `d1` has extent zero — and root 1
+/// iterates `d0` alone and writes `out[d0, 0]`, owning the whole boundary. The
+/// verifier admits this; the roots are disjoint and cover exactly.
+///
+/// Zeroing the parallel product zeroes the walk, so no point is visited, nothing
+/// is written, and [`IndexRegionEvaluationError::IncompleteWrite`] names the
+/// boundary's first root — root 0, which left no gap because it owns nothing.
+/// The stated refusal names root 1 instead, and says why.
+#[test]
+fn a_zero_extent_write_root_refuses_without_blaming_an_innocent_sibling() {
+    let scalars = scalar_registry(1);
+    let mut builder = IndexRegionBuilder::new(scalars.clone()).unwrap();
+    let out = builder
+        .tensor(TensorRole::Output, f32_type(), Shape::from_dims([2, 1]))
+        .unwrap();
+    let full = builder
+        .dimension(DomainRole::Parallel, Extent::new(2))
+        .unwrap();
+    let empty = builder
+        .dimension(DomainRole::Parallel, Extent::new(0))
+        .unwrap();
+    let row = builder.dimension_expr(full).unwrap();
+    let column = builder.dimension_expr(empty).unwrap();
+    let zero = builder.constant(IndexInteger::from_i128(0)).unwrap();
+    let value = builder
+        .apply(key("constant"), constant_attributes(1.0), &[])
+        .unwrap()
+        .get(0)
+        .expect("constant produces one result");
+    let whole_domain = builder.write(out, &[full, empty], &[row, column]).unwrap();
+    builder.output(whole_domain, value).unwrap();
+    let short_domain = builder.write(out, &[full], &[row, zero]).unwrap();
+    builder.output(short_domain, value).unwrap();
+    let region = builder.build().unwrap();
+
+    let accesses = output_accesses(&region);
+    // What makes naming one root a claim about attribution at all: were the two
+    // writes interned into one access, the assertion below would hold whichever
+    // root the refusal meant.
+    assert_ne!(
+        accesses[0], accesses[1],
+        "the whole-domain root and the short root are distinct accesses",
+    );
+
+    assert_eq!(
+        evaluator(&scalars)
+            .evaluate(&region, IndexRegionAuthority::new(&scalars), &[])
+            .unwrap_err(),
+        IndexRegionEvaluationError::Unsupported {
+            feature: UnsupportedRegionFeature::SubDomainWriteRoot {
+                access: accesses[1],
+            },
+        },
+        "the short root is named — not `accesses[0]`, the sibling that iterates \
+         the whole domain and owns nothing — and the reason is its domain rather \
+         than a gap",
     );
 }
 
