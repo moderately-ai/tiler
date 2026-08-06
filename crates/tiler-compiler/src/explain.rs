@@ -19,25 +19,91 @@ use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 use crate::target::honourability::NumericalRefusalEvidence;
 
-// Schema v9 appends the complete refusing honourability fact — its declared
-// behaviour, means, availability phase, authority, validity scope, versioned
-// authority identity, and governed-guarantee or measured
-// compiler-build/environment basis — to every unhonourable record. v9 also
-// carries event tag 13, the complete synchronization-realization subject, which
-// renderer v7 spells on its own `synchronization:` line; that tag was appended
-// under the already-published v9 rather than by moving it. No previously encoded
-// trace's bytes move — every earlier record keeps its tag and field layout — but
-// it does mean a v9 trace's event vocabulary is not decided by the version alone.
-// Under v8 two
-// profiles refusing the same behaviour on different measured builds produced
-// identical trace identities. v8 appended exact prepared-entry deferred target
-// requirements; v7 appends the bits quantity used for exact widths; v6 adds the
-// complete resolved dtype to numerical honourability; v5 appended opaque-call
-// and provider subject kinds, the NotApplicable check class and disposition, and
-// the arithmetic dtype to numerical honourability. Every earlier tag retains its
-// v4 value. Renderer v7 spells that same refusal provenance; renderer v6
-// appended the deferred-requirement spelling; renderer v5 appended the `bits`
-// unit without changing any existing spelling.
+// The two numbers below version different things, under one rule: a version
+// steps when something a reader already had changes, and does not step when
+// something new merely becomes expressible.
+//
+// `EXPLAIN_SCHEMA_VERSION` versions the canonical trace *encoding*, so its job
+// is injectivity — distinct traces never share bytes, and bytes written under
+// one version are never read as a different value under another. It steps when
+// a change moves or reinterprets a previously encodable record's bytes. It does
+// *not* step when a fresh event, subject, disposition, or quantity tag is
+// appended under the existing per-tag framing: every earlier record keeps its
+// tag and its field layout, so a reader that reaches the new tag is reading a
+// record the earlier vocabulary could not express, never an earlier record
+// under a new interpretation. That is the rule the sibling identity domains
+// state at their own tag sites (`tiler-ir`'s schedule, kernel, and program
+// models; `tiler-artifact`'s stage key), and the rule `request.rs`'s
+// `canonical_explain_subject_bytes` states in the negative when it steps to
+// `v5` because "the per-tag injectivity argument that would license the cheaper
+// option does not close".
+//
+// `EXPLAIN_RENDERER_VERSION` versions the *presentation*, so its job is that a
+// change a reader of an existing trace can see is announced. The same rule
+// takes the same shape: it steps when an existing record's spelling changes,
+// and not when a record type the earlier vocabulary could not produce receives
+// its first spelling, because no trace renders differently for it.
+//
+// So a version does not promise the vocabulary, and this is the inference to
+// refuse: two traces sealed under one schema version by different builds may
+// differ in which tags they can contain, and a reader must never derive a tag
+// set from a version. The ledger below is the vocabulary's only authority.
+//
+// Nothing depends on the promise being refused, which is what makes the rule
+// safe here rather than merely consistent with its siblings. Every consumer of
+// `EXPLAIN_SCHEMA_VERSION` is in this file, and none reads it as a vocabulary:
+// `push_trace_preamble` folds the value into the identity bytes; `seal` stores
+// it on the sealed trace; `VerifiedExplainTrace::verify` compares it — the only
+// comparison there is — against this same build's constant, so it can detect a
+// stale identity and nothing else; and the pin in
+// `explain_vocabulary_is_append_only_and_versioned` holds it to this ledger. No
+// decoder exists, here or anywhere: a trace is never serialized, never embedded
+// in an artifact envelope, never cached, and leaves the crate only as an opaque
+// `VerifiedCompilationExplain` and a rendered string that ADR 0074 and
+// `docs/compiler/optimizer.md` both refuse as a parse target. Should the
+// trigger those documents name ever fire and a second crate have to read
+// canonical traces, an appended tag's payload is one a decoder cannot frame or
+// skip, so it fails closed on the unknown tag — which is the outcome a version
+// step would have bought, reached without one.
+//
+// Ledger, newest first. A step marked *forced* moved a previously encodable
+// record's bytes or an existing record's spelling; one marked *unforced* did
+// not, and is labelled so this file's history is not read as its rule.
+//
+// - Event tag 13, the complete synchronization-realization subject, with
+//   renderer v7's `synchronization:` line: appended under the already-published
+//   v9/v7 and correctly moving neither, by the rule above.
+// - Schema v9, *forced*: the complete refusing honourability fact — declared
+//   behaviour, means, availability phase, authority, validity scope, versioned
+//   authority identity, and governed-guarantee or measured
+//   compiler-build/environment basis — joined every unhonourable record inside
+//   event tag 10's payload, so records that already encoded moved. Under v8 two
+//   profiles refusing the same behaviour on different measured builds produced
+//   identical trace identities. Renderer v7, *forced*: it respells records that
+//   already rendered.
+// - Schema v8 and renderer v6, *unforced*: exact prepared-entry deferred target
+//   requirements arrived as event tag 8, disposition tag 16, and a first
+//   spelling. Nothing earlier moved, so by the rule above neither number needed
+//   to step. This is the closest precedent to event tag 13 and it is history,
+//   not authority.
+// - Schema v7 and renderer v5, *unforced*: the bits quantity used for exact
+//   widths arrived as quantity kind 8 and a first unit spelling, with no
+//   existing spelling changed. Same shape as v8.
+// - Schema v6, *forced*: the complete resolved dtype joined numerical
+//   honourability inside tag 10's payload. The renderer correctly did not step
+//   — v4 already published the nominal dtype spelling.
+// - Schema v5 and renderer v4, *forced*: the arithmetic dtype joined numerical
+//   honourability inside tag 10's payload and changed its spelling. The same
+//   landing also appended the opaque-call and provider subject kinds and the
+//   NotApplicable rejection class and disposition, which alone would have
+//   stepped nothing.
+//
+// Every tag assigned at v4 retains its v4 value, and every addition since has
+// taken a value above the range then in use — verified by diffing the stage,
+// disposition, subject-kind, and quantity-kind tables and the event tags
+// against the v4 tree. Event tag 9 is unused: it named the omitted-record
+// summary that the complete-or-refused trace contract removed at v1. The gap is
+// history rather than a reservation.
 pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 9;
 pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 7;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
@@ -2914,8 +2980,14 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             outcome,
             profile,
         ),
-        // Event tag `13`, appended: every earlier record keeps its tag and its
-        // field layout, so no previously encoded trace's bytes move.
+        // Event tag `13`, appended rather than inserted, and the schema version
+        // deliberately did not step with it: tags `1` through `12` keep their
+        // values and their field layouts, so no previously encodable trace's
+        // bytes move and a reader that reaches `13` is reading a record the
+        // earlier vocabulary could not express, never an earlier record under a
+        // new interpretation. The rule and its consumers are stated once at the
+        // version block; renderer v7 gave this record its first
+        // `synchronization:` spelling and did not step for the same reason.
         ExplainEvent::SynchronizationRealization {
             kind,
             execution_scope,
@@ -3354,6 +3426,22 @@ mod tests {
             }),
         );
         assert_eq!(deferred[0], 8);
+        // The append the version block's rule was written against: tag 13 is
+        // pinned here because it is what makes "appended, and the schema did not
+        // step" a checked claim rather than a comment.
+        let synchronization = ExplainEvent::SynchronizationRealization {
+            kind: ReasonCode::new("control-barrier").unwrap(),
+            execution_scope: ReasonCode::new("workgroup").unwrap(),
+            visibility_scope: ReasonCode::new("workgroup").unwrap(),
+            fences_workgroup: true,
+            fences_device: false,
+            ordering: ReasonCode::new("acquire-release").unwrap(),
+            outcome: SynchronizationOutcome::Undeclared,
+        };
+        assert_eq!(synchronization.validate(), Ok(()));
+        let mut realization = Vec::new();
+        encode_event(&mut realization, &synchronization);
+        assert_eq!(realization[0], 13);
     }
 
     #[test]
