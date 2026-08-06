@@ -1,7 +1,7 @@
 ---
 id: decide-whether-executable-coverage-evidence-folds-as-a-digest
 title: Decide whether executable-coverage evidence folds as a digest
-status: deferred
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound, bind-stage-coverage-to-index-refinement-identity]
@@ -14,7 +14,7 @@ tags: [identity, decision, program-planning, deferred]
 
 If the kernel-program boundary ever admits programs large enough for the quadratic term in program identity to matter, the choice between keeping the embedded `SemanticGraphIdentity` and folding it as a digest is a recorded decision with its measurement already in hand — rather than a 64 MiB refusal discovered by whoever first fuses too much.
 
-**This is a deferral. Its triggers have not fired.** See the trigger check log at the end.
+**This was a deferral until 2026-08-06; trigger 4 has fired.** See the trigger check log at the end.
 
 ## Why this exists
 
@@ -28,6 +28,8 @@ If the kernel-program boundary ever admits programs large enough for the quadrat
 
 **Fact — nothing can approach the bound today.** `DeterministicBudgets::governed` caps `semantic_operations` at 8 (`crates/tiler-compiler/src/request.rs:821`), roughly two orders of magnitude below the largest contemplated program and nearly two below the refusal point.
 
+**Superseded 2026-08-06, twice, and the second half is what fires this ticket.** The budget is no longer 8: `36d05128` raised `semantic_operations` to **62**, sized to the decoder-layer program. And the 64 MiB program-identity bound is no longer the consumer that binds first: [Where the artifact envelope's fixed content came from](../docs/research/artifacts/manifest-fixed-content-growth.md) measured that the envelope stores the per-occurrence coverage evidence **four times** (the framed program-subject section, the manifest's per-entry stage subjects, and twice inside the carried identity run), so the envelope's fixed content passes the **1,048,576-byte per-invocation embedding ceiling between 32 and 33 semantic operations** — `4 × (134·32² + 3650·32 + 719) = 1,018,940`, `4 × (134·33² + 3650·33 + 719) = 1,068,380` — against the 695 operations at which the identity bound refuses. Tom's 2026-08-06 digest decision on the manifest's carried identity run ([`decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest`](decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest.md)) will cut the multiplier to about two when it lands, moving the crossing to roughly 46–47 operations — still under the ≥ 51-operation decoder layer and still under the admitted budget. The extrapolation boundary is the record's Section 5: the multiplier is measured on one fixture, the curve is fitted on 2..=8 and extrapolated, so what this licenses is the ordering, not the exact crossing.
+
 ## Triggers
 
 Any one of these fires this ticket. Each is checkable in one command.
@@ -35,6 +37,7 @@ Any one of these fires this ticket. Each is checkable in one command.
 1. **A program boundary that admits more than ~350 operations** — half the fitted refusal point, so that the margin is under 2× rather than under 125×. Check: `grep -n 'semantic_operations' crates/tiler-compiler/src/request.rs`.
 2. **A measured per-operation graph-identity slope materially above 134 bytes** for a realistic family mix, which moves the refusal point down proportionally to its square root. Check: rerun `spikes/program-planning/identity-growth` after the operation families widen, and compare the reported `graph_bytes(n)` slope.
 3. **A decision to compile a whole model, or a whole multi-layer span, as one semantic program** — that is, any supersession of the per-layer program boundary in [Complete model ingestion and execution](../docs/research/program-planning/complete-model-ingestion-and-execution.md). Check: `grep -n 'program boundary' docs/research/program-planning/complete-model-ingestion-and-execution.md`.
+4. **A program boundary that admits more than ~30 operations**, which is where the four-fold envelope restatement of coverage evidence passes the 1,048,576-byte per-invocation embedding ceiling — roughly 21× earlier in operation count than trigger 1's bound and below the ≥ 51-operation decoder-layer program the roadmap contemplates (about ~46 once the manifest digest decision lands and the multiplier halves). The multiplier and the crossing are [Where the artifact envelope's fixed content came from](../docs/research/artifacts/manifest-fixed-content-growth.md) Section 5, with the extrapolation boundary stated there. Check: `grep -n 'semantic_operations' crates/tiler-compiler/src/request.rs`, against 30 rather than 350.
 
 ## What to do when one fires
 
@@ -57,3 +60,4 @@ A trigger has fired, Tom has answered, and the answer is an accepted ADR or an e
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** All three triggers evaluated at `5f14cd11`. `semantic_operations` is 8, two orders of magnitude below trigger 1's ~350. No family widening has landed, so trigger 2's slope is the measured 134. The per-layer boundary stands as a pending proposal, so trigger 3 has not moved. Reproduce: `grep -n 'semantic_operations: ' crates/tiler-compiler/src/request.rs`.
+- 2026-08-06 — **trigger 4 fired at the moment it was added** ([`add-the-embedding-ceiling-trigger-to-the-coverage-digest-deferral`](add-the-embedding-ceiling-trigger-to-the-coverage-digest-deferral.md) landed it from the manifest-growth attribution). `DeterministicBudgets::governed` caps `semantic_operations` at **62** — `grep -n 'semantic_operations' crates/tiler-compiler/src/request.rs` — which is past the ~30-operation embedding-ceiling crossing (and past the ~46 post-digest one), so the boundary already admits programs whose envelopes could not be embedded. Triggers 1 and 3 remain unfired (62 < ~350; the per-layer boundary stands); trigger 2 is currently **unevaluable** — the identity-growth ladder refuses on its own wall probe now that the budget passed 8, owned by [`widen-the-identity-growth-ladder-to-the-governed-operation-budget`](widen-the-identity-growth-ladder-to-the-governed-operation-budget.md). Per this ticket's own procedure, the atomic question goes to Tom with the measurement as evidence.

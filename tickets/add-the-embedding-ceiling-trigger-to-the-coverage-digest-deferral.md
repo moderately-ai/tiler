@@ -1,7 +1,7 @@
 ---
 id: add-the-embedding-ceiling-trigger-to-the-coverage-digest-deferral
 title: Add the embedding-ceiling trigger to the coverage-digest deferral
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [decide-whether-executable-coverage-evidence-folds-as-a-digest, attribute-the-canonical-manifest-growth-and-decide-whether-the-encoding-owes-a-budget, decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest]
