@@ -1374,7 +1374,7 @@ pub fn reindex_decodes_are_bijective(
         .copied()
         .filter(|decode| decode.modulus > 1)
         .collect();
-    carrying.sort_unstable_by(|left, right| right.divisor.cmp(&left.divisor));
+    carrying.sort_unstable_by_key(|decode| std::cmp::Reverse(decode.divisor));
     let Some(first) = carrying.first() else {
         // No axis carries a coordinate, so the map is a bijection exactly when
         // both domains are the single element the empty product names.

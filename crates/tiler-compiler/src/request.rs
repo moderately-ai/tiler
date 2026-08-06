@@ -3855,7 +3855,7 @@ fn reindex_axis_decodes(
             let axis = position_of(form.axes().first()?)?;
             let factors = form.factors().len();
             let last = axis.checked_add(factors)?.checked_sub(1)?;
-            for position in 0..rank {
+            for (position, extent) in extents.iter().enumerate() {
                 let divisor = match position.cmp(&axis) {
                     Ordering::Less => *suffix.get(position)?,
                     Ordering::Equal => *suffix.get(last)?,
@@ -3863,7 +3863,7 @@ fn reindex_axis_decodes(
                         *suffix.get(position.checked_add(factors)?.checked_sub(1)?)?
                     }
                 };
-                decodes.push(axis_decode(divisor, extents[position], false));
+                decodes.push(axis_decode(divisor, *extent, false));
             }
             Some(decodes)
         }
@@ -3883,7 +3883,7 @@ fn reindex_axis_decodes(
                 inner[offset] = running;
                 running = running.checked_mul(*extents.get(first.checked_add(offset)?)?)?;
             }
-            for position in 0..rank {
+            for (position, extent) in extents.iter().enumerate() {
                 let divisor = if position < first {
                     *suffix.get(position)?
                 } else if position < first.checked_add(count)? {
@@ -3891,7 +3891,7 @@ fn reindex_axis_decodes(
                 } else {
                     *suffix.get(position.checked_sub(count)?.checked_add(1)?)?
                 };
-                decodes.push(axis_decode(divisor, extents[position], false));
+                decodes.push(axis_decode(divisor, *extent, false));
             }
             Some(decodes)
         }
@@ -3900,13 +3900,13 @@ fn reindex_axis_decodes(
         // the insertion point onward.
         ReindexFormKind::InsertUnitAxis => {
             let inserted = usize::try_from(form.axes().first()?.get()).ok()?;
-            for position in 0..rank {
+            for (position, extent) in extents.iter().enumerate() {
                 let source = if position < inserted {
                     position
                 } else {
                     position.checked_add(1)?
                 };
-                decodes.push(axis_decode(*suffix.get(source)?, extents[position], false));
+                decodes.push(axis_decode(*suffix.get(source)?, *extent, false));
             }
             Some(decodes)
         }
@@ -3914,15 +3914,13 @@ fn reindex_axis_decodes(
         // zero and it reads no result axis at all.
         ReindexFormKind::RemoveUnitAxis => {
             let removed = position_of(form.axes().first()?)?;
-            for position in 0..rank {
+            for (position, extent) in extents.iter().enumerate() {
                 let decode = match position.cmp(&removed) {
                     Ordering::Equal => AxisDecode::fixed(),
-                    Ordering::Less => axis_decode(*suffix.get(position)?, extents[position], false),
-                    Ordering::Greater => axis_decode(
-                        *suffix.get(position.checked_sub(1)?)?,
-                        extents[position],
-                        false,
-                    ),
+                    Ordering::Less => axis_decode(*suffix.get(position)?, *extent, false),
+                    Ordering::Greater => {
+                        axis_decode(*suffix.get(position.checked_sub(1)?)?, *extent, false)
+                    }
                 };
                 decodes.push(decode);
             }
@@ -3933,10 +3931,10 @@ fn reindex_axis_decodes(
         // mirror flag exists for.
         ReindexFormKind::ReverseAxis => {
             let reversed = position_of(form.axes().first()?)?;
-            for position in 0..rank {
+            for (position, extent) in extents.iter().enumerate() {
                 decodes.push(axis_decode(
                     *suffix.get(position)?,
-                    extents[position],
+                    *extent,
                     position == reversed,
                 ));
             }
