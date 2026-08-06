@@ -31,10 +31,16 @@
 //! **The exceptional-value, signed-zero, and subnormal policies are stated
 //! independently of the error metric**, as ADR 0042 requires, and they are stated
 //! for the composed activation rather than inferred from the exponential's bound.
-//! The measurement behind them is recorded at [`SILU_F32_FACT_SUBNORMALS`]: no
-//! subnormal arises anywhere in `f32` `SiLU`, so there is no subnormal band for a
-//! flush policy to act on, and the exact `-0.0` the `-88.73` band produces is a
-//! correctly rounded division by an overflowed infinity rather than a flush.
+//! The subnormal band *is* reached — near zero the activation is `fl(x / 2)`, and
+//! the subordinate exponential underflows into the band for large positive
+//! arguments — so the preservation policy is one a flushing target is genuinely
+//! asked to honour rather than a claim about a range the operation never enters.
+//! [`SILU_F32_FACT_SUBNORMALS`] carries the measurement for each region separately,
+//! because the large-negative tail is the one region where no subnormal arises and
+//! a policy quantified over the domain cannot be justified from it. That tail is
+//! also the one place a reader might mistake for a flush and is not one: the exact
+//! `-0.0` the `-88.73` band produces is a correctly rounded division by an
+//! overflowed infinity.
 
 use std::sync::Arc;
 
@@ -101,12 +107,40 @@ pub const SILU_F32_FACT_EVALUATION_ORDER: AttributeFieldId = AttributeFieldId::n
 pub const SILU_F32_FACT_EXPONENTIAL_ACCURACY_CONTRACT: AttributeFieldId = AttributeFieldId::new(4);
 /// Fact field naming the operation's behaviour on binary32 subnormals.
 ///
-/// **Measurement — no subnormal is produced anywhere in binary32 `SiLU`.**
-/// `silu(-88.7228)` is `0x82b173cc`, a *normal* value more than twenty times the
-/// minimum normal `0x00800000`, and `silu(-88.73)` is already exactly
-/// `0x80000000`. The result drops from normal straight to `-0.0` with no subnormal
-/// band between them, so this states a preservation policy over a range the
-/// operation never enters rather than one a target could be asked to honour.
+/// **Measurement — the band is reached in two of the domain's three regions, and
+/// each region is stated with the argument bits that bound it.** A policy
+/// quantified over the whole domain cannot be justified from one region of it, and
+/// the tail below is exactly the region an earlier spelling of this fact
+/// generalized "unreachable" from.
+///
+/// **Reached as a *result*, near zero.** For `|x| <= 0x33000000` (`2^-25`) the
+/// correctly rounded `e^-x` is exactly `1.0`: `e^-t > 1 - t` for `t > 0` puts it
+/// strictly above `1 - 2^-25`, which is the rounding midpoint below `1.0`. So the
+/// divisor is exactly `2.0` and the activation is `fl(x / 2)` over that whole
+/// region. Every argument from `0x00000002` to `0x00fffffe` in magnitude therefore
+/// has a subnormal result — including the *normal* arguments from `0x00800000` up,
+/// so a subnormal result does not need a subnormal operand.
+/// `silu(0x007fffff)` is `0x00400000` and `silu(0x00800000)` is `0x00400000`;
+/// `silu(0x00fffffe)` is `0x007fffff`, the largest subnormal result, and its
+/// successor `silu(0x00ffffff)` is `0x00800000`, back in the normal range. At the
+/// other end `silu(0x00000001)` is `0x00000000` — round-to-nearest ties-to-even
+/// landing on zero, not a flush.
+///
+/// **Reached as the subordinate exponential's own value, for large positive
+/// arguments.** `e^-x` is subnormal from `0x42aeac50` (`87.3365478515625`) through
+/// `0x42cff1b4` (`103.97207641601562`), and exactly `+0.0` above that. It is not
+/// observable in the result — `fl(1 + subnormal)` is exactly `1.0`, so the
+/// activation returns `x` unchanged — but it is a subnormal an arithmetic unit
+/// produces, which is the site a flush policy acts on and not a value only read.
+///
+/// **Not reached in the large-negative tail.** The last argument with a finite
+/// divisor is `0xc2b17217`, the negation of
+/// [`SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS`], and it gives `0x82b1726d` —
+/// about `2.6e-37`, over twenty times the minimum normal `0x00800000`. Its
+/// successor `0xc2b17218` overflows the exponential and gives exactly `0x80000000`.
+/// The result drops from normal straight to `-0.0` with no subnormal band between
+/// them, and no tail argument can reach one: a finite divisor is at most
+/// `f32::MAX`, so the smallest tail magnitude is `88.72 / f32::MAX`, still normal.
 pub const SILU_F32_FACT_SUBNORMALS: AttributeFieldId = AttributeFieldId::new(5);
 /// Fact field naming the operation's behaviour on signed zero.
 pub const SILU_F32_FACT_SIGNED_ZERO: AttributeFieldId = AttributeFieldId::new(6);
@@ -327,7 +361,11 @@ pub fn silu_f32_facts() -> CanonicalValue {
         ),
         CanonicalField::new(
             SILU_F32_FACT_SUBNORMALS,
-            fact("preserved-and-unreachable-no-binary32-silu-result-or-intermediate-is-subnormal"),
+            fact(
+                "preserved-by-this-contract-and-reached-as-a-result-near-zero-where-the-reference-\
+                 is-x-over-two-and-as-the-subordinate-exponential-for-large-positive-arguments-\
+                 and-flushed-on-a-declared-flushing-realization-a-recorded-divergence",
+            ),
         ),
         CanonicalField::new(
             SILU_F32_FACT_SIGNED_ZERO,
