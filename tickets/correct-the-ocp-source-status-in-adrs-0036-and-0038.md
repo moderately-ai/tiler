@@ -37,7 +37,7 @@ Both ADR spans state the current classification, the grep above returns only the
 
 ## Outcome — 2026-08-06
 
-Both spans corrected at base `76fe3a8e`; delivering commit recorded below. Two files changed, both under `contracts/decisions`.
+Both spans corrected at base `76fe3a8e` and delivered as `13c46d52`, the first of two commits on `tkt/correct-the-ocp-source-status-in-adrs-0036-and-0038`. Two ADR files changed, both under `contracts/decisions`.
 
 **Fact — the classification was read from the preservation record before either span was written.** `docs/research/numerics/sources/README.md` was read in full at the `## Hand-acquired records` section. Both OCP rows carry **Acquired 2026-07-31** by an interactive browser session, a SHA-256 digest over the exact retrieved PDF, a licence reviewed in the document's own Section 1 — OWFa 1.0.2 incorporated by reference for `ocp-ofp8-v1.0`, OWFa 1.0 for `ocp-mx-v1.0`, the different revision being why the two were reviewed separately — and a `metadata-only` verdict on the ground that neither document carries a self-contained redistribution grant. No digest is restated in either ADR; the preservation record keeps sole ownership of both.
 

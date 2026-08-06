@@ -40,7 +40,7 @@ Every reproduction in ADR 0090 runs and returns what the sentence beside it clai
 
 ## Outcome — 2026-08-06
 
-Thirteen spans corrected in one file. **Every line number in this ticket's body is a fact about `51e9374a` and none of them survived**: each anchor was re-derived by reading the cited file at base `76fe3a8e`, and each landed at a different line than the ticket predicted. The three the ticket names are corrected; reading the whole record for siblings of the same defect found **seven more anchors and three more stale claims**, all inside `contracts/decisions`, all corrected in the same commit on the "find one, check all siblings" ground.
+Delivered as `0f2bb9c5`, the second of two commits on `tkt/correct-the-ocp-source-status-in-adrs-0036-and-0038`, over base `76fe3a8e`. Fifteen corrections across thirteen lines of one file. **Every line number in this ticket's body is a fact about `51e9374a` and none of them survived**: each anchor was re-derived by reading the cited file at base `76fe3a8e`, and each landed at a different line than the ticket predicted. The three the ticket names are corrected; reading the whole record for siblings of the same defect found **seven more anchors and three more stale claims**, all inside `contracts/decisions`, all corrected in the same commit on the "find one, check all siblings" ground.
 
 **Fact — the three named anchors, re-derived.**
 
