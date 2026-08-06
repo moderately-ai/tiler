@@ -1,7 +1,7 @@
 ---
 id: carry-the-pure-bf16-producer-path-into-artifact-packaging-evidence
 title: Carry the pure-BF16 producer path into artifact packaging evidence
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-a-bf16-index-realization-law-and-refinement-contract]
 related: [carry-bf16-through-the-artifact-encoding-and-identity, conform-the-bf16-vertical-end-to-end]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, bf16, identity]
+claimed_from: todo
+assignee: agent-bf16-packaging
+lease_expires_at: 1785988695
 ---
 ## User-visible outcome
 
