@@ -1,7 +1,7 @@
 ---
 id: resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage
 title: Resolve the region-attribution fork for a multi-region elementary stage
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages, widen-the-staged-realization-law-to-the-registered-elementary-families]
@@ -47,3 +47,7 @@ Pick one and implement it. Both are coherent, and the choice is about whether a 
 ## Closes when
 
 Tom names the option. The chosen one is then filed as its own implementation ticket with the surface it touches enumerated.
+
+## Decided 2026-08-06 — Option A, stage-level atoms
+
+**Tom decided at the live session (coordinator's question round, witnessed and executed by the coordinator):** the attribution atom becomes a *(member, stage)* pair. The elimination was run under Tom's stated priority order (correctness, performance, long-term maintainability, code quality): correctness equal; performance — stage atoms enable fusing a family's internal pass into a neighbouring region, the flash-shaped plan; maintainability — one identity migration rather than B-then-A; quality — stages are real domain objects. Option B is rejected rather than deferred. Tom additionally confirmed the DX ground: explain records gain per-stage attribution. Implementation is [`implement-stage-level-cover-atoms-for-multi-region-occurrences`](implement-stage-level-cover-atoms-for-multi-region-occurrences.md).

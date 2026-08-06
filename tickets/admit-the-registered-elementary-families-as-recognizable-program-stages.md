@@ -3,7 +3,7 @@ id: admit-the-registered-elementary-families-as-recognizable-program-stages
 title: Admit the registered elementary families as recognizable program stages
 status: blocked
 priority: p1
-dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage]
+dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, implement-stage-level-cover-atoms-for-multi-region-occurrences]
 related: [accept-the-governed-reciprocal-square-root-scalar-key]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
