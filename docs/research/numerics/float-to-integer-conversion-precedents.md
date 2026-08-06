@@ -27,7 +27,11 @@ ticket: "numerical-policy-contract"
 - **Sources:** every primary source below is named by a preserved-source id in
   [the preserved-source record](sources/README.md); run `sources/verify-sources.sh` to check the
   bytes against their recorded digests. Provenance hardening record:
-  [preserve-the-float-to-integer-conversion-precedent-sources](../../../tickets/preserve-the-float-to-integer-conversion-precedent-sources.md).
+  [preserve-the-float-to-integer-conversion-precedent-sources](../../../tickets/preserve-the-float-to-integer-conversion-precedent-sources.md),
+  which closed seven citations into ids, and
+  [preserve-the-pytorch-conversion-platform-variation-source](../../../tickets/preserve-the-pytorch-conversion-platform-variation-source.md),
+  which closed the eighth claim that had never been cited at all. Every claim in
+  "Existing contracts" below now names a source; there are eight claims and eight resolutions.
 
 
 ## Finding
@@ -70,11 +74,15 @@ holds the owner, edition, retrieval route, licence, and verdict for every one:
   the record carries a digest and an acquisition route rather than bytes.
 - StableHLO convert — `stablehlo-spec-v1.18.0`, the `convert` section of `docs/spec.md` at
   `v1.18.0`.
+- PyTorch dtype conversion — `pytorch-tensor-docs-v2.13.0`, the `Tensor.to` docstring's casting
+  note in `torch/_tensor_docs.py` at `v2.13.0`, which renders as the published
+  `docs.pytorch.org/docs/2.13/generated/torch.Tensor.to.html` page.
 - PTX conversion instructions — `nvidia-ptx-isa-cuda-13.3.0`, the `cvt` section of the PTX ISA as
   published in the CUDA 13.3.0 documentation archive. Metadata-only, for the same reason.
 
-**Re-check, 2026-08-06.** All seven citations above were re-checked against the preserved or
-re-acquired bytes when the ids replaced the live URLs they previously carried, and **every claim in
+**Re-check, 2026-08-06.** All seven citations this list then held were re-checked against the
+preserved or re-acquired bytes when the ids replaced the live URLs they previously carried — the
+PyTorch row below arrived later the same day and has its own paragraph — and **every claim in
 the "Existing contracts" list above held**; nothing was softened, corrected, or found to have moved.
 The per-claim quotations, and two precisions the check surfaced without changing a conclusion, are
 recorded beside the sources in [the preserved-source record](sources/README.md) rather than repeated
@@ -87,6 +95,25 @@ WebAssembly, Rust, C++, and StableHLO all round toward zero, and PTX alone expos
 integer rounding directions — so what actually separates them is the residue: a poison value, a
 trap, an endpoint saturation, a NaN-to-zero totalization, a width-dependent NaN, an undefined
 result, and a deferred one are seven answers to the question the shared rounding rule leaves open.
+
+**The eighth claim, closed 2026-08-06.** The re-check above covered the seven citations the list
+then held, but the "Existing contracts" list makes *eight* claims: the fourth bullet's middle
+clause, "PyTorch documents platform variation", had never been cited, in either the pre- or
+post-hardening list. It was acquired rather than corrected, which was not the expected outcome —
+the ticket that filed the gap predicted the sentence would have to go. **The claim holds, and the
+bullet needed no rewording.** PyTorch's `Tensor.to` documentation states that if a truncated float "cannot fit into
+the target type (e.g., casting `torch.inf` to `torch.long`), the behavior is undefined and the
+result may vary across platforms", and that note renders on the published documentation site, so
+this is documented variation and not merely observed variation. Two things follow, neither of which
+disturbs the tally above. First, PyTorch does not reach that undefinedness on its own: the same
+note attributes it to "C++ type conversion rules", so PyTorch is C++'s residue imported by
+reference, which is why it sits in the same bullet rather than becoming an eighth residue —
+seven answers, now from seven systems. Second, PyTorch fixes the rounding the same way the others
+do, truncating the fractional part, so it joins the majority the paragraph above describes rather
+than widening the disagreement. What it adds to the record is a fact about *ecosystem reach*: the
+undefined-overflow contract is not confined to systems programming languages, it is what a tensor
+framework hands its users through `Tensor.to`, which is precisely the boundary Tiler's strict
+portable family exists to replace.
 
 ## Boundary details
 
