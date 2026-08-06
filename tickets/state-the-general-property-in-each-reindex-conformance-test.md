@@ -1,7 +1,7 @@
 ---
 id: state-the-general-property-in-each-reindex-conformance-test
 title: State the general property in each reindex conformance test
-status: review
+status: done
 priority: p3
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-reindex-docs
-lease_expires_at: 1786049402
 ---
 ## User-visible outcome
 
