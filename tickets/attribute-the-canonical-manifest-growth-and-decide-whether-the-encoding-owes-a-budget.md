@@ -1,7 +1,7 @@
 ---
 id: attribute-the-canonical-manifest-growth-and-decide-whether-the-encoding-owes-a-budget
 title: Attribute the canonical-manifest growth and decide whether the encoding owes a budget
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [re-derive-the-measured-envelope-band-the-cache-hot-path-sweeps, re-price-the-envelope-band-consumers-against-the-re-derived-band]
@@ -9,6 +9,9 @@ scopes: [research/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, artifacts, measurement, encoding]
+claimed_from: todo
+assignee: agent-manifest-growth
+lease_expires_at: 1786053357
 ---
 ## User-visible outcome
 
