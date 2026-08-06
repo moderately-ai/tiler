@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use super::tests::{interpret_fused, reduction_loop};
+use super::tests::{bits_of, f32_tensor, interpret_fused, reduction_loop, tensor_bits};
 use super::{
     CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind, compile,
 };
@@ -578,70 +578,22 @@ fn ordered_multi_output_programs_compile_through_the_ordinary_path() {
     }
 }
 
-/// A program publishing an intermediate it also consumes still refuses, by name.
+/// The published-and-consumed program, spelled as a governed one.
 ///
-/// This is the shape the multi-output row used to be asserted with — publish
-/// `scaled` and reduce it into `reduced` — and it is *not* what discharges the
-/// row, because it does not compile. Recording which refusal it now reports is
-/// what keeps the gate's bound honest: the two outputs' recognition walks share
-/// the scaling occurrence, so it refuses at the request boundary under
-/// `output-partition-overlap` rather than at any layer below it. One region's
-/// owning write would otherwise have to serve both the materialization edge its
-/// consumer reads across and the publication, and
-/// `tiler_ir::program::ValueRole` is exclusive.
+/// `input`, `scale = 2.0`, `product = input * scale`, `sum` folding `product`
+/// along axis 1, publishing `reduced = sum` and then `scaled = product`. The
+/// value `scaled` names is the same value the fold consumes, which is the whole
+/// shape: `product`'s recognition walk is exactly the prologue part of `sum`'s.
 ///
-/// **The copy stage that would lift it is a region this crate now builds, and
-/// the refusal survives anyway — which is the fact worth recording rather than
-/// the ticket that owns it.**
-/// `admit-elementwise-epilogues-over-a-materialized-intermediate` admitted an
-/// elementwise region reading a materialized intermediate and writing a declared
-/// output, so the *region* the copy stage needs exists and
-/// `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
-/// measures it. What that stage still has no account for is its *coverage*: it
-/// publishes a value another region computed, so it claims no occurrence, and
-/// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
-/// only as the declared combiner of a split.
-///
-/// **That program-scope account is the last of four walls, not the only one, and
-/// the earlier three are all in this crate.** An earlier revision of this comment
-/// said lifting the row was "a program-scope vocabulary widening in `tiler-ir`
-/// … and not a recognizer change". That was measured wrong by disabling each wall
-/// in turn against a `SemanticProgramBuilder::try_standard` spelling of this
-/// fixture and reading the next refusal:
-///
-/// 1. `check_output_cover`'s `output-partition-overlap`, which this test asserts;
-/// 2. `crate::program`'s `cover-named-output-attribution`
-///    ([`AttributionFailure::MaterializesAndPublishes`]) — recognition, region
-///    formation, cover enumeration, selection and planning all *succeed*, and the
-///    cover places the scaling region as both the producer of the edge the fold
-///    reads and the retainer of `scaled`;
-/// 3. `crate::program`'s `internal-unwritten` — with that attribution admitted,
-///    the scaling region's one owning write goes to the materialization edge and
-///    nothing writes `scaled`. This is the copy stage's absence stated by the
-///    assembler, and closing it is a *physical and frontier* widening here: the
-///    region needs a second dispatch, exactly as a split reduction has one;
-/// 4. only then `tiler_ir::program`'s `UncoveringStage` — inferred from the
-///    verifier rather than measured, because rows 1 to 3 stop the program first.
-///
-/// All four are owned together by
-/// `lift-the-four-published-and-consumed-walls-together`, because lifting row 1
-/// alone would move this refusal from `strategy` to `program-assembly`, which is
-/// later and less specific than what the caller is told today.
-///
-/// **This fixture also cannot be turned into the compiling assertion the row
-/// wants without changing how it is built.** It registers [`ExternalSemantics`],
-/// and `externally_registered_operations_require_their_own_realization_authority`
-/// pins that such a program refuses under `capability` / `semantic-authority-pairing`
-/// — which is exactly what wall 1 was masking. A published-and-consumed program
-/// that is meant to compile has to be spelled with
-/// `SemanticProgramBuilder::try_standard`, like [`governed_program`].
-#[test]
-fn a_published_and_consumed_intermediate_refuses_by_name() {
-    let mut registry = SemanticRegistryBuilder::new();
-    registry
-        .register_provider(&ExternalSemantics { revision: 1 })
-        .unwrap();
-    let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+/// **It is spelled with [`SemanticProgramBuilder::try_standard`] and not with
+/// this module's [`ExternalSemantics`], and that is not a style choice.** An
+/// externally registered program refuses under `capability` /
+/// `semantic-authority-pairing` before anything below the request boundary runs,
+/// which `externally_registered_operations_require_their_own_realization_authority`
+/// pins — so an external spelling could never become the compiling assertion,
+/// only a differently-worded refusal.
+fn published_and_consumed_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let input = builder
         .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
         .unwrap();
@@ -655,17 +607,112 @@ fn a_published_and_consumed_intermediate_refuses_by_name() {
     builder
         .output(OutputKey::new("scaled").unwrap(), product)
         .unwrap();
-    let multi_output = builder.build().unwrap();
-    assert_eq!(multi_output.output_count(), 2);
+    builder.build().unwrap()
+}
 
-    let error = compile(CompilationRequest::governed(&multi_output)).unwrap_err();
+/// A program publishing an intermediate it also consumes compiles, and both
+/// published outputs agree with the reference bit for bit.
+///
+/// **This assertion was the inverse until the four walls came down together.**
+/// It read `strategy` / `output-partition-overlap` and recorded the
+/// published-and-consumed row of `docs/correctness-and-testing.md`'s requirement
+/// as a negative test. The row is now positive, and the four walls it took —
+/// measured by disabling each in turn and reading the next refusal — were
+/// `check_output_cover`'s `output-partition-overlap`, `crate::program`'s
+/// `cover-named-output-attribution` and `internal-unwritten`, and only then
+/// `tiler_ir::program`'s `UncoveringStage`. The first three are all in this
+/// crate; the premise that lifting the row was a `tiler-ir` widening "and not a
+/// recognizer change" was measured wrong.
+///
+/// **The shape that lifts it is a second dispatch of the producing region**, not
+/// a region of its own and not a duplicated computation.
+/// [`tiler_ir::program::ValueRole`] is exclusive, so the scaling region's first
+/// dispatch stages the value the fold reads across and its second copies those
+/// bytes into the buffer `scaled` publishes — structurally a split reduction's
+/// final pass, one fold up, and accounted for by
+/// `tiler_ir::program::PublishingCopy` exactly as a split's final pass is
+/// accounted for by its own declaration.
+///
+/// **Both outputs are compared, and each is a distinct claim.** `scaled` is what
+/// the copy wrote, so it catches a copy that published the wrong buffer, an
+/// identity expression that is not the identity, or a publication bound to the
+/// staged temporary instead of the output. `reduced` is what the fold wrote from
+/// the *same* staged value, so it catches a first dispatch whose write was
+/// redirected to the publication and left the edge unwritten — a program that
+/// would still publish a correct `scaled`. The input is chosen so no two
+/// elements and no two row sums coincide, which is what makes a transposed,
+/// rotated, or partially-written buffer disagree rather than accidentally match.
+#[test]
+fn a_published_and_consumed_intermediate_compiles_and_agrees() {
+    let shape = Shape::from_dims([2, 2]);
+    let values: [f32; 4] = [1.0, 2.0, 4.0, 8.0];
+    let program = published_and_consumed_program();
+    assert_eq!(program.output_count(), 2);
+    assert_eq!(program.operation_count(), 3);
+
+    let product = compile(CompilationRequest::governed(&program))
+        .expect("the published-and-consumed program compiles");
+    assert_eq!(product.targets[0].failure(), None);
+    let retained: Vec<&ProgramAlternative> =
+        product.targets[0].portfolio.alternatives.iter().collect();
+    let [alternative] = retained.as_slice() else {
+        panic!(
+            "expected one retained alternative, found {}",
+            retained.len()
+        );
+    };
+
+    // The assembled structure, stated rather than assumed: three dispatches over
+    // two cover regions, one materialization edge between them, and the two
+    // declared keys published in the caller's order.
+    assert_eq!(alternative.plan.cover().region_count(), 2);
+    assert_eq!(alternative.plan.cover().materializations().len(), 1);
+    assert_eq!(alternative.kernels.len(), 3);
     assert_eq!(
-        error,
-        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "output-partition-overlap",
-        })
+        alternative
+            .program
+            .core()
+            .outputs()
+            .map(|output| output.key().as_str().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["reduced".to_owned(), "scaled".to_owned()],
     );
+    // The publishing copy is declared at program scope, and it is what accounts
+    // for the uncovering dispatch: exactly one stage covers no occurrence, and
+    // it is the one the copy names as publisher.
+    let copies: Vec<_> = alternative.program.core().publishing_copies().collect();
+    assert_eq!(copies.len(), 1);
+    assert_eq!(
+        alternative
+            .program
+            .core()
+            .stages()
+            .filter(|stage| stage.coverage().is_empty())
+            .count(),
+        1,
+    );
+    assert!(copies[0].publisher().coverage().is_empty());
+    assert!(!copies[0].source_stage().coverage().is_empty());
+
+    // The three dispatches in the order the program declares them: the scaling
+    // pass writing the edge, the copy publishing `scaled` from it, and the fold
+    // publishing `reduced` from the same edge.
+    let staged = interpret_fused(&alternative.kernels[0], &values);
+    let scaled = interpret_fused(&alternative.kernels[1], &staged);
+    let reduced = interpret_fused(&alternative.kernels[2], &staged);
+
+    let key = InputKey::new("input").unwrap();
+    let tensor = f32_tensor(shape, &values);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&program, &[InputBinding::new(&key, &tensor)])
+        .unwrap();
+    assert_eq!(bits_of(&reduced), tensor_bits(&expected[0]));
+    assert_eq!(bits_of(&scaled), tensor_bits(&expected[1]));
+    // Stated independently of the oracle as well, so a reference evaluator that
+    // agreed with a wrong compiler would still be caught.
+    assert_eq!(scaled, vec![2.0, 4.0, 8.0, 16.0]);
+    assert_eq!(reduced, vec![6.0, 24.0]);
 }
 
 /// ADR 0072 identity conformance for a provider-only revision change.

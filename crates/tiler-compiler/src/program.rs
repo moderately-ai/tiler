@@ -382,6 +382,21 @@ pub(crate) struct AssemblySplit {
     pub(crate) partition: ContributorPartition,
 }
 
+/// One publishing-copy contract a two-dispatch publishing region declares.
+///
+/// Distinct from [`AssemblySplit`] rather than a widening of it, because the two
+/// declare different facts: a split partitions a fold's contributors and
+/// combines partials, while a copy moves one value into the buffer the interface
+/// publishes. Collapsing them would make `contributors_per_partition` a number a
+/// copy has to invent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AssemblyPublishingCopy {
+    pub(crate) source_stage: usize,
+    pub(crate) publisher: usize,
+    pub(crate) source: usize,
+    pub(crate) published: usize,
+}
+
 /// The complete structural description one retained plan's cover assembles into.
 ///
 /// **Every quantity here is read from the cover or from the semantic program,
@@ -409,6 +424,7 @@ pub(crate) struct CoverAssembly {
     stages: Vec<AssemblyStage>,
     dependencies: Vec<AssemblyDependency>,
     splits: Vec<AssemblySplit>,
+    copies: Vec<AssemblyPublishingCopy>,
     /// The ordered named program outputs, each naming the internal value that
     /// publishes it, in the semantic program's declaration order.
     outputs: Vec<(OutputKey, usize)>,
@@ -605,32 +621,11 @@ impl CoverAssembly {
                 role: ValueRole::Temporary,
             });
         }
-        // One staged value per dispatch of a subprogram other than its last: the
-        // pass that writes it and the pass that reads it are two dispatches, and
-        // the dispatch boundary is what makes the staged value visible.
-        let mut pass_values: Vec<Vec<usize>> = vec![Vec::new(); regions.len()];
-        for position in &order {
-            let (first, last) = span[*position];
-            for staged in &stage_regions[first..last] {
-                pass_values[*position].push(internals.len());
-                internals.push(AssemblyValue {
-                    shape: staged.region().index.iteration_shape.clone(),
-                    role: ValueRole::Temporary,
-                });
-            }
-        }
-        // One value per ordered named program output, in declaration order,
-        // attributed to the region the *cover* says retains that named result.
-        //
-        // Deliberately by value rather than by the position a publishing region
-        // occupies in execution order. Execution order is the cover's canonical
-        // occurrence order, which has nothing to do with the order the caller
-        // declared its interface in — so pairing the two lists positionally
-        // publishes the right buffers under the wrong keys whenever they
-        // disagree, which is the interchangeable-outputs interface the
-        // architectural contract forbids. With one declared output the two
-        // agree, which is why the guess was invisible while `output-arity`
-        // stood.
+        // Which regions materialize an edge, and which of those also retain a
+        // declared named result. Derived before the staged values below because
+        // a publishing region's first dispatch writes the *edge* rather than a
+        // staged value of its own, so how many staged values it mints depends on
+        // this answer.
         let materializing: Vec<bool> = regions
             .iter()
             .map(|region| {
@@ -651,6 +646,56 @@ impl CoverAssembly {
                     "cover-named-output-attribution",
                 )
             })?;
+        // A region whose value is published *and* consumed: its first dispatch
+        // stages the value the edge carries and its last publishes a copy.
+        let publishing: Vec<bool> = (0..regions.len())
+            .map(|region| materializing[region] && attribution.contains(&region))
+            .collect();
+        // Exactly two dispatches, because that is what the physical layer offers
+        // for this shape and what the program-scope declaration below accounts
+        // for. A longer subprogram would be a split *and* a publication, whose
+        // middle passes have no declared account, and refusing it by name is
+        // what keeps an unaccounted-for dispatch from reaching the verifier.
+        for position in &order {
+            let (first, last) = span[*position];
+            if publishing[*position] && last != first + 1 {
+                return Err(AssemblyRefusal::missing(
+                    regions[*position].label(),
+                    "publishing-copy-pass-count",
+                ));
+            }
+        }
+        // One staged value per dispatch of a subprogram other than its last: the
+        // pass that writes it and the pass that reads it are two dispatches, and
+        // the dispatch boundary is what makes the staged value visible. A
+        // publishing region mints none — its first dispatch's owning write goes
+        // to the materialization edge, which the cover already minted above.
+        let mut pass_values: Vec<Vec<usize>> = vec![Vec::new(); regions.len()];
+        for position in &order {
+            let (first, last) = span[*position];
+            if publishing[*position] {
+                continue;
+            }
+            for staged in &stage_regions[first..last] {
+                pass_values[*position].push(internals.len());
+                internals.push(AssemblyValue {
+                    shape: staged.region().index.iteration_shape.clone(),
+                    role: ValueRole::Temporary,
+                });
+            }
+        }
+        // One value per ordered named program output, in declaration order,
+        // attributed to the region the *cover* says retains that named result.
+        //
+        // Deliberately by value rather than by the position a publishing region
+        // occupies in execution order. Execution order is the cover's canonical
+        // occurrence order, which has nothing to do with the order the caller
+        // declared its interface in — so pairing the two lists positionally
+        // publishes the right buffers under the wrong keys whenever they
+        // disagree, which is the interchangeable-outputs interface the
+        // architectural contract forbids. With one declared output the two
+        // agree, which is why the guess was invisible while `output-arity`
+        // stood.
         let mut outputs: Vec<(OutputKey, usize)> = Vec::new();
         let mut output_value: Vec<Option<usize>> = vec![None; regions.len()];
         for (output, position) in semantic.outputs().zip(&attribution) {
@@ -671,6 +716,7 @@ impl CoverAssembly {
         let inputs = semantic.input_count();
         let mut stages: Vec<AssemblyStage> = Vec::with_capacity(stage_regions.len());
         let mut splits: Vec<AssemblySplit> = Vec::new();
+        let mut copies: Vec<AssemblyPublishingCopy> = Vec::new();
         for position in &order {
             let region = &regions[*position];
             let (first, last) = span[*position];
@@ -747,9 +793,19 @@ impl CoverAssembly {
                             }
                             // The first dispatch of a region reads what the cover
                             // hands the region; every later one reads what the
-                            // dispatch before it staged.
+                            // dispatch before it staged — except a publishing
+                            // copy, whose source is the materialization edge the
+                            // dispatch before it wrote rather than a staged value
+                            // of its own.
                             bindings.push(AssemblyBinding::Internal(if stage == first {
                                 consumed[0]
+                            } else if publishing[*position] {
+                                *produced.first().ok_or_else(|| {
+                                    AssemblyRefusal::missing(
+                                        region.label(),
+                                        "cover-materialization-unnamed",
+                                    )
+                                })?
                             } else {
                                 pass_values[*position][stage - first - 1]
                             }));
@@ -779,7 +835,18 @@ impl CoverAssembly {
                     })?,
                     // A pass that is not the region's last stages its result for
                     // the pass after it, so it writes an intermediate whatever
-                    // the region as a whole writes.
+                    // the region as a whole writes — except a publishing region's
+                    // first dispatch, whose owning write *is* the materialization
+                    // edge, because the publication it also owes is the next
+                    // dispatch's write rather than this one's.
+                    (TensorRole::Intermediate, false) if publishing[*position] => {
+                        *produced.first().ok_or_else(|| {
+                            AssemblyRefusal::missing(
+                                region.label(),
+                                "cover-materialization-unnamed",
+                            )
+                        })?
+                    }
                     (TensorRole::Intermediate, false) => pass_values[*position][stage - first],
                     (TensorRole::Output | TensorRole::Input { .. }, false)
                     | (TensorRole::Input { .. }, true) => {
@@ -798,6 +865,25 @@ impl CoverAssembly {
                     },
                     bindings,
                 });
+            }
+            // The publishing-copy contract a two-dispatch publishing region
+            // declares. It is stated instead of the split contracts below rather
+            // than beside them: the two dispatches are not a split — nothing is
+            // partitioned and no partial is combined — and the value the second
+            // reads is the edge the first wrote, which is the fact the
+            // declaration names.
+            if publishing[*position] {
+                copies.push(AssemblyPublishingCopy {
+                    source_stage: first,
+                    publisher: last,
+                    source: *produced.first().ok_or_else(|| {
+                        AssemblyRefusal::missing(region.label(), "cover-materialization-unnamed")
+                    })?,
+                    published: output_value[*position].ok_or_else(|| {
+                        AssemblyRefusal::missing(region.label(), "cover-named-output-unnamed")
+                    })?,
+                });
+                continue;
             }
             // The split contract each consecutive pair of passes declares. The
             // partition is read back from the producing pass's own topology, so
@@ -837,6 +923,7 @@ impl CoverAssembly {
             stages,
             dependencies,
             splits,
+            copies,
             outputs,
         })
     }
@@ -859,6 +946,7 @@ impl CoverAssembly {
         internals: Vec<(Shape, ValueRole)>,
         stages: Vec<AssemblyStage>,
         splits: Vec<AssemblySplit>,
+        copies: Vec<AssemblyPublishingCopy>,
         outputs: Vec<(OutputKey, usize)>,
     ) -> Result<Self, AssemblyRefusal> {
         let internals: Vec<AssemblyValue> = internals
@@ -873,6 +961,7 @@ impl CoverAssembly {
             stages,
             dependencies,
             splits,
+            copies,
             outputs,
         })
     }
@@ -902,9 +991,6 @@ enum AttributionFailure {
     /// One region retains two declared outputs, so its one owning write would
     /// have to publish both.
     Shared { region: usize },
-    /// The region retaining a declared output also materializes an edge, so its
-    /// one owning write would have to serve the publication and the edge.
-    MaterializesAndPublishes { region: usize },
     /// A region that materializes nothing is attributed no declared output, so
     /// nothing names what its owning write produces.
     Unpublished { region: usize },
@@ -917,7 +1003,6 @@ impl AttributionFailure {
             Self::Unattributed { .. } => None,
             Self::Ambiguous { region, .. }
             | Self::Shared { region }
-            | Self::MaterializesAndPublishes { region }
             | Self::Unpublished { region } => Some(region),
         }
     }
@@ -937,6 +1022,16 @@ impl AttributionFailure {
 /// materialization edge. A region's one owning write goes to exactly one place,
 /// so anything else is a description the schedule cannot realize.
 ///
+/// **A region that materializes an edge *and* publishes is admitted, and used to
+/// be the arm nearest the surface.** `MaterializesAndPublishes` refused it on
+/// the reading that one owning write would have to serve both — true of one
+/// dispatch, and the reason the arm stood while every region was one dispatch.
+/// A published-and-consumed region is now two: the first stages the edge, the
+/// second publishes a copy, and [`CoverAssembly::from_plan`] binds each write to
+/// its own value. The variant is gone rather than left unreachable, because a
+/// refusal whose premise has been replaced is a claim the next reader would take
+/// as current.
+///
 /// **Every refusal below is defence in depth against the search as it stands,
 /// and that is stated rather than presented as a live gate.** `verify_cover`
 /// already proved each ordered named output is produced by exactly one placed
@@ -948,21 +1043,6 @@ impl AttributionFailure {
 /// duplication policy that admits a named-result producer, makes each reachable,
 /// and `named_output_attribution_can_say_no_in_every_direction` is what proves
 /// meanwhile that they can say no.
-///
-/// **[`AttributionFailure::MaterializesAndPublishes`] is the arm nearest the
-/// surface, and it is one recognizer rule away rather than a profile away.**
-/// Disabling `check_output_cover`'s `output-partition-overlap` against a governed
-/// published-and-consumed program — publish `scaled`, reduce it into `reduced` —
-/// reaches this arm directly: recognition, region formation, cover enumeration
-/// and selection all succeed, and the cover legally places the scaling region as
-/// both the producer of the edge the fold reads and the retainer of `scaled`.
-/// Admitting it in turn reaches [`derive_dependencies`]'s `internal-unwritten`,
-/// because that region's one owning write goes to the edge and nothing writes the
-/// published value. That missing second dispatch is the publishing copy stage,
-/// and supplying it is a widening of this crate's physical and frontier layers
-/// before it is one of `tiler_ir::program`'s uncovering-stage account.
-/// `crate::pipeline::conformance`'s
-/// `a_published_and_consumed_intermediate_refuses_by_name` records the order.
 ///
 /// # Errors
 ///
@@ -991,9 +1071,6 @@ fn attribute_named_outputs(
         }
         if attributed[position].is_some() {
             return Err(AttributionFailure::Shared { region: position });
-        }
-        if materializing.get(position).copied().unwrap_or(true) {
-            return Err(AttributionFailure::MaterializesAndPublishes { region: position });
         }
         attributed[position] = Some(output);
         attribution.push(position);
@@ -1354,6 +1431,28 @@ fn build_cover_core(
                 })?,
             partitions: split.partition.partitions,
             contributors_per_partition: split.partition.contributors_per_partition,
+        })?;
+    }
+    for copy in &assembly.copies {
+        builder.push_publishing_copy(tiler_ir::program::PublishingCopy {
+            source_stage: *pushed
+                .get(copy.source_stage)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-publishing-copy-stage",
+                })?,
+            publisher: *pushed.get(copy.publisher).ok_or(ProgramError::Structure {
+                rule: "assembly-publishing-copy-stage",
+            })?,
+            source: *internal_values
+                .get(copy.source)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-publishing-copy-value",
+                })?,
+            published: *internal_values
+                .get(copy.published)
+                .ok_or(ProgramError::Structure {
+                    rule: "assembly-publishing-copy-value",
+                })?,
         })?;
     }
     for (key, value) in &assembly.outputs {

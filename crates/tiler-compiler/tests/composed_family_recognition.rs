@@ -664,19 +664,35 @@ fn a_broadcast_widening_a_declared_weight_compiles_as_a_replication_relation() {
     }
 }
 
-/// A second named output *inside the first's walk* refuses under its own rule.
+/// A second named output *inside the first's walk* now compiles, at every contract.
 ///
 /// The accepted neighbour is [`composed_region`] itself: the same three
 /// occurrences over the same three inputs, with one further value named as an
-/// output. What refuses is the sharing rather than the second output — the
-/// declared arity guard is gone and independent ordered outputs compile, which
-/// `pipeline::conformance` discharges. Here `biased` is consumed by the fold
-/// that produces `out`, so the two outputs' recognition walks claim one
-/// occurrence twice: whichever region owns that write would have to serve both
-/// the materialization edge the fold reads across and the publication, and a
-/// region writes one owning tensor.
+/// output. `biased` is consumed by the fold that produces `out`, so the two
+/// recognition walks claim the composed prologue's occurrences twice — the
+/// published-and-consumed shape, which `output-partition-overlap` refused until
+/// the four walls came down together and which the region now realizes as two
+/// dispatches: one staging the value the fold reads across, one publishing a
+/// copy of it.
+///
+/// **It is asserted at every contract because that is what this file is for,
+/// and it must track its neighbour exactly.** The publication adds a full-tensor
+/// copy and no arithmetic, so it consumes no numerical freedom of its own: the
+/// contraction-permitting contract declines this program for the multiply/add
+/// adjacency its prologue already had, which is the same verdict
+/// `an_elementary_neighbour_resolves_where_the_composed_region_declines` records
+/// for the same three occurrences published as one output. A row that differed
+/// from that neighbour would mean the copy had acquired a numerical claim it has
+/// no business making.
+///
+/// The neighbouring *refusals* — two keys naming one value, and a publication
+/// inside one recognized part rather than at a part boundary — are driven at the
+/// recognizer in `request`'s `an_output_key_pair_naming_one_value_still_refuses_by_name`
+/// rather than here. Composing them into this fixture's three-input domain
+/// reaches `elementwise-reads` first, which would make the row report about the
+/// read arity instead of about the partition rule.
 #[test]
-fn a_second_named_output_inside_the_first_s_walk_refuses() {
+fn a_second_named_output_inside_the_first_s_walk_compiles() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let inputs: Vec<_> = ["a", "b", "c"]
         .into_iter()
@@ -699,10 +715,13 @@ fn a_second_named_output_inside_the_first_s_walk_refuses() {
     for contract in CONTRACTS {
         assert_eq!(
             compile_under(&two_outputs, contract),
-            Err(CompileFailureClass::UnsupportedCapability {
-                rule: "output-partition-overlap"
-            }),
-            "{contract:?} admitted two outputs one walk would have to publish",
+            if contract == CONTRACTION_PERMITTED {
+                Err(CompileFailureClass::NoFeasiblePlan)
+            } else {
+                Ok(())
+            },
+            "{contract:?} did not resolve the published-and-consumed program as \
+             its single-output neighbour resolves",
         );
     }
 }

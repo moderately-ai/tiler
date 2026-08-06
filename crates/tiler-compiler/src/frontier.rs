@@ -715,6 +715,16 @@ fn derive_subprogram_boundary_contract(
     // The value the previous stage handed on. `None` at the head of the chain,
     // and never carried past the stage that consumes it.
     let mut handoff: Option<&tiler_ir::shape::Shape> = None;
+    // Whether this chain's last stage is a publishing copy. It is the one shape
+    // in which a *non-final* stage's write also leaves the subprogram: the copy
+    // exists because the value is published and consumed, so the value it copies
+    // from is the materialization edge some other cover region reads. Declaring
+    // only the copy's own write would state a contract that omits a buffer the
+    // cover joins on, and the plan would then fail to compose for a reason that
+    // is a gap in this derivation rather than a fact about the regions.
+    let publishes_a_copy = stages
+        .last()
+        .is_some_and(|stage| stage.region().index.id == crate::physical::PUBLISHING_COPY_REGION);
     for (position, stage) in stages.iter().enumerate() {
         let region = stage.region();
         if !region.index.accesses.is_empty() && !stage.requirements().requires_device_memory {
@@ -742,6 +752,13 @@ fn derive_subprogram_boundary_contract(
                     });
                 } else if access.tensor == TensorRole::Intermediate {
                     handoff = Some(&region.index.iteration_shape);
+                    if publishes_a_copy {
+                        guarantees.push(BoundaryGuarantee {
+                            tensor: access.tensor,
+                            ownership: BoundaryOwnership::TotalRaceFreeWrite,
+                            properties: bounded_guarantees(carrier),
+                        });
+                    }
                 } else {
                     return Err(SUBPROGRAM_NOT_CHAINED_RULE);
                 }
@@ -2959,6 +2976,14 @@ impl<'providers> PhysicalAuthorities<'providers> {
     }
 }
 
+/// Stable rule code naming a strategy with no place for a publishing dispatch.
+///
+/// A fact about the *region* the cover placed rather than about the request,
+/// which is why it is carried as an [`StrategyDeclineCause::UnspellableRegion`]:
+/// the same reduction in a cover that does not publish its value keeps both
+/// parallel strategies.
+const PUBLISHING_COPY_COMPOSITION_RULE: &str = "region-publishes-a-copy";
+
 /// Namespace of Tiler's own governed physical implementation provider.
 const GOVERNED_PHYSICAL_NAMESPACE: &str = "tiler";
 /// Name of Tiler's own governed physical implementation provider.
@@ -3073,7 +3098,13 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
                     crate::physical::RegionWrite::ProgramOutput => {
                         PhysicalCostEstimate::structural(1, output_elements, 0)
                     }
-                    crate::physical::RegionWrite::Materialized => {
+                    // The staging half of a published-and-consumed region costs
+                    // exactly what a materializing one costs; the publishing
+                    // dispatch is added below, where the body becomes a
+                    // subprogram, so that the cost and the dispatch count move
+                    // together instead of at two sites.
+                    crate::physical::RegionWrite::Materialized
+                    | crate::physical::RegionWrite::MaterializedAndPublished => {
                         PhysicalCostEstimate::structural(1, input_elements, intermediate_bytes)
                     }
                 },
@@ -3084,18 +3115,41 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // is stated. The serial alternative is offered either way; a split
             // is additive and never replaces it.
             crate::physical::RegionSpellingKind::SerialSum => {
-                split = Some(propose_split(
-                    request,
-                    producer,
-                    &applicability,
-                    subject.write(),
-                ));
-                tree = Some(propose_workgroup_tree(
-                    request,
-                    producer,
-                    &applicability,
-                    subject.write(),
-                ));
+                // Both parallel strategies end in a pass that writes the tensor
+                // the cover assigned, and a published-and-consumed region's
+                // publication is a *further* dispatch after that pass. Composing
+                // the two would be a three-pass shape nothing below here
+                // assembles, so the strategies are declined by name rather than
+                // offered as plans the assembler would refuse.
+                if subject.write().publishes_a_copy() {
+                    split = Some(Err(DeclinedStrategy::new(
+                        crate::physical::MULTI_PASS_SPLIT_STRATEGY,
+                        StrategyDeclineCause::UnspellableRegion {
+                            rule: PUBLISHING_COPY_COMPOSITION_RULE,
+                            covered: u32::try_from(members.len()).unwrap_or(u32::MAX),
+                        },
+                    )));
+                    tree = Some(Err(DeclinedStrategy::new(
+                        crate::physical::SINGLE_WORKGROUP_TREE_STRATEGY,
+                        StrategyDeclineCause::UnspellableRegion {
+                            rule: PUBLISHING_COPY_COMPOSITION_RULE,
+                            covered: u32::try_from(members.len()).unwrap_or(u32::MAX),
+                        },
+                    )));
+                } else {
+                    split = Some(propose_split(
+                        request,
+                        producer,
+                        &applicability,
+                        subject.write(),
+                    ));
+                    tree = Some(propose_workgroup_tree(
+                        request,
+                        producer,
+                        &applicability,
+                        subject.write(),
+                    ));
+                }
                 (
                     crate::physical::reduction_region(request, producer, subject.write()).0,
                     PhysicalCostEstimate::structural(1, output_elements, 0),
@@ -3138,17 +3192,46 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
                     crate::physical::RegionWrite::ProgramOutput => {
                         PhysicalCostEstimate::structural(1, output_elements, 0)
                     }
-                    crate::physical::RegionWrite::Materialized => {
+                    // The staging half, for the reason the pointwise arm states.
+                    crate::physical::RegionWrite::Materialized
+                    | crate::physical::RegionWrite::MaterializedAndPublished => {
                         PhysicalCostEstimate::structural(1, output_elements, intermediate_bytes)
                     }
                 },
             ),
         };
-        let serial = ImplementationProposal::new(
-            ProposalBody::ScheduledKernel(Box::new(region)),
-            applicability,
-            cost,
-        );
+        // A published-and-consumed region is two dispatches: the one just built,
+        // which stages the value its consumer reads across, and a copy that
+        // moves those bytes into the buffer the interface publishes. The copy is
+        // a *planned* dispatch rather than something the assembler synthesizes,
+        // because a full-tensor copy is a real cost the planner must see — a
+        // cover that avoids the publication entirely is a legal alternative, and
+        // hiding the copy would let the planner prefer this one for free.
+        let serial = if subject.write().publishes_a_copy() {
+            let domain = region.index.iteration_shape.clone();
+            let staged_elements = tiler_ir::schedule::element_count(&domain).unwrap_or(0);
+            let (copy, copy_members) =
+                crate::physical::publishing_copy_region(request, domain, staged_elements);
+            let passes = vec![
+                SubprogramStage::new(region, members.to_vec()),
+                SubprogramStage::new(copy, copy_members),
+            ];
+            ImplementationProposal::new(
+                ProposalBody::KernelSubprogram(Box::new(KernelSubprogram::new(passes))),
+                applicability,
+                PhysicalCostEstimate::structural(
+                    2,
+                    cost.launched_threads().saturating_add(staged_elements),
+                    cost.temporary_bytes(),
+                ),
+            )
+        } else {
+            ImplementationProposal::new(
+                ProposalBody::ScheduledKernel(Box::new(region)),
+                applicability,
+                cost,
+            )
+        };
         // The serial alternative is offered unconditionally, and each parallel
         // strategy is additive beside it: a request that admits neither still
         // has a legal plan, and one that admits both retains all three. Whether

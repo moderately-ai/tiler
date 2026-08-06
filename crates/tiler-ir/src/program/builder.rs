@@ -42,15 +42,17 @@ use super::model::{
     AllocationData, AllocationOwnership, AllocationSpec, ByteWindow, CoveredOccurrence,
     DependencyData, DependencyReasonData, KernelProgramData, MaterializedComponentSpec,
     MaterializedOrigin, MaterializedValueData, MaterializedValueSpec, MemorySpace,
-    PartialReduction, PartialReductionData, ProgramOutputData, ROUTING_COMMIT_TRANSITIONS,
-    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessData,
-    StageAccessMode, StageData, StageLaunch, StageLaunchData, StorageEncoding, StorageScalar,
-    ValueRole, VerifiedKernelProgram, ViewData, element_bytes, encode_identity,
+    PartialReduction, PartialReductionData, ProgramOutputData, PublishingCopy, PublishingCopyData,
+    ROUTING_COMMIT_TRANSITIONS, RoutingCommitState, RoutingCommitTransition, SemanticOccurrence,
+    StageAccess, StageAccessData, StageAccessMode, StageData, StageLaunch, StageLaunchData,
+    StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewData, element_bytes,
+    encode_identity,
 };
 use super::{
     MAX_PROGRAM_ABI_EXPRESSIONS, MAX_PROGRAM_ALLOCATIONS, MAX_PROGRAM_DEPENDENCIES,
-    MAX_PROGRAM_OUTPUTS, MAX_PROGRAM_PARTIAL_REDUCTIONS, MAX_PROGRAM_STAGES, MAX_PROGRAM_VALUES,
-    MAX_PROGRAM_VIEWS, MAX_STAGE_ACCESSES, MAX_STAGE_COVERAGE,
+    MAX_PROGRAM_OUTPUTS, MAX_PROGRAM_PARTIAL_REDUCTIONS, MAX_PROGRAM_PUBLISHING_COPIES,
+    MAX_PROGRAM_STAGES, MAX_PROGRAM_VALUES, MAX_PROGRAM_VIEWS, MAX_STAGE_ACCESSES,
+    MAX_STAGE_COVERAGE,
 };
 
 /// The unforgeable semantic subject one kernel program must completely realize.
@@ -73,6 +75,7 @@ pub struct KernelProgramBuilder {
     allocations: Vec<AllocationData>,
     dependencies: Vec<DependencyData>,
     partial_reductions: Vec<PartialReductionData>,
+    publishing_copies: Vec<PublishingCopyData>,
     outputs: Vec<ProgramOutputData>,
     covered: Vec<SemanticOccurrence>,
     claimed_inputs: Vec<(InputKey, Option<EncodedComponentRole>)>,
@@ -135,6 +138,7 @@ impl KernelProgramBuilder {
             allocations: Vec::new(),
             dependencies: Vec::new(),
             partial_reductions: Vec::new(),
+            publishing_copies: Vec::new(),
             outputs: Vec::new(),
             covered: Vec::new(),
             claimed_inputs: Vec::new(),
@@ -703,6 +707,59 @@ impl KernelProgramBuilder {
         Ok(())
     }
 
+    /// Declares that one stage publishes a value another stage computed.
+    ///
+    /// **Draft public surface**, for the reason [`PublishingCopy`] records.
+    ///
+    /// The declaration is what accounts for the publisher's dispatch: it covers
+    /// no occurrence of the bound graph, because the stage that computed the
+    /// value already claims them, and whole-program verification refuses an
+    /// unaccounted-for uncovering stage. The ordering that makes the source
+    /// visible is the ordinary data dependency between the two stages, which
+    /// [`Self::push_data_dependency`] declares and verification requires for the
+    /// read.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle error, [`KernelProgramBuildError::SelfDependency`] when
+    /// one stage is named as both the source and the publisher,
+    /// [`KernelProgramBuildError::DuplicatePublishingCopy`] when the same value
+    /// is published by two declared copies, or a structural-limit error.
+    pub fn push_publishing_copy(
+        &mut self,
+        copy: PublishingCopy,
+    ) -> Result<(), KernelProgramBuildError> {
+        self.resolve_stage(copy.source_stage)?;
+        self.resolve_stage(copy.publisher)?;
+        self.resolve_value(copy.source)?;
+        self.resolve_value(copy.published)?;
+        // One stage cannot both define the value and publish a copy of it: the
+        // copy exists precisely because the two writes cannot be one, and a
+        // self-edge is what a program declares when it has not separated them.
+        if copy.source_stage.index == copy.publisher.index {
+            return Err(KernelProgramBuildError::SelfDependency);
+        }
+        if self
+            .publishing_copies
+            .iter()
+            .any(|declared| declared.published == copy.published.index)
+        {
+            return Err(KernelProgramBuildError::DuplicatePublishingCopy);
+        }
+        limit(
+            self.publishing_copies.len().saturating_add(1),
+            MAX_PROGRAM_PUBLISHING_COPIES,
+            ProgramLimitKind::PublishingCopies,
+        )?;
+        self.publishing_copies.push(PublishingCopyData {
+            source_stage: copy.source_stage.index,
+            publisher: copy.publisher.index,
+            source: copy.source.index,
+            published: copy.published.index,
+        });
+        Ok(())
+    }
+
     /// Publishes one materialized value under a named semantic output key.
     ///
     /// # Errors
@@ -811,6 +868,7 @@ impl KernelProgramBuilder {
             allocations: std::mem::take(&mut self.allocations),
             dependencies: std::mem::take(&mut self.dependencies),
             partial_reductions: std::mem::take(&mut self.partial_reductions),
+            publishing_copies: std::mem::take(&mut self.publishing_copies),
             outputs: std::mem::take(&mut self.outputs),
             abi_expressions: std::mem::take(&mut self.expressions),
             applicability_guard: self.applicability_guard,
@@ -827,6 +885,7 @@ impl KernelProgramBuilder {
         self.allocations = data.allocations;
         self.dependencies = data.dependencies;
         self.partial_reductions = data.partial_reductions;
+        self.publishing_copies = data.publishing_copies;
         self.outputs = data.outputs;
         self.expressions = data.abi_expressions;
         self.routing_commit = data.routing_commit;

@@ -45,7 +45,7 @@
 //! - **The routing-commit contract.** The ordered lifecycle from preflight to
 //!   publication and, for each step, whether fallback is still permitted.
 //!
-//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`, which moved the domain from `tiler.kernel-program.v1` to historical v2 because a v1 identity was blind to two programs that differed only in their guard, ABI, or fallback contract. Later encoding and ABI-completeness changes moved the same subject through v3 and v4 to v5, folding the declared split-reduction contracts moved it to v6, canonical semantic stage coverage moved it to v7, folding the published outputs in interface order rather than sorted by content moved it to v8, and binding each covered occurrence to its reached-only refinement evidence moved it to the current `tiler.kernel-program.v9`; [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity) documents each step.
+//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`, which moved the domain from `tiler.kernel-program.v1` to historical v2 because a v1 identity was blind to two programs that differed only in their guard, ABI, or fallback contract. Later encoding and ABI-completeness changes moved the same subject through v3 and v4 to v5, folding the declared split-reduction contracts moved it to v6, canonical semantic stage coverage moved it to v7, folding the published outputs in interface order rather than sorted by content moved it to v8, binding each covered occurrence to its reached-only refinement evidence moved it to v9, and folding the declared publishing-copy contracts moved it to the current `tiler.kernel-program.v10`; [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity) documents each step.
 //!
 //! Every transient ordinal is excluded: builder insertion order, the program's
 //! own stage/value/view/allocation/arena positions, and the planning `RegionId`
@@ -461,9 +461,10 @@ pub use model::{
     CanonicalKernelProgramIdentity, CoveredOccurrence, DependencyReasonView, DependencyRef,
     MaterializedComponentSpec, MaterializedOrigin, MaterializedValueRef, MaterializedValueSpec,
     MemorySpace, PackedBitOrder, PackedTailRule, PartialReduction, PartialReductionRef,
-    ProgramOutputRef, RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess,
-    StageAccessMode, StageAccessRef, StageLaunch, StageLaunchView, StageRef, StorageEncoding,
-    StorageScalar, ValueRole, VerifiedKernelProgram, ViewRef,
+    ProgramOutputRef, PublishingCopy, PublishingCopyRef, RoutingCommitState,
+    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode, StageAccessRef,
+    StageLaunch, StageLaunchView, StageRef, StorageEncoding, StorageScalar, ValueRole,
+    VerifiedKernelProgram, ViewRef,
 };
 
 /// Maximum stages admitted by one kernel program.
@@ -480,6 +481,10 @@ pub const MAX_PROGRAM_DEPENDENCIES: usize = 262_144;
 ///
 /// One contract per stage pair at most, so the stage ceiling bounds it.
 pub const MAX_PROGRAM_PARTIAL_REDUCTIONS: usize = 4_096;
+/// Maximum publishing-copy contracts admitted by one kernel program.
+///
+/// One contract per published value at most, so the output ceiling bounds it.
+pub const MAX_PROGRAM_PUBLISHING_COPIES: usize = 4_096;
 /// Maximum named outputs admitted by one kernel program.
 pub const MAX_PROGRAM_OUTPUTS: usize = 4_096;
 /// Maximum accesses admitted by one program stage.

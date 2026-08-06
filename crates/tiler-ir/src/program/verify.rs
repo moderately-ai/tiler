@@ -66,6 +66,11 @@ pub(super) fn verify_program(
     // the missing edge rather than the split, and before storage, so a split
     // that stages its partials in an aliasable place is named as a split.
     verify_partial_reductions(data, &accesses, &definitions)?;
+    // After the split phase, so a program declaring both accounts for one stage
+    // reports the split obligation it names rather than the copy obligation it
+    // does not, and before the output phase, so a copy publishing a temporary is
+    // named as a copy rather than as an unbound output value.
+    verify_publishing_copies(data, &accesses, &definitions)?;
 
     verify_usage(data, &accesses)?;
     verify_storage(data)?;
@@ -400,15 +405,23 @@ fn verify_partial_reductions(
     definitions: &[Option<ValueDefinition>],
 ) -> Result<(), KernelProgramDiagnostic> {
     // A dispatch that computes no operation of the bound graph has to be
-    // accounted for. The only account this profile admits is being the final
-    // pass of a declared split, whose partial pass already claims the reduction
-    // both of them realize.
+    // accounted for. This profile admits exactly two accounts, and both are
+    // declarations: the final pass of a declared split, whose partial pass
+    // already claims the reduction both of them realize, and the publisher of a
+    // declared publishing copy, whose source stage already claims the
+    // occurrences that computed the value being published. Neither arm relaxes
+    // the rule — an undeclared uncovering stage is still refused, which is what
+    // `an_undeclared_uncovering_stage_still_refuses_by_name` holds.
     for (index, stage) in data.stages.iter().enumerate() {
         if stage.coverage.is_empty()
             && !data
                 .partial_reductions
                 .iter()
                 .any(|split| split.combiner == ordinal(index))
+            && !data
+                .publishing_copies
+                .iter()
+                .any(|copy| copy.publisher == ordinal(index))
         {
             return Err(KernelProgramDiagnostic::UncoveringStage);
         }
@@ -454,6 +467,62 @@ fn verify_partial_reductions(
             .and_then(|partials| u64::try_from(partials).ok());
         if expected.is_none() || expected != staged {
             return Err(KernelProgramDiagnostic::PartialExtentMismatch);
+        }
+    }
+    Ok(())
+}
+
+/// Proves every declared publishing copy is one the program actually realizes.
+///
+/// The obligations are exactly the ones no single stage can see. That the
+/// publisher copies a value some *other* stage produced is proven in two parts:
+/// the named source stage is the source value's unique defining stage, and the
+/// publisher reads it — for which the dependency phase already required a data
+/// edge from the definer, which is the visibility transition across the dispatch
+/// boundary. That the copy publishes rather than stages is proven by the
+/// published value being written by the publisher and carrying
+/// [`ValueRole::Output`]. That it is a *copy* rather than an unaccounted-for
+/// computation is proven by the two extents agreeing: a dispatch that changes
+/// the element count computes something, and something computed is an occurrence
+/// some stage must cover.
+///
+/// What this deliberately does not prove is that the publisher's kernel body is
+/// the identity function. That is a semantic-equivalence claim about a bound
+/// implementation, which is compiler-owned refinement evidence (ADR 0071) and
+/// not a structural obligation this layer can discharge.
+fn verify_publishing_copies(
+    data: &KernelProgramData,
+    accesses: &[Vec<ValueAccess>],
+    definitions: &[Option<ValueDefinition>],
+) -> Result<(), KernelProgramDiagnostic> {
+    for copy in &data.publishing_copies {
+        let source = position(copy.source);
+        let published = position(copy.published);
+        if definitions[source].is_none_or(|writer| writer.stage != copy.source_stage) {
+            return Err(KernelProgramDiagnostic::CopiedSourceNotInitializedBySourceStage);
+        }
+        if !accesses[source]
+            .iter()
+            .any(|access| access.stage == copy.publisher && access.mode == StageAccessMode::Read)
+        {
+            return Err(KernelProgramDiagnostic::CopiedSourceNotReadByPublisher);
+        }
+        // The role before the writer, because "is this a publication at all" is
+        // the more basic question: a declaration naming a temporary has nothing
+        // to publish whichever stage wrote it, while a declaration naming a
+        // genuine output that some *other* stage wrote is the more specific
+        // failure. Ordering them the other way makes the role arm unreachable
+        // for any program whose publisher writes only temporaries.
+        if data.values[published].role != ValueRole::Output {
+            return Err(KernelProgramDiagnostic::PublishedCopyNotOutput);
+        }
+        if definitions[published].is_none_or(|writer| writer.stage != copy.publisher) {
+            return Err(KernelProgramDiagnostic::PublishedCopyNotWrittenByPublisher);
+        }
+        let copied = data.values[source].shape.element_count();
+        let publication = data.values[published].shape.element_count();
+        if copied.is_none() || copied != publication {
+            return Err(KernelProgramDiagnostic::PublishedCopyExtentMismatch);
         }
     }
     Ok(())

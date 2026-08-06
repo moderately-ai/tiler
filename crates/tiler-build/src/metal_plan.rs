@@ -1210,17 +1210,34 @@ mod tests {
     /// numerical rows. The two steps landed on sibling branches and composed at
     /// integration, where both pins were recomputed on the merged tree.
     ///
+    /// **And both moved again at `tiler.kernel-program.v10`, which folds a
+    /// program's declared publishing-copy contracts.** This program declares
+    /// none, and its identity moves anyway: the section is written
+    /// unconditionally, so a zero-copy program grows an eight-byte zero count
+    /// and every program's bytes move. That is the whole content of the step,
+    /// and it is why the step was taken instead of an appended conditional
+    /// section — an appended one would leave the section's presence
+    /// positionally ambiguous and constrain every future appended section. The
+    /// artifact stage key did *not* step with it, unlike at the v9 step: a
+    /// publishing copy is a program-scope declaration and no entry writes that
+    /// subject itself, so the artifact domain and the manifest schema both hold,
+    /// each framing the complete stepped program identity with its own
+    /// separator.
+    ///
     /// The values are recorded rather than written in because a sibling branch
     /// may move the same two pins from its own base, and two branch-local
     /// rebaselines cannot compose: a pinned identity is recomputed on the tree
     /// the step lands into, never taken from either side.
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
     /// sibling that depends on this row for exactly that reason. The constants
-    /// below were recomputed on 2026-08-05, on the tree carrying the
-    /// kernel-program v9 step described above over the 2026-08-04 merged base
-    /// that already held the kernel-program v8 step and the measured grid-axis
-    /// row. Superseded values, for a reader reconciling an older record:
-    /// v8-and-grid-row, which is what these constants held immediately before
+    /// below were recomputed on 2026-08-06, on the tree carrying the
+    /// kernel-program v10 step described above over the base that already held
+    /// the v9 step, the v8 step, and the measured grid-axis row. Superseded
+    /// values, for a reader reconciling an older record:
+    /// v9, which is what these constants held immediately before the v10 step,
+    /// `d22c0d11f8486a15b3df7651feee543eb5d0f8d398a7eb9047ae45b15f9ce832` /
+    /// `6dee9552e5fb3c0cefe12cacab8d15153fd0909923bf7c93f2d5f92c5d679d68`;
+    /// v8-and-grid-row, which is what they held immediately before
     /// the v9 step,
     /// `886ed671cb98364ed0e020e7e2d51d69db1cd210d11f11d8ed7ee2c82f403892` /
     /// `f23ac9ddf349011f751e3128a8d89d7c423d4f155a37d9a03d1d8838deb64ba1`,
@@ -1248,9 +1265,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "d22c0d11f8486a15b3df7651feee543eb5d0f8d398a7eb9047ae45b15f9ce832";
+            "e3ac0aee9e9ce35b23edc2ee49ce7fdb4b40cabbb34774b782b7325d4455fa34";
         const CACHE_SUBJECT: &str =
-            "6dee9552e5fb3c0cefe12cacab8d15153fd0909923bf7c93f2d5f92c5d679d68";
+            "14cbccad74c0d2f1c4a05f295a6b04e87aa45aa13be86460e810e76ff478a263";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
