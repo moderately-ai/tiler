@@ -20,10 +20,10 @@ This harness counts every byte the **public** [`decode_artifact`](../../../crate
 ```sh
 cd spikes/artifacts/decoder-allocation
 cargo build --release
-./target/release/artifact-decoder-allocation --record macos-27.0-2026-08-06-after
+./target/release/artifact-decoder-allocation --record macos-27.0-2026-08-06-comparator
 ```
 
-Nothing runs it automatically; no `make` target reaches `spikes/`. Run it from this directory, which is where `--record` resolves `results/` from. `cargo run --release -- --record <name>` is the same binary and works identically. Without `--record` it prints the table and writes nothing. One run takes about two seconds and peaks near 1.6 GB, which is the finding rather than an accident of the harness.
+Nothing runs it automatically; no `make` target reaches `spikes/`. Run it from this directory, which is where `--record` resolves `results/` from. `cargo run --release -- --record <name>` is the same binary and works identically. Without `--record` it prints the table and writes nothing. One run takes about two seconds and now peaks under a megabyte; the two retained runs before it peak near 1.6 GB, which was the finding rather than an accident of the harness.
 
 ## The instrument, and why it is a counting allocator
 
@@ -47,21 +47,21 @@ An envelope grows in two independent ways and they behave completely differently
 
 **Sections** — `object_bytes` is the carried backend object, which travels opaquely in its own framed section. The sweep runs 0, 1 MiB, 16 MiB, and 64 MiB, the last being `MAX_SECTION_BYTES`, so the top row is the largest section this envelope shape may carry rather than a round number.
 
-**Manifest** — `arena_chain` is a chain of ABI expression nodes minted through the builder's public `push_binary`, reachable from one launch precondition. The sweep runs 128, 512, 1,024, and 2,048, and ends at 4,000, which is `MAX_ABI_EXPRESSIONS` less the nodes the compiled program and the chain's own literals occupy. A chain rather than a wide fan, because the quantity it exercises is the **depth** of an arena node's canonical content key: `tiler_ir::program::abi::expr_key` frames each operand's whole key inside its node's key.
+**Manifest** — `arena_chain` is a chain of ABI expression nodes minted through the builder's public `push_binary`, reachable from one launch precondition. The sweep runs 128, 512, 1,024, and 2,048, and ends at 4,000, which is `MAX_ABI_EXPRESSIONS` less the nodes the compiled program and the chain's own literals occupy. A chain rather than a wide fan, because the quantity it exercises is arena **depth**: at manifest schema `13.0` the codec derived a canonical content key per node with `tiler_ir::program::abi::expr_key`, which frames each operand's whole key inside its node's key.
 
 ## What the retained results say
 
-Two files, taken at the same commit on either side of one change: [before](results/decoder-allocation-macos-27.0-2026-08-06-before.tsv) and [after](results/decoder-allocation-macos-27.0-2026-08-06-after.tsv). The change replaced the decoder's canonicity backstop — which re-encoded the envelope into a second buffer and compared the two — with a derivation compared against the bytes run by run.
+Three files. [before](results/decoder-allocation-macos-27.0-2026-08-06-before.tsv) and [after](results/decoder-allocation-macos-27.0-2026-08-06-after.tsv) were taken at one commit on either side of the canonicity-backstop change, which replaced a re-encode into a second buffer with a derivation compared against the bytes run by run. [comparator](results/decoder-allocation-macos-27.0-2026-08-06-comparator.tsv) was taken on the manifest `14.0` tree, where the codec orders and deduplicates the arena through `compare_expr_nodes` and derives no key table at all.
 
-| Shape | `decode` peak, before | after |
-| --- | --- | --- |
-| 64 MiB object | 134,614,747 (2.00× envelope) | 67,391,869 (1.00×) |
-| 16 MiB object | 33,951,451 (2.01×) | 17,060,221 (1.01×) |
-| 1 MiB object | 2,494,171 (2.15×) | 1,331,581 (1.15×) |
-| no object | 459,256 (4.03×) | 283,005 (2.48×) |
-| 4,000-node chain | 1,569,929,746 (6,940× ) | 1,569,620,906 (6,939×) |
+| Shape | `decode` peak, before | after | comparator (`14.0`) |
+| --- | --- | --- | --- |
+| 64 MiB object | 134,614,747 (2.00× envelope) | 67,391,869 (1.00×) | 67,391,869 (1.00×) |
+| 16 MiB object | 33,951,451 (2.01×) | 17,060,221 (1.01×) | 17,060,221 (1.01×) |
+| 1 MiB object | 2,494,171 (2.15×) | 1,331,581 (1.15×) | 1,331,581 (1.15×) |
+| no object | 459,256 (4.03×) | 283,005 (2.48×) | 283,005 (2.48×) |
+| 4,000-node chain | 1,569,929,746 (6,940×) | 1,569,620,906 (6,939×) | **670,658 (2.96×)** |
 
-The section rows are the change. The chain rows are the finding it does not touch, and they are the larger number by three orders of magnitude: a **226,214-byte** envelope makes a decode allocate **1.57 GB**, and a forged envelope that will be rejected makes it allocate exactly the same. See [the research result](../../../docs/research/artifacts/decoder-allocation-amplification.md).
+The section rows are the first change, and the third run reproduces them to the byte because it touched nothing they measure. The chain rows are the finding the first change did not touch and the third one closes: a **226,214-byte** envelope made a decode allocate **1.57 GB** and now makes it allocate 670,658 bytes, and the quadratic growth in chain depth is gone. All 93 rows report the **same envelope byte length** in the second and third runs, so the schema step's permission to move the wire went unused on these fixtures. See [the research result](../../../docs/research/artifacts/decoder-allocation-amplification.md).
 
 ## How a pass could have been vacuous, and what prevents it
 
@@ -83,4 +83,4 @@ The section rows are the change. The chain rows are the finding it does not touc
 
 **The object bytes are synthetic and the artifact is one shape.** The carried object travels opaquely — artifact identity folds the payload *metadata* and excludes every object byte — so the artifact layer performs identical work on `n` synthetic bytes and `n` bytes of `metallib`. This is not evidence about a real Metal compilation. Every row packages one variant of one compiled serial-sum program, so the variant, entry, binding, provider, and payload tables are at their smallest; the sweep varies section bytes and arena size and nothing else.
 
-**The arena rows measure a legitimately built artifact.** They are produced through the ordinary builder, so they say what a *producer* can make a consumer do. That the same cost is reachable from bytes alone is shown by the `forged/identity` row at each arena size, which allocates the identical peak on its way to a rejection — not by an independently forged manifest, which this harness does not construct.
+**The arena rows measure a legitimately built artifact.** They are produced through the ordinary builder, so they say what a *producer* can make a consumer do. That the same cost is reachable from bytes alone is shown here only by the `forged/identity` row at each arena size, which allocates the identical peak on its way to a rejection. This harness constructs no independently forged manifest; `tiler-artifact`'s `a_forged_manifest_reaches_the_arena_parser_before_any_identity_check` is what answers that question, by splicing a chain into a real manifest and repairing its digest.

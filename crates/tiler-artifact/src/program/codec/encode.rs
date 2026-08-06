@@ -91,7 +91,33 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// count and lose framing for the rest of the manifest. No reader that predates
 /// the family can read any artifact carrying one, so a required-feature key
 /// beside it would mark nothing.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (13, 0);
+///
+/// Raised to `14.0` when the canonical arena order and the canonical launch
+/// precondition order stopped being derived from
+/// `tiler_ir::program::abi::expr_key` and started being derived from
+/// `tiler_ir::program::abi::compare_expr_nodes`. This is the first step whose
+/// framing is untouched — every field keeps its width and its position — and it
+/// is nonetheless **major**, because a manifest schema names one canonical byte
+/// spelling of an artifact and this step changes which spelling that is. The two
+/// orders are different relations rather than two implementations of one: a
+/// content key frames each operand's whole key behind an eight-byte length
+/// prefix, so comparing two keys compares operand *lengths* before operand
+/// content, while the comparator compares structure directly. An arena whose
+/// nodes disagree between the two encodes to different bytes at `13.0` and at
+/// `14.0`, and a `13.0` reader — admitted at `minor <= implemented` — would
+/// refuse such an artifact as a non-canonical spelling, which names the wrong
+/// thing about it.
+///
+/// The switch is a bound rather than a preference: a key names its node's whole
+/// subtree, so a table of them over an arena of `d` chained nodes is quadratic
+/// in `d`, and `super::decode::parse_expressions` built that table out of
+/// manifest bytes before any identity check.
+/// `replace-the-codec-arena-content-key-with-the-existing-comparator` carries
+/// the measurement. **Artifact identity does not move.** `encode_identity`
+/// numbers the arena through `canonical_arena_traversal`, which is invariant to
+/// arena permutation, and already ordered both expression-bearing sets with the
+/// comparator.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (14, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -507,7 +533,11 @@ fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
 }
 
 /// Encodes the shared ABI expression arena in canonical order.
-fn encode_expressions(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
+///
+/// Reachable from the test module so a forgery can replace exactly this run of a
+/// real manifest, which is what makes the forger-reach case a hand-built
+/// manifest rather than a re-encoded envelope.
+pub(super) fn encode_expressions(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
     push_len(bytes, envelope.expressions().len());
     for node in envelope.expressions() {
         encode_node(bytes, node);

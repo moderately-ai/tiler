@@ -302,12 +302,16 @@ fn push_object(
 /// Mints a chain of `nodes` additional arena expressions and returns its head.
 ///
 /// A chain rather than a wide fan, because the quantity this dimension exists to
-/// exercise is the **depth** of the canonical content key an arena node carries.
-/// `tiler_ir::program::abi::expr_key` frames each operand's whole key inside its
-/// node's key, so a chain of depth `d` carries a key linear in `d` and an arena
-/// of `d` such nodes carries key bytes quadratic in `d`. A wide fan of shallow
-/// nodes would grow the manifest at the same rate and the key table linearly, so
-/// it would not separate the two.
+/// exercise is arena **depth**. At manifest schema `13.0` the codec derived a
+/// canonical content key per node with `tiler_ir::program::abi::expr_key`, which
+/// frames each operand's whole key inside its node's key, so a chain of depth `d`
+/// carried a key linear in `d` and an arena of `d` such nodes carried key bytes
+/// quadratic in `d`. A wide fan of shallow nodes would grow the manifest at the
+/// same rate and that table only linearly, so it would not separate the two.
+///
+/// `14.0` orders the arena through `compare_expr_nodes` and derives no table at
+/// all, and the shape is retained unchanged because that is exactly what makes
+/// the two recorded result files comparable: the same depth, measured twice.
 ///
 /// The head is boolean, so it can be a launch precondition — the one use site an
 /// out-of-crate producer still supplies, and therefore the only way to make an

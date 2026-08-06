@@ -83,7 +83,7 @@ use super::model::{
     MAX_INTERFACE_SHAPE_RANK, MAX_SECTION_BYTES, MAX_SECTIONS, MAX_TEXT_BYTES, NumericalFacts,
     PayloadSections, ReachedDefinitionsSubject, SUPPORTED_FEATURES, Section, SectionDisposition,
     SectionKind, SemanticGraphSubject, SemanticSubjects, StageSubject, VariantRow,
-    canonical_expression_order, expression_keys, ordinal, position,
+    canonical_expression_order, ordinal, position,
 };
 use super::validate::validate;
 
@@ -647,8 +647,20 @@ fn parse_component_schemas(cursor: &mut Cursor<'_>) -> Result<ArtifactSchema, Ar
 ///
 /// The three obligations are exactly the ones the transactional builder
 /// discharges at insertion: every operand precedes its node, every operand has
-/// the value type its operation requires, and no two nodes share a canonical
-/// content key. The last is what keeps a cross-reference by key injective.
+/// the value type its operation requires, and no two nodes denote the same
+/// expression. The last is what keeps a cross-reference by content injective.
+///
+/// **Distinctness is recognized by shallow structural equality, and that decides
+/// deep structural equality by induction** — the argument
+/// `ArtifactProgramBuilder::push_node` writes out, reached here because the
+/// operand check above has already proven every operand strictly precedes the
+/// node naming it. Take the prefix `0..q` to be free of duplicates. If node `q`
+/// denotes the same expression as some earlier `p`, their operands denote the
+/// same expressions pairwise and every operand lies in that duplicate-free
+/// prefix, so each pair is the *same position* and `p` and `q` are equal as
+/// stored records. The converse is immediate. So a hash set over the nodes
+/// themselves refuses exactly what a table of canonical content keys refused, in
+/// linear space rather than in space quadratic in arena depth.
 fn parse_expressions(cursor: &mut Cursor<'_>) -> Result<Vec<ExprNode>, ArtifactCodecError> {
     let count = cursor.count(MAX_ABI_EXPRESSIONS, CodecLimitKind::Expressions)?;
     let mut nodes: Vec<ExprNode> = Vec::with_capacity(count);
@@ -659,15 +671,15 @@ fn parse_expressions(cursor: &mut Cursor<'_>) -> Result<Vec<ExprNode>, ArtifactC
         types.push(node_type(&node, &types));
         nodes.push(node);
     }
-    let keys = expression_keys(&nodes);
-    let mut sorted: Vec<&Vec<u8>> = keys.iter().collect();
-    sorted.sort_unstable();
-    if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(ArtifactCodecError::DuplicateItem {
-            subject: OrderedSubject::Expression,
-        });
+    let mut seen: std::collections::HashSet<&ExprNode> = std::collections::HashSet::new();
+    for node in &nodes {
+        if !seen.insert(node) {
+            return Err(ArtifactCodecError::DuplicateItem {
+                subject: OrderedSubject::Expression,
+            });
+        }
     }
-    if canonical_expression_order(&nodes, &keys) != (0..ordinal(nodes.len())).collect::<Vec<_>>() {
+    if canonical_expression_order(&nodes) != (0..ordinal(nodes.len())).collect::<Vec<_>>() {
         return Err(ArtifactCodecError::NonCanonicalOrder {
             subject: OrderedSubject::Expression,
         });
@@ -677,10 +689,11 @@ fn parse_expressions(cursor: &mut Cursor<'_>) -> Result<Vec<ExprNode>, ArtifactC
 
 /// Parses one standalone expression arena, for arena-shaped adversarial tests.
 ///
-/// Forging a malformed arena through the envelope model is not possible: the
-/// canonical content key of a node reads its operands' keys, so a self- or
-/// forward-referencing operand cannot be encoded at all. Driving the parser
-/// directly is the only way to prove the rejection is the named one.
+/// Forging a malformed arena through the envelope model is not possible for any
+/// node the identity reaches: `canonical_arena_traversal` numbers every operand
+/// before the node naming it, so a self- or forward-referencing operand never
+/// reaches bytes. Driving the parser directly is the only way to prove the
+/// rejection is the named one.
 #[cfg(test)]
 pub(super) fn parse_expression_arena(bytes: &[u8]) -> Result<Vec<ExprNode>, ArtifactCodecError> {
     let mut cursor = Cursor::new(bytes);

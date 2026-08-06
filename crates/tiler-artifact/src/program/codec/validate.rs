@@ -50,11 +50,10 @@ use super::super::model::{
 };
 use super::super::requirement::canonical_requirement_order;
 use super::error::{ArtifactCodecError, OrderedSubject};
-use super::model::{
-    ArtifactEnvelope, EntryRow, VariantRow, expression_keys, node_operands, position,
-};
+use super::model::{ArtifactEnvelope, EntryRow, VariantRow, node_operands, position};
 use super::payload::{decode_metadata, payload_identity};
 use tiler_ir::kernel::KernelType;
+use tiler_ir::program::abi::compare_expr_nodes;
 use tiler_ir::program::{StorageEncoding, StorageScalar};
 
 /// Proves every artifact-model obligation a decoded envelope can discharge.
@@ -84,12 +83,11 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     check_delivery_positions(envelope)?;
     check_entry_mappings(envelope)?;
     let facts = ExpressionFacts::derive(envelope.expressions());
-    let keys = expression_keys(envelope.expressions());
     check_expression_closure(envelope)?;
     check_backend_entries(envelope)?;
     let static_facts = interface_facts(envelope);
     for variant in envelope.variants() {
-        check_variant(envelope, variant, &facts, &keys, &static_facts)?;
+        check_variant(envelope, variant, &facts, &static_facts)?;
     }
     check_duplicate_variants(envelope)?;
     // Last, and deliberately: the record decoded on its own terms before
@@ -562,7 +560,6 @@ fn check_variant(
     envelope: &ArtifactEnvelope,
     variant: &VariantRow,
     facts: &ExpressionFacts,
-    keys: &[Vec<u8>],
     static_facts: &AbiFacts,
 ) -> Result<(), ArtifactCodecError> {
     facts.check_use(
@@ -619,7 +616,7 @@ fn check_variant(
         OrderedSubject::Entry,
     )?;
     for (index, entry) in variant.entries.iter().enumerate() {
-        check_entry(envelope, entry, index, facts, keys, static_facts)?;
+        check_entry(envelope, entry, index, facts, static_facts)?;
     }
     Ok(())
 }
@@ -660,7 +657,6 @@ fn check_entry(
     entry: &EntryRow,
     index: usize,
     facts: &ExpressionFacts,
-    keys: &[Vec<u8>],
     static_facts: &AbiFacts,
 ) -> Result<(), ArtifactCodecError> {
     for binding in &entry.bindings {
@@ -693,9 +689,9 @@ fn check_entry(
         AvailabilityPhase::LiveDevicePreflight,
         true,
     )?;
-    check_ordered(
+    check_ordered_nodes(
+        envelope.expressions(),
         &entry.launch.preconditions,
-        |node| keys[position(*node)].as_slice(),
         OrderedSubject::LaunchPrecondition,
     )?;
     for precondition in &entry.launch.preconditions {
@@ -782,6 +778,35 @@ fn check_ordered<'a, T>(
 ) -> Result<(), ArtifactCodecError> {
     for pair in items.windows(2) {
         match key(&pair[0]).cmp(key(&pair[1])) {
+            std::cmp::Ordering::Less => {}
+            std::cmp::Ordering::Equal => {
+                return Err(ArtifactCodecError::DuplicateItem { subject });
+            }
+            std::cmp::Ordering::Greater => {
+                return Err(ArtifactCodecError::NonCanonicalOrder { subject });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Proves a canonically ordered run of arena nodes is sorted and free of repeats.
+///
+/// [`compare_expr_nodes`] rather than a table of canonical content keys, and for
+/// the reason that comparator exists: a key frames each operand's whole key
+/// inside its node's, so a key table over the arena costs bytes quadratic in
+/// arena depth — a quantity a producer, or a forger, chooses. A comparison walks
+/// both subtrees and stops at the first difference, so it materializes nothing.
+/// It is the same relation the identity encoder folds through
+/// `canonical_precondition_order`, which is what makes the stored order and the
+/// checked order one definition rather than two that happen to agree.
+fn check_ordered_nodes(
+    nodes: &[ExprNode],
+    run: &[u32],
+    subject: OrderedSubject,
+) -> Result<(), ArtifactCodecError> {
+    for pair in run.windows(2) {
+        match compare_expr_nodes(nodes, pair[0], pair[1]) {
             std::cmp::Ordering::Less => {}
             std::cmp::Ordering::Equal => {
                 return Err(ArtifactCodecError::DuplicateItem { subject });

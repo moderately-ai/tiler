@@ -76,8 +76,7 @@ mod view;
 // into this module today; everything else stays behind its own module path so
 // the crate-private surface stays exactly as wide as its use.
 pub(crate) use model::{
-    ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, canonical_entry_positions,
-    expression_keys, position,
+    ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, canonical_entry_positions, position,
 };
 // The governed digest is the one part of this module that is public, for the
 // reason `digest.rs` states: `docs/artifact-abi.md` requires every digest use

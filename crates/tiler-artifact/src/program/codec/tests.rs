@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use tiler_ir::identity::push_slice;
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
-use tiler_ir::program::abi::TargetPropertyRequirementRelation;
+use tiler_ir::program::abi::{TargetPropertyRequirementRelation, compare_expr_nodes, expr_key};
 use tiler_ir::program::{StorageEncoding, StorageScalar};
 use tiler_ir::schedule::{ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance};
 use tiler_ir::semantic::{
@@ -309,7 +309,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (13, 0));
+    assert_eq!(MANIFEST_SCHEMA, (14, 0));
 }
 
 /// The canonicity backstop compares a derivation against bytes rather than
@@ -1177,8 +1177,7 @@ fn a_non_canonical_launch_precondition_order_is_rejected() {
     let error = reject_guarded_forgery(|envelope| {
         let extra = envelope.variants[0].deferred[0].predicate;
         let held = envelope.variants[0].entries[0].launch.preconditions[0];
-        let keys = super::model::expression_keys(&envelope.expressions);
-        let descending = if keys[position(held)] < keys[position(extra)] {
+        let descending = if compare_expr_nodes(&envelope.expressions, held, extra).is_lt() {
             vec![extra, held]
         } else {
             vec![held, extra]
@@ -1246,6 +1245,46 @@ fn a_non_canonical_expression_order_is_rejected() {
         ArtifactCodecError::NonCanonicalOrder {
             subject: OrderedSubject::Expression,
         },
+    );
+}
+
+/// Permuting the arena moves the envelope's bytes and leaves its identity.
+///
+/// **This is what holds the `14.0` step to the wire.** The canonical arena order
+/// decides which byte string is *the* encoding of an artifact, so changing the
+/// relation that decides it changes the wire — and it must change nothing else.
+/// It does not: `encode_identity` numbers the arena through
+/// `canonical_arena_traversal`, whose numbering is a function of the use sites
+/// and of the DAG beneath them and never of where a node sits in the arena, and
+/// it orders both expression-bearing sets with `compare_expr_nodes` before
+/// numbering anything.
+///
+/// Watched failing under one perturbation: asserting the two encodings *equal*
+/// fails, which is what proves the permutation reached the wire instead of being
+/// normalized away before it could distinguish anything.
+#[test]
+fn permuting_the_arena_moves_the_envelope_bytes_and_not_its_identity() {
+    let artifact = default_artifact();
+    let envelope = envelope_of(&artifact);
+    let straight = encode(&envelope).expect("the fixture encodes");
+
+    let mut permuted = envelope.clone();
+    assert!(matches!(permuted.expressions[0], ExprNode::Root(_)));
+    assert!(matches!(permuted.expressions[1], ExprNode::Root(_)));
+    permuted.expressions.swap(0, 1);
+    swap_expression_references(&mut permuted, 0, 1);
+
+    assert_eq!(
+        permuted
+            .canonical_identity()
+            .expect("the permuted envelope derives"),
+        *artifact.canonical_identity(),
+        "artifact identity is invariant to arena permutation",
+    );
+    assert_ne!(
+        encode(&permuted).expect("the permuted envelope encodes"),
+        straight,
+        "the arena is written in the order it is stored, so the wire moved",
     );
 }
 
@@ -1723,6 +1762,203 @@ fn a_repeated_expression_node_is_rejected() {
         Err(ArtifactCodecError::DuplicateItem {
             subject: OrderedSubject::Expression,
         }),
+    );
+}
+
+/// The five nodes on which the content key and the comparator disagree.
+///
+/// Both binary nodes apply one operation to one shared right operand, so the
+/// only thing separating them is their left operand — an input extent whose key
+/// is long, against a target property whose key is short.
+///
+/// [`compare_expr_nodes`] compares those two roots by their encoded bytes, and a
+/// root's encoding opens with its constructor tag: an input extent is `0x03` and
+/// a target property is `0x04`, so the extent-bearing node is the smaller.
+/// [`expr_key`] frames each operand's whole key behind an eight-byte big-endian
+/// length, so comparing the two keys compares `64` against `47` before reaching
+/// any content, and the *property*-bearing node is the smaller. The two orders
+/// are opposite on this pair, which is what makes the switch a schema step
+/// rather than a refactor.
+///
+/// Returned in comparator order; `key_ordered_arena` is the same five nodes in
+/// the other one.
+fn divergent_arena() -> Vec<ExprNode> {
+    vec![
+        ExprNode::Root(AbiRoot::UnsignedLiteral(1)),
+        ExprNode::Root(AbiRoot::InputExtent {
+            key: InputKey::new("extent-key-aaaa").expect("a bounded interface key"),
+            axis: Axis::new(1),
+        }),
+        ExprNode::Root(AbiRoot::TargetProperty {
+            key: super::super::expr::TargetPropertyKey::new("p").expect("a bounded governed key"),
+            phase: AvailabilityPhase::LiveDevicePreflight,
+        }),
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedAdd,
+            left: 1,
+            right: 0,
+        },
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedAdd,
+            left: 2,
+            right: 0,
+        },
+    ]
+}
+
+/// [`divergent_arena`]'s five nodes in canonical *content-key* order.
+///
+/// The two binary nodes swap places and their operand references are unaffected,
+/// because both name roots the swap does not move.
+fn key_ordered_arena() -> Vec<ExprNode> {
+    let nodes = divergent_arena();
+    vec![
+        nodes[0].clone(),
+        nodes[1].clone(),
+        nodes[2].clone(),
+        nodes[4].clone(),
+        nodes[3].clone(),
+    ]
+}
+
+/// Encodes one arena's node records the way the manifest encoder does.
+fn arena_of(nodes: &[ExprNode]) -> Vec<u8> {
+    let mut envelope = envelope_of(&default_artifact());
+    envelope.expressions = nodes.to_vec();
+    let mut bytes = Vec::new();
+    super::encode::encode_expressions(&mut bytes, &envelope);
+    bytes
+}
+
+/// The codec's arena order follows the comparator where the key disagrees.
+///
+/// **The disagreement is asserted rather than assumed.** Both directions are
+/// checked on the same five nodes, so a future change that made the two
+/// relations agree again would fail here instead of leaving the case testing
+/// nothing.
+///
+/// Watched failing under two perturbations before it was trusted. Replacing
+/// `ReadyNode::order`'s comparison with the arena position alone made the third
+/// assertion report `[0, 1, 2, 3, 4]` — and failed
+/// `the_arena_parser_accepts_the_comparator_order_and_refuses_the_key_order` at
+/// the same time. Lengthening the target-property key to twenty bytes took its
+/// content key past the input extent's, collapsing the two relations onto each
+/// other, and failed the second assertion.
+#[test]
+fn the_canonical_arena_order_follows_the_comparator_where_the_content_key_disagrees() {
+    let nodes = divergent_arena();
+    let mut keys: Vec<Vec<u8>> = Vec::new();
+    for node in &nodes {
+        let key = expr_key(node, &keys);
+        keys.push(key);
+    }
+
+    assert!(
+        compare_expr_nodes(&nodes, 3, 4).is_lt(),
+        "the extent-bearing node is structurally the smaller",
+    );
+    assert!(
+        keys[4] < keys[3],
+        "and its content key is the larger, through the operand length prefix",
+    );
+    assert_eq!(
+        super::model::canonical_expression_order(&key_ordered_arena()),
+        vec![0, 1, 2, 4, 3],
+        "the codec orders by structure, so the key order is not canonical",
+    );
+}
+
+/// The arena parser accepts the comparator order and refuses the key order.
+///
+/// The same five nodes on both sides, driven through the decode path rather than
+/// through `canonical_expression_order` directly, because that is the site a
+/// forger reaches.
+#[test]
+fn the_arena_parser_accepts_the_comparator_order_and_refuses_the_key_order() {
+    let canonical = divergent_arena();
+    assert_eq!(
+        parse_expression_arena(&arena_of(&canonical)),
+        Ok(canonical.clone()),
+    );
+    assert_eq!(
+        parse_expression_arena(&arena_of(&key_ordered_arena())),
+        Err(ArtifactCodecError::NonCanonicalOrder {
+            subject: OrderedSubject::Expression,
+        }),
+    );
+}
+
+/// A manifest built from bytes alone reaches the arena parser, and pays for it.
+///
+/// **This is the ticket's forger-reach question, answered rather than inferred.**
+/// The retained spike rows prove a *producer* can impose the arena cost and that
+/// a decode ending in rejection pays it in full; what they do not prove is that
+/// a manifest carrying the arena can be forged from bytes. It can:
+/// `parse_expressions` runs inside `parse_manifest`, and the only thing between
+/// an attacker's bytes and it is the framing header and the manifest digest —
+/// which the attacker recomputes.
+///
+/// The forgery replaces the fixture's arena run with a chain of
+/// [`FORGED_CHAIN`] nodes, repairs the manifest length, the total length, and the
+/// manifest digest, and changes nothing else. The rejection it earns is
+/// [`ArtifactDiagnostic::UnusedExpression`], raised by `super::validate` — which
+/// runs only after `parse_manifest` returned, so the whole chain was parsed,
+/// type-checked, proven distinct, and proven canonically ordered before anything
+/// refused it. At `13.0` that same path also materialized a content-key table
+/// quadratic in the chain's length.
+///
+/// Watched failing under one perturbation: omitting the manifest-digest repair
+/// makes it report `ManifestDigestMismatch`, which is the shallow refusal this
+/// case exists to get past.
+#[test]
+fn a_forged_manifest_reaches_the_arena_parser_before_any_identity_check() {
+    /// Long enough that the forged arena cannot be mistaken for the fixture's,
+    /// and short enough that a debug-profile test stays fast. The governed bound
+    /// is `MAX_ABI_EXPRESSIONS`, and nothing here depends on reaching it.
+    const FORGED_CHAIN: usize = 512;
+
+    let envelope = envelope_of(&default_artifact());
+    let mut bytes = encode(&envelope).expect("the fixture encodes");
+    let carried = arena_of(&envelope.expressions);
+
+    // One unsigned root, then a chain that adds it to the running total. Every
+    // node's operands precede it, no two nodes are structurally equal, and only
+    // one node is ever ready, so the chain is already in canonical order.
+    let mut chain = vec![ExprNode::Root(AbiRoot::UnsignedLiteral(0))];
+    for index in 1..FORGED_CHAIN {
+        chain.push(ExprNode::Binary {
+            op: AbiBinaryOp::CheckedAdd,
+            left: u32::try_from(index - 1).expect("a bounded arena fits u32"),
+            right: 0,
+        });
+    }
+    assert!(
+        chain.len() > envelope.expressions.len(),
+        "the forged arena must cover every reference the fixture's manifest makes",
+    );
+    let forged = arena_of(&chain);
+
+    let at = manifest_offset(&bytes, &carried);
+    let mut spliced = bytes[..at].to_vec();
+    spliced.extend_from_slice(&forged);
+    spliced.extend_from_slice(&bytes[at + carried.len()..]);
+    bytes = spliced;
+
+    let manifest_len = u64::from_be_bytes(
+        bytes[MANIFEST_LENGTH_AT..MANIFEST_LENGTH_AT + 8]
+            .try_into()
+            .expect("a fixed-width field"),
+    ) + u64::try_from(forged.len() - carried.len())
+        .expect("supported usize fits u64");
+    bytes[MANIFEST_LENGTH_AT..MANIFEST_LENGTH_AT + 8].copy_from_slice(&manifest_len.to_be_bytes());
+    reseal(&mut bytes);
+
+    assert_eq!(
+        decode(&bytes).expect_err("a forged arena is refused"),
+        ArtifactCodecError::ModelObligation {
+            cause: ArtifactDiagnostic::UnusedExpression,
+        },
+        "the refusal must come from validate, which runs after the whole arena is parsed",
     );
 }
 
@@ -3422,9 +3658,12 @@ fn hot_path_decode_and_reencode_share() {
 /// and re-encodes as its canonicity backstop. Deriving the identity is the
 /// single largest stage, and it is paid *twice* over the decode as a whole —
 /// once directly and once inside the re-encode's manifest, which embeds the
-/// identity bytes but is dominated by the expression-key derivation it shares
-/// with them. The stages are measured against the same decoded envelope so the
-/// numbers add up against the full decode above them.
+/// identity bytes. The last stage is the canonical arena order, printed because
+/// it is where the decode's worst amplification used to sit: it derived a
+/// content-key table quadratic in arena depth, and now walks the same arena
+/// through `compare_expr_nodes` without materializing one. The stages are
+/// measured against the same decoded envelope so the numbers add up against the
+/// full decode above them.
 #[test]
 fn hot_path_decode_stage_budget() {
     const REPEATS: u32 = 400;
@@ -3455,8 +3694,8 @@ fn hot_path_decode_stage_budget() {
             let _ = section_digest(DigestAlgorithm::GOVERNED, section);
         }
     });
-    let (keys, _) = min_and_mean(REPEATS, || {
-        let _ = super::model::expression_keys(envelope.expressions());
+    let (arena_order, _) = min_and_mean(REPEATS, || {
+        let _ = super::model::canonical_expression_order(envelope.expressions());
     });
 
     let share = |part: std::time::Duration| (part.as_secs_f64() / full.as_secs_f64()) * 100.0;
@@ -3479,8 +3718,8 @@ fn hot_path_decode_stage_budget() {
         share(section_hash)
     );
     println!(
-        "MEASURE     of which keys : {keys:?} ({:.1}% of decode)",
-        share(keys)
+        "MEASURE   arena order     : {arena_order:?} ({:.1}% of decode)",
+        share(arena_order)
     );
 }
 

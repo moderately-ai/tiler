@@ -863,7 +863,6 @@ pub(super) struct ArtifactProgramData {
     /// compilation subject and the emitted bytes.
     pub(super) payload_content: Vec<Option<PayloadContent>>,
     pub(super) expressions: Vec<ExprNode>,
-    pub(super) expression_keys: Vec<Vec<u8>>,
     pub(super) expression_types: Vec<AbiType>,
     pub(super) variants: Vec<VariantData>,
     /// The numerical realization this artifact delivered.
