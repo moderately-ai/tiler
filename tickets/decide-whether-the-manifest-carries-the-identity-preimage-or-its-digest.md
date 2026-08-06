@@ -51,3 +51,9 @@ Not the IR layer's per-record `SemanticGraphIdentity` — that is [`decide-wheth
 ## Closes when
 
 Tom has answered, and the answer is an accepted ADR carrying the identity-domain step and its ledger obligations, or a recorded decision to keep the preimage with the reason stated where a later reader of the envelope's size would look.
+
+## Decision — the digest
+
+**Decided by Tom on 2026-08-06 at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket): the manifest carries a digest of the derived identity under its own domain, replacing the preimage.** The grounds accepted are the record's: the producer-disagreement refusal survives in 32 bytes, no consumer reads the carried preimage, artifact identity provably does not move, and the self-describing property serves a reader that does not exist — revisitable if one appears. The keep-nothing option was not taken: the refusal is retained.
+
+**What executes it, and why it waits.** The ADR carrying the identity-domain step (a `MANIFEST_SCHEMA` major step; the ADR 0074 convention-2 argument recorded from the record's own derivation) and the codec implementation land together under one implementation ticket. **Held: [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md) is in flight holding `implementation/artifact` and stepping `MANIFEST_SCHEMA` itself for the staged-realization declaration — two uncoordinated steps of one schema cannot co-run. Release trigger: that ticket integrates into main; the digest step then lands against the post-declaration encoding.** This ticket stays open until the ADR is accepted and the step lands whole.
