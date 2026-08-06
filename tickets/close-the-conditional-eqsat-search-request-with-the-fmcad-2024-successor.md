@@ -1,7 +1,7 @@
 ---
 id: close-the-conditional-eqsat-search-request-with-the-fmcad-2024-successor
 title: Close the conditional-eqsat search request with the FMCAD 2024 successor
-status: review
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/region-search]
 shared_scopes: [project/tickets]
 paths: []
 tags: [sources, region-search, eqsat]
-claimed_from: todo
-assignee: agent-eqsat-close
-lease_expires_at: 1786040225
 ---
 
 ## What Tom pulled (2026-08-06)

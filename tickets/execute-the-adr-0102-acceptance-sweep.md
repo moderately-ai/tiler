@@ -1,7 +1,7 @@
 ---
 id: execute-the-adr-0102-acceptance-sweep
 title: Execute the ADR 0102 acceptance sweep
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [accept-adr-0102-conversion-pair-decomposition, land-the-conversion-pair-decomposition-adr]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/navigation, contracts/numerics, research
 shared_scopes: [project/tickets]
 paths: []
 tags: [acceptance-sweep, adr, conversion]
+claimed_from: todo
+assignee: agent-0102-sweep
+lease_expires_at: 1786041779
 ---
 
 ## The acceptance this applies

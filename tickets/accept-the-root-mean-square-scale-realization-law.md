@@ -1,7 +1,7 @@
 ---
 id: accept-the-root-mean-square-scale-realization-law
 title: Accept the root-mean-square scale realization law
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [widen-the-staged-realization-law-to-the-registered-elementary-families, accept-the-multi-region-index-realization-surface, accept-the-governed-reciprocal-square-root-scalar-key]
@@ -51,3 +51,7 @@ The deriving ticket's Outcome carries: the elimination that produced this shape,
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the variant is in use inside `tiler-ir` and labelled a draft at its definition.
+
+## Accepted — 2026-08-06
+
+**Tom accepted the surface as stated**, at the live session's decision round in the coordination session, via the coordinator's decision presentation (AskUserQuestion, option "Accept"), witnessed first-hand by the coordinator relaying it here. What was accepted is exactly the surface above: the `StagedRootMeanSquareScaleF32` variant with its two attribute-identifier fields, the `const` constructor, and the standard registration for `tiler::rms-norm-f32@1`; no exclusion was named. The choices-worth-objecting-to were presented with the recommendation and none was objected to, including the deliberate second-width trade (a BF16 normalization would need a second variant rather than a second row, currently unreachable with no BF16 division or reciprocal-square-root keys). Acceptance is not stabilization: this is accepted pre-alpha vocabulary, not a published API with compatibility obligations. No draft label existed at the definition to flip, so no code moves with this close.

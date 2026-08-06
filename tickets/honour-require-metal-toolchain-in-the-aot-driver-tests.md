@@ -1,7 +1,7 @@
 ---
 id: honour-require-metal-toolchain-in-the-aot-driver-tests
 title: Make the metal-aot driver tests able to say no on a toolchain-bearing host
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [remove-the-fast-honor-pragmas-variant]
@@ -9,6 +9,9 @@ scopes: [implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, metal-aot, test-validity]
+claimed_from: todo
+assignee: agent-aot-skip
+lease_expires_at: 1786041779
 ---
 ## User-visible outcome
 

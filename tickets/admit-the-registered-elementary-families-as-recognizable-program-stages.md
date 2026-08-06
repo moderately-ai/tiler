@@ -1,7 +1,7 @@
 ---
 id: admit-the-registered-elementary-families-as-recognizable-program-stages
 title: Admit the registered elementary families as recognizable program stages
-status: blocked
+status: in-progress
 priority: p1
 dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, implement-stage-level-cover-atoms-for-multi-region-occurrences]
 related: [accept-the-governed-reciprocal-square-root-scalar-key]
@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: []
 claimed_from: todo
-assignee: agent-elementary-stages
-lease_expires_at: 1786034532
+assignee: agent-recognizer
+lease_expires_at: 1786041779
 ---
 ## User-visible outcome
 

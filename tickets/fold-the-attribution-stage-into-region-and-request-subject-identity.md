@@ -1,7 +1,7 @@
 ---
 id: fold-the-attribution-stage-into-region-and-request-subject-identity
 title: Fold the attribution stage into region and request-subject identity
-status: deferred
+status: in-progress
 priority: p1
 dependencies: []
 related: [implement-stage-level-cover-atoms-for-multi-region-occurrences, widen-the-staged-realization-law-to-the-registered-elementary-families, admit-the-registered-elementary-families-as-recognizable-program-stages]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, identity-domain, deferred]
+claimed_from: todo
+assignee: agent-recognizer
+lease_expires_at: 1786041779
 ---
 ## What is missing
 
@@ -42,3 +45,5 @@ A multi-stage candidate has an identity distinct from every single-stage candida
 ## Trigger check log
 
 - 2026-08-06 — not fired. No authority mints a candidate or a recognized partition with a non-first stage; `assemble` and the three recognizers are the only constructors and each mints `SemanticStage::first`. Reproduce: `rg -n 'SemanticStage::first|SemanticStage::new' crates/tiler-compiler/src`.
+
+- 2026-08-06 — **fired.** The recognizer dispatch (`admit-the-registered-elementary-families-as-recognizable-program-stages`) mints the first multi-stage candidate, so the encoding must land whole in the same change; promoted to `todo` and claimed alongside it. Reproduce: `grep -m1 '^status:' tickets/admit-the-registered-elementary-families-as-recognizable-program-stages.md` no longer answers `blocked`.
