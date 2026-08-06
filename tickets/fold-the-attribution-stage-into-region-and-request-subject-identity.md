@@ -1,7 +1,7 @@
 ---
 id: fold-the-attribution-stage-into-region-and-request-subject-identity
 title: Fold the attribution stage into region and request-subject identity
-status: deferred
+status: done
 priority: p1
 dependencies: []
 related: [implement-stage-level-cover-atoms-for-multi-region-occurrences, widen-the-staged-realization-law-to-the-registered-elementary-families, admit-the-registered-elementary-families-as-recognizable-program-stages]
@@ -53,3 +53,5 @@ A multi-stage candidate has an identity distinct from every single-stage candida
 - 2026-08-06 — **the adjacent obligation is unchanged and its site is recorded.** `verify_cover` still counts per operation (`cover.rs:1158`–`:1180`) and `cover::member_index`'s doc still names the widening; nothing in this wave touched either, because nothing can yet produce a cover that would exercise them.
 
 - 2026-08-06 — **evaluation under the decided fork: fires with the implementation, not before.** Tom chose Option A′ on [`resolve-which-authority-mints-a-multi-stage-region-candidate`](resolve-which-authority-mints-a-multi-stage-region-candidate.md), so stage-enumerated candidates are region formation's to mint and this encoding lands whole inside [`enumerate-region-candidates-over-realization-stages`](enumerate-region-candidates-over-realization-stages.md). Stays `deferred` until that ticket starts; the earlier fired/withdrawn pair above records why a dispatch's claim is not a tree's. Reproduce: `grep -m1 '^status:' tickets/enumerate-region-candidates-over-realization-stages.md` answers `todo`.
+
+- 2026-08-06 — **fired and discharged whole, inside [`enumerate-region-candidates-over-realization-stages`](enumerate-region-candidates-over-realization-stages.md).** Every obligation, against the tree: the stage folds into both region encodings as a conditional trailer (`append_stage_trailer`, `covers_staged_member` — the derivation for appends-only over a version step is at those sites: presence is a function of the member population's stage counts, so no previously encodable candidate's bytes move and injectivity holds within and across programs); `encode_output_subject` is unchanged because no recognizer mints a staged partition and the request subject reaches stage structure through the law-registry identity it already folds; `verify_candidate`'s `unencoded-member-stage` refusal is replaced by the rebuild reading atoms; **zero pins moved** — the predicted at-least set (cover identity, request qualifier, goldens) is untouched, proven by the full workspace suite rather than recomputed, which is what the appends-only choice bought; and the adjacent cover-mask obligation landed with the same producer, watched refusing in both directions. Closes-when met on every clause.

@@ -88,3 +88,7 @@ So the question "which authority mints the multi-stage claim" is open, two coher
 ### What remains here
 
 This ticket's stated outcome — the normalization compiling as a middle stage with reference bit-agreement — is unsupported until that fork is decided and implemented. What moved is the wall the tree's own harness named: `tiler::rms-norm-f32@1` had a registered law and no provider, and now has both. The four checks this ticket named are otherwise unchanged.
+
+## Re-evaluation — 2026-08-06, after the A′ enumeration landed
+
+[`enumerate-region-candidates-over-realization-stages`](enumerate-region-candidates-over-realization-stages.md) is `done`: staged candidates enumerate, the cover search covers every stage exactly once, and the identity encoding landed whole with zero moved pins. What remains for this ticket's outcome is exactly two walls, both fail-closed today: the **recognizer half** — `select_supported_strategy` still refuses a staged family under `operation-set` before formation runs, so no whole program reaches the staged machinery through `compile()`; and the **physical half** — a selected split-stage cover's handed value has no materialization through program assembly and the ABI. The first is this ticket's own remaining work; the second becomes concrete only once the first admits a program whose selected cover splits.
