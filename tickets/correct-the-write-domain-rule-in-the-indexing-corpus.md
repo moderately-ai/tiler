@@ -1,7 +1,7 @@
 ---
 id: correct-the-write-domain-rule-in-the-indexing-corpus
 title: Correct the write-domain rule in the indexing corpus
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-sub-range-write-domains-for-unequal-partitions, state-the-oracle-boundary-for-sub-domain-write-roots, scope-the-concatenate-fusion-role-and-lowering]
@@ -9,9 +9,6 @@ scopes: [research/indexing, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, indexing, corpus]
-claimed_from: todo
-assignee: agent-write-domain
-lease_expires_at: 1786042934
 ---
 ## User-visible outcome
 
