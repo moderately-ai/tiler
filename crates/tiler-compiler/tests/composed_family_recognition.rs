@@ -38,6 +38,20 @@
 //! class. Asserting them together is the point: the decline reads the adjacency
 //! and not the composition.
 //!
+//! # Where the boundary still is: the two structural families
+//!
+//! Recognition generalized over the *expression* vocabulary, and the families
+//! that compute nothing did not come with it. `tiler::reindex-f32@1` and
+//! `tiler::broadcast-f32@1` each carry registered semantics and a registered
+//! index-access lowering capability, and each resolves a `CoordinateRelation`
+//! fusion role — but `tiler_ir::schedule::LogicalAccess` spells no reindex map
+//! and no widening broadcast, so a region containing either cannot be written
+//! down. Both walls are pinned here, each beside an elementary neighbour that
+//! differs from it in one occurrence, so `operation-set` is attributable to the
+//! missing *access relation* rather than to arity or registration.
+//! `admit-the-structural-families-into-the-scheduled-region-vocabulary` owns the
+//! widening that flips both assertions.
+//!
 //! # What is deliberately not asserted here
 //!
 //! Bit-level agreement with the reference evaluator is the in-crate conformance
@@ -53,10 +67,11 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, F32Reindex, F32Silu, InputKey, OutputKey, ReindexForm,
-    SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
+    BroadcastAxisMapping, BroadcastAxisSource, F32, F32Add, F32Broadcast, F32Constant, F32Multiply,
+    F32Reindex, F32Silu, InputKey, OutputKey, ReindexForm, SemanticProgram, SemanticProgramBuilder,
+    StrictSerialF32Sum,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape};
 
 /// Every numerical contract a caller can state.
 ///
@@ -241,6 +256,97 @@ fn composed_region_with_an_unspellable_occurrence() -> SemanticProgram {
     builder.build().unwrap()
 }
 
+/// The domain of the three weight-multiply fixtures below.
+///
+/// Separate from [`domain`] because a broadcast has to actually widen: a
+/// `Replicate` axis of extent one is refused by `BroadcastAxisMapping` itself
+/// with `RelationDoesNotWiden`, so the single-row domain the fold fixtures use
+/// cannot express the occurrence at all. Four elements in two rows keeps the
+/// launch inside the same governed four-thread grid axis [`domain`] is sized
+/// against, so the trio below differs from the rest of this file in the shape of
+/// its iteration space and in nothing that decides admission.
+fn widening_domain() -> Shape {
+    Shape::from_dims([2, 2])
+}
+
+/// `a * w`: two declared tensors at one shape, and the control for the trio.
+///
+/// The plainest program that reads two declared inputs in the position the two
+/// fixtures below elaborate. Without it, a refusal there would be consistent
+/// with the widened domain or the two-input shape being unrecognized rather than
+/// with anything about the occurrence between them.
+fn weighted_by_a_declared_tensor() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let activations = builder
+        .input::<F32>(InputKey::new("a").unwrap(), widening_domain())
+        .unwrap();
+    let weight = builder
+        .input::<F32>(InputKey::new("w").unwrap(), widening_domain())
+        .unwrap();
+    let scaled = F32Multiply::apply(&mut builder, activations, weight).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), scaled)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// `a * silu(w)`: a registered unary family feeding the multiply.
+///
+/// The accepted neighbour of [`weighted_by_a_broadcast`]. Both interpose one
+/// registered unary family with a registered index-access lowering capability
+/// between a declared weight and the same multiply, so the two differ in that
+/// occurrence's operation — and, because widening is what a broadcast *is*, in
+/// the weight's declared shape. Nothing else about them differs.
+fn weighted_by_an_activation() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let activations = builder
+        .input::<F32>(InputKey::new("a").unwrap(), widening_domain())
+        .unwrap();
+    let weight = builder
+        .input::<F32>(InputKey::new("w").unwrap(), widening_domain())
+        .unwrap();
+    let activated = F32Silu::apply(&mut builder, weight).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, activations, activated).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), scaled)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// `a * broadcast(w)`: the workload's most frequent structural occurrence.
+///
+/// The weight is declared at the widened axis alone and read at every row, which
+/// is the `[1024]`-against-`[T, 1024]` shape of the RMS-normalization weight
+/// multiply — 113 of the pinned workload's 197 broadcast occurrences. It is the
+/// program `reach-a-verified-kernel-through-the-structural-families` names, and
+/// it refuses: `LogicalAccess` carries `ScalarBroadcast`, a rank-zero operand
+/// read once, and no relation that reads a rank-one operand across a widened
+/// axis. `admit-the-structural-families-into-the-scheduled-region-vocabulary`
+/// owns the widening that flips this assertion.
+fn weighted_by_a_broadcast() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let activations = builder
+        .input::<F32>(InputKey::new("a").unwrap(), widening_domain())
+        .unwrap();
+    let weight = builder
+        .input::<F32>(InputKey::new("w").unwrap(), Shape::from_dims([2]))
+        .unwrap();
+    let mapping = BroadcastAxisMapping::new(
+        [Extent::new(2), Extent::new(2)],
+        [
+            BroadcastAxisSource::Replicate,
+            BroadcastAxisSource::FromOperand(Axis::new(0)),
+        ],
+    )
+    .unwrap();
+    let widened = F32Broadcast::apply(&mut builder, &mapping, weight).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, activations, widened).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), scaled)
+        .unwrap();
+    builder.build().unwrap()
+}
+
 /// Compiles one program under one contract against the governed profile.
 ///
 /// Returns only after the per-target outcome resolves, so `Ok` is a complete
@@ -401,6 +507,69 @@ fn perturbing_one_occurrence_out_of_the_vocabulary_refuses_by_name() {
                 rule: "operation-set"
             }),
             "{contract:?} admitted an occurrence no scalar program spells",
+        );
+    }
+}
+
+/// The broadcast that widens a declared weight refuses under the same rule.
+///
+/// **This is the wall in front of the workload's dominant structural
+/// occurrence, and until now it was observed nowhere at the compile boundary.**
+/// The sibling assertions in this file and in `multi_input_elementwise_boundary`
+/// pin `tiler::reindex-f32@1`; `tiler::broadcast-f32@1` reaches the request
+/// boundary only through `fusion_legality`'s in-crate derivation, which proves a
+/// region containing it is *legal* to fuse and says nothing about whether one
+/// can be spelled. So the family the pinned workload cannot be written without
+/// had its refusal asserted by no test, and a widening that admitted the
+/// occurrence without a `LogicalAccess` relation would have had nothing here to
+/// contradict it.
+///
+/// **The trio is the assertion.** `a * w` compiles, so neither the widened
+/// domain nor the two declared inputs is what refuses. `a * silu(w)` compiles,
+/// so a registered unary family with a registered index-access lowering
+/// capability in that exact position is admitted — which is what leaves
+/// `operation-set` reading the missing *access relation* rather than the
+/// family's arity, its registration, or its position. `a * broadcast(w)`
+/// refuses, under every contract, before any target-qualified trace exists.
+///
+/// The activation declines under the contraction-permitting contract for the
+/// reason the module header states — its body carries the multiply/add adjacency
+/// — and it declines as `NoFeasiblePlan`, *after* recognition admitted it, which
+/// is itself the evidence that recognition admitted it. The plain control
+/// carries no such adjacency and compiles under all five, so the accepted half
+/// of the pair never stands alone.
+#[test]
+fn a_broadcast_widening_a_declared_weight_refuses_under_the_vocabulary_rule() {
+    let control = weighted_by_a_declared_tensor();
+    let accepted = weighted_by_an_activation();
+    let widened = weighted_by_a_broadcast();
+    assert_eq!((control.input_count(), control.operation_count()), (2, 1));
+    assert_eq!((accepted.input_count(), accepted.operation_count()), (2, 2));
+    assert_eq!((widened.input_count(), widened.operation_count()), (2, 2));
+
+    for contract in CONTRACTS {
+        assert_eq!(
+            compile_under(&control, contract),
+            Ok(()),
+            "{contract:?} refused two declared tensors at the widened domain, so \
+             nothing below would be evidence about the broadcast occurrence",
+        );
+        assert_eq!(
+            compile_under(&accepted, contract),
+            if contract == CONTRACTION_PERMITTED {
+                Err(CompileFailureClass::NoFeasiblePlan)
+            } else {
+                Ok(())
+            },
+            "{contract:?} did not resolve the elementary neighbour as expected, so \
+             the refusal below would not be evidence about the missing relation",
+        );
+        assert_eq!(
+            compile_under(&widened, contract),
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "operation-set"
+            }),
+            "{contract:?} admitted a widening no logical access spells",
         );
     }
 }
