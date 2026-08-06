@@ -1,7 +1,7 @@
 ---
 id: catalog-the-enforcer-input-property-exclusion-record
 title: Catalog the enforcer input-property exclusion record
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [close-the-enforcer-input-property-exclusion-gap]

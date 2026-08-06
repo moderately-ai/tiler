@@ -1,7 +1,7 @@
 ---
 id: re-read-the-bf16-and-elementary-support-rows-against-source
 title: Re-read the BF16 and elementary support rows against source
-status: review
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-navigation-3
-lease_expires_at: 1786031910
 ---
 ## The work (maturity audit 2026-08-06, key claims coordinator-verified: KernelConstant::Bf16Bits exists; the four named tickets are done)
 
