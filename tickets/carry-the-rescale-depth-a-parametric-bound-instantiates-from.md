@@ -32,6 +32,14 @@ A scheduled candidate carrying an online-softmax rescaling fold states the two s
 
 Implementing a field; admitting a permission; deriving a bound.
 
+## Widened 2026-08-06 — the pair is not sufficient for the rule that would read it
+
+**Fact, from [the rule-object record](../docs/research/numerics/online-softmax-rule-object.md)'s Part 3.** The rule consuming this shape parameter has a **dimension set that is a function of the fold tree**: the sequential fold consumes distributivity and elementary-function identity, and every other merge tree additionally consumes reassociation. So the schedule's declaration is read twice — once to instantiate the bound and once to evaluate which dimensions the candidate consumes, which is also the input to the refusal ADR 0101 decision 6 requires.
+
+**Inference — `(D, h2)` prices the rewrite and does not decide its dimensions.** `h2 = V - 1` says the summation tree is a chain; it does not say the chain is the canonical left-deep one in contributor order, and only the canonical one avoids reassociation, because `SOFTMAX_F32_FACT_SUM_FOLD_ORDER` (`crates/tiler-ir/src/semantic/softmax.rs:581`) pins the strict left fold over the canonical contributor sequence. A caterpillar of the other orientation has the same `(D, h2)` and consumes a third dimension. **So this ticket's subject is the tree, from which the pair is derived, rather than the pair.**
+
+**Inference — and this ticket's own trigger rationale is understated rather than wrong.** "A shape parameter for a rewrite no contract can perform is a field nothing reads" holds for the *bound*; it does not hold for the refusal, which a decline requires to exist and which reads the same declaration. The trigger below is unchanged, because a refusal naming the right dimensions is still not blocked on a field the compiler could carry — no rule consuming those dimensions is registered either.
+
 ## Trigger
 
 A shape parameter for a rewrite no contract can perform is a field nothing reads, so this waits on the permissions the fold consumes. It fires when **either** [`reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller`](reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller.md) **and** [`decide-whether-to-admit-an-elementary-identity-permission`](decide-whether-to-admit-an-elementary-identity-permission.md) both resolve in the admitting direction, **or** a second rewrite rule appears whose bound is instantiated from a fold's depth, at which point the parameter has more than one caller and stops being speculative.
