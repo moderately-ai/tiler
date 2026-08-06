@@ -4069,7 +4069,25 @@ mod tests {
                 // every registered definition's facts. Recomputed by observing
                 // the failing value on this branch tree with the focused
                 // nextest command above, never copied from another branch.
-                "tiler-explain-v7 request=a95ad77532352d7f\n",
+                // Rebaselined from `a95ad77532352d7f` when
+                // `DeterministicBudgets::governed` was widened to admit the
+                // complete decoder-layer program — `semantic_values` 16 → 80,
+                // `semantic_operations` 8 → 62, `host_expression_nodes`
+                // 32 → 43, `buffers` 6 → 21. Every budget is written into the
+                // request subject, so a budget value change moves every
+                // governed compilation's qualifier including this fixture's,
+                // whose program is nowhere near any of the four; that is the
+                // stated consequence of a budget being a property of the
+                // *request*, and the same reason the earlier `buffers` step
+                // moved it. **No encoding version moved**: the budget field
+                // set, their widths, and their order in
+                // `canonical_explain_subject_bytes` are untouched, so a value
+                // change stays injective inside
+                // `tiler.compiler.request-subject.v5` and the renderer version
+                // stays 7 because nothing about explain's rendering changed.
+                // Recomputed by observing the failing value on this branch tree
+                // with the focused nextest command above.
+                "tiler-explain-v7 request=8e06e11fdc3a2889\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

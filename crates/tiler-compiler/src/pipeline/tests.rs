@@ -5284,12 +5284,15 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
     // widened buffer budget admits the split, one stating less does not reach
     // it at all, so the value that separates them is the one that moved.
     //
-    // The budget is `6` rather than the `4` this test first pinned because the
-    // recognizer now admits an elementwise prologue over several declared
-    // inputs. The *requirement* this one-input program places on it is still
+    // The budget is `21` rather than the `4` this test first pinned, then the
+    // `6` it pinned next, because it is sized to the largest program shape the
+    // profile may be asked to admit and that is now the eighteen-input decoder
+    // layer. The *requirement* this one-input program places on it is still
     // four — every declared input, the prologue's temporary, the split's staged
     // partial tensor, and the output — and `verify_program` derives that from
     // the declared arity, which is what the `buffers: 3` refusal above drives.
+    // That is the point of the pair: the bound moved and the derived demand did
+    // not, so a widening that had removed the check would fail the loop above.
     let (semantic, request) = split_request(Shape::from_dims([1, 4]));
     let scheduled = split_regions(&request);
     assert!(
@@ -5300,7 +5303,7 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
         )
         .is_ok()
     );
-    assert_eq!(request.budgets().buffers, 6);
+    assert_eq!(request.budgets().buffers, 21);
     assert_eq!(request.budgets().regions, 3);
 }
 

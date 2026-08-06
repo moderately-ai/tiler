@@ -816,47 +816,86 @@ pub(crate) struct DeterministicBudgets {
 impl DeterministicBudgets {
     /// The bounded profile's deterministic budgets.
     ///
-    /// **`regions` and `buffers` are sized for the largest program shape this
-    /// profile assembles, which is the split reduction.** `regions` was `2` —
-    /// the materialized pointwise-then-reduce program's two stages — and a split
-    /// replaces the single reduction dispatch with a partial pass and a final
-    /// pass, so its program is three stages.
+    /// **The four program-scoped bounds are sized to the complete decoder-layer
+    /// program, which is the largest program shape this profile may be asked to
+    /// admit.** Each is derived from that program's own measured counts rather
+    /// than from the smallest number that lets it through, which is the rule
+    /// [`check_program_budgets`] states and the rule the split reduction's
+    /// earlier widenings followed. The counts are the two rows the layer was
+    /// verified and reference-evaluated at: eighteen declared inputs at both,
+    /// fifty-eight occurrences over seventy-six values at the C1 prefill row,
+    /// and sixty-two over eighty at the C1 decode row. The decode row is the
+    /// binding one, and it is larger for a reason that is not the cache: at
+    /// `T = 1` six position-axis rank pads duplicate nothing, so the broadcast
+    /// family refuses a many-to-one relation onto an extent-one result axis and
+    /// the layer spells those widenings as further occurrences.
     ///
-    /// `buffers` was `3`, then `4`, and is now `6`, and each step is the same
-    /// derivation over a wider recognized program. Three was the one-input
-    /// materialized program's input, temporary, and output; four added the
-    /// split's staged partial tensor. Six is that same split over the widest
-    /// prologue the *target* side admits: the governed profile declares four
-    /// buffer bindings and an elementwise region binds one per declared input
-    /// plus its write, so a three-input prologue is the widest feasible one, and
-    /// its split program declares three inputs, the temporary, the partial
-    /// tensor, and the output. It is a bound rather than a requirement —
-    /// `verify_program` refuses a request whose declared arity needs more — so
-    /// widening it admits program shapes and never demands them.
+    /// - `semantic_values` is `80`: the decode row's eighteen declared inputs
+    ///   plus one result per occurrence, because no occurrence in the layer
+    ///   produces more than one value. The prefill row is `18 + 58 = 76` by the
+    ///   same arithmetic, so eighty bounds both.
+    /// - `semantic_operations` is `62`: the decode row's occurrence count.
+    /// - `host_expression_nodes` is `43`: [`check_program_budgets`] derives the
+    ///   actual as two nodes per declared input plus seven, so eighteen inputs
+    ///   reach `2 × 18 + 7`.
+    /// - `buffers` is `21`: the same function derives the actual as every
+    ///   declared input plus the prologue's temporary, a split's staged partial
+    ///   tensor, and the output, so eighteen inputs reach `18 + 3`. It was `3`,
+    ///   then `4`, then `6` — the one-input materialized program's input,
+    ///   temporary and output; the split's staged partial tensor; and that split
+    ///   over the widest three-input prologue the governed target's four buffer
+    ///   bindings admit — and every step, including this one, is the same
+    ///   derivation over a wider admitted program.
+    ///
+    /// Both input-derived bounds are now tight at exactly eighteen declared
+    /// inputs, so their thresholds coincide: a nineteen-input program exceeds
+    /// both at once and the earlier check, `host-expression-nodes`, is the one
+    /// that reports.
+    ///
+    /// **`regions` stays `3`, and that is a derivation rather than an
+    /// omission.** The actual it is checked against is the constant three — the
+    /// split program's pointwise, partial and final stages — because a region
+    /// count is a property of a *plan*, and this profile plans no decoder layer:
+    /// [`select_supported_strategy`] refuses it under its own named rules, which
+    /// is a separate refusal with a separate remedy. There is therefore no layer
+    /// region count to derive, and a number invented here would be the opposite
+    /// of the rule above. It moves when the layer becomes plannable, and that is
+    /// a second identity move this one cannot honestly absorb.
+    ///
+    /// `normalization_rewrites` and every `region_*` bound are unchanged because
+    /// none of them admits or refuses a program: each bounds a *search*, and
+    /// exhausting one costs an alternative while the verified input and complete
+    /// coverage survive.
     ///
     /// The widening is a *deliberate* decision and not a test-enabling edit,
-    /// because both numbers are inside the canonical request subject
-    /// (`VerifiedRequestSubject::canonical_bytes` writes every budget), which is
-    /// carried into artifact identity. Every governed compilation's request
-    /// subject, and therefore every artifact identity and cache entry derived
-    /// from it, moves with this change — for programs that never assemble a
-    /// split as much as for ones that do, because the budget is a property of
-    /// the *request* rather than of the plan chosen for it. No pinned golden
-    /// encodes these bytes: every request-subject assertion in the corpus is
-    /// relational (a mutated budget must not reconstruct its authority), so the
-    /// move is invisible to the suite and is stated here instead.
+    /// because every one of these numbers is inside the canonical request
+    /// subject ([`VerifiedRequestSubject::canonical_explain_subject_bytes`]
+    /// writes every budget), which is carried into artifact identity. Every
+    /// governed compilation's request subject, and therefore every artifact
+    /// identity and cache entry derived from it, moves with this change — for
+    /// programs nowhere near any of these bounds as much as for ones at them,
+    /// because a budget is a property of the *request* rather than of the plan
+    /// chosen for it. Exactly one pinned identity encodes these bytes and it
+    /// moved with them: `explain`'s
+    /// `deterministic_trace_is_sealed_and_rendered_separately` request
+    /// qualifier, whose ledger comment records the recomputation. No encoding
+    /// version moved with it — the field set, widths, and order are untouched,
+    /// so a value change stays injective inside
+    /// `tiler.compiler.request-subject.v5`.
     ///
     /// A budget is an upper bound, so widening admits program shapes and never
-    /// requires them: `verify_program` still refuses a request whose shape needs
-    /// more, and `verify_host_contract` still refuses a program whose value
-    /// count exceeds `buffers`.
+    /// requires them: [`check_program_budgets`] still refuses a program one step
+    /// past each of these, and `verify_host_contract` still refuses a built
+    /// program whose value count exceeds `buffers`. Nor does clearing the budget
+    /// gate compile a decoder layer — the recognizer's refusal is untouched, and
+    /// what this widening removes is only the refusal that was about *size*.
     pub(crate) const fn governed() -> Self {
         Self {
-            semantic_values: 16,
-            semantic_operations: 8,
+            semantic_values: 80,
+            semantic_operations: 62,
             regions: 3,
-            host_expression_nodes: 32,
-            buffers: 6,
+            host_expression_nodes: 43,
+            buffers: 21,
             normalization_rewrites: 8,
             region_members: 32,
             region_boundary_outputs: 8,
@@ -2929,9 +2968,10 @@ fn check_program_budgets(
     // the request is admitted before any plan is chosen, so a budget that only
     // admitted the two-region materialized program would let a request through
     // and then refuse the split at assembly, reporting a caller's request as a
-    // compiler-output defect. Three regions and four buffers are the split
-    // program's pointwise, partial, and final stages over its input, temporary,
-    // partial, and output values.
+    // compiler-output defect. Three is the split program's own stage count —
+    // pointwise, partial, and final — and it is spelled rather than derived
+    // because a region count belongs to a plan, and the widest plan this profile
+    // assembles is that split whatever the submitted program declares.
     check_budget("regions", budgets.regions, 3)?;
     // Derived from the declared input arity rather than spelled, because it is
     // an upper bound over every plan the request could reach and the widest of
@@ -5461,6 +5501,129 @@ mod tests {
                 phase: "strategy",
                 rule: "operation-set",
             })
+        );
+    }
+
+    /// Builds a program declaring exactly `inputs` inputs over `operations`
+    /// occurrences, so a budget's `actual` can be placed on either side of its
+    /// bound.
+    ///
+    /// Every occurrence is one `f32` add producing one value, so
+    /// `value_count() == inputs + operations`. That is the same identity the
+    /// decoder layer has — no occurrence in it produces more than one value —
+    /// and it is the identity `semantic_values` is sized against. The chain
+    /// consumes every declared input before it starts re-reading the last, so no
+    /// declared input is left unreached.
+    fn budget_probe(inputs: usize, operations: usize) -> SemanticProgram {
+        assert!(inputs >= 2, "the chain's first add needs two operands");
+        assert!(
+            operations >= inputs - 1,
+            "fewer adds than inputs would leave a declared input unreached",
+        );
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let declared: Vec<_> = (0..inputs)
+            .map(|index| {
+                builder
+                    .input::<F32>(
+                        InputKey::new(format!("input{index}")).unwrap(),
+                        Shape::from_dims([2, 3]),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let mut accumulator = declared[0];
+        for step in 0..operations {
+            let operand = declared[(step + 1).min(inputs - 1)];
+            accumulator = F32Add::apply(&mut builder, accumulator, operand).unwrap();
+        }
+        builder
+            .output(OutputKey::new("result").unwrap(), accumulator)
+            .unwrap();
+        let program = builder.build().unwrap();
+        assert_eq!(program.input_count(), inputs);
+        assert_eq!(program.operation_count(), operations);
+        assert_eq!(program.value_count(), inputs + operations);
+        program
+    }
+
+    /// Each widened budget refuses the program one step past it, and the
+    /// decoder layer's own measured counts are admitted.
+    ///
+    /// The four program-scoped bounds are sized to that layer, so the admitted
+    /// neighbours are its two measured rows exactly — eighteen declared inputs
+    /// over sixty-two occurrences and eighty values at the decode row, and over
+    /// fifty-eight and seventy-six at the prefill row — and the decode row sits
+    /// *on* all four bounds rather than under them.
+    ///
+    /// Refusals are observed through [`verify_program`], which is the entry the
+    /// budgets guard; admission is observed at [`check_program_budgets`],
+    /// because clearing the budget gate is the whole of what a budget can
+    /// promise. `verify_program` still refuses the layer's *shape* at the
+    /// recognizer under a rule this widening deliberately does not touch, so an
+    /// admitted probe here is evidence about size and about nothing else.
+    #[test]
+    fn each_widened_budget_refuses_the_program_one_step_past_it() {
+        let governed = DeterministicBudgets::governed();
+
+        for (inputs, operations) in [(18, 62), (18, 58)] {
+            assert_eq!(
+                check_program_budgets(&budget_probe(inputs, operations), governed),
+                Ok(()),
+                "the decoder layer's measured row {inputs}/{operations} is admitted",
+            );
+        }
+
+        // Exceeding `semantic_values` alone is not expressible: the bound is
+        // exactly the eighteen inputs plus the sixty-two occurrences, so one
+        // more value is one more input or one more occurrence. Which resource is
+        // reported is therefore the check order's guarantee rather than an
+        // accident, and it is the first one.
+        assert_eq!(
+            verify_program(&budget_probe(19, 62), governed).err(),
+            Some(RequestError::BudgetExceeded {
+                resource: "semantic-values",
+                limit: 80,
+                actual: 81,
+            }),
+        );
+
+        assert_eq!(
+            verify_program(&budget_probe(17, 63), governed).err(),
+            Some(RequestError::BudgetExceeded {
+                resource: "semantic-operations",
+                limit: 62,
+                actual: 63,
+            }),
+        );
+
+        assert_eq!(
+            verify_program(&budget_probe(19, 18), governed).err(),
+            Some(RequestError::BudgetExceeded {
+                resource: "host-expression-nodes",
+                limit: 43,
+                actual: 45,
+            }),
+        );
+
+        // `buffers` is reached only once the bound that shadows it moves, and
+        // the shadowing is a property of the two bounds rather than of this
+        // test: both are derived from the declared input count and both are
+        // tight at eighteen, so a nineteen-input program exceeds them together
+        // and the earlier check reports. The perturbation widens
+        // `host_expression_nodes` to exactly what nineteen inputs need and
+        // leaves `buffers` at its governed value, so what is observed refusing
+        // is the governed bound.
+        let unshadowed = DeterministicBudgets {
+            host_expression_nodes: 45,
+            ..governed
+        };
+        assert_eq!(
+            verify_program(&budget_probe(19, 18), unshadowed).err(),
+            Some(RequestError::BudgetExceeded {
+                resource: "buffers",
+                limit: 21,
+                actual: 22,
+            }),
         );
     }
 
