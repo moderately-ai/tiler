@@ -1,0 +1,276 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.reference.permitted-divergence-oracle"
+kind: "research"
+title: "The oracle for a permitted-divergence candidate"
+topics: ["reference", "numerics", "conformance", "correctness", "reductions"]
+catalog_group: "numerical-operations"
+research_status: "complete"
+disposition: "pending"
+implementation_status: "partial"
+evidence_classes: ["primary-source-synthesis", "sound-proof"]
+informs: ["tiler.contract.correctness-and-testing", "tiler.contract.numerical-semantics"]
+depends_on: ["tiler.research.numerics.certified-bounds-as-rewrite-permissions", "tiler.research.program-planning.flash-class-capability-set", "tiler.research.reference.normative-reference-slice"]
+ticket: "derive-the-oracle-for-a-permitted-divergence-candidate"
+---
+
+# The oracle for a permitted-divergence candidate
+
+**Status:** derivation complete. The object that bounds a program under a permissive numerical contract is derived, the five candidate oracle shapes are eliminated against correctness, refusal-explainability, and computability at reference-evaluation cost, exactly one survives as the admission authority, and one eliminated candidate is retained in a strictly weaker role that its own soundness argument supports. Nothing here changes a contract, admits a permission, designs a public Rust surface, or edits `crates/`. Every repository claim was read at this record's own base, `4cf593e7`, and states the exact path or the one-line command that reproduces it.
+
+Claims are labelled **Fact** when traced to inspected source, primary documentation, or a merged record; **Inference** when derived from stated facts; **Measurement** when tied to an exact environment and procedure; and **Proposal** when not yet accepted or tested.
+
+## Traceability
+
+- **Work record:** [`derive-the-oracle-for-a-permitted-divergence-candidate`](../../../tickets/derive-the-oracle-for-a-permitted-divergence-candidate.md), filed by [the flash-class capability record's](../program-planning/flash-class-capability-set.md) axis 6.
+- **Current disposition:** pending. No ADR adopts this record, no contract sentence has moved for it, and no crate changed.
+- **Normative destinations, neither edited here:** [Correctness and testing](../../correctness-and-testing.md) owns the oracle rule and already carries its reduction-shaped special case; [Numerical semantics](../../numerical-semantics.md) owns the dimension definitions and the conformance-level vocabulary this record's Part 3 sharpens. `contracts/numerics` and `contracts/navigation` were both outside the producing ticket's scopes, and the catalog row is reported to the coordinator in the ticket's Outcome rather than written here.
+- **Accepted authorities consumed rather than re-derived:** [ADR 0011](../../decisions/0011-per-operation-numerical-permissions.md) (one permission never implies another; the program ceiling is the outer authority), [ADR 0014](../../decisions/0014-reassociation-vs-permutation.md), [ADR 0015](../../decisions/0015-fma-vs-contraction.md), [ADR 0019](../../decisions/0019-split-subnormal-handling.md), [ADR 0021](../../decisions/0021-validated-value-assumptions.md), [ADR 0042](../../decisions/0042-use-typed-transcendental-accuracy-contracts.md), [ADR 0101](../../decisions/0101-treat-elementary-function-identities-as-a-fourth-numerical-dimension.md) decision 7.
+- **Research evidence:** [certified rounding-error bounds as rewrite permissions](../numerics/certified-bounds-as-rewrite-permissions.md) for the derived-bound machinery, its five admission obligations, and the measured looseness that decides Part 2's elimination; [the flash-class capability set](../program-planning/flash-class-capability-set.md) for the framing this record corrects; [the normative reference evaluator slice](normative-reference-slice.md) for what the reference layer is for.
+- **Prior eliminations this record generalizes rather than re-runs.** Three independent places in the tree already reached the surviving object for the reduction-shaped case: the doc comment on `strict_partial_sums` (`crates/tiler-reference/src/evaluate.rs:484`), the normative paragraph at [Correctness and testing](../../correctness-and-testing.md)'s reduction matrix, and [`drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies`](../../../tickets/drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies.md)'s 2026-08-02 Outcome. This record credits them, states the general rule they are instances of, and corrects the one framing that is wrong.
+- **No literature acquisition failed for this record**, and no claim below rests on a source this repository does not hold. The standing `higham-asna-2002` acquisition request at [the numerics source record](../numerics/sources/README.md#higham-asna-2002) is unchanged; the only result of it this record uses is `gamma_h`'s definition, read in the vendored Acta Numerica survey through the certified-bounds record.
+
+## Outcome
+
+**The object that soundly bounds a whole program's permitted result set is not an object over the result set at all.** It is the exact evaluation of the *one* realization the physical plan pinned, and the comparison stays bitwise. A permissive contract does not widen the comparison; it widens the space of *reference programs*, and the plan names which one of them it implemented. Every candidate that widens the comparison instead — a propagated program enclosure, a per-output interval derived from the contract's granted freedoms, or a membership test against the reachable realization set — is eliminated on correctness, and each is eliminated for a different and independently checkable reason.
+
+**Inference — the oracle's subject is therefore a triple, and that is the whole derivation stated at the type level.** `ReferenceNumericalConformance::from_realization` (`crates/tiler-reference/src/conformance.rs:166`) takes a `&NumericalRealization` — the contract's projection alone — and refuses every permissive resolution. **The refusal is correct for the object it is given and must not be relaxed**: a realization resolving `reassociation: Permitted` genuinely does not determine a value, and accepting it would be the silent single-value answer its module header refuses to give. What is missing is not a weaker check but a *third argument*: the order witness the plan already carries. `(program, contract)` does not determine a value; `(program, contract, plan's realization witness)` does. Any counter-proposal is refuted by exhibiting two candidates that share the first two and disagree in bits — which Part 6 does, with numbers.
+
+**Fact — the ticket's premise is half right, and correcting the other half is this record's most consequential finding.** The flash record's axis 6 states that "for any candidate compiled under a permissive contract the oracle has no verdict at all". That is true of the *index-region* oracle and false of the corpus. For the one permissive dimension that is registered and reachable today, the declared-order oracle already exists (`tiler_reference::strict_partitioned_sum`), is public, is normative in [Correctness and testing](../../correctness-and-testing.md), is exercised CPU-side in `crates/tiler-compiler/src/pipeline/tests.rs` with a proved-able-to-fail guard, and has been carried to a qualified device. What is unowned is narrower, and Part 7 states it exactly.
+
+**Fact — and the second half of the correction is a real gap the ticket's framing hides.** The declared numerical conformance is applied at exactly **three** sites in the workspace, all inside the index-region oracle's binary-arithmetic path. Exact check, reproducible in one line:
+
+```text
+grep -rn 'apply_to_operand\|apply_to_result' crates/ --include='*.rs'
+```
+
+returns fourteen lines at this base: eleven inside `conformance.rs` itself — the two method definitions and nine of its own test assertions — and `oracle.rs:754`, `:755`, `:761`. No other file in `crates/` matches. **The semantic evaluator applies it nowhere** — `grep -n 'ReferenceNumericalConformance' crates/tiler-reference/src/evaluate.rs` returns nothing. So `from_realization`'s refusal cannot fire on the whole-program semantic path at all: that path was never told a contract, and it answers the strict reading unconditionally. The refusal guards the one oracle that *does* consult a contract, and the two oracles actually used to qualify a `FLUSH_AND_REASSOCIATE_F32` candidate — the semantic evaluator and `strict_partitioned_sum` — both route around it. Neither takes a conformance, so both silently ignore the two subnormal dimensions that same contract resolves to flushing.
+
+## Part 1 — What the corpus already decided, read at this base
+
+### There are three oracles, and only one of them is guarded
+
+**Fact — `crates/tiler-reference` ships three distinct answer-producing paths, and they differ in whether a numerical contract reaches them.**
+
+| Path | Entry point | Subject | Takes a contract? |
+| --- | --- | --- | --- |
+| Semantic evaluator | `ReferenceEvaluator::evaluate` (`src/evaluate.rs:129`) | a verified `SemanticProgram` | **No.** No `ReferenceNumericalConformance` appears in the module. |
+| Index-region oracle | `IndexRegionEvaluator::under` (`src/oracle.rs:1316`) | a `VerifiedIndexRegion` | **Yes**, and `from_realization` is its checked bridge, documented as such at `oracle.rs:1304`. |
+| Declared-order reduction oracle | `strict_partitioned_sum` (`src/evaluate.rs:615`) | one reduction at one declared split | **No.** Its signature is `(input, axes, partitions, contributors_per_partition)`. |
+
+**Inference — so the refusal at `conformance.rs:166` is narrower in effect than in intent.** Its own header says an oracle returning a single value under a permissive contract "would assert a bitwise equality the contract does not promise", which is a statement about *every* oracle. It is enforced on one of the three. That is not a defect in the refusal; it is a gap in where the type is threaded, and it is filed by this record.
+
+### The general rule is already normative for the reduction-shaped case
+
+**Fact — [Correctness and testing](../../correctness-and-testing.md)'s reduction matrix carries the derivation verbatim**, in a paragraph whose first sentence is the rule: "Under a contract that permits reassociation, the oracle is the strategy's own declared grouping, and it stays bitwise." It states the elimination of a widened comparison — "The answer is not to widen the comparison but to narrow the question" — eliminates result-set membership as "too weak", and eliminates a tolerance as "weaker still", on the document's own standing position that "a difference is attributed to a named cause or it is a defect".
+
+**Fact — the same derivation is written on `strict_partial_sums` itself** (`crates/tiler-reference/src/evaluate.rs:484`): "This is a *second* exact oracle rather than a relaxation of the first. A contract that permits reassociation admits a set of results, so no oracle can answer 'the' value for it; what a plan can be checked against is the one order it selected, and this evaluates exactly that order."
+
+**Fact — and it has been run as an elimination against the same three candidates this ticket names.** [`drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies`](../../../tickets/drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies.md) tested a derived bound, permitted-set membership, and a paired operand set against correctness, maintainability, and performance, discarded all three with grounds, and landed on the declared grouping's exact value. Its Outcome is a Measurement on the qualified M4 Max row and its check was watched failing five ways.
+
+**Inference — what this record owes is therefore not the reduction case but the general one.** The corpus has the rule for a sum reduction under one permission at one topology family. It does not have: the rule stated over a *program*, the rule stated over the other ten dimensions, or the statement of which dimensions the rule does not reach. Parts 2 through 5 supply those, and Part 7 says what is left.
+
+## Part 2 — The derivation
+
+### 2.1 Two sources of non-uniqueness, which are not the same axis
+
+The trap this ticket exists to avoid is treating "the reference is not a single number" as one phenomenon. It is two, they demand different objects, and conflating them is how an enclosure gets lifted where it does not belong.
+
+**Fact — source one is reference irrationality, and it is what `accuracy.rs` exists for.** Its module header states the case exactly: "`exp(x)` is irrational at every nonzero representable `x`, so there is no exact rational reference to compare against". A `CertifiedEnclosure` brackets a real number the reference cannot write down. This is a property of the *reference*, not of the contract: it holds identically under the strictest contract Tiler can state.
+
+**Fact — source two is contract-granted freedom, and its result set is finite and discrete.** A contract resolving `reassociation: Permitted` admits every legal regrouping of a same-operation operand sequence. That is a finite set of representable values indexed by groupings — not an interval, not a continuum, and not irrational.
+
+**Inference — an enclosure alone is never an oracle; it is half of one.** `decide_predicate` (`accuracy.rs:772`) decides nothing from an enclosure: every arm compares a bracketed `|z - r|` against a *tolerance* drawn from an `AccuracyPredicate`. The enclosure supplies where the real value is; the tolerance supplies how far a candidate may be from it. **A categorical permission supplies no tolerance.** `NumericalPermission::Permitted` is a two-valued enum; there is no number in it. So lifting the enclosure machinery to a permissive order contract does not fail because the composition is hard — it fails because the second half of the object is absent, and manufacturing it is exactly what Part 2.3 eliminates.
+
+**Inference — this is also the precise content of ADR 0101 decision 7 and of the certified-bounds record's third obligation, arriving from the oracle's side.** Decision 7 holds that a pointwise accuracy contract "cannot stand in for this dimension" because "the divergence above holds with every evaluation correctly rounded on both sides". The oracle-side reading is the same sentence: an object built from tolerances cannot decide a freedom that is not a tolerance, and a program under both kinds of freedom needs both kinds of object at their own sites rather than one object over the program.
+
+### 2.2 The five candidates
+
+Let `P` be a verified semantic program, `C` a resolved numerical contract, `K` a compiled candidate with observed output bits `z`, and `R(P, C)` the permitted result set — the outputs some legal implementation of `P` under `C` may produce.
+
+- **O1 — Single-value bit-exact.** Evaluate the strict reading of `P`; admit iff `z` matches bit for bit. The status quo, and what `from_realization` restricts itself to.
+- **O2 — Propagated program enclosure.** Carry a `CertifiedEnclosure` through every operation of `P`; admit iff `z` lies inside the output bracket.
+- **O3 — Derived-bound interval.** Instantiate a worst-case rounding bound (the `gamma_h` summation bound and its relatives) from the shape, the format, and the target profile; admit iff `|z - r|` is within it, decided in exact rationals.
+- **O4 — Set membership.** Enumerate `R(P, C)` and admit iff `z ∈ R(P, C)`.
+- **O5 — Declared-realization exact re-evaluation.** Read the plan's own order witness `W`, evaluate `P` under `(C, W)` exactly, admit iff `z` matches bit for bit.
+
+### 2.3 The elimination
+
+**Correctness first, because it eliminates three of the five and the grounds differ.**
+
+**O2 is a category error, not a loose oracle.** A propagated enclosure brackets the program's *real* value. The candidate is a floating-point value whose distance from the real value is a rounding accumulation, and interval propagation adds no rounding term — so a *correct* candidate legitimately lies outside the bracket, and O2 returns `Violates` for it. Making the bracket contain the candidate requires adding a rounding term at every operation, which is forward dataflow analysis with rounding, which is O3. **Eliminated: as stated it refuses correct implementations, and repaired it is not a distinct candidate.** This is worth stating because "compose the enclosures" is the shape a reader arrives at from the module name alone, and it is the one that looks most like reuse.
+
+**O3 is sound as a refutation and unsound as an admission, and the asymmetry is structural.** Given its side conditions are discharged, a candidate outside the derived interval is provably not producible by any legal realization — so `Violates` is sound. A candidate *inside* it has been shown only to satisfy a bound that every legal realization also satisfies; the interval is a strict superset of `R(P, C)`, containing representable values no grouping produces. **Admitting on O3 therefore accepts results the contract does not permit, and does so silently.** Part 6 exhibits the failure with exact bits: at four contributors the derived interval admits four representable values where the contract permits two, and one of the two it wrongly admits is the answer a kernel that dropped two contributors produces.
+
+That superset grows, and the growth is arithmetic rather than opinion. For `V` positive contributors summing to about `1.0` in binary32, the bound `gamma_{V-1} * sum |x_i|` admits every representable value in `[1 - gamma_{V-1}, 1 + gamma_{V-1}]`:
+
+| `V` | `gamma_{V-1}` | representable binary32 values admitted |
+| ---: | ---: | ---: |
+| 4 | 1.788e-7 | 6 |
+| 64 | 3.755e-6 | 96 |
+| 512 | 3.046e-5 | 768 |
+
+Reproduce in one line with `python3 -c "from fractions import Fraction; import struct; b=lambda x: struct.unpack('>I',struct.pack('>f',x))[0]; u=Fraction(1,2**24); [print(V, b(float(1+ (V-1)*u/(1-(V-1)*u))) - b(float(1- (V-1)*u/(1-(V-1)*u))) + 1) for V in (4,64,512)]"`.
+
+**Measurement — and the bound's looseness is already measured, by the record that derived it.** [The certified-bounds record's](../numerics/certified-bounds-as-rewrite-permissions.md) 22-case probe reports bound-over-observed ratios "from 4.8 at `V = 2` to 2.7e29 where every term but one underflows the sum", and states the consequence for an admission rule in its own words: "a sound admission rule will refuse rewrites that would in fact have met the caller's tolerance". **Inference — read from the oracle's side the same looseness inverts into the dangerous direction.** A rule that refuses too much costs candidates; an *oracle* that admits an interval that loose costs correctness, because everything the bound is loose by is admission room a defective kernel occupies. The one measurement is decisive for both designs and in opposite directions, which is why the certified-bounds elimination does not transfer to this layer unexamined: its performance ground (an analyzer at 8–320 ms inside a search) does not bind an oracle that runs once in a test, and the ground that does bind is correctness.
+
+**O4 is exactly correct and strictly dominated, and it is dominated by the plan's own declaration.** `R(P, C)` *is* the permitted set, so membership never admits a wrong result under the contract's own semantics. But `K` is not an arbitrary member-producer: it *published* which member it computes, and that declaration is what the plan identity, the cost model, the explain trace, and the artifact cache key all name. A `K` that produced some other legal member did not implement the plan it published, and membership cannot see that. [Correctness and testing](../../correctness-and-testing.md) states this as "membership would in any case be too weak — it accepts a strategy that produced some *other* legal grouping than the one it declared, which is precisely the defect a declared-grouping oracle exists to catch."
+
+O4 is also uncomputable in general. The order-preserving groupings of `V` contributors number `Catalan(V-1)`, which is `5` at `V = 4` and about `4^511` at `V = 512`, and a program's freedom sites multiply. **Eliminated as the acceptance criterion on both grounds.** It survives in one strictly different role that the tree already uses, stated in Part 4.
+
+**O1 is correct exactly when `|R(P, C)| = 1`.** Under a contract strict on every order and structure dimension it is the whole answer. Under a permissive one it returns `Violates` for a correct implementation — Part 6 shows it doing so. **Not eliminated: it is O5's specialization at the trivial witness**, which is the unification Part 5 states.
+
+**O5 survives.** It never admits a wrong result, because it compares against one exactly determined value; it is strictly stronger than O4, because it refuses a candidate that produced a different legal member; it refuses explainably, by naming the freedom site whose realization the plan did not pin; and it costs one reference evaluation, which is the stated budget exactly.
+
+**Performance eliminates nothing that correctness had not already eliminated, and saying so is the honest form.** O5 is one evaluation. O3 is one evaluation plus an exact-rational bound instantiation, so it is affordable and is eliminated on correctness alone. O2 is one evaluation in interval-rational arithmetic with grid coarsening — the technique `exp_enclosure` already uses — so it is also affordable, and is likewise eliminated on correctness alone. Only O4 is eliminated partly on cost, and it is independently eliminated on being dominated. **No candidate here was discarded for being expensive**, which is the check against the cheap-option failure mode: the eliminations name what each candidate would silently accept, not what it would cost.
+
+**Maintainability is where O5's real price sits, and it is bounded by a property the tree already has.** O5 needs one exact evaluator per admitted realization shape. That looks like an unbounded obligation and is not: the realization shapes are exactly the schedule's own reduction-topology vocabulary, and **an exact evaluator for a topology is that topology's definition**. A topology whose evaluation order cannot be written as an exact host fold has not been defined — it has been named. `strict_partial_sums` is one such evaluator, written in the same landing that admitted `ReductionTopology::MultiPass`; the obligation is to keep that pairing, not to chase a growing set.
+
+**Result: exactly one candidate survives as the admission authority, so there is no question here for Tom.** O5 is the oracle. O3 is retained in a strictly weaker refutation-only role (Part 4). O4 is retained as a refusal-population generator (Part 4). O2 is eliminated outright. O1 is O5 at the trivial witness.
+
+### 2.4 The type-level statement, so the answer can be refuted rather than only doubted
+
+**Proposal — the oracle's input is `(P, C, W)`, where `W` is the plan's realization witness: for every site at which `C` grants a categorical freedom, the concrete choice the plan made there.** Three consequences follow, and each is checkable:
+
+1. **`from_realization`'s refusal is not the defect and must not be relaxed by widening its acceptance.** It receives `(C)` and correctly reports that `(P, C)` does not determine a value. A repair that accepted `reassociation: Permitted` and evaluated the strict reading would be exactly the silent single-value oracle its header refuses.
+2. **The witness is not a new invention; most of it is already carried and already cross-checked.** `ReductionTopology` (`crates/tiler-ir/src/schedule/model.rs:563`) carries `ContributorPartition`, `ContributorOrder`, `accumulation`, `arrival`, `permits_reassociation`, and `permits_permutation` on every variant that has a fold, and the schedule verifier already cross-checks the permission fields against the region's declared realization. The witness object is an aggregation over the plan, not a new fact source.
+3. **The obligation the design places on the compiler is one sentence: a physical plan must be *evaluation-order-complete* with respect to every dimension its contract permitted.** A plan that is not is unqualifiable, and the oracle says so rather than guessing — which is the same fail-closed direction ADR 0011 already imposes on the rewrite side, read at the plan.
+
+## Part 3 — Which freedoms are boundable, and which are not
+
+**Inference — one rule generates the whole split.** *An interval is a valid admission oracle exactly when the permission is itself stated as a tolerance. Every categorical permission is discharged by a witness, never by a bound.* A tolerance-stated permission's result set *is* an interval by definition, so admitting inside it asserts precisely what the contract promised; a categorically-stated permission's result set is a finite family indexed by choices, and every interval containing it contains more.
+
+**Fact — the vocabulary is eleven dimensions**, `CANONICAL_DIMENSIONS` (`crates/tiler-ir/src/numerics.rs:149`), with distributivity and elementary-function identity named normatively and unpermissioned beside them. The table walks all eleven, so nothing is answered by omission.
+
+| Dimension | Shape of the freedom | What decides a candidate | Reachable today? |
+| --- | --- | --- | --- |
+| `InputSubnormals` | **Realization-determining** — a function on values, not a set | The mode itself; `ReferenceNumericalConformance::apply_to_operand` | Yes; carried by the type, applied on one of three paths |
+| `ResultSubnormals` | Realization-determining | `apply_to_result` | Yes; same gap |
+| `MaterializationRounding` | Realization-determining | The mode; `MaterializationRounding` has exactly one variant, `NearestTiesToEven` (`crates/tiler-ir/src/schedule/numerics.rs:566`), so it admits no divergence at all today | Yes, vacuously |
+| `Reassociation` | **Order-shaped**, finite set indexed by grouping | The plan's topology witness, evaluated exactly | **Yes** — `FLUSH_AND_REASSOCIATE_F32` and `RELAXED_F32` |
+| `Permutation` | Order-shaped | `ContributorArrival`; `requires_permutation()` is `false` for the only admitted arrival | **No** — see below |
+| `Contraction` | **Structure-shaped** — which multiply-adds were fused | The emitted kernel pins it, *and* the backend compiler must be pinned too | Yes via `RELAXED_F32`; the second pin is a refusal class (Part 4) |
+| `ReciprocalTransform` | Structure-shaped — which expression form was emitted | The emitted expression | Yes via `RELAXED_F32` |
+| `ApproximateIntrinsics` | **Tolerance-shaped by construction** | `decide_contract` against the operation's accuracy contract and a `CertifiedEnclosure` — this is where an interval *is* the admission authority, and it is implemented | Yes via `RELAXED_F32` |
+| `SignedZero` | **Neither** — a quotient on the comparison | A widened equality relation at exactly the permitted sites | **No registered contract grants it** |
+| `NanAssumptions` | **A precondition, not a result freedom** | Validate the assumption on the pinned realization's own values | **No registered contract grants it** |
+| `InfinityAssumptions` | Same | Same | **No registered contract grants it** |
+
+**Fact — permutation is declared but unspendable, so its oracle is absent by construction rather than by oversight.** `ContributorOrder` (`crates/tiler-ir/src/schedule/model.rs:92`) has exactly one variant, `OriginalAxisLexicographic`, and `ContributorArrival` (`crates/tiler-ir/src/schedule/cooperative.rs:136`) admits only `AscendingParticipant`, whose `requires_permutation()` returns `false`; the other two variants are documented as unadmitted and refused by name. **Inference — so no schedule Tiler can build consumes a permutation permission**, and a permutation-permitting contract's freedom is granted and never spent. That is not a hole in this derivation; it is the correct state, and it means the witness for permutation is `AscendingParticipant` in every plan that exists.
+
+**Inference — signed-zero elimination can never be an interval question, and this is a proof rather than a preference.** Every metric `decide_predicate` supports — absolute, relative, ULP, and their boolean combinations — is a function of `|z - r|`. Since `|(+0) - (+0)| = |(-0) - (+0)| = +0`, the metric is *constant* across the signed-zero freedom. So a metric-based oracle cannot refuse a signed-zero divergence under any tolerance, including a tolerance of exactly zero, and therefore cannot refuse one under a *strict* contract either. It does not decide the dimension in either direction. The honest object is a widened equality relation applied at exactly the sites the contract permits — a quotient on the comparison, never a change to the reference value. **Fact — the tree already keeps this separation**: `decide_predicate`'s doc states its candidate is taken "*before* the result-subnormal and signed-zero mapping — step three of ADR 0042's composition, not step four", so the accuracy machinery is documented as not answering for step four rather than as answering it loosely.
+
+**Inference — an exceptional-value absence assumption is not a freedom over results and must not be given an oracle shaped like one.** `AssumeAbsent { provenance }` constrains the *inputs*, not the outputs: on the assumed domain it promises the candidate agrees with the no-assumption reading, and off it the result set is unconstrained. So the oracle's obligation is a validation, not a comparison — scan the pinned realization's own values, including its intermediates, which the pinned evaluation produces anyway. If the assumption holds there, the dimension grants nothing observable and the oracle proceeds as though it were `MakeNoAssumption`; if it does not, the plan's routing commit was invalid under ADR 0021 and the failure belongs to that authority rather than to a numerical comparison. **This narrows the existing refusal correctly rather than removing it**: `UnsupportedReferenceContract::NanAbsenceAssumed` says "the reference cannot validate the `{provenance:?}` domain assumption", and for a `RuntimeValidated` provenance over a pinned realization that is answerable, while for `CompilerProven` it remains the compiler's proof to exhibit and not the reference's to reconstruct.
+
+**Inference — the two subnormal dimensions and the materialization rounding are a third class the ticket's framing does not name, and it matters.** They are not freedoms at all: each names one function the reference applies. They compose with a permissive order contract without interacting with it — a plan under `FLUSH_AND_REASSOCIATE_F32` needs its order pinned *and* both subnormal modes applied, and those are independent obligations. Part 7's first filed gap is exactly that the oracle actually in use discharges the first and drops the second.
+
+## Part 4 — What the oracle answers when it cannot decide
+
+**The decision is three-way and `Undecided` is never a pass.** `ConformanceDecision` (`crates/tiler-reference/src/accuracy.rs:735`) is `Conforms` / `Violates` / `Undecided { reason }` and `conforms()` returns `false` for the last two. The derived oracle reuses that discipline unchanged rather than growing a parallel one, and adds refusal reasons rather than a fourth arm.
+
+**Proposal — four refusal classes the derived oracle must be able to return.** Each is named with what closes it and with the population that proves it can fire, because a refusal nothing can reach is not a refusal.
+
+1. **`OrderNotPinned` — the contract permits a freedom at a site whose realization the plan does not declare.** The reduction topologies declare their grouping; a fused elementwise chain does not. **Fact — a three-leaf `f32` add or multiply chain compiles through the `PointwiseF32Expression` projection under a reassociation-permitting contract** ([Numerical semantics](../../numerical-semantics.md), *Implemented ordered-associativity rules and oracle boundary*), and no `ReductionTopology` names its grouping — `ReductionTopology::None` is what such a region carries. So the population is non-empty today. **Closed by** the plan carrying a grouping witness for non-reduction freedom sites, which is Part 7's first research gap.
+2. **`RealizationNotEvaluable` — the plan pins an order the reference has no exact evaluator for.** Three concrete members: a cooperative tile with `rounds > 1`, whose coverage is `partitions * contributors_per_partition * tile.rounds` and whose participant `p` of round `r` owns the range at index `r * partitions + p` — an order `strict_partial_sums`'s flat `partition * chunk + within` does not express; a topology declaring an `accumulation` width other than the element type, which `strict_partial_sums` cannot honour because it has no such parameter; and any future non-uniform split, since `ContributorPartition::covers` admits only an exact blocked product. **Closed by** an evaluator per admitted shape, filed deferred behind the rounds-greater-than-one trigger.
+3. **`ExecutionOrderNotGuaranteed` — the plan pins an order the *backend compiler* is permitted to change.** **Fact — Tiler pins it today by asserting flags rather than by consulting a target fact**: `MetalNumericalRequirement::NoFloatingPointContraction` renders `-ffp-contract=off` and `SafeMathMode` renders `-fmetal-math-mode=safe` (`crates/tiler-metal/src/record.rs:76-132`), and `crates/tiler-metal/src/tests.rs:1311` records why — "`-ffp-contract=off` is a defence against the *compiler* contracting a written multiply and add". **Fact — no target profile declares the property.** `MetalTargetFacts` (`crates/tiler-metal/src/target.rs:755`) has five fields: language, platform, deployment minimum, per-type subnormal arithmetic, buffer binding limit; `CapabilityAxis` (`crates/tiler-compiler/src/target/feasibility.rs:211`) has seven, none of them about compiler-preserved evaluation order. **Inference — so under a contract that permits contraction, Tiler would have no ground to keep asserting the flag that supplies its own pin, and the executed order would become a property of a compiler nothing declares.** This is the named candidate class the derived oracle refuses to qualify. **Closed by** a declared target fact plus a bounded measurement of whether the fact is true on the qualified row — filed as an experiment, and it is a device measurement this record does not perform.
+4. **`AssumptionUnvalidated` — an `AssumeAbsent` this evaluator cannot discharge on the pinned realization's values.** The existing refusal, correctly retained, and narrowed by Part 3 to the `CompilerProven` case.
+
+**Inference — O3 and O4 keep real jobs, and typing them correctly is what stops them becoming admission authorities.**
+
+- **O3 becomes a refutation-only oracle** whose `Conforms` arm is structurally unreachable: it may return `Violates` (the candidate is outside the interval, so no legal realization produces it) or `Undecided { EnclosureTooWide }`, and never `Conforms`. AGENTS.md's rule that every check must be proved able to say no has a converse here: a check that cannot say *yes* must be typed so, not left to convention, because a `Conforms` it can technically return is a `Conforms` some caller will eventually read as an admission. It is useful for exactly the candidates O5 refuses — a candidate whose order is unpinnable can still be *refuted* — and it has no caller today, so it is filed deferred rather than built.
+- **O4 becomes the refusal-population generator, and the tree already uses it that way.** `prototypes/serial-sum-run/src/proof.rs`'s `ordered_associations` enumerates every order-preserving regrouping and its doc states the role precisely: "This is the *permitted set* ... and it is deliberately not the acceptance criterion ... What it is used for is the refusal population: every member that is not the declared grouping's answer is a wrong-but-in-range answer the oracle must say no to, and a run that cannot name one has a check that cannot fail." The membership assertion was written, perturbed, found unreachable, and removed. **Fact — the same shape appears in the compiler's own rewrite conformance**: [Numerical semantics](../../numerical-semantics.md) records an exact result-set oracle over three-to-six leaves as "bounded test evidence, not a compile-time authority", enumerating every order-preserving grouping and requiring the *rewrite's* result to be a member. **Inference — that is a different subject and the difference is the whole point.** A rewrite has no plan and declares no grouping, so membership is the strongest claim available about it; a compiled candidate does declare one, so membership is strictly weaker than what is available. Both readings are correct because they are about different objects, and the record states it here so a reader does not port one to the other.
+
+## Part 5 — What the bit-exact oracle keeps owning
+
+**Inference — O1 is not superseded, because there is only ever one comparison relation.** The derived oracle compares bit for bit, exactly as the strict oracle does. What a permissive contract changes is which reference program is evaluated, and O1 is the case where the witness is trivial because the contract left no choice to make. Under a contract strict on `contraction`, `reassociation`, `permutation`, `signed_zero`, `reciprocal_transform`, and `approximate_intrinsics`, `|R(P, C)| = 1` and the strict evaluation *is* the pinned realization.
+
+**Fact — the corpus already writes that claim carefully, and the sentence generalizes.** `crates/tiler-reference/tests/contraction_conformance.rs:28-36` states which conformance level its results claim: strict on both subnormal dimensions with a separately rounded multiply and add, "Its results are therefore *the* value the declared contract names, not a member of an admitted set — which is only meaningful because the declared signature forbids fusion, reassociation, and permutation."
+
+**Fact — and it already states the boundary this record's Part 7 files.** The same header continues: "A device comparison against this oracle is a comparison against the strict reading, and the flushing dimension has to be declared on the comparison rather than absorbed here." **Inference — nothing in the tree is that declaration.** It is per-test prose today, which is exactly why the missing thread of `ReferenceNumericalConformance` through the semantic and declared-order paths is a gap rather than a style question: the obligation is stated, correctly, in a comment, and no object carries it.
+
+So the strict contract keeps its territory whole, and the zero-differing-elements standard the naive decoder-layer baseline meets stays exactly what it is. What the derivation removes is the inference that *bitwise* implies *strict* — a permissive candidate is also qualified bitwise, against a different reference program.
+
+## Part 6 — The worked example: `FLUSH_AND_REASSOCIATE_F32` at four contributors
+
+**Fact — the contract.** `NumericalContract::FLUSH_AND_REASSOCIATE_F32` (`crates/tiler-compiler/src/session.rs:1490`) is `strict_f32` with exactly three resolutions moved: sign-preserving flush on both subnormal dimensions and `reassociation: Permitted`. Its own doc states that "contraction, permutation, signed-zero elimination, reciprocal replacement, approximate intrinsics, and both exceptional-value assumptions stay at their strict resolution". Contracts are not a five-preset enumeration — `is_governed` (`crates/tiler-compiler/src/request.rs:435`) admits any coherent vector whose key is its own canonical encoding — but this one is registered, documented, and measured under.
+
+**Measurement, relayed from [`drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies`](../../../tickets/drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies.md), 2026-08-02.** Apple M4 Max, macOS 27.0 build `26A5388g`, `arm64`, Apple9, offline compiler `Apple metal version 32023.883`, toolchain `nightly-2026-07-19`. A `1x4` reduction under this contract on operands `0x3f400000, 0x3e800000, 0x33400000, 0x33000000` — `0.75`, `0.25`, `3 * 2^-26`, `2^-25`. The serial fold returned `0x3f800000`; the single-workgroup tree and the multi-pass split each declared a `2`-by-`2` partition and each returned `0x3f800001`, matching its own declared grouping bit for bit.
+
+**Inference — the arithmetic reproduces by hand, and the reproduction is what licenses reasoning about candidates nobody ran.** `0.75 + 0.25 = 1.0` exactly. `ulp(1.0) = 2^-23`, so the two tail contributors are `0.375 ulp` and `0.25 ulp`. The serial fold adds them one at a time and each rounds back to `1.0`. The declared `2`-by-`2` split adds them to each other first — `0.625 ulp`, exact — and one add then rounds up, to `0x3f800001`. No step is a tie. Reproduce the whole example, including everything below, with the following — NumPy supplies the binary32 arithmetic, and it is not incidental: a float64 add narrowed back to binary32 double-rounds and is a different computation.
+
+```text
+python3 - <<'PY'
+import struct, numpy as np
+f=lambda b: struct.unpack('>f', struct.pack('>I', b))[0]
+b=lambda x: struct.unpack('>I', struct.pack('>f', x))[0]
+v=[np.float32(f(o)) for o in (0x3f400000,0x3e800000,0x33400000,0x33000000)]
+def groupings(s):
+    if len(s)==1: return [s[0]]
+    return [np.float32(l+r) for i in range(1,len(s)) for l in groupings(s[:i]) for r in groupings(s[i:])]
+g=groupings(v)
+print("groupings", len(g), "distinct", sorted({format(b(x),'08x') for x in g}))
+s=v[0]
+for x in v[1:]: s=np.float32(s+x)
+print("serial", format(b(s),'08x'))
+print("2x2   ", format(b(np.float32(np.float32(v[0]+v[1])+np.float32(v[2]+v[3]))),'08x'))
+print("drops c,d", format(b(np.float32(v[0]+v[1])),'08x'))
+PY
+```
+
+**Fact — the permitted set at these operands has five groupings and two distinct values.** The five order-preserving binary groupings of four leaves produce exactly `{0x3f800000, 0x3f800001}`. This agrees with the ticket's own count ("Over four contributors there are five order-preserving groupings ... On the new operands the five produce two values").
+
+**The five oracles, on this one case:**
+
+| Oracle | Verdict on the tree's `0x3f800001` | Verdict on a kernel that silently dropped contributors `c` and `d` |
+| --- | --- | --- |
+| **O1** strict serial reference `0x3f800000` | **`Violates`** — refuses a correct implementation | `Conforms` — admits a two-contributor kernel |
+| **O2** propagated real-value enclosure | `Violates` — the bracket of the exact real sum `1.000000074505806` contains no rounding room | `Violates` |
+| **O3** `gamma_3` interval about the exact sum | `Conforms` | **`Conforms`** — admits a two-contributor kernel |
+| **O4** membership in `{0x3f800000, 0x3f800001}` | `Conforms` | **`Conforms`** — admits a two-contributor kernel |
+| **O5** `strict_partitioned_sum(t, [axis 1], 2, 2)` = `0x3f800001` | `Conforms` | **`Violates`** |
+
+**Inference — the dropped-contributor column is the elimination made concrete, and it needs no hypothetical defect.** A kernel that computed only `0.75 + 0.25` returns `0x3f800000`, which is a *member of the permitted set* and is *inside the derived bound*. Membership admits it, the interval admits it, and the serial reference admits it — three oracles that each look sound, all admitting a kernel that ignored half its input. Only the declared-order oracle refuses, and it refuses because the plan said `2`-by-`2` and `2`-by-`2` produces something else. This is the same shape the ticket's own perturbation exercised from the other side: reporting the tree's partition as the serial order produced a refusal of `0x3f800001`, and "the refused value is *legal* under this contract".
+
+**Fact — the `gamma_3` interval's admission region, computed exactly.** `u = 2^-24`, `gamma_3 = 3u/(1 - 3u) = 1.788139663006007e-7`, `sum |x_i| = 1.0000000745058060`, so the radius is `1.7881397962327938e-7` about the exact real sum. The representable binary32 values inside are `0x3f7fffff, 0x3f800000, 0x3f800001, 0x3f800002` — **four admitted where the contract permits two**, and the two extras are not values any legal grouping produces.
+
+**Measurement boundary, stated so nothing here is overread.** The device row is one host, one contract, one shape, four contributors, `f32` throughout, all operands normal and positive, and it is relayed rather than re-run. This record adds no device measurement. The hand arithmetic and the interval counts are exact-rational and binary32 computations reproducible by the two commands above on any host, and they are `sound-proof` rather than `bounded-measurement`: they say what the oracles answer, not what any hardware did.
+
+**Fact — and the case is silent about the one dimension Part 7 files.** Every operand and every intermediate here is normal, so the fact that `strict_partitioned_sum` applies no subnormal flush is invisible: the contract flushes on both dimensions and the oracle preserves, and on this operand set the two agree. **Inference — a subnormal-producing operand set at the same shape would make the declared-order oracle and the device disagree for a reason that is not the grouping**, and the disagreement would present as a reduction defect.
+
+## Part 7 — What is actually missing, and what this record files
+
+**One gap that already bites, three that are gated, and one that is a measurement.**
+
+1. **The declared numerical conformance is threaded through one of three oracle paths.** Read at Part 1's table and Outcome's one-line check. Under `FLUSH_AND_REASSOCIATE_F32` the two oracles actually used discharge the reassociation dimension correctly and drop the two subnormal dimensions the same contract resolves to flushing. Failing closed today only because no case is subnormal, and misattributing when one is. → filed `todo`, `apply-the-declared-numerical-conformance-on-every-reference-evaluation-path`.
+2. **The order witness is aggregated by hand, per test, and only for reductions.** `pipeline/tests.rs` reads `partition` out of the region and passes it to `strict_partitioned_sum`; `proof.rs` reads it from the plan's published launch geometry. Nothing derives "the pinned evaluation order of this plan" as an object, and the non-reduction freedom sites — the `PointwiseF32Expression` chain most of all — have no witness at all. This is refusal class 1's population. → filed `todo`, `enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle`. Its delivery names a public boundary, which is Tom's under ADR 0075 and is not self-accepted there.
+3. **`strict_partitioned_sum` expresses one realization shape.** Blocked uniform partitions, serial within, ascending across, at the element width. A multi-round cooperative tile, a wider `accumulation`, and any non-uniform split are all unevaluable. → filed `deferred` with a trigger check log; its trigger is the same one [`separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ`](../../../tickets/separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ.md) records, a cooperative tile whose rounds exceed one.
+4. **The refutation-only derived-bound oracle has no caller.** Its role is derived in Part 4 and it is only reachable for candidates O5 refuses, which are exactly the candidates refusal class 3 describes. → filed `deferred` with a trigger check log.
+5. **Nothing declares whether a backend compiler preserves the emitted evaluation order.** Refusal class 3, with the flags read at `crates/tiler-metal/src/record.rs` and the absence checked against `MetalTargetFacts` and `CapabilityAxis`. → filed `todo` as a bounded experiment; it needs a device measurement this record does not perform and does not presume the outcome of.
+
+## The four-outcome roll-up
+
+Every axis ends in one of AGENTS.md's four sanctioned outcomes, and none in an open-ended note.
+
+| Axis | Outcome class | What closes or discharges it |
+| --- | --- | --- |
+| Which object bounds a program | **Correctness-derived contract update, identified** | O5 survives alone. [Correctness and testing](../../correctness-and-testing.md) already states the reduction-shaped case and would own the general sentence; this record holds no `contracts/numerics` scope and reports the wording to the coordinator rather than writing it |
+| The honest split of freedoms | **Correctness-derived contract update, identified** | Part 3's generating rule and its eleven-dimension walk; [Numerical semantics](../../numerical-semantics.md)'s conformance-level list is the sentence it sharpens |
+| The `Undecided` discipline | **Bounded research deliverable, filed** | Four refusal classes with non-empty populations; `enumerate-the-freedom-sites-…` owns turning class 1 into a plan-side object |
+| The conformance thread | **Bounded implementation deliverable, filed** | `apply-the-declared-numerical-conformance-on-every-reference-evaluation-path`, `todo` — the one gap that bites today |
+| Realization shapes without an evaluator | **Explicit deferral with a trigger, filed** | `derive-the-exact-evaluator-for-a-multi-round-cooperative-fold-order`, `deferred` |
+| The retained refutation oracle | **Explicit deferral with a trigger, filed** | `admit-a-refutation-only-derived-bound-conformance-oracle`, `deferred` |
+| Backend-preserved evaluation order | **Bounded experiment, filed** | `measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order`, `todo` — inputs, procedure, and stop conditions on the ticket |
+
+## Parked for Tom — nothing here is presumed
+
+**One boundary, and it is not this record's to approach.** The witness object of Part 2.4 and any change to `ReferenceNumericalConformance`'s construction are a public boundary of an accepted surface under ADR 0075. This record designs no Rust surface and proposes no spelling; it derives what the object must determine and states the obligation the design carries. The implementing ticket takes the surface to Tom rather than self-accepting it, and its ticket says so.
+
+**No genuine fork survived the elimination**, so nothing else is parked. Part 2.3 is stated so that a reader can refute the elimination rather than only the conclusion: the way to overturn O5 is to exhibit a candidate class Tiler emits whose order is not pinnable *and* which must be qualified rather than refused. Refusal class 3 is the closest such class and it is filed as a measurement rather than assumed either way.
+
+## What this record does not establish
+
+- **No contract changed and no decision was made.** No permission admitted, no ADR proposed, no dimension added, no crate touched, no catalog edited. `implementation_status` is `partial` because the surviving object is implemented for one topology family and one dimension, which is the honest high-water mark rather than a claim about the general case.
+- **Nothing here is measured on any device.** The one hardware row is relayed from a merged ticket with its boundary restated. The interval counts and the grouping enumeration are exact arithmetic reproducible by the two commands quoted, and they are evidence about what the five oracles answer, not about what any hardware does.
+- **The derivation is a pencil argument checked by hand on one four-contributor case.** It is `sound-proof` within the stated model — binary32, round-to-nearest-ties-to-even, the standard model's side conditions as the certified-bounds record states them — and no machine has checked it. The `gamma` bound it prices O3 with is read in a peer-reviewed restatement rather than in the monograph that proves it, exactly as the certified-bounds record records.
+- **The eleven-dimension walk is exhaustive over the vocabulary and not over the future.** Distributivity and elementary-function identity are named normatively and unpermissioned; Part 3's generating rule is stated so a twelfth or thirteenth dimension is classified by applying it rather than by extending a list, but neither has been classified here because neither is grantable.
+- **Nothing here claims the missing pieces are small.** Gap 2 in particular is a plan-side object over every freedom site in a program, and its size is exactly the number of places a contract can grant a freedom — which is not the number of reduction topologies.
