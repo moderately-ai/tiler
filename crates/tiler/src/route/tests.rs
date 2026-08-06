@@ -21,11 +21,12 @@ use super::{
     RouteFacts, RouteOutcome, bind_route_and_build, dispatch_embedded_route,
     producer_declared_equality,
 };
+use crate::artifact::program::ArithmeticType;
 use crate::expansion::{OperandExtent, OperandFacts, RegionFacts, ResultAxis, ResultFacts};
 use crate::runtime::adapter::{AdapterRouteFailure, LiveExecutionContext, RuntimeAdapter};
 use crate::runtime::load::{
-    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
-    RoutedEntry, TargetPropertyRequest,
+    DTypeDispatch, DTypeDispatchResolution, ExecutionEnvironment, LiveDeviceObservation,
+    LiveDeviceRequest, Preflight, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 use crate::value::{
     AdapterCapability, BindError, DispatchAdapter, OperandAxis, RegionRequest, ResultRequest,
@@ -282,6 +283,20 @@ const REGION: RegionFacts = RegionFacts {
     },
 };
 
+/// The dtype-dispatchability rows a delivering expansion emits, in the shape it
+/// emits them.
+///
+/// Two rows rather than one, and one of each verdict rather than two of the
+/// same: a conversion that read the first row for every entry, or that collapsed
+/// the two verdicts, would still pass a single-row fixture. The values are the
+/// *shape* an expansion emits and not a claim about any profile — what the bound
+/// macOS declaration actually declares is asserted in `tiler-build`, which owns
+/// those rows.
+const EMITTED_ROWS: &[(ArithmeticType, DTypeDispatch)] = &[
+    (ArithmeticType::Bf16, DTypeDispatch::Unsupported),
+    (ArithmeticType::F32, DTypeDispatch::Dispatchable),
+];
+
 /// Route facts whose every field is well formed but whose bytes are not an
 /// artifact.
 ///
@@ -297,6 +312,7 @@ fn well_formed_facts(artifact: &'static [u8], payload: Option<usize>) -> RouteFa
         target_profile_descriptor: b"a descriptor identity",
         backend: "tiler.metal",
         representation: "metallib",
+        dtype_dispatch: EMITTED_ROWS,
     }
 }
 
@@ -361,13 +377,27 @@ fn an_empty_envelope_is_refused() {
 /// would leave the others able to panic or to be silently accepted.
 #[test]
 fn every_unrestatable_emitted_fact_is_an_expansion_defect() {
-    let cases: [(RouteFacts, &str); 4] = [
+    // One arithmetic type carrying two verdicts. A map cannot hold both, so
+    // without this case the second row would silently win and the environment
+    // would state a verdict the expansion never declared twice over.
+    const REPEATED: &[(ArithmeticType, DTypeDispatch)] = &[
+        (ArithmeticType::F32, DTypeDispatch::Dispatchable),
+        (ArithmeticType::F32, DTypeDispatch::Unsupported),
+    ];
+    let cases: [(RouteFacts, &str); 5] = [
         (
             RouteFacts {
                 target_profile_key: "",
                 ..well_formed_facts(b"not an artifact", Some(0))
             },
             "target profile key",
+        ),
+        (
+            RouteFacts {
+                dtype_dispatch: REPEATED,
+                ..well_formed_facts(b"not an artifact", Some(0))
+            },
+            "arithmetic type",
         ),
         (
             RouteFacts {
@@ -393,8 +423,8 @@ fn every_unrestatable_emitted_fact_is_an_expansion_defect() {
     ];
     assert_eq!(
         cases.len(),
-        4,
-        "the population this test covers is every governed key a route restates, counted",
+        5,
+        "the population this test covers is every emitted fact a route restates, counted",
     );
     for (facts, subject) in cases {
         let outcome = outcome(&facts);
@@ -404,6 +434,67 @@ fn every_unrestatable_emitted_fact_is_an_expansion_defect() {
         assert!(
             detail.contains(subject),
             "the refusal for a malformed {subject} must name it: {detail}",
+        );
+    }
+}
+
+/// The published environment's dtype rows are the emitted ones and nothing else.
+///
+/// The whole of what emitting the rows bought: the map a loader classifies
+/// against is a transcription of [`RouteFacts::dtype_dispatch`], so a producer
+/// whose profile refuses a dtype publishes that refusal here rather than having
+/// it replaced by whatever this crate would otherwise have assumed. Both
+/// verdicts are read back, because a conversion that mapped every row to
+/// `Dispatchable` would be the permissive default this boundary must not have.
+#[test]
+fn the_published_environment_states_exactly_the_emitted_dtype_rows() {
+    let environment = super::execution_environment(&well_formed_facts(b"", Some(0)))
+        .expect("the fixture facts restate a governed environment");
+    assert_eq!(
+        environment.classify_dtype(ArithmeticType::F32),
+        DTypeDispatchResolution::Dispatchable,
+    );
+    assert_eq!(
+        environment.classify_dtype(ArithmeticType::Bf16),
+        DTypeDispatchResolution::Unsupported,
+        "an emitted refusal must survive as a stated negative, not be dropped into silence",
+    );
+    // Every type the vocabulary defines that the fixture does not emit, rather
+    // than a chosen example: a conversion that seeded the map from the whole
+    // vocabulary would pass a two-case check.
+    for arithmetic in ArithmeticType::ALL {
+        if EMITTED_ROWS.iter().any(|(row, _)| *row == arithmetic) {
+            continue;
+        }
+        assert_eq!(
+            environment.classify_dtype(arithmetic),
+            DTypeDispatchResolution::Unknown,
+            "{} is not an emitted row and must not acquire a verdict here",
+            arithmetic.canonical_type_key(),
+        );
+    }
+}
+
+/// An expansion that emitted no dtype row publishes a host that dispatches
+/// nothing.
+///
+/// The fail-closed direction, asserted rather than left to follow from the map
+/// being empty: `RouteFacts::dtype_dispatch` is a slice an expansion fills, and
+/// the honest answer for a producer that declared nothing is a host that routes
+/// nothing — never a permissive default supplied here because the slice was
+/// short.
+#[test]
+fn an_expansion_that_emits_no_dtype_row_publishes_a_host_that_dispatches_nothing() {
+    let environment = super::execution_environment(&RouteFacts {
+        dtype_dispatch: &[],
+        ..well_formed_facts(b"", Some(0))
+    })
+    .expect("an empty rows literal is well formed");
+    for arithmetic in ArithmeticType::ALL {
+        assert!(
+            !environment.classify_dtype(arithmetic).is_dispatchable(),
+            "{} must not be dispatchable on a host that was told nothing",
+            arithmetic.canonical_type_key(),
         );
     }
 }

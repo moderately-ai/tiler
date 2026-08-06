@@ -10,14 +10,20 @@
 //! An expansion that stated a selected artifact family embeds one artifact
 //! envelope as a byte-string literal, together with the facts its *producer*
 //! declared about it: the artifact's canonical identity, the target profile key
-//! and exact descriptor the plan was compiled under, and the backend and
-//! representation the payload realizes. [`RouteFacts`] is that record, and
-//! `tiler_macros::aot` is the only thing that constructs one.
+//! and exact descriptor the plan was compiled under, the backend and
+//! representation the payload realizes, and the dtype-dispatchability rows that
+//! profile declares. [`RouteFacts`] is that record, and `tiler_macros::aot` is
+//! the only thing that constructs one.
 //!
-//! Those facts are read from the produced artifact rather than restated: the
-//! expansion takes each of them off the verified artifact program it just
-//! assembled, so a frontend-local copy cannot come to disagree with the bytes it
-//! ships beside.
+//! Those facts are emitted rather than restated, and the two sources are stated
+//! separately because the artifact carries one of them and not the other. The
+//! identity, profile reference, backend, and representation are taken off the
+//! verified artifact program the expansion just assembled, so a frontend-local
+//! copy cannot come to disagree with the bytes it ships beside. The dtype rows
+//! have no counterpart in the envelope at all — an artifact declares no
+//! dispatchability — so they are read from
+//! `tiler_build::BoundMetalCompileDeclaration`, the declaration the plan was
+//! compiled under and the same `TargetProfile` the compile gate consulted.
 //!
 //! # This is producer-declared equality, not host-earned eligibility
 //!
@@ -31,6 +37,14 @@
 //! distinction in the same words, and the reason it must be said here too is
 //! that a reader who mistook one for the other would read a successful decode —
 //! or now a successful *dispatch* — as a qualified host.
+//!
+//! **The dtype rows are producer-declared on exactly the same terms, and
+//! emitting them did not change that.** What emission removed is a call-site
+//! literal standing in for a declaration; what it could not remove is that this
+//! crate binds no device before an adapter exists, so the row it publishes is
+//! the producer's and an integration that echoes it back has settled the route
+//! on producer-declared equality. [`execution_environment`] carries the full
+//! derivation and names the one place a host-earned row can come from instead.
 //!
 //! An integration's adapter is the one that answers
 //! [`RuntimeAdapter::bind_execution_context`](crate::runtime::adapter::RuntimeAdapter::bind_execution_context),
@@ -150,6 +164,19 @@ pub struct RouteFacts {
     pub backend: &'static str,
     /// The governed executable representation the embedded payload is in.
     pub representation: &'static str,
+    /// The dtype-dispatchability rows that profile declares, as it declares them.
+    ///
+    /// A slice of pairs rather than a map, because a `&'static` literal is what
+    /// an expansion can emit; this module's `execution_environment` is where it
+    /// becomes the map [`ExecutionEnvironment`] holds, and where a repeated
+    /// arithmetic type is refused rather than resolved by insertion order.
+    ///
+    /// **Omission is the emitted answer for a dtype nobody measured**, and it is
+    /// not a gap in this record. `tiler_build::BoundMetalCompileDeclaration::
+    /// dtype_dispatchability_rows` publishes only exact declarations, so a dtype
+    /// the producer's profile resolves `Unknown` or `Deferred` is absent here —
+    /// and a host that states nothing about a dtype refuses it.
+    pub dtype_dispatch: &'static [(ArithmeticType, DTypeDispatch)],
 }
 
 /// How far a guarded selection got, and whether the region fell back.
@@ -355,32 +382,55 @@ fn checked_length<A: DispatchAdapter>(
 
 /// Restates the producer's declared environment from the emitted facts.
 ///
-/// # The dtype row is the one field with no emitted fact behind it
+/// # Every field is now an emitted fact, the dtype rows included
 ///
-/// Every other field is read from [`RouteFacts`], which the expansion emitted.
-/// There is no dtype-dispatchability fact in that record, so this states `f32`
-/// alone, and the derivation is worth writing down because the alternative
-/// readings are both wrong.
+/// The dtype-dispatchability rows used to be the one field this function
+/// *asserted* — `f32` alone, on the reasoning that `tiler-compiler` had already
+/// refused any request whose dtype the selected profile did not resolve
+/// `Dispatchable`. That reasoning was sound and the value was still a call-site
+/// literal, which is the failure mode ADR 0086 item 4 excludes by name in
+/// another subject: a row nobody emitted, standing in for one somebody declared.
+/// [`RouteFacts::dtype_dispatch`] closes it. The rows come from the same
+/// `TargetProfile` the compile gate consulted, and a widened, narrowed, or
+/// retracted measurement moves them.
 ///
-/// It is **not** an observation about this machine. Nothing here bound a device,
-/// and ADR 0086 is explicit that a public execution-environment row is a validity
-/// scope rather than an applicability authority.
+/// # This crate cannot earn a host row, and that is structural rather than
+/// pending
 ///
-/// It is a restatement of something the *compile* gate already proved: an
-/// expansion only produces an artifact if `tiler-compiler` admitted the request,
-/// and `RequestError::DTypeNotDispatchable` refuses one whose dtype the selected
-/// target profile does not resolve `Dispatchable` at the compile profile. So an
-/// embedded artifact is evidence that its own profile declared its dtypes
-/// dispatchable — which makes the runtime's dtype check tautological on this
-/// path, exactly as [`ExecutionEnvironment::classify`] already is here.
+/// The environment built here is an **input** to
+/// [`DispatchAdapter::dispatcher`](crate::value::DispatchAdapter::dispatcher):
+/// [`dispatch_embedded_route`] must have it before the integration's adapter
+/// exists, so there is no point on this path at which a device could be
+/// consulted, and this crate holds none of its own in any case. Emitting the row
+/// therefore removes the *asserted literal* and does not make the comparison
+/// non-tautological here — an artifact whose profile declared its dtypes
+/// dispatchable is being compared against that same declaration, exactly as
+/// [`ExecutionEnvironment::classify`] compares the profile against itself.
 ///
-/// That tautology is the gap, not the design. Closing it means emitting the
-/// declared row into `RouteFacts` so this restates a fact instead of asserting
-/// one, and widening past `f32` requires it — a `bf16` region reaching this
-/// function today would be refused, correctly, for a reason this comment is the
-/// only record of. `declare-host-dtype-dispatchability-at-the-consumer-boundary`
-/// carries that work.
+/// **Where a host-earned row can arise is the adapter, and only the adapter.**
+/// An integration answers
+/// [`RuntimeAdapter::bind_execution_context`](crate::runtime::adapter::RuntimeAdapter::bind_execution_context)
+/// with the environment the route is actually settled against, and it holds the
+/// device this crate does not. One that returns
+/// [`RegionRequest::declared_environment`] verbatim has chosen producer-declared
+/// equality for the dtype rows along with everything else, and
+/// [`PRODUCER_DECLARED_EQUALITY`] is the label that says so. One that observes
+/// its device per dtype states what it observed. Nothing here can make that
+/// choice on an integration's behalf, and a row this function invented would
+/// take it away.
+///
+/// # Errors
+///
+/// Returns the field that could not be restated, including a rows literal
+/// stating one arithmetic type twice — which would otherwise be resolved by
+/// insertion order into a verdict neither row states.
 fn execution_environment(route: &RouteFacts) -> Result<ExecutionEnvironment, &'static str> {
+    let mut dtype_dispatch = BTreeMap::new();
+    for (arithmetic, verdict) in route.dtype_dispatch {
+        if dtype_dispatch.insert(*arithmetic, *verdict).is_some() {
+            return Err("the recorded dtype dispatch rows state one arithmetic type twice");
+        }
+    }
     Ok(ExecutionEnvironment {
         target_profile: TargetProfileRef {
             key: TargetProfileKey::new(route.target_profile_key)
@@ -394,10 +444,10 @@ fn execution_environment(route: &RouteFacts) -> Result<ExecutionEnvironment, &'s
             .map_err(|_| "the recorded backend family is not a governed backend key")?,
         representation: RepresentationKey::new(route.representation)
             .map_err(|_| "the recorded representation is not a governed representation key")?,
-        // `f32` alone, and deliberately not `bf16`: see this function's heading
-        // for why this is a restatement of the compile gate rather than a host
-        // observation, and why widening it needs an emitted fact first.
-        dtype_dispatch: BTreeMap::from([(ArithmeticType::F32, DTypeDispatch::Dispatchable)]),
+        // Carried across whole rather than filtered: an emitted `Unsupported` is
+        // a stated negative the loader reports differently from silence, so
+        // dropping it here would turn a measured refusal into an unmeasured one.
+        dtype_dispatch,
     })
 }
 

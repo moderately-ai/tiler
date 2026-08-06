@@ -758,6 +758,70 @@ fn the_emitted_route_facts_name_the_embedded_artifact_rather_than_copying_it() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// The emitted dtype rows are the compiled-under declaration's own, and the
+/// source spells each one in the vocabulary a host states.
+///
+/// **This is the correspondence the consumer boundary rests on.** `crates/tiler`
+/// can only check that it restates whatever slice it was handed; what makes that
+/// slice a *fact* rather than an assertion is that it comes from the same
+/// `TargetProfile` this expansion compiled against, and this is the only place
+/// both are in scope at once. The expected value is read from the declaration
+/// rather than transcribed, so widening the ledger's measured dtypes moves both
+/// sides together; that the declaration's own rows are the ledger's is
+/// `tiler-build`'s to pin, and it does.
+///
+/// The rendered paths are asserted separately because the rows are emitted as
+/// *source*: a renderer that produced a well-typed pair naming the wrong variant
+/// would satisfy the value comparison and still emit a verdict nothing declared.
+#[test]
+fn the_emitted_dtype_rows_are_the_declarations_own() {
+    let root = scratch("route-facts-dtype");
+    let program = approved_region();
+    let delivered = deliver(
+        Some(&program),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &PreflightGate::new(),
+        &automatic(&EvictionGate::new()),
+        &Toolchain::system(),
+    )
+    .expect("it builds");
+
+    let declaration =
+        BoundMetalCompileDeclaration::first_macos_apple9().expect("the declaration assembles");
+    let facts = delivered
+        .route_facts
+        .as_ref()
+        .expect("a built family carries route facts");
+    assert_eq!(
+        facts.dtype_dispatch(),
+        declaration.dtype_dispatchability_rows(),
+        "the emitted rows must be the compiled-under declaration's, not a frontend-local list",
+    );
+    assert!(
+        !facts.dtype_dispatch().is_empty(),
+        "a declaration stating no dispatchable dtype could not have compiled this region at all",
+    );
+
+    let source = facts.source(
+        crate::delivery::ARTIFACT_BINDING,
+        crate::delivery::SELECTED_PAYLOAD_BINDING,
+    );
+    for (arithmetic, verdict) in facts.dtype_dispatch() {
+        let rendered = format!(
+            "({}, {})",
+            super::arithmetic_type_path(*arithmetic),
+            super::dtype_dispatch_path(*verdict),
+        );
+        assert!(
+            source.contains(&rendered),
+            "the emitted source must spell {rendered}: {source}",
+        );
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// A build host with no Apple toolchain retains a family-scoped diagnostic
 /// instead of failing the whole invocation.
 ///
