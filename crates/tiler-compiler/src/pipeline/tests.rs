@@ -265,7 +265,23 @@ enum Bf16Canonicalization {
 /// graph-specific reconstruction.
 struct KirMachine<'a> {
     kernel: &'a VerifiedKernel,
-    input: KirElements<'a>,
+    /// One boundary payload per declared read buffer, in declaration order.
+    ///
+    /// A list rather than one payload, because a region reads one tensor per
+    /// program input and the families that compute nothing are only worth
+    /// compiling beside the operand they address: the workload's occurrence is
+    /// `activation * broadcast(weight)`, whose region binds two reads at
+    /// *different* element counts. A machine holding one payload cannot model
+    /// that at all — the widened read addresses its operand's range, which is
+    /// the smaller of the two.
+    inputs: Vec<KirElements<'a>>,
+    /// Position in [`Self::inputs`] for each declared read buffer.
+    ///
+    /// Resolved from the kernel's own signature rather than from load order: a
+    /// buffer parameter's position *is* its argument-table ordinal, and a body
+    /// that happens to load its second operand first would otherwise bind the
+    /// payloads the wrong way round and still produce a plausible tensor.
+    reads: BTreeMap<tiler_ir::kernel::VerifiedBufferId, usize>,
     output: KirOutputs,
     canonicalization: Bf16Canonicalization,
     values: BTreeMap<tiler_ir::kernel::VerifiedValueId, KirValue>,
@@ -283,15 +299,48 @@ struct KirMachine<'a> {
 impl<'a> KirMachine<'a> {
     fn run(
         kernel: &'a VerifiedKernel,
-        input: KirElements<'a>,
+        inputs: &[KirElements<'a>],
         canonicalization: Bf16Canonicalization,
     ) -> KirOutputs {
-        let mut buffers = kernel.buffers();
-        let read = buffers.next().expect("a read buffer parameter");
-        let write = buffers.next().expect("a write buffer parameter");
-        assert_eq!(read.access, tiler_ir::kernel::BufferAccess::Read);
-        assert_eq!(write.access, tiler_ir::kernel::BufferAccess::Write);
-        assert_eq!(input.len(), usize::try_from(read.element_count).unwrap());
+        // Walked once over the declared signature, so the read population is
+        // *counted* against the payloads offered rather than consumed until one
+        // side runs out: a fixture binding three payloads to a two-read kernel
+        // would otherwise leave the third silently unread.
+        let mut reads = BTreeMap::new();
+        let mut write = None;
+        for (id, parameter) in kernel.declared_buffers() {
+            match parameter.access {
+                tiler_ir::kernel::BufferAccess::Read => {
+                    let position = reads.len();
+                    let payload = inputs
+                        .get(position)
+                        .unwrap_or_else(|| panic!("no payload bound for read buffer {position}"));
+                    // Against the *parameter's* own count, which is the read's
+                    // addressable range and not the region's domain. A widening
+                    // broadcast is exactly the case where the two differ, so
+                    // comparing against the domain would admit a payload the
+                    // kernel can address past the end of.
+                    assert_eq!(
+                        payload.len(),
+                        usize::try_from(parameter.element_count).unwrap(),
+                        "the payload bound to read buffer {position} is not its declared length",
+                    );
+                    reads.insert(id, position);
+                }
+                tiler_ir::kernel::BufferAccess::Write => {
+                    assert!(
+                        write.replace(parameter).is_none(),
+                        "this machine models one written boundary",
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            reads.len(),
+            inputs.len(),
+            "the fixture bound a payload the kernel declares no read buffer for",
+        );
+        let write = write.expect("a write buffer parameter");
         let outputs = usize::try_from(write.element_count).unwrap();
         // Read from the kernel's own staging declaration, so the machine still
         // resolves nothing from the schedule, the request, or the graph: a
@@ -310,7 +359,8 @@ impl<'a> KirMachine<'a> {
         };
         let mut machine = KirMachine {
             kernel,
-            input,
+            inputs: inputs.to_vec(),
+            reads,
             output,
             canonicalization,
             values: BTreeMap::new(),
@@ -496,9 +546,18 @@ impl<'a> KirMachine<'a> {
                     };
                     self.define(&mut results, value);
                 }
-                OperationView::Load { offset, .. } => {
+                // Addressed through the buffer the load *names*, not through
+                // whichever payload the machine holds. That is the whole reason
+                // a structural region is interpretable here: the widened read
+                // and the dense one differ in nothing a body-shaped model sees
+                // except which parameter they carry.
+                OperationView::Load { buffer, offset, .. } => {
                     let offset = usize::try_from(self.get(offset).index()).unwrap();
-                    let value = match self.input {
+                    let position = *self
+                        .reads
+                        .get(&buffer)
+                        .expect("a load names a declared read buffer");
+                    let value = match self.inputs[position] {
                         KirElements::F32(values) => KirValue::F32(values[offset]),
                         KirElements::Bf16(values) => KirValue::Bf16(values[offset]),
                     };
@@ -572,11 +631,17 @@ impl<'a> KirMachine<'a> {
 }
 
 pub(super) fn interpret_fused(kernel: &VerifiedKernel, input: &[f32]) -> Vec<f32> {
-    match KirMachine::run(
-        kernel,
-        KirElements::F32(input),
-        Bf16Canonicalization::Applied,
-    ) {
+    interpret_fused_inputs(kernel, &[input])
+}
+
+/// Interprets one `f32` kernel over one payload per declared read buffer.
+///
+/// `inputs` is in the kernel's own buffer declaration order, which the region
+/// builder fixes as ascending input ordinal followed by the owning write — so a
+/// caller binds its program's declared inputs in the order it declared them.
+pub(super) fn interpret_fused_inputs(kernel: &VerifiedKernel, inputs: &[&[f32]]) -> Vec<f32> {
+    let payloads: Vec<KirElements<'_>> = inputs.iter().copied().map(KirElements::F32).collect();
+    match KirMachine::run(kernel, &payloads, Bf16Canonicalization::Applied) {
         KirOutputs::F32(values) => values,
         KirOutputs::Bf16(_) => panic!("an f32 fixture produced a bf16 boundary"),
     }
@@ -588,7 +653,7 @@ fn interpret_bf16(
     input: &[u16],
     canonicalization: Bf16Canonicalization,
 ) -> Vec<u16> {
-    match KirMachine::run(kernel, KirElements::Bf16(input), canonicalization) {
+    match KirMachine::run(kernel, &[KirElements::Bf16(input)], canonicalization) {
         KirOutputs::Bf16(values) => values,
         KirOutputs::F32(_) => panic!("a bf16 fixture produced an f32 boundary"),
     }
@@ -898,6 +963,175 @@ fn a_reindex_reaches_a_kernel_matching_the_reference_evaluator() {
     // agreed with a wrong compiler would still be caught here. Row-major `[2, 2]`
     // reversed on axis 1 is each row read backwards.
     assert_eq!(actual, vec![2.0, 1.0, 8.0, 4.0]);
+}
+
+/// Compiles one two-input `f32` program and returns its kernel's result beside
+/// the reference evaluator's, both as bits.
+///
+/// The two payloads are bound to the reference by *key* and to the kernel by
+/// buffer declaration order, which are independent routes to the same
+/// correspondence: a compiler that ordered its region's reads against the
+/// program's declared inputs would disagree here rather than agree by
+/// construction.
+fn compiled_and_reference_bits(
+    semantic: &SemanticProgram,
+    bindings: &[(&str, Shape, &[f32]); 2],
+) -> (Vec<u32>, Vec<u32>) {
+    let product =
+        compile(CompilationRequest::governed(semantic)).expect("the structural program compiles");
+    let fused = alternative(&product, ProgramAlternativeKind::Fused);
+    let actual = interpret_fused_inputs(&fused.kernels[0], &[bindings[0].2, bindings[1].2]);
+
+    let keys: Vec<InputKey> = bindings
+        .iter()
+        .map(|(key, ..)| InputKey::new(key).unwrap())
+        .collect();
+    let tensors: Vec<Tensor> = bindings
+        .iter()
+        .map(|(_, shape, values)| f32_tensor(shape.clone(), values))
+        .collect();
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(
+            semantic,
+            &[
+                InputBinding::new(&keys[0], &tensors[0]),
+                InputBinding::new(&keys[1], &tensors[1]),
+            ],
+        )
+        .unwrap();
+    (bits_of(&actual), tensor_bits(&expected[0]))
+}
+
+/// A widening broadcast reaches a kernel whose result is the reference
+/// evaluator's, bit for bit.
+///
+/// **This is the ticket's user-visible outcome at its smallest honest size.**
+/// The program is `out = a * broadcast(w)` with `a` at `[2, 2]` and `w` declared
+/// at `[2]` and read at every row — the `[1024]`-against-`[T, 1024]` shape of the
+/// normalization weight multiply, which is 113 of the pinned workload's 197
+/// broadcast occurrences. Only the extents are smaller: the governed baseline
+/// profile declares a four-thread grid axis, so a wider domain would decline for
+/// a launch reason and stop being evidence about the access relation.
+///
+/// **The two reads are at different element counts, and that is the point.** The
+/// widened read addresses its *operand's* range — two elements against the
+/// region's four — so a region binding it against the domain would address past
+/// the weight's end, and a machine holding one payload could not model the
+/// program at all.
+///
+/// Bit-compared rather than approximately compared, for the reason the reindex
+/// test states: a broadcast computes nothing, so every weight the multiply reads
+/// must be an input element unchanged, and a tolerance would hide the only way
+/// this can be wrong — replicating along the wrong axis.
+#[test]
+fn a_broadcast_reaches_a_kernel_matching_the_reference_evaluator() {
+    let domain = Shape::from_dims([2, 2]);
+    let weight_shape = Shape::from_dims([2]);
+    // Distinct and exactly representable on both sides. The weight's two entries
+    // must differ: a uniform weight makes replication along axis 0
+    // indistinguishable from replication along axis 1, which is exactly the
+    // defect this test exists to catch.
+    let activations: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+    let weights: Vec<f32> = vec![3.0, 5.0];
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), domain.clone())
+        .unwrap();
+    let w = builder
+        .input::<F32>(InputKey::new("w").unwrap(), weight_shape.clone())
+        .unwrap();
+    let mapping = tiler_ir::semantic::BroadcastAxisMapping::new(
+        [
+            tiler_ir::shape::Extent::new(2),
+            tiler_ir::shape::Extent::new(2),
+        ],
+        [
+            tiler_ir::semantic::BroadcastAxisSource::Replicate,
+            tiler_ir::semantic::BroadcastAxisSource::FromOperand(Axis::new(0)),
+        ],
+    )
+    .expect("one replicated axis over a rank-one operand is an admitted relation");
+    let widened = tiler_ir::semantic::F32Broadcast::apply(&mut builder, &mapping, w)
+        .expect("the standard registry admits the broadcast family");
+    let scaled = F32Multiply::apply(&mut builder, a, widened).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), scaled)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let (actual, expected) = compiled_and_reference_bits(
+        &semantic,
+        &[("a", domain, &activations), ("w", weight_shape, &weights)],
+    );
+    assert_eq!(actual, expected);
+    // Stated independently of the oracle as well, so a reference evaluator that
+    // agreed with a wrong compiler would still be caught. Row-major `[2, 2]`
+    // against a `[2]` weight replicated over axis 0 is `out[i][j] = a[i][j] *
+    // w[j]`; replicating over the *other* axis would give `3, 6, 20, 40`, which
+    // is why this literal discriminates.
+    assert_eq!(actual, bits_of(&[3.0, 10.0, 12.0, 40.0]));
+}
+
+/// A reindex feeding a pointwise multiply reaches a kernel matching the
+/// reference evaluator, bit for bit.
+///
+/// **This is Milestone 2's "reindex plus pointwise fusion" at the smallest
+/// domain the governed profile launches.** The program is
+/// `out = permute(a) * b`, where the permutation is `rearrange('i j -> j i')` —
+/// an einops `rearrange` written in the one form the `Reindex` family spells for
+/// it, `permute-axes`. Both operands are declared inputs at `[2, 2]`, so one
+/// region carries a structural read and a dense read side by side, which is what
+/// "fused" means here: no intermediate is materialized between the rearrangement
+/// and the arithmetic, and the transpose contributes an access map rather than a
+/// copy kernel.
+///
+/// **The reindex half is deliberately not the reversal.** `reverse-axis` is the
+/// one form whose decode mirrors, and its bit comparison is already
+/// [`a_reindex_reaches_a_kernel_matching_the_reference_evaluator`]'s. A permute
+/// exercises the divide-and-modulo decode instead, over a *second* read the
+/// region addresses densely in the same body — the composition neither of those
+/// two tests covers on its own.
+#[test]
+fn a_reindexed_operand_feeding_a_multiply_matches_the_reference_evaluator() {
+    let domain = Shape::from_dims([2, 2]);
+    // Powers of two, so every product below is exact and any disagreement is a
+    // wrong *element* rather than a rounding. Deliberately not symmetric under
+    // transposition: `a` transposed is `1, 4, 2, 8`, so a compiler that dropped
+    // the permutation entirely would produce a different tensor.
+    let left: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+    let right: Vec<f32> = vec![3.0, 5.0, 7.0, 11.0];
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), domain.clone())
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), domain.clone())
+        .unwrap();
+    let transposed = tiler_ir::semantic::F32Reindex::apply(
+        &mut builder,
+        &tiler_ir::semantic::ReindexForm::permute_axes([Axis::new(1), Axis::new(0)])
+            .expect("an axis permutation is an admitted form"),
+        a,
+    )
+    .expect("the standard registry admits the reindex family");
+    let scaled = F32Multiply::apply(&mut builder, transposed, b).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), scaled)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let (actual, expected) = compiled_and_reference_bits(
+        &semantic,
+        &[("a", domain.clone(), &left), ("b", domain, &right)],
+    );
+    assert_eq!(actual, expected);
+    // Independently of the oracle: `a` transposed is `1, 4, 2, 8`, multiplied
+    // elementwise by `3, 5, 7, 11`. Without the permutation the product would be
+    // `3, 10, 28, 88`, which is what makes this literal discriminating.
+    assert_eq!(actual, bits_of(&[3.0, 20.0, 14.0, 88.0]));
 }
 
 fn assert_fused_matches_reference(shape: Shape, values: Vec<f32>, scale_bits: u32, bias_bits: u32) {

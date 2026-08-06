@@ -60,18 +60,20 @@
 //! shared reads are now properties of the caller's program rather than of a
 //! shape the recognizer was taught.
 //!
-//! The refusal then passed to `tiler::silu-f32@1`, and it has now passed on
-//! again — which is the second transition this file records rather than
-//! asserts. The activation compiles: no `PointwiseF32Node` spells a
+//! The refusal then passed to `tiler::silu-f32@1`, and it has now passed off the
+//! pair entirely — which is the second and third transitions this file records
+//! rather than asserts. The activation compiles: no `PointwiseF32Node` spells a
 //! sigmoid-weighted linear unit, but its *per-point body* is expressible in that
 //! vocabulary, and the boundary projects it by driving the one function that
 //! states the composition — the same one the governed index-access lowering
-//! drives — rather than re-deriving a provider's arithmetic. What still refuses
-//! is `tiler::reindex-f32@1`, whose *access relation* `LogicalAccess` cannot
-//! spell at all, so there is no projection to make. The pair is the assertion:
-//! two registered unary families with registered lowering capabilities, one
-//! admitted and one refused, so `operation-set` reads which vocabulary is
-//! missing rather than the family's arity.
+//! drives — rather than re-deriving a provider's arithmetic. `tiler::reindex-f32@1`
+//! then compiled too, once `LogicalAccess::ReindexBijection` gave its *access
+//! relation* a spelling. The pair is kept and its purpose inverts: two
+//! registered unary families with registered lowering capabilities now reach a
+//! region by routes that are not interchangeable — one projects a body, the
+//! other contributes a coordinate map and no body — and holding them together is
+//! what would catch a widening that admitted the structural half by projecting
+//! it, which would have to materialize the operand.
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
@@ -316,24 +318,27 @@ fn the_deeper_three_input_region_compiles_wherever_a_mixed_body_is_admitted() {
     }
 }
 
-/// The activation compiles; the family whose *access relation* has no spelling
-/// still refuses, with a named rule.
+/// A family with no node of its own compiles, by projection or by addressing.
 ///
-/// **This is the assertion that changed direction, and the pair is what makes it
-/// evidence.** Both programs state one registered unary family over one declared
-/// input, and both families carry a registered index-access lowering capability.
-/// `tiler::silu-f32@1` now compiles to a complete verified plan: its per-point
-/// body is expressible in the physical expression vocabulary, and the boundary
-/// projects it by driving the *same* function the governed index-access lowering
-/// drives, so the composition is stated once rather than re-derived here.
-/// `tiler::reindex-f32@1` still refuses: `LogicalAccess` has no reindex map, so
-/// there is no projection to make, and admitting it would produce a program the
-/// physical layer cannot express.
+/// **The pair is the assertion, and both halves have now changed direction.**
+/// Both programs state one registered unary family over one declared input, and
+/// both families carry a registered index-access lowering capability, yet
+/// neither has a `PointwiseF32Node` of its own. They reach a region by routes
+/// that are not interchangeable: `tiler::silu-f32@1` has its per-point body
+/// *projected* into the physical expression vocabulary, by driving the same
+/// function the governed index-access lowering drives, so the composition is
+/// stated once rather than re-derived here; `tiler::reindex-f32@1` projects no
+/// body at all and contributes a `LogicalAccess::ReindexBijection` read map
+/// instead.
 ///
-/// The refusal names `operation-set` — the property that was not recognized —
-/// and precedes any target-qualified trace, which `compile_under` asserts.
+/// The structural half refused under `operation-set` until that relation landed.
+/// Keeping the two together is what stops "a registered family with no node"
+/// reading as one mechanism: a widening that admitted the structural half *by
+/// projection* would satisfy a test asserting only that it compiles, and would
+/// be wrong — a projection has to materialize the operand, adding the observable
+/// rounding boundary the family's admission exists to avoid.
 #[test]
-fn a_family_outside_the_expression_vocabulary_refuses_with_a_typed_reason() {
+fn a_family_with_no_node_of_its_own_compiles_by_projection_or_by_addressing() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
         .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
