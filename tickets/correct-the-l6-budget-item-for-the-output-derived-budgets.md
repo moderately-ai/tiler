@@ -1,7 +1,7 @@
 ---
 id: correct-the-l6-budget-item-for-the-output-derived-budgets
 title: Correct L6's budget item for the output-derived budgets
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals, correct-the-l6-budget-refusal-item]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, program-planning, documentation]
-claimed_from: todo
-assignee: agent-l6-budgets
-lease_expires_at: 1786034532
 ---
 ## User-visible outcome
 
