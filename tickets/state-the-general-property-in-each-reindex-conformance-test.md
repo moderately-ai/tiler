@@ -31,7 +31,7 @@ Doc-only change, every test documented, nextest green, rustdoc -D warnings clean
 
 ## Outcome (2026-08-06)
 
-Delivered doc-only at commit `PLACEHOLDER_COMMIT` on `tkt/state-the-general-property-in-each-reindex-conformance-test`, base `01ad1c99`.
+Delivered doc-only at commit `7399212c` on `tkt/state-the-general-property-in-each-reindex-conformance-test`, base `01ad1c99`.
 
 **The population, recounted rather than carried from the audit.** The audit's numbers are wrong in both directions and are recorded here as superseded. Counting `#[test]` attributes in the five workload-named conformance fixtures under `crates/tiler-reference/tests/` gives **54 tests, not 51**, and **28 undocumented, not 26** — the audit's "26" is the *documented* count. `decoder_layer.rs` is not at 12/12: it carries 18 tests of which 15 were documented, so the model file itself had three gaps. Per file, documented before -> after:
 
