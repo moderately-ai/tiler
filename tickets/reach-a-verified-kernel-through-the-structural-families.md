@@ -1,7 +1,7 @@
 ---
 id: reach-a-verified-kernel-through-the-structural-families
 title: Reach a verified kernel through the structural families
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-reindex-and-broadcast-operation-families, admit-the-structural-families-into-the-scheduled-region-vocabulary]
 related: [prototype-optimizer-conformance-gate, admit-the-contraction-semantic-profile, own-operation-family-support-matrix, compose-rotary-position-embedding-from-reindex-and-broadcast]
@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, structural, breadth]
 claimed_from: todo
-assignee: agent-structural-vertical
-lease_expires_at: 1785985712
+assignee: agent-structural-r6
+lease_expires_at: 1785991750
 ---
 ## User-visible outcome
 
