@@ -16,8 +16,8 @@ ticket: "measure-artifact-decoder-allocation-amplification"
 
 # Artifact decoder allocation amplification
 
-**Status:** measured; both amplifications removed, the second by the schema step this note's follow-up ticket carried
-**Ticket:** `measure-artifact-decoder-allocation-amplification`, then `replace-the-codec-arena-content-key-with-the-existing-comparator`
+**Status:** measured; all three amplifications removed — the decoder's, the arena's by a schema step, and the encoder's by the projection change in Section 9
+**Ticket:** `measure-artifact-decoder-allocation-amplification`, then `replace-the-codec-arena-content-key-with-the-existing-comparator`, then `stop-copying-the-carried-payload-through-the-envelope-projection`
 
 Everything below comes from [`spikes/artifacts/decoder-allocation/`](../../../spikes/artifacts/decoder-allocation/README.md), which counts allocations through a counting `GlobalAlloc` while driving the **public** [`decode_artifact`](../../../crates/tiler-artifact/src/program/codec/decode.rs) over real envelopes. Allocation counts are properties of the program rather than of the host, and the harness asserts that two measured repetitions of every call agree exactly, so there is no variance to report: every figure below is the reading, not an estimate of one.
 
@@ -31,7 +31,7 @@ Everything below comes from [`spikes/artifacts/decoder-allocation/`](../../../sp
 
 **Measurement, and it is what closed that.** [`replace-the-codec-arena-content-key-with-the-existing-comparator`](../../../tickets/replace-the-codec-arena-content-key-with-the-existing-comparator.md) took the schema step Section 5 said the artifact layer could not take alone. The same 226,214-byte envelope now peaks at **670,658 bytes**, 2.96× the envelope and 2,340× less than before, and the quadratic term is gone: peak live runs between 2.48× and 3.23× the envelope across the whole 31-fold arena range. Section 5 carries the retained rows beside the new ones and Section 8 records the forger-reach question this note left open, now answered.
 
-**Measurement.** The encoder, not the decoder, is the worst amplifier that remains inside one crate's reach: `VerifiedArtifactProgram::encode` peaks at **4.99×** the envelope for a 64 MiB object, because the projection from artifact data to envelope copies each carried object four times before the encoder writes it a fifth. Filed as [`stop-copying-the-carried-payload-through-the-envelope-projection`](../../../tickets/stop-copying-the-carried-payload-through-the-envelope-projection.md).
+**Measurement, and it was the worst amplifier remaining inside one crate's reach.** `VerifiedArtifactProgram::encode` peaked at **4.99×** the envelope for a 64 MiB object, because the projection from artifact data to envelope held four copies of each carried object before the encoder wrote it a fifth. [`stop-copying-the-carried-payload-through-the-envelope-projection`](../../../tickets/stop-copying-the-carried-payload-through-the-envelope-projection.md) took it to **2.00×**, which is the floor the signature admits. Section 9 has the census and the byte-identity evidence.
 
 ## 1. Procedure and measurement validity
 
@@ -148,3 +148,39 @@ The first five are refused before anything is read into memory, which is the pro
 **Confirmed with one hand-built manifest.** `tiler-artifact`'s `a_forged_manifest_reaches_the_arena_parser_before_any_identity_check` takes the ordinary fixture's encoded bytes, splices a 512-node chain into the manifest in place of the arena run the fixture wrote, repairs the manifest length, the total length, and the manifest digest, and changes nothing else. The decode is refused — by `ArtifactDiagnostic::UnusedExpression`, raised in `validate`, which is what proves the whole forged chain was parsed, type-checked, proven distinct, and proven canonically ordered first. Watched failing under one perturbation: omitting the digest repair reports `ManifestDigestMismatch`, the shallow refusal the case exists to get past.
 
 **So the `13.0` figure was an attacker-reachable cost rather than a producer-imposed one.** Roughly 226 KB of bytes a consumer never produced could make it allocate 1.5 GB before refusing them, and every consumer that decodes bytes it did not write was exposed — the expansion cache validating a stored bundle among them. That is the severity the `14.0` step was sized against, and the test is retained so the reachability claim stays checked rather than argued.
+
+## 9. The envelope projection, which copied what only the encoder needed to own
+
+Sections 3 to 8 are all about the *reading* side. This one is the publication side, and it was the larger multiple: every artifact `tiler-macros` embeds and every bundle the expansion cache publishes pays it, and it scales with the compiled object, which for a real `metallib` is the whole point of the envelope.
+
+`ArtifactEnvelope::project` reads `&ArtifactProgramData` and returns an envelope whose `Section` values own their bytes, so **one** copy of each distinct carried object is forced and no more. It made five, four of them live at once.
+
+**Fact, from the source at the measured commit.** The census, and each entry is one live copy of the object unless named otherwise:
+
+| Site | What it copied | Now |
+| --- | --- | --- |
+| `project_payloads` | cloned each `PayloadContent` to reorder the payload table | borrows it; reordering is not a reason to copy a library |
+| `project_sections` | cloned `content.code` into an `encoded` staging table | the staging table holds compilation subjects only |
+| `project_sections` | cloned it again pushing it into `contents` | pushes a `Cow::Borrowed` |
+| `project_sections` | cloned **every** `contents` entry into an owned `BTreeMap` key | `binary_search_by` over the sorted, deduplicated table |
+| `project_sections` | cloned it once more per `index[&(tag, code.clone())]` lookup — transient, so requested rather than live | the search key is borrowed |
+| `Section::bytes` | — | the one copy, `Cow::into_owned` on the distinct survivors |
+
+**Measurement.** Peak live during `VerifiedArtifactProgram::encode`, which is `project` followed by `encode`:
+
+| Object bytes | Envelope | Before | ×env | After | ×env | Requested, before → after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 114,083 | 340,479 | 2.98 | 340,479 | 2.98 | 599,665 → 543,644 |
+| 1 MiB | 1,162,659 | 5,308,322 | 4.57 | 2,437,631 | 2.10 | 6,891,121 → 2,640,796 |
+| 16 MiB | 16,891,299 | 83,951,522 | 4.97 | 33,894,911 | 2.01 | 101,262,961 → 34,098,076 |
+| 64 MiB | 67,222,947 | 335,609,762 | 4.99 | 134,558,207 | 2.00 | 403,252,849 → 134,761,372 |
+
+Allocator calls for the 64 MiB encode fell 237 → 213 with it. The totals are what count the copies: peak was the envelope plus four live object-sized blocks and requested was the envelope plus five, against one of each afterwards. The `largest_blocks` column is the attribution — a block the size of the carried object has one possible origin — and it read `67222947 67108864 67108864 67108864`, the envelope and as many object copies as its four-slot array had room for, against `67222947 67108864 111020 56320` now.
+
+**The no-object row does not move, and that is the boundary of this change.** Its 2.98× is the identity derivation and the manifest, not a section; what the change removed there is one owned key per table entry, which shows up as 56,021 fewer bytes requested and 20 fewer allocator calls and not in the peak at all. The same holds for every arena-bearing encode row: identical peak, 56,021 fewer bytes requested, 20 fewer calls.
+
+**Measurement, and it is what makes this a pure allocation change.** The envelope bytes did not move. Thirteen artifact fixtures — the default, guarded, two-variant in both declaration orders, partial-window, BF16 and F32 pointwise, strict-affine, route-requiring, two carried, and two delivering one object from two payloads — encode to digests identical before and after, at 39,812 to 186,642 bytes each. Independently, all 93 spike rows report the same `envelope_bytes` as the previous run and 84 of the 93 are byte-identical in every column; the 9 that moved are exactly the encode rows above.
+
+**The content-addressed section table is unchanged, and is now asserted rather than assumed.** Two payloads that carry equal objects share one section — that is what makes a section's address its content — and no test covered it. `two_payloads_carrying_equal_objects_share_one_section` builds an artifact delivering two payloads with different compilation subjects and one object, and requires two subject sections, one object section, and a clean round trip. Watched failing: dropping the projection's `dedup` makes it report two object sections.
+
+**What this does not reach.** `ArtifactProgramBuilder::build` copies the same objects once more, into the `ArtifactProgramData` the artifact owns, because `build` promises the intact builder back on failure and therefore cannot move out of it before the diagnostics are known. That copy is outside the harness's measured window — the fixture is built before `measure_twice` opens — so its size here is a reading of the source rather than a measurement. Filed as [`stop-copying-the-carried-payload-through-the-builder-assemble`](../../../tickets/stop-copying-the-carried-payload-through-the-builder-assemble.md), which has to add a `build` phase to the harness before it can claim anything.
