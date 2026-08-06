@@ -107,7 +107,7 @@ The ticket's hypothesis was that the obligations would discharge "on the same or
 
 **Fact.** [Concatenate fusion role and lowering](concatenate-fusion-role-and-lowering.md) states that `FusionNumericalCapabilities::governed()` "maps eight operation keys onto them", and [`admit-a-fusion-role-for-the-sequence-extension-concatenate`](../../../tickets/admit-a-fusion-role-for-the-sequence-extension-concatenate.md) repeats the number. The table holds **nine** keys, both at this record's base and at `d5960e81`, the commit the concatenate record names as its own tree: `git show d5960e81:crates/tiler-compiler/src/fusion_legality.rs | grep -c 'roles.insert('` returns `9`, and `grep -c 'roles.insert(' crates/tiler-compiler/src/fusion_legality.rs` returns `9`. The missing key in both statements is `softmax_f32_op()`, whose `ExtremumShiftedOrderedReduction` role is registered at `fusion_legality.rs:324-327` and asserted by name in `softmax_role_tests` (`:2272-2293`).
 
-**Inference — the error is arithmetic and changes no conclusion of either document.** Both texts use the count only to say that the concatenate is absent from the table, which is true at nine keys as it was at eight. The number is corrected in both places in the same change as this record, rather than left to be copied a third time.
+**Inference — the error is arithmetic and changes no conclusion of either document.** Both texts use the count only to say that the concatenate is absent from the table, which is true at nine keys as it was at eight. The number is corrected in both places in the same change as this record, rather than left to be copied a third time. *Restated 2026-08-06: the live `grep -c` above returns `11` on the current tree — the concatenate's own role and the softmax's landed after this record — while the `d5960e81` count and the arithmetic correction it grounds are unchanged; the reproducible checks below carry the current counts.*
 
 ## What this record does not decide
 
@@ -124,16 +124,25 @@ The ticket's hypothesis was that the obligations would discharge "on the same or
 Each is one command from the repository root, with the positive control that proves it can return something.
 
 ```sh
-# 1. The fusion-role table holds nine keys and no slice.
+# 1. The fusion-role table holds eleven keys and no slice.
 grep -n 'roles.insert(' -A 1 crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds reindex_f32_op and broadcast_f32_op,
 #    so a missing key is an absence from a list with members rather than an
 #    empty result.
+#    Restated 2026-08-06: this read "nine keys", the count at this record's
+#    base. The concatenate's role and the softmax's landed since, so the list
+#    is eleven; the slice's absence — the fact this check observes — holds
+#    unchanged.
 
-# 2. The coordinate-relation arm of the contraction proof is closed over two keys.
+# 2. The coordinate-relation arm of the contraction proof is closed over three
+#    exact keys, and the slice is not among them.
 grep -n 'fn is_exact_governed_same_family_pointwise' -A 50 crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds the ValueSource arm's constant guard,
 #    so the match is being read rather than a comment.
+#    Restated 2026-08-06: this read "closed over two keys" — reindex and
+#    broadcast, the membership at this record's base. The concatenate's
+#    admission added a third; the arm is still closed and the slice is still
+#    outside it, which is what this check observes.
 
 # 3. The family declares its mapping class as a registered definition fact, and
 #    the concatenate declares no such fact.
