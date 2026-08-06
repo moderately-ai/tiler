@@ -20,7 +20,9 @@ An exact host evaluator for every reduction order a schedule can declare, so tha
 
 **Fact — three declared shapes fall outside it.** `ReductionTopology::CooperativeWorkgroup` (`crates/tiler-ir/src/schedule/model.rs`) documents that on a loop-carried tile "participant `p` of round `r` owns the contiguous range at index `r * partitions + p`" over `partitions * contributors_per_partition * tile.rounds` contributors — a different index map from the flat one above. Both `MultiPass` and `CooperativeWorkgroup` carry `accumulation: ArithmeticType`, "the width every combining step is performed at", and the oracle has no such parameter. And any future non-uniform split is a third.
 
-**Inference — none of the three is reachable today.** `workgroup_tree_tile` fixes `rounds: 1`, which the corpus already records as the reason the tree's and the split's declared groupings are identical at every contributor count; and every current plan accumulates at the element width. So the oracle is correct for every plan that exists and would be wrong for the first one that does not.
+**Fact — none of the three is reachable *from a compiler-constructed plan*, and the distinction matters.** `grep -rn 'CooperativeTile' crates/tiler-compiler/src --include='*.rs'` returns three lines, all naming `tiler_ir::schedule::workgroup_tree_tile` (`physical.rs:1363` in a doc table, `physical.rs:1401`, `target.rs:3272`), and that constructor's body hard-codes `rounds: 1` (`crates/tiler-ir/src/schedule/cooperative.rs:887`). Accumulation is likewise pinned: `physical.rs:1654` sets `accumulation: request.numerical_contract().arithmetic`, so no plan can declare a width other than its element type.
+
+**Fact — but the schedule vocabulary already admits and verifies a multi-round tile.** `crates/tiler-ir/src/schedule/builder.rs:4767` constructs `multi_round_tile_fixture` with `rounds: 2` and its tests verify it as a schedule. **Inference — so this deferral is one compiler construction away from firing rather than one ADR away**, which is a materially nearer position than ADR 0100's `implementation_status: not-started` alone suggests, and it is why the trigger check below names the compiler's construction sites rather than searching for a literal.
 
 **Fact — filed `deferred` rather than `todo` because the board must not offer non-work.** There is nothing to evaluate until a topology outside the shape exists.
 
@@ -36,7 +38,7 @@ Either: a `ReductionTopology` in `crates/tiler-ir` realizes ADR 0100's multi-rou
 
 ## Trigger check log
 
-- 2026-08-05 — **not fired.** `grep -rn 'rounds' crates/tiler-ir/src/schedule/cooperative.rs` shows the field, and ADR 0100's `implementation_status` is `not-started`; no constructed plan carries `rounds > 1` and no plan declares an `accumulation` other than its element type. Reproduce with `grep -rn 'rounds: *[2-9]' crates/ --include='*.rs'` — an empty result is the not-fired verdict.
+- 2026-08-05 — **not fired, and the check names its population rather than relying on an empty result.** `grep -rn 'CooperativeTile' crates/tiler-compiler/src --include='*.rs'` returns exactly **three** lines, all naming `workgroup_tree_tile`, whose body fixes `rounds: 1` — so every tile any compiler path can build is single-round. A count other than three, or a line naming any other constructor, is the fired verdict. **The first form of this check was wrong and is recorded rather than replaced silently**: `grep -rn 'rounds: *[2-9]' crates/ --include='*.rs'` returns three hits, of which two (`crates/tiler-compiler/src/legality.rs:1617`, `crates/tiler-compiler/src/pipeline/conformance.rs:1322`) are an unrelated `rounds` field on a test lowering fixture and one (`crates/tiler-ir/src/schedule/builder.rs:4767`) is a `tiler-ir` schedule test. An emptiness check over that pattern would have read as fired when it is not, and a naming check over the compiler's construction sites is what distinguishes the two.
 
 ## Graph maintenance
 
