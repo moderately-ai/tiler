@@ -1,7 +1,7 @@
 ---
 id: admit-a-multi-region-index-realization-law
 title: Admit a multi-region index realization law
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [lower-a-two-region-occurrence-through-one-index-access-capability, admit-the-rms-normalization-family, admit-the-softmax-family, reach-a-verified-kernel-through-the-structural-families, accept-the-multi-region-index-realization-surface]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, lowering, normalization]
-claimed_from: todo
-assignee: agent-multiregion-law
-lease_expires_at: 1785995912
 ---
 ## User-visible outcome
 
