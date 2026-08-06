@@ -1,7 +1,7 @@
 ---
 id: state-the-oracle-boundary-for-sub-domain-write-roots
 title: State the oracle boundary for sub-domain write roots
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-sub-range-write-domains-for-unequal-partitions]
 related: [lower-the-concatenate-occurrence-through-partitioned-writes, correct-the-reference-oracle-for-partitioned-output-writes]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, oracle, indexing]
+claimed_from: todo
+assignee: agent-oracle-boundary
+lease_expires_at: 1785995912
 ---
 ## User-visible outcome
 
