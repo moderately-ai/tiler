@@ -591,16 +591,17 @@ fn ordered_multi_output_programs_compile_through_the_ordinary_path() {
 /// `tiler_ir::program::ValueRole` is exclusive.
 ///
 /// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
-/// stage that would lift it, and the copy stage is itself blocked one layer
-/// further down than that ticket was filed believing: it reads
-/// `TensorRole::Intermediate` and writes `TensorRole::Output`, and
-/// `tiler_ir::schedule`'s pointwise access contract requires read access `i` to
-/// be `TensorRole::Input { ordinal: i }`, so no region of the current vocabulary
-/// spells it.
+/// stage that would lift it, and that copy stage is now expressible: it reads
+/// `TensorRole::Intermediate` and writes `TensorRole::Output`, which
+/// `tiler_ir::schedule`'s pointwise access contract refused while it required
+/// read access `i` to be `TensorRole::Input { ordinal: i }` and admits since
 /// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-/// owns that widening, and
+/// separated the access position from the declared input the role names.
 /// `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
-/// measures the refusal against a control that differs only in the read's role.
+/// measures the admission against a control that differs only in the read's
+/// role. What is left is building the stage from a recognized program, which is
+/// that ticket's own work — so this refusal is unchanged and still names the
+/// request boundary.
 #[test]
 fn a_published_and_consumed_intermediate_refuses_by_name() {
     let mut registry = SemanticRegistryBuilder::new();

@@ -626,17 +626,16 @@ fn verify_pointwise_bf16(
 
 /// The access contract every pointwise region satisfies, at any width.
 ///
-/// The obligation that makes an N-input region safe is the *correspondence*:
-/// read access `i` must be `TensorRole::Input { ordinal: i }`, and there must be
-/// exactly as many reads as the expression has input leaves. Both halves are
-/// needed. Without the count, an expression could read an ordinal no access
-/// binds — a load through a buffer the signature never declares. Without the
-/// per-position role, two accesses could name one tensor while a third went
-/// unread, and every consumer that binds buffers positionally would bind the
-/// wrong one without noticing.
-///
-/// The expression's own verifier already proved its ordinals are the dense
-/// `0..n`, so pairing by position is exhaustive rather than a sample.
+/// Two obligations make an N-input region safe, and they are about different
+/// things. **The count**: there must be exactly as many reads as the expression
+/// has input leaves, or an expression could read an ordinal no access binds — a
+/// load through a buffer the signature never declares. The expression's own
+/// verifier already proved its ordinals are the dense `0..n`, so leaf `i` is
+/// served by read `i` and the pairing is exhaustive rather than a sample.
+/// **The binding**: each read must name a boundary tensor no other read names,
+/// in the canonical order [`reads_bind_boundary_tensors_in_order`] states, or a
+/// consumer that binds buffers positionally would bind the wrong one without
+/// noticing.
 ///
 /// Shared by the two width-specific verifiers above rather than written twice:
 /// the obligation is about *accesses*, and nothing in it reads an element type.
@@ -665,18 +664,10 @@ fn verify_pointwise_region(
     }
     let read_refs: Vec<&Access> = reads.iter().collect();
     verify_proof_records(region, &read_refs, write)?;
-    let ordinals_bind_in_order = reads.iter().enumerate().all(|(position, read)| {
-        u32::try_from(position).is_ok_and(|ordinal| {
-            read.tensor
-                == TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                }
-        })
-    });
     if !expression_is_valid
         || !matches!(region.schedule.reduction, ReductionTopology::None)
         || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
-        || !ordinals_bind_in_order
+        || !reads_bind_boundary_tensors_in_order(reads)
         || !reads
             .iter()
             .all(|read| pointwise_read_map_is_admissible(&read.map, &region.index.iteration_shape))
@@ -684,6 +675,60 @@ fn verify_pointwise_region(
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     Ok(())
+}
+
+/// Returns whether one pointwise region's reads bind boundary tensors in the
+/// canonical order, each tensor at most once.
+///
+/// **This widens a correspondence that conflated two facts, and separating them
+/// is the whole content of the change.** A read's *position* is the expression
+/// leaf it serves: `crate::kernel`'s `emit_pointwise` looks a leaf's
+/// ordinal up among the values loaded in access order, so position is what
+/// pairs a leaf with a buffer. A read's *tensor role* is which boundary tensor
+/// that buffer binds, and [`TensorRole::Input`]'s ordinal names one declared
+/// program input rather than the access position — `CoverAssembly::from_plan` in
+/// `tiler-compiler` binds it against the program's declared interface. Requiring
+/// the two to be equal made an elementwise epilogue inexpressible: a region
+/// reading a materialized intermediate and the program's third input has leaves
+/// `0` and `1`, and its second read must still say `Input { ordinal: 2 }` or
+/// name the wrong tensor.
+///
+/// What the equality was protecting survives as three rules:
+///
+/// - **Declared input ordinals ascend strictly.** Two reads naming one input
+///   would bind one buffer twice while the leaf that meant another tensor went
+///   unbound, and a descending pair would be a second spelling of one
+///   computation — one region with two identities.
+/// - **At most one read binds the materialized intermediate.** The role carries
+///   no ordinal, so a second read leaves nothing to say which materialization
+///   edge it binds. `CoverAssembly::from_plan` refuses that a layer up under
+///   `cover-intermediate-read-attribution`; stating it here is what stops an
+///   intrinsically ambiguous region from being built at all, for a producer that
+///   never passes through a cover.
+/// - **A program output is never read.** Refused by name rather than under a
+///   wildcard, so a role added to the vocabulary later is a build error here
+///   instead of silently inheriting an admission nobody checked it for.
+fn reads_bind_boundary_tensors_in_order(reads: &[Access]) -> bool {
+    let mut highest_input: Option<u32> = None;
+    let mut intermediate_reads = 0_usize;
+    for read in reads {
+        match read.tensor {
+            TensorRole::Input { ordinal } => {
+                if highest_input.is_some_and(|highest| ordinal.get() <= highest) {
+                    return false;
+                }
+                highest_input = Some(ordinal.get());
+            }
+            TensorRole::Intermediate => {
+                intermediate_reads += 1;
+                if intermediate_reads > 1 {
+                    return false;
+                }
+            }
+            TensorRole::Output => return false,
+        }
+    }
+    true
 }
 
 /// Returns whether one read map is admissible on a pointwise region.
@@ -2630,13 +2675,21 @@ mod tests {
         assert_eq!(verified.region().index.accesses.len(), 4);
     }
 
-    /// Read `i` must be input `i`: a permuted binding is a different program.
+    /// The reads must name strictly ascending declared inputs: a permuted or
+    /// repeated binding is a different program, or an ambiguous one.
     ///
-    /// Swapping two ordinals leaves every other fact — access count, modes,
-    /// proofs, expression — intact, so this isolates the correspondence rule
-    /// from the arity rule below.
+    /// Each perturbation leaves every other fact — access count, modes, proofs,
+    /// expression — intact, so this isolates the binding rule from the arity
+    /// rule below.
+    ///
+    /// **The ordinals need not be the dense prefix `0..n`, and the third case
+    /// pins that deliberately.** The ordinal names the declared input tensor the
+    /// read binds, not the access position, so a region reading inputs `0`, `1`,
+    /// and `7` of a wider interface is well formed — and it has to be, because an
+    /// elementwise epilogue reading a materialized intermediate alongside the
+    /// program's later inputs cannot name a prefix at all.
     #[test]
-    fn read_accesses_must_carry_their_own_ordinal_in_order() {
+    fn read_accesses_must_name_strictly_ascending_declared_inputs() {
         let mut permuted = three_input_builder(4);
         permuted.accesses.swap(0, 1);
         permuted.bounds_proofs.swap(0, 1);
@@ -2656,6 +2709,68 @@ mod tests {
         };
         assert_eq!(
             repeated.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+
+        // Ascending with a gap: the third leaf binds the eighth declared input.
+        let mut sparse = three_input_builder(4);
+        sparse.accesses[2].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(7),
+        };
+        sparse.bounds_proofs[2].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(7),
+        };
+        assert!(sparse.build().is_ok());
+    }
+
+    /// An elementwise region may read one materialized intermediate, and only
+    /// one.
+    ///
+    /// This is the consumer half of a `producer -> intermediate -> epilogue`
+    /// chain: the region carries the epilogue's own expression and binds one of
+    /// its leaves to a tensor an earlier region wrote. Every other obligation is
+    /// discharged exactly as the input-reading control's is — the same bounds
+    /// proof, the same ownership proof, the same map — so a widening rather than
+    /// a relaxation.
+    ///
+    /// The two refusals are what the widening must not lose. A second
+    /// intermediate read is ambiguous rather than merely unsupported:
+    /// `TensorRole::Intermediate` carries no ordinal, so nothing says which
+    /// materialization edge each read binds. A read of the program output is
+    /// refused for a different reason — a region does not consume what it
+    /// publishes — and both report the access-refinement rule.
+    #[test]
+    fn an_elementwise_region_may_read_one_materialized_intermediate() {
+        let control = three_input_builder(4).build().unwrap();
+
+        let mut epilogue = three_input_builder(4);
+        epilogue.accesses[0].tensor = TensorRole::Intermediate;
+        epilogue.bounds_proofs[0].tensor = TensorRole::Intermediate;
+        let verified = epilogue.build().unwrap();
+        assert_eq!(verified.requirements().buffer_bindings, 4);
+        // The read's boundary role reaches the encoding, so the epilogue and its
+        // input-reading control are distinct regions rather than one region with
+        // two spellings.
+        assert_ne!(
+            verified.canonical_identity().as_bytes(),
+            control.canonical_identity().as_bytes()
+        );
+
+        let mut two_intermediates = three_input_builder(4);
+        for position in 0..2 {
+            two_intermediates.accesses[position].tensor = TensorRole::Intermediate;
+            two_intermediates.bounds_proofs[position].tensor = TensorRole::Intermediate;
+        }
+        assert_eq!(
+            two_intermediates.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+
+        let mut reads_output = three_input_builder(4);
+        reads_output.accesses[0].tensor = TensorRole::Output;
+        reads_output.bounds_proofs[0].tensor = TensorRole::Output;
+        assert_eq!(
+            reads_output.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
         );
     }

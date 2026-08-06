@@ -55,13 +55,13 @@
 //! writes one owning tensor, so both are refused a layer down —
 //! [`a_published_output_value_cannot_fill_an_intermediate_buffer`] pins the
 //! mechanism — and `admit-elementwise-epilogues-over-a-materialized-intermediate`
-//! owns the copy stage that would lift the second. That copy stage is itself
-//! blocked in `tiler-ir` rather than here:
-//! `materialized_intermediate_epilogue_wall.rs` measures a pointwise region
-//! reading `TensorRole::Intermediate` being refused by the intrinsic schedule
-//! verifier, and
+//! owns the copy stage that would lift the second. That copy stage was itself
+//! blocked in `tiler-ir` rather than here until
 //! `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-//! owns the widening.
+//! landed; `materialized_intermediate_epilogue_wall.rs` now measures a pointwise
+//! region reading `TensorRole::Intermediate` being *admitted* by the intrinsic
+//! schedule verifier, so what is left is building the stage from a recognized
+//! program.
 //!
 //! One further limit is *not* about outputs at all and is recorded here because
 //! multi-output is what makes it reachable: an elementwise walk must read every
@@ -399,11 +399,11 @@ fn two_programs_differing_only_in_output_order_have_distinct_identities() {
 /// That is the shape `pipeline::conformance`'s multi-output fixture has — it
 /// publishes `scaled` and reduces it into `reduced` — and it is also the shape
 /// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns, because
-/// no elementwise region this profile builds reads a materialized intermediate.
-/// The reason none does is a `tiler-ir` access contract rather than a compiler
-/// gap; `materialized_intermediate_epilogue_wall.rs` measures it, and
-/// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-/// owns the widening.
+/// no elementwise region this profile *builds* reads a materialized
+/// intermediate. That is now a compiler gap and nothing more: the `tiler-ir`
+/// access contract that also forbade it was widened by
+/// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`,
+/// which `materialized_intermediate_epilogue_wall.rs` measures.
 ///
 /// Pinned here so that a `ValueRole` widening which made publication and
 /// consumption compatible fails this test and reports itself, rather than
