@@ -47,7 +47,16 @@ use super::synchronization::{
 pub enum TensorRole {
     /// One named program input consumed by the region.
     Input {
-        /// Which of the region's input tensors this is.
+        /// Which declared input tensor this access binds.
+        ///
+        /// The *declared* one, not the position of the access carrying it: a
+        /// region reading a materialized intermediate and the program's third
+        /// input binds that input at its own access position while still naming
+        /// ordinal `2`, because a consumer resolves the ordinal against the
+        /// program's declared interface and the position against the region's
+        /// own buffer list. The two coincide for a region that reads a dense
+        /// prefix of the declared inputs, which is every region the current
+        /// compiler builds, and they are different facts.
         ordinal: InputOrdinal,
     },
     /// A materialized intermediate produced or consumed by the region.

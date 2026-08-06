@@ -3272,32 +3272,38 @@ fn resolve_numerical_contract(
 ///   contraction or a reduction feeding an elementwise epilogue has no region
 ///   to be assembled into.
 ///
-///   **The wall is in the schedule vocabulary, not in this crate**, and the
-///   paragraph that used to stand here said the opposite. It reasoned from
-///   `tiler_ir::schedule::TensorRole::Intermediate` being a per-region role to
-///   the conclusion that nothing in `tiler-ir` forbids the chain. The role is
-///   indeed per-region; what forbids the chain is the *access contract* each
-///   scalar-program family declares around it.
-///   `tiler_ir::schedule`'s `verify_pointwise_region` requires read access `i`
-///   to be `TensorRole::Input { ordinal: i }` at every position, so no
-///   `ScalarProgram::PointwiseF32` region may read an intermediate at all; and
-///   `verify_access_and_semantics` admits a `ScalarProgram::StrictSerialSum`
-///   under a `ReductionTopology::Serial` only when its owning write targets
-///   `TensorRole::Output`, so the fold a reduction epilogue would read from
-///   cannot produce one. The multi-pass partial pass is the one fold that does
-///   write an intermediate, and it is a different topology declaring a split
-///   rather than a fold another region's epilogue may consume. A contraction
-///   *may* already write one, which is the single part of the chain that is
-///   expressible today. `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
-///   measures all three.
-///
+///   **The wall was in the schedule vocabulary rather than in this crate, and
+///   the consumer half of it is gone.** The paragraph that used to stand here
+///   reasoned from `tiler_ir::schedule::TensorRole::Intermediate` being a
+///   per-region role to the conclusion that nothing in `tiler-ir` forbade the
+///   chain. The role is indeed per-region; what forbade the chain was the
+///   *access contract* each scalar-program family declares around it.
+///   `verify_pointwise_region` required read access `i` to be
+///   `TensorRole::Input { ordinal: i }` at every position, so no
+///   `ScalarProgram::PointwiseF32` region could read an intermediate at all —
 ///   `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-///   owns that widening and
-///   `admit-elementwise-epilogues-over-a-materialized-intermediate` is its
-///   compiler-side dependent — the same division
-///   `admit-multi-input-tensors-in-the-scheduled-region-vocabulary` and its own
-///   dependent already record. Refusing here rather than admitting and failing
-///   mid-pipeline is unchanged by the correction.
+///   separated the access position from the declared input the role names, and a
+///   pointwise region may now read one materialized intermediate alongside
+///   strictly ascending declared inputs.
+///
+///   What remains refused a crate down is the *producer* half of the reduction
+///   shape: `verify_access_and_semantics` admits a
+///   `ScalarProgram::StrictSerialSum` under a `ReductionTopology::Serial` only
+///   when its owning write targets `TensorRole::Output`, so the fold a reduction
+///   epilogue would read from cannot produce an intermediate. The multi-pass
+///   partial pass is the one fold that does write one, and it is a different
+///   topology declaring a split rather than a fold another region's epilogue may
+///   consume; `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate`
+///   owns that widening. A contraction *may* already write one, so
+///   `contract(a, b) * 2.0` is the shape whose halves are both expressible now.
+///   `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
+///   measures all three rows.
+///
+///   Building those regions from a recognized program is
+///   `admit-elementwise-epilogues-over-a-materialized-intermediate`'s own work —
+///   the same division `admit-multi-input-tensors-in-the-scheduled-region-vocabulary`
+///   and its own dependent already record. Refusing here rather than admitting
+///   and failing mid-pipeline is unchanged by either correction.
 ///
 /// **A reduction reading a declared input directly was the third wall here, and
 /// it is gone.** `sum(x)` was refused under `reduction-prologue` because

@@ -4,7 +4,7 @@ title: Admit an elementwise region reading a subset of the declared inputs
 status: todo
 priority: p2
 dependencies: []
-related: [admit-ordered-multi-output-programs-at-the-compiler-request-boundary, recognize-several-ordered-named-outputs-at-the-compiler-request-boundary]
+related: [admit-ordered-multi-output-programs-at-the-compiler-request-boundary, recognize-several-ordered-named-outputs-at-the-compiler-request-boundary, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -32,6 +32,14 @@ A program declaring several ordered named outputs whose recognition walks read *
 ## Required failure-path evidence
 
 Each observed failing against an accepted neighbour: the disjoint-input two-output program above must compile rather than refuse under `elementwise-reads`; a program declaring an input *no* output's walk reads must still refuse, so the obligation is relocated rather than deleted; a region built for an output reading a subset must bind the program input ordinals its expression actually reads, checked against a fixture where those ordinals are not `0..n`; and two programs whose outputs read different subsets must keep distinct region identities.
+
+## An unrecorded `tiler-ir` prerequisite, discharged 2026-08-06
+
+**Fact — this ticket was filed dispatchable over a wall a crate down, and that wall is now gone.** Closes-when item 1 requires the region built for an output to bind exactly the program input ordinals its expression reads, and item 4's failure evidence names "a fixture where those ordinals are not `0..n`". `tiler_ir::schedule`'s `verify_pointwise_region` refused precisely that: it required read access `i` to be `TensorRole::Input { ordinal: i }` at every position, so a region binding inputs `0` and `2` was rejected by the intrinsic verifier no matter what the recognizer produced. [`admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`](admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary.md) separated the access position from the declared input the role names, for the epilogue's sake, and the rule is now that the reads name *strictly ascending* declared inputs — a gap between ordinals is admitted, a repeat or a descent is not.
+
+**Inference — the second Boundaries bullet is now enforced by the verifier rather than only asserted here.** That bullet states `TensorRole::Input { ordinal }` is program-scoped and a region-local renumbering would have to be undone at assembly. The widening reached the same conclusion from the other direction and `crates/tiler-ir/src/schedule/builder.rs`'s `reads_bind_boundary_tensors_in_order` records the derivation; `read_accesses_must_name_strictly_ascending_declared_inputs` pins the non-prefix admission with a region reading declared inputs `0`, `1`, and `7`.
+
+What this does *not* discharge is anything in this ticket's own scope: `recognize_elementwise` still requires `reads.len() == declared.len()`, `NormalizedPointwise::input_keys` is still every declared input key, and the leaf-ordinal-to-input-ordinal map item 1 asks for still has to be carried and folded into identity. The wall this ticket would have hit *after* doing that work is what moved.
 
 ## Closes when
 

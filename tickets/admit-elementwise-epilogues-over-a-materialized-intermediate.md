@@ -4,7 +4,7 @@ title: Admit an elementwise epilogue over a materialized intermediate
 status: blocked
 priority: p2
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary]
-related: []
+related: [admit-a-strict-serial-fold-that-writes-a-materialized-intermediate]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -85,3 +85,17 @@ Nothing that changes behaviour. No recognizer, encoder, region builder, or budge
 **Scope.** `crates/tiler-compiler/**` (exclusive `implementation/compiler`) and `tickets/**` (shared `project/tickets`) only. No `crates/tiler-ir/**` file was edited — which is the finding, not an omission.
 
 **Recommended board move after integration.** This ticket is set to `review` so the branch can be integrated, but `review` misrepresents it: the stated outcome is not delivered and the ticket now carries an unmet dependency. Once the diff is merged, move it to `blocked` — the parked category the unmet `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary` edge actually describes — so the scheduler stops treating it as work in flight. Do not mark it `done`; nothing it promised compiles yet.
+
+## Unblocking note, 2026-08-06 — two of this ticket's three shapes are reachable and the third is not
+
+Written by the worker on [`admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`](admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary.md), which is the dependency above and is now delivered. Read it before dispatching this one; what follows is the delta a brief needs.
+
+**Fact — the pointwise read is admitted, and the shape of the admission matters to the region builder this ticket writes.** `verify_pointwise_region` no longer requires read access `i` to be `TensorRole::Input { ordinal: i }`. It requires the reads to name strictly ascending *declared inputs* and at most one `TensorRole::Intermediate`, refusing a second intermediate read (nothing attributes two reads to two materialization edges) and a read of `TensorRole::Output` by name. The consequence for `pointwise_region` in `crates/tiler-compiler/src/physical.rs`, which today builds every read as `Input { ordinal }` with the ordinal equal to its position: an epilogue's expression leaf ordinal is the *access position* — `emit_pointwise` looks a leaf up among the values loaded in access order — while the `TensorRole::Input` ordinal names the declared input that read binds, which `CoverAssembly::from_plan` resolves against the program's declared interface. An epilogue reading a staged value and the program's third input therefore carries leaves `0` and `1` with roles `Intermediate` and `Input { ordinal: 2 }`, and a builder that kept them equal would bind the wrong buffer.
+
+**Fact — `ValueRole::fills` was re-derived and deliberately not changed.** An epilogue's intermediate read binds a `Temporary` value, and `(Temporary, Intermediate)` is already `true`. The escape hatch this ticket's own Outcome named — declaring `Input { ordinal }` and binding a temporary there — stays closed, and the widening is what makes opening it unnecessary: the region now *says* `Intermediate` where it means one. `a_published_output_value_cannot_fill_an_intermediate_buffer` still passes unchanged.
+
+**Fact — the assembly layer already binds the shape.** `CoverAssembly::from_plan` maps `Input { ordinal }` to `AssemblyBinding::Input(ordinal)` and `Intermediate` to the consumed edge, and refuses a second intermediate read under `cover-intermediate-read-attribution`. Nothing in it needs widening for a mixed read list.
+
+**Fact — the reduction shape is still walled, one layer down, and it is not this ticket's scope.** `verify_access_and_semantics` admits a serial `StrictSerialSum` only when its owning write targets `TensorRole::Output`, so `sum(x * x) * scale` has no producer region. [`admit-a-strict-serial-fold-that-writes-a-materialized-intermediate`](admit-a-strict-serial-fold-that-writes-a-materialized-intermediate.md) owns it and is filed at `todo`; it is `related` rather than a dependency because this ticket's other two shapes do not need it. **So this ticket can deliver `contract(a, b) * 2.0` and the published-and-consumed copy stage now, and cannot deliver `sum(x * x) * scale` until that one lands** — a dispatch should either narrow this ticket's outcome to the two reachable shapes and split the reduction half, or land the serial-fold widening first. Marking this ticket done while its own user-visible outcome still names `sum(x * x) * scale` would overstate it.
+
+**Fact — `materialized_intermediate_epilogue_wall.rs` was updated rather than deleted.** Its pointwise row now reads `yes` and `a_pointwise_region_may_read_a_materialized_intermediate` asserts the admission, the mixed read list, and the three refusals. Its two request-boundary tests are unchanged and still green: this ticket's `operation-set` refusals are exactly what this ticket lifts.

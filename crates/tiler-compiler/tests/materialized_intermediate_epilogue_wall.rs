@@ -1,16 +1,16 @@
 //! Where the elementwise-epilogue wall actually is, measured rather than asserted.
 //!
 //! `admit-elementwise-epilogues-over-a-materialized-intermediate` was filed on a
-//! premise this file refutes. Its "Why this exists" section stated the wall as
+//! premise this file refuted. Its "Why this exists" section stated the wall as
 //! *the physical layer's, not the schedule IR's* — "`TensorRole::Intermediate`
 //! is a per-region role, so nothing in `tiler-ir` forbids a chain that stages a
 //! second temporary" — and `request.rs` carried the same claim in
 //! [`select_supported_strategy`]'s own documentation. The claim is about the
-//! role, and the role is indeed per-region; the conclusion drawn from it is
-//! wrong, because what forbids the chain is not the role but the *access
+//! role, and the role is indeed per-region; the conclusion drawn from it was
+//! wrong, because what forbade the chain was not the role but the *access
 //! contract* each scalar-program family declares around it.
 //!
-//! # The three walls, and which of them is open
+//! # The three walls, and which of them are open
 //!
 //! A chain `producer -> materialized intermediate -> elementwise epilogue` needs
 //! a producer region that writes `TensorRole::Intermediate` and a pointwise
@@ -18,36 +18,49 @@
 //!
 //! | Region | Needs | Admitted by `tiler-ir` |
 //! | --- | --- | --- |
-//! | elementwise epilogue | read `TensorRole::Intermediate` | **no** — [`a_pointwise_region_cannot_read_a_materialized_intermediate`] |
+//! | elementwise epilogue | read `TensorRole::Intermediate` | yes — [`a_pointwise_region_may_read_a_materialized_intermediate`] |
 //! | serial-sum producer | write `TensorRole::Intermediate` | **no** — [`a_strict_serial_sum_region_cannot_write_a_materialized_intermediate`] |
 //! | contraction producer | write `TensorRole::Intermediate` | yes — [`a_contraction_region_can_already_write_a_materialized_intermediate`] |
 //!
-//! The refusing halves live in `crates/tiler-ir/src/schedule/builder.rs`:
-//! `verify_pointwise_region` requires read access `i` to be
-//! `TensorRole::Input { ordinal: i }` for every `i`, and
+//! **The first row was `no` when this file was written, and
+//! `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
+//! flipped it.** `verify_pointwise_region` required read access `i` to be
+//! `TensorRole::Input { ordinal: i }` for every `i`, which conflated the access
+//! *position* — the expression leaf it serves — with the *declared input* its
+//! role names. The two are separate now: the reads must name strictly ascending
+//! declared inputs and at most one materialized intermediate, so the epilogue's
+//! region is expressible and a region with two intermediate reads, which nothing
+//! could attribute to materialization edges, is still refused.
+//!
+//! The remaining refusal lives in `crates/tiler-ir/src/schedule/builder.rs`:
 //! `verify_access_and_semantics` admits a `ScalarProgram::StrictSerialSum` under
 //! a `ReductionTopology::Serial` only when `write.tensor == TensorRole::Output`.
-//! Neither is reachable from `tiler-compiler`, so the epilogue admission is a
-//! `tiler-ir` widening with a compiler-side dependent — exactly the shape
-//! `admit-multi-input-elementwise-programs-at-the-compiler-boundary` hit, and
-//! `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-//! now owns it.
+//! It is not reachable from `tiler-compiler`, so `sum(x * x) * scale` still
+//! needs a `tiler-ir` widening —
+//! `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate` owns it
+//! — while `contract(a, b) * 2.0` and the published-and-consumed copy stage need
+//! only the read this file now records as admitted.
 //!
-//! **The compiler cannot route around it by binding differently, either.** A
-//! region could not declare `TensorRole::Input { ordinal }` for the read and let
+//! **The compiler still cannot route around the write by binding differently.** A
+//! region cannot declare `TensorRole::Input { ordinal }` for a read and let
 //! program assembly bind a temporary there: `tiler_ir::program::ValueRole::fills`
 //! refuses a `Temporary` value for an `Input` buffer, and
-//! `KernelProgramBuilder::push_stage` is where that bites. That mechanism is
-//! already pinned by `multi_output_boundary.rs`'s
+//! `KernelProgramBuilder::push_stage` is where that bites. The widening above did
+//! not touch `fills` and did not need to — an epilogue's read now says
+//! `TensorRole::Intermediate`, which a `Temporary` already fills. That mechanism
+//! is pinned by `multi_output_boundary.rs`'s
 //! `a_published_output_value_cannot_fill_an_intermediate_buffer`, so it is cited
 //! here rather than re-asserted.
 //!
 //! # What the caller sees today
 //!
-//! Both epilogue shapes the ticket names refuse at the request boundary under
-//! `operation-set`, which is the elementwise walk reporting that the operand it
-//! reached is produced by a family its expression vocabulary has no node for.
-//! Each travels with the bare producer as a control, so a refusal here is
+//! Both epilogue shapes the ticket names still refuse at the request boundary
+//! under `operation-set`, which is the elementwise walk reporting that the
+//! operand it reached is produced by a family its expression vocabulary has no
+//! node for. The schedule vocabulary now has regions for the contraction shape;
+//! building them from a recognized program is
+//! `admit-elementwise-epilogues-over-a-materialized-intermediate`'s own work.
+//! Each shape travels with the bare producer as a control, so a refusal here is
 //! evidence about the epilogue rather than about the profile.
 
 use tiler_compiler::session::{
@@ -312,61 +325,85 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
     }
 }
 
-/// `input(0) * 2.0`: the smallest expression an epilogue region could carry.
-fn scale_expression() -> PointwiseF32Expression {
+/// The product of `count` leaves, times `2.0` when there is only one.
+///
+/// One leaf per read, because the pointwise access contract requires exactly as
+/// many reads as the expression has input leaves. The constant keeps the
+/// one-read expression a legal two-operand tree.
+fn product_expression(count: usize) -> PointwiseF32Expression {
     let mut builder = PointwiseF32ExpressionBuilder::new();
-    let leaf = builder.input(InputOrdinal::new(0)).unwrap();
-    let two = builder.constant(2.0_f32.to_bits()).unwrap();
-    let root = builder.multiply(leaf, two).unwrap();
+    let leaves: Vec<_> = (0..count)
+        .map(|ordinal| {
+            builder
+                .input(InputOrdinal::new(u32::try_from(ordinal).unwrap()))
+                .unwrap()
+        })
+        .collect();
+    let mut leaves = leaves.into_iter();
+    let mut root = leaves.next().expect("at least one read");
+    if count == 1 {
+        let two = builder.constant(2.0_f32.to_bits()).unwrap();
+        root = builder.multiply(root, two).unwrap();
+    }
+    for leaf in leaves {
+        root = builder.multiply(root, leaf).unwrap();
+    }
     builder.build(root).unwrap()
 }
 
-/// A one-read elementwise region over `shape`, reading whichever tensor is named.
+/// An elementwise region over `shape`, reading whichever tensors are named.
 ///
-/// The *only* thing that varies between the refused region and its control is
-/// `read`, and it varies in the access, the bounds proof, and nowhere else — so
-/// the verifier's verdict is attributable to the read's boundary role alone.
-fn elementwise_region(read: TensorRole, elements: u64) -> ScheduledRegion {
+/// The *only* thing that varies between the regions below is `reads`, and it
+/// varies in the accesses, their bounds proofs, and nowhere else — so the
+/// verifier's verdict is attributable to the reads' boundary roles alone.
+fn elementwise_region(reads: &[TensorRole], elements: u64) -> ScheduledRegion {
+    let write_witness = u32::try_from(reads.len()).unwrap();
+    let mut accesses: Vec<Access> = reads
+        .iter()
+        .enumerate()
+        .map(|(position, tensor)| Access {
+            tensor: *tensor,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(u32::try_from(position).unwrap()),
+            ownership: None,
+        })
+        .collect();
+    let mut bounds_proofs: Vec<BoundsProof> = reads
+        .iter()
+        .enumerate()
+        .map(|(position, tensor)| BoundsProof {
+            id: BoundsWitnessId::new(u32::try_from(position).unwrap()),
+            tensor: *tensor,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: elements,
+            },
+        })
+        .collect();
+    accesses.push(Access {
+        tensor: TensorRole::Output,
+        component_role: None,
+        mode: AccessMode::Write,
+        map: LogicalAccess::LinearIdentity,
+        bounds: BoundsWitnessId::new(write_witness),
+        ownership: Some(OwnershipWitnessId::new(0)),
+    });
+    bounds_proofs.push(BoundsProof {
+        id: BoundsWitnessId::new(write_witness),
+        tensor: TensorRole::Output,
+        component_role: None,
+        kind: BoundsProofKind::LinearRange {
+            element_count: elements,
+        },
+    });
     ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(0),
             iteration_shape: Shape::from_dims([elements]),
-            accesses: vec![
-                Access {
-                    tensor: read,
-                    component_role: None,
-                    mode: AccessMode::Read,
-                    map: LogicalAccess::LinearIdentity,
-                    bounds: BoundsWitnessId::new(0),
-                    ownership: None,
-                },
-                Access {
-                    tensor: TensorRole::Output,
-                    component_role: None,
-                    mode: AccessMode::Write,
-                    map: LogicalAccess::LinearIdentity,
-                    bounds: BoundsWitnessId::new(1),
-                    ownership: Some(OwnershipWitnessId::new(0)),
-                },
-            ],
-            bounds_proofs: vec![
-                BoundsProof {
-                    id: BoundsWitnessId::new(0),
-                    tensor: read,
-                    component_role: None,
-                    kind: BoundsProofKind::LinearRange {
-                        element_count: elements,
-                    },
-                },
-                BoundsProof {
-                    id: BoundsWitnessId::new(1),
-                    tensor: TensorRole::Output,
-                    component_role: None,
-                    kind: BoundsProofKind::LinearRange {
-                        element_count: elements,
-                    },
-                },
-            ],
+            accesses,
+            bounds_proofs,
             ownership_proof: OwnershipProof {
                 id: OwnershipWitnessId::new(0),
                 tensor: TensorRole::Output,
@@ -374,7 +411,7 @@ fn elementwise_region(read: TensorRole, elements: u64) -> ScheduledRegion {
                     output_count: elements,
                 },
             },
-            scalar_program: ScalarProgram::PointwiseF32(scale_expression()),
+            scalar_program: ScalarProgram::PointwiseF32(product_expression(reads.len())),
             numerical: strict_f32_realization(),
         },
         schedule: linear_schedule(elements, OwnershipWitnessId::new(0)),
@@ -389,45 +426,97 @@ fn verify(region: ScheduledRegion) -> Result<(), Vec<ScheduledRegionDiagnostic>>
         .map_err(|error| error.diagnostics().to_vec())
 }
 
-/// **The falsification.** A pointwise region may not read a materialized
-/// intermediate, so the epilogue this ticket owns has no region to be built as.
+/// **The falsification, inverted.** A pointwise region may read a materialized
+/// intermediate, so the epilogue this ticket owns has a region to be built as.
 ///
-/// `verify_pointwise_region` requires read access `i` to be
-/// `TensorRole::Input { ordinal: i }` at every position — both halves of that
-/// correspondence are load-bearing there, and the role half is what refuses
-/// here. The control is the identical region with the read at ordinal zero, so
-/// the verdict cannot be attributed to the expression, the domain, the proofs,
-/// the ownership, the schedule, or the numerical declaration.
-///
-/// This is what makes the epilogue admission a `crates/tiler-ir/**` widening
-/// with a `crates/tiler-compiler/**` dependent rather than a compiler-side gap,
-/// and it is why
+/// This assertion measured the opposite when the file was written, and
 /// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-/// exists. If that widening lands, this test fails and says so.
+/// lifted it: `verify_pointwise_region` required read access `i` to be
+/// `TensorRole::Input { ordinal: i }` at every position, conflating the access
+/// position with the declared input the role names. It now requires the reads to
+/// name strictly ascending declared inputs and at most one intermediate. The
+/// control is the identical region reading input ordinal zero, so the admission
+/// is not evidence that the verifier stopped refusing things.
+///
+/// The two refusals travel with it because the widening had to keep them. A
+/// second intermediate read is *ambiguous*, not merely unsupported —
+/// `TensorRole::Intermediate` carries no ordinal, so nothing says which
+/// materialization edge each read binds, which is why `CoverAssembly::from_plan`
+/// refuses it a layer up under `cover-intermediate-read-attribution` — and a
+/// region reading the program's own output is refused by name rather than under
+/// a wildcard.
 #[test]
-fn a_pointwise_region_cannot_read_a_materialized_intermediate() {
+fn a_pointwise_region_may_read_a_materialized_intermediate() {
     let control = elementwise_region(
-        TensorRole::Input {
+        &[TensorRole::Input {
             ordinal: InputOrdinal::new(0),
-        },
+        }],
         4,
     );
     assert_eq!(
         verify(control),
         Ok(()),
-        "the input-reading control must verify, or the refusal below is not \
+        "the input-reading control must verify, or the admission below is not \
          about the read's boundary role",
     );
 
-    let epilogue = elementwise_region(TensorRole::Intermediate, 4);
-    let diagnostics = verify(epilogue).expect_err(
-        "a pointwise region reading a materialized intermediate must be refused \
-         by the intrinsic schedule verifier",
+    let epilogue = elementwise_region(&[TensorRole::Intermediate], 4);
+    assert_eq!(
+        verify(epilogue),
+        Ok(()),
+        "a pointwise region reading a materialized intermediate must verify: \
+         it is the consumer half of every epilogue chain",
     );
-    assert!(
-        diagnostics.contains(&ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
-        "expected the access-refinement diagnostic, got {diagnostics:?}",
+
+    // The mixed list, which is what the separation actually buys: one leaf reads
+    // what an earlier region staged, the other reads a declared input whose
+    // ordinal is not its access position.
+    let mixed = elementwise_region(
+        &[
+            TensorRole::Intermediate,
+            TensorRole::Input {
+                ordinal: InputOrdinal::new(2),
+            },
+        ],
+        4,
     );
+    assert_eq!(
+        verify(mixed),
+        Ok(()),
+        "an epilogue reading a staged value and the program's third input must \
+         verify, or the ordinal is still being read as the access position",
+    );
+
+    for (reads, why) in [
+        (
+            vec![TensorRole::Intermediate, TensorRole::Intermediate],
+            "two intermediate reads have nothing to attribute them to two edges",
+        ),
+        (
+            vec![
+                TensorRole::Input {
+                    ordinal: InputOrdinal::new(2),
+                },
+                TensorRole::Intermediate,
+                TensorRole::Input {
+                    ordinal: InputOrdinal::new(1),
+                },
+            ],
+            "declared input ordinals must ascend across the whole read list",
+        ),
+        (
+            vec![TensorRole::Output],
+            "a region does not consume the output it publishes",
+        ),
+    ] {
+        let Err(diagnostics) = verify(elementwise_region(&reads, 4)) else {
+            panic!("{reads:?} must be refused by the intrinsic verifier: {why}");
+        };
+        assert!(
+            diagnostics.contains(&ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
+            "expected the access-refinement diagnostic for {reads:?}, got {diagnostics:?}",
+        );
+    }
 }
 
 /// A strict serial fold may not write a materialized intermediate.
