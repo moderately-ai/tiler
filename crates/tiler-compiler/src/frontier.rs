@@ -3260,10 +3260,11 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
 /// `calibrate-and-activate-parallel-reduction-selection` owns preference and
 /// this slice only enumerates.
 ///
-/// That preference is still unassigned, and not for want of trying: on the
-/// authoritative profile exactly one shape retains all three strategies, so
-/// there is no crossover to measure. See [`crate::physical::governed_partition`]
-/// for the derivation and the row that blocks it.
+/// That preference is still unassigned, and no longer for want of a domain:
+/// the authoritative profile's grid-axis row is a retained measurement wide
+/// enough that several shapes retain all three strategies, and the crossover
+/// sweep over them is `calibrate-and-activate-parallel-reduction-selection`'s
+/// to run. See [`crate::physical::governed_partition`] for the derivation.
 fn propose_split(
     request: &VerifiedTargetRequest,
     output: &crate::request::NormalizedOutput,
@@ -3331,10 +3332,11 @@ fn propose_split(
 /// `calibrate-and-activate-parallel-reduction-selection` owns preference and
 /// this slice only enumerates.
 ///
-/// That preference is still unassigned, and not for want of trying: on the
-/// authoritative profile exactly one shape retains all three strategies, so
-/// there is no crossover to measure. See [`crate::physical::governed_partition`]
-/// for the derivation and the row that blocks it.
+/// That preference is still unassigned, and no longer for want of a domain:
+/// the authoritative profile's grid-axis row is a retained measurement wide
+/// enough that several shapes retain all three strategies, and the crossover
+/// sweep over them is `calibrate-and-activate-parallel-reduction-selection`'s
+/// to run. See [`crate::physical::governed_partition`] for the derivation.
 fn propose_workgroup_tree(
     request: &VerifiedTargetRequest,
     output: &crate::request::NormalizedOutput,
