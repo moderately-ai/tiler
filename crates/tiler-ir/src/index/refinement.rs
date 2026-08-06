@@ -24,7 +24,10 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::identity::{push_len, push_slice};
 use crate::program::SemanticOccurrence;
-use crate::schedule::{ArithmeticType, F32NumericalContractKey, NumericalContractKeyError};
+use crate::schedule::{
+    ArithmeticType, BF16_NUMERICAL_CONTRACT_KEY_DOMAIN, Bf16NumericalContractKey,
+    F32NumericalContractKey, NumericalContractKeyError,
+};
 use crate::semantic::{
     EncodedComponentRole, FrozenSemanticRegistry, OpKey, OperationAttributes, OperationEffect,
     OperationId, ProviderIdentity, RegistryError, ResolvedValueType, SemanticCapabilityAuthority,
@@ -103,16 +106,44 @@ impl IndexRefinementBoundary {
 }
 
 /// Canonical identity of the numerical contract an occurrence is lowered under.
+///
+/// One opaque identity over the governed per-width contract key types, rather
+/// than a public sum of them. The keys themselves stay siblings — distinct
+/// types over mutually closed domains, because subnormal behaviour is
+/// measurably per-dtype — and this type is what lets one
+/// [`IndexRefinementSubject`] field hold whichever width its occurrence is
+/// stated for. Keeping the sum private means every consumer discriminates
+/// through [`Self::arithmetic`], whose [`ArithmeticType`] is deliberately not
+/// `#[non_exhaustive]`, so a third admitted width is a build error at each such
+/// site instead of falling through a match written before it existed.
+///
+/// **The identity bytes are the key spelling and nothing else.** No width tag is
+/// written beside them: the two governed domains render mutually closed
+/// preimages, so the spelling already determines the width, and a tag would move
+/// every `f32` refinement receipt ever encoded to restate what the bytes say.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct NumericalContractIdentity(F32NumericalContractKey);
+pub struct NumericalContractIdentity(NumericalContractKey);
+
+/// The governed per-width contract key one refinement identity retains.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum NumericalContractKey {
+    F32(F32NumericalContractKey),
+    Bf16(Bf16NumericalContractKey),
+}
 
 impl NumericalContractIdentity {
-    /// Validates and identifies one canonical coherent v2 `f32` contract key.
+    /// Validates and identifies one canonical coherent governed contract key.
+    ///
+    /// The governed domains are `tiler.contract.f32.v2` and
+    /// `tiler.contract.bf16.v1`. They are mutually closed, so the rendered
+    /// domain selects the parser and the reported refusal is that grammar's
+    /// own: trying both and returning the second's error would name a grammar
+    /// the caller never wrote.
     ///
     /// # Errors
     ///
     /// Returns a typed refusal when the key is not the exact IR-owned canonical
-    /// spelling of a coherent `f32` contract vector.
+    /// spelling of a coherent contract vector in one of those domains.
     pub fn try_from_key(key: &str) -> Result<Self, IndexRefinementVerificationError> {
         if key.len() > MAX_NUMERICAL_CONTRACT_IDENTITY_BYTES {
             return Err(
@@ -121,38 +152,56 @@ impl NumericalContractIdentity {
                 },
             );
         }
-        F32NumericalContractKey::try_from_str(key)
-            .map(Self::from)
-            .map_err(
-                |source| IndexRefinementVerificationError::InvalidNumericalContractIdentity {
-                    source,
-                },
-            )
+        let parsed = if key.starts_with(BF16_NUMERICAL_CONTRACT_KEY_DOMAIN) {
+            Bf16NumericalContractKey::try_from_str(key).map(Self::from)
+        } else {
+            // Every input that is not rendered under the `bf16` domain reaches
+            // the `f32` parser exactly as it did before that domain existed, so
+            // no previously admitted key and no previously reported refusal
+            // moves.
+            F32NumericalContractKey::try_from_str(key).map(Self::from)
+        };
+        parsed.map_err(|source| {
+            IndexRefinementVerificationError::InvalidNumericalContractIdentity { source }
+        })
     }
 
     /// Returns the canonical numerical-contract identity bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_str().as_bytes()
+        self.as_str().as_bytes()
     }
 
     /// Returns the validated UTF-8 contract key.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        self.0.as_str()
+        match &self.0 {
+            NumericalContractKey::F32(key) => key.as_str(),
+            NumericalContractKey::Bf16(key) => key.as_str(),
+        }
     }
 
     /// Returns the arithmetic type established by the canonical key grammar.
     #[must_use]
     pub const fn arithmetic(&self) -> ArithmeticType {
-        self.0.arithmetic()
+        match &self.0 {
+            NumericalContractKey::F32(key) => key.arithmetic(),
+            NumericalContractKey::Bf16(key) => key.arithmetic(),
+        }
     }
 }
 
 impl From<F32NumericalContractKey> for NumericalContractIdentity {
     /// Retains an already-validated canonical `f32` contract key as refinement identity.
     fn from(key: F32NumericalContractKey) -> Self {
-        Self(key)
+        Self(NumericalContractKey::F32(key))
+    }
+}
+
+impl From<Bf16NumericalContractKey> for NumericalContractIdentity {
+    /// Retains an already-validated canonical `bf16` contract key as refinement identity.
+    fn from(key: Bf16NumericalContractKey) -> Self {
+        Self(NumericalContractKey::Bf16(key))
     }
 }
 
@@ -1339,10 +1388,7 @@ impl ResolvedIndexRealization {
         }
         let operand_bindings = bind_operands(subject, region)?;
         let result_bindings = bind_results(subject, region)?;
-        if !self
-            .law
-            .accepts_numerical_contract(subject.numerical_contract())
-        {
+        if !self.law.accepts_numerical_contract(subject) {
             return Err(IndexRefinementVerificationError::NumericalContractNotGoverned);
         }
         let expected = self

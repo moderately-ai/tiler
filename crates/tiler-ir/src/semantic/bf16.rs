@@ -399,13 +399,18 @@ fn governed_op(name: &str) -> OpKey {
 
 /// Returns the BF16 payload width in bytes, read from the registered descriptor.
 ///
+/// The **one** derivation of this width. The index layer's `bf16` scalar
+/// constant validates its payload against this same function rather than a
+/// literal of its own, so the semantic operation and the scalar it lowers to
+/// cannot come to disagree about how wide a `bf16` payload is.
+///
 /// # Panics
 ///
 /// Panics when the governed catalog does not describe `tiler::bf16@1` with a
 /// whole-byte width. Both are defects in this crate's own catalog rather than
 /// consumer input, and a registration that proceeded past either would validate
 /// constant payloads against a width no registered identity claims.
-fn registered_bf16_payload_bytes() -> usize {
+pub(crate) fn registered_bf16_payload_bytes() -> usize {
     let facts = builtin_scalar_value_type_facts(&Bf16::resolved_type())
         .expect("the governed catalog describes tiler::bf16@1");
     let CanonicalValueView::Record(fields) = facts.view() else {
