@@ -44,11 +44,12 @@
 //! a partial is an unfolded fragment and is no cover's declared output.
 //!
 //! **With all three rows open, every region the chain needs is expressible in
-//! `tiler-ir`.** What remains for
-//! `admit-elementwise-epilogues-over-a-materialized-intermediate` is entirely
-//! compiler-side: recognizing the epilogue shape, threading `RegionWrite` into
-//! the reduction spellings that still hard-code `TensorRole::Output`, and
-//! assembling the chain.
+//! `tiler-ir`**, and
+//! `admit-elementwise-epilogues-over-a-materialized-intermediate` built the
+//! compiler side on top of them: the recognizer names the staged value a folding
+//! family produces and walks the epilogue against it, `RegionWrite` is threaded
+//! into every producing spelling that hard-coded `TensorRole::Output`, and the
+//! ordinary cover search assembles the chain.
 //!
 //! **The compiler still cannot route around the write by binding differently.** A
 //! region cannot declare `TensorRole::Input { ordinal }` for a read and let
@@ -63,15 +64,19 @@
 //!
 //! # What the caller sees today
 //!
-//! Both epilogue shapes the ticket names still refuse at the request boundary
-//! under `operation-set`, which is the elementwise walk reporting that the
-//! operand it reached is produced by a family its expression vocabulary has no
-//! node for. The schedule vocabulary now has regions for *both* shapes, so the
-//! two refusals below are the recognizer's alone; building the chain from a
-//! recognized program is
-//! `admit-elementwise-epilogues-over-a-materialized-intermediate`'s own work.
-//! Each shape travels with the bare producer as a control, so a refusal here is
-//! evidence about the epilogue rather than about the profile.
+//! Both epilogue shapes the ticket names compile. Each travels with the bare
+//! producer as a control under the identical request, so a green run is evidence
+//! about the epilogue rather than about the profile or the target, and each
+//! travels with a neighbour that still refuses — the same program one
+//! materialization boundary deeper — so the admission is bounded rather than
+//! open-ended.
+//!
+//! **The two assertions below measured `operation-set` refusals until that
+//! ticket landed**, and what they measured was real: the elementwise walk
+//! reached an operand produced by a family its expression vocabulary has no node
+//! for, and stopped. It now *names* that operand instead, which is the whole
+//! change — the value a cover materializes is exactly the value the walk could
+//! not absorb.
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
@@ -226,15 +231,16 @@ fn compile_under(
     }
 }
 
-/// An elementwise epilogue over a contraction refuses, and its producer compiles.
+/// An elementwise epilogue over a contraction compiles, and so does its producer.
 ///
-/// The refusal is the elementwise walk's `operation-set`: the walk reaches the
-/// contraction occurrence as an operand, and no `PointwiseF32Node` spells a sum
-/// over indices shared by two operands, so there is no leaf to mint for it. The
-/// bare contraction travels with it under the identical request, so a green run
-/// is evidence about the epilogue rather than about the profile or the target.
+/// The walk reaches the contraction occurrence as an operand and no
+/// `PointwiseF32Node` spells a sum over indices shared by two operands, so there
+/// is no leaf to mint for it — which is why the value is *staged* rather than
+/// absorbed. The bare contraction travels with it under the identical request,
+/// so a green run is evidence about the epilogue rather than about the profile
+/// or the target.
 #[test]
-fn an_elementwise_epilogue_over_a_contraction_refuses_at_the_request_boundary() {
+fn an_elementwise_epilogue_over_a_contraction_compiles_as_a_chain() {
     let control = bare_contraction();
     let epilogue = contraction_with_epilogue();
     // One further occurrence than the control, and nothing else moved.
@@ -253,18 +259,22 @@ fn an_elementwise_epilogue_over_a_contraction_refuses_at_the_request_boundary() 
         );
         assert_eq!(
             compile_under(&epilogue, contract),
+            Ok(()),
+            "{contract:?} refused the contraction epilogue",
+        );
+        assert_eq!(
+            compile_under(&nested_contraction_chain(), contract),
             Err(CompileFailureClass::UnsupportedCapability {
                 rule: "operation-set"
             }),
-            "{contract:?} did not refuse the contraction epilogue under the \
-             elementwise walk's own rule",
+            "{contract:?} admitted a chain two materialization boundaries deep",
         );
     }
 }
 
-/// An elementwise epilogue over a reduction refuses, and its producer compiles.
+/// An elementwise epilogue over a reduction compiles, and so does its producer.
 #[test]
-fn an_elementwise_epilogue_over_a_reduction_refuses_at_the_request_boundary() {
+fn an_elementwise_epilogue_over_a_reduction_compiles_as_a_chain() {
     let control = bare_reduction();
     let epilogue = reduction_with_epilogue();
     assert_eq!(
@@ -282,13 +292,62 @@ fn an_elementwise_epilogue_over_a_reduction_refuses_at_the_request_boundary() {
         );
         assert_eq!(
             compile_under(&epilogue, contract),
+            Ok(()),
+            "{contract:?} refused the reduction epilogue",
+        );
+        assert_eq!(
+            compile_under(&nested_reduction_chain(), contract),
             Err(CompileFailureClass::UnsupportedCapability {
                 rule: "operation-set"
             }),
-            "{contract:?} did not refuse the reduction epilogue under the \
-             elementwise walk's own rule",
+            "{contract:?} admitted a chain two materialization boundaries deep",
         );
     }
+}
+
+/// `refolded = sum(contract(a, b) * 2.0, axis 0)` — one boundary too deep.
+///
+/// The admission is one materialization boundary wide, because
+/// `TensorRole::Intermediate` carries no ordinal: a region reading two staged
+/// values has nothing to attribute the second to. This program needs exactly
+/// that — a fold whose contributors are an epilogue over a contraction — so it
+/// refuses, which is what makes the admission above a bounded statement rather
+/// than an open one.
+fn nested_contraction_chain() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let projected =
+        F32TensorContraction::apply(&mut builder, &projection_structure(), a, b).unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, projected, two).unwrap();
+    let refolded = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(0)]).unwrap();
+    builder
+        .output(OutputKey::new("refolded").unwrap(), refolded)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// `refolded = sum(sum(x * x, axis 1) * 2.0, axis 0)` — the reduction pair's
+/// too-deep neighbour, for the reason [`nested_contraction_chain`] states.
+fn nested_reduction_chain() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let x = builder
+        .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2, 4]))
+        .unwrap();
+    let squared = F32Multiply::apply(&mut builder, x, x).unwrap();
+    let reduced = StrictSerialF32Sum::apply(&mut builder, squared, [Axis::new(1)]).unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, reduced, two).unwrap();
+    let refolded = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(0)]).unwrap();
+    builder
+        .output(OutputKey::new("refolded").unwrap(), refolded)
+        .unwrap();
+    builder.build().unwrap()
 }
 
 // ---------------------------------------------------------------------------

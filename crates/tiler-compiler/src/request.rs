@@ -8,7 +8,7 @@ use tiler_ir::index::{FrozenIndexRealizationLawRegistry, FrozenScalarRegistry};
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
     AxisDecode, InputOrdinal, LogicalAccess, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
-    PointwiseF32Node, PointwiseF32Value,
+    PointwiseF32Node, PointwiseF32Value, TensorRole,
 };
 use tiler_ir::semantic::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
@@ -854,15 +854,31 @@ impl DeterministicBudgets {
     /// both at once and the earlier check, `host-expression-nodes`, is the one
     /// that reports.
     ///
-    /// **`regions` stays `3`, and that is a derivation rather than an
-    /// omission.** The actual it is checked against is the constant three — the
-    /// split program's pointwise, partial and final stages — because a region
-    /// count is a property of a *plan*, and this profile plans no decoder layer:
-    /// [`select_supported_strategy`] refuses it under its own named rules, which
-    /// is a separate refusal with a separate remedy. There is therefore no layer
-    /// region count to derive, and a number invented here would be the opposite
-    /// of the rule above. It moves when the layer becomes plannable, and that is
-    /// a second identity move this one cannot honestly absorb.
+    /// **`regions` is `4`, and it is derived from a measurement rather than from
+    /// the decoder layer.** The actual it is checked against is a constant,
+    /// because a region count is a property of a *plan* and this profile plans no
+    /// decoder layer: [`select_supported_strategy`] refuses it under its own
+    /// named rules, which is a separate refusal with a separate remedy. What the
+    /// constant states is the widest plan the profile assembles, and that moved
+    /// when `admit-elementwise-epilogues-over-a-materialized-intermediate`
+    /// landed: a fold may now stage its result for an elementwise epilogue, so
+    /// the split program's three stages — prologue, partial, final — gain a
+    /// fourth. The number is the measured stage count of that plan, taken from
+    /// `crate::pipeline::tests::the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue`,
+    /// whose reassociation-forbidding neighbour is what attributes the fourth
+    /// stage to the split rather than to the epilogue alone.
+    ///
+    /// It moved from `3`, and the consequence is the one this comment already
+    /// records for the other four: every budget is written into the request
+    /// subject, so every governed compilation's qualifier moved with it. The
+    /// pinned identity is the same single one — `explain`'s
+    /// `deterministic_trace_is_sealed_and_rendered_separately` request qualifier
+    /// — and its ledger comment records the recomputation. No encoding version
+    /// moved: the field set, widths, and order are untouched, so a value change
+    /// stays injective inside `tiler.compiler.request-subject.v5`.
+    ///
+    /// It moves again when the decoder layer becomes plannable, and that is a
+    /// second identity move this one cannot honestly absorb.
     ///
     /// `normalization_rewrites` and every `region_*` bound are unchanged because
     /// none of them admits or refuses a program: each bounds a *search*, and
@@ -895,7 +911,7 @@ impl DeterministicBudgets {
         Self {
             semantic_values: 80,
             semantic_operations: 62,
-            regions: 3,
+            regions: 4,
             host_expression_nodes: 43,
             buffers: 21,
             normalization_rewrites: 8,
@@ -1305,6 +1321,88 @@ pub(crate) struct NormalizedContraction {
     pub(crate) contracted_elements: u64,
 }
 
+/// One read an elementwise epilogue's expression leaf binds.
+///
+/// **The access position and the boundary role are separate facts here, and a
+/// whole-program elementwise region never had to distinguish them.** That region
+/// reads every declared input in declaration order, so leaf `i` and declared
+/// input `i` coincide and one number serves as both. An epilogue reads the value
+/// an earlier region staged plus whichever declared inputs its expression names,
+/// so the *position* of a read — the leaf it serves — and the *tensor* it binds
+/// are independent. `tiler_ir::schedule`'s `reads_bind_boundary_tensors_in_order`
+/// states the same separation from the schedule side, and
+/// `crate::program::CoverAssembly::from_plan` is what resolves the role against
+/// the program's declared interface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EpilogueRead {
+    /// The value the producer region staged, bound to the materialization edge
+    /// the cover hands this region.
+    ///
+    /// Carries no ordinal because [`TensorRole::Intermediate`] carries none: a
+    /// region reads at most one staged value, which is exactly what makes the
+    /// unordinalled role sufficient and a second staged read inadmissible.
+    Staged,
+    /// The declared program input at this ordinal.
+    Input(u32),
+}
+
+impl EpilogueRead {
+    /// Returns the boundary tensor this read binds.
+    pub(crate) const fn tensor(self) -> TensorRole {
+        match self {
+            Self::Staged => TensorRole::Intermediate,
+            Self::Input(ordinal) => TensorRole::Input {
+                ordinal: InputOrdinal::new(ordinal),
+            },
+        }
+    }
+}
+
+/// A verified `f32` program output that is an elementwise expression over a
+/// value an earlier region produces.
+///
+/// **The chain is the recognized shape, not two shapes that happen to compose.**
+/// `matmul(a, b) * 2.0` and `sum(x * x) * scale` are one declared output each,
+/// and neither the contraction nor the fold publishes anything: their result is
+/// a materialization edge some cover places, and the epilogue is the region that
+/// consumes it. Carrying the producer *inside* this shape is what makes "which
+/// recognized partition does this region belong to" answerable for both halves
+/// from one place, and what lets every region builder, cost, and subject binding
+/// the producing family already has apply to the producer unchanged.
+///
+/// **The producer is a folding family, and only ever those two.** A pointwise
+/// producer is not a materialization boundary at all — its occurrences are part
+/// of the epilogue's own walk, and fusing them is the whole point of the
+/// expression vocabulary. [`recognize_epilogue_producer`] is where that is
+/// enforced, and the `NormalizedOutput` typing here is a convenience for the
+/// consumers rather than a claim that any variant may appear.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedEpilogue {
+    /// The producer whose staged result this epilogue reads.
+    ///
+    /// Its `output_key` is *this* chain's published key. The producer names no
+    /// key of its own — it publishes nothing — and the field means "the ordered
+    /// named output the partition this shape belongs to publishes", which is the
+    /// producer's own key exactly when the producer is the whole output.
+    pub(crate) producer: Box<NormalizedOutput>,
+    pub(crate) input_keys: Vec<InputKey>,
+    pub(crate) output_key: OutputKey,
+    /// The epilogue region's iteration domain, which is the published shape.
+    pub(crate) shape: Shape,
+    pub(crate) expression: PointwiseF32Expression,
+    /// One entry per expression input leaf, in access order.
+    ///
+    /// Parallel to the region's reads: leaf `i` is served by entry `i`, which
+    /// names the boundary tensor it binds and the relation it addresses that
+    /// tensor with. Exactly one entry is [`EpilogueRead::Staged`].
+    pub(crate) reads: Vec<(EpilogueRead, LogicalAccess)>,
+    /// The occurrences the epilogue region itself covers.
+    pub(crate) members: Vec<SemanticMemberId>,
+    pub(crate) inputs: Vec<ValueId>,
+    pub(crate) output: ValueId,
+    pub(crate) elements: u64,
+}
+
 /// One recognized ordered named program output, and the region partition that
 /// implements it.
 ///
@@ -1324,13 +1422,18 @@ pub(crate) enum NormalizedOutput {
     /// serial sum's payload — and every value of this enum would otherwise pay
     /// for the widest variant.
     Contraction(Box<NormalizedContraction>),
+    /// An elementwise expression over a value a folding region stages.
+    ///
+    /// Boxed because it carries a whole further recognized output inside it,
+    /// which would otherwise make every value of this enum the size of two.
+    Epilogue(Box<NormalizedEpilogue>),
 }
 
 impl NormalizedOutput {
     pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
-            Self::Pointwise(_) | Self::Contraction(_) => {
+            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => {
                 panic!("request is not a serial-sum program")
             }
         }
@@ -1339,21 +1442,45 @@ impl NormalizedOutput {
     pub(crate) const fn try_serial_sum(&self) -> Option<&NormalizedSerialSum> {
         match self {
             Self::SerialSum(normalized) => Some(normalized),
-            Self::Pointwise(_) | Self::Contraction(_) => None,
+            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => None,
         }
     }
 
     pub(crate) const fn pointwise(&self) -> Option<&NormalizedPointwise> {
         match self {
-            Self::SerialSum(_) | Self::Contraction(_) => None,
+            Self::SerialSum(_) | Self::Contraction(_) | Self::Epilogue(_) => None,
             Self::Pointwise(normalized) => Some(normalized),
         }
     }
 
     pub(crate) const fn contraction(&self) -> Option<&NormalizedContraction> {
         match self {
-            Self::SerialSum(_) | Self::Pointwise(_) => None,
+            Self::SerialSum(_) | Self::Pointwise(_) | Self::Epilogue(_) => None,
             Self::Contraction(normalized) => Some(normalized),
+        }
+    }
+
+    pub(crate) const fn epilogue(&self) -> Option<&NormalizedEpilogue> {
+        match self {
+            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) => None,
+            Self::Epilogue(normalized) => Some(normalized),
+        }
+    }
+
+    /// Returns the recognized shape every *producer* region of this output is
+    /// built from.
+    ///
+    /// A chain's producer regions — the fold, its prologue, its split passes,
+    /// its cooperative tile, the contraction — are spelled from the producer's
+    /// own recognized shape, so every derivation that would otherwise read the
+    /// chain asks this instead and reaches the same value it reaches for a
+    /// standalone output. The epilogue region is the one part that is not built
+    /// from it, and [`crate::physical::RegionSpellingKind::Epilogue`] is what
+    /// distinguishes it.
+    pub(crate) fn producer_shape(&self) -> &Self {
+        match self {
+            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) => self,
+            Self::Epilogue(chain) => &chain.producer,
         }
     }
 
@@ -1376,6 +1503,31 @@ impl NormalizedOutput {
                 (ordinal < normalized.input_keys.len()).then_some(normalized.elements)
             }
             Self::Contraction(normalized) => normalized.input_elements.get(ordinal).copied(),
+            // A chain reads a declared input from its producer, from its
+            // epilogue, or from both — and the two read it at different domains
+            // whenever the producer folds. Agreement or nothing, for the reason
+            // [`NormalizedProgram::agreed_input_elements_at`] states: this count
+            // scales a call over the tensor bound to the ordinal, and answering
+            // with either side would size a call against a domain one of the two
+            // regions does not iterate.
+            Self::Epilogue(chain) => {
+                let produced = chain
+                    .producer
+                    .input_elements_at(InputOrdinal::new(u32::try_from(ordinal).ok()?));
+                let consumed = chain
+                    .reads
+                    .iter()
+                    .any(|(read, _)| {
+                        u32::try_from(ordinal)
+                            .is_ok_and(|ordinal| *read == EpilogueRead::Input(ordinal))
+                    })
+                    .then_some(chain.elements);
+                match (produced, consumed) {
+                    (Some(produced), Some(consumed)) if produced != consumed => None,
+                    (Some(elements), _) | (None, Some(elements)) => Some(elements),
+                    (None, None) => None,
+                }
+            }
         }
     }
 
@@ -1390,6 +1542,21 @@ impl NormalizedOutput {
                 .copied()
                 .max()
                 .unwrap_or_default(),
+            // The epilogue's own domain counts only when it actually reads a
+            // declared input: a chain whose epilogue reads only the staged value
+            // reads no declared input at that domain, and reporting one would
+            // overstate what this output reads.
+            Self::Epilogue(chain) => chain.producer.max_input_elements().max(
+                if chain
+                    .reads
+                    .iter()
+                    .any(|(read, _)| matches!(read, EpilogueRead::Input(_)))
+                {
+                    chain.elements
+                } else {
+                    0
+                },
+            ),
         }
     }
 
@@ -1398,6 +1565,7 @@ impl NormalizedOutput {
             Self::SerialSum(normalized) => normalized.output_elements,
             Self::Pointwise(normalized) => normalized.elements,
             Self::Contraction(normalized) => normalized.output_elements,
+            Self::Epilogue(chain) => chain.elements,
         }
     }
 
@@ -1407,6 +1575,13 @@ impl NormalizedOutput {
             Self::SerialSum(normalized) => normalized.members.all(),
             Self::Pointwise(normalized) => normalized.members.clone(),
             Self::Contraction(normalized) => normalized.members.clone(),
+            Self::Epilogue(chain) => {
+                let mut members = chain.producer.members();
+                members.extend_from_slice(&chain.members);
+                members.sort_unstable();
+                members.dedup();
+                members
+            }
         }
     }
 
@@ -1436,6 +1611,14 @@ impl NormalizedOutput {
             }
             Self::Pointwise(normalized) => members == normalized.members,
             Self::Contraction(normalized) => members == normalized.members,
+            // The epilogue's own part, or any part of the producer's partition.
+            // The chain as a whole is deliberately *not* a part: no scheduled
+            // region computes a fold and an expression over its result, so a
+            // cover grouping both has no spelling and must be declined rather
+            // than resolved to this output.
+            Self::Epilogue(chain) => {
+                members == chain.members || chain.producer.owns_region_members(members)
+            }
         }
     }
 
@@ -1443,7 +1626,9 @@ impl NormalizedOutput {
     fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
-            Self::Pointwise(_) | Self::Contraction(_) => panic!("the fixture is a serial sum"),
+            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => {
+                panic!("the fixture is a serial sum")
+            }
         }
     }
 }
@@ -1688,6 +1873,55 @@ pub(crate) enum NormalizedOutputSubject {
     Pointwise(NormalizedPointwise),
     /// Boxed for the reason [`NormalizedOutput::Contraction`] is.
     Contraction(Box<NormalizedContraction>),
+    /// Boxed for the reason [`NormalizedOutput::Epilogue`] is.
+    Epilogue(Box<NormalizedEpilogueSubject>),
+}
+
+/// The subject projection of one recognized elementwise epilogue chain.
+///
+/// It carries the producer's own subject rather than a summary of it, so a
+/// region of the producer's partition binds against exactly the subject it would
+/// bind against if the producer were the whole declared output — which is what
+/// lets [`crate::physical`]'s binding recurse instead of restating each
+/// producing family's obligations a second time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedEpilogueSubject {
+    producer: Box<NormalizedOutputSubject>,
+    input_keys: Vec<InputKey>,
+    output_key: OutputKey,
+    shape: Shape,
+    expression: PointwiseF32Expression,
+    reads: Vec<(EpilogueRead, LogicalAccess)>,
+    members: Vec<SemanticMemberId>,
+    elements: u64,
+}
+
+impl NormalizedEpilogueSubject {
+    /// Returns the producer subject a region of the producing partition binds
+    /// against.
+    pub(crate) fn producer(&self) -> &NormalizedOutputSubject {
+        &self.producer
+    }
+    /// Returns the epilogue region's iteration domain.
+    pub(crate) const fn shape(&self) -> &Shape {
+        &self.shape
+    }
+    /// Returns the recognized epilogue expression.
+    pub(crate) const fn expression(&self) -> &PointwiseF32Expression {
+        &self.expression
+    }
+    /// Returns the epilogue region's reads, in access order.
+    pub(crate) fn reads(&self) -> &[(EpilogueRead, LogicalAccess)] {
+        &self.reads
+    }
+    /// Returns the occurrences the epilogue region itself covers.
+    pub(crate) fn members(&self) -> &[SemanticMemberId] {
+        &self.members
+    }
+    /// Returns the epilogue region's published element count.
+    pub(crate) const fn elements(&self) -> u64 {
+        self.elements
+    }
 }
 
 /// The recognized program as the request subject records it: one per ordered
@@ -1923,129 +2157,7 @@ impl VerifiedRequestSubject {
         // semantic graph identity above already says so.
         push_len(&mut bytes, self.normalized.outputs.len());
         for normalized in &self.normalized.outputs {
-            match normalized {
-                NormalizedOutputSubject::SerialSum(normalized) => {
-                    // **The sub-tag holds at `v3` although the arm gained an
-                    // absent prologue, and the forced-not-chosen standard is what
-                    // decides that.** A prologue is written below as its framed
-                    // node run, and
-                    // `tiler_ir::schedule::PointwiseF32ExpressionBuilder::build`
-                    // refuses an expression with no node — so every subject this
-                    // arm could encode before carries a node count of at least
-                    // one at that position. Writing the absent prologue as a
-                    // framed *zero* therefore occupies a byte string no
-                    // previously encodable subject can produce, and the run stays
-                    // self-delimiting: a count of zero ends the prologue and a
-                    // count of `n` is followed by exactly `n` nodes and the root.
-                    // Per-tag injectivity closes, no already-encodable subject's
-                    // bytes move, and a step would restate every pin for a
-                    // separation the encoding already has.
-                    //
-                    // The earlier step to `v3` was forced, and by the shape this
-                    // one is not: the access-relation run is written at the arm's
-                    // *end*, so a `v2` subject and a `v3` one carrying no maps
-                    // would have differed only by a trailing framed zero, and a
-                    // reader with the old framing would have consumed the
-                    // following output's tag as this arm's payload.
-                    push_slice(&mut bytes, b"serial-sum-f32.v3");
-                    push_len(&mut bytes, normalized.input_keys.len());
-                    for key in &normalized.input_keys {
-                        push_slice(&mut bytes, key.as_str().as_bytes());
-                    }
-                    push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
-                    encode_explain_shape(&mut bytes, &normalized.input_shape);
-                    encode_explain_shape(&mut bytes, &normalized.output_shape);
-                    push_len(&mut bytes, normalized.reduction_axes.len());
-                    for axis in &normalized.reduction_axes {
-                        bytes.extend_from_slice(&axis.get().to_be_bytes());
-                    }
-                    match &normalized.prologue {
-                        Some(prologue) => encode_pointwise_expression(&mut bytes, prologue),
-                        None => push_len(&mut bytes, 0),
-                    }
-                    for members in [
-                        normalized.members.pointwise(),
-                        normalized.members.reduction(),
-                    ] {
-                        push_len(&mut bytes, members.len());
-                        for member in members {
-                            bytes.extend_from_slice(&member.0.to_be_bytes());
-                        }
-                    }
-                    bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
-                    bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
-                    encode_access_maps(&mut bytes, &normalized.prologue_access_maps);
-                }
-                NormalizedOutputSubject::Pointwise(normalized) => {
-                    // The sub-tag steps to `v4` because the arm gained each read's
-                    // access relation, and that fact is *load-bearing for
-                    // identity*: `a * w` with both inputs declared at the region's
-                    // shape and `a * broadcast(w)` widening a smaller `w` encode
-                    // the same input keys, the same result shape, the same
-                    // expression, and the same element count. Only the access maps
-                    // separate them, so a subject that omitted them would give two
-                    // different programs one identity — and leaning on the member
-                    // list to separate them would be exactly the unstated invariant
-                    // an identity encoder must not rest on.
-                    //
-                    // `v3` stepped because a fixed root family, child family,
-                    // association, and three leaves became the general expression
-                    // the recognizer now admits. A `v2` pointwise subject can never
-                    // be read as a `v3` one, and a `v3` one can never be read as a
-                    // `v4`.
-                    push_slice(&mut bytes, b"pointwise-f32.v4");
-                    push_len(&mut bytes, normalized.input_keys.len());
-                    for key in &normalized.input_keys {
-                        push_slice(&mut bytes, key.as_str().as_bytes());
-                    }
-                    push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
-                    encode_explain_shape(&mut bytes, &normalized.shape);
-                    encode_pointwise_expression(&mut bytes, &normalized.expression);
-                    push_len(&mut bytes, normalized.members.len());
-                    for member in &normalized.members {
-                        bytes.extend_from_slice(&member.0.to_be_bytes());
-                    }
-                    bytes.extend_from_slice(&normalized.elements.to_be_bytes());
-                    encode_access_maps(&mut bytes, &normalized.access_maps);
-                }
-                // A third sub-tag rather than a step of the enclosing
-                // `request-subject.v2` domain: neither existing arm's bytes move, so
-                // a subject encoded before this variant existed still encodes to
-                // exactly what it did, and a reader that reaches this tag is reading
-                // a subject the earlier vocabulary could not express.
-                NormalizedOutputSubject::Contraction(normalized) => {
-                    push_slice(&mut bytes, b"contraction-f32.v1");
-                    push_len(&mut bytes, normalized.input_keys.len());
-                    for key in &normalized.input_keys {
-                        push_slice(&mut bytes, key.as_str().as_bytes());
-                    }
-                    push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
-                    for shape in &normalized.input_shapes {
-                        encode_explain_shape(&mut bytes, shape);
-                    }
-                    encode_explain_shape(&mut bytes, &normalized.output_shape);
-                    encode_explain_shape(&mut bytes, &normalized.contracted_shape);
-                    // The canonical structure encoding, not a projection of it: the
-                    // index tuples are what ADR 0087 makes the operation's identity,
-                    // and two structures over one set of shapes are two programs.
-                    push_slice(
-                        &mut bytes,
-                        normalized.structure.canonical_encoding().as_bytes(),
-                    );
-                    for position in normalized.operand_positions {
-                        push_len(&mut bytes, position);
-                    }
-                    push_len(&mut bytes, normalized.members.len());
-                    for member in &normalized.members {
-                        bytes.extend_from_slice(&member.0.to_be_bytes());
-                    }
-                    for elements in normalized.input_elements {
-                        bytes.extend_from_slice(&elements.to_be_bytes());
-                    }
-                    bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
-                    bytes.extend_from_slice(&normalized.contracted_elements.to_be_bytes());
-                }
-            }
+            encode_output_subject(&mut bytes, normalized);
         }
         encode_contract(&mut bytes, self.numerical_contract);
         // The stated preference follows the resolved contract, length-framed and
@@ -2081,6 +2193,176 @@ impl VerifiedRequestSubject {
         push_slice(&mut bytes, self.lowering_registry.as_bytes());
         push_slice(&mut bytes, &self.realization_registry);
         bytes
+    }
+}
+
+/// Appends one recognized output's complete canonical subject encoding.
+///
+/// Recursive because an epilogue chain's producer is itself a recognized output;
+/// every other arm is flat. The recursion is bounded by the recognizer, which
+/// admits a folding family as a chain's producer and nothing else, so a chain of
+/// chains is not a subject this function can be handed.
+fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubject) {
+    match normalized {
+        NormalizedOutputSubject::SerialSum(normalized) => {
+            // **The sub-tag holds at `v3` although the arm gained an
+            // absent prologue, and the forced-not-chosen standard is what
+            // decides that.** A prologue is written below as its framed
+            // node run, and
+            // `tiler_ir::schedule::PointwiseF32ExpressionBuilder::build`
+            // refuses an expression with no node — so every subject this
+            // arm could encode before carries a node count of at least
+            // one at that position. Writing the absent prologue as a
+            // framed *zero* therefore occupies a byte string no
+            // previously encodable subject can produce, and the run stays
+            // self-delimiting: a count of zero ends the prologue and a
+            // count of `n` is followed by exactly `n` nodes and the root.
+            // Per-tag injectivity closes, no already-encodable subject's
+            // bytes move, and a step would restate every pin for a
+            // separation the encoding already has.
+            //
+            // The earlier step to `v3` was forced, and by the shape this
+            // one is not: the access-relation run is written at the arm's
+            // *end*, so a `v2` subject and a `v3` one carrying no maps
+            // would have differed only by a trailing framed zero, and a
+            // reader with the old framing would have consumed the
+            // following output's tag as this arm's payload.
+            push_slice(bytes, b"serial-sum-f32.v3");
+            push_len(bytes, normalized.input_keys.len());
+            for key in &normalized.input_keys {
+                push_slice(bytes, key.as_str().as_bytes());
+            }
+            push_slice(bytes, normalized.output_key.as_str().as_bytes());
+            encode_explain_shape(bytes, &normalized.input_shape);
+            encode_explain_shape(bytes, &normalized.output_shape);
+            push_len(bytes, normalized.reduction_axes.len());
+            for axis in &normalized.reduction_axes {
+                bytes.extend_from_slice(&axis.get().to_be_bytes());
+            }
+            match &normalized.prologue {
+                Some(prologue) => encode_pointwise_expression(bytes, prologue),
+                None => push_len(bytes, 0),
+            }
+            for members in [
+                normalized.members.pointwise(),
+                normalized.members.reduction(),
+            ] {
+                push_len(bytes, members.len());
+                for member in members {
+                    bytes.extend_from_slice(&member.0.to_be_bytes());
+                }
+            }
+            bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
+            bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+            encode_access_maps(bytes, &normalized.prologue_access_maps);
+        }
+        NormalizedOutputSubject::Pointwise(normalized) => {
+            // The sub-tag steps to `v4` because the arm gained each read's
+            // access relation, and that fact is *load-bearing for
+            // identity*: `a * w` with both inputs declared at the region's
+            // shape and `a * broadcast(w)` widening a smaller `w` encode
+            // the same input keys, the same result shape, the same
+            // expression, and the same element count. Only the access maps
+            // separate them, so a subject that omitted them would give two
+            // different programs one identity — and leaning on the member
+            // list to separate them would be exactly the unstated invariant
+            // an identity encoder must not rest on.
+            //
+            // `v3` stepped because a fixed root family, child family,
+            // association, and three leaves became the general expression
+            // the recognizer now admits. A `v2` pointwise subject can never
+            // be read as a `v3` one, and a `v3` one can never be read as a
+            // `v4`.
+            push_slice(bytes, b"pointwise-f32.v4");
+            push_len(bytes, normalized.input_keys.len());
+            for key in &normalized.input_keys {
+                push_slice(bytes, key.as_str().as_bytes());
+            }
+            push_slice(bytes, normalized.output_key.as_str().as_bytes());
+            encode_explain_shape(bytes, &normalized.shape);
+            encode_pointwise_expression(bytes, &normalized.expression);
+            push_len(bytes, normalized.members.len());
+            for member in &normalized.members {
+                bytes.extend_from_slice(&member.0.to_be_bytes());
+            }
+            bytes.extend_from_slice(&normalized.elements.to_be_bytes());
+            encode_access_maps(bytes, &normalized.access_maps);
+        }
+        // A third sub-tag rather than a step of the enclosing
+        // `request-subject.v2` domain: neither existing arm's bytes move, so
+        // a subject encoded before this variant existed still encodes to
+        // exactly what it did, and a reader that reaches this tag is reading
+        // a subject the earlier vocabulary could not express.
+        NormalizedOutputSubject::Contraction(normalized) => {
+            push_slice(bytes, b"contraction-f32.v1");
+            push_len(bytes, normalized.input_keys.len());
+            for key in &normalized.input_keys {
+                push_slice(bytes, key.as_str().as_bytes());
+            }
+            push_slice(bytes, normalized.output_key.as_str().as_bytes());
+            for shape in &normalized.input_shapes {
+                encode_explain_shape(bytes, shape);
+            }
+            encode_explain_shape(bytes, &normalized.output_shape);
+            encode_explain_shape(bytes, &normalized.contracted_shape);
+            // The canonical structure encoding, not a projection of it: the
+            // index tuples are what ADR 0087 makes the operation's identity,
+            // and two structures over one set of shapes are two programs.
+            push_slice(bytes, normalized.structure.canonical_encoding().as_bytes());
+            for position in normalized.operand_positions {
+                push_len(bytes, position);
+            }
+            push_len(bytes, normalized.members.len());
+            for member in &normalized.members {
+                bytes.extend_from_slice(&member.0.to_be_bytes());
+            }
+            for elements in normalized.input_elements {
+                bytes.extend_from_slice(&elements.to_be_bytes());
+            }
+            bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+            bytes.extend_from_slice(&normalized.contracted_elements.to_be_bytes());
+        }
+        // A fourth sub-tag rather than a step of the enclosing
+        // `request-subject.v5` domain, and the argument is the contraction
+        // arm's: no existing arm's bytes move, so a subject encoded before this
+        // variant existed still encodes to exactly what it did, and a reader
+        // that reaches this tag is reading a subject the earlier vocabulary
+        // could not express. The nested producer is written through this same
+        // function, so a chain's producer encodes exactly as the standalone
+        // output of that family would — which is what keeps the two spellings of
+        // one fold from acquiring two identities.
+        NormalizedOutputSubject::Epilogue(normalized) => {
+            push_slice(bytes, b"epilogue-f32.v1");
+            push_len(bytes, normalized.input_keys.len());
+            for key in &normalized.input_keys {
+                push_slice(bytes, key.as_str().as_bytes());
+            }
+            push_slice(bytes, normalized.output_key.as_str().as_bytes());
+            encode_explain_shape(bytes, &normalized.shape);
+            encode_pointwise_expression(bytes, &normalized.expression);
+            // The read list, in access order, each entry naming the boundary
+            // tensor it binds and the relation it addresses it with. Both halves
+            // are identity: two chains whose epilogues read the same leaves in a
+            // different order are different regions, and a staged read and a
+            // declared-input read at the same position bind different buffers.
+            push_len(bytes, normalized.reads.len());
+            for (read, map) in &normalized.reads {
+                match read {
+                    EpilogueRead::Staged => bytes.push(0x01),
+                    EpilogueRead::Input(ordinal) => {
+                        bytes.push(0x02);
+                        bytes.extend_from_slice(&ordinal.to_be_bytes());
+                    }
+                }
+                encode_access_relation(bytes, map);
+            }
+            push_len(bytes, normalized.members.len());
+            for member in &normalized.members {
+                bytes.extend_from_slice(&member.0.to_be_bytes());
+            }
+            bytes.extend_from_slice(&normalized.elements.to_be_bytes());
+            encode_output_subject(bytes, &normalized.producer);
+        }
     }
 }
 
@@ -2198,33 +2480,52 @@ fn encode_access_maps(output: &mut Vec<u8>, maps: &[(u32, LogicalAccess)]) {
     push_len(output, maps.len());
     for (ordinal, map) in maps {
         output.extend_from_slice(&ordinal.to_be_bytes());
-        match map {
-            LogicalAccess::ReindexBijection {
-                operand_shape,
-                result_shape,
-                axes,
-            } => {
-                output.push(0x01);
-                encode_explain_shape(output, operand_shape);
-                encode_explain_shape(output, result_shape);
-                encode_explain_axis_decodes(output, axes);
-            }
-            LogicalAccess::BroadcastReplication {
-                operand_shape,
-                result_shape,
-                axes,
-            } => {
-                output.push(0x02);
-                encode_explain_shape(output, operand_shape);
-                encode_explain_shape(output, result_shape);
-                encode_explain_axis_decodes(output, axes);
-            }
-            // No other relation can be recorded here: `recognize_structural_read`
-            // is the only producer and it builds exactly these two. The arm is a
-            // refusal to encode rather than a wildcard tag, so a relation added
-            // to the run later cannot silently share one of these two tags.
-            _ => output.push(0x00),
+        encode_access_relation(output, map);
+    }
+}
+
+/// Appends one read's access relation under its canonical per-variant tag.
+///
+/// Split out of [`encode_access_maps`] because an epilogue's read list states a
+/// relation per *access position* rather than per input ordinal, so it needs the
+/// relation without the ordinal framing. One definition is what keeps the two
+/// spellings from drifting into two tag vocabularies.
+///
+/// [`LogicalAccess::LinearIdentity`] carries its own tag rather than falling
+/// through the wildcard. It is unreachable from [`encode_access_maps`] — the
+/// run there records only the ordinals a structural occurrence interposed — and
+/// an epilogue read that interposes none reaches it directly, so naming it is
+/// what keeps the dense read distinguishable from a relation this encoder
+/// refuses. No already-encodable subject's bytes move: the byte it now writes
+/// was never written before.
+fn encode_access_relation(output: &mut Vec<u8>, map: &LogicalAccess) {
+    match map {
+        LogicalAccess::ReindexBijection {
+            operand_shape,
+            result_shape,
+            axes,
+        } => {
+            output.push(0x01);
+            encode_explain_shape(output, operand_shape);
+            encode_explain_shape(output, result_shape);
+            encode_explain_axis_decodes(output, axes);
         }
+        LogicalAccess::BroadcastReplication {
+            operand_shape,
+            result_shape,
+            axes,
+        } => {
+            output.push(0x02);
+            encode_explain_shape(output, operand_shape);
+            encode_explain_shape(output, result_shape);
+            encode_explain_axis_decodes(output, axes);
+        }
+        LogicalAccess::LinearIdentity => output.push(0x03),
+        // No other relation can be recorded here: `recognize_structural_read`
+        // is the only producer of a mapped read and it builds exactly the two
+        // above. The arm is a refusal to encode rather than a wildcard tag, so a
+        // relation added later cannot silently share one of these tags.
+        _ => output.push(0x00),
     }
 }
 
@@ -2435,32 +2736,7 @@ fn request_subject(
     #[cfg(test)]
     crate::workcount::REQUEST_SUBJECT_REBUILDS.record();
     let normalized = NormalizedProgramSubject {
-        outputs: normalized
-            .outputs()
-            .iter()
-            .map(|normalized| match normalized {
-                NormalizedOutput::SerialSum(normalized) => {
-                    NormalizedOutputSubject::SerialSum(NormalizedSerialSumSubject {
-                        input_keys: normalized.input_keys.clone(),
-                        output_key: normalized.output_key.clone(),
-                        input_shape: normalized.input_shape.clone(),
-                        output_shape: normalized.output_shape.clone(),
-                        reduction_axes: normalized.reduction_axes.clone(),
-                        prologue: normalized.prologue.clone(),
-                        prologue_access_maps: normalized.prologue_access_maps.clone(),
-                        members: normalized.members.clone(),
-                        input_elements: normalized.input_elements,
-                        output_elements: normalized.output_elements,
-                    })
-                }
-                NormalizedOutput::Pointwise(normalized) => {
-                    NormalizedOutputSubject::Pointwise(normalized.clone())
-                }
-                NormalizedOutput::Contraction(normalized) => {
-                    NormalizedOutputSubject::Contraction(normalized.clone())
-                }
-            })
-            .collect(),
+        outputs: normalized.outputs().iter().map(output_subject).collect(),
     };
     VerifiedRequestSubject {
         normalized,
@@ -2477,6 +2753,47 @@ fn request_subject(
             .as_bytes()
             .to_vec()
             .into_boxed_slice(),
+    }
+}
+
+/// Projects one recognized output into the subject the request is bound to.
+///
+/// Recursive because an epilogue chain carries a whole further recognized output
+/// inside it; every other arm is a flat projection.
+fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputSubject {
+    match normalized {
+        NormalizedOutput::SerialSum(normalized) => {
+            NormalizedOutputSubject::SerialSum(NormalizedSerialSumSubject {
+                input_keys: normalized.input_keys.clone(),
+                output_key: normalized.output_key.clone(),
+                input_shape: normalized.input_shape.clone(),
+                output_shape: normalized.output_shape.clone(),
+                reduction_axes: normalized.reduction_axes.clone(),
+                prologue: normalized.prologue.clone(),
+                prologue_access_maps: normalized.prologue_access_maps.clone(),
+                members: normalized.members.clone(),
+                input_elements: normalized.input_elements,
+                output_elements: normalized.output_elements,
+            })
+        }
+        NormalizedOutput::Pointwise(normalized) => {
+            NormalizedOutputSubject::Pointwise(normalized.clone())
+        }
+        NormalizedOutput::Contraction(normalized) => {
+            NormalizedOutputSubject::Contraction(normalized.clone())
+        }
+        NormalizedOutput::Epilogue(chain) => {
+            NormalizedOutputSubject::Epilogue(Box::new(NormalizedEpilogueSubject {
+                producer: Box::new(output_subject(&chain.producer)),
+                input_keys: chain.input_keys.clone(),
+                output_key: chain.output_key.clone(),
+                shape: chain.shape.clone(),
+                expression: chain.expression.clone(),
+                reads: chain.reads.clone(),
+                members: chain.members.clone(),
+                elements: chain.elements,
+            }))
+        }
     }
 }
 
@@ -3118,11 +3435,16 @@ fn check_program_budgets(
     // the request is admitted before any plan is chosen, so a budget that only
     // admitted the two-region materialized program would let a request through
     // and then refuse the split at assembly, reporting a caller's request as a
-    // compiler-output defect. Three is the split program's own stage count —
-    // pointwise, partial, and final — and it is spelled rather than derived
+    // compiler-output defect. Four is the split program's own stage count with
+    // its consumer — prologue, partial, final, and the elementwise epilogue that
+    // reads the fold's staged result — and it is spelled rather than derived
     // because a region count belongs to a plan, and the widest plan this profile
-    // assembles is that split whatever the submitted program declares.
-    check_budget("regions", budgets.regions, 3)?;
+    // assembles is that chain whatever the submitted program declares. It was
+    // three while a fold's result could only be a declared program output;
+    // `crate::pipeline::tests::the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue`
+    // is the measurement that moved it, and the neighbour in that test is what
+    // attributes the fourth stage to the split rather than to the epilogue.
+    check_budget("regions", budgets.regions, 4)?;
     // Derived from the declared input arity rather than spelled, because it is
     // an upper bound over every plan the request could reach and the widest of
     // those grows with the arity: the element width, one element count and one
@@ -3269,11 +3591,11 @@ fn resolve_numerical_contract(
 ///   (`operation-set` from the contraction cover, `elementwise-shape` or
 ///   `operation-set` from the elementwise walk). Every elementwise region this
 ///   profile builds reads declared input tensors and nothing else, so a
-///   contraction or a reduction feeding an elementwise epilogue has no region
-///   to be assembled into.
+///   contraction or a reduction feeding an elementwise epilogue is a *chain*
+///   rather than a refusal.
 ///
-///   **The wall was in the schedule vocabulary rather than in this crate, and
-///   the consumer half of it is gone.** The paragraph that used to stand here
+///   **The wall was in the schedule vocabulary rather than in this crate, and it
+///   is gone in all three of its rows.** The paragraph that used to stand here
 ///   reasoned from `tiler_ir::schedule::TensorRole::Intermediate` being a
 ///   per-region role to the conclusion that nothing in `tiler-ir` forbade the
 ///   chain. The role is indeed per-region; what forbade the chain was the
@@ -3284,26 +3606,21 @@ fn resolve_numerical_contract(
 ///   `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
 ///   separated the access position from the declared input the role names, and a
 ///   pointwise region may now read one materialized intermediate alongside
-///   strictly ascending declared inputs.
-///
-///   What remains refused a crate down is the *producer* half of the reduction
-///   shape: `verify_access_and_semantics` admits a
-///   `ScalarProgram::StrictSerialSum` under a `ReductionTopology::Serial` only
-///   when its owning write targets `TensorRole::Output`, so the fold a reduction
-///   epilogue would read from cannot produce an intermediate. The multi-pass
-///   partial pass is the one fold that does write one, and it is a different
-///   topology declaring a split rather than a fold another region's epilogue may
-///   consume; `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate`
-///   owns that widening. A contraction *may* already write one, so
-///   `contract(a, b) * 2.0` is the shape whose halves are both expressible now.
+///   strictly ascending declared inputs. `verify_access_and_semantics` then
+///   admitted a fold only when its owning write targeted `TensorRole::Output`,
+///   and `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate`
+///   replaced that with a cover-assigned obligation at every committing pass. A
+///   contraction could already write one.
 ///   `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
 ///   measures all three rows.
 ///
-///   Building those regions from a recognized program is
-///   `admit-elementwise-epilogues-over-a-materialized-intermediate`'s own work —
-///   the same division `admit-multi-input-tensors-in-the-scheduled-region-vocabulary`
-///   and its own dependent already record. Refusing here rather than admitting
-///   and failing mid-pipeline is unchanged by either correction.
+///   [`recognize_epilogue`] is what builds the chain from a recognized program:
+///   the elementwise walk *names* the value a folding family produced instead of
+///   stopping at it, the producer is recognized as its own shape, and the cover
+///   search places the materialization edge between them. What is still refused
+///   under `operation-set` is a chain one boundary deeper — a walk that reaches a
+///   second folded value has nothing to attribute a second staged read to,
+///   because `TensorRole::Intermediate` carries no ordinal.
 ///
 /// **A reduction reading a declared input directly was the third wall here, and
 /// it is gone.** `sum(x)` was refused under `reduction-prologue` because
@@ -3349,12 +3666,14 @@ fn resolve_numerical_contract(
 /// publication: two keys naming one value, and a published intermediate that is
 /// also consumed. [`tiler_ir::program::ValueRole`] is exclusive and a region
 /// writes one owning tensor, so both are refused a layer down.
-/// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
-/// stage that would lift the second, and that copy stage is itself blocked in
-/// `tiler-ir`: it reads `TensorRole::Intermediate` and writes
-/// `TensorRole::Output`, and no scalar-program family admits that pair of roles
-/// — `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-/// owns the widening.
+/// The copy stage that would lift the second is blocked in `tiler-ir`, one layer
+/// below where it is observed: a stage publishing a value another region
+/// computed claims no occurrence of its own, and
+/// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
+/// only as the declared combiner of a split. That is a program-scope vocabulary
+/// widening rather than a schedule-vocabulary one — the *region* it needs is
+/// expressible, and `materialized_intermediate_epilogue_wall.rs` measures that —
+/// which is why admitting the epilogue chain did not lift it.
 /// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence for
 /// where that boundary now is, and
 /// `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
@@ -3427,12 +3746,64 @@ fn recognize_output(
     }
     let (member, root) = producer_for_value(program, output.value())?;
     if root.key() == &strict_serial_sum_f32_op() {
-        recognize_reduction(program, output, member, &root).map(NormalizedOutput::SerialSum)
+        recognize_reduction(program, output.value(), output.key().clone(), member, &root)
+            .map(NormalizedOutput::SerialSum)
     } else if root.key() == &strict_tensor_contraction_f32_op() {
-        normalize_contraction(program, output)
+        normalize_contraction(program, output.value(), output.key().clone())
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
     } else {
-        recognize_pointwise(program, output).map(NormalizedOutput::Pointwise)
+        recognize_elementwise_output(program, output)
+    }
+}
+
+/// Recognizes an output whose producing occurrence is elementwise.
+///
+/// **Two shapes share this entry, and which one a program is depends on a fact
+/// only the walk can report.** An elementwise expression over declared inputs is
+/// one region; the same expression over a *folded* value is two, because no
+/// per-point body spells a fold. The walk is run once and its answer decides:
+/// a completed plan is the whole-program shape, and a plan that stopped at a
+/// folding family names the value the chain materializes.
+///
+/// Deciding it this way rather than by pre-scanning the graph is deliberate. A
+/// pre-scan would be a second classifier of the same operand DAG, and the two
+/// would have to agree about constants, structural occurrences, shapes, and
+/// arity for the answer to mean anything — which is exactly the drift a single
+/// authority exists to prevent.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] under `output-handle` for an
+/// output the program holds no shape for, `elementwise-rank` for a rank-zero
+/// domain no region iterates, and every rule [`plan_elementwise`],
+/// [`mint_elementwise`], and [`recognize_epilogue`] report.
+fn recognize_elementwise_output(
+    program: &SemanticProgram,
+    output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+) -> Result<NormalizedOutput, RequestError> {
+    let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
+    let shape = program
+        .shape(output.value())
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "output-handle",
+        })?
+        .clone();
+    if shape.rank() == 0 {
+        return mismatch("elementwise-rank");
+    }
+    let leaves = ElementwiseLeaves {
+        declared: &declared,
+        staged: None,
+    };
+    match plan_elementwise(program, output.value(), &leaves, &shape) {
+        Ok(plan) => recognize_pointwise(program, output, &declared, shape, plan)
+            .map(NormalizedOutput::Pointwise),
+        Err(ElementwiseRefusal::Folded(staged)) => {
+            recognize_epilogue(program, output, &declared, shape, staged)
+                .map(|chain| NormalizedOutput::Epilogue(Box::new(chain)))
+        }
+        Err(ElementwiseRefusal::Refused(error)) => Err(error),
     }
 }
 
@@ -3456,12 +3827,13 @@ fn recognize_output(
 /// [`tiler_ir::program::ValueRole`] is exclusive and a region writes one owning
 /// tensor, so both are refused a layer down — and refusing here instead is what
 /// keeps the boundary from admitting a program that dies mid-pipeline.
-/// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
-/// stage that would lift it, behind
-/// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`:
-/// the copy stage reads `TensorRole::Intermediate` and writes
-/// `TensorRole::Output`, which the schedule vocabulary's pointwise access
-/// contract does not yet admit.
+/// The copy stage that would lift it reads `TensorRole::Intermediate` and writes
+/// `TensorRole::Output`, which the schedule vocabulary admits and this crate now
+/// builds for every epilogue chain. What it does not have is an *account*: it
+/// publishes a value another region computed, so it claims no occurrence, and
+/// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
+/// only as the declared combiner of a split. Lifting this refusal is therefore a
+/// program-scope vocabulary widening a crate down, not a recognizer change here.
 ///
 /// Claimed counts are taken over the deduplicated per-output member sets, so one
 /// constant shared by two operands of the *same* walk contributes one member
@@ -3495,6 +3867,108 @@ struct RecognizedElementwise {
     /// read is [`LogicalAccess::LinearIdentity`] and is left implicit, which is
     /// what keeps every already-recognized program's region byte-identical.
     access_maps: Vec<(u32, LogicalAccess)>,
+}
+
+/// Which values one elementwise walk *reads* rather than computes.
+///
+/// **The leaf set and the leaf *order* are separate facts, and separating them
+/// is what makes an epilogue expressible.** A whole-program or prologue walk
+/// reads exactly the declared program inputs and numbers its expression leaves
+/// by declaration position, because its region binds one buffer per declared
+/// input in that order. An epilogue additionally reads the value an earlier
+/// region staged, reads only *some* of the declared inputs, and numbers its
+/// leaves by the position of the read that serves them — which is not the
+/// declaration ordinal. [`plan_elementwise`] decides the set and the validation;
+/// [`mint_elementwise`] is handed the order.
+struct ElementwiseLeaves<'a> {
+    /// The program's declared input values, in declaration order.
+    declared: &'a [ValueId],
+    /// The producer result an epilogue reads as a materialized value.
+    ///
+    /// `None` for every walk that reads only declared inputs, which keeps the
+    /// classification below one rule rather than two.
+    staged: Option<ValueId>,
+}
+
+impl ElementwiseLeaves<'_> {
+    /// Returns whether one value is read rather than computed by this walk.
+    fn is_leaf(&self, value: ValueId) -> bool {
+        self.staged == Some(value) || self.declared.contains(&value)
+    }
+}
+
+/// What one step of a planned elementwise walk mints.
+///
+/// The steps are in mint order, so a node's operands are always already minted
+/// when it is reached — which is the property that lets [`mint_elementwise`]
+/// replay a plan against any leaf ordering without re-deciding anything.
+enum ElementwiseMint {
+    /// A read of one leaf tensor value.
+    ///
+    /// The leaf is the step's own value for a direct read, and the structural
+    /// occurrence's *operand* when one interposed: a structural occurrence
+    /// computes nothing, so the value it produces is minted as the leaf that
+    /// reads the tensor behind it.
+    Read { leaf: ValueId },
+    /// An exact `f32` constant leaf.
+    Constant(u32),
+    /// One node of the recognized vocabulary over already-minted operands.
+    Node(ElementwiseFamily, Vec<ValueId>),
+}
+
+/// Why one elementwise walk did not complete.
+///
+/// **The second variant is the epilogue's discovery, and it is a variant rather
+/// than a rule code because the caller acts on it.** A walk that reaches a value
+/// produced by a folding family has not found an unrecognizable program; it has
+/// found the *boundary* between two regions, and the value it names is the one a
+/// cover materializes. Reporting it as `operation-set` — which is what a caller
+/// that only wants a whole-program expression still does — would throw away the
+/// one fact the epilogue recognizer needs.
+enum ElementwiseRefusal {
+    /// The typed refusal to report.
+    Refused(RequestError),
+    /// The walk reached a value a folding family produces.
+    ///
+    /// Raised only for a walk that has no staged value yet: a walk that already
+    /// reads one and reaches a second has nothing to attribute the second read
+    /// to, so it is refused rather than reported as another boundary.
+    Folded(ValueId),
+}
+
+impl From<ElementwiseRefusal> for RequestError {
+    /// Flattens a discovered materialization boundary into the rule a caller
+    /// with no epilogue to build reports for it.
+    fn from(refusal: ElementwiseRefusal) -> Self {
+        match refusal {
+            ElementwiseRefusal::Refused(error) => error,
+            ElementwiseRefusal::Folded(_) => Self::UnsupportedCapability {
+                phase: "strategy",
+                rule: "operation-set",
+            },
+        }
+    }
+}
+
+/// A validated elementwise expression, linearized in mint order.
+///
+/// **Every rule the recognizer states is discharged here**, so the only thing
+/// left for minting is the arithmetic of node identifiers. That split exists
+/// because two callers need the same validation under different leaf numbering,
+/// and a second walk written for the second numbering would be a second
+/// classifier that could drift from this one.
+struct ElementwisePlan {
+    /// Each value the walk mints, in mint order.
+    steps: Vec<(ValueId, ElementwiseMint)>,
+    /// The distinct leaf tensor values, in first-mint order.
+    leaves: Vec<ValueId>,
+    /// The non-identity access map each leaf's read carries.
+    ///
+    /// Keyed by the leaf value rather than by an ordinal, because the ordinal is
+    /// exactly what this plan does not yet know.
+    access_maps: Vec<(ValueId, LogicalAccess)>,
+    members: Vec<SemanticMemberId>,
+    root: ValueId,
 }
 
 /// The elementwise operation families this recognizer projects.
@@ -3588,41 +4062,133 @@ fn recognize_elementwise(
     declared: &[ValueId],
     shape: &Shape,
 ) -> Result<RecognizedElementwise, RequestError> {
-    let mut builder = PointwiseF32ExpressionBuilder::new();
-    let mut minted: Vec<(ValueId, PointwiseF32Value)> = Vec::new();
-    let mut members: Vec<SemanticMemberId> = Vec::new();
-    let mut reads: BTreeSet<u32> = BTreeSet::new();
-    let mut access_maps: Vec<(u32, LogicalAccess)> = Vec::new();
-    let mut pending = vec![(root, false)];
-    while let Some((value, operands_visited)) = pending.pop() {
-        if minted.iter().any(|(seen, _)| *seen == value) {
-            continue;
-        }
-        if let Some(position) = declared.iter().position(|input| *input == value) {
+    let plan = plan_elementwise(
+        program,
+        root,
+        &ElementwiseLeaves {
+            declared,
+            staged: None,
+        },
+        shape,
+    )
+    .map_err(RequestError::from)?;
+    resolve_elementwise(plan, declared)
+}
+
+/// Resolves one planned whole-program or prologue expression against the
+/// declared inputs.
+///
+/// Declaration order *is* the leaf order here: the region binds one buffer per
+/// declared input in the order the ABI binds them, so leaf `i` is served by the
+/// read of declared input `i` and the two indices coincide. An epilogue is where
+/// they come apart, and [`recognize_epilogue`] states its own order rather than
+/// relaxing this one.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads` for
+/// a walk that did not read every declared input, and every rule
+/// [`mint_elementwise`] reports.
+fn resolve_elementwise(
+    plan: ElementwisePlan,
+    declared: &[ValueId],
+) -> Result<RecognizedElementwise, RequestError> {
+    // Every declared input must be read. One that is not would bind a buffer the
+    // kernel never loads, and the expression's own dense-ordinal rule would
+    // refuse the assembled expression anyway — this reports the property rather
+    // than the consequence.
+    if plan.leaves.len() != declared.len() {
+        return mismatch("elementwise-reads");
+    }
+    let expression = mint_elementwise(&plan, declared)?;
+    let mut access_maps: Vec<(u32, LogicalAccess)> = plan
+        .access_maps
+        .iter()
+        .map(|(leaf, map)| {
+            let position = declared.iter().position(|input| input == leaf).ok_or(
+                RequestError::UnsupportedCapability {
+                    phase: "strategy",
+                    rule: "structural-operand",
+                },
+            )?;
             let ordinal =
                 u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
                     phase: "strategy",
                     rule: "input-ordinal",
                 })?;
-            if program.shape(value).ok() != Some(shape) {
-                return mismatch("elementwise-shape");
-            }
-            let leaf = builder
-                .input(InputOrdinal::new(ordinal))
-                .map_err(|_| expression_bound())?;
-            reads.insert(ordinal);
-            minted.push((value, leaf));
+            Ok((ordinal, map.clone()))
+        })
+        .collect::<Result<_, RequestError>>()?;
+    access_maps.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+    Ok(RecognizedElementwise {
+        expression,
+        members: plan.members,
+        access_maps,
+    })
+}
+
+/// Records one leaf tensor value at its first sighting.
+fn record_leaf(leaves: &mut Vec<ValueId>, value: ValueId) {
+    if !leaves.contains(&value) {
+        leaves.push(value);
+    }
+}
+
+/// Validates and linearizes the elementwise expression rooted at one value.
+///
+/// This is the whole of the recognition stated in [`recognize_elementwise`]'s
+/// documentation; what it deliberately does not do is choose expression input
+/// ordinals, because two callers number their leaves differently and a walk that
+/// decided the numbering would have to be written twice.
+///
+/// # Errors
+///
+/// Returns every [`RequestError::UnsupportedCapability`]
+/// [`recognize_elementwise`] documents except `elementwise-reads`,
+/// `elementwise-node-limit`, and `elementwise-expression`, which are properties
+/// of a *numbering* and are reported by [`mint_elementwise`], each wrapped in
+/// [`ElementwiseRefusal::Refused`] — or [`ElementwiseRefusal::Folded`] naming
+/// the value a folding family produced.
+fn plan_elementwise(
+    program: &SemanticProgram,
+    root: ValueId,
+    leaves: &ElementwiseLeaves<'_>,
+    shape: &Shape,
+) -> Result<ElementwisePlan, ElementwiseRefusal> {
+    let mut steps: Vec<(ValueId, ElementwiseMint)> = Vec::new();
+    let mut minted: Vec<ValueId> = Vec::new();
+    let mut members: Vec<SemanticMemberId> = Vec::new();
+    let mut leaf_values: Vec<ValueId> = Vec::new();
+    let mut access_maps: Vec<(ValueId, LogicalAccess)> = Vec::new();
+    // Leaves this walk reads *without* a relation interposed, retained so the
+    // conflict below can be decided over the whole walk rather than in the order
+    // the two spellings happened to be popped.
+    let mut dense_leaves: Vec<ValueId> = Vec::new();
+    let mut pending = vec![(root, false)];
+    while let Some((value, operands_visited)) = pending.pop() {
+        if minted.contains(&value) {
             continue;
         }
-        let (member, operation) = producer_for_value(program, value)?;
+        if leaves.is_leaf(value) {
+            if program.shape(value).ok() != Some(shape) {
+                return refused("elementwise-shape");
+            }
+            record_leaf(&mut leaf_values, value);
+            record_leaf(&mut dense_leaves, value);
+            steps.push((value, ElementwiseMint::Read { leaf: value }));
+            minted.push(value);
+            continue;
+        }
+        let (member, operation) =
+            producer_for_value(program, value).map_err(ElementwiseRefusal::Refused)?;
         if operation.results().collect::<Vec<_>>() != [value] {
-            return mismatch("elementwise-result-arity");
+            return refused("elementwise-result-arity");
         }
         if operation.key() == &constant_f32_op() {
-            let (bits, _) = constant_bits(program, value)?;
-            let leaf = builder.constant(bits).map_err(|_| expression_bound())?;
+            let (bits, _) = constant_bits(program, value).map_err(ElementwiseRefusal::Refused)?;
             members.push(SemanticMemberId(member));
-            minted.push((value, leaf));
+            steps.push((value, ElementwiseMint::Constant(bits)));
+            minted.push(value);
             continue;
         }
         // A structural occurrence contributes an *access relation*, not a node.
@@ -3631,36 +4197,48 @@ fn recognize_elementwise(
         // map the family denotes. That is what makes a fused region the
         // deliverable rather than a materializing copy kernel: the arithmetic
         // still comes from the neighbour, and only the addressing changes.
-        if let Some((ordinal, map)) =
-            recognize_structural_read(program, &operation, declared, shape)?
+        if let Some((leaf, map)) = recognize_structural_read(program, &operation, leaves, shape)
+            .map_err(ElementwiseRefusal::Refused)?
         {
-            // One ordinal, one map. A program reading `a` directly *and* through
+            // One leaf, one map. A program reading `a` directly *and* through
             // a reindex asks one buffer parameter to carry two relations, which
             // this region shape cannot bind — refused by name rather than
             // resolved in favour of whichever was walked first.
-            match access_maps.iter().find(|(seen, _)| *seen == ordinal) {
+            match access_maps.iter().find(|(seen, _)| *seen == leaf) {
                 Some((_, bound)) if bound != &map => {
-                    return mismatch("structural-access-conflict");
+                    return refused("structural-access-conflict");
                 }
                 Some(_) => {}
-                None => access_maps.push((ordinal, map)),
+                None => access_maps.push((leaf, map)),
             }
-            let leaf = builder
-                .input(InputOrdinal::new(ordinal))
-                .map_err(|_| expression_bound())?;
-            reads.insert(ordinal);
+            record_leaf(&mut leaf_values, leaf);
             members.push(SemanticMemberId(member));
-            minted.push((value, leaf));
+            steps.push((value, ElementwiseMint::Read { leaf }));
+            minted.push(value);
             continue;
         }
         let Some(family) = elementwise_family(&operation) else {
-            return mismatch("operation-set");
+            // A folding family is the *boundary* between two regions rather than
+            // an unrecognizable operation: no `PointwiseF32Node` spells a sum
+            // over a contributor sequence, and none ever will, because the
+            // expression is a per-point body. Naming the value lets the epilogue
+            // recognizer read it as the tensor an earlier region staged. A walk
+            // that already reads one staged value reports the ordinary rule
+            // instead: `TensorRole::Intermediate` carries no ordinal, so a second
+            // staged read has nothing to attribute it to a second edge.
+            if leaves.staged.is_none()
+                && (operation.key() == &strict_serial_sum_f32_op()
+                    || operation.key() == &strict_tensor_contraction_f32_op())
+            {
+                return Err(ElementwiseRefusal::Folded(value));
+            }
+            return refused("operation-set");
         };
         // A recognized elementwise operation of this profile is attribute-free.
         // An attribute is a semantic fact the expression does not carry forward,
         // so admitting one would silently drop it.
         if !operation.attributes().fields().is_empty() {
-            return mismatch("elementwise-attributes");
+            return refused("elementwise-attributes");
         }
         // The region's domain, or rank zero. The second arm is not a relaxation:
         // the expression's nodes are *per-point values*, so a subexpression over
@@ -3673,11 +4251,11 @@ fn recognize_elementwise(
         // check with no correctness content behind it.
         let value_shape = program.shape(value).ok();
         if value_shape != Some(shape) && value_shape.map(Shape::rank) != Some(0) {
-            return mismatch("elementwise-shape");
+            return refused("elementwise-shape");
         }
         let operands: Vec<ValueId> = operation.operands().collect();
         if operands.len() != family.operand_count() {
-            return mismatch("elementwise-arity");
+            return refused("elementwise-arity");
         }
         if !operands_visited {
             pending.push((value, true));
@@ -3688,85 +4266,159 @@ fn recognize_elementwise(
             }
             continue;
         }
-        let projected: Vec<PointwiseF32Value> = operands
-            .iter()
-            .map(|operand| minted_value(&minted, *operand))
-            .collect::<Result<_, _>>()?;
-        let node = match (family, projected.as_slice()) {
-            (ElementwiseFamily::Add, [lhs, rhs]) => {
-                builder.add(lhs.clone(), rhs.clone()).map_err(|_| ())
-            }
-            (ElementwiseFamily::Multiply, [lhs, rhs]) => {
-                builder.multiply(lhs.clone(), rhs.clone()).map_err(|_| ())
-            }
-            // The composition is emitted by the shared authority rather than
-            // spelled here; see [`ElementwiseFamily::Silu`].
-            (ElementwiseFamily::Silu, [argument]) => {
-                let mut sink = PointwiseExpressionSink::new(&mut builder);
-                silu_point_body(&mut sink, argument).map_err(|_| ())
-            }
-            // Unreachable through the arity check above, and refused rather than
-            // assumed away: an arity this projection has no case for is a
-            // vocabulary gap, not a node to invent.
-            _ => return mismatch("elementwise-arity"),
+        // Every operand is already minted, so the node's own step records the
+        // operand *values* and the numbering is left to the mint pass.
+        if !operands.iter().all(|operand| minted.contains(operand)) {
+            return refused("elementwise-operand");
         }
-        .map_err(|()| expression_bound())?;
         members.push(SemanticMemberId(member));
-        minted.push((value, node));
+        steps.push((value, ElementwiseMint::Node(family, operands)));
+        minted.push(value);
     }
-    // Every declared input must be read. One that is not would bind a buffer the
-    // kernel never loads, and the expression's own dense-ordinal rule would
-    // refuse the assembled expression anyway — this reports the property rather
-    // than the consequence.
-    if reads.len() != declared.len() {
-        return mismatch("elementwise-reads");
+    // **One leaf, one relation — including the identity one.** A program reading
+    // `a` directly *and* through a reindex asks the single read this region binds
+    // for that leaf to carry two relations at once. The region has one access per
+    // leaf and the expression's two `Input` nodes share its ordinal, so admitting
+    // it made the *mapped* read serve both: `a * permute(a)` compiled as
+    // `permute(a) * permute(a)` and returned a wrong tensor with nothing
+    // reporting it. The pair is refused by name here, under the rule that
+    // already refuses two *different* structural relations on one leaf, because
+    // it is the same conflict with `LinearIdentity` as one of the two.
+    //
+    // Admitting it instead — binding two reads to one declared input — is a
+    // widening rather than a repair, because the region's read list and the
+    // program's declared interface stop being the same list;
+    // `admit-two-reads-of-one-declared-input-in-an-elementwise-region` owns it.
+    if access_maps
+        .iter()
+        .any(|(leaf, _)| dense_leaves.contains(leaf))
+    {
+        return refused("structural-access-conflict");
     }
-    let root = minted_value(&minted, root)?;
-    let expression = builder
+    members.sort_unstable();
+    members.dedup();
+    Ok(ElementwisePlan {
+        steps,
+        leaves: leaf_values,
+        access_maps,
+        members,
+        root,
+    })
+}
+
+/// Mints one planned elementwise expression under a stated leaf ordering.
+///
+/// `order` is the read list the region will bind, in access order: leaf `i` of
+/// the built expression is served by read `i`, which is the correspondence
+/// `emit_pointwise` relies on and the one
+/// `tiler_ir::schedule::reads_bind_boundary_tensors_in_order` states the
+/// boundary-role rules against.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads` for
+/// a leaf the order does not name, `input-ordinal` for a position no expression
+/// ordinal can hold, `elementwise-node-limit` for an expression exceeding
+/// [`tiler_ir::schedule::MAX_POINTWISE_F32_EXPRESSION_NODES`], and
+/// `elementwise-expression` for an assembled expression no region can bind.
+fn mint_elementwise(
+    plan: &ElementwisePlan,
+    order: &[ValueId],
+) -> Result<PointwiseF32Expression, RequestError> {
+    let mut builder = PointwiseF32ExpressionBuilder::new();
+    let mut minted: Vec<(ValueId, PointwiseF32Value)> = Vec::new();
+    for (value, mint) in &plan.steps {
+        let node = match mint {
+            ElementwiseMint::Read { leaf } => {
+                let position = order.iter().position(|named| named == leaf).ok_or(
+                    RequestError::UnsupportedCapability {
+                        phase: "strategy",
+                        rule: "elementwise-reads",
+                    },
+                )?;
+                let ordinal =
+                    u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
+                        phase: "strategy",
+                        rule: "input-ordinal",
+                    })?;
+                builder
+                    .input(InputOrdinal::new(ordinal))
+                    .map_err(|_| expression_bound())?
+            }
+            ElementwiseMint::Constant(bits) => {
+                builder.constant(*bits).map_err(|_| expression_bound())?
+            }
+            ElementwiseMint::Node(family, operands) => {
+                let projected: Vec<PointwiseF32Value> = operands
+                    .iter()
+                    .map(|operand| minted_value(&minted, *operand))
+                    .collect::<Result<_, _>>()?;
+                match (family, projected.as_slice()) {
+                    (ElementwiseFamily::Add, [lhs, rhs]) => {
+                        builder.add(lhs.clone(), rhs.clone()).map_err(|_| ())
+                    }
+                    (ElementwiseFamily::Multiply, [lhs, rhs]) => {
+                        builder.multiply(lhs.clone(), rhs.clone()).map_err(|_| ())
+                    }
+                    // The composition is emitted by the shared authority rather
+                    // than spelled here; see [`ElementwiseFamily::Silu`].
+                    (ElementwiseFamily::Silu, [argument]) => {
+                        let mut sink = PointwiseExpressionSink::new(&mut builder);
+                        silu_point_body(&mut sink, argument).map_err(|_| ())
+                    }
+                    // Unreachable through the planner's arity check, and refused
+                    // rather than assumed away: an arity this projection has no
+                    // case for is a vocabulary gap, not a node to invent.
+                    _ => return mismatch("elementwise-arity"),
+                }
+                .map_err(|()| expression_bound())?
+            }
+        };
+        minted.push((*value, node));
+    }
+    let root = minted_value(&minted, plan.root)?;
+    builder
         .build(root)
         .map_err(|_| RequestError::UnsupportedCapability {
             phase: "strategy",
             rule: "elementwise-expression",
-        })?;
-    members.sort_unstable();
-    members.dedup();
-    access_maps.sort_unstable_by_key(|(ordinal, _)| *ordinal);
-    Ok(RecognizedElementwise {
-        expression,
-        members,
-        access_maps,
-    })
+        })
 }
 
-/// Recognizes one structural occurrence as a mapped read of a declared input.
+/// Recognizes one structural occurrence as a mapped read of a leaf tensor.
 ///
-/// Returns the input ordinal and the access relation the occurrence denotes, or
+/// Returns the leaf value and the access relation the occurrence denotes, or
 /// `None` when the operation is not a structural family at all — which is the
 /// caller's signal to try the elementwise projection instead. An operation that
 /// *is* structural but cannot be admitted returns a typed refusal rather than
 /// `None`, so a reindex this profile cannot bind never falls through to be
 /// reported as an unrecognized operation set.
 ///
-/// **The operand must be a declared input.** A structural occurrence over a
-/// computed value would need the region to address an intermediate it also
-/// produces, which this region shape has no access to bind — and admitting it by
-/// materializing the intermediate would add the observable rounding boundary the
-/// family's admission deliberately excludes. It is refused by name.
+/// **The operand must be a value this walk reads rather than computes.** A
+/// structural occurrence over a value the *same region* computes would need the
+/// region to address an intermediate it also produces, which this region shape
+/// has no access to bind — and admitting it by materializing the intermediate
+/// would add the observable rounding boundary the family's admission
+/// deliberately excludes. It is refused by name. An epilogue's staged operand is
+/// a different case and is admitted: another region already materialized it, so
+/// the rounding boundary is the cover's rather than one this occurrence
+/// introduced, and the read binds the materialization edge the cover hands the
+/// region.
 ///
 /// # Errors
 ///
 /// Returns [`RequestError::UnsupportedCapability`] naming the property that was
-/// not recognized: `structural-arity`, `structural-operand` for an operand that
-/// is not a declared input, `structural-attributes` for a malformed or missing
+/// not recognized: `structural-arity`, `structural-operand` for an operand this
+/// walk does not read, `structural-attributes` for a malformed or missing
 /// form record, `structural-shape` for a result at another domain, and
 /// `structural-relation` when the derived map is not one the region vocabulary
 /// admits.
 fn recognize_structural_read(
     program: &SemanticProgram,
     operation: &tiler_ir::semantic::OperationRef<'_>,
-    declared: &[ValueId],
+    leaves: &ElementwiseLeaves<'_>,
     shape: &Shape,
-) -> Result<Option<(u32, LogicalAccess)>, RequestError> {
+) -> Result<Option<(ValueId, LogicalAccess)>, RequestError> {
     let reindex = operation.key() == &reindex_f32_op();
     if !reindex && operation.key() != &broadcast_f32_op() {
         return Ok(None);
@@ -3775,13 +4427,9 @@ fn recognize_structural_read(
     let [operand] = operands.as_slice() else {
         return mismatch("structural-arity");
     };
-    let Some(position) = declared.iter().position(|input| input == operand) else {
+    if !leaves.is_leaf(*operand) {
         return mismatch("structural-operand");
-    };
-    let ordinal = u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
-        phase: "strategy",
-        rule: "input-ordinal",
-    })?;
+    }
     let Ok(operand_shape) = program.shape(*operand) else {
         return mismatch("structural-operand");
     };
@@ -3858,7 +4506,7 @@ fn recognize_structural_read(
     if !admissible {
         return mismatch("structural-relation");
     }
-    Ok(Some((ordinal, map)))
+    Ok(Some((*operand, map)))
 }
 
 /// Returns the row-major suffix products of `shape`, one per axis.
@@ -4123,19 +4771,11 @@ const fn expression_bound() -> RequestError {
 fn recognize_pointwise(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+    declared: &[ValueId],
+    shape: Shape,
+    plan: ElementwisePlan,
 ) -> Result<NormalizedPointwise, RequestError> {
-    let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
-    let shape = program
-        .shape(output.value())
-        .map_err(|_| RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "output-handle",
-        })?
-        .clone();
-    if shape.rank() == 0 {
-        return mismatch("elementwise-rank");
-    }
-    let recognized = recognize_elementwise(program, output.value(), &declared, &shape)?;
+    let recognized = resolve_elementwise(plan, declared)?;
     let elements = element_count_u64(&shape, "input")?;
     Ok(NormalizedPointwise {
         input_keys: program.inputs().map(|input| input.key().clone()).collect(),
@@ -4143,11 +4783,120 @@ fn recognize_pointwise(
         shape,
         expression: recognized.expression,
         members: recognized.members,
-        inputs: declared,
+        inputs: declared.to_vec(),
         output: output.value(),
         elements,
         access_maps: recognized.access_maps,
     })
+}
+
+/// Recognizes an elementwise epilogue over one staged producer result.
+///
+/// **The read order is canonical rather than the order the walk minted leaves
+/// in, and that is a correctness requirement rather than tidiness.**
+/// `tiler_ir::schedule`'s pointwise access contract requires a region's declared
+/// input ordinals to ascend strictly across its read list, so a read list in
+/// walk order would make `staged * (b + a)` admissible and `staged * (a + b)`
+/// not — the same computation refused for the order its operands happened to be
+/// popped in. The staged read leads because exactly one read binds it and it
+/// carries no ordinal to interleave with; the declared inputs follow in
+/// declaration order.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] naming the property that was
+/// not recognized: every rule [`plan_elementwise`] and [`mint_elementwise`]
+/// report for the epilogue's own walk, `input-ordinal` for a declaration
+/// position no expression ordinal can hold, and every rule the producing
+/// family's recognizer reports.
+fn recognize_epilogue(
+    program: &SemanticProgram,
+    output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+    declared: &[ValueId],
+    shape: Shape,
+    staged: ValueId,
+) -> Result<NormalizedEpilogue, RequestError> {
+    let leaves = ElementwiseLeaves {
+        declared,
+        staged: Some(staged),
+    };
+    let plan =
+        plan_elementwise(program, output.value(), &leaves, &shape).map_err(RequestError::from)?;
+    let mut order = vec![staged];
+    order.extend(
+        declared
+            .iter()
+            .copied()
+            .filter(|input| plan.leaves.contains(input)),
+    );
+    let expression = mint_elementwise(&plan, &order)?;
+    let reads = order
+        .iter()
+        .map(|leaf| {
+            let read = if *leaf == staged {
+                EpilogueRead::Staged
+            } else {
+                let position = declared.iter().position(|input| input == leaf).ok_or(
+                    RequestError::UnsupportedCapability {
+                        phase: "strategy",
+                        rule: "elementwise-reads",
+                    },
+                )?;
+                EpilogueRead::Input(u32::try_from(position).map_err(|_| {
+                    RequestError::UnsupportedCapability {
+                        phase: "strategy",
+                        rule: "input-ordinal",
+                    }
+                })?)
+            };
+            // Every read carries its relation explicitly, because the access
+            // position no longer indexes the map run: an absent entry would have
+            // to be resolved against an ordinal this list does not have.
+            let map = plan
+                .access_maps
+                .iter()
+                .find(|(seen, _)| seen == leaf)
+                .map_or(LogicalAccess::LinearIdentity, |(_, map)| map.clone());
+            Ok((read, map))
+        })
+        .collect::<Result<Vec<_>, RequestError>>()?;
+    let producer = recognize_epilogue_producer(program, staged, output.key().clone())?;
+    let elements = element_count_u64(&shape, "output")?;
+    Ok(NormalizedEpilogue {
+        producer: Box::new(producer),
+        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
+        output_key: output.key().clone(),
+        shape,
+        expression,
+        reads,
+        members: plan.members,
+        inputs: declared.to_vec(),
+        output: output.value(),
+        elements,
+    })
+}
+
+/// Recognizes the producer half of one epilogue chain.
+///
+/// The two folding families and nothing else. The refusal is not dead code
+/// standing in for an impossible state: [`plan_elementwise`] names a value only
+/// for these two families today, and a third family added to that discovery
+/// without a producer region here must refuse rather than acquire one.
+fn recognize_epilogue_producer(
+    program: &SemanticProgram,
+    staged: ValueId,
+    output_key: OutputKey,
+) -> Result<NormalizedOutput, RequestError> {
+    let (member, root) = producer_for_value(program, staged)?;
+    if root.key() == &strict_serial_sum_f32_op() {
+        recognize_reduction(program, staged, output_key, member, &root)
+            .map(NormalizedOutput::SerialSum)
+    } else if root.key() == &strict_tensor_contraction_f32_op() {
+        normalize_contraction(program, staged, output_key)
+            .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
+    } else {
+        mismatch("operation-set")
+    }
 }
 
 /// Recognizes a strict serial reduction and whatever elementwise expression
@@ -4178,7 +4927,8 @@ fn recognize_pointwise(
 /// [`recognize_elementwise`] reports for the contributor walk.
 fn recognize_reduction(
     program: &SemanticProgram,
-    output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+    result: ValueId,
+    output_key: OutputKey,
     sum_member: u32,
     sum: &tiler_ir::semantic::OperationRef<'_>,
 ) -> Result<NormalizedSerialSum, RequestError> {
@@ -4187,7 +4937,7 @@ fn recognize_reduction(
     let [contributor] = sum_operands.as_slice() else {
         return mismatch("sum-signature");
     };
-    if sum.results().collect::<Vec<_>>() != [output.value()] {
+    if sum.results().collect::<Vec<_>>() != [result] {
         return mismatch("sum-output");
     }
     let axes = reduction_axes(sum.attributes())?;
@@ -4203,7 +4953,7 @@ fn recognize_reduction(
     }
     check_canonical_reduction_axes(&axes, input_shape.rank())?;
     let output_shape = input_shape.without_axes(&axes);
-    if program.shape(output.value()).ok() != Some(&output_shape) {
+    if program.shape(result).ok() != Some(&output_shape) {
         return mismatch("sum-shape");
     }
 
@@ -4221,7 +4971,7 @@ fn recognize_reduction(
     let output_elements = element_count_u64(&output_shape, "output")?;
     Ok(NormalizedSerialSum {
         input_keys: program.inputs().map(|input| input.key().clone()).collect(),
-        output_key: output.key().clone(),
+        output_key,
         input_shape,
         output_shape,
         reduction_axes: axes,
@@ -4230,7 +4980,7 @@ fn recognize_reduction(
         members,
         inputs: declared,
         pointwise_result: *contributor,
-        output: output.value(),
+        output: result,
         input_elements,
         output_elements,
     })
@@ -4249,7 +4999,8 @@ fn recognize_reduction(
 /// throughout, and no attribute beyond the index structure.
 fn normalize_contraction(
     program: &SemanticProgram,
-    output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+    result: ValueId,
+    output_key: OutputKey,
 ) -> Result<NormalizedContraction, RequestError> {
     // Both declared inputs are this contraction's operands, checked below, and
     // the region binds them by *declaration* ordinal — so a program declaring a
@@ -4258,24 +5009,12 @@ fn normalize_contraction(
         return mismatch("input-arity");
     }
     // An elementwise epilogue over a contraction result is a two-region chain
-    // this profile cannot assemble: every elementwise region it builds reads
-    // declared input tensors, and none reads a materialized intermediate. It is
-    // refused rather than admitted-then-dropped, by `check_output_cover` when
-    // the epilogue's occurrences belong to no walk and by the elementwise walk's
-    // own `operation-set` when the epilogue produces the output.
-    //
-    // The producer half of that chain is not the obstruction: `tiler-ir` already
-    // admits a contraction region whose owning write targets
-    // `TensorRole::Intermediate`, and `contraction_region`'s hard-coded
-    // `TensorRole::Output` is a compiler-side choice. The consumer half is,
-    // because no `ScalarProgram::PointwiseF32` region may read an intermediate —
-    // `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-    // owns that widening and
-    // `admit-elementwise-epilogues-over-a-materialized-intermediate` is its
-    // compiler-side dependent.
-    let (ordinal, operation) =
-        producer(program, output.value(), &strict_tensor_contraction_f32_op())?;
-    if operation.results().collect::<Vec<_>>() != [output.value()] {
+    // this profile assembles as a two-region chain, and this normalization is
+    // the producer half of it: [`recognize_epilogue`] reaches here with the
+    // contraction's own result value rather than a declared program output, and
+    // `contraction_region` writes whichever tensor the cover assigns.
+    let (ordinal, operation) = producer(program, result, &strict_tensor_contraction_f32_op())?;
+    if operation.results().collect::<Vec<_>>() != [result] {
         return mismatch("contraction-output");
     }
     // Exactly the index structure. An attribute this normalization does not
@@ -4377,7 +5116,7 @@ fn normalize_contraction(
     };
     let output_shape = shape_over(structure.output())?;
     let contracted_shape = shape_over(structure.contracted())?;
-    if program.shape(output.value()).ok() != Some(&output_shape) {
+    if program.shape(result).ok() != Some(&output_shape) {
         return mismatch("contraction-output-shape");
     }
 
@@ -4417,7 +5156,7 @@ fn normalize_contraction(
                 .key()
                 .clone(),
         ],
-        output_key: output.key().clone(),
+        output_key,
         input_shapes,
         output_shape,
         contracted_shape,
@@ -4425,7 +5164,7 @@ fn normalize_contraction(
         operand_positions,
         members: vec![SemanticMemberId(ordinal)],
         inputs: [declared[0], declared[1]],
-        output: output.value(),
+        output: result,
         input_elements,
         output_elements,
         contracted_elements,
@@ -4563,6 +5302,19 @@ fn element_count_u64(shape: &Shape, role: &'static str) -> Result<u64, RequestEr
 
 fn mismatch<T>(rule: &'static str) -> Result<T, RequestError> {
     unsupported("strategy", rule)
+}
+
+/// The elementwise planner's spelling of [`mismatch`].
+///
+/// Separate because the planner's error type additionally carries a discovered
+/// materialization boundary, which is a finding rather than a rule.
+fn refused<T>(rule: &'static str) -> Result<T, ElementwiseRefusal> {
+    Err(ElementwiseRefusal::Refused(
+        RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule,
+        },
+    ))
 }
 
 fn unsupported<T>(phase: &'static str, rule: &'static str) -> Result<T, RequestError> {
@@ -5610,6 +6362,47 @@ mod tests {
         let computed = builder.build().unwrap();
         assert_eq!(recognize(&computed).unwrap_err(), "structural-operand");
 
+        // `structural-access-conflict`: one declared input read *both* densely
+        // and through a relation. **This refusal replaced a silently wrong
+        // result**, measured on this program at `912b6058`: the region binds one
+        // read per declared input and the expression's two `Input { ordinal: 0 }`
+        // nodes share it, so the mapped relation served both leaves and
+        // `a * permute(a)` over `[[1, 2], [4, 8]]` compiled to
+        // `[1, 16, 4, 64]` — `permute(a) * permute(a)` — where the reference
+        // evaluator gives `[1, 8, 8, 64]`. Its accepted neighbour is the same
+        // program with the dense read removed, which differs by exactly the
+        // second spelling of that read.
+        let mixed = |dense: bool| {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let a = builder
+                .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+                .unwrap();
+            let permuted = tiler_ir::semantic::F32Reindex::apply(
+                &mut builder,
+                &tiler_ir::semantic::ReindexForm::permute_axes([Axis::new(1), Axis::new(0)])
+                    .expect("a two-axis transposition is an admitted form"),
+                a,
+            )
+            .expect("the standard registry admits the reindex family");
+            let root = if dense {
+                F32Multiply::apply(&mut builder, a, permuted).unwrap()
+            } else {
+                F32Multiply::apply(&mut builder, permuted, permuted).unwrap()
+            };
+            builder
+                .output(OutputKey::new("result").unwrap(), root)
+                .unwrap();
+            builder.build().unwrap()
+        };
+        assert!(matches!(
+            recognize(&mixed(false)),
+            Ok(NormalizedOutput::Pointwise(_)),
+        ));
+        assert_eq!(
+            recognize(&mixed(true)).unwrap_err(),
+            "structural-access-conflict",
+        );
+
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), shape())
@@ -5631,17 +6424,68 @@ mod tests {
         assert_eq!(recognized.expression.input_count(), 1);
         assert_eq!(recognized.expression.nodes().len(), 7);
 
-        // `operation-set` again, from the other side: a contraction with a
-        // reachable elementwise epilogue. Its accepted neighbour is the bare
-        // contraction, and the difference between them is exactly the epilogue
-        // this profile has no region to assemble.
+        // A contraction with a reachable elementwise epilogue is a *chain*, not
+        // a refusal, and the bare contraction beside it is what makes the
+        // difference attributable: the two programs differ by exactly the
+        // epilogue, and the recognized shape differs by exactly the consumer
+        // region.
         let contraction = contraction_program(false);
         assert!(matches!(
             recognize(&contraction),
             Ok(NormalizedOutput::Contraction(_))
         ));
         let with_epilogue = contraction_program(true);
-        assert_eq!(recognize(&with_epilogue).unwrap_err(), "operation-set");
+        let Ok(NormalizedOutput::Epilogue(chain)) = recognize(&with_epilogue) else {
+            panic!("an elementwise expression over a contraction result is a chain");
+        };
+        assert!(matches!(*chain.producer, NormalizedOutput::Contraction(_)));
+        assert_eq!(
+            chain.reads.len(),
+            1,
+            "the epilogue reads only the staged value"
+        );
+        assert_eq!(chain.reads[0].0, EpilogueRead::Staged);
+
+        // `operation-set`, from the one side the discovery deliberately does not
+        // open: a fold whose *contributors* are another fold's result. The chain
+        // the recognizer admits is one materialization boundary deep, so a
+        // prologue reading a staged value has no second staged read to attribute
+        // — `TensorRole::Intermediate` carries no ordinal — and is refused
+        // rather than silently flattened. The accepted neighbour is the same
+        // fold over the same scaling of the *declared input*, so the difference
+        // between them is exactly where the scaled value comes from.
+        let folded_prologue = |nested: bool| {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let input = builder
+                .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 4]))
+                .unwrap();
+            let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+            let (contributors, axis) = if nested {
+                let inner = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(1)]).unwrap();
+                (
+                    F32Multiply::apply(&mut builder, inner, scale).unwrap(),
+                    Axis::new(0),
+                )
+            } else {
+                (
+                    F32Multiply::apply(&mut builder, input, scale).unwrap(),
+                    Axis::new(1),
+                )
+            };
+            let outer = StrictSerialF32Sum::apply(&mut builder, contributors, [axis]).unwrap();
+            builder
+                .output(OutputKey::new("result").unwrap(), outer)
+                .unwrap();
+            builder.build().unwrap()
+        };
+        assert!(matches!(
+            recognize(&folded_prologue(false)),
+            Ok(NormalizedOutput::SerialSum(_)),
+        ));
+        assert_eq!(
+            recognize(&folded_prologue(true)).unwrap_err(),
+            "operation-set"
+        );
     }
 
     /// Two ordered named outputs whose producers share no occurrence.
@@ -5828,12 +6672,11 @@ mod tests {
     ///   `ValueRole` is exclusive.
     ///
     /// Their accepted neighbour is the independent two-output program above,
-    /// which differs from both by exactly the sharing.
-    /// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the
-    /// copy stage that would lift the second, behind
-    /// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-    /// — the copy stage's `Intermediate`-read is not a region the schedule
-    /// vocabulary spells.
+    /// which differs from both by exactly the sharing. The copy stage that would
+    /// lift the second is now a region this crate builds — an epilogue reading a
+    /// materialized intermediate is exactly it — and what it still lacks is a
+    /// program-scope account: it claims no occurrence, and `tiler_ir::program`
+    /// admits an uncovering stage only as a declared split's combiner.
     #[test]
     fn two_outputs_sharing_one_walk_refuse_rather_than_publish_twice() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();

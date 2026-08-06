@@ -45,8 +45,9 @@ use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::semantic::{
     ContractionIndex, ContractionIndexStructure, F32, F32Constant, F32Multiply,
     F32TensorContraction, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
+    StrictSerialF32Sum,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Axis, Shape};
 
 /// Every numerical contract a caller can state.
 ///
@@ -257,14 +258,25 @@ fn a_contraction_over_one_declared_input_refuses_with_a_typed_reason() {
     }
 }
 
-/// A contraction with an extra reachable operation is not recognized.
+/// A contraction with an elementwise epilogue compiles as a chain.
 ///
-/// The recognized shape is exactly one operation. A program that squares its
-/// result afterwards stays inside every governed budget and is still refused,
-/// because an operation outside the recognized set would be work the single
-/// region silently drops.
+/// **This assertion measured a refusal until
+/// `admit-elementwise-epilogues-over-a-materialized-intermediate` landed**, and
+/// the reason it did is what the name now has to stop claiming: the recognized
+/// shape *was* exactly one operation, so squaring the result was "an operation
+/// outside the recognized set" and was refused under `operation-set` rather than
+/// dropped. The recognized shape is now a two-region chain — the contraction
+/// stages its result and the epilogue reads it — so the extra occurrence is
+/// covered by a region of its own rather than by nothing.
+///
+/// `projected * projected` is the narrow case worth keeping here rather than a
+/// fresh one: both operands name the *same* staged value, so the epilogue mints
+/// one read and not two. A second read would be inadmissible —
+/// `TensorRole::Intermediate` carries no ordinal to attribute a second
+/// materialization edge to — and the program that would need one is the
+/// neighbour below.
 #[test]
-fn a_contraction_with_an_extra_operation_refuses_with_a_typed_reason() {
+fn a_contraction_with_an_elementwise_epilogue_compiles_as_a_chain() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let activations = builder
         .input::<F32>(
@@ -288,10 +300,44 @@ fn a_contraction_with_an_extra_operation_refuses_with_a_typed_reason() {
     for contract in CONTRACTS {
         assert_eq!(
             compile_under(&program, contract),
+            Ok(()),
+            "{contract:?} refused a contraction feeding an elementwise epilogue",
+        );
+    }
+
+    // The neighbour that still refuses, and it refuses for the reason the
+    // epilogue admission is bounded by rather than for the reason the name above
+    // used to state: a fold whose own contributors are another fold's result
+    // needs two staged reads in one region, and nothing attributes the second to
+    // a materialization edge.
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let activations = builder
+        .input::<F32>(
+            InputKey::new("activations").unwrap(),
+            Shape::from_dims([2, 3]),
+        )
+        .unwrap();
+    let weights = builder
+        .input::<F32>(InputKey::new("weights").unwrap(), Shape::from_dims([2, 3]))
+        .unwrap();
+    let projected =
+        F32TensorContraction::apply(&mut builder, &projection_structure(), activations, weights)
+            .unwrap();
+    let folded = StrictSerialF32Sum::apply(&mut builder, projected, [Axis::new(1)]).unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, folded, two).unwrap();
+    let refolded = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(0)]).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), refolded)
+        .unwrap();
+    let nested = builder.build().unwrap();
+    for contract in CONTRACTS {
+        assert_eq!(
+            compile_under(&nested, contract),
             Err(CompileFailureClass::UnsupportedCapability {
                 rule: "operation-set"
             }),
-            "{contract:?} admitted a body outside the recognized shape",
+            "{contract:?} admitted a chain two materialization boundaries deep",
         );
     }
 }

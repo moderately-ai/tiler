@@ -54,14 +54,15 @@
 //! intermediate that is also consumed. `ValueRole` is exclusive and a region
 //! writes one owning tensor, so both are refused a layer down —
 //! [`a_published_output_value_cannot_fill_an_intermediate_buffer`] pins the
-//! mechanism — and `admit-elementwise-epilogues-over-a-materialized-intermediate`
-//! owns the copy stage that would lift the second. That copy stage was itself
-//! blocked in `tiler-ir` rather than here until
-//! `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-//! landed; `materialized_intermediate_epilogue_wall.rs` now measures a pointwise
-//! region reading `TensorRole::Intermediate` being *admitted* by the intrinsic
-//! schedule verifier, so what is left is building the stage from a recognized
-//! program.
+//! mechanism. The copy stage that would lift the second is now a region this
+//! crate builds — `admit-elementwise-epilogues-over-a-materialized-intermediate`
+//! admitted an elementwise region reading `TensorRole::Intermediate` and writing
+//! `TensorRole::Output`, which `materialized_intermediate_epilogue_wall.rs`
+//! measures — and what it still lacks is a *program-scope* account: it publishes
+//! a value another region computed, so it claims no occurrence, and
+//! `tiler_ir::program` admits an uncovering stage only as a declared split's
+//! combiner. `admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary`
+//! owns that widening.
 //!
 //! One further limit is *not* about outputs at all and is recorded here because
 //! multi-output is what makes it reachable: an elementwise walk must read every
@@ -397,13 +398,14 @@ fn two_programs_differing_only_in_output_order_have_distinct_identities() {
 /// raises: a program publishing an intermediate *and* consuming it needs a copy
 /// stage reading `TensorRole::Intermediate` and writing `TensorRole::Output`.
 /// That is the shape `pipeline::conformance`'s multi-output fixture has — it
-/// publishes `scaled` and reduces it into `reduced` — and it is also the shape
-/// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns, because
-/// no elementwise region this profile *builds* reads a materialized
-/// intermediate. That is now a compiler gap and nothing more: the `tiler-ir`
-/// access contract that also forbade it was widened by
-/// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`,
-/// which `materialized_intermediate_epilogue_wall.rs` measures.
+/// publishes `scaled` and reduces it into `reduced`. Every *region* that shape
+/// needs is now built: `admit-elementwise-epilogues-over-a-materialized-intermediate`
+/// admitted an elementwise region reading a materialized intermediate, which
+/// `materialized_intermediate_epilogue_wall.rs` measures. What remains is one
+/// layer further out than this test — a stage publishing a value another region
+/// computed claims no occurrence, and `tiler_ir::program` admits an uncovering
+/// stage only as a declared split's combiner —
+/// `admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary` owns it.
 ///
 /// Pinned here so that a `ValueRole` widening which made publication and
 /// consumption compatible fails this test and reports itself, rather than

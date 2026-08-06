@@ -590,18 +590,21 @@ fn ordered_multi_output_programs_compile_through_the_ordinary_path() {
 /// consumer reads across and the publication, and
 /// `tiler_ir::program::ValueRole` is exclusive.
 ///
-/// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
-/// stage that would lift it, and that copy stage is now expressible: it reads
-/// `TensorRole::Intermediate` and writes `TensorRole::Output`, which
-/// `tiler_ir::schedule`'s pointwise access contract refused while it required
-/// read access `i` to be `TensorRole::Input { ordinal: i }` and admits since
-/// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-/// separated the access position from the declared input the role names.
+/// **The copy stage that would lift it is a region this crate now builds, and
+/// the refusal survives anyway — which is the fact worth recording rather than
+/// the ticket that owns it.**
+/// `admit-elementwise-epilogues-over-a-materialized-intermediate` admitted an
+/// elementwise region reading a materialized intermediate and writing a declared
+/// output, so the *region* the copy stage needs exists and
 /// `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
-/// measures the admission against a control that differs only in the read's
-/// role. What is left is building the stage from a recognized program, which is
-/// that ticket's own work — so this refusal is unchanged and still names the
-/// request boundary.
+/// measures it. What that stage still has no account for is its *coverage*: it
+/// publishes a value another region computed, so it claims no occurrence, and
+/// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
+/// only as the declared combiner of a split. Lifting this row is therefore a
+/// program-scope vocabulary widening in `tiler-ir`, filed as
+/// `admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary`, and not a
+/// recognizer change — which is why the epilogue landing left this refusal
+/// unchanged and still naming the request boundary.
 #[test]
 fn a_published_and_consumed_intermediate_refuses_by_name() {
     let mut registry = SemanticRegistryBuilder::new();

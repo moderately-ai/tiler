@@ -3055,6 +3055,12 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         // expression, and member set below is that output's rather than a
         // whole-program value that would answer the same for every region.
         let output = request.output_at(spelling.output());
+        // Every region except the epilogue itself is built from the *producer's*
+        // recognized shape, which is the output itself for a standalone one and
+        // the staged producer for a chain. Asking for it here is what lets each
+        // builder below stay written against one recognized family rather than
+        // against "the output, unless it is a chain".
+        let producer = output.producer_shape();
         let (region, cost) = match spelling.kind() {
             // One elementwise pass, whichever tensor the cover assigned its
             // write. The two write roles cost differently because the cover
@@ -3062,7 +3068,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // stages that result, and one that writes a declared program output
             // stages nothing.
             crate::physical::RegionSpellingKind::Pointwise(write) => (
-                crate::physical::pointwise_region(request, output, write).0,
+                crate::physical::pointwise_region(request, producer, write).0,
                 match write {
                     crate::physical::RegionWrite::ProgramOutput => {
                         PhysicalCostEstimate::structural(1, output_elements, 0)
@@ -3078,10 +3084,20 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // is stated. The serial alternative is offered either way; a split
             // is additive and never replaces it.
             crate::physical::RegionSpellingKind::SerialSum => {
-                split = Some(propose_split(request, output, &applicability));
-                tree = Some(propose_workgroup_tree(request, output, &applicability));
+                split = Some(propose_split(
+                    request,
+                    producer,
+                    &applicability,
+                    subject.write(),
+                ));
+                tree = Some(propose_workgroup_tree(
+                    request,
+                    producer,
+                    &applicability,
+                    subject.write(),
+                ));
                 (
-                    crate::physical::reduction_region(request, output).0,
+                    crate::physical::reduction_region(request, producer, subject.write()).0,
                     PhysicalCostEstimate::structural(1, output_elements, 0),
                 )
             }
@@ -3089,7 +3105,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // sequence, and splitting it would consume the reassociation this
             // family declares forbidden.
             crate::physical::RegionSpellingKind::Contraction => (
-                crate::physical::contraction_region(request, output).0,
+                crate::physical::contraction_region(request, producer, subject.write()).0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
             ),
             // Whether the whole-program region may be *fused* belongs to the
@@ -3101,10 +3117,31 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // `spell_region` declines it by name, so the materialized cover's
             // two regions remain the plan and the lost candidate is recorded.
             crate::physical::RegionSpellingKind::FusedSerialSum => (
-                crate::physical::fused_region(request, output)
+                crate::physical::fused_region(request, producer, subject.write())
                     .expect("a fused spelling is decided before the region is built")
                     .0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
+            ),
+            // The consumer half of a chain, costed like any other elementwise
+            // pass: one dispatch over its own domain, staging bytes only when
+            // the cover made it a producer in turn.
+            crate::physical::RegionSpellingKind::Epilogue(write) => (
+                crate::physical::epilogue_region(
+                    request,
+                    output
+                        .epilogue()
+                        .expect("an epilogue spelling resolves to an epilogue output"),
+                    write,
+                )
+                .0,
+                match write {
+                    crate::physical::RegionWrite::ProgramOutput => {
+                        PhysicalCostEstimate::structural(1, output_elements, 0)
+                    }
+                    crate::physical::RegionWrite::Materialized => {
+                        PhysicalCostEstimate::structural(1, output_elements, intermediate_bytes)
+                    }
+                },
             ),
         };
         let serial = ImplementationProposal::new(
@@ -3148,9 +3185,10 @@ fn propose_split(
     request: &VerifiedTargetRequest,
     output: &crate::request::NormalizedOutput,
     applicability: &TargetApplicability,
+    write: crate::physical::RegionWrite,
 ) -> Result<ImplementationProposal, DeclinedStrategy> {
-    let split =
-        crate::physical::split_reduction_regions(request, output).map_err(|unavailable| {
+    let split = crate::physical::split_reduction_regions(request, output, write).map_err(
+        |unavailable| {
             DeclinedStrategy::new(
                 crate::physical::MULTI_PASS_SPLIT_STRATEGY,
                 match unavailable {
@@ -3174,7 +3212,8 @@ fn propose_split(
                     }
                 },
             )
-        })?;
+        },
+    )?;
     let output_elements = output.output_elements();
     let partial_elements = output_elements.saturating_mul(split.partition.partitions);
     let stages = split
@@ -3217,9 +3256,10 @@ fn propose_workgroup_tree(
     request: &VerifiedTargetRequest,
     output: &crate::request::NormalizedOutput,
     applicability: &TargetApplicability,
+    write: crate::physical::RegionWrite,
 ) -> Result<ImplementationProposal, DeclinedStrategy> {
-    let (region, _) =
-        crate::physical::single_workgroup_tree_region(request, output).map_err(|unavailable| {
+    let (region, _) = crate::physical::single_workgroup_tree_region(request, output, write)
+        .map_err(|unavailable| {
             DeclinedStrategy::new(
                 crate::physical::SINGLE_WORKGROUP_TREE_STRATEGY,
                 match unavailable {
@@ -5671,12 +5711,16 @@ mod tests {
 
     /// Returns the governed split's two raw passes for one request.
     fn split_stages(request: &VerifiedTargetRequest) -> Vec<SubprogramStage> {
-        crate::physical::split_reduction_regions(request, request.sole_output())
-            .expect("a four-contributor relaxed request admits the split")
-            .stages
-            .into_iter()
-            .map(|(region, members)| SubprogramStage::new(region, members))
-            .collect()
+        crate::physical::split_reduction_regions(
+            request,
+            request.sole_output(),
+            crate::physical::RegionWrite::ProgramOutput,
+        )
+        .expect("a four-contributor relaxed request admits the split")
+        .stages
+        .into_iter()
+        .map(|(region, members)| SubprogramStage::new(region, members))
+        .collect()
     }
 
     /// Enumerates one subprogram against a subject and returns the outcome.
