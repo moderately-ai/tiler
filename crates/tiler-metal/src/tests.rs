@@ -21,11 +21,12 @@
 use std::collections::BTreeSet;
 
 use tiler_ir::kernel::{
-    AddressSpace, BarrierOrdering, BarrierSpec, BufferAccess, ExecutionScope, KernelType,
-    MemoryScope, VerifiedKernel, lower_scheduled_region,
+    AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BufferAccess, BufferParameter, Builtin,
+    CompareOp, ExecutionScope, KernelBufferId, KernelBuilder, KernelConstant, KernelDiagnostic,
+    KernelType, MemoryScope, VerifiedKernel, lower_scheduled_region,
 };
 use tiler_ir::schedule::{
-    Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    Access, AccessMode, ArithmeticType, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
     ContractionAxisSource, ContributorArrival, ContributorOrder, ContributorPartition,
     ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal, KernelSchedule,
     LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
@@ -43,9 +44,9 @@ use tiler_ir::shape::{Axis, Shape};
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError};
 use crate::emit::{
-    address_space_declaration, barrier_call, bf16_canonical_nan,
-    emit_translation_unit as emit_with_realization, is_bf16_nan, is_f32_nan, msl_type,
-    realization_requirements, reserve_symbol,
+    address_space_declaration, barrier_call, bf16_canonical_nan, binary_realization,
+    constant_minuend, emit_translation_unit as emit_with_realization, is_bf16_nan, is_f32_nan,
+    msl_type, realization_requirements, reserve_symbol,
 };
 use crate::record::{MetalNumericalGap, MetalNumericalRequirement, MetalTranslationUnit};
 use crate::target::{
@@ -1022,6 +1023,255 @@ pub(crate) fn cooperative_kernel() -> VerifiedKernel {
         .expect("bounded cooperative fixture lowers")
 }
 
+// ---------------------------------------------------------------------------
+// Structural fixtures
+// ---------------------------------------------------------------------------
+
+/// The identity pointwise expression: the value written is the value read.
+///
+/// A structural family computes nothing, so the region carries a scalar program
+/// whose root is the input leaf itself. That is what makes the emitted body the
+/// *access relation* and nothing else — a fixture with arithmetic in it would
+/// mix the offset statements this section is about with statements that are
+/// already covered elsewhere.
+fn identity_expression() -> PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression
+        .input(InputOrdinal::FIRST)
+        .expect("pointwise input");
+    expression
+        .build(input)
+        .expect("verified identity pointwise expression")
+}
+
+/// A structural region reading one operand through `map` and writing densely.
+///
+/// The two structural relations differ only in that argument. Both state the
+/// region's own iteration shape as their result shape, which the region verifier
+/// requires — the decodes are divisors of *this* region's linear coordinate — and
+/// both prove the same domain: the contiguous element range of the operand they
+/// read, which is why a single `LinearRange` witness serves either.
+fn structural_region(
+    id: RegionId,
+    iteration_shape: &Shape,
+    operand_shape: &Shape,
+    map: LogicalAccess,
+) -> VerifiedScheduledRegion {
+    let result_elements = element_count(iteration_shape).expect("bounded fixture shape");
+    let operand_elements = element_count(operand_shape).expect("bounded fixture operand shape");
+    let mut builder = ScheduledRegionBuilder::new(id);
+    builder.iteration_shape(iteration_shape.clone()).unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map,
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: operand_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: result_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: result_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::PointwiseF32(identity_expression()))
+        .unwrap();
+    builder.numerical(numerical(NAN_BITS)).unwrap();
+    builder.schedule(linear_schedule(result_elements)).unwrap();
+    builder.build().unwrap()
+}
+
+/// `out = reverse(a)` on a `[2, 2]` operand, reversing axis 1.
+///
+/// **The one fixture whose body emits `BinaryOp::IndexSubtract`**, which is the
+/// construct the mirror needs and the only one in the vocabulary whose contract
+/// an unsigned realization can violate silently. The program is the compiler's
+/// own `a_reindex_reaches_a_kernel_matching_the_reference_evaluator` fixture —
+/// same shape, same axis, same admitted form — built by hand here because
+/// `tiler-metal` does not and must not depend on `tiler-compiler`, so the region
+/// is restated rather than imported.
+///
+/// The two decodes are the transposition-style windows a reversal keeps: axis 0
+/// takes the leading window of the linear result coordinate (`divisor` 2,
+/// `modulus` 2) and axis 1 takes the trailing one (`divisor` 1) with the mirror
+/// set. Sorted by descending divisor they telescope `2 * 2 == 4` and `1 * 2 == 2`,
+/// which is what `reindex_decodes_are_bijective` checks, and mirroring is
+/// irrelevant to that check because `c -> extent - 1 - c` is a bijection of any
+/// axis onto itself.
+fn mirrored_reindex_region() -> VerifiedScheduledRegion {
+    let shape = Shape::from_dims([2, 2]);
+    structural_region(
+        RegionId::new(40),
+        &shape,
+        &shape,
+        LogicalAccess::ReindexBijection {
+            operand_shape: shape.clone(),
+            result_shape: shape.clone(),
+            axes: vec![
+                AxisDecode::read(2, 2),
+                AxisDecode {
+                    divisor: 1,
+                    modulus: 2,
+                    mirrored: true,
+                },
+            ],
+        },
+    )
+}
+
+pub(crate) fn mirrored_reindex_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&mirrored_reindex_region())
+        .expect("the bounded mirrored reindex fixture lowers")
+}
+
+/// The mirrored fixture's own signature, declared through the public builder.
+fn structural_signature(
+    builder: &mut KernelBuilder,
+    region: &VerifiedScheduledRegion,
+) -> (KernelBufferId, KernelBufferId) {
+    let read = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Read,
+            element_count: 4,
+        })
+        .unwrap();
+    let write = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Output,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Write,
+            element_count: 4,
+        })
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::GlobalInvocationIndex)
+        .unwrap();
+    builder.numerical(numerical(NAN_BITS)).unwrap();
+    builder.requirements(region.requirements()).unwrap();
+    (read, write)
+}
+
+/// The mirrored fixture's body with its subtraction's operands exchanged.
+///
+/// **The one perturbation the offline compiler cannot catch.** `c - (extent - 1)`
+/// is well-formed MSL that translates, links, and — on every coordinate below the
+/// mirror point — computes `c - 1` modulo `2^64`, which is an index near `2^64`
+/// scaled into a buffer subscript. No `metal` diagnostic can see that, because
+/// there is nothing ill-formed about it.
+///
+/// Everything else is the canonical lowering's body, statement for statement, so
+/// a refusal names the exchange and not some other divergence. This returns the
+/// builder rather than a kernel because `build()` **refuses it**, which is the
+/// fact `the_verifier_refuses_a_reordered_mirror_before_emission_sees_it`
+/// records.
+fn reordered_mirror_builder() -> KernelBuilder {
+    let region = mirrored_reindex_region();
+    let mut builder = KernelBuilder::new(&region).unwrap();
+    let (read, write) = structural_signature(&mut builder, &region);
+    let invocation = builder.builtin(Builtin::GlobalInvocationIndex).unwrap();
+    let elements = builder.constant(KernelConstant::Index(4)).unwrap();
+    let active = builder
+        .compare(CompareOp::IndexLessThan, invocation, elements)
+        .unwrap();
+    builder
+        .predicated(active, |builder| {
+            let divisor = builder.constant(KernelConstant::Index(2))?;
+            let quotient = builder.binary(BinaryOp::IndexDivide, invocation, divisor)?;
+            let stride = builder.constant(KernelConstant::Index(2))?;
+            let leading = builder.binary(BinaryOp::IndexMultiply, quotient, stride)?;
+            let modulus = builder.constant(KernelConstant::Index(2))?;
+            let coordinate = builder.binary(BinaryOp::IndexModulo, invocation, modulus)?;
+            let last = builder.constant(KernelConstant::Index(1))?;
+            // The exchange, and the only difference from the canonical body:
+            // the lowering emits `last - coordinate`.
+            let mirrored = builder.binary(BinaryOp::IndexSubtract, coordinate, last)?;
+            let offset = builder.binary(BinaryOp::IndexAdd, leading, mirrored)?;
+            let loaded = builder.load(read, offset, BoundsWitnessId::new(0))?;
+            builder.store(
+                write,
+                invocation,
+                loaded,
+                BoundsWitnessId::new(1),
+                OwnershipWitnessId::new(0),
+            )
+        })
+        .unwrap();
+    builder
+}
+
+/// `out = broadcast(w)` widening a `[2]` operand across a `[2, 2]` result.
+///
+/// The other structural relation, and it pins a different property: the read and
+/// the write declare *different element counts* on one entry point, which is the
+/// signature shape a widening broadcast needs and which no fixture but the
+/// contraction had. Its decode names result axis 1, so result axis 0 is the
+/// replicated one the read is invariant in — visible in the emitted body as an
+/// offset that wraps the launch coordinate and never divides it.
+pub(crate) fn widening_broadcast_kernel() -> VerifiedKernel {
+    let operand = Shape::from_dims([2]);
+    let result = Shape::from_dims([2, 2]);
+    lower_scheduled_region(&structural_region(
+        RegionId::new(41),
+        &result,
+        &operand,
+        LogicalAccess::BroadcastReplication {
+            operand_shape: operand.clone(),
+            result_shape: result.clone(),
+            axes: vec![AxisDecode::read(1, 2)],
+        },
+    ))
+    .expect("the bounded widening broadcast fixture lowers")
+}
+
 pub(crate) fn pointwise_kernel() -> VerifiedKernel {
     lower_scheduled_region(&pointwise_region(
         RegionId::new(0),
@@ -1196,6 +1446,149 @@ fn cooperative_workgroup_reduction_matches_its_golden_source() {
         include_str!("../goldens/cooperative_workgroup_reduction.metal"),
         &emit_one(&cooperative_kernel()),
     );
+}
+
+#[test]
+fn mirrored_reindex_matches_its_golden_source() {
+    assert_golden(
+        "structural_mirrored_reindex.metal",
+        include_str!("../goldens/structural_mirrored_reindex.metal"),
+        &emit_one(&mirrored_reindex_kernel()),
+    );
+}
+
+#[test]
+fn widening_broadcast_matches_its_golden_source() {
+    assert_golden(
+        "structural_widening_broadcast.metal",
+        include_str!("../goldens/structural_widening_broadcast.metal"),
+        &emit_one(&widening_broadcast_kernel()),
+    );
+}
+
+/// The mirrored offset emits an unsigned difference that says what carries it.
+///
+/// Asserted on the exact statement rather than on the golden as a whole, because
+/// the golden would stay green if the annotation moved to a line where it means
+/// nothing. Two halves matter and they are separate claims: the difference is
+/// emitted *exactly* — no clamp, no widening, no saturating call, any of which
+/// would keep the index in range by reading a different element — and the text
+/// attributes the non-negativity to the IR's proof rather than implying this
+/// backend tested it.
+#[test]
+fn the_mirrored_offset_emits_an_exact_difference_naming_its_proof() {
+    let source = emit_one(&mirrored_reindex_kernel());
+    assert!(
+        source.contains(
+            "uint64_t v10 = v9 - v8;  // unsigned; v8 <= v9 by the IR's proof, not by a test\n"
+        ),
+        "the mirror must emit the plain difference with its provenance: {source}"
+    );
+    // The bound the annotation names is established by the statement above it,
+    // and that statement is the emitted wrap rather than a comment about one.
+    assert!(source.contains("uint64_t v8 = v0 % v7;\n"));
+    // No clamping or saturating spelling reached the text. `min` would keep a
+    // violated proof in range and silently address the wrong element, which is
+    // the failure the exact difference refuses to hide.
+    assert!(!source.contains("min("));
+    assert!(!source.contains("clamp("));
+}
+
+/// The exchanged mirror never reaches emission: `tiler-ir` refuses it first.
+///
+/// **This is the wrap perturbation, and where it is actually caught.**
+/// `c - (extent - 1)` is well-formed MSL — the offline compiler accepts it and
+/// links it, and it computes an index near `2^64` for every coordinate below the
+/// mirror point — so no compile-stage test can be the defence. The defence is
+/// that the structured kernel verifier re-derives the offset expression from the
+/// region's access relation and answers `BodyRefinement`, which this pins
+/// against a builder that differs from the canonical lowering in exactly the two
+/// exchanged operands.
+///
+/// Stated here rather than left implicit because it is what bounds
+/// [`constant_minuend`]'s claim: that check is defence in depth against a
+/// producer building a kernel some other way, not the thing standing between the
+/// mirror and a wrapped index.
+#[test]
+fn the_verifier_refuses_a_reordered_mirror_before_emission_sees_it() {
+    let diagnostics = reordered_mirror_builder()
+        .build()
+        .expect_err("an exchanged mirror is not a refinement of its region")
+        .into_parts()
+        .1;
+    assert!(
+        diagnostics.contains(&KernelDiagnostic::BodyRefinement),
+        "the exchange must be refused as a refinement failure: {diagnostics:?}"
+    );
+    // The canonical body of the same region verifies and emits, so the refusal
+    // above is about the exchanged operands and not about the fixture.
+    assert!(emit_translation_unit(&[&mirrored_reindex_kernel()], &target()).is_ok());
+}
+
+/// A computed minuend is refused rather than emitted as an unsigned difference.
+///
+/// [`constant_minuend`] is exercised directly, for the reason
+/// [`bf16_canonical_nan`]'s refusals are: the verifier above makes it
+/// unreachable through `lower_scheduled_region`, and a rule with no test is a
+/// rule that silently stops holding. Both refusing shapes are covered — no
+/// constant at all, and a constant of the wrong role — because reading the
+/// second as a bound would be reading an `f32` bit pattern as an index.
+#[test]
+fn an_index_subtraction_from_a_computed_minuend_is_refused() {
+    assert_eq!(constant_minuend(Some(KernelConstant::Index(1))), Ok(1));
+    for rejected in [None, Some(KernelConstant::F32Bits(BIAS_BITS))] {
+        assert_eq!(
+            constant_minuend(rejected),
+            Err(MetalEmitError::MalformedKernel {
+                rule: "non-constant-minuend",
+            }),
+        );
+    }
+}
+
+/// Every construct the binary vocabulary names has an emitted Metal realization.
+///
+/// **The declared array length is the check, and it is the only mechanism this
+/// crate has for it.** [`BinaryOp`] is `#[non_exhaustive]`, so
+/// [`binary_realization`]'s match must carry a wildcard and `rustc` will never
+/// close it here; a construct appended in `tiler-ir` therefore reaches the
+/// backend as a run-time refusal that no test exercises, which is exactly how
+/// `IndexSubtract` arrived unemittable and stayed that way. Declaring this array
+/// at `variant_count` makes the same append an array-length build error in this
+/// crate — the mechanism `applicability::MetalGpuFamily::ALL` already uses, and
+/// the reason `#![feature(variant_count)]` is enabled at the crate root.
+///
+/// The distinctness assertion is what stops the length check from being
+/// satisfied by a repeated construct, which would make the array long enough and
+/// leave the new one untested.
+#[test]
+fn every_binary_construct_has_a_metal_realization() {
+    const OPS: [BinaryOp; core::mem::variant_count::<BinaryOp>()] = [
+        BinaryOp::IndexAdd,
+        BinaryOp::IndexMultiply,
+        BinaryOp::IndexDivide,
+        BinaryOp::IndexModulo,
+        BinaryOp::IndexSubtract,
+        BinaryOp::I32Subtract,
+        BinaryOp::F32Add,
+        BinaryOp::F32Multiply,
+        BinaryOp::F32Divide,
+        BinaryOp::F32Maximum,
+        BinaryOp::Bf16Add,
+        BinaryOp::Bf16Multiply,
+    ];
+    let distinct: BTreeSet<BinaryOp> = OPS.into_iter().collect();
+    assert_eq!(
+        distinct.len(),
+        OPS.len(),
+        "a repeated construct would satisfy the length check and test nothing"
+    );
+    for op in OPS {
+        assert!(
+            binary_realization(op).is_ok(),
+            "{op:?} reaches the backend with no Metal realization"
+        );
+    }
 }
 
 /// The cooperative kernel emits every construct its tile requires, and no other.

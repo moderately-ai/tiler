@@ -1155,6 +1155,175 @@ const fn ir_arithmetic_type(arithmetic_type: MetalFloatArithmeticType) -> Arithm
     }
 }
 
+/// How one governed binary construct is realized in emitted MSL.
+///
+/// Separated from [`KernelEmitter::emit_binary`] so the mapping is a pure
+/// function of the operation rather than a step inside a statement emission,
+/// which is what lets `every_binary_construct_has_a_metal_realization` call it
+/// over a list whose declared length is `variant_count`. That is the only
+/// mechanism that turns a construct appended to [`BinaryOp`] into a build error
+/// in this crate: the vocabulary is `#[non_exhaustive]`, so the wildcard in
+/// [`binary_realization`] cannot be removed and `rustc` will never close that
+/// match on this backend's behalf. A tag appended in `tiler-ir` reaching a
+/// silent run-time refusal is exactly how `IndexSubtract` arrived unemittable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BinaryRealization {
+    /// An MSL infix operator, with the arithmetic type whose subnormal fact it
+    /// selects.
+    ///
+    /// The type is carried rather than reduced to a boolean because the
+    /// subnormal fact it selects differs by type: reading `f32`'s fact for a
+    /// `f16` operation would report a flush against a value the measured Apple
+    /// hardware carries exactly. `None` is an operand type with no
+    /// floating-point contract to weigh, not an unknown one.
+    Operator {
+        /// The emitted MSL operator token.
+        operator: &'static str,
+        /// The arithmetic type whose subnormal fact this operation weighs.
+        arithmetic_type: Option<MetalFloatArithmeticType>,
+    },
+    /// The emitted IEEE 754-2019 `maximum` helper call.
+    ///
+    /// A variant rather than an operator spelling because MSL has no operator
+    /// for it, the intrinsic that looks like one implements a different
+    /// contract, and the call carries two obligations an operator does not.
+    MaximumF32,
+}
+
+/// Returns the MSL realization of one governed binary construct, or refuses it.
+///
+/// # The unsigned subtraction, and where its non-negativity actually comes from
+///
+/// [`BinaryOp::IndexSubtract`] is the one construct here whose contract a
+/// realization can violate *silently*. Its result is declared proven
+/// non-negative; the index role's MSL spelling is `uint64_t` ([`msl_type`]), and
+/// MSL subtraction on an unsigned integer is modular, so a violated proof does
+/// not trap or produce a negative value — it produces an index near `2^64` that
+/// the next emitted statement scales and adds into a buffer subscript. That is
+/// the failure this comment exists to keep visible.
+///
+/// **The emitted form is the plain difference, and the reasoning is not
+/// re-derived here.** Three candidates were weighed and two are defects rather
+/// than alternatives: a clamped `minuend - min(minuend, subtrahend)` keeps the
+/// index in range by returning a *different element*, which is the silently
+/// wrong result the fail-closed rule forbids; and a widened signed form moves
+/// the same violation from defined wrapping into C++ signed overflow, which is
+/// undefined behaviour and still converts back to a huge unsigned index. The
+/// difference is emitted exactly, and what carries the proof is the operation
+/// vocabulary, not the statement.
+///
+/// **The proof, stated once so a reader of the emitted text can check it.** The
+/// producing lowering is a reindex mirror, which emits `extent - 1 - c` for the
+/// coordinate `c` of the axis whose extent is `extent`. The bound `c < extent`
+/// reaches the emitted body by one of two routes, and both are visible in the
+/// text this module emits:
+///
+/// - The decode's own wrap. `c` is the result of an emitted
+///   [`BinaryOp::IndexModulo`] whose divisor is that same `extent`, so
+///   `c <= extent - 1` follows from the statement two lines above the
+///   subtraction.
+/// - The domain guard, where the lowering elides that wrap as redundant. It is
+///   elided exactly when the decode names the most significant window of the
+///   linear coordinate, so `c` is `index / divisor` with
+///   `divisor * extent` equal to the region's element count — and the emitted
+///   [`OperationView::Predicated`] guard above it establishes
+///   `index < element_count`, giving `c < extent` again.
+///
+/// **This module proves neither, deliberately.** Both derivations are facts
+/// about an access relation, and reconstructing an access relation here is the
+/// thing this file's own contract forbids — the IR states the map, the schedule
+/// verifier discharged its bijectivity, and a second opinion computed from
+/// emitted statements would be a shape recognizer with none of that evidence.
+/// What [`KernelEmitter::emit_binary`] checks instead is the half a backend
+/// *can* check without re-deriving anything: that the minuend is the constant
+/// the contract describes. That refuses a widened producer — and a swapped
+/// operand pair, which is the one perturbation that turns this construct into a
+/// wrapped index while leaving source the Metal compiler happily accepts.
+pub(crate) fn binary_realization(op: BinaryOp) -> Result<BinaryRealization, MetalEmitError> {
+    let (operator, arithmetic_type) = match op {
+        BinaryOp::IndexAdd => ("+", None),
+        BinaryOp::IndexMultiply => ("*", None),
+        BinaryOp::IndexDivide => ("/", None),
+        BinaryOp::IndexModulo => ("%", None),
+        // One arm because MSL spells both differences `-` and neither weighs a
+        // floating-point fact, **not** because they are one construct. The
+        // signed subtraction is exact over its whole operand range; the index
+        // one is unsigned and carries the non-negativity proof this function's
+        // documentation derives. That difference is enforced where it is
+        // observable — [`KernelEmitter::emit_binary`] annotates the index
+        // difference and checks its minuend and does neither for the signed
+        // one — so sharing the realization here loses nothing the emitted text
+        // keeps.
+        BinaryOp::IndexSubtract | BinaryOp::I32Subtract => ("-", None),
+        BinaryOp::F32Add => ("+", Some(MetalFloatArithmeticType::F32)),
+        BinaryOp::F32Multiply => ("*", Some(MetalFloatArithmeticType::F32)),
+        // The `/` operator, deliberately, and not `metal::divide(x, y)`.
+        // MSL's Table 8.1 states its accuracy against the *operator*
+        // spelling; Table 6.4 defines `divide()` as "Compute x / y" and the
+        // table gives it no row of its own, so lowering through the function
+        // would rest the accuracy claim on a reading rather than on a
+        // quotation.
+        BinaryOp::F32Divide => ("/", Some(MetalFloatArithmeticType::F32)),
+        // The `bfloat` operators, carrying `Bf16` rather than `F32` as the
+        // arithmetic type. The two happen to share a measured subnormal
+        // behaviour on the macOS row, which is exactly why the distinction
+        // has to be made here rather than inferred later: a record that
+        // answered `bf16` from the `f32` entry would look right on that row
+        // and be a guess, and the third measured type disagrees with both.
+        //
+        // There is deliberately no fused form beside them. MSL provides no
+        // `bfloat` overload of `fma` — the call promotes to `float` and the
+        // compiler rejects the narrowing initialization — so a BF16
+        // contraction has nothing to lower to at the source level, and
+        // `design-the-bf16-computation-and-accumulator-contract` owns the
+        // question rather than this backend inventing a promotion.
+        BinaryOp::Bf16Add => ("+", Some(MetalFloatArithmeticType::Bf16)),
+        BinaryOp::Bf16Multiply => ("*", Some(MetalFloatArithmeticType::Bf16)),
+        BinaryOp::F32Maximum => return Ok(BinaryRealization::MaximumF32),
+        _ => {
+            return Err(MetalEmitError::UnsupportedOperation {
+                family: MetalOperationFamily::Binary,
+            });
+        }
+    };
+    Ok(BinaryRealization::Operator {
+        operator,
+        arithmetic_type,
+    })
+}
+
+/// Returns the constant minuend an index subtraction's contract requires.
+///
+/// The half of [`BinaryOp::IndexSubtract`]'s non-negativity proof a backend can
+/// check without re-deriving an access relation. The contract states the minuend
+/// is the constant `extent - 1`; a computed minuend is a widened producer
+/// contract, and it must stop at this backend rather than emit a `uint64_t`
+/// difference whose bound moved — for the same reason
+/// [`staging_declaration`] refuses an address space the verifier already
+/// constrains.
+///
+/// **This is written as a refusal and not an `expect` even though the structured
+/// kernel verifier already makes it unreachable.** A body whose mirror subtracts
+/// in the other order fails `tiler-ir`'s own body-refinement check, which
+/// re-derives the offset expression from the region's access relation and
+/// answers `KernelDiagnostic::BodyRefinement` — so the exchange never reaches
+/// emission through `lower_scheduled_region`, and
+/// `the_verifier_refuses_a_reordered_mirror_before_emission_sees_it` pins that.
+/// What stays reachable is a producer that builds a kernel some other way, which
+/// is the population this crate's refusals exist for.
+///
+/// It deliberately says nothing about the *subtrahend*. Bounding that is the
+/// access relation's business, the schedule verifier discharged it, and the
+/// emitted comment beside the difference attributes it there rather than
+/// implying a test happened here.
+pub(crate) fn constant_minuend(minuend: Option<KernelConstant>) -> Result<u64, MetalEmitError> {
+    minuend
+        .and_then(KernelConstant::as_index)
+        .ok_or(MetalEmitError::MalformedKernel {
+            rule: "non-constant-minuend",
+        })
+}
+
 /// Per-kernel emission state.
 struct KernelEmitter<'a> {
     kernel: &'a VerifiedKernel,
@@ -1441,48 +1610,13 @@ impl KernelEmitter<'_> {
         let [result] = results else {
             return Err(arity("binary-result"));
         };
-        // Whether the operation is floating-point arithmetic, and in which
-        // type, is an operation-vocabulary fact rather than a recognized shape.
-        // The type is carried rather than reduced to a boolean because the
-        // subnormal fact it selects differs by type: reading `f32`'s fact for a
-        // `f16` operation would report a flush against a value the measured
-        // Apple hardware carries exactly.
-        let (operator, arithmetic_type) = match op {
-            BinaryOp::IndexAdd => ("+", None),
-            BinaryOp::IndexMultiply => ("*", None),
-            BinaryOp::IndexDivide => ("/", None),
-            BinaryOp::IndexModulo => ("%", None),
-            BinaryOp::I32Subtract => ("-", None),
-            BinaryOp::F32Add => ("+", Some(MetalFloatArithmeticType::F32)),
-            BinaryOp::F32Multiply => ("*", Some(MetalFloatArithmeticType::F32)),
-            // The `/` operator, deliberately, and not `metal::divide(x, y)`.
-            // MSL's Table 8.1 states its accuracy against the *operator*
-            // spelling; Table 6.4 defines `divide()` as "Compute x / y" and the
-            // table gives it no row of its own, so lowering through the function
-            // would rest the accuracy claim on a reading rather than on a
-            // quotation.
-            BinaryOp::F32Divide => ("/", Some(MetalFloatArithmeticType::F32)),
-            // The `bfloat` operators, carrying `Bf16` rather than `F32` as the
-            // arithmetic type. The two happen to share a measured subnormal
-            // behaviour on the macOS row, which is exactly why the distinction
-            // has to be made here rather than inferred later: a record that
-            // answered `bf16` from the `f32` entry would look right on that row
-            // and be a guess, and the third measured type disagrees with both.
-            //
-            // There is deliberately no fused form beside them. MSL provides no
-            // `bfloat` overload of `fma` — the call promotes to `float` and the
-            // compiler rejects the narrowing initialization — so a BF16
-            // contraction has nothing to lower to at the source level, and
-            // `design-the-bf16-computation-and-accumulator-contract` owns the
-            // question rather than this backend inventing a promotion.
-            BinaryOp::Bf16Add => ("+", Some(MetalFloatArithmeticType::Bf16)),
-            BinaryOp::Bf16Multiply => ("*", Some(MetalFloatArithmeticType::Bf16)),
+        let (operator, arithmetic_type) = match binary_realization(op)? {
             // The one binary construct emitted as a call rather than an
             // operator, because MSL has no operator for it and the intrinsic
             // that looks like one implements a different contract. The helper
             // carries the whole derivation; the two obligations it needs are
-            // recorded below.
-            BinaryOp::F32Maximum => {
+            // recorded here.
+            BinaryRealization::MaximumF32 => {
                 self.helpers.insert(MetalHelper::MaximumF32);
                 // A maximum performs no arithmetic and produces no new
                 // subnormal, but a target that flushed a subnormal *operand*
@@ -1505,11 +1639,10 @@ impl KernelEmitter<'_> {
                 ));
                 return Ok(());
             }
-            _ => {
-                return Err(MetalEmitError::UnsupportedOperation {
-                    family: MetalOperationFamily::Binary,
-                });
-            }
+            BinaryRealization::Operator {
+                operator,
+                arithmetic_type,
+            } => (operator, arithmetic_type),
         };
         if let Some(arithmetic_type) = arithmetic_type {
             self.record_subnormal_obligation(arithmetic_type);
@@ -1527,11 +1660,24 @@ impl KernelEmitter<'_> {
                 });
             }
         }
+        // The same defence at the one construct whose violation is *silent*
+        // rather than undefined; see [`constant_minuend`].
+        let proven_non_negative = matches!(op, BinaryOp::IndexSubtract);
+        if proven_non_negative {
+            constant_minuend(self.kernel.value_constant(lhs)?)?;
+        }
         let lhs = self.name(lhs)?.to_owned();
         let rhs = self.name(rhs)?.to_owned();
         let value_type = self.value_type(*result)?;
         let name = self.bind(*result)?;
-        self.line(&format!("{value_type} {name} = {lhs} {operator} {rhs};"));
+        let statement = format!("{value_type} {name} = {lhs} {operator} {rhs};");
+        if proven_non_negative {
+            self.line(&format!(
+                "{statement}  // unsigned; {rhs} <= {lhs} by the IR's proof, not by a test"
+            ));
+        } else {
+            self.line(&statement);
+        }
         Ok(())
     }
 
