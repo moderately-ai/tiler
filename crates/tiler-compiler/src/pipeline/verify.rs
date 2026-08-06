@@ -350,25 +350,24 @@ pub(super) fn verify_equivalence(
 /// is a *whole-program* cover realized by a subprogram, and the old shape check
 /// rejected that as malformed compiler output.
 ///
-/// What the obligation always was survives intact and is now written directly:
-/// the dispatches' claims *partition* the candidate's occurrences. One comparison
-/// rather than two checks, because
-/// [`crate::region::RegionCandidate::members`] is ascending and duplicate-free —
-/// so a sorted concatenation equals it exactly when every occurrence is claimed
-/// once. A stage claiming an occurrence twice, one claiming an occurrence outside
-/// the candidate, and a plan leaving one unclaimed all fail that comparison, so
-/// none of the three is an arm nothing could drive.
+/// What the obligation always was survives intact: the dispatches' claims
+/// *partition* the candidate's occurrences. It is decided by
+/// [`crate::region::chain_realizes_subject`], which is the one place the rule is
+/// written — the physical frontier owes the identical obligation for a
+/// subprogram it admits, and two spellings of one rule are two rules to keep in
+/// agreement. A dispatch claiming an occurrence twice, one claiming an
+/// occurrence outside the candidate, one continuing a stage nothing computed,
+/// and a plan leaving an occurrence unclaimed all fail it.
 fn verify_whole_program_schedule_coverage(
     alternative: &ProgramAlternative,
     candidate: &crate::region::RegionCandidate,
 ) -> Result<(), CompileError> {
-    let mut claimed: Vec<crate::region::SemanticMemberId> = alternative
+    let mut claimed: Vec<crate::region::SemanticStage> = alternative
         .scheduled_regions
         .iter()
         .flat_map(|region| region.semantic_members().iter().copied())
         .collect();
-    claimed.sort_unstable();
-    if claimed != candidate.members() {
+    if !crate::region::chain_realizes_subject(&mut claimed, candidate.members()) {
         return Err(ProgramError::Structure {
             rule: "portfolio-candidate-schedule-binding",
         }

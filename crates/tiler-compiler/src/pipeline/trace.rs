@@ -588,7 +588,11 @@ pub(super) fn record_numerical_equivalence(
             let provider = lowering
                 .occurrences()
                 .iter()
-                .find(|occurrence| reduction.contains(&occurrence.member()))
+                .find(|lowering| {
+                    reduction
+                        .iter()
+                        .any(|atom| atom.member() == lowering.member())
+                })
                 .map(crate::lowering::OccurrenceLowering::provider)
                 .ok_or_else(|| {
                     CompileError::from(ProgramError::Structure {

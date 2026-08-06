@@ -46,7 +46,7 @@ use crate::physical::{
     AccessMode, ContributorPartition, NumericalRealization, RegionId, TensorRole, VerifiedKernel,
     VerifiedScheduledRegion, lower_structured_kernel,
 };
-use crate::region::{RegionOccurrenceIdentity, SemanticMemberId, SemanticValueId, value_ordinal};
+use crate::region::{RegionOccurrenceIdentity, SemanticStage, SemanticValueId, value_ordinal};
 use crate::request::{LoweringProviderIdentity, TargetProfile, VerifiedTargetRequest};
 use crate::selection::SelectedPlan;
 use crate::target::feasibility::DeferredPredicate;
@@ -350,20 +350,24 @@ pub(crate) enum AssemblyBinding {
 /// One dispatch of the program a cover assembles into.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AssemblyStage {
-    /// The occurrences this stage covers, taken from the cover region it
-    /// realizes.
+    /// The attribution atoms this stage claims, taken from the verified region
+    /// the stage dispatches rather than from the cover region as a whole.
     ///
-    /// Empty for every pass of a subprogram after the first: the first pass
-    /// already claims the occurrences the passes jointly realize, and claiming
-    /// them twice would double-cover the semantic graph. Whole-program
-    /// verification admits an uncovering pass only when a declaration accounts
-    /// for it, and this profile has exactly two such declarations — the split
-    /// [`KernelProgramBuilder::push_partial_reduction`] states, whose partial
-    /// pass already claims the reduction both passes realize, and the copy
-    /// [`KernelProgramBuilder::push_publishing_copy`] states, whose source stage
-    /// already claims the occurrences that computed the published value. Without
+    /// **Per pass, because the passes of one region do not claim it uniformly.**
+    /// A split reduction's partial pass claims the reduction occurrence's first
+    /// stage and its combine claims the stage after it, so reading the cover
+    /// region's atoms for every pass would have both passes claim the same work.
+    /// A publishing copy claims nothing at all — it computes no occurrence, it
+    /// moves a value — and that is the one empty claim this profile mints.
+    ///
+    /// It projects onto [`tiler_ir::program::CoveredOccurrence`] through
+    /// [`covered`], which keeps only first-stage atoms: whole-program coverage
+    /// is an obligation of the *occurrence*, discharged once, and the IR admits
+    /// the resulting uncovering pass exactly when a declaration accounts for it
+    /// — the split [`KernelProgramBuilder::push_partial_reduction`] states, or
+    /// the copy [`KernelProgramBuilder::push_publishing_copy`] states. Without
     /// either, it is a stage computing nothing and `UncoveringStage` rejects it.
-    pub(crate) coverage: Vec<SemanticMemberId>,
+    pub(crate) coverage: Vec<SemanticStage>,
     pub(crate) bindings: Vec<AssemblyBinding>,
 }
 
@@ -861,11 +865,7 @@ impl CoverAssembly {
                 };
                 bindings.push(AssemblyBinding::Internal(written));
                 stages.push(AssemblyStage {
-                    coverage: if stage == first {
-                        region.members().to_vec()
-                    } else {
-                        Vec::new()
-                    },
+                    coverage: stage_regions[stage].semantic_members().to_vec(),
                     bindings,
                 });
             }
@@ -1693,15 +1693,25 @@ fn lower(scheduled: &VerifiedScheduledRegion) -> Result<VerifiedKernel, ProgramE
 /// receipt and produces a refusal rather than a bare occurrence. That is the
 /// compiler half of the fail-closed rule — a proof gap never reaches
 /// `push_stage` in a form the IR could accept.
+///
+/// **Only first-stage atoms yield a record, and that is a projection rather than
+/// a filter that discards evidence.** `tiler_ir::program`'s coverage is keyed on
+/// [`tiler_ir::program::SemanticOccurrence`] and refuses the same occurrence
+/// twice across a program, because what it proves is that every operation is
+/// computed exactly once with a refinement receipt behind it — a property of the
+/// occurrence, not of whichever dispatch continues it. A later stage's work is
+/// accounted for at program scope by the declaration that admits it as an
+/// uncovering pass, which is where the chain, not the coverage, is proven.
 fn covered(
-    members: &[SemanticMemberId],
+    members: &[SemanticStage],
     lowering: &ResolvedLowering,
 ) -> Result<Vec<CoveredOccurrence>, ProgramError> {
     members
         .iter()
-        .map(|member| {
+        .filter(|atom| atom.is_first())
+        .map(|atom| {
             lowering
-                .occurrence(*member)
+                .occurrence(atom.member())
                 .map(crate::lowering::OccurrenceLowering::covered_occurrence)
                 .ok_or(ProgramError::Structure {
                     rule: "refinement-coverage-missing",

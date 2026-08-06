@@ -71,7 +71,7 @@ use tiler_ir::semantic::{SemanticProgram, ValueId};
 
 use crate::region::{
     RegionCandidate, RegionContentIdentity, RegionError, RegionFormationOutcome, RegionGraph,
-    RegionOccurrenceIdentity, SemanticMemberId, SemanticValueId,
+    RegionOccurrenceIdentity, SemanticMemberId, SemanticStage, SemanticValueId,
 };
 use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 
@@ -494,7 +494,7 @@ impl MaterializationEdge {
 /// drift from the candidate region formation admitted.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CoverRegion {
-    members: Vec<SemanticMemberId>,
+    members: Vec<SemanticStage>,
     content: RegionContentIdentity,
     occurrence: RegionOccurrenceIdentity,
     /// Graph-local ordinals of the ordered named program outputs this region
@@ -527,8 +527,8 @@ pub(crate) struct CoverRegion {
     reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
 )]
 impl CoverRegion {
-    /// Returns the region's members in ascending graph-local order.
-    pub(crate) fn members(&self) -> &[SemanticMemberId] {
+    /// Returns the region's attribution atoms in ascending graph-local order.
+    pub(crate) fn members(&self) -> &[SemanticStage] {
         &self.members
     }
 
@@ -1020,12 +1020,13 @@ pub(crate) fn enumerate_covers(
     let mut containing: Vec<Vec<usize>> =
         vec![Vec::new(); usize::try_from(operation_count).unwrap_or(usize::MAX)];
     for (index, candidate) in candidates.iter().enumerate() {
-        for member in candidate.members() {
-            let slot = containing
-                .get_mut(member_index(*member))
-                .ok_or(CoverError::Structure {
-                    rule: "member-ordinal",
-                })?;
+        for atom in candidate.members() {
+            let slot =
+                containing
+                    .get_mut(member_index(atom.member()))
+                    .ok_or(CoverError::Structure {
+                        rule: "member-ordinal",
+                    })?;
             slot.push(index);
         }
     }
@@ -1156,12 +1157,13 @@ pub(crate) fn verify_cover(
     let legality = DuplicationLegality::derive(graph, outcome.candidates(), policy)?;
     let mut counts = vec![0_u32; usize::try_from(operation_count).unwrap_or(usize::MAX)];
     for candidate in &resolved {
-        for member in candidate.members() {
-            let slot = counts
-                .get_mut(member_index(*member))
-                .ok_or(CoverError::Structure {
-                    rule: "member-ordinal",
-                })?;
+        for atom in candidate.members() {
+            let slot =
+                counts
+                    .get_mut(member_index(atom.member()))
+                    .ok_or(CoverError::Structure {
+                        rule: "member-ordinal",
+                    })?;
             *slot = slot.saturating_add(1);
         }
     }
@@ -1591,23 +1593,23 @@ impl Partitioner<'_> {
         &self,
         candidate: &RegionCandidate,
     ) -> Option<(SemanticMemberId, DuplicationRefusal)> {
-        candidate.members().iter().find_map(|member| {
+        candidate.members().iter().find_map(|atom| {
             let covered = self
                 .covered
-                .get(member_index(*member))
+                .get(member_index(atom.member()))
                 .copied()
                 .unwrap_or(u32::MAX);
             (covered > 0)
-                .then(|| self.legality.refusal(*member))
+                .then(|| self.legality.refusal(atom.member()))
                 .flatten()
-                .map(|cause| (*member, cause))
+                .map(|cause| (atom.member(), cause))
         })
     }
 
     /// Adds or removes one region's coverage on the current branch.
     fn mark(&mut self, candidate: &RegionCandidate, covering: bool) {
-        for member in candidate.members() {
-            if let Some(slot) = self.covered.get_mut(member_index(*member)) {
+        for atom in candidate.members() {
+            if let Some(slot) = self.covered.get_mut(member_index(atom.member())) {
                 *slot = if covering {
                     slot.saturating_add(1)
                 } else {
@@ -1682,9 +1684,9 @@ impl Partitioner<'_> {
             // coverage vector cannot hold never makes a candidate look like an
             // augmentation. It cannot happen, for the reason that method's doc
             // states.
-            let covers_new = candidate.members().iter().any(|member| {
+            let covers_new = candidate.members().iter().any(|atom| {
                 self.covered
-                    .get(member_index(*member))
+                    .get(member_index(atom.member()))
                     .copied()
                     .unwrap_or(1)
                     == 0
@@ -1996,16 +1998,26 @@ fn assemble_resolved_cover(
 /// Expressed in content-derived canonical positions, ascending and
 /// deduplicated, so the record does not depend on authoring order and can be
 /// folded into cover identity.
+///
+/// **Keyed on the attribution atom, which is what separates a duplication from a
+/// split.** Two regions computing one occurrence's *same* stage compute the same
+/// value twice, and that is the recomputation this record names. Two regions
+/// carrying two *different* stages of one occurrence realize it once between
+/// them — a fold region and the normalization over its result each do part of
+/// the work — so the occurrence appears twice in the cover's atoms and is not
+/// duplicated at all. With a bare occurrence as the key the two are the same
+/// observation, and every multi-region realization would be reported as a
+/// recomputation the exact-partition contract then refuses.
 fn derive_duplication(
     graph: &RegionGraph,
     regions: &[&RegionCandidate],
 ) -> Result<CoverDuplication, CoverError> {
-    let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
+    let mut seen: BTreeSet<SemanticStage> = BTreeSet::new();
     let mut duplicated: BTreeSet<u32> = BTreeSet::new();
     for region in regions {
-        for member in region.members() {
-            if !seen.insert(*member) {
-                duplicated.insert(graph.member_canonical_position(*member)?);
+        for atom in region.members() {
+            if !seen.insert(*atom) {
+                duplicated.insert(graph.member_canonical_position(atom.member())?);
             }
         }
     }
@@ -2180,7 +2192,7 @@ fn derive_cover_cost(
     for edge in materializations {
         materialized_elements = materialized_elements.saturating_add(edge.element_count);
     }
-    let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
+    let mut seen: BTreeSet<SemanticStage> = BTreeSet::new();
     let mut recomputed_elements = 0_u64;
     // The canonical order the "first region is the original" rule ranges over,
     // derived here rather than taken from the caller's argument order: the
@@ -2194,8 +2206,13 @@ fn derive_cover_cost(
             .cmp(right.occurrence().as_bytes())
     });
     for region in ordered {
-        for member in region.members() {
-            if seen.insert(*member) {
+        // Keyed on the attribution atom for the reason `derive_duplication` is:
+        // a second *stage* of an occurrence is the rest of that occurrence's
+        // work, not a second evaluation of work already done, so pricing it as
+        // recomputation would charge a multi-region realization for computing
+        // itself once.
+        for atom in region.members() {
+            if seen.insert(*atom) {
                 continue;
             }
             // The member's *own* results, read from the graph rather than from
@@ -2205,7 +2222,7 @@ fn derive_cover_cost(
             // list, and costing it from that list would report the recomputation
             // as free — which is the case this dimension exists to price.
             recomputed_elements =
-                recomputed_elements.saturating_add(member_result_elements(graph, *member)?);
+                recomputed_elements.saturating_add(member_result_elements(graph, atom.member())?);
         }
     }
     Ok(CoverCost {
@@ -2236,8 +2253,12 @@ fn collect_singletons(
 ) -> Result<Vec<usize>, CoverError> {
     let mut by_member: BTreeMap<u32, usize> = BTreeMap::new();
     for (index, candidate) in candidates.iter().enumerate() {
-        if let [member] = candidate.members()
-            && by_member.insert(member.0, index).is_some()
+        // A singleton is one atom, and the singleton coverage this collects is
+        // the *occurrence* one: a candidate covering one later stage of an
+        // occurrence would not be the operation's unfused region.
+        if let [atom] = candidate.members()
+            && atom.is_first()
+            && by_member.insert(atom.member().0, index).is_some()
         {
             return Err(CoverError::Structure {
                 rule: "duplicate-singleton",
@@ -2345,6 +2366,25 @@ fn encode_materialization(output: &mut Vec<u8>, edge: &MaterializationEdge) {
     }
 }
 
+/// Indexes the per-*occurrence* vectors the search keeps.
+///
+/// Coverage masks, the candidate index, and duplication legality are all sized
+/// by the graph's operation count and are facts about the occurrence rather than
+/// about a stage of it: the cover's obligation is that every operation is
+/// computed, and the legality of recomputing one is a property of the operation
+/// and the contract. An atom therefore indexes them through
+/// [`SemanticStage::member`], while attribution — which region realizes which
+/// *part* of an occurrence — is decided by comparing whole atom sets.
+///
+/// **The counting these vectors drive is still per occurrence, which is exact
+/// while every candidate is single-stage and is not a model of a split.** Two
+/// candidates covering two stages of one occurrence would raise its count to
+/// two, and [`verify_cover`] reads a count above one as duplication — so the
+/// search would refuse a legal multi-region realization rather than admit it
+/// wrongly. That is the fail-closed direction, and lifting it belongs with the
+/// authority that mints the first multi-stage candidate: the mask has to require
+/// every *stage* covered once, which is a different obligation from every
+/// operation covered once.
 fn member_index(member: SemanticMemberId) -> usize {
     usize::try_from(member.0).unwrap_or(usize::MAX)
 }
@@ -2530,7 +2570,13 @@ mod tests {
                 cover
                     .regions()
                     .iter()
-                    .map(|region| region.members().iter().map(|member| member.0).collect())
+                    .map(|region| {
+                        region
+                            .members()
+                            .iter()
+                            .map(|atom| atom.member().0)
+                            .collect()
+                    })
                     .collect()
             })
             .collect()
@@ -2577,8 +2623,8 @@ mod tests {
                 .collect();
             let mut counts = vec![0_u32; operation_count as usize];
             for region in &chosen {
-                for member in region.members() {
-                    counts[member.0 as usize] += 1;
+                for atom in region.members() {
+                    counts[atom.member().0 as usize] += 1;
                 }
             }
             if counts.contains(&0) {
@@ -2609,7 +2655,13 @@ mod tests {
             covers.insert(
                 chosen
                     .iter()
-                    .map(|region| region.members().iter().map(|member| member.0).collect())
+                    .map(|region| {
+                        region
+                            .members()
+                            .iter()
+                            .map(|atom| atom.member().0)
+                            .collect()
+                    })
                     .collect(),
             );
         }
@@ -2880,7 +2932,7 @@ mod tests {
                 let covered: BTreeSet<u32> = cover
                     .regions()
                     .iter()
-                    .flat_map(|region| region.members().iter().map(|member| member.0))
+                    .flat_map(|region| region.members().iter().map(|atom| atom.member().0))
                     .collect();
                 assert_eq!(
                     covered, all_operations,
@@ -3147,7 +3199,7 @@ mod tests {
         let mut duplicated = enumeration.fully_materialized_cover().unwrap().clone();
         let doubled: Vec<_> = overlapping_pair
             .into_iter()
-            .filter(|region| region.members().iter().any(|member| member.0 == 1))
+            .filter(|region| region.members().iter().any(|atom| atom.member().0 == 1))
             .collect();
         assert!(
             doubled.len() >= 2,
@@ -3234,7 +3286,13 @@ mod tests {
             let members: BTreeSet<Vec<u32>> = cover
                 .regions()
                 .iter()
-                .map(|region| region.members().iter().map(|member| member.0).collect())
+                .map(|region| {
+                    region
+                        .members()
+                        .iter()
+                        .map(|atom| atom.member().0)
+                        .collect()
+                })
                 .collect();
             assert!(!exact.contains(&members));
         }
@@ -3571,7 +3629,13 @@ mod tests {
             let have: BTreeSet<Vec<u32>> = cover
                 .regions()
                 .iter()
-                .map(|region| region.members().iter().map(|member| member.0).collect())
+                .map(|region| {
+                    region
+                        .members()
+                        .iter()
+                        .map(|atom| atom.member().0)
+                        .collect()
+                })
                 .collect();
             have == want
         })

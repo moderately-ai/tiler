@@ -4874,10 +4874,10 @@ fn relaxed_reassociation_reaches_verified_global_physical_selection() {
     assert_eq!(
         reassociated.scheduled_regions[0].semantic_members(),
         [
-            crate::region::SemanticMemberId(0),
-            crate::region::SemanticMemberId(1),
-            crate::region::SemanticMemberId(2),
-            crate::region::SemanticMemberId(3),
+            crate::region::SemanticStage::first(crate::region::SemanticMemberId(0)),
+            crate::region::SemanticStage::first(crate::region::SemanticMemberId(1)),
+            crate::region::SemanticStage::first(crate::region::SemanticMemberId(2)),
+            crate::region::SemanticStage::first(crate::region::SemanticMemberId(3)),
         ],
     );
     assert_eq!(reassociated.equivalence.legality().len(), 1);
@@ -4944,10 +4944,10 @@ fn pointwise_region_roles_require_the_exact_whole_program_subject() {
     .unwrap();
     let request = verified.for_target(verified.target_profiles()[0]).unwrap();
     let members = [
-        crate::region::SemanticMemberId(0),
-        crate::region::SemanticMemberId(1),
-        crate::region::SemanticMemberId(2),
-        crate::region::SemanticMemberId(3),
+        crate::region::SemanticStage::first(crate::region::SemanticMemberId(0)),
+        crate::region::SemanticStage::first(crate::region::SemanticMemberId(1)),
+        crate::region::SemanticStage::first(crate::region::SemanticMemberId(2)),
+        crate::region::SemanticStage::first(crate::region::SemanticMemberId(3)),
     ];
 
     assert_eq!(region_role(&request, &members), "whole-program");
@@ -6362,9 +6362,11 @@ fn materialized_assembly(
 /// The split's three-stage assembly: the same two-region cover, with its
 /// reduction realized by a partial pass and a combining pass.
 ///
-/// The combining pass covers **no** occurrence — the partial pass already claims
-/// the reduction the two of them realize — which whole-program verification
-/// admits only because the split contract below is declared.
+/// The combining pass claims the reduction occurrence's *second* stage — the
+/// partial pass claims its first, and the two realize one occurrence between
+/// them. Only first stages project onto kernel-program coverage, so the combine
+/// is still an uncovering stage at program scope, which whole-program
+/// verification admits only because the split contract below is declared.
 fn split_assembly(
     request: &crate::request::VerifiedTargetRequest,
     scheduled: &[crate::physical::VerifiedScheduledRegion],
@@ -6396,7 +6398,12 @@ fn split_assembly(
                 ],
             },
             crate::program::AssemblyStage {
-                coverage: Vec::new(),
+                coverage: subject
+                    .members
+                    .reduction()
+                    .iter()
+                    .map(|atom| atom.next_stage())
+                    .collect(),
                 bindings: vec![
                     crate::program::AssemblyBinding::Internal(1),
                     crate::program::AssemblyBinding::Internal(2),

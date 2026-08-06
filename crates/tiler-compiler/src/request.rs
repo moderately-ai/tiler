@@ -37,7 +37,7 @@ use crate::capability::{
 use crate::elementary::{PointwiseExpressionSink, silu_point_body};
 use crate::governed::{governed_lowering_capabilities, governed_scalars};
 use crate::policy::UnrepresentableDimension;
-use crate::region::SemanticMemberId;
+use crate::region::{SemanticMemberId, SemanticStage};
 use crate::target::DTypeDispatchabilityResolution;
 use crate::target::honourability::{
     DeferredDimension, DimensionBehaviour, NumericalDimension, NumericalRequirement,
@@ -1157,34 +1157,34 @@ impl CompilationRequest<'_> {
 /// the option rather than the emptiness.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RecognizedSerialSumMembers {
-    pointwise: Vec<SemanticMemberId>,
-    reduction: Vec<SemanticMemberId>,
+    pointwise: Vec<SemanticStage>,
+    reduction: Vec<SemanticStage>,
 }
 
 impl RecognizedSerialSumMembers {
     /// Binds the recognized prologue's occurrences and the reduction's own.
-    fn new(pointwise: Vec<SemanticMemberId>, reduction: u32) -> Self {
+    fn new(pointwise: Vec<SemanticStage>, reduction: u32) -> Self {
         let mut pointwise = pointwise;
         pointwise.sort_unstable();
         pointwise.dedup();
         Self {
             pointwise,
-            reduction: vec![SemanticMemberId(reduction)],
+            reduction: vec![SemanticStage::first(SemanticMemberId(reduction))],
         }
     }
 
     /// Returns the pointwise prologue members in ascending order.
-    pub(crate) fn pointwise(&self) -> &[SemanticMemberId] {
+    pub(crate) fn pointwise(&self) -> &[SemanticStage] {
         &self.pointwise
     }
 
     /// Returns the reduction members in ascending order.
-    pub(crate) fn reduction(&self) -> &[SemanticMemberId] {
+    pub(crate) fn reduction(&self) -> &[SemanticStage] {
         &self.reduction
     }
 
     /// Returns every recognized member in ascending order.
-    pub(crate) fn all(&self) -> Vec<SemanticMemberId> {
+    pub(crate) fn all(&self) -> Vec<SemanticStage> {
         let mut members: Vec<_> = self
             .pointwise
             .iter()
@@ -1263,7 +1263,7 @@ impl NormalizedSerialSum {
     /// are the same bytes and different facts: "the prologue claims nothing" is a
     /// state no recognized program is in, and treating it as one is how an empty
     /// member set would acquire a region.
-    pub(crate) fn prologue_members(&self) -> Option<&[SemanticMemberId]> {
+    pub(crate) fn prologue_members(&self) -> Option<&[SemanticStage]> {
         self.prologue.as_ref().map(|_| self.members.pointwise())
     }
 }
@@ -1285,7 +1285,7 @@ pub(crate) struct NormalizedPointwise {
     pub(crate) output_key: OutputKey,
     pub(crate) shape: Shape,
     pub(crate) expression: PointwiseF32Expression,
-    pub(crate) members: Vec<SemanticMemberId>,
+    pub(crate) members: Vec<SemanticStage>,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) output: ValueId,
     pub(crate) elements: u64,
@@ -1328,7 +1328,7 @@ pub(crate) struct NormalizedContraction {
     pub(crate) structure: ContractionIndexStructure,
     /// Structure operand position supplying each declared input ordinal.
     pub(crate) operand_positions: [usize; 2],
-    pub(crate) members: Vec<SemanticMemberId>,
+    pub(crate) members: Vec<SemanticStage>,
     /// Operand values, indexed by declared input ordinal.
     pub(crate) inputs: [ValueId; 2],
     pub(crate) output: ValueId,
@@ -1415,7 +1415,7 @@ pub(crate) struct NormalizedEpilogue {
     /// tensor with. Exactly one entry is [`EpilogueRead::Staged`].
     pub(crate) reads: Vec<(EpilogueRead, LogicalAccess)>,
     /// The occurrences the epilogue region itself covers.
-    pub(crate) members: Vec<SemanticMemberId>,
+    pub(crate) members: Vec<SemanticStage>,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) output: ValueId,
     pub(crate) elements: u64,
@@ -1627,7 +1627,7 @@ impl NormalizedOutput {
     }
 
     /// Returns every occurrence this output's walk claimed, in ascending order.
-    pub(crate) fn members(&self) -> Vec<SemanticMemberId> {
+    pub(crate) fn members(&self) -> Vec<SemanticStage> {
         match self {
             Self::SerialSum(normalized) => normalized.members.all(),
             Self::Pointwise(normalized) => normalized.members.clone(),
@@ -1657,7 +1657,7 @@ impl NormalizedOutput {
     /// derivation downstream would build one. Like the same distinction in
     /// [`crate::physical::spell_region`], it is defence in depth rather than a
     /// live gate — no cover this search places carries an empty member set.
-    fn owns_region_members(&self, members: &[SemanticMemberId]) -> bool {
+    fn owns_region_members(&self, members: &[SemanticStage]) -> bool {
         match self {
             Self::SerialSum(normalized) => {
                 normalized
@@ -1735,7 +1735,7 @@ impl NormalizedProgram {
     /// check that says no if that ever stops holding.
     pub(crate) fn output_for_region(
         &self,
-        members: &[SemanticMemberId],
+        members: &[SemanticStage],
     ) -> Option<(usize, &NormalizedOutput)> {
         self.outputs
             .iter()
@@ -1807,18 +1807,35 @@ impl NormalizedProgram {
             .unwrap_or_default()
     }
 
-    /// Returns every occurrence any output's walk claimed, in ascending order.
+    /// Returns every attribution atom any output's walk claimed, ascending.
     ///
     /// The walks partition the program's occurrences — [`check_output_cover`]
     /// proves it — so this is the program's whole operation set and the
     /// deduplication is the invariant being relied on rather than a repair.
-    pub(crate) fn all_members(&self) -> Vec<SemanticMemberId> {
-        let mut members: Vec<SemanticMemberId> = self
+    pub(crate) fn all_members(&self) -> Vec<SemanticStage> {
+        let mut members: Vec<SemanticStage> = self
             .outputs
             .iter()
             .flat_map(NormalizedOutput::members)
             .collect();
         members.sort_unstable();
+        members.dedup();
+        members
+    }
+
+    /// Returns every *occurrence* any output's walk claimed, ascending.
+    ///
+    /// The projection of [`Self::all_members`] onto operations, for the
+    /// authorities whose subject is the occurrence rather than a stage of it:
+    /// an occurrence resolves one lowering capability and carries one refinement
+    /// receipt however many regions realize it, so asking per atom would resolve
+    /// one capability twice and mint two receipts for one proof obligation.
+    pub(crate) fn all_occurrences(&self) -> Vec<SemanticMemberId> {
+        let mut members: Vec<SemanticMemberId> = self
+            .all_members()
+            .into_iter()
+            .map(SemanticStage::member)
+            .collect();
         members.dedup();
         members
     }
@@ -1959,7 +1976,7 @@ pub(crate) struct NormalizedEpilogueSubject {
     shape: Shape,
     expression: PointwiseF32Expression,
     reads: Vec<(EpilogueRead, LogicalAccess)>,
-    members: Vec<SemanticMemberId>,
+    members: Vec<SemanticStage>,
     elements: u64,
 }
 
@@ -1982,7 +1999,7 @@ impl NormalizedEpilogueSubject {
         &self.reads
     }
     /// Returns the occurrences the epilogue region itself covers.
-    pub(crate) fn members(&self) -> &[SemanticMemberId] {
+    pub(crate) fn members(&self) -> &[SemanticStage] {
         &self.members
     }
     /// Returns the epilogue region's published element count.
@@ -2018,7 +2035,7 @@ impl VerifiedTargetRequest {
     /// says which output's partition it belongs to.
     pub(crate) fn output_for_region(
         &self,
-        members: &[SemanticMemberId],
+        members: &[SemanticStage],
     ) -> Option<(usize, &NormalizedOutput)> {
         self.normalized.output_for_region(members)
     }
@@ -2269,6 +2286,17 @@ impl VerifiedRequestSubject {
 /// every other arm is flat. The recursion is bounded by the recognizer, which
 /// admits a folding family as a chain's producer and nothing else, so a chain of
 /// chains is not a subject this function can be handed.
+///
+/// **Every member run below writes the occurrence ordinal of an attribution
+/// atom and not its stage, and that is complete rather than lossy.** A
+/// recognized part is minted by `plan_elementwise`, by
+/// [`RecognizedSerialSumMembers::new`], and by the contraction recognizer, and
+/// each of the three mints [`SemanticStage::first`] — no recognizer in this
+/// module can produce a partition holding a later stage, so no two subjects can
+/// differ in a stage ordinal and the ordinals alone separate them. A recognizer
+/// that admits a family realized as a region *sequence* breaks that premise and
+/// must fold the stage into these runs, which steps this domain's version and
+/// moves every pinned request qualifier with it.
 fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubject) {
     match normalized {
         NormalizedOutputSubject::SerialSum(normalized) => {
@@ -2315,8 +2343,8 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
                 normalized.members.reduction(),
             ] {
                 push_len(bytes, members.len());
-                for member in members {
-                    bytes.extend_from_slice(&member.0.to_be_bytes());
+                for atom in members {
+                    bytes.extend_from_slice(&atom.member().0.to_be_bytes());
                 }
             }
             bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
@@ -2370,8 +2398,8 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
             encode_explain_shape(bytes, &normalized.shape);
             encode_pointwise_expression(bytes, &normalized.expression);
             push_len(bytes, normalized.members.len());
-            for member in &normalized.members {
-                bytes.extend_from_slice(&member.0.to_be_bytes());
+            for atom in &normalized.members {
+                bytes.extend_from_slice(&atom.member().0.to_be_bytes());
             }
             bytes.extend_from_slice(&normalized.elements.to_be_bytes());
             encode_elementwise_reads(bytes, normalized.input_keys.len(), &normalized.reads);
@@ -2401,8 +2429,8 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
                 push_len(bytes, position);
             }
             push_len(bytes, normalized.members.len());
-            for member in &normalized.members {
-                bytes.extend_from_slice(&member.0.to_be_bytes());
+            for atom in &normalized.members {
+                bytes.extend_from_slice(&atom.member().0.to_be_bytes());
             }
             for elements in normalized.input_elements {
                 bytes.extend_from_slice(&elements.to_be_bytes());
@@ -2445,8 +2473,8 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
                 encode_access_relation(bytes, map);
             }
             push_len(bytes, normalized.members.len());
-            for member in &normalized.members {
-                bytes.extend_from_slice(&member.0.to_be_bytes());
+            for atom in &normalized.members {
+                bytes.extend_from_slice(&atom.member().0.to_be_bytes());
             }
             bytes.extend_from_slice(&normalized.elements.to_be_bytes());
             encode_output_subject(bytes, &normalized.producer);
@@ -4081,10 +4109,9 @@ fn check_output_cover(
     program: &SemanticProgram,
     outputs: &[NormalizedOutput],
 ) -> Result<(), RequestError> {
-    let claimed: Vec<Vec<SemanticMemberId>> =
-        outputs.iter().map(NormalizedOutput::members).collect();
+    let claimed: Vec<Vec<SemanticStage>> = outputs.iter().map(NormalizedOutput::members).collect();
     let total: usize = claimed.iter().map(Vec::len).sum();
-    let mut distinct: Vec<SemanticMemberId> = claimed.iter().flatten().copied().collect();
+    let mut distinct: Vec<SemanticStage> = claimed.iter().flatten().copied().collect();
     distinct.sort_unstable();
     distinct.dedup();
     if total != distinct.len()
@@ -4144,7 +4171,7 @@ fn check_output_cover(
 fn published_and_consumed_overlap(
     program: &SemanticProgram,
     outputs: &[NormalizedOutput],
-    claimed: &[Vec<SemanticMemberId>],
+    claimed: &[Vec<SemanticStage>],
 ) -> Option<(usize, usize)> {
     let mut overlapping = None;
     for short in 0..claimed.len() {
@@ -4185,8 +4212,11 @@ fn published_and_consumed_overlap(
         .operations()
         .enumerate()
         .filter(|(ordinal, _)| {
-            u32::try_from(*ordinal)
-                .is_ok_and(|ordinal| !claimed[published].contains(&SemanticMemberId(ordinal)))
+            u32::try_from(*ordinal).is_ok_and(|ordinal| {
+                !claimed[published]
+                    .iter()
+                    .any(|atom| atom.member().0 == ordinal)
+            })
         })
         .any(|(_, operation)| operation.operands().any(|operand| operand == staged));
     crosses.then_some((published, consuming))
@@ -4195,7 +4225,7 @@ fn published_and_consumed_overlap(
 /// One recognized elementwise expression and the occurrences it covers.
 struct RecognizedElementwise {
     expression: PointwiseF32Expression,
-    members: Vec<SemanticMemberId>,
+    members: Vec<SemanticStage>,
     /// One entry per expression input leaf, in access order.
     ///
     /// Parallel to the region's reads: leaf `i` is served by entry `i`, which
@@ -4314,7 +4344,7 @@ struct ElementwisePlan {
     steps: Vec<(ValueId, ElementwiseMint)>,
     /// The distinct leaf reads, in first-mint order.
     leaves: Vec<LeafRead>,
-    members: Vec<SemanticMemberId>,
+    members: Vec<SemanticStage>,
     root: ValueId,
 }
 
@@ -4594,7 +4624,7 @@ fn plan_elementwise(
 ) -> Result<ElementwisePlan, ElementwiseRefusal> {
     let mut steps: Vec<(ValueId, ElementwiseMint)> = Vec::new();
     let mut minted: Vec<ValueId> = Vec::new();
-    let mut members: Vec<SemanticMemberId> = Vec::new();
+    let mut members: Vec<SemanticStage> = Vec::new();
     let mut leaf_reads: Vec<LeafRead> = Vec::new();
     let mut pending = vec![(root, false)];
     while let Some((value, operands_visited)) = pending.pop() {
@@ -4621,7 +4651,7 @@ fn plan_elementwise(
         }
         if operation.key() == &constant_f32_op() {
             let (bits, _) = constant_bits(program, value).map_err(ElementwiseRefusal::Refused)?;
-            members.push(SemanticMemberId(member));
+            members.push(SemanticStage::first(SemanticMemberId(member)));
             steps.push((value, ElementwiseMint::Constant(bits)));
             minted.push(value);
             continue;
@@ -4640,7 +4670,7 @@ fn plan_elementwise(
                 map,
             };
             record_leaf(&mut leaf_reads, leaves.staged, leaf.clone())?;
-            members.push(SemanticMemberId(member));
+            members.push(SemanticStage::first(SemanticMemberId(member)));
             steps.push((value, ElementwiseMint::Read { leaf }));
             minted.push(value);
             continue;
@@ -4699,7 +4729,7 @@ fn plan_elementwise(
         if !operands.iter().all(|operand| minted.contains(operand)) {
             return refused("elementwise-operand");
         }
-        members.push(SemanticMemberId(member));
+        members.push(SemanticStage::first(SemanticMemberId(member)));
         steps.push((value, ElementwiseMint::Node(family, operands)));
         minted.push(value);
     }
@@ -5613,7 +5643,7 @@ fn normalize_contraction(
         contracted_shape,
         structure,
         operand_positions,
-        members: vec![SemanticMemberId(ordinal)],
+        members: vec![SemanticStage::first(SemanticMemberId(ordinal))],
         inputs: [declared[0], declared[1]],
         output: result,
         input_elements,
@@ -6942,7 +6972,10 @@ mod tests {
         };
         // One occurrence, one declared input read once, and the composition's
         // seven nodes: the projection is the shared body's, not a per-shape one.
-        assert_eq!(recognized.members, vec![SemanticMemberId(0)]);
+        assert_eq!(
+            recognized.members,
+            vec![SemanticStage::first(SemanticMemberId(0))]
+        );
         assert_eq!(recognized.expression.input_count(), 1);
         assert_eq!(recognized.expression.nodes().len(), 7);
 
@@ -7273,7 +7306,7 @@ mod tests {
         let published_and_consumed = builder.build().unwrap();
         let recognized =
             recognize_outputs(&published_and_consumed).expect("the overlap is admitted");
-        let claimed: Vec<Vec<SemanticMemberId>> = recognized
+        let claimed: Vec<Vec<SemanticStage>> = recognized
             .outputs()
             .iter()
             .map(NormalizedOutput::members)
@@ -7621,7 +7654,7 @@ mod tests {
         }
 
         /// The per-output facts the request subject encodes, in list order.
-        fn encoded(recognized: &NormalizedProgram) -> Vec<(OutputKey, Vec<SemanticMemberId>)> {
+        fn encoded(recognized: &NormalizedProgram) -> Vec<(OutputKey, Vec<SemanticStage>)> {
             recognized
                 .outputs()
                 .iter()

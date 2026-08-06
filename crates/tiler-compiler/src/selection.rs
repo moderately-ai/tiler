@@ -1117,7 +1117,7 @@ fn bind_region_frontiers<'a>(
             rule: "region-frontier-count",
         });
     }
-    let mut by_members: BTreeMap<Vec<u32>, &RegionFrontier> = BTreeMap::new();
+    let mut by_members: BTreeMap<Vec<(u32, u32)>, &RegionFrontier> = BTreeMap::new();
     for region in regions {
         let key = member_key(region.subject.semantic_members());
         if by_members.insert(key, region).is_some() {
@@ -1681,11 +1681,20 @@ fn encode_honoured(output: &mut Vec<u8>, honoured: &HonouredDimension) {
     output.extend_from_slice(honoured.canonical_key());
 }
 
-fn member_key(members: &[crate::region::SemanticMemberId]) -> Vec<u32> {
-    let mut ordinals: Vec<u32> = members.iter().map(|member| member.0).collect();
-    ordinals.sort_unstable();
-    ordinals.dedup();
-    ordinals
+/// The canonical comparison key of one region's attribution atoms.
+///
+/// The *pair* rather than the occurrence ordinal, because the key is what binds
+/// a placed cover region to the frontier enumerated for it: two regions
+/// realizing different stages of one occurrence claim different work, and a key
+/// that dropped the stage would bind either one to either frontier.
+fn member_key(members: &[crate::region::SemanticStage]) -> Vec<(u32, u32)> {
+    let mut atoms: Vec<(u32, u32)> = members
+        .iter()
+        .map(|atom| (atom.member().0, atom.stage().get()))
+        .collect();
+    atoms.sort_unstable();
+    atoms.dedup();
+    atoms
 }
 
 /// Appends one boundary tensor role to a canonical encoding.
@@ -2148,7 +2157,13 @@ mod tests {
                 let have: std::collections::BTreeSet<Vec<u32>> = cover
                     .regions()
                     .iter()
-                    .map(|region| region.members().iter().map(|member| member.0).collect())
+                    .map(|region| {
+                        region
+                            .members()
+                            .iter()
+                            .map(|atom| atom.member().0)
+                            .collect()
+                    })
                     .collect();
                 have == want
             })
