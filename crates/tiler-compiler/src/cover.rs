@@ -732,6 +732,9 @@ pub(crate) struct CoverEnumeration {
     budget_stops: Vec<CoverBudgetStop>,
     infeasibilities: Vec<CoverInfeasibility>,
     operation_count: u32,
+    /// One per realization stage atom; equal to `operation_count` exactly when
+    /// no member is staged.
+    node_count: u32,
 }
 
 #[allow(
@@ -838,7 +841,7 @@ impl CoverEnumeration {
     /// the program is coverable.
     pub(crate) fn fully_materialized_cover(&self) -> Option<&RegionCover> {
         self.covers.iter().find(|cover| {
-            u32::try_from(cover.regions.len()).is_ok_and(|count| count == self.operation_count)
+            u32::try_from(cover.regions.len()).is_ok_and(|count| count == self.node_count)
                 && cover.regions.iter().all(|region| region.members.len() == 1)
         })
     }
@@ -849,7 +852,7 @@ impl CoverEnumeration {
         self.covers.iter().find(|cover| {
             cover.regions.len() == 1
                 && u32::try_from(cover.regions[0].members.len())
-                    .is_ok_and(|count| count == self.operation_count)
+                    .is_ok_and(|count| count == self.node_count)
         })
     }
 }
@@ -1008,6 +1011,7 @@ pub(crate) fn enumerate_covers(
             budget_stops: Vec::new(),
             infeasibilities,
             operation_count,
+            node_count: graph.node_count(),
         });
     }
 
@@ -1018,12 +1022,12 @@ pub(crate) fn enumerate_covers(
     // Candidate indices containing each operation, in the candidates' canonical
     // order, so the anchored search is deterministic.
     let mut containing: Vec<Vec<usize>> =
-        vec![Vec::new(); usize::try_from(operation_count).unwrap_or(usize::MAX)];
+        vec![Vec::new(); usize::try_from(graph.node_count()).unwrap_or(usize::MAX)];
     for (index, candidate) in candidates.iter().enumerate() {
         for atom in candidate.members() {
             let slot =
                 containing
-                    .get_mut(member_index(atom.member()))
+                    .get_mut(atom_index(graph, *atom))
                     .ok_or(CoverError::Structure {
                         rule: "member-ordinal",
                     })?;
@@ -1034,7 +1038,7 @@ pub(crate) fn enumerate_covers(
     let mut retained: BTreeMap<RegionCoverIdentity, RegionCover> = BTreeMap::new();
 
     // The fully-materialized (all-singleton) cover is retained unconditionally.
-    let singletons = collect_singletons(candidates, operation_count)?;
+    let singletons = collect_singletons(graph, candidates)?;
     let materialized = assemble_cover(graph, candidates, &graph_identity, &singletons)?;
     retained.insert(materialized.identity.clone(), materialized);
 
@@ -1062,7 +1066,7 @@ pub(crate) fn enumerate_covers(
         refusals: BTreeSet::new(),
         stops: BTreeMap::new(),
         expansions: 0,
-        covered: vec![0_u32; usize::try_from(operation_count).unwrap_or(usize::MAX)],
+        covered: vec![0_u32; usize::try_from(graph.node_count()).unwrap_or(usize::MAX)],
         memo: BTreeMap::new(),
         memoized_completions: 0,
     };
@@ -1073,6 +1077,7 @@ pub(crate) fn enumerate_covers(
     Ok(CoverEnumeration {
         policy,
         covers,
+        node_count: graph.node_count(),
         refusals: partitioner.refusals.into_iter().collect(),
         budget_stops: partitioner.stops.into_values().collect(),
         infeasibilities: Vec::new(),
@@ -1109,8 +1114,6 @@ pub(crate) fn verify_cover(
     cover: &RegionCover,
 ) -> Result<(), CoverError> {
     let graph = outcome.graph();
-    let operation_count = graph.operation_count();
-
     // Keyed by reference. The map is a lookup table over candidates the outcome
     // already owns and outlives this call, so owning the keys copied every
     // candidate's occurrence encoding — the largest identity in the stage — once
@@ -1155,20 +1158,25 @@ pub(crate) fn verify_cover(
     //    more than once admitted by the legality condition rather than by the
     //    cover having recorded it.
     let legality = DuplicationLegality::derive(graph, outcome.candidates(), policy)?;
-    let mut counts = vec![0_u32; usize::try_from(operation_count).unwrap_or(usize::MAX)];
+    let mut counts = vec![0_u32; usize::try_from(graph.node_count()).unwrap_or(usize::MAX)];
     for candidate in &resolved {
         for atom in candidate.members() {
-            let slot =
-                counts
-                    .get_mut(member_index(atom.member()))
-                    .ok_or(CoverError::Structure {
-                        rule: "member-ordinal",
-                    })?;
+            let slot = counts
+                .get_mut(atom_index(graph, *atom))
+                .ok_or(CoverError::Structure {
+                    rule: "member-ordinal",
+                })?;
             *slot = slot.saturating_add(1);
         }
     }
-    for (position, count) in counts.iter().enumerate() {
-        let member = SemanticMemberId(u32::try_from(position).unwrap_or(u32::MAX));
+    // Every *stage* covered exactly once — the mask obligation. A missing later
+    // stage refuses as the member left uncovered, and any stage covered twice
+    // is duplication of the occurrence, whose legality is the occurrence's.
+    for (node, count) in counts.iter().enumerate() {
+        let member = graph
+            .node_atom(u32::try_from(node).unwrap_or(u32::MAX))
+            .map_err(CoverError::Region)?
+            .member();
         match count {
             0 => return Err(CoverError::UncoveredMember { member }),
             1 => {}
@@ -1596,7 +1604,7 @@ impl Partitioner<'_> {
         candidate.members().iter().find_map(|atom| {
             let covered = self
                 .covered
-                .get(member_index(atom.member()))
+                .get(atom_index(self.graph, *atom))
                 .copied()
                 .unwrap_or(u32::MAX);
             (covered > 0)
@@ -1609,7 +1617,7 @@ impl Partitioner<'_> {
     /// Adds or removes one region's coverage on the current branch.
     fn mark(&mut self, candidate: &RegionCandidate, covering: bool) {
         for atom in candidate.members() {
-            if let Some(slot) = self.covered.get_mut(member_index(atom.member())) {
+            if let Some(slot) = self.covered.get_mut(atom_index(self.graph, *atom)) {
                 *slot = if covering {
                     slot.saturating_add(1)
                 } else {
@@ -1686,7 +1694,7 @@ impl Partitioner<'_> {
             // states.
             let covers_new = candidate.members().iter().any(|atom| {
                 self.covered
-                    .get(member_index(atom.member()))
+                    .get(atom_index(self.graph, *atom))
                     .copied()
                     .unwrap_or(1)
                     == 0
@@ -2248,31 +2256,30 @@ fn member_result_elements(
 
 /// Collects the singleton candidate covering each operation exactly once.
 fn collect_singletons(
+    graph: &RegionGraph,
     candidates: &[RegionCandidate],
-    operation_count: u32,
 ) -> Result<Vec<usize>, CoverError> {
-    let mut by_member: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut by_node: BTreeMap<u32, usize> = BTreeMap::new();
     for (index, candidate) in candidates.iter().enumerate() {
-        // A singleton is one atom, and the singleton coverage this collects is
-        // the *occurrence* one: a candidate covering one later stage of an
-        // occurrence would not be the operation's unfused region.
-        if let [atom] = candidate.members()
-            && atom.is_first()
-            && by_member.insert(atom.member().0, index).is_some()
-        {
-            return Err(CoverError::Structure {
-                rule: "duplicate-singleton",
-            });
+        // A singleton is one atom. Under staged realizations the materialized
+        // cover is one region per *stage atom* — a staged occurrence's unfused
+        // plan is its stages placed separately, exactly as formation's
+        // unconditional singleton coverage emits them.
+        if let [atom] = candidate.members() {
+            let node = graph.atom_node(*atom).map_err(CoverError::Region)?;
+            if by_node.insert(node, index).is_some() {
+                return Err(CoverError::Structure {
+                    rule: "duplicate-singleton",
+                });
+            }
         }
     }
-    let mut singletons = Vec::with_capacity(usize::try_from(operation_count).unwrap_or(usize::MAX));
-    for member in 0..operation_count {
-        let index = by_member
-            .get(&member)
-            .copied()
-            .ok_or(CoverError::Structure {
-                rule: "missing-singleton",
-            })?;
+    let mut singletons =
+        Vec::with_capacity(usize::try_from(graph.node_count()).unwrap_or(usize::MAX));
+    for node in 0..graph.node_count() {
+        let index = by_node.get(&node).copied().ok_or(CoverError::Structure {
+            rule: "missing-singleton",
+        })?;
         singletons.push(index);
     }
     Ok(singletons)
@@ -2366,27 +2373,30 @@ fn encode_materialization(output: &mut Vec<u8>, edge: &MaterializationEdge) {
     }
 }
 
-/// Indexes the per-*occurrence* vectors the search keeps.
+/// Indexes the per-*occurrence* vectors duplication legality keeps.
 ///
-/// Coverage masks, the candidate index, and duplication legality are all sized
-/// by the graph's operation count and are facts about the occurrence rather than
-/// about a stage of it: the cover's obligation is that every operation is
-/// computed, and the legality of recomputing one is a property of the operation
-/// and the contract. An atom therefore indexes them through
-/// [`SemanticStage::member`], while attribution — which region realizes which
-/// *part* of an occurrence — is decided by comparing whole atom sets.
-///
-/// **The counting these vectors drive is still per occurrence, which is exact
-/// while every candidate is single-stage and is not a model of a split.** Two
-/// candidates covering two stages of one occurrence would raise its count to
-/// two, and [`verify_cover`] reads a count above one as duplication — so the
-/// search would refuse a legal multi-region realization rather than admit it
-/// wrongly. That is the fail-closed direction, and lifting it belongs with the
-/// authority that mints the first multi-stage candidate: the mask has to require
-/// every *stage* covered once, which is a different obligation from every
-/// operation covered once.
+/// Duplication legality is a fact about the occurrence rather than about a
+/// stage of it — the legality of recomputing an operation is a property of the
+/// operation and the contract — so its vectors stay sized by the operation
+/// count and an atom indexes them through [`SemanticStage::member`]. Coverage
+/// masks and the candidate index are per-*atom* and go through [`atom_index`]:
+/// the cover's obligation is that every realization stage is computed exactly
+/// once, which is the mask obligation the single-stage counting could not
+/// state.
 fn member_index(member: SemanticMemberId) -> usize {
     usize::try_from(member.0).unwrap_or(usize::MAX)
+}
+
+/// Indexes the per-*atom* vectors the search keeps.
+///
+/// The formation graph's node space is the authority on which atoms exist; an
+/// atom the graph does not hold indexes past every vector, which reads as
+/// covered on the duplication side and never matches a mutable slot — the
+/// documented defaults each site relies on.
+fn atom_index(graph: &RegionGraph, atom: SemanticStage) -> usize {
+    graph.atom_node(atom).map_or(usize::MAX, |node| {
+        usize::try_from(node).unwrap_or(usize::MAX)
+    })
 }
 
 fn count(value: usize) -> u64 {
@@ -2403,11 +2413,12 @@ fn digest(bytes: &[u8]) -> u64 {
 mod tests {
     use super::{
         CoverBudgetResource, CoverCost, CoverEnumeration, CoverError, CoverInfeasibility,
-        CoverPolicy, CoverRefusal, DuplicationRefusal, RegionCover, enumerate_covers, verify_cover,
+        CoverPolicy, CoverRefusal, DuplicationRefusal, RegionCover, assemble_cover,
+        enumerate_covers, verify_cover,
     };
     use crate::region::{
-        RegionCandidate, RegionError, RegionFormationOutcome, SemanticMemberId,
-        form_region_candidates,
+        RegionCandidate, RegionError, RegionFormationOutcome, SemanticMemberId, SemanticStage,
+        StageOrdinal, form_region_candidates,
     };
     use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
     use std::collections::{BTreeMap, BTreeSet};
@@ -2428,6 +2439,164 @@ mod tests {
             StrictF32NumericalContract::governed(),
         )
         .expect("the fixture forms regions")
+    }
+
+    /// A normalization feeding a pointwise consumer, formed with its law's
+    /// stage structure: the smallest staged cover space the standard
+    /// registries produce.
+    fn rms_norm_program() -> SemanticProgram {
+        use tiler_ir::semantic::{
+            CanonicalField, OperationAttributes, RMS_NORM_EPS_BITS_ATTRIBUTE,
+            RMS_NORM_REDUCED_AXES_ATTRIBUTE, multiply_f32_op, rms_norm_f32_axis_attribute,
+            rms_norm_f32_eps_attribute, rms_norm_f32_op,
+        };
+        use tiler_ir::shape::Axis;
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let value = builder
+            .input_resolved(
+                InputKey::new("value").unwrap(),
+                Shape::from_dims([2, 4]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let weight = builder
+            .input_resolved(
+                InputKey::new("weight").unwrap(),
+                Shape::from_dims([2, 4]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let attributes = OperationAttributes::new([
+            CanonicalField::new(
+                RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                rms_norm_f32_axis_attribute(Axis::new(1)),
+            ),
+            CanonicalField::new(
+                RMS_NORM_EPS_BITS_ATTRIBUTE,
+                rms_norm_f32_eps_attribute(1.0e-6_f32.to_bits()),
+            ),
+        ])
+        .unwrap();
+        let normalized = builder
+            .apply(rms_norm_f32_op(), attributes, &[value, weight])
+            .unwrap()[0];
+        let scaled = builder
+            .apply(
+                multiply_f32_op(),
+                OperationAttributes::new([]).unwrap(),
+                &[normalized, value],
+            )
+            .unwrap()[0];
+        builder
+            .output_resolved(OutputKey::new("result").unwrap(), scaled)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn staged_formation_of(program: &SemanticProgram) -> RegionFormationOutcome {
+        let laws = tiler_ir::index::FrozenIndexRealizationLawRegistry::from_semantic(
+            program.semantic_registry().clone(),
+            tiler_ir::index::FrozenScalarRegistry::standard().unwrap(),
+        )
+        .unwrap();
+        crate::region::form_region_candidates_with_realizations(
+            program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed(),
+            &laws,
+        )
+        .unwrap()
+    }
+
+    /// The mask obligation: every realization stage covered exactly once.
+    ///
+    /// Four claims over the staged fixture. The materialized cover is one
+    /// region per stage atom rather than per operation; a cover placing one
+    /// stage beside the downstream consumer — the shape the stage-atom
+    /// decision exists to admit — is enumerated and verifies; a cover missing
+    /// a later stage refuses as the member left uncovered; and a cover
+    /// covering one stage twice refuses as duplication of the occurrence.
+    #[test]
+    fn a_staged_programs_covers_account_for_every_stage() {
+        let program = rms_norm_program();
+        let outcome = staged_formation_of(&program);
+        let graph = outcome.graph();
+        let enumeration =
+            enumerate_covers(&program, exhaustive_budgets(), &outcome, exact_partition()).unwrap();
+        assert!(enumeration.is_coverable());
+        for cover in enumeration.covers() {
+            verify_cover(&program, &outcome, exact_partition(), cover).unwrap();
+        }
+
+        let materialized = enumeration
+            .fully_materialized_cover()
+            .expect("the all-singleton cover is retained");
+        assert_eq!(
+            u32::try_from(materialized.regions.len()).unwrap(),
+            graph.node_count(),
+            "the unfused plan places every stage atom separately"
+        );
+        assert!(
+            enumeration.fused_cover().is_some(),
+            "the whole-program candidate covers every stage atom"
+        );
+
+        // The staged member and its two atoms.
+        let member = (0..graph.operation_count())
+            .find(|member| graph.member_stage_count(*member) > 1)
+            .unwrap();
+        let fold = SemanticStage::at(SemanticMemberId(member), StageOrdinal(0));
+        let pass = fold.next_stage();
+        assert!(
+            enumeration.covers().iter().any(|cover| {
+                cover.regions.iter().any(|region| {
+                    region.members.len() > 1
+                        && region.members.contains(&pass)
+                        && !region.members.contains(&fold)
+                })
+            }),
+            "some cover fuses the pass into a region its fold is not part of"
+        );
+
+        // The refusals, on hand-assembled covers of real candidates.
+        let candidates = outcome.candidates();
+        let singleton = |atom: SemanticStage| {
+            candidates
+                .iter()
+                .position(|candidate| candidate.members() == [atom])
+                .expect("every atom's singleton is enumerated")
+        };
+        let multiply = (0..graph.operation_count())
+            .find(|other| *other != member)
+            .unwrap();
+        let fold_index = singleton(fold);
+        let pass_index = singleton(pass);
+        let multiply_index = singleton(SemanticStage::first(SemanticMemberId(multiply)));
+        let graph_identity = program.semantic_identity().graph().as_bytes().to_vec();
+
+        let missing_pass = assemble_cover(
+            graph,
+            candidates,
+            &graph_identity,
+            &[fold_index, multiply_index],
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_cover(&program, &outcome, exact_partition(), &missing_pass),
+            Err(CoverError::UncoveredMember { member: uncovered }) if uncovered.0 == member
+        ));
+
+        let doubled_pass = assemble_cover(
+            graph,
+            candidates,
+            &graph_identity,
+            &[fold_index, pass_index, pass_index, multiply_index],
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_cover(&program, &outcome, exact_partition(), &doubled_pass),
+            Err(CoverError::IllegalDuplication { member: doubled, .. }) if doubled.0 == member
+        ));
     }
 
     /// The exact-partition contract the compile path enumerates under.
@@ -3444,6 +3613,7 @@ mod tests {
             }],
             infeasibilities: Vec::new(),
             operation_count: 0,
+            node_count: 0,
         };
         assert!(
             stopped(CoverBudgetResource::Refusals).is_exhaustive(),

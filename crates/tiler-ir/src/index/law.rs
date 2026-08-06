@@ -2729,6 +2729,55 @@ mod tests {
         );
     }
 
+    /// A resolution answers the realization's shape from its own authorities.
+    ///
+    /// The two accessors exist so a consumer that needs a law's stage structure
+    /// — region formation is the caller — reads it from the resolution rather
+    /// than deriving a second account of the law. Three claims: the staged
+    /// family answers its two-stage sequence, a single-region family answers
+    /// one stage behind a false predicate, and a subject the law refuses maps
+    /// to the same typed refusal refinement reports, carrying the law's own
+    /// rule.
+    #[test]
+    fn a_resolved_realization_exposes_its_laws_sequence_shape() {
+        use crate::index::{FrozenIndexRealizationLawRegistry, IndexRefinementVerificationError};
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let semantic = crate::semantic::FrozenSemanticRegistry::standard().unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars.clone()).unwrap();
+
+        let staged = laws
+            .resolve(&rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS))
+            .unwrap();
+        assert!(staged.realizes_region_sequence());
+        let sequence = staged.realize_sequence().unwrap();
+        assert_eq!(sequence.stage_count(), 2);
+        assert_eq!(sequence.intermediates().len(), 1);
+
+        let single = laws
+            .resolve(&subject(StrictAffineU4::resolved_type()))
+            .unwrap();
+        assert!(!single.realizes_region_sequence());
+        let sequence = single.realize_sequence().unwrap();
+        assert_eq!(sequence.stage_count(), 1);
+        assert!(sequence.intermediates().is_empty());
+
+        // The refusal is the law's, in refinement's vocabulary: an extent no
+        // binary32 value equals refuses the realization, not the resolution.
+        let refused = laws
+            .resolve(&rms_norm_subject(
+                &[16_777_217],
+                0,
+                RMS_NORM_F32_QWEN3_EPS_BITS,
+            ))
+            .unwrap();
+        assert!(matches!(
+            refused.realize_sequence().unwrap_err(),
+            IndexRefinementVerificationError::SemanticRealizationLawRefused { rule, .. }
+                if rule == "rms-scale-extent-not-exact"
+        ));
+    }
+
     #[test]
     fn an_existing_law_payload_is_unchanged_by_the_appended_tag() {
         let mut encoded = Vec::new();

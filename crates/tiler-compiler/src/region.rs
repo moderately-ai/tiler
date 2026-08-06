@@ -413,7 +413,7 @@ pub(crate) struct RegionCandidate {
     /// Shared rather than owned: every cover that places this region copies the
     /// label, so an `Arc<str>` makes that copy a refcount bump.
     label: Arc<str>,
-    program_operation_count: u32,
+    program_node_count: u32,
 }
 
 impl RegionCandidate {
@@ -465,9 +465,9 @@ impl RegionCandidate {
         Arc::clone(&self.label)
     }
 
-    /// Returns whether the region covers every operation of its program.
+    /// Returns whether the region covers every stage atom of its program.
     pub(crate) fn covers_whole_program(&self) -> bool {
-        u32::try_from(self.members.len()).is_ok_and(|count| count == self.program_operation_count)
+        u32::try_from(self.members.len()).is_ok_and(|count| count == self.program_node_count)
     }
 }
 
@@ -1068,12 +1068,12 @@ impl RegionGraph {
     /// Equal to [`Self::operation_count`] exactly when no member is staged,
     /// which is what keeps every single-stage enumeration identical to the
     /// pre-stage one.
-    fn node_count(&self) -> u32 {
+    pub(crate) fn node_count(&self) -> u32 {
         self.node_base.last().copied().unwrap_or(0)
     }
 
     /// Returns the attribution atom a formation node id denotes.
-    fn node_atom(&self, node: u32) -> Result<SemanticStage, RegionError> {
+    pub(crate) fn node_atom(&self, node: u32) -> Result<SemanticStage, RegionError> {
         // The base list is strictly ascending, so the owning member is the last
         // base at or below the node.
         let member = self
@@ -1094,7 +1094,7 @@ impl RegionGraph {
     }
 
     /// Returns the formation node id of one attribution atom.
-    fn atom_node(&self, atom: SemanticStage) -> Result<u32, RegionError> {
+    pub(crate) fn atom_node(&self, atom: SemanticStage) -> Result<u32, RegionError> {
         let member = usize::try_from(atom.member().0).unwrap_or(usize::MAX);
         let base = self
             .node_base
@@ -1685,8 +1685,8 @@ impl Formation<'_> {
     /// Singleton coverage is unconditional: a budget stops a growth path, and it
     /// never removes the unfused plan.
     fn retain_singleton_coverage(&mut self) -> Result<(), RegionError> {
-        for member in 0..self.graph.operation_count() {
-            match form_candidate(self.graph, self.budgets, self.numerical_contract, &[member])? {
+        for node in 0..self.graph.node_count() {
+            match form_candidate(self.graph, self.budgets, self.numerical_contract, &[node])? {
                 Ok(candidate) => self.candidates.push(candidate),
                 Err(rejection) => {
                     return Err(RegionError::Structure {
@@ -1700,7 +1700,7 @@ impl Formation<'_> {
 
     /// Grows multi-member regions from every seed in stable topological order.
     fn grow(&mut self) -> Result<(), RegionError> {
-        for seed in 0..self.graph.operation_count() {
+        for seed in 0..self.graph.node_count() {
             if self.grow_from(seed)? == GrowthOutcome::ExpansionsExhausted {
                 return Ok(());
             }
@@ -2093,7 +2093,7 @@ fn assemble(
         content,
         occurrence,
         label,
-        program_operation_count: graph.operation_count(),
+        program_node_count: graph.node_count(),
     })
 }
 
