@@ -1,7 +1,7 @@
 ---
 id: validate-bf16-at-the-runtime-routing-boundary
 title: Validate BF16 at the runtime routing boundary before the one-way commit
-status: review
+status: done
 priority: p1
 dependencies: [carry-bf16-through-the-artifact-encoding-and-identity, lower-bf16-to-metal, admit-a-bf16-index-realization-law-and-refinement-contract]
 related: [spike-bf16-through-the-second-dtype-seams, decide-per-dtype-dispatchability-as-a-target-capability, declare-host-dtype-dispatchability-at-the-consumer-boundary, move-the-runtime-semantic-validation-cells-for-f32-and-bf16]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime, implementation/frontend, implementation/candle,
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, runtime, routing, fail-closed]
-claimed_from: todo
-assignee: agent-bf16-routing
-lease_expires_at: 1785990735
 ---
 ## User-visible outcome
 
