@@ -85,7 +85,33 @@
 //! -ffp-contract=off`, and the four-entry-point portfolio unit links into one
 //! library carrying all four `tiler_kernel_*` symbols.
 //!
-//! **The cooperative fixture is the newest and the one that moved the boundary.**
+//! **The BF16 fixture is the newest, and it moved a different boundary.**
+//! `pointwise_scale_bias_bf16.metal` is the first golden emitted at a width
+//! other than `f32`, so this run is the measurement that the Apple offline
+//! toolchain accepts the `bfloat` spelling, the `ushort` constant carrier, and
+//! the `bfloat` NaN-canonicalization helper this backend now emits.
+//!
+//! **Measurement — recorded on a later toolchain row than the paragraph above,
+//! and deliberately not merged into it.** On an Apple M4 Max under macOS 27.0
+//! (build 26A5388g) with Xcode 27.0 (build 27A5228h), Metal 32023.921
+//! (`metalfe-32023.921`, AIR-LLD 32023.921), and macOS SDK 27.0 (build
+//! 26A5388f), all seven fixtures compile and link under the same flag row;
+//! `pointwise_scale_bias_bf16.metal` links 3,635 bytes and the linked library
+//! names `tiler_kernel_7c905e3938dc8d91`. Stripping the `ushort` narrowing from
+//! its constant is rejected at the `metal` stage with `as_type cast from
+//! 'unsigned int' to 'bfloat' is not allowed`, which is what makes the carrier
+//! a measured requirement rather than a stylistic choice.
+//!
+//! **What this compile evidence is not.** It says the source translates and
+//! links for `air64-apple-macos14.0`. It says nothing about whether a device
+//! *runs* it, which for `bfloat` is a per-family fact the retained Apple record
+//! owns and the two families disagree on: finding 26 records the iOS Simulator
+//! compiling and linking every `bfloat` module and then failing pipeline
+//! creation. It also says nothing about the BF16 numerical row, which was
+//! measured under `-std=metal4.0` for `air64-apple-macos26.0` and is carried by
+//! the target profile, not by this compilation.
+//!
+//! **The cooperative fixture moved the boundary before it.**
 //! `cooperative_workgroup_reduction.metal` is the first golden whose entry point
 //! declares threadgroup storage, reads `[[thread_index_in_threadgroup]]`, stages
 //! values, and carries a `threadgroup_barrier` — so this run is the measurement
@@ -127,10 +153,21 @@ const REQUIRE_TOOLCHAIN: &str = "TILER_REQUIRE_METAL_TOOLCHAIN";
 /// `every_checked_in_golden_is_compiled_by_this_module` proves this list covers
 /// the whole `goldens/` directory, so a new fixture cannot be added without
 /// being compiled.
-const GOLDENS: [(&str, &str); 6] = [
+const GOLDENS: [(&str, &str); 7] = [
     (
         "pointwise_scale_bias.metal",
         include_str!("../goldens/pointwise_scale_bias.metal"),
+    ),
+    // The one fixture emitted at a width other than `f32`. Compiling it is what
+    // turns "the emitter writes `bfloat`" into "the Metal compiler accepts the
+    // `bfloat` spelling, the `ushort` constant carrier, and the `bfloat` NaN
+    // helper this backend emits", none of which any `f32` golden can say — and
+    // the carrier is the half most likely to be wrong in a way that still looks
+    // right, since `as_type` requires equal sizes and the `f32` spelling applied
+    // at this width does not compile at all.
+    (
+        "pointwise_scale_bias_bf16.metal",
+        include_str!("../goldens/pointwise_scale_bias_bf16.metal"),
     ),
     (
         "reduction_single_axis.metal",
@@ -527,6 +564,97 @@ fn a_golden_whose_helper_is_renamed_is_rejected_when_a_toolchain_resolves() {
     let error = toolchain
         .compile(&golden_request(&broken))
         .expect_err("an undeclared function call must not compile");
+    match error {
+        DriverError::ToolFailure { stage, stderr, .. } => {
+            assert_eq!(stage, CompileStage::Metal);
+            assert!(
+                !stderr.is_empty(),
+                "the compiler must explain the rejection"
+            );
+        }
+        other => panic!("expected a metal-stage ToolFailure, got {other:?}"),
+    }
+}
+
+/// The realization the BF16 unit compiles under satisfies what it demands.
+///
+/// The sibling of `the_strict_realization_honours_every_requirement_emission_records`
+/// at the other width, and it is not redundant with it. Finding 28 measures one
+/// per-dtype difference in the strictest cell — under `safe` with
+/// `-ffp-contract=fast`, `f16` fuses and `bf16` does not — so a contraction
+/// conclusion drawn at one width is not evidence at another, and the flag the
+/// driver actually selects for a BF16 compilation is asserted here rather than
+/// inherited from the `f32` fixture's row.
+///
+/// **This checks the selection, not the fusion.** That `-ffp-contract=off`
+/// suppresses a BF16 fusion is the retained probe's measurement; what this adds
+/// is that the flag emission requires is the flag this compilation passes.
+#[test]
+fn the_strict_realization_honours_what_the_bf16_unit_records() {
+    let unit = emit_translation_unit(
+        &[&crate::tests::bf16_pointwise_kernel()],
+        &emitter_facts(),
+        emission_realization(),
+    )
+    .expect("the bounded bf16 pointwise fixture emits");
+    let realization = NumericalRealization::strict_baseline();
+    let flags = golden_request(unit.source()).compile_flags();
+    assert!(
+        unit.numerical_requirements()
+            .contains(&MetalNumericalRequirement::NoFloatingPointContraction),
+        "a bf16 unit forbidding contraction must record the defence at its own width"
+    );
+    for requirement in unit.numerical_requirements() {
+        assert!(
+            realization_honours(*requirement, realization),
+            "the strict baseline does not deliver {requirement}"
+        );
+        assert!(
+            flags.iter().any(|flag| flag == requirement.flag()),
+            "the driver does not select {}, which emission requires; flags were {flags:?}",
+            requirement.flag()
+        );
+    }
+}
+
+/// The BF16 golden's `ushort` constant carrier is rejected when removed.
+///
+/// This is what makes the BF16 compile evidence non-vacuous, and it is the one
+/// perturbation the `f32` goldens cannot express. `as_type` requires its source
+/// and result to have the same size, and an unsuffixed MSL integer literal is
+/// `uint` — so the `f32` spelling applied at `bfloat`'s width is a compile
+/// error rather than a stylistic difference. Deleting the narrowing leaves
+/// source that still reads as a bit-pattern reinterpretation and does not
+/// compile, which is exactly the failure a byte-stability golden cannot see.
+///
+/// It also bounds the claim in the other direction: the fixture compiles
+/// *because* the carrier is there, not because the Metal compiler is lenient
+/// about `bfloat`.
+#[test]
+fn the_bf16_golden_without_its_ushort_carrier_is_rejected_when_a_toolchain_resolves() {
+    const CARRIER: &str = "as_type<bfloat>(ushort(0x4000u))";
+    const STRIPPED: &str = "as_type<bfloat>(0x4000u)";
+
+    let Some(toolchain) = resolved_toolchain() else {
+        return;
+    };
+    let name = "pointwise_scale_bias_bf16.metal";
+    let source = GOLDENS
+        .iter()
+        .find(|(fixture, _)| *fixture == name)
+        .map(|(_, source)| *source)
+        .expect("the bf16 fixture is compiled by this module");
+    assert_eq!(
+        source.matches(CARRIER).count(),
+        1,
+        "{name}: the fixture must carry exactly one such constant"
+    );
+    let broken = source.replacen(CARRIER, STRIPPED, 1);
+    assert!(broken.contains(STRIPPED), "the perturbation must apply");
+
+    let error = toolchain
+        .compile(&golden_request(&broken))
+        .expect_err("a bfloat reinterpretation of a uint literal must not compile");
     match error {
         DriverError::ToolFailure { stage, stderr, .. } => {
             assert_eq!(stage, CompileStage::Metal);

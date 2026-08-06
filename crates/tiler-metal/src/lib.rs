@@ -39,11 +39,15 @@
 //! - **Fail-closed translation.** A governed construct with no Metal
 //!   realization is a typed [`diagnostic::MetalEmitError`] naming the rejected
 //!   entity and a stable rule identifier, never best-effort source.
-//! - **Explicit numerics.** `f32` immediates are emitted as exact bit patterns,
-//!   NaN canonicalization is an emitted helper whose predicate is an integer
-//!   test over reinterpreted bits rather than a floating-point one, and each
-//!   arithmetic operation is its own statement. Those three hold under every
-//!   math mode. What the operations cannot carry is reported instead of
+//! - **Explicit numerics.** Floating-point immediates are emitted as exact bit
+//!   patterns — `f32` reinterpreting a `uint` and `bf16` a `ushort`, which the
+//!   narrower width requires — NaN canonicalization is an emitted helper whose
+//!   predicate is an integer test over reinterpreted bits rather than a
+//!   floating-point one, and each arithmetic operation is its own statement.
+//!   Those three hold under every math mode and at every emitted width; the
+//!   canonicalization helper is per width, because a binary32 canonical pattern
+//!   is not a `bfloat16` encoding at all. What the operations cannot carry is
+//!   reported instead of
 //!   assumed: compiler selections as [`record::MetalNumericalRequirement`]s,
 //!   obligations no selection realizes as [`record::MetalNumericalGap`]s, and
 //!   arithmetic types the target states no subnormal fact for through
@@ -74,6 +78,20 @@
 //! the conformance claim fails closed on it, ahead of any gap, because a gap
 //! set computed while a fact is missing is incomplete rather than merely
 //! shorter.
+//!
+//! `bf16` is the third emitted width and the reason that record is keyed rather
+//! than split in two. Its measured row *flushes*, like `f32`'s and unlike
+//! `f16`'s, so "narrow formats preserve" is not a rule and a record answering
+//! one narrow type from the other would be wrong half the time. A `bf16` kernel
+//! reaching a target that states nothing for it is refused as `Unknown`, which
+//! is what an unmeasured Apple family gets.
+//!
+//! **Emitting `bfloat` is not a claim that a device runs it.** Whether a target
+//! family can dispatch a dtype is a target-profile capability, resolved before
+//! routing commits and owned outside this crate; the measured Apple record has
+//! one family compiling and linking a `bfloat` module and then refusing to
+//! create a pipeline for it. Emission is identical on both, which is precisely
+//! why that refusal cannot live here.
 //!
 //! This step is deliberately kept alongside the compiler's per-dimension
 //! honourability declaration rather than retired in favour of it. The two are
