@@ -142,7 +142,11 @@ pub enum IndexBuildError {
     ReadFromOutput,
     /// An input tensor was used as a write boundary.
     WriteToInput,
-    /// A write domain is not exactly the parallel region domain.
+    /// A write domain named a dimension that is not parallel.
+    ///
+    /// A write may iterate any subset of the region's parallel dimensions, so
+    /// this refuses the reduction half alone: a write iterating a reduction
+    /// dimension would store to one element once per reduced point.
     InvalidWriteDomain,
     /// An output root referred to a read access.
     OutputUsesRead,
@@ -293,6 +297,36 @@ pub enum IndexRegionDiagnostic {
         /// Invalid scalar value.
         value: ScalarValueId,
         /// Free reduction dimension.
+        dimension: DimensionId,
+    },
+    /// An output root's value varies along a parallel dimension its write does
+    /// not iterate.
+    ///
+    /// **Draft surface, not yet accepted.** Added with the relaxation that lets
+    /// a write declare a subset of the region's parallel dimensions; the
+    /// variant, its name, and its fields are a concrete draft pending Tom's
+    /// acceptance of the boundary.
+    ///
+    /// The value-side counterpart of
+    /// [`IndexBuildError::CoordinateOutsideAccessDomain`]. A coordinate has
+    /// never been allowed to name a dimension outside its access domain; while
+    /// every write iterated every parallel dimension the same restriction on
+    /// the *stored value* held for free, and a subset domain is exactly what
+    /// stops it holding. It is refused rather than interpreted because both
+    /// available readings are wrong: evaluating the root once per point of the
+    /// omitted dimension stores several values to one element, and picking one
+    /// point of it stores a value nothing in the region selected.
+    ///
+    /// Distinct from [`Self::FreeReductionDimension`], which is the reduction
+    /// case and stays reported under its own name: a reduction dimension is
+    /// never in a write's domain, so folding the two would report every
+    /// unreduced value as a domain mismatch.
+    ValueDimensionOutsideWriteDomain {
+        /// The write root whose domain does not supply the dimension.
+        access: TensorAccessId,
+        /// The stored value that varies along it.
+        value: ScalarValueId,
+        /// The parallel dimension the write does not iterate.
         dimension: DimensionId,
     },
     /// A finite proof exceeded a governed resource budget.

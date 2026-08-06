@@ -1204,6 +1204,20 @@ impl IndexRegionBuilder {
 
     /// Creates or reuses a logical write access.
     ///
+    /// `domain` may be **any subset of the region's parallel dimensions**, not
+    /// only all of them. Each write root therefore carries its own iteration
+    /// space, which is what makes a partition whose members have unequal
+    /// extents expressible: two roots over one output declare dimensions of
+    /// different extents rather than sharing one, and a zero-extent member is
+    /// the degenerate case of that rather than a shape nothing can spell. A
+    /// dimension the domain omits is simply not iterated by this root; the
+    /// obligation that keeps that coherent is that the stored value may not vary
+    /// along it either, which verification refuses under
+    /// [`IndexRegionDiagnostic::ValueDimensionOutsideWriteDomain`].
+    ///
+    /// A reduction dimension is still refused, and that is the whole of what
+    /// [`IndexBuildError::InvalidWriteDomain`] now means.
+    ///
     /// # Errors
     ///
     /// Returns an error for an invalid access contract or exceeded limit.
@@ -1306,7 +1320,25 @@ impl IndexRegionBuilder {
                 });
             }
         }
-        if mode == AccessMode::Write && domain_set != self.parallel_dimensions() {
+        // A write iterates parallel dimensions and only parallel dimensions.
+        // Subset rather than equality: two roots partitioning one output into
+        // unequally sized pieces need different point counts, and a point count
+        // is the product of the extents a root iterates, so roots that share one
+        // domain own equal shares by construction. The reduction half of the
+        // rule is unchanged and is what the subset still excludes — a write
+        // iterating a reduction dimension would store to one element once per
+        // reduced point, which is the double-write the ownership proof exists to
+        // refuse and which no coordinate could distinguish.
+        //
+        // Read from each dimension's own role rather than from the parallel set
+        // accumulated so far, so a write authored before the last parallel
+        // dimension is declared is admitted or refused on what it names rather
+        // than on when it was named.
+        if mode == AccessMode::Write
+            && domain_set
+                .iter()
+                .any(|dimension| self.dimensions[*dimension as usize].role != DomainRole::Parallel)
+        {
             return Err(IndexBuildError::InvalidWriteDomain);
         }
         let coords: Vec<_> = coordinates
@@ -2089,14 +2121,6 @@ impl IndexRegionBuilder {
             IndexEntityKind::ScalarValue,
         )
         .map(|value| &value.data)
-    }
-    fn parallel_dimensions(&self) -> BTreeSet<u32> {
-        self.dimensions
-            .iter()
-            .enumerate()
-            .filter(|(_, dimension)| dimension.role == DomainRole::Parallel)
-            .map(|(index, _)| bounded_index(index))
-            .collect()
     }
 }
 

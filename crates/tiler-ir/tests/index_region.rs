@@ -1603,6 +1603,235 @@ fn a_sole_root_keeps_its_whole_boundary_evidence() {
     );
 }
 
+/// Builds one output whose roots each iterate a parallel dimension of their
+/// **own** extent, which is what an unequal partition needs and what one shared
+/// domain cannot express: a root's point count is the product of the extents it
+/// iterates, so roots sharing one domain own equal shares by construction.
+///
+/// Each root is `(extent, offset)` and writes `d + offset` over a dimension of
+/// that extent, so the roots' rectangles are `[offset, offset + extent)`.
+fn unequal_partition_region(boundary: u64, roots: &[(u64, i128)]) -> IndexRegionBuilder {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let output = builder
+        .tensor(
+            TensorRole::Output,
+            test_type(),
+            Shape::from_dims([boundary]),
+        )
+        .unwrap();
+    let value = constant_value(&mut builder);
+    for (extent, offset) in roots {
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(*extent))
+            .unwrap();
+        let expression = builder.dimension_expr(dimension).unwrap();
+        let coordinate = builder
+            .linear_combination((*offset).into(), &[(1_i128.into(), expression)])
+            .unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+    }
+    builder
+}
+
+/// The case the equal-share contract could not spell: three and five into eight.
+#[test]
+fn unequally_sized_contiguous_partitions_are_admitted_by_interval_reasoning() {
+    let region = unequal_partition_region(8, &[(3, 0), (5, 3)])
+        .build()
+        .unwrap();
+    assert_eq!(
+        partition_ownership(&region),
+        vec![
+            WriteOwnershipProofView::PartitionMember {
+                joint: JointPartitionProofView::Interval
+            };
+            2
+        ]
+    );
+    // Canonicalization is part of what must hold, not only verification: an
+    // identity that cannot be produced is a region that cannot be cached.
+    assert!(!region.canonical_identity().as_bytes().is_empty());
+}
+
+/// The pinned concatenate occurrence's shape, with the zero-extent operand
+/// first: `[0]` joined with `[4]` is `[4]`. The empty root visits no point, owns
+/// nothing, and contributes zero volume.
+#[test]
+fn a_zero_extent_partition_member_owns_nothing_and_is_admitted() {
+    let region = unequal_partition_region(4, &[(0, 0), (4, 0)])
+        .build()
+        .unwrap();
+    assert_eq!(
+        partition_ownership(&region),
+        vec![
+            WriteOwnershipProofView::PartitionMember {
+                joint: JointPartitionProofView::Interval
+            };
+            2
+        ]
+    );
+    // The empty root's own bounds obligation is vacuous rather than unproved:
+    // it has no point at which a coordinate could leave the boundary.
+    assert!(
+        region
+            .accesses()
+            .any(|access| access.bounds_proof() == Some(BoundsProofView::VacuousEmptyDomain)),
+        "the empty root's coordinates are discharged over an unvisited domain"
+    );
+}
+
+/// An empty rectangle is disjoint from everything, including a sibling whose
+/// range strictly contains its offset — the one placement where the per-axis
+/// separation test alone is not exact, because `b > c && d > a` decides
+/// `max(a, c) < min(b, d)` only for nonempty ranges.
+#[test]
+fn an_empty_partition_member_inside_a_sibling_range_is_still_disjoint() {
+    let region = unequal_partition_region(4, &[(4, 0), (0, 2)])
+        .build()
+        .unwrap();
+    assert_eq!(
+        partition_ownership(&region),
+        vec![
+            WriteOwnershipProofView::PartitionMember {
+                joint: JointPartitionProofView::Interval
+            };
+            2
+        ]
+    );
+}
+
+/// Unequal members whose volumes still sum to the boundary, so only disjointness
+/// can refuse them. This is the perturbation that shows coverage is derived from
+/// disjointness rather than checked beside it.
+#[test]
+fn overlapping_unequal_partitions_refuse_despite_an_exact_volume_sum() {
+    // `[0, 3)` and `[2, 7)` share element 2 of an eight-element boundary while
+    // summing to exactly eight.
+    let error = unequal_partition_region(8, &[(3, 0), (5, 2)])
+        .build()
+        .unwrap_err();
+    let diagnostics = error.diagnostics();
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionRangesOverlap { .. }
+        )),
+        "{diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionUncovered { .. }
+        )),
+        "the summed volume is exact, so only the overlap may be reported: \
+         {diagnostics:?}"
+    );
+}
+
+/// The other perturbation: unequal members that are disjoint but leave a gap.
+#[test]
+fn unequal_partitions_that_leave_a_gap_refuse_as_uncovered() {
+    // `[0, 3)` and `[4, 8)` leave element 3 of an eight-element boundary bare.
+    let error = unequal_partition_region(8, &[(3, 0), (4, 4)])
+        .build()
+        .unwrap_err();
+    assert!(
+        error.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionUncovered { .. }
+        )),
+        "{:?}",
+        error.diagnostics()
+    );
+}
+
+/// The subset relaxation stops at the role: a write may omit a parallel
+/// dimension, never name a reduction one. This is what `InvalidWriteDomain`
+/// still means.
+#[test]
+fn a_write_may_not_iterate_a_reduction_dimension() {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let output = builder
+        .tensor(TensorRole::Output, test_type(), Shape::from_dims([2]))
+        .unwrap();
+    let parallel = builder
+        .dimension(DomainRole::Parallel, Extent::new(2))
+        .unwrap();
+    let reduction = builder
+        .dimension(DomainRole::Reduction, Extent::new(3))
+        .unwrap();
+    let coordinate = builder.dimension_expr(parallel).unwrap();
+    assert_eq!(
+        builder
+            .write(output, &[parallel, reduction], &[coordinate])
+            .unwrap_err(),
+        IndexBuildError::InvalidWriteDomain
+    );
+    // The same write over the parallel dimension alone is admitted, so the
+    // refusal above is the reduction dimension and not the shape of the call.
+    assert!(builder.write(output, &[parallel], &[coordinate]).is_ok());
+}
+
+/// The obligation a subset domain replaces the old rule with: a root may not
+/// store a value that varies along a dimension the root does not iterate.
+#[test]
+fn a_value_may_not_vary_along_a_dimension_its_write_omits() {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let input = builder
+        .tensor(TensorRole::Input, test_type(), Shape::from_dims([3]))
+        .unwrap();
+    let output = builder
+        .tensor(TensorRole::Output, test_type(), Shape::from_dims([2]))
+        .unwrap();
+    let written = builder
+        .dimension(DomainRole::Parallel, Extent::new(2))
+        .unwrap();
+    let unwritten = builder
+        .dimension(DomainRole::Parallel, Extent::new(3))
+        .unwrap();
+    let written_expr = builder.dimension_expr(written).unwrap();
+    let unwritten_expr = builder.dimension_expr(unwritten).unwrap();
+    // The read varies along `unwritten`; the write does not iterate it.
+    let value = builder
+        .read(input, &[unwritten], &[unwritten_expr])
+        .unwrap();
+    let write = builder.write(output, &[written], &[written_expr]).unwrap();
+    builder.output(write, value).unwrap();
+    let error = builder.build().unwrap_err();
+    assert!(
+        error.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::ValueDimensionOutsideWriteDomain { .. }
+        )),
+        "{:?}",
+        error.diagnostics()
+    );
+}
+
+/// A parallel dimension nothing iterates and nothing varies along is retained by
+/// compaction and would sit in the identity of a region whose meaning does not
+/// include it. Unreachable until a write could omit a parallel dimension.
+#[test]
+fn a_parallel_dimension_no_root_iterates_is_refused_as_unused() {
+    let mut builder = unequal_partition_region(4, &[(4, 0)]);
+    let _dangling = builder
+        .dimension(DomainRole::Parallel, Extent::new(7))
+        .unwrap();
+    let error = builder.build().unwrap_err();
+    assert!(
+        error.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::UnusedDomainDimension { .. }
+        )),
+        "{:?}",
+        error.diagnostics()
+    );
+}
+
 #[test]
 fn boundary_rank_budget_failure_leaves_builder_usable() {
     let (_, registry) = registries();
