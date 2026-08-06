@@ -1,7 +1,7 @@
 ---
 id: preserve-the-float-to-integer-conversion-precedent-sources
 title: Preserve the float-to-integer conversion precedent sources
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [land-the-conversion-pair-decomposition-adr, test-the-directional-conversion-pair-generalization]
@@ -9,9 +9,6 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, conversion, sources, preservation]
-claimed_from: todo
-assignee: agent-precedent-sources
-lease_expires_at: 1786032770
 ---
 ## User-visible outcome
 
