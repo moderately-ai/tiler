@@ -76,6 +76,7 @@ satisfies_dependents = false
 "research/workspace" = ["docs/research/workspace/**"]
 "research/distributed" = ["docs/research/distributed/**", "spikes/distributed/**"]
 "research/external-storage" = ["docs/research/external-storage/**", "spikes/external-storage/**"]
+"research/verification" = ["docs/research/verification/**", "spikes/verification/**"]
 "research/metal-transfers" = ["docs/research/metal-transfers/**", "spikes/metal-transfers/**"]
 "research/cuda-transfers" = ["docs/research/cuda-transfers/**", "spikes/cuda-transfers/**"]
 "contracts/foundation" = [
