@@ -1,7 +1,7 @@
 ---
 id: admit-a-bf16-index-realization-law-and-refinement-contract
 title: Admit a BF16 index-realization law and refinement contract
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [carry-bf16-through-the-artifact-encoding-and-identity, conform-the-bf16-vertical-end-to-end, lower-bf16-to-metal, state-and-check-a-bf16-numerical-contract]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, indexing, identity]
+claimed_from: todo
+assignee: agent-bf16-lawful
+lease_expires_at: 1785985712
 ---
 ## User-visible outcome
 
