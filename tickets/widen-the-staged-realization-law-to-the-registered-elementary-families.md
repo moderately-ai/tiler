@@ -4,7 +4,7 @@ title: Widen the staged realization law to the registered elementary families
 status: in-progress
 priority: p1
 dependencies: []
-related: [admit-the-registered-elementary-families-as-recognizable-program-stages, admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage]
+related: [admit-the-registered-elementary-families-as-recognizable-program-stages, admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, accept-the-root-mean-square-scale-realization-law, admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence, flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
@@ -53,3 +53,73 @@ Making the compiler *recognize* the family as a program stage. That is blocked o
 ## Closes when
 
 At least the normalization's law is registered and realizes a verified `VerifiedIndexRegionSequence` whose stages match the pinned reference step for step, every declared attribute is consumed or refused by name, the new encoding tag is proved append-only and injective, and the wall test above is flipped rather than deleted.
+
+## Outcome
+
+The normalization half landed. The softmax half is further away than the graph said, and that finding is the second-most useful thing here.
+
+### The law's shape, and the elimination that produced it
+
+A **new appended variant**, not a generalized template:
+
+```rust
+StagedRootMeanSquareScaleF32 { axes_attribute: AttributeFieldId, eps_attribute: AttributeFieldId }
+```
+
+Four candidates were tested against `law.rs`'s own contract that "each variant is an atomic template whose complete interpretation is owned here", and three fail:
+
+- **Reuse `StagedStrictSerialSumThenPointwiseF32`.** Refuted by this ticket's own body, and by measurement: it *realizes* a rank-one normalization occurrence successfully while never reading `eps`. That silent success is now a watched assertion.
+- **Widen that variant in place with optional prologue/epilogue/arity fields.** It mutates an accepted variant's payload and therefore tag 9's encoding, and most field combinations denote no program. Discarded.
+- **Carry the epilogue and the pass as law data.** Representing a chain of scalar applications in law data is a scalar-program language inside the law vocabulary — the universal IR the module header refuses.
+- **A field-less variant, `PreciseSiluF32`-style.** Hard-codes two record-local attribute identifiers, which is the exact defect `scalar_attributes`' doc-comment records for the `f32`/`bf16` constants numbering their payload field alike.
+
+The survivor fixes the chain (as `PreciseSiluF32` does, because the chain is what the template means) and names the attributes (as every parameterized variant does, because record-local identifiers are what a second row varies).
+
+**Where the generality actually went, per the worked-examples discipline.** The three gaps this ticket names are closed as reusable *emitters*, not as one family's inline code: `SumPlan::contributor_square` (a fold over a per-contributor square), `SumPlan::fold` (a fold that returns its value so an epilogue can transform it inside the producing region, split out of `emit_serial_sum` with its emission order preserved byte for byte), and reading a reduced-rank published value at the kept coordinates of the consuming stage's point domain. The next staged family instantiates those; it does not instantiate this variant.
+
+**Why the epilogue is in stage zero.** `r` is computed once per folded row and read once per point. Publishing `a` and putting `/N`, `+eps`, and `Rsqrt` in the pointwise pass evaluates each `N` times per row — a different scalar program, not a different schedule, by the same argument the staged template's own doc-comment already makes.
+
+### Step-for-step realization evidence
+
+`the_normalization_law_realizes_the_pinned_reference_step_for_step` derives an occurrence over `[3, 4]` reduced on axis 1 and reads the two verified stages. It pins the whole operation population of each stage first (so a walk that skipped a step could not pass), then walks the fold stage backwards from its published value — a verified region orders operations canonically rather than in emission order, so the walk navigates by definition rather than by position:
+
+`r = Rsqrt(t)` is the published value; `t = add(u, eps)` with the eps constant's attribute record equal to the declared payload; `u = divide(a, N)` with the extent constant equal to `4.0f32`; `a` is a reduction seeded at a squared seed and combining a squared tail; each square is one *read* applied to itself at both sites. The scale stage is `multiply(w, multiply(x, r))`, with the boundary of each read asserted, because the value and the weight agree on element type and shape and only the boundary separates them. Sources: `[[Occurrence(0)], [Occurrence(0), Occurrence(1), Intermediate(0)]]`, and the handed value is `[3]` — one per folded row.
+
+Three deliberate perturbations were run and watched fail: dropping the contributor square (step population), transposing the outer multiply's operands (read boundary), and moving the eps payload by one ULP (attribute record).
+
+### The eps-consumption proof
+
+`realize_root_mean_square_scale` requires the occurrence's attribute record to be **exactly** the two fields the law names, checked before `reduction_axes` is called, so that function's tolerance for a wider record cannot drop `eps` here. Aliased identifiers are refused first, which is what makes "two distinct names, two fields, both named" imply "each present exactly once".
+
+`the_normalization_law_consumes_eps_where_the_staged_template_drops_it` asserts the hazard (the staged template realizes the same occurrence and never reads `eps`) and then watches four refusals fire: a wrong `eps` identifier and a wrong axes identifier both give `rms-scale-attributes`, aliased identifiers give `rms-scale-attribute-aliasing`, and the transposed pair — which passes the field-set check and reads each payload as the other — gives `rms-scale-eps-kind`.
+
+### The appended tag and its injectivity
+
+Tag 10; tags 1..=9 and their payloads are unchanged, so every sidecar byte any law registry has encoded is byte-identical. The first byte discriminates, so no other variant's encoding can be read as this one. Within the tag the payload is two fixed-width identifiers at disjoint fixed offsets, so the map from the pair to bytes is injective, and the pair is ordered, so the transposed row encodes as a third distinct row — which matters because the transposition is a real construction error the realizer must be able to refuse as a *different* law. `the_root_mean_square_law_tag_is_append_only_and_distinct` checks all four rows pairwise and every earlier variant against it.
+
+### Two refusals that are not in the reference and are derived from it
+
+- `rms-scale-extent-not-exact`: the reference divides by the extent, so a folded count whose nearest binary32 is not the count is refused rather than rounded. The representability test is integer-only (an integer is a binary32 value exactly when its odd part fits the 24-bit significand), so it does not depend on the rounding it detects. Watched: `[16_777_217]` refuses, `[16_777_216]` realizes.
+- `rms-scale-empty-fold`: a fold seeded at the first contributor has no first contributor over an empty axis.
+
+### Pins that moved, and the two sites this branch could not touch
+
+The `FrozenIndexRealizationLawRegistry` identity moves, because the sidecar is a count-prefixed run over every registered law and it gained a row. The `FrozenSemanticRegistry` snapshot identity does **not** — it is computed without the sidecar (`refinement.rs:634-636` compares the two separately) — which is why no artifact, cache, or kernel-program pin moved.
+
+The survey is empirical rather than argued: `cargo nextest run --workspace` reported 2844 tests, 2842 passing, and exactly two failures, both in `tiler-compiler` and both expected. They are transcribed into [`flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin`](flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin.md) with their exact repairs, because this ticket holds `implementation/ir` only. That ticket records both collision checks: the first was **vacuous** (the live `implementation/compiler` claim's branch carried zero commits, and an empty diff is not disjointness evidence), and by the second the branch had merged and been removed, with neither site moved on `main` since this base. The request pin must be recomputed on the merged tree, not copied from this branch.
+
+### The rsqrt acceptance's code half
+
+Folded in here on the coordinator's instruction, and executed against the *merged* record rather than the relay: `tickets/accept-the-governed-reciprocal-square-root-scalar-key.md` is `done` on `main` (`32d58a30`), its `## Accepted 2026-08-06` section carries the provenance, and its own "Closes when" routes the label flip to whichever branch holds `implementation/ir`. The draft label on `rsqrt_f32_scalar_op` is replaced by the accepted-boundary form the `PublishingCopy` acceptance established, naming who, when, where, that it was relayed rather than witnessed here, and that acceptance is not stabilization. Three stale "drafted" references in the same file's tests moved with it.
+
+### The softmax remainder, scoped
+
+The graph said the softmax waits on [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`](admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md). That key is necessary and **not sufficient**. `VerifiedIndexRegionSequence` requires a non-final stage to publish exactly one value and that value to be read by the immediately following stage and nothing else; the softmax needs `e_i` in both the summing fold and the final scale, or `m` and `d` together in the final stage. Every staging is refused, and the derivation is filed at [`admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence`](admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence.md). The softmax law is one ticket once both walls are down.
+
+### The public boundary
+
+`IndexRealizationLaw` is `pub` and `#[non_exhaustive]`, so the variant lands as a labelled draft with its own acceptance node, [`accept-the-root-mean-square-scale-realization-law`](accept-the-root-mean-square-scale-realization-law.md), parked at `awaiting-decision`. Nothing is self-accepted.
+
+### Checks
+
+`cargo fmt --check`, `cargo check -p tiler-ir --all-targets`, `cargo clippy -p tiler-ir --all-targets -- -D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-ir`, and `cargo nextest run -p tiler-ir` (872 passed) are all green. `cargo nextest run --workspace` is green except the two transcribed compiler-side sites.

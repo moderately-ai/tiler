@@ -2415,6 +2415,17 @@ impl SemanticRegistryProvider for StandardSemantics {
                 super::quantization::dequantize_strict_affine_op(),
                 IndexRealizationLaw::strict_affine_u4_dequantize(),
             ),
+            // The first registered row whose realization is a region *sequence*,
+            // and the first to name two attributes. Its arrival moves the
+            // sidecar — and therefore `FrozenIndexRealizationLawRegistry`'s
+            // identity — because the sidecar is a count-prefixed run over every
+            // registered law; the semantic snapshot identity is computed without
+            // it and does not move, which is what keeps every artifact and
+            // kernel-program identity derived from that snapshot byte-identical.
+            (
+                super::rms_norm::rms_norm_f32_op(),
+                IndexRealizationLaw::staged_root_mean_square_scale_f32(),
+            ),
             // The `bf16` family's three rows. They reuse the constant and
             // pointwise templates rather than introducing law variants, so no
             // encoding tag is added and every existing row's payload is
