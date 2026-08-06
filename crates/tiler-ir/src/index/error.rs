@@ -192,8 +192,6 @@ pub enum IndexBuildError {
         /// Yielded value type.
         actual: Arc<ResolvedValueType>,
     },
-    /// More than one root writes the same output tensor.
-    DuplicateOutputTensor,
     /// Output tensor and scalar value types differ.
     OutputTypeMismatch,
     /// Scalar authority rejected registration, typing, or application.
@@ -259,6 +257,36 @@ pub enum IndexRegionDiagnostic {
     WriteOwnershipNotProven {
         /// Unproved write access.
         access: TensorAccessId,
+    },
+    /// The write roots over one output leave part of it unwritten.
+    ///
+    /// Raised by either partition mechanism: interval reasoning found the
+    /// disjoint partitions' volumes short of the boundary's element count, or
+    /// the joint enumeration finished with an element no root reached. A
+    /// partition that does not cover leaves bytes whose contents no proof in
+    /// this region establishes.
+    OutputPartitionUncovered {
+        /// Output boundary whose partition is incomplete.
+        tensor: TensorId,
+    },
+    /// Interval reasoning proved two roots' coordinate ranges intersect.
+    ///
+    /// Distinct from [`Self::OutputPartitionDoubleWritten`] because it is
+    /// decided over the ranges without visiting an element: no separating axis
+    /// exists for the pair, so the two rectangles share at least one
+    /// coordinate.
+    OutputPartitionRangesOverlap {
+        /// Output boundary whose roots overlap.
+        tensor: TensorId,
+    },
+    /// The joint enumeration observed one element written by two roots.
+    ///
+    /// The enumerated counterpart of [`Self::OutputPartitionRangesOverlap`],
+    /// reported where interval reasoning could not place every root and the
+    /// shared bitset found the collision instead.
+    OutputPartitionDoubleWritten {
+        /// Output boundary whose roots collide.
+        tensor: TensorId,
     },
     /// A reachable scalar value retained an unreduced dimension.
     FreeReductionDimension {

@@ -3,7 +3,7 @@ id: lower-the-concatenate-occurrence-through-partitioned-writes
 title: Lower the concatenate occurrence through partitioned writes
 status: todo
 priority: p1
-dependencies: [admit-a-partitioned-write-ownership-contract]
+dependencies: [admit-a-partitioned-write-ownership-contract, admit-sub-range-write-domains-for-unequal-partitions]
 related: [scope-the-concatenate-fusion-role-and-lowering, lower-a-two-region-occurrence-through-one-index-access-capability, admit-the-structural-families-into-the-scheduled-region-vocabulary, reach-a-verified-kernel-through-the-structural-families]
 scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]

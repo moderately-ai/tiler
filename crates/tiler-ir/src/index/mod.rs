@@ -30,11 +30,11 @@ pub use integer::{IndexIntegerDecodeError, IndexIntegerSign};
 pub use law::IndexRealizationLaw;
 pub use model::{
     AccessMode, BoundsProofView, CanonicalIndexRegionIdentity, DomainDimensionRef, DomainRole,
-    IndexExprClass, IndexExprRef, IndexExprView, LinearTermRef, LinearTerms, OutputRef,
-    ReducerBodyOperationRef, ReducerBodyValueDefinitionView, ReducerBodyValueRef,
-    ReductionTraversal, ScalarOperationKindRef, ScalarOperationRef, ScalarReducerBodyRef,
-    ScalarReductionRef, ScalarValueDefinitionView, ScalarValueRef, TensorAccessRef, TensorRef,
-    TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
+    IndexExprClass, IndexExprRef, IndexExprView, JointPartitionProofView, LinearTermRef,
+    LinearTerms, OutputRef, ReducerBodyOperationRef, ReducerBodyValueDefinitionView,
+    ReducerBodyValueRef, ReductionTraversal, ScalarOperationKindRef, ScalarOperationRef,
+    ScalarReducerBodyRef, ScalarReductionRef, ScalarValueDefinitionView, ScalarValueRef,
+    TensorAccessRef, TensorRef, TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
 };
 pub use predicate::{
     CanonicalIndexDomainObligationKey, DischargedIndexDomainPredicate, IndexDomainEvidence,
