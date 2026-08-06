@@ -1,7 +1,7 @@
 ---
 id: record-or-validate-the-fast-honor-pragmas-selection
 title: Record or validate the fast-honor-pragmas selection the measured toolchain rejects
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [compile-an-elementary-function-golden-through-the-metal-toolchain, emit-the-contraction-pragma-as-a-declared-metal-realization]
@@ -9,6 +9,9 @@ scopes: [implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal-aot, toolchain, fail-closed, doc-claim]
+claimed_from: todo
+assignee: agent-fp-contract
+lease_expires_at: 1786038040
 ---
 
 ## The observation (elementary-golden work, 2026-08-06; coordinator-verified at source)
