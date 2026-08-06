@@ -1,7 +1,7 @@
 ---
 id: enumerate-region-candidates-over-realization-stages
 title: Enumerate region candidates over realization stages
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [resolve-which-authority-mints-a-multi-stage-region-candidate, fold-the-attribution-stage-into-region-and-request-subject-identity, admit-the-registered-elementary-families-as-recognizable-program-stages, implement-stage-level-cover-atoms-for-multi-region-occurrences]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner, identity-domain]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1786044344
 ---
 ## User-visible outcome
 
