@@ -1,7 +1,7 @@
 ---
 id: admit-a-fusion-role-for-the-tensor-contraction
 title: Admit a fusion role for the tensor contraction
-status: review
+status: done
 priority: p2
 dependencies: [realize-the-contraction-through-the-appendable-direct-path]
 related: [realize-the-strict-contraction-on-metal, admit-reassociated-contraction-schedule-alternatives]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, fusion, contraction]
-claimed_from: todo
-assignee: agent-contraction-role
-lease_expires_at: 1785999015
 ---
 ## User-visible outcome
 
