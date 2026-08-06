@@ -1,7 +1,7 @@
 ---
 id: admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary
 title: Admit a publishing copy stage in the kernel-program vocabulary
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [admit-elementwise-epilogues-over-a-materialized-intermediate, recognize-several-ordered-named-outputs-at-the-compiler-request-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer]
-claimed_from: todo
-assignee: agent-copy-stage
-lease_expires_at: 1786015190
 ---
 ## User-visible outcome
 
