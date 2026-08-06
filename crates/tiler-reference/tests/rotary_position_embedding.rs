@@ -502,6 +502,17 @@ fn differing(left: &[u32], right: &[u32]) -> usize {
 
 // --- the composition's shape ------------------------------------------------
 
+/// A named workload construct can be a graph shape over already-registered keys.
+///
+/// The general claim is that no key, form, or structure is admitted to express
+/// this composition: its operation sequence is exactly the four registered
+/// families in a stated order, and each step's result shape is derived by its own
+/// family from its operand rather than declared here. The worked instance is
+/// rotary embedding as ten occurrences of `tiler::reindex-f32@1`,
+/// `tiler::broadcast-f32@1`, `tiler::multiply-f32@1` and `tiler::add-f32@1`. The
+/// perturbation is pinned structurally too — dropping the within-axis swap
+/// removes one occurrence and nothing else — so the counts it produces later
+/// measure the reversal rather than a second difference that came with it.
 #[test]
 fn the_composition_is_ten_occurrences_over_four_admitted_families() {
     let program = build_program(QUERY_HEADS, Swap::Present);
@@ -578,6 +589,18 @@ fn the_composition_is_ten_occurrences_over_four_admitted_families() {
     );
 }
 
+/// A multi-element literal enters as a program input, because no family makes one.
+///
+/// `tiler::constant-f32@1` infers rank zero and nothing else, so a dense constant
+/// carrying more than one element is inexpressible in the family rather than
+/// merely awkward — and a broadcast cannot stand in, both because it replicates
+/// one value rather than inventing a second and because a mapping refuses an
+/// operand missing the axes it consumes, under
+/// `broadcast.mapping.operand-axes-unconsumed`. The worked instance is the `[2, 1]`
+/// rotary sign, whose two halves carry *different* signs: the alternative to eight
+/// bytes of program input is not a worse constant but no constant at all. The
+/// declared `[2, 1]` input is applied afterwards, so the refusal discriminates the
+/// operand rather than the mapping.
 #[test]
 fn the_sign_operand_cannot_be_a_constant() {
     // Why the `[2, 1]` sign enters as an input. `tiler::constant-f32@1` produces
@@ -672,6 +695,18 @@ fn compare(heads: usize) -> RotaryCounts {
     }
 }
 
+/// The composition denotes its formula bit for bit, and both perturbations move.
+///
+/// A conformance claim needs two halves: agreement with an expectation the graph
+/// did not produce, and evidence that the comparison could have disagreed. The
+/// expectation here is recomputed from `y = x · cos + rotate_half(x) · sin` by
+/// coordinate arithmetic rather than by a second run of the coordinate maps, and
+/// the two retained perturbations are chosen because neither changes a shape —
+/// one drops a single occurrence and the other changes eight bytes of input, so a
+/// structural check would pass both. The worked instance is the query operand at
+/// sixteen heads: 0 differing of 20,480 against the expectation, and 20,480 for
+/// each perturbation. Those counts are exact rather than probable because the
+/// fixture's payloads are pairwise distinct and every one is normal and nonzero.
 #[test]
 fn the_query_operand_matches_the_rotary_formula_at_sixteen_heads() {
     let counts = compare(QUERY_HEADS);
@@ -703,6 +738,16 @@ fn the_query_operand_matches_the_rotary_formula_at_sixteen_heads() {
     assert_eq!(counts.rotary_reversed_signs, 20_480);
 }
 
+/// The same composition holds at a second head count, with no form changed.
+///
+/// Only the head axis's extent moves: every form, mapping and occurrence is the
+/// one the first head count carries, which is what makes the head count a binding
+/// rather than a graph choice. Grouped-query attention makes that a real case
+/// rather than a parameter sweep — the worked instance is the key operand, which
+/// carries half the query's heads at the same head dimension against the same
+/// tables — and every count scales with the element count to 0 and 10,240 of
+/// 10,240. The numbers are restated literally here rather than shared through an
+/// assertion helper, so one head count's evidence cannot stand in for the other's.
 #[test]
 fn the_key_operand_matches_the_rotary_formula_at_eight_heads() {
     let counts = compare(KEY_VALUE_HEADS);
@@ -734,6 +779,17 @@ const PINNED_INPUT_LANES_64_67: [u32; 4] = [0x3f80_ccb2, 0xbf1d_b431, 0x3e56_2f4
 const PINNED_OUTPUT_LANES_0_3: [u32; 4] = [0xbf80_ccb2, 0x3f1d_b431, 0xbe56_2f44, 0xbf24_d1ed];
 const PINNED_OUTPUT_LANES_64_67: [u32; 4] = [0x3e7e_d70a, 0x3fe3_8215, 0xbef3_454d, 0x3f0e_7721];
 
+/// An in-tree composition is tied to an out-of-tree reference by its retained bits.
+///
+/// When a measurement retains counts and a few payloads rather than its operands,
+/// the tie that remains is to drive the retained inputs through the composition
+/// and require the retained outputs back — a narrow comparison, but against the
+/// reference's own bits rather than against a recomputation. The lanes the probe
+/// did not retain come from this file's fixture rather than being invented, which
+/// keeps the operand a pinned fixture instead of a fabricated one. The worked
+/// instance is the eight `rotate_half` lanes at the first position of the first
+/// head; both perturbations are checked to move exactly those lanes, so the
+/// comparison discriminates rather than passing on a coincidence of the fixture.
 #[test]
 fn the_pinned_rotate_half_lanes_are_reproduced() {
     // The probe's eight retained input payloads, placed at the lanes it read
@@ -807,6 +863,19 @@ fn rotate_axis_attribute() -> OperationAttributes {
         .expect("one attribute is canonical")
 }
 
+/// The family admits *forms*, not properties, and names the form it refuses.
+///
+/// Which form a mapping attribute names is a property of the attribute, so an
+/// unadmitted kind is refused under `reindex.form.unadmitted-kind` when the
+/// attribute decodes — before any operand exists — and again through an
+/// occurrence, and the refusal names the rejected kind rather than reporting an
+/// anonymous invalidity. Admitting forms rather than properties is what makes
+/// that refusal possible at all: the worked instance is `rotate-axis`,
+/// `i -> (i + k) mod n`, which is total, bijective, expressible in the accepted
+/// index vocabulary, and at extent two agrees with the admitted reversal on every
+/// coordinate — so nothing about the resulting tensor could have revealed the
+/// substitution. The reversal is applied afterwards, so the refusal discriminates
+/// the form rather than every within-axis map.
 #[test]
 fn an_unadmitted_within_axis_map_refuses_by_name_at_construction() {
     // Decoding alone refuses it, before any operand exists: which form a mapping
