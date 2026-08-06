@@ -1,7 +1,7 @@
 ---
 id: move-the-runtime-semantic-validation-cells-for-f32-and-bf16
 title: Move the runtime semantic validation cells for f32 and BF16
-status: review
+status: done
 priority: p3
 dependencies: [validate-bf16-at-the-runtime-routing-boundary]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, dtype, bf16, runtime, maturity-matrix]
-claimed_from: todo
-assignee: agent-navigation-5
-lease_expires_at: 1786039087
 ---
 ## User-visible outcome
 

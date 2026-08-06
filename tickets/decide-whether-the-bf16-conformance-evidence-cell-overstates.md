@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-bf16-conformance-evidence-cell-overstates
 title: Decide whether the BF16 conformance-evidence cell overstates without the end-to-end run
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [conform-the-bf16-vertical-end-to-end, carry-a-bf16-subnormal-realization-the-reference-can-be-told, re-read-the-bf16-and-elementary-support-rows-against-source]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [navigation, bf16, maturity-claims]
-claimed_from: todo
-assignee: agent-navigation-5
-lease_expires_at: 1786039087
 ---
 
 ## The question (raised by the BF16 vertical's discovery stop, 2026-08-06)
