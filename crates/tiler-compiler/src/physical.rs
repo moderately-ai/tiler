@@ -27,8 +27,9 @@ use tiler_ir::schedule::{
 
 use crate::region::SemanticMemberId;
 use crate::request::{
-    NormalizedContraction, NormalizedOutput, NormalizedOutputSubject, NumericalPermission,
-    StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
+    NormalizedContraction, NormalizedOutput, NormalizedOutputSubject, NormalizedSerialSum,
+    NumericalPermission, StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject,
+    VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -48,6 +49,29 @@ const FIRST_INPUT: TensorRole = TensorRole::Input {
     ordinal: InputOrdinal::FIRST,
 };
 
+/// The boundary tensor holding one recognized fold's declared contributor domain.
+///
+/// The first declared input when the program folds it directly, and the
+/// intermediate a prologue region materialized otherwise. It is the compiler side
+/// of the obligation `tiler-ir`'s schedule verifier states as
+/// `ContributorTensor::DeclaredDomain`: the verifier admits either tensor, and
+/// *which* one a region binds is a fact about the recognized program. Deriving it
+/// once here is what stops the serial region, the split's partial pass, and the
+/// cooperative tile from disagreeing about where the contributors live — three
+/// spellings of one fold, which the program assembler would then bind to three
+/// different buffers.
+///
+/// The split's *final* pass deliberately does not ask: it folds partials its own
+/// partial pass staged, so its read is the intermediate whatever the fold's
+/// contributor domain is.
+fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
+    if serial.prologue.is_some() {
+        TensorRole::Intermediate
+    } else {
+        FIRST_INPUT
+    }
+}
+
 /// Recovers the scale and bias a fused serial sum's scalar program can spell.
 ///
 /// [`ScalarProgram::FusedMultiplyAddSerialSum`] applies exactly `scale * x +
@@ -63,12 +87,19 @@ const FIRST_INPUT: TensorRole = TensorRole::Input {
 /// two-region plan realizes every recognized prologue, and it is what a general
 /// prologue compiles through.
 ///
+/// A fold with *no* prologue answers `None` too, and loses nothing at all: there
+/// is no prologue to fuse into it, its member partition has one part, and the
+/// single reduction region reading the declared input already is the whole
+/// program. Spelling it as `x * 1.0 + 0.0` would not be the same computation —
+/// that expression maps `-0.0` to `+0.0` — so the affine vocabulary is genuinely
+/// absent here rather than merely unused.
+///
 /// This is the single authority the whole compilation asks: the region builder,
 /// the request-subject binding, and the whole-program numerical proof all reach
 /// it, so "a fused alternative exists" and "the fused equivalence proof is
 /// claimed" cannot disagree.
 pub(crate) fn fused_prologue_constants(output: &NormalizedOutput) -> Option<(u32, u32)> {
-    affine_prologue(&output.try_serial_sum()?.prologue)
+    affine_prologue(output.try_serial_sum()?.prologue.as_ref()?)
 }
 
 /// Recovers the scale and bias one recognized expression spells, or declines.
@@ -199,8 +230,11 @@ impl RegionSpelling {
 /// names as *widenings with their own owning tickets*. Each becomes an offer
 /// when its widening lands, with no change to this classification's shape. The
 /// profile's third named wall — a reduction folding a declared input directly —
-/// has no variant here because `recognize_reduction` refuses that program at
-/// the request boundary, so no cover ever places such a region.
+/// never had a variant here and still has none, but for the opposite reason: it
+/// was refused at the request boundary, and
+/// `admit-a-reduction-over-a-declared-input-tensor` made it a region this
+/// vocabulary spells. `sum(x)` resolves to [`RegionSpellingKind::SerialSum`] by
+/// the ordinary member match, so there is nothing left to decline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RegionVocabularyWall {
     /// The region covers part of a recognized occurrence group the vocabulary
@@ -293,7 +327,21 @@ pub(crate) fn spell_region(
             }
             NormalizedOutput::SerialSum(normalized) => {
                 let recognized = &normalized.members;
-                if members == recognized.pointwise() {
+                // Asked through the partition rather than by comparing against the
+                // prologue member list directly: a fold over a declared input has
+                // no prologue part, and an empty member set matching an empty list
+                // would spell a prologue region for a program that has none — which
+                // `pointwise_region` then panics on rather than building.
+                //
+                // Defence in depth against the enumeration as it stands, stated
+                // rather than presented as a live gate: `GovernedPhysicalProvider`
+                // is this function's only caller and answers an empty member set
+                // with an empty offer before reaching here, so no cover the search
+                // currently places drives the distinction.
+                if normalized
+                    .prologue_members()
+                    .is_some_and(|prologue| members == prologue)
+                {
                     return Ok(RegionSpelling::new(
                         position,
                         RegionSpellingKind::Pointwise(write),
@@ -302,6 +350,9 @@ pub(crate) fn spell_region(
                 if members == recognized.reduction() {
                     return Ok(RegionSpelling::new(position, RegionSpellingKind::SerialSum));
                 }
+                // Unreachable for a prologue-less fold, and correctly so: its two
+                // parts coincide, the reduction arm above answers first, and
+                // there is no prologue for a fused region to absorb.
                 if members == recognized.all() {
                     return fused_prologue_constants(output)
                         .map(|_| RegionSpelling::new(position, RegionSpellingKind::FusedSerialSum))
@@ -593,13 +644,21 @@ pub(crate) fn build_fused_scheduled_region(
 ///
 /// # Panics
 ///
-/// Panics when asked for an output whose recognized shape is a contraction,
-/// which is invalid compiler output rather than a caller error: the frontier
-/// offers this region only for an elementwise or reduced-elementwise subject. It applies no
-/// intrinsic, subject-binding, or feasibility gate. The implementation frontier
-/// and its providers use it to obtain a canonical region they then re-submit
-/// through the ordinary checked verification path, including for a domain the
-/// governed profile cannot dispatch.
+/// Panics when asked for an output whose recognized shape is a contraction, or
+/// for a reduction that has no prologue to build a region from. Both are invalid
+/// compiler output rather than caller errors: the frontier offers this region only
+/// for an elementwise or reduced-elementwise subject, and [`spell_region`] resolves
+/// a prologue spelling only through
+/// [`crate::request::NormalizedSerialSum::prologue_members`], which a
+/// prologue-less fold answers `None` for. Panicking is what keeps a cover that
+/// somehow named one from silently receiving an identity copy kernel — a
+/// materialization, and its rounding boundary, the caller's program never asked
+/// for.
+///
+/// It applies no intrinsic, subject-binding, or feasibility gate. The
+/// implementation frontier and its providers use it to obtain a canonical region
+/// they then re-submit through the ordinary checked verification path, including
+/// for a domain the governed profile cannot dispatch.
 pub(crate) fn pointwise_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
@@ -622,7 +681,10 @@ pub(crate) fn pointwise_region(
                 serial.input_shape.clone(),
                 serial.input_elements,
                 serial.input_keys.len(),
-                serial.prologue.clone(),
+                serial
+                    .prologue
+                    .clone()
+                    .expect("a prologue region is spelled only for a fold that has a prologue"),
                 serial.members.pointwise().to_vec(),
                 serial.prologue_access_maps.clone(),
             )
@@ -864,7 +926,14 @@ pub(crate) fn contraction_region(
     (region, normalized.members.clone())
 }
 
-/// Builds the canonical materialized reduction scheduled region for one request.
+/// Builds the canonical reduction scheduled region for one request.
+///
+/// **It is the whole plan for a fold with no prologue, and the fold half of a
+/// two-region plan otherwise**, and the only thing that differs between the two is
+/// which tensor [`contributor_tensor`] resolves the contributor read to. The
+/// program assembler binds that read to a declared input buffer or to the
+/// materialization edge the cover placed, so a prologue-less fold assembles into
+/// one dispatch over one buffer with no temporary at all.
 ///
 /// Like [`pointwise_region`], this is the raw region and its recognized members;
 /// every gate is applied when the frontier resubmits it through the ordinary
@@ -874,13 +943,14 @@ pub(crate) fn reduction_region(
     output: &NormalizedOutput,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
     let serial = output.serial_sum();
+    let contributor = contributor_tensor(serial);
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(1),
             iteration_shape: serial.output_shape.clone(),
             accesses: vec![
                 Access {
-                    tensor: TensorRole::Intermediate,
+                    tensor: contributor,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
@@ -904,7 +974,7 @@ pub(crate) fn reduction_region(
             bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId::new(2),
-                    tensor: TensorRole::Intermediate,
+                    tensor: contributor,
                     component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
                         input_shape: serial.input_shape.clone(),
@@ -1137,17 +1207,25 @@ pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartiti
 /// Builds the canonical partial pass of a split reduction for one request.
 ///
 /// It splits the *materialized* strategy's reduction rather than the fused one:
-/// it reads the pointwise temporary and writes the partial tensor, so the split
-/// replaces one dispatch with two and leaves the prologue where it was. Fusing
-/// the prologue into this pass would additionally have to reconcile the
-/// contraction permission the fused scalar program carries, which is a
-/// different question from splitting a contributor sequence.
+/// it reads whichever tensor holds the fold's declared contributor domain and
+/// writes the partial tensor, so the split replaces one dispatch with two and
+/// leaves the prologue, if there is one, where it was. Fusing the prologue into
+/// this pass would additionally have to reconcile the contraction permission the
+/// fused scalar program carries, which is a different question from splitting a
+/// contributor sequence.
+///
+/// A prologue-less fold is split by the same two passes, and only the partial
+/// pass's read moves: the final pass folds partials this pass staged, so it reads
+/// an intermediate whatever the contributor domain is. The strategy is therefore
+/// offered for `sum(x)` rather than declined for it, which is what keeps the
+/// widening from silently losing an alternative.
 pub(crate) fn partial_reduction_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
     partition: ContributorPartition,
 ) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
     let subject = output.serial_sum();
+    let contributor = contributor_tensor(subject);
     let partial_shape =
         tiler_ir::schedule::partial_reduction_shape(&subject.output_shape, partition)?;
     let partial_elements = subject.output_elements.checked_mul(partition.partitions)?;
@@ -1157,7 +1235,7 @@ pub(crate) fn partial_reduction_region(
             iteration_shape: partial_shape,
             accesses: vec![
                 Access {
-                    tensor: TensorRole::Intermediate,
+                    tensor: contributor,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
@@ -1181,7 +1259,7 @@ pub(crate) fn partial_reduction_region(
             bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId::new(4),
-                    tensor: TensorRole::Intermediate,
+                    tensor: contributor,
                     component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
                         input_shape: subject.input_shape.clone(),
@@ -1413,6 +1491,7 @@ pub(crate) fn single_workgroup_tree_region(
         return Err(WorkgroupTreeUnavailable::ReassociationForbidden);
     }
     let subject = output.serial_sum();
+    let contributor = contributor_tensor(subject);
     let contributors =
         reduction_contributors(output).ok_or(WorkgroupTreeUnavailable::Unrepresentable)?;
     let partition = governed_partition(contributors)
@@ -1435,7 +1514,7 @@ pub(crate) fn single_workgroup_tree_region(
             iteration_shape,
             accesses: vec![
                 Access {
-                    tensor: TensorRole::Intermediate,
+                    tensor: contributor,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
@@ -1459,7 +1538,7 @@ pub(crate) fn single_workgroup_tree_region(
             bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId::new(8),
-                    tensor: TensorRole::Intermediate,
+                    tensor: contributor,
                     component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
                         input_shape: subject.input_shape.clone(),
@@ -1917,8 +1996,10 @@ fn verify_region_output_binding(
                     // The recognized prologue itself, compared whole: node
                     // topology, ordered operands, constant bits, shared reads,
                     // and the explicit root. A provider cannot substitute an
-                    // algebraically similar but unproved expression for it.
-                    normalized.prologue() == expression
+                    // algebraically similar but unproved expression for it — and
+                    // a subject with no prologue binds no pointwise region at
+                    // all, because `None` equals no expression.
+                    normalized.prologue() == Some(expression)
                         && semantic_members == normalized.members().pointwise()
                         && region.index.id == RegionId::new(0)
                         && region.index.iteration_shape == *normalized.input_shape()
@@ -1932,7 +2013,11 @@ fn verify_region_output_binding(
                         && region.index.id == RegionId::new(1)
                         && region.index.iteration_shape == *normalized.output_shape()
                         && axes == normalized.reduction_axes()
-                        && reduction_access_matches(&region.index.accesses[0], normalized)
+                        && reduction_access_matches(
+                            &region.index.accesses[0],
+                            normalized,
+                            subject_contributor_tensor(normalized),
+                        )
                         && *canonical_nan_bits
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
                 }
@@ -1950,10 +2035,10 @@ fn verify_region_output_binding(
                         // read back: the fused scalar program is admitted only
                         // for the one expression it can spell, so a prologue
                         // that is not that expression has no fused form at all.
-                        && affine_prologue(normalized.prologue())
+                        && normalized.prologue().and_then(affine_prologue)
                             == Some((*scale_bits, *bias_bits))
                         && axes == normalized.reduction_axes()
-                        && reduction_access_matches(&region.index.accesses[0], normalized)
+                        && reduction_access_matches(&region.index.accesses[0], normalized, FIRST_INPUT)
                         && *canonical_nan_bits
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
                 }
@@ -2019,7 +2104,11 @@ fn verify_multi_pass_subject_binding(
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
             ) && semantic_members == normalized.members().reduction()
                 && region.index.id == RegionId::new(2)
-                && reduction_access_matches(&region.index.accesses[0], normalized)
+                && reduction_access_matches(
+                    &region.index.accesses[0],
+                    normalized,
+                    subject_contributor_tensor(normalized),
+                )
                 && tiler_ir::schedule::partial_reduction_shape(
                     normalized.output_shape(),
                     *partition,
@@ -2077,7 +2166,11 @@ fn verify_workgroup_tree_subject_binding(
                     == subject.numerical_contract().canonical_arithmetic_nan_bits
     ) && semantic_members == normalized.members().reduction()
         && region.index.id == RegionId::new(4)
-        && reduction_access_matches(&region.index.accesses[0], normalized)
+        && reduction_access_matches(
+            &region.index.accesses[0],
+            normalized,
+            subject_contributor_tensor(normalized),
+        )
         && tiler_ir::schedule::partial_reduction_shape(normalized.output_shape(), *partition)
             .is_some_and(|shape| shape == region.index.iteration_shape);
     if !expected {
@@ -2115,17 +2208,50 @@ fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContra
     })
 }
 
+/// The contributor tensor one recognized fold's own region must bind.
+///
+/// The subject projection of [`contributor_tensor`], derived from the same fact —
+/// whether the recognized program has a prologue — so a region and the builder
+/// that produced it cannot disagree about where the contributors live. A fold with
+/// a prologue reads the intermediate that prologue region materialized; one
+/// without reads the declared input directly.
+///
+/// The *fused* region does not ask, and passes [`FIRST_INPUT`] explicitly: it
+/// carries the prologue inside its own scalar program, so it reads the original
+/// input precisely because a prologue exists.
+fn subject_contributor_tensor(
+    normalized: &crate::request::NormalizedSerialSumSubject,
+) -> TensorRole {
+    if normalized.prologue().is_some() {
+        TensorRole::Intermediate
+    } else {
+        FIRST_INPUT
+    }
+}
+
+/// Requires one fold's contributor read to realize the recognized reduction.
+///
+/// `tensor` is stated by the caller rather than derived here because the four
+/// spellings do not agree on it: the materialized fold, the split's partial pass,
+/// and the cooperative tile bind whichever tensor holds the *declared contributor
+/// domain*, while the fused region binds the first input because its scalar
+/// program contains the prologue. Checking it at all is what stops a provider
+/// offering a `sum(x)` region that reads an intermediate no cover materialized —
+/// which `tiler-ir` admits as an intrinsically coherent region and the program
+/// assembler would then refuse for a missing edge, naming the wrong authority.
 fn reduction_access_matches(
     access: &Access,
     normalized: &crate::request::NormalizedSerialSumSubject,
+    tensor: TensorRole,
 ) -> bool {
-    matches!(
-        &access.map,
-        LogicalAccess::ReductionContributor { input_shape, output_shape, axes, .. }
-            if input_shape == normalized.input_shape()
-                && output_shape == normalized.output_shape()
-                && axes == normalized.reduction_axes()
-    )
+    access.tensor == tensor
+        && matches!(
+            &access.map,
+            LogicalAccess::ReductionContributor { input_shape, output_shape, axes, .. }
+                if input_shape == normalized.input_shape()
+                    && output_shape == normalized.output_shape()
+                    && axes == normalized.reduction_axes()
+        )
 }
 
 /// Assesses one scheduled region against the typed feasibility authority.

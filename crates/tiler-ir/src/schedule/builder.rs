@@ -302,6 +302,43 @@ const FIRST_INPUT: TensorRole = TensorRole::Input {
     ordinal: InputOrdinal::FIRST,
 };
 
+/// Which boundary tensor one fold's contributor read is required to bind.
+///
+/// Two obligations rather than one role, because two different facts decide it.
+/// A family whose scalar program *carries its own prologue* reads the original
+/// input, since that is what the prologue applies to; a pass that folds values an
+/// earlier dispatch staged reads the intermediate holding them. Both are exact,
+/// and a region binding anything else is describing a different computation.
+///
+/// [`ScalarProgram::StrictSerialSum`] states neither. It says how contributors
+/// combine and nothing about where they live, so `sum(x)` over a declared input
+/// and the same fold over a materialized prologue's result are one scalar program
+/// over two tensors. Requiring the intermediate would make the vocabulary unable
+/// to express the first without an identity prologue region — a materialization,
+/// and its observable rounding boundary, that no caller's program asked for — and
+/// requiring the input would lose the second. Admitting both is what makes the
+/// region's own access the thing that says which, rather than a rule guessing it
+/// from the fold.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContributorTensor {
+    /// This boundary tensor and no other.
+    Exactly(TensorRole),
+    /// The fold's declared contributor domain, wherever the plan placed it: the
+    /// first input tensor when the program folds it directly, or a materialized
+    /// intermediate when a prologue region wrote it.
+    DeclaredDomain,
+}
+
+impl ContributorTensor {
+    /// Returns whether one read's boundary tensor discharges this obligation.
+    fn admits(self, tensor: TensorRole) -> bool {
+        match self {
+            Self::Exactly(required) => tensor == required,
+            Self::DeclaredDomain => tensor == TensorRole::Intermediate || tensor == FIRST_INPUT,
+        }
+    }
+}
+
 /// Runs the intrinsic schedule verifier over an assembled region.
 fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagnostic> {
     let iteration_count = element_count(&region.index.iteration_shape)
@@ -798,6 +835,10 @@ fn verify_access_and_semantics(
         &region.schedule.reduction,
         &read.map,
     ) {
+        // The one family here whose contributor tensor is not fixed by its scalar
+        // program, for the reason [`ContributorTensor::DeclaredDomain`] states:
+        // the fold carries no prologue, so it reads whichever tensor holds its
+        // declared contributor domain.
         (
             ScalarProgram::StrictSerialSum {
                 axes,
@@ -826,7 +867,7 @@ fn verify_access_and_semantics(
             && *empty_identity_bits == 0.0_f32.to_bits()
             && output_shape == &region.index.iteration_shape
             && input_shape.without_axes(axes) == *output_shape
-            && read.tensor == TensorRole::Intermediate
+            && ContributorTensor::DeclaredDomain.admits(read.tensor)
             && write.tensor == TensorRole::Output => {}
         (
             ScalarProgram::FusedMultiplyAddSerialSum {
@@ -1001,8 +1042,8 @@ struct SplitFamily<'a> {
     /// consume: a topology disagreeing with its own contract is incoherent
     /// however the fold behaves.
     consumes_reassociation: bool,
-    /// Boundary tensor this pass's single read must bind.
-    read_tensor: TensorRole,
+    /// Boundary-tensor obligation this pass's single read must discharge.
+    read_tensor: ContributorTensor,
 }
 
 /// Decides one family's empty-domain obligation against a pass's contributors.
@@ -1037,13 +1078,23 @@ const fn empty_domain_is_satisfied(contract: EmptyDomainContract, contributors: 
 /// Both therefore admit a partial pass alone, and the final pass that consumes
 /// their partials is an ordinary [`ScalarProgram::StrictSerialSum`] region.
 ///
-/// **The extrema family is the one here whose two passes read different
+/// **The two passes of a bare sum have different obligations, and the asymmetry
+/// is structural rather than conservative.** The partial pass folds the region's
+/// declared contributor domain, which lives in whichever tensor the plan placed
+/// it — the first input for `sum(x)`, an intermediate for a materialized prologue
+/// — so it carries [`ContributorTensor::DeclaredDomain`]. The final pass folds
+/// values the partial pass *staged*, and those exist only because it staged them,
+/// so its read is exactly the intermediate. Widening the final pass too would let
+/// a region claim a declared input holds partials no dispatch wrote there.
+///
+/// **The extrema family is the other one here whose two passes read different
 /// tensors.** Its partial pass reads the original scores exactly as the serial
 /// extrema pass does, and its final pass folds the staged partials under the
 /// *same* family — which is what makes the split a reassociation of one fold
 /// rather than two reductions composed. A partial pass that read the original
-/// scores and *summed* them is refused, because every sum admitted here reads an
-/// intermediate: a mis-specified extrema partial cannot be admitted as a sum.
+/// scores and *summed* them is not thereby admitted as a sum: the sum's partial
+/// pass has its own contributor domain to prove, and a mis-specified extrema
+/// partial states the extrema family's split rather than that domain.
 fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<SplitFamily<'_>> {
     match program {
         ScalarProgram::StrictSerialSum {
@@ -1058,7 +1109,10 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            read_tensor: TensorRole::Intermediate,
+            read_tensor: match pass {
+                ReductionPass::Partial => ContributorTensor::DeclaredDomain,
+                ReductionPass::Final => ContributorTensor::Exactly(TensorRole::Intermediate),
+            },
         }),
         ScalarProgram::FusedMultiplyAddSerialSum {
             axes,
@@ -1074,7 +1128,7 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
                     bits: *empty_identity_bits,
                 },
                 consumes_reassociation: true,
-                read_tensor: FIRST_INPUT,
+                read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
             }),
             ReductionPass::Partial | ReductionPass::Final => None,
         },
@@ -1091,7 +1145,7 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
                     bits: *empty_identity_bits,
                 },
                 consumes_reassociation: true,
-                read_tensor: FIRST_INPUT,
+                read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
             }),
             ReductionPass::Final => None,
         },
@@ -1100,10 +1154,10 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
             order,
             empty_domain: EmptyDomainContract::NoIdentity,
             consumes_reassociation: false,
-            read_tensor: match pass {
+            read_tensor: ContributorTensor::Exactly(match pass {
                 ReductionPass::Partial => FIRST_INPUT,
                 ReductionPass::Final => TensorRole::Intermediate,
-            },
+            }),
         }),
         // No pointwise program folds anything, at either width.
         ScalarProgram::PointwiseF32(_)
@@ -1120,6 +1174,12 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
 /// inputs is admissible — there is no later pass here for a prologue to be
 /// applied twice in. That is also why the extrema family needs no pass
 /// distinction: a tile *is* both halves of the split.
+///
+/// It is also why the bare sum carries [`ContributorTensor::DeclaredDomain`] with
+/// no pass distinction where [`multi_pass_family`] gives it one. A tile stages its
+/// partials in workgroup memory, which is not a boundary tensor at all, so the
+/// region's single read is the declared contributor domain and nothing here folds
+/// a staged intermediate through a boundary access.
 fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
     match program {
         ScalarProgram::StrictSerialSum {
@@ -1134,7 +1194,7 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            read_tensor: TensorRole::Intermediate,
+            read_tensor: ContributorTensor::DeclaredDomain,
         }),
         ScalarProgram::FusedMultiplyAddSerialSum {
             axes,
@@ -1149,7 +1209,7 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            read_tensor: FIRST_INPUT,
+            read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
         }),
         ScalarProgram::SquaredSerialSum {
             axes,
@@ -1163,7 +1223,7 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            read_tensor: FIRST_INPUT,
+            read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
         }),
         // The extrema fold reads the original scores, as its serial and partial
         // passes do, and stages one maximum per participant. Every slot it reads
@@ -1174,7 +1234,7 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
             order,
             empty_domain: EmptyDomainContract::NoIdentity,
             consumes_reassociation: false,
-            read_tensor: FIRST_INPUT,
+            read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
         }),
         // No pointwise program folds anything, at either width.
         ScalarProgram::PointwiseF32(_)
@@ -1251,7 +1311,7 @@ fn verify_multi_pass_semantics(
         || family.order != scheduled_order
         || family.order != access_order
         || input_shape.without_axes(axes) != *output_shape
-        || read.tensor != family.read_tensor
+        || !family.read_tensor.admits(read.tensor)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
@@ -1376,7 +1436,7 @@ fn verify_cooperative_semantics(
         || family.order != scheduled_order
         || family.order != access_order
         || input_shape.without_axes(axes) != *output_shape
-        || read.tensor != family.read_tensor
+        || !family.read_tensor.admits(read.tensor)
         || write.tensor != TensorRole::Output
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
@@ -3586,16 +3646,23 @@ mod tests {
         assert!(bare.build().is_ok());
     }
 
-    /// A partial pass that reads the original scores and *sums* them is refused.
+    /// An extrema partial pass respelled as a sum verifies as *that sum*.
     ///
-    /// The defect a split of this family must not be able to spell. Every sum
-    /// admitted as a partial pass either reads an intermediate — the bare sum —
-    /// or carries a prologue that changes what it folds, so a region that read the
-    /// scores and added them would be an extrema partial pass computing the wrong
-    /// function. Only the scalar program changes here; the topology, the split,
-    /// the accesses, and the proofs are the verifying fixture's.
+    /// **This assertion inverted when a bare fold gained its declared input, and
+    /// the inversion narrows what the intrinsic verifier claims rather than losing
+    /// a check.** It was previously refused because every sum admitted as a partial
+    /// pass had to read an intermediate; a bare sum now folds whichever boundary
+    /// tensor holds its declared contributor domain, so this region is a coherent
+    /// partial pass of a prologue-less sum — the same accesses, the same split, a
+    /// different fold. That it was *authored* as an extrema pass is not a fact the
+    /// region carries: which occurrences a region claims is the compiler's subject
+    /// binding, and an intrinsic rule guessing intent from the read would have to
+    /// refuse the legal program this widening exists to admit.
+    ///
+    /// What still separates the two spellings is identity, asserted here beside
+    /// the admission so they can never be interchanged downstream.
     #[test]
-    fn a_partial_pass_that_reads_the_scores_and_sums_them_is_refused() {
+    fn an_extrema_partial_pass_respelled_as_a_sum_verifies_as_that_sum() {
         let mut summed = extrema_partial_builder(SPLIT);
         summed.numerical = Some(reassociating_numerical());
         let Some(ReductionTopology::MultiPass {
@@ -3608,22 +3675,21 @@ mod tests {
         else {
             panic!("the fixture schedules a multi-pass split")
         };
-        // Reassociation permitted, so the refusal cannot be the permission: the
-        // sum is refused because it reads the scores, not because it is a split.
+        // Reassociation permitted, because a split of a sum consumes it where a
+        // split of the extrema fold does not: without it the region would be
+        // refused for the permission and say nothing about the boundary role.
         *permits_reassociation = true;
-        summed.scalar_program = Some(ScalarProgram::StrictSerialSum {
-            axes: vec![Axis::new(1)],
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: 0x7fc0_0000,
-            empty_identity_bits: 0.0_f32.to_bits(),
-        });
-        assert_eq!(
-            summed.build().unwrap_err().diagnostics(),
-            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
-        );
+        summed.scalar_program = Some(bare_sum(vec![Axis::new(1)]));
+        let summed = summed
+            .build()
+            .expect("a bare sum folding the first input is a coherent partial pass");
 
-        // The control: the extrema program over the identical region verifies.
-        assert!(extrema_partial_builder(SPLIT).build().is_ok());
+        // The control: the extrema program over the identical region verifies,
+        // and the two are not one region under two names.
+        let extrema = extrema_partial_builder(SPLIT)
+            .build()
+            .expect("the extrema partial pass verifies");
+        assert_ne!(summed.canonical_identity(), extrema.canonical_identity());
     }
 
     /// A split extrema region shares identity with neither neighbour.
@@ -3919,6 +3985,154 @@ mod tests {
         assert_eq!(
             partial.requirements().permutation,
             NumericalPermission::Forbidden
+        );
+    }
+
+    /// The bare fold this family's fixtures declare, over one reduced axis.
+    fn bare_sum(axes: Vec<Axis>) -> ScalarProgram {
+        ScalarProgram::StrictSerialSum {
+            axes,
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        }
+    }
+
+    /// Rebinds a reduction fixture's contributor read to another boundary tensor.
+    ///
+    /// The access and its bounds proof move together because
+    /// [`verify_proof_records`] requires them to name one tensor: separating them
+    /// would report the proof reference and prove nothing about the boundary role
+    /// under test.
+    fn read_from(builder: &mut ScheduledRegionBuilder, tensor: TensorRole) {
+        builder.accesses[0].tensor = tensor;
+        builder.bounds_proofs[0].tensor = tensor;
+    }
+
+    /// The second declared input tensor, which no reduction family binds.
+    const SECOND_INPUT: TensorRole = TensorRole::Input {
+        ordinal: InputOrdinal::new(1),
+    };
+
+    /// A bare serial sum folds a declared input or a materialized domain.
+    ///
+    /// **The widening, and its exact width.** `ScalarProgram::StrictSerialSum`
+    /// carries no prologue, so it says how contributors combine and nothing about
+    /// where they live: `sum(x)` over the first input tensor and the same fold
+    /// over a prologue region's materialized result are one scalar program over
+    /// two tensors, and both verify. What the widening is *not* is "any tensor" —
+    /// a second declared input is refused, because a family reading one
+    /// contributor domain has no ordinal for it.
+    #[test]
+    fn a_bare_serial_sum_folds_a_declared_input_or_a_materialized_domain() {
+        assert!(
+            serial_reduction_builder(bare_sum(vec![Axis::new(1)]))
+                .build()
+                .is_ok(),
+            "a fold over the first declared input has no prologue region to read",
+        );
+
+        let mut materialized = serial_reduction_builder(bare_sum(vec![Axis::new(1)]));
+        read_from(&mut materialized, TensorRole::Intermediate);
+        assert!(
+            materialized.build().is_ok(),
+            "the prologue-carrying plan still folds the intermediate it staged",
+        );
+
+        let mut second = serial_reduction_builder(bare_sum(vec![Axis::new(1)]));
+        read_from(&mut second, SECOND_INPUT);
+        assert_eq!(
+            second.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "one contributor domain has no second input ordinal to bind",
+        );
+    }
+
+    /// A bare fold still proves its contributor access against its own reduction.
+    ///
+    /// The widening moved which *tensor* the read may bind and nothing else. The
+    /// declared reduction and the access relation still have to state the same
+    /// reduced axes, so a region folding a declared input over one axis while
+    /// addressing another is refused exactly as the intermediate-reading one always
+    /// was.
+    ///
+    /// The fold's own declaration moves here rather than the access's, because the
+    /// bounds proof refines the *access*: perturbing the access alone is caught one
+    /// authority earlier and would report the proof reference instead of the
+    /// disagreement under test.
+    #[test]
+    fn a_bare_fold_over_an_input_still_proves_its_contributor_access() {
+        let mut mismatched = serial_reduction_builder(bare_sum(vec![Axis::new(0)]));
+        let Some(ReductionTopology::Serial { axes, .. }) = mismatched
+            .schedule
+            .as_mut()
+            .map(|schedule| &mut schedule.reduction)
+        else {
+            panic!("the fixture schedules a serial reduction");
+        };
+        *axes = vec![Axis::new(0)];
+        assert_eq!(
+            mismatched.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a fold declaring one reduced axis while addressing another is not that fold",
+        );
+    }
+
+    /// A split's partial pass may fold a declared input; its final pass may not.
+    ///
+    /// **The asymmetry is the assertion.** The partial pass folds the region's
+    /// declared contributor domain, which lives wherever the plan put it. The final
+    /// pass folds values the partial pass *staged*, and those exist only because it
+    /// staged them — so a final pass claiming a declared input holds them describes
+    /// a handoff no dispatch performed.
+    #[test]
+    fn only_the_partial_pass_of_a_split_may_fold_a_declared_input() {
+        assert!(
+            partial_pass_builder(SPLIT).build().is_ok(),
+            "the intermediate-reading control must verify, or neither case below is evidence",
+        );
+        assert!(final_pass_builder(SPLIT).build().is_ok());
+
+        let mut partial = partial_pass_builder(SPLIT);
+        read_from(&mut partial, FIRST_INPUT);
+        assert!(
+            partial.build().is_ok(),
+            "a prologue-less fold's partial pass reads the input the fold folds",
+        );
+
+        let mut combine = final_pass_builder(SPLIT);
+        read_from(&mut combine, FIRST_INPUT);
+        assert_eq!(
+            combine.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "no declared input holds partials a dispatch staged",
+        );
+    }
+
+    /// A cooperative tile may fold a declared input, and only a declared one.
+    ///
+    /// The tile stages its partials in workgroup memory rather than in a boundary
+    /// tensor, so its single read is the declared contributor domain whatever the
+    /// plan staged — which is why it carries no pass distinction where the
+    /// multi-pass split has one.
+    #[test]
+    fn a_cooperative_tile_may_fold_a_declared_input() {
+        assert!(
+            cooperative_builder(cooperative_tile_fixture())
+                .build()
+                .is_ok(),
+            "the intermediate-reading control must verify, or neither case below is evidence",
+        );
+
+        let mut input = cooperative_builder(cooperative_tile_fixture());
+        read_from(&mut input, FIRST_INPUT);
+        assert!(input.build().is_ok());
+
+        let mut second = cooperative_builder(cooperative_tile_fixture());
+        read_from(&mut second, SECOND_INPUT);
+        assert_eq!(
+            second.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
         );
     }
 

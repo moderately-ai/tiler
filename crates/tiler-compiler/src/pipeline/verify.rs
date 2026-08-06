@@ -289,17 +289,27 @@ pub(super) fn verify_equivalence(
         // A whole-program strategy that carries no fused-numerics proof, because
         // there is no fusion to prove: its single region realizes one semantic
         // occurrence family directly rather than merging an elementwise prologue
-        // into a reduction. A reduced-elementwise request never reaches this arm
-        // — its only whole-program region is the fused one, which exists exactly
-        // when the affine equivalence proof does. The coverage check below is
-        // what stands in its place, and it is not weaker: it requires the one
-        // scheduled region to cover exactly the candidate's occurrences.
+        // into a reduction. The coverage check below is what stands in its place,
+        // and it is not weaker: it requires the one scheduled region to cover
+        // exactly the candidate's occurrences.
+        //
+        // **The condition is the prologue, not the family**, and the difference
+        // arrived with `admit-a-reduction-over-a-declared-input-tensor`. This arm
+        // used to exclude every reduced request, on the reasoning that a
+        // reduction's only whole-program region is the fused one and that region
+        // exists exactly when the affine equivalence proof does. `sum(x)` has no
+        // prologue at all: its whole-program region is the plain
+        // `ScalarProgram::StrictSerialSum` folding a declared input, it merges
+        // nothing, and there is no affine pair for a proof to be about — which is
+        // why `fused_prologue_constants` answers `None` for it. A fold that *does*
+        // carry a prologue still falls through to the proving arm below, because
+        // its whole-program region really is a fusion.
         (ProgramAlternativeKind::Fused, None)
-            if request
-                .normalized()
-                .outputs()
-                .iter()
-                .all(|output| output.try_serial_sum().is_none()) =>
+            if request.normalized().outputs().iter().all(|output| {
+                output
+                    .try_serial_sum()
+                    .is_none_or(|serial| serial.prologue.is_none())
+            }) =>
         {
             let candidate = formation.whole_program_candidate().ok_or({
                 CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
@@ -328,13 +338,37 @@ pub(super) fn verify_equivalence(
     }
 }
 
+/// Requires a whole-program plan's dispatches to cover its candidate exactly.
+///
+/// **Stated over the dispatches together rather than over one of them**, because
+/// a cover placing every operation in one region does not fix how many dispatches
+/// realize it. This used to require exactly one scheduled region, which was
+/// equivalent while every whole-program cover region was realized by a single
+/// kernel: a split reduction always covered two occurrences — a prologue and its
+/// fold — so its cover had two regions and the plan was classified `Materialized`
+/// before reaching here. `sum(x)` has one occurrence, so a two-dispatch split of it
+/// is a *whole-program* cover realized by a subprogram, and the old shape check
+/// rejected that as malformed compiler output.
+///
+/// What the obligation always was survives intact and is now written directly:
+/// the dispatches' claims *partition* the candidate's occurrences. One comparison
+/// rather than two checks, because
+/// [`crate::region::RegionCandidate::members`] is ascending and duplicate-free —
+/// so a sorted concatenation equals it exactly when every occurrence is claimed
+/// once. A stage claiming an occurrence twice, one claiming an occurrence outside
+/// the candidate, and a plan leaving one unclaimed all fail that comparison, so
+/// none of the three is an arm nothing could drive.
 fn verify_whole_program_schedule_coverage(
     alternative: &ProgramAlternative,
     candidate: &crate::region::RegionCandidate,
 ) -> Result<(), CompileError> {
-    if alternative.scheduled_regions.len() != 1
-        || alternative.scheduled_regions[0].semantic_members() != candidate.members()
-    {
+    let mut claimed: Vec<crate::region::SemanticMemberId> = alternative
+        .scheduled_regions
+        .iter()
+        .flat_map(|region| region.semantic_members().iter().copied())
+        .collect();
+    claimed.sort_unstable();
+    if claimed != candidate.members() {
         return Err(ProgramError::Structure {
             rule: "portfolio-candidate-schedule-binding",
         }

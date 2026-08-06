@@ -1020,8 +1020,8 @@ fn the_reduction_grammar_reaches_a_multi_entry_selected_plan() {
 /// A region the compiler does not recognize is refused with a diagnostic naming
 /// what a consumer would change, rather than with the capability rule alone.
 ///
-/// Both cases are semantically well-formed regions: each lowers to a verified
-/// public logical program, and each is refused only because *this build's*
+/// The refused case is a semantically well-formed region: it lowers to a verified
+/// public logical program, and it is refused only because *this build's*
 /// recognizer does not cover its whole-program shape. That is what makes the
 /// diagnostic the deliverable — the consumer did nothing wrong that a rule name
 /// like `input-arity` would tell them about.
@@ -1133,32 +1133,31 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
         &[("rows", 58)],
     );
 
-    // Two of the ticket's four awaiting shapes stopped waiting while this
-    // branch was in flight: the general program-shape recognizer landed on
-    // main, and a multi-input reduction and a deeper elementwise prologue are
-    // exactly what its occurrence walk admits. They compile now — with no
-    // grammar change, which is what this module's refusal rendering was
-    // designed for — so they moved from this refusal population to the
-    // positive assertion below, and only the two walls the recognizer still
-    // refuses by name remain here: a reduction directly over a declared input
-    // (`reduction-prologue`), and a reduction whose prologue meets a
+    // Three of the ticket's four awaiting shapes stopped waiting while this
+    // module stood still, each because a compiler widening landed rather than
+    // because this grammar changed — which is what this module's refusal
+    // rendering was designed for. The general program-shape recognizer admitted
+    // a multi-input reduction and a deeper elementwise prologue, and
+    // `admit-a-reduction-over-a-declared-input-tensor` admitted the bare
+    // reduction by widening the schedule verifier's contributor arm to the
+    // fold's declared contributor domain. All three moved from the refusal
+    // population to the positive assertion below, leaving the one wall the
+    // recognizer still names: a reduction whose prologue meets a
     // non-elementwise producer (`operation-set`).
     for (label, region) in [
         ("a two-input reduction", &multi_input),
         ("a deeper pointwise chain under a reduction", &deeper),
+        ("a bare reduction over a declared input", &bare),
     ] {
         assert!(
             plans_for_the_bound_declaration(region),
             "{label} must compile under the general recognizer, or this population is wrong",
         );
     }
-    let cases = [
-        ("a bare reduction", bare),
-        ("a reduction of a reduction", nested),
-    ];
+    let cases = [("a reduction of a reduction", nested)];
     assert_eq!(
         cases.len(),
-        2,
+        1,
         "the population is every grammar-expressible shape this build does not recognize that the \
          ticket names, counted",
     );
