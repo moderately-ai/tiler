@@ -2494,13 +2494,12 @@ fn every_cover_region_receives_a_proposal_or_a_typed_decline() {
     );
 }
 
-/// A registered staged family's stages are both spelled by scheduled regions,
-/// and the one wall left is the kernel program's own.
+/// A registered staged family compiles end to end and computes the right value.
 ///
 /// **The program is `rms_norm(value, weight) * value`**: a registered elementary
-/// family as a program stage a later elementwise pass consumes. Three facts are
-/// measured, and the third is what
-/// [`admit-a-scheduled-region-for-a-staged-elementary-family`] moved.
+/// family as a program stage a later elementwise pass consumes. Four facts are
+/// measured, and the last two are what
+/// [`account-for-a-staged-realization-stage-in-the-kernel-program`] moved.
 ///
 /// *It is recognized and its own lowering runs.* The occurrence resolves its
 /// index-access capability and `refine_index_region` proves
@@ -2508,53 +2507,88 @@ fn every_cover_region_receives_a_proposal_or_a_typed_decline() {
 /// realization handing one value on.
 ///
 /// *Both stages are spelled.* The producing stage is a
-/// [`ScalarProgram::SquaredSerialSumThenEpilogue`] region over the reduced
-/// domain, the consuming stage a pointwise pass reading the handed value at its
-/// kept coordinates, and both are answered with an implementation — so
-/// `region-staged-family-unspellable` no longer appears anywhere in the trace.
-/// The only regions still declining are the two that group a stage of the
-/// normalization with the consuming multiply, which no recognized partition
-/// owns.
+/// `ScalarProgram::SquaredSerialSumThenEpilogue` region over the reduced domain,
+/// the consuming stage a pointwise pass reading the handed value at its kept
+/// coordinates, and both are answered with an implementation — so
+/// `region-staged-family-unspellable` no longer appears on either of them. The
+/// only regions still declining are the one carrying both stages and the two
+/// grouping a stage of the normalization with the consuming multiply, which no
+/// recognized partition owns.
 ///
-/// *The refusal that remains belongs to program scope, not to the region
-/// vocabulary.* A complete plan is now selected and assembled, and the assembler
-/// refuses it by name: the consuming stage covers no occurrence's *first*
-/// attribution atom, and `tiler_ir::program` admits exactly two accounts for such
-/// a dispatch — a declared split's final pass and a declared publishing copy's
-/// publisher. A staged realization's later stage is a third, and no declaration
-/// states it. The class is a **missing compilation capability** naming the
-/// region, which is the honest one: the plan is valid and its cover is a verified
-/// authority; what is absent is a declaration this assembler cannot make.
-/// [`account-for-a-staged-realization-stage-in-the-kernel-program`] owns it.
+/// *The program assembles.* The consuming stage covers no occurrence's *first*
+/// attribution atom, and program scope admits such a dispatch only under a
+/// declaration. [`tiler_ir::program::StagedRealization`] is that declaration and
+/// the assembler emits one: the producer, the consumer, the handed `[2]` value,
+/// and the normalization occurrence the two jointly realize. This is where the
+/// compile used to stop, as `program-assembly/realization-stage-unaccounted`.
 ///
-/// The check that can say no: reverting `spell_staged` to answer
+/// *And the three dispatched kernels compute the normalization, bit for bit.*
+/// The program's own stages are interpreted in the program's own execution
+/// order, each reading what an earlier stage wrote, and the published output is
+/// compared against `tiler-reference`'s evaluation of the same semantic program.
+/// It is bit-exact rather than close: the reference divides by the extent rather
+/// than by a reciprocal and certifies its reciprocal square root against an
+/// exact rational enclosure, so a spelling that rounded a different number of
+/// times disagrees in bits.
+///
+/// The checks that can say no: reverting `spell_staged` to answer
 /// `StagedFamilyUnspellable` for both stages puts the three walls back and no
-/// plan completes, so both the wall map and the failure class below fail.
+/// plan completes; dropping the `StagedRealization` the assembler pushes returns
+/// `UncoveringStage` from whole-program verification and no program is built;
+/// and exchanging the pass expression's two multiplies — `x * (w * r)` for
+/// `w * (x * r)` — is one function in exact arithmetic and two in binary32,
+/// which the bit comparison catches on this fixture.
 ///
-/// [`admit-a-scheduled-region-for-a-staged-elementary-family`]: ../../../tickets/admit-a-scheduled-region-for-a-staged-elementary-family.md
 /// [`account-for-a-staged-realization-stage-in-the-kernel-program`]: ../../../tickets/account-for-a-staged-realization-stage-in-the-kernel-program.md
 #[test]
-fn a_staged_family_program_spells_both_stages_and_names_the_program_scope_wall() {
+fn a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit() {
     let semantic = staged_family_program();
-    // A missing *capability* is a property of the program and this compiler
-    // rather than of one target, so it reaches the caller rather than sitting in
-    // a target slot: `compile_candidate_target` retains only a `NoFeasiblePlan`
-    // as a candidate-local failure. The trace travels with it either way.
-    let error = compile(CompilationRequest::governed(&semantic))
-        .expect_err("no program-scope account admits the consuming stage");
-    let CompileError::Explained { source, explain } = &error else {
-        panic!("an explained refusal retains its trace, observed {error:?}");
-    };
-    assert!(
-        matches!(
-            source.as_ref(),
-            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-                phase: "program-assembly",
-                rule: "realization-stage-unaccounted",
-            })
-        ),
-        "observed {source:?}",
+    let product =
+        compile(CompilationRequest::governed(&semantic)).expect("the staged program compiles");
+    let target = product.targets[0]
+        .compiled()
+        .expect("the governed target compiles");
+    let explain = &target.explain;
+    let selected = target
+        .portfolio
+        .alternatives
+        .iter()
+        .find(|alternative| {
+            alternative.stable_id == target.portfolio.selection.selected_alternative_id
+        })
+        .expect("the portfolio's selection names one of its alternatives");
+    let core = selected.program.core();
+
+    // Three dispatches: the fold over the reduced domain, the pass that reads
+    // its handed value, and the multiply that consumes the normalization.
+    assert_eq!(core.stages().len(), 3);
+    // The declaration that accounts for the middle one, and the exact facts it
+    // states. The handed value is the fold's `[2]` result — one element per
+    // folded row — and its extent deliberately differs from the consumer's,
+    // which is what separates this declaration from a publishing copy.
+    let declarations: Vec<_> = core.staged_realizations().collect();
+    assert_eq!(declarations.len(), 1);
+    let realization = declarations[0];
+    assert_eq!(realization.handed().shape(), &Shape::from_dims([2]));
+    assert_eq!(realization.handed().role(), ValueRole::Temporary);
+    assert_eq!(
+        Some(realization.producer()),
+        realization.handed().definition(),
     );
+    assert_ne!(realization.producer(), realization.consumer());
+    // The occurrence it continues is the one the producer covers, and the
+    // consumer covers nothing: coverage is an obligation of the occurrence and
+    // is discharged once, by the stage that began the realization.
+    assert_eq!(
+        realization
+            .producer()
+            .coverage()
+            .iter()
+            .map(tiler_ir::program::CoveredOccurrence::occurrence)
+            .collect::<Vec<_>>(),
+        vec![realization.occurrence()],
+    );
+    assert!(realization.consumer().coverage().is_empty());
 
     // The family's own lowering ran, and the realization it proved is staged.
     let stages = explain
@@ -2616,6 +2650,103 @@ fn a_staged_family_program_spells_both_stages_and_names_the_program_scope_wall()
         3,
         "three of the six candidates are regions of the staged occurrence alone",
     );
+
+    // The measurement the program exists for. The inputs are chosen so every
+    // rounding is observable: no row's sum of squares is a power of two, so
+    // `a / N + eps` is inexact and its reciprocal square root is not
+    // representable, and the two multiplies do not associate.
+    let shape = Shape::from_dims([2, 2]);
+    let value: Vec<f32> = vec![1.0, 3.0, 7.0, 0.5];
+    let weight: Vec<f32> = vec![0.25, 11.0, 0.125, 5.0];
+    let published = interpret_program(core, &[("value", &value), ("weight", &weight)]);
+    assert_eq!(published.len(), 1);
+
+    let value_key = InputKey::new("value").unwrap();
+    let weight_key = InputKey::new("weight").unwrap();
+    let value_tensor = f32_tensor(shape.clone(), &value);
+    let weight_tensor = f32_tensor(shape, &weight);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(
+            &semantic,
+            &[
+                InputBinding::new(&value_key, &value_tensor),
+                InputBinding::new(&weight_key, &weight_tensor),
+            ],
+        )
+        .unwrap();
+    assert_eq!(bits_of(&published[0]), tensor_bits(&expected[0]));
+}
+
+/// Interprets a whole verified kernel program, in the program's own order.
+///
+/// **Driven by the program rather than by the caller.** Which buffer each
+/// dispatch reads, which value it writes, and what order the dispatches run in
+/// are all read off the verified program: the stages come from
+/// [`VerifiedKernelProgram::execution_order`], each stage's payloads from its
+/// own accesses in its own kernel's buffer order, and a read resolves to
+/// whatever an earlier stage left in that value. A test that bound the buffers
+/// itself would be asserting its own plumbing rather than the program's.
+///
+/// `bound` names one payload per declared program input, by interface key. The
+/// answer is one payload per named program output, in the program's published
+/// interface order.
+///
+/// [`VerifiedKernelProgram::execution_order`]: tiler_ir::program::VerifiedKernelProgram::execution_order
+fn interpret_program(
+    program: &tiler_ir::program::VerifiedKernelProgram,
+    bound: &[(&str, &[f32])],
+) -> Vec<Vec<f32>> {
+    use tiler_ir::program::{MaterializedOrigin, StageAccessMode};
+
+    let values: Vec<_> = program.values().collect();
+    let position = |target: tiler_ir::program::MaterializedValueRef<'_>| {
+        values
+            .iter()
+            .position(|value| *value == target)
+            .expect("every access addresses a value the program declares")
+    };
+    let mut contents: Vec<Option<Vec<f32>>> = vec![None; values.len()];
+    for (slot, value) in values.iter().enumerate() {
+        if let MaterializedOrigin::ProgramInput { key } = value.origin() {
+            let payload = bound
+                .iter()
+                .find(|(name, _)| *name == key.as_str())
+                .unwrap_or_else(|| panic!("no payload bound for program input {key:?}"));
+            contents[slot] = Some(payload.1.to_vec());
+        }
+    }
+    for stage in program.execution_order() {
+        let mut reads: Vec<Vec<f32>> = Vec::new();
+        let mut written = None;
+        for access in stage.accesses() {
+            let slot = position(access.view().value());
+            match access.mode() {
+                StageAccessMode::Read => reads.push(
+                    contents[slot]
+                        .clone()
+                        .expect("a stage reads a value an earlier stage wrote"),
+                ),
+                StageAccessMode::Write => {
+                    assert!(
+                        written.replace(slot).is_none(),
+                        "a verified stage has exactly one owning write",
+                    );
+                }
+            }
+        }
+        let payloads: Vec<&[f32]> = reads.iter().map(Vec::as_slice).collect();
+        let produced = interpret_fused_inputs(stage.kernel(), &payloads);
+        contents[written.expect("a verified stage declares its owning write")] = Some(produced);
+    }
+    program
+        .outputs()
+        .map(|output| {
+            contents[position(output.value())]
+                .clone()
+                .expect("a published output is written by some stage")
+        })
+        .collect()
 }
 
 /// The two staged regions compute the normalization, bit for bit.
@@ -2638,9 +2769,17 @@ fn a_staged_family_program_spells_both_stages_and_names_the_program_scope_wall()
 /// feasibility. So this measures what the compiler would dispatch rather than a
 /// hand-built region that happens to agree.
 ///
-/// It stops at the regions because the program they belong to does not assemble:
-/// [`a_staged_family_program_spells_both_stages_and_names_the_program_scope_wall`]
-/// states and owns that boundary.
+/// It stops at the regions deliberately, and is kept beside the end-to-end
+/// compile rather than replaced by it, because the two fail for different
+/// reasons. This one fails when the *vocabulary* computes the wrong function,
+/// against regions built directly from the request; the whole-program
+/// measurement in
+/// [`a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit`]
+/// additionally fails when recognition, formation, cover selection, assembly, or
+/// the program-scope declaration goes wrong, and it cannot say which. A
+/// regression that reached only the region spelling would leave the compile
+/// green here and red there, and one that broke only the assembler the other way
+/// round.
 ///
 /// The check that can say no: exchanging the pass expression's two multiplies —
 /// `x * (w * r)` for `w * (x * r)` — is one function in exact arithmetic and two
@@ -6629,6 +6768,7 @@ fn materialized_assembly(
         ],
         Vec::new(),
         Vec::new(),
+        Vec::new(),
         vec![(subject.output_key.clone(), 1)],
     )
     .expect("the two-region assembly is well formed")
@@ -6692,6 +6832,7 @@ fn split_assembly(
             result: 2,
             partition,
         }],
+        Vec::new(),
         Vec::new(),
         vec![(subject.output_key.clone(), 2)],
     )

@@ -1,11 +1,11 @@
 ---
 id: account-for-a-staged-realization-stage-in-the-kernel-program
 title: Account for a staged realization stage in the kernel program
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [admit-a-scheduled-region-for-a-staged-elementary-family, admit-the-registered-elementary-families-as-recognizable-program-stages, accept-the-root-mean-square-scale-realization-law]
-scopes: [implementation/ir, implementation/compiler]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts, implementation/build, contracts/decisions, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, program, identity-domain]
@@ -46,3 +46,66 @@ The scheduled-region vocabulary (landed). A staged family that *reads* a materia
 ## Closes when
 
 A program with a registered elementary family as a middle stage compiles through the ordinary path and agrees with `tiler-reference` bit for bit, the program-scope declaration is a labelled draft with an acceptance node, the domain step is recorded with its full reasoning, and every moved identity pin is recomputed on the landing tree and enumerated.
+
+## Outcome — 2026-08-06
+
+**A program whose middle stage is a registered elementary family compiles end to end and agrees with `tiler-reference` bit for bit.** `pipeline::tests::a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit` compiles `rms_norm(value, weight) * value` over `[2, 2]` through `compile()`, reads the selected alternative's verified kernel program, dispatches its three kernels through the structured-kernel interpreter in the program's *own* execution order — each stage's payloads taken from its own accesses in its own kernel's buffer order, each read resolving to what an earlier stage wrote — and compares the published output against `ReferenceEvaluator::standard()`'s evaluation of the same semantic program. Equal in bits. The refusal it replaces was `program-assembly/realization-stage-unaccounted`, and that rule is removed rather than left unreachable. `the_staged_regions_compute_the_normalization_bit_for_bit` is kept beside it, with a doc-comment stating why: the two fail for different reasons, and one that reached only the region spelling would leave the compile green there and red here.
+
+### The declaration
+
+**Fact — `tiler_ir::program::StagedRealization`, a labelled draft.** Four fields: `producer: StageId`, `consumer: StageId`, `handed: MaterializedValueId`, `occurrence: SemanticOccurrence`. Builder route `push_staged_realization`, view `StagedRealizationRef` with the four accessors, `VerifiedKernelProgram::staged_realizations()`, `MAX_PROGRAM_STAGED_REALIZATIONS = 4_096`, `ProgramLimitKind::StagedRealizations`. Insertion refuses `SelfDependency` when one stage is named as both halves, `CoverageOutOfRange` for an occurrence outside the bound subject, and the new `DuplicateStagedRealization` when one *(consumer, occurrence)* pair is declared twice — the pair rather than the stage, because one fused dispatch may legitimately continue several occurrences' realizations at once.
+
+**Fact — four verification obligations, in `verify_staged_realizations`.** Three per row: the handed value's unique definer is the named producer (`HandedValueNotInitializedByProducer`), the named consumer reads it (`HandedValueNotReadByConsumer`), and it is a `ValueRole::Temporary` (`HandedValueNotMaterialized`). One over the chain: the declarations naming one occurrence form an unbroken path from the stage that *covers* that occurrence, with no fork, no loop, and no row left off the path (`StagedRealizationChainBroken`). The chain rule is the one `crate::region::chain_realizes_subject` states for the compiler over stage-carrying attribution atoms; program scope has no stage ordinals to sort — `SemanticOccurrence` is a bare ordinal — so the same rule is decided over the declared edges instead, and the compiler runs `chain_realizes_subject` itself before deriving any declaration rather than re-deriving the rule.
+
+**Fact — the uncovering-stage check is hoisted, not widened in place.** `verify_stage_accounts` now owns it, called at exactly the phase position the loop occupied inside `verify_partial_reductions`, and names three accounts: a split's combiner, a copy's publisher, and a staged realization's consumer. Diagnostic order and spelling are unchanged; `an_undeclared_uncovering_stage_still_refuses_by_name` still holds.
+
+**Unsupported case, stated rather than hidden.** `HandedValueNotMaterialized` is unreachable and is stated for the reason `PartialNotMaterialized` is. No program can present a handed value that is neither a temporary nor an externally bound input: an input is refused a writer by `ExternalValueWritten` two phases earlier, and `ValueRole::Output` fills only `TensorRole::Output`, which is a write — so no stage can *read* an output-role value and the read obligation above it always fires first. The other three obligations each have a driving case below.
+
+### The identity step, and every pin it moved
+
+**Fact — `PROGRAM_DOMAIN` steps `tiler.kernel-program.v10` → `v11`, unconditional section, on `v10`'s own recorded reasoning.** `crates/tiler-ir/src/program/model.rs` carries the step's paragraph. A fourth program-scope declaration section written unconditionally, so a program with no staged chain grows a second eight-byte zero count and every program's bytes move; a cache or artifact holding a `v10` identity must miss rather than match. The appended-conditional alternative is rejected on the grammar-determinacy argument `v10` recorded, and with more force rather than less: two adjacent optional sections would make the grammar's shape depend on the content before both of them. **Not appends-only.**
+
+**Fact — the complete moved-pin enumeration is two values, both in `crates/tiler-build/src/metal_plan.rs`, both recomputed from observed values on this tree.**
+
+- standard Metal artifact identity: `e3ac0aee9e9ce35b23edc2ee49ce7fdb4b40cabbb34774b782b7325d4455fa34` → `e57b8852b4a9172057dba08f4758574b96fe140a0f2d974390e890dc7425c59d`
+- standard Metal expansion-cache subject: `14cbccad74c0d2f1c4a05f295a6b04e87aa45aa13be86460e810e76ff478a263` → `f107cd81f779decff8c2bb15fd61881a2e79ad004457b042fcbfdea25ad97c88`
+
+The test's ledger carries a new paragraph naming the step, and the superseded `v10` pair is recorded in it for a reader reconciling an older record. **The list is complete by the whole gate rather than by a grep**: `make full` is green with no other pinned value edited anywhere in the workspace — no cache subject, no explain golden, no prototype pin, and no artifact or manifest constant moved. The reason is structural: the artifact identity folds the kernel-program identity as one framed section and projects a program's interface, bindings, entries, execution order, and dependency edges, never its declaration sections, so exactly the two values that fold a program identity move.
+
+**Fact — the manifest schema does not step, and the derivation is the schema's own admission rule.** `MANIFEST_SCHEMA` holds at `14.0` and `ARTIFACT_DOMAIN` at `tiler.artifact-program.v15`; the artifact stage key holds at `tiler.artifact-program.stage.v3`. A `14.0` reader *can* frame an artifact carrying a `v11` program: every field keeps its width, its position, and its count, because no artifact record carries a program's declaration sections at all — `tiler-artifact` contains no reference to `PartialReduction` or `PublishingCopy` either, and none to `StagedRealization` now. What moves is the content of a folded value, which is content moving through a fold rather than a grammar changing, and the `minor <= implemented` admission rule neither loses framing nor names such an artifact wrongly. **No artifact codec field was added**, because an artifact program does not carry the declaration. The derivation is recorded in `docs/artifact-abi.md`'s new step paragraph and in the `metal_plan.rs` pin ledger, following the form of the `14.0` statement rather than being added beside the constant, which is where every prior *non*-step of that constant is recorded.
+
+**Documents moved with it:** `docs/artifact-abi.md` (the current-ledger sentence, the ABI-uses sentence, and a new two-paragraph step record carrying the manifest non-step derivation), `docs/ir.md` (a new Proposal paragraph for the labelled-draft surface), `docs/decisions/0072`'s implementation ledger, `crates/tiler-ir/src/program/mod.rs`, `crates/tiler-artifact/src/program/mod.rs`, and `crates/tiler-artifact/src/program/builder.rs`.
+
+### The compiler side
+
+**Fact — `CoverAssembly::from_plan` emits the declaration where it refused.** The `realization-stage-unaccounted` refusal and its rule are gone. In their place: the whole assembly's dispatch claims are proven to realize the program's occurrences by `chain_realizes_subject`, and then one `AssemblyStagedRealization` is derived per non-first attribution atom a dispatch claims — skipping a split combiner and a copy publisher, which have their own declarations, and skipping a dispatch that claims the atom's predecessor itself, which needs no account because program-scope coverage already names it. The producer is the dispatch claiming the predecessor atom; the handed value is the one internal value the consumer reads that the producer's owning write defines. `build_cover_core` projects the planner's `SemanticMemberId` onto the IR's `SemanticOccurrence` through the same `OccurrenceLowering` that mints the stage's coverage records, so a declaration cannot continue an occurrence some other receipt is about.
+
+**Measurement boundary.** Two refusals in that derivation are stated rather than live. `dispatch-chain-unrealizing` is unreachable while `verify_cover` proves the placed regions' atoms partition the graph and every dispatch claims a subset of its own region's atoms; `realization-stage-unbegun` is unreachable while the chain proof holds. Both are recorded as conditions rather than consequences at their sites, and both keep the uniqueness the derivation rests on a proved fact instead of an assumption.
+
+### Tests, each watched failing
+
+Six in `crates/tiler-ir/src/program/tests.rs` and the rewritten end-to-end compile:
+
+- `an_uncovering_stage_is_admitted_as_a_declared_staged_realizations_consumer` — both directions off one coverage shape. **Perturbation:** deleting the third arm of `verify_stage_accounts` fails it (and the row-obligation test) with `UncoveringStage`.
+- `a_declared_staged_realization_changes_program_identity` — two programs alike in every stage, value, and edge, differing only by the declaration. **Perturbation:** dropping the staged section from `encode_identity` fails it.
+- `the_staged_realization_row_obligations_can_each_say_no` — `HandedValueNotInitializedByProducer` and `HandedValueNotReadByConsumer`, each one named entity away from a well-formed row.
+- `a_staged_realization_chain_must_start_where_its_occurrence_is_covered` — a positive control plus two refusals whose every named entity is right. **Perturbation:** deleting the `walked != chain.len()` comparison fails it.
+- `a_malformed_staged_realization_declaration_is_rejected_at_insertion` — `SelfDependency`, `CoverageOutOfRange`, one consumer legitimately continuing two occurrences, then `DuplicateStagedRealization`.
+- `the_program_domain_separator_is_what_distinguishes_the_reinterpreting_steps` — extended to `v11`, with `v10` added to the historical loop.
+- `a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit`. **Perturbation:** dropping the compiler's `push_staged_realization` call fails it with `InvalidCompilerOutput(Program(CoreVerification(UncoveringStage)))`.
+
+### Carried, and owed
+
+**Two acceptance doc-comment rewrites landed**, both recording Tom's 2026-08-06 acceptances at the live session's decision round: `ScalarProgram::SquaredSerialSumThenEpilogue` gains an accepted-public-surface paragraph citing `accept-the-fold-with-epilogue-scheduled-region` (it carried no draft label to rewrite, so the paragraph is added in the sibling's form), and `FrozenIndexRealizationLawRegistry::family_realization_law`'s "**Labelled draft.**" paragraph is rewritten to the accepted form citing `accept-the-registered-family-realization-law-query`, matching `family_realizes_region_sequence` above it verbatim in shape.
+
+**Acceptance node filed:** [`accept-the-staged-realization-program-declaration`](accept-the-staged-realization-program-declaration.md), `awaiting-decision`, carrying the exact surface, five choices worth objecting to, the identity step, and the evidence.
+
+**Scopes added and why:** `implementation/artifact` (three ledger sentences in `tiler-artifact` doc comments), `contracts/artifacts` (`docs/artifact-abi.md`), `implementation/build` (the two moved pins and their ledger in `tiler-build`), `contracts/decisions` (ADR 0072's implementation ledger), `contracts/foundation` (`docs/ir.md`). `contracts/navigation` was deliberately **not** taken; the two sentences it owes are below.
+
+**Owed to the coordinator — `docs/status.md`, line 20.** The row is already stale at `v9` against a source that read `v10` before this branch. Replace `verified kernel program v9` with `verified kernel program v11`, and extend the correction clause to read: "the program moved through canonical stage coverage, published output order, binding each covered occurrence to the reached-only refinement evidence proving it — which stepped the artifact stage key with it while leaving the artifact domain and manifest schema where they were — folding the declared publishing-copy contracts, and, most recently, folding the declared staged-realization contracts, neither of which stepped anything below or beside the program domain."
+
+**Owed to the coordinator — `docs/roadmap.md`, the `Normalization: tiler::rms-norm-f32@1` row.** Its closing claim is now false. Replace "**What refuses now is program assembly**: a staged realization's later stage covers no occurrence's *first* attribution atom, and `tiler_ir::program` admits exactly two accounts for such a dispatch — a split's combiner and a publishing copy's publisher — of which it is neither; a third account steps `tiler.kernel-program.v10` non-appendably, so the assembler refuses by name (`realization-stage-unaccounted`) and [`account-for-a-staged-realization-stage-in-the-kernel-program`](../tickets/account-for-a-staged-realization-stage-in-the-kernel-program.md) owns the declaration." with: "**Superseded 2026-08-06: nothing refuses.** [`account-for-a-staged-realization-stage-in-the-kernel-program`](../tickets/account-for-a-staged-realization-stage-in-the-kernel-program.md) landed the third program-scope account — `tiler_ir::program::StagedRealization`, naming the producing stage, the consuming stage, the handed value, and the occurrence they jointly realize — which stepped `tiler.kernel-program.v10` to `v11` non-appendably and moved the standard Metal path's two recorded identities. `pipeline::tests::a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit` compiles this family through `compile()`, dispatches its three kernels through the structured-kernel interpreter in the program's own execution order, and agrees with `tiler-reference` bit for bit." The rung judgement immediately after it also needs remaking: the stated R5 reason was that "no program of this family assembles", and one now does — the remaining R6 gap is a backend emission of a compiler-derived region of this family, which the assembly wall was previously hiding.
+
+### Checks
+
+`make fmt`, `cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings` (crates; `prototypes/` excluded per the Makefile), `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`, `cargo nextest run --workspace` — 2884 passed, 7 skipped — `cargo test --workspace --doc`, the release numerical run, `ticketsplease lint`, and `shellcheck`. All of it through `make full`, green on this branch.

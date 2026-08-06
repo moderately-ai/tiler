@@ -1224,6 +1224,18 @@ mod tests {
     /// each framing the complete stepped program identity with its own
     /// separator.
     ///
+    /// **And both moved again at `tiler.kernel-program.v11`, which folds a
+    /// program's declared staged-realization contracts.** This program declares
+    /// none either, and the shape of the move is exactly the v10 one: a fourth
+    /// program-scope declaration section written unconditionally, so a program
+    /// with no staged chain grows a second eight-byte zero count and every
+    /// program's bytes move. Nothing below or beside the program domain steps,
+    /// and for the reasons the v10 paragraph records: a staged realization is a
+    /// program-scope declaration and no artifact entry writes that subject
+    /// itself, so `tiler.artifact-program.stage.v3`,
+    /// `tiler.artifact-program.v15`, and manifest schema 14.0 all hold, each
+    /// framing the complete stepped program identity with its own separator.
+    ///
     /// The values are recorded rather than written in because a sibling branch
     /// may move the same two pins from its own base, and two branch-local
     /// rebaselines cannot compose: a pinned identity is recomputed on the tree
@@ -1231,10 +1243,13 @@ mod tests {
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
     /// sibling that depends on this row for exactly that reason. The constants
     /// below were recomputed on 2026-08-06, on the tree carrying the
-    /// kernel-program v10 step described above over the base that already held
-    /// the v9 step, the v8 step, and the measured grid-axis row. Superseded
-    /// values, for a reader reconciling an older record:
-    /// v9, which is what these constants held immediately before the v10 step,
+    /// kernel-program v11 step described above over the base that already held
+    /// the v10 step, the v9 step, the v8 step, and the measured grid-axis row.
+    /// Superseded values, for a reader reconciling an older record:
+    /// v10, which is what these constants held immediately before the v11 step,
+    /// `e3ac0aee9e9ce35b23edc2ee49ce7fdb4b40cabbb34774b782b7325d4455fa34` /
+    /// `14cbccad74c0d2f1c4a05f295a6b04e87aa45aa13be86460e810e76ff478a263`;
+    /// v9, which is what they held immediately before the v10 step,
     /// `d22c0d11f8486a15b3df7651feee543eb5d0f8d398a7eb9047ae45b15f9ce832` /
     /// `6dee9552e5fb3c0cefe12cacab8d15153fd0909923bf7c93f2d5f92c5d679d68`;
     /// v8-and-grid-row, which is what they held immediately before
@@ -1265,9 +1280,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "e3ac0aee9e9ce35b23edc2ee49ce7fdb4b40cabbb34774b782b7325d4455fa34";
+            "e57b8852b4a9172057dba08f4758574b96fe140a0f2d974390e890dc7425c59d";
         const CACHE_SUBJECT: &str =
-            "14cbccad74c0d2f1c4a05f295a6b04e87aa45aa13be86460e810e76ff478a263";
+            "f107cd81f779decff8c2bb15fd61881a2e79ad004457b042fcbfdea25ad97c88";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

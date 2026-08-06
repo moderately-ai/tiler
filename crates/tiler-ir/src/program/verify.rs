@@ -65,12 +65,18 @@ pub(super) fn verify_program(
     // After the dependency phase, so a split whose passes are unordered reports
     // the missing edge rather than the split, and before storage, so a split
     // that stages its partials in an aliasable place is named as a split.
+    verify_stage_accounts(data)?;
     verify_partial_reductions(data, &accesses, &definitions)?;
     // After the split phase, so a program declaring both accounts for one stage
     // reports the split obligation it names rather than the copy obligation it
     // does not, and before the output phase, so a copy publishing a temporary is
     // named as a copy rather than as an unbound output value.
     verify_publishing_copies(data, &accesses, &definitions)?;
+    // Last of the three declaration phases, on the same principle: a program
+    // declaring a staged realization *and* a split or a copy for one stage
+    // reports the older obligation, which is the one whose other half the
+    // program also names.
+    verify_staged_realizations(data, &accesses, &definitions)?;
 
     verify_usage(data, &accesses)?;
     verify_storage(data)?;
@@ -389,6 +395,42 @@ fn verify_dependencies(
     Ok(())
 }
 
+/// Proves every dispatch computing no operation of the graph has an account.
+///
+/// This profile admits exactly three accounts, and all three are declarations:
+/// the final pass of a declared split, whose partial pass already claims the
+/// reduction both of them realize; the publisher of a declared publishing copy,
+/// whose source stage already claims the occurrences that computed the value
+/// being published; and the consumer of a declared staged realization, whose
+/// producer already claims the occurrence the chain continues. No arm relaxes
+/// the rule — an undeclared uncovering stage is still refused, which is what
+/// `an_undeclared_uncovering_stage_still_refuses_by_name` holds.
+///
+/// It is stated here rather than inside any one declaration's phase because it
+/// is an obligation of the *stage*: each declaration proves its own facts, and
+/// this proves that nothing was left with no declaration at all.
+fn verify_stage_accounts(data: &KernelProgramData) -> Result<(), KernelProgramDiagnostic> {
+    for (index, stage) in data.stages.iter().enumerate() {
+        if stage.coverage.is_empty()
+            && !data
+                .partial_reductions
+                .iter()
+                .any(|split| split.combiner == ordinal(index))
+            && !data
+                .publishing_copies
+                .iter()
+                .any(|copy| copy.publisher == ordinal(index))
+            && !data
+                .staged_realizations
+                .iter()
+                .any(|realization| realization.consumer == ordinal(index))
+        {
+            return Err(KernelProgramDiagnostic::UncoveringStage);
+        }
+    }
+    Ok(())
+}
+
 /// Proves every declared split reduction is one the program actually realizes.
 ///
 /// The obligations here are exactly the ones a single region cannot see. That
@@ -404,28 +446,6 @@ fn verify_partial_reductions(
     accesses: &[Vec<ValueAccess>],
     definitions: &[Option<ValueDefinition>],
 ) -> Result<(), KernelProgramDiagnostic> {
-    // A dispatch that computes no operation of the bound graph has to be
-    // accounted for. This profile admits exactly two accounts, and both are
-    // declarations: the final pass of a declared split, whose partial pass
-    // already claims the reduction both of them realize, and the publisher of a
-    // declared publishing copy, whose source stage already claims the
-    // occurrences that computed the value being published. Neither arm relaxes
-    // the rule — an undeclared uncovering stage is still refused, which is what
-    // `an_undeclared_uncovering_stage_still_refuses_by_name` holds.
-    for (index, stage) in data.stages.iter().enumerate() {
-        if stage.coverage.is_empty()
-            && !data
-                .partial_reductions
-                .iter()
-                .any(|split| split.combiner == ordinal(index))
-            && !data
-                .publishing_copies
-                .iter()
-                .any(|copy| copy.publisher == ordinal(index))
-        {
-            return Err(KernelProgramDiagnostic::UncoveringStage);
-        }
-    }
     for split in &data.partial_reductions {
         let partial = position(split.partial);
         let result = position(split.result);
@@ -523,6 +543,106 @@ fn verify_publishing_copies(
         let publication = data.values[published].shape.element_count();
         if copied.is_none() || copied != publication {
             return Err(KernelProgramDiagnostic::PublishedCopyExtentMismatch);
+        }
+    }
+    Ok(())
+}
+
+/// Proves every declared staged realization is one the program actually realizes.
+///
+/// Three of the obligations are the per-declaration ones no single stage can
+/// see, in the shape the two sibling declarations state theirs: the handed
+/// value's unique definer is the named producer, the named consumer reads it —
+/// for which the dependency phase already required a data edge from the definer,
+/// which is the visibility transition across the dispatch boundary — and the
+/// value is a [`ValueRole::Temporary`], so a realization does not hand its
+/// intermediate through storage the caller owns.
+///
+/// The fourth is the one no *declaration* can see either, and it is why this
+/// walks the chain instead of checking each row: a realization's stages run in
+/// order and each runs once. The declarations naming one occurrence must
+/// therefore form an unbroken path from the stage that **covers** it — the stage
+/// that began the realization, which whole-program coverage already proved
+/// unique — through one consumer at a time. A chain rooted anywhere else, a fork
+/// continuing from one stage twice, a stage reached twice, and a declaration the
+/// walk never reaches all fail the same count, because each is a program whose
+/// later dispatches compute a stage nobody began, or one twice. This is the
+/// obligation `crate::region::chain_realizes_subject` states for the compiler
+/// over stage-carrying attribution atoms; program scope has no stage ordinals to
+/// sort, so the same rule is decided over the declared edges instead.
+///
+/// What this deliberately does not prove is that the consumer's kernel body
+/// continues the *same* operation. That is a semantic-equivalence claim about a
+/// bound implementation, which is compiler-owned refinement evidence (ADR 0071)
+/// and not a structural obligation this layer can discharge — the same boundary
+/// [`verify_publishing_copies`] draws for a copy's identity function.
+fn verify_staged_realizations(
+    data: &KernelProgramData,
+    accesses: &[Vec<ValueAccess>],
+    definitions: &[Option<ValueDefinition>],
+) -> Result<(), KernelProgramDiagnostic> {
+    for realization in &data.staged_realizations {
+        let handed = position(realization.handed);
+        if definitions[handed].is_none_or(|writer| writer.stage != realization.producer) {
+            return Err(KernelProgramDiagnostic::HandedValueNotInitializedByProducer);
+        }
+        if !accesses[handed].iter().any(|access| {
+            access.stage == realization.consumer && access.mode == StageAccessMode::Read
+        }) {
+            return Err(KernelProgramDiagnostic::HandedValueNotReadByConsumer);
+        }
+        if data.values[handed].role != ValueRole::Temporary {
+            return Err(KernelProgramDiagnostic::HandedValueNotMaterialized);
+        }
+    }
+    let mut occurrences: Vec<u32> = data
+        .staged_realizations
+        .iter()
+        .map(|realization| realization.occurrence)
+        .collect();
+    occurrences.sort_unstable();
+    occurrences.dedup();
+    for occurrence in occurrences {
+        let chain: Vec<&super::model::StagedRealizationData> = data
+            .staged_realizations
+            .iter()
+            .filter(|realization| realization.occurrence == occurrence)
+            .collect();
+        let root = data.stages.iter().position(|stage| {
+            stage
+                .coverage
+                .iter()
+                .any(|covered| covered.occurrence().get() == occurrence)
+        });
+        // The walk from the covering stage, one consumer at a time. It stops at
+        // a stage it has already reached, so a chain that closes a loop is
+        // bounded rather than divergent, and it takes the first continuation of
+        // each stage, so a fork leaves its other rows unwalked. Both land in the
+        // one comparison below instead of needing arms of their own.
+        let mut walked = 0_usize;
+        if let Some(root) = root {
+            let mut reached = vec![false; data.stages.len()];
+            reached[root] = true;
+            let mut current = ordinal(root);
+            while let Some(next) = chain
+                .iter()
+                .find(|realization| realization.producer == current)
+                .map(|realization| realization.consumer)
+            {
+                if reached[position(next)] {
+                    break;
+                }
+                reached[position(next)] = true;
+                current = next;
+                walked = walked.saturating_add(1);
+            }
+        }
+        // Every declaration of this occurrence must lie on the walked path. A
+        // chain rooted at another stage, a fork, a loop, and a second
+        // disconnected path all leave a row the walk never reached, and each is
+        // a program whose later dispatches compute a stage nobody began.
+        if walked != chain.len() {
+            return Err(KernelProgramDiagnostic::StagedRealizationChainBroken);
         }
     }
     Ok(())

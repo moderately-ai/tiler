@@ -12,10 +12,10 @@
 //! region *sequence* is recognized as a program stage, with no operation key
 //! named. The normalization carries `StagedRootMeanSquareScaleF32` and is
 //! therefore recognized, reaches its own lowering, has both of its realization
-//! stages spelled by scheduled regions, and now stops one layer further out — at
-//! the kernel program's lack of an account for a dispatch that continues an
-//! occurrence's realization
-//! (`pipeline::tests::a_staged_family_program_spells_both_stages_and_names_the_program_scope_wall`).
+//! stages spelled by scheduled regions, and now has no ceiling above it at all:
+//! it compiles end to end and its dispatched kernels agree with
+//! `tiler-reference` bit for bit
+//! (`pipeline::tests::a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit`).
 //! The softmax carries no law at all, so the same arm answers `false` for it and
 //! the refusal below is the recognizer's — which is why the assertions here are
 //! unchanged and are now about *this* family rather than about a class of them.

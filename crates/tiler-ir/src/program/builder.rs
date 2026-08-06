@@ -45,14 +45,14 @@ use super::model::{
     PartialReduction, PartialReductionData, ProgramOutputData, PublishingCopy, PublishingCopyData,
     ROUTING_COMMIT_TRANSITIONS, RoutingCommitState, RoutingCommitTransition, SemanticOccurrence,
     StageAccess, StageAccessData, StageAccessMode, StageData, StageLaunch, StageLaunchData,
-    StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewData, element_bytes,
-    encode_identity,
+    StagedRealization, StagedRealizationData, StorageEncoding, StorageScalar, ValueRole,
+    VerifiedKernelProgram, ViewData, element_bytes, encode_identity,
 };
 use super::{
     MAX_PROGRAM_ABI_EXPRESSIONS, MAX_PROGRAM_ALLOCATIONS, MAX_PROGRAM_DEPENDENCIES,
     MAX_PROGRAM_OUTPUTS, MAX_PROGRAM_PARTIAL_REDUCTIONS, MAX_PROGRAM_PUBLISHING_COPIES,
-    MAX_PROGRAM_STAGES, MAX_PROGRAM_VALUES, MAX_PROGRAM_VIEWS, MAX_STAGE_ACCESSES,
-    MAX_STAGE_COVERAGE,
+    MAX_PROGRAM_STAGED_REALIZATIONS, MAX_PROGRAM_STAGES, MAX_PROGRAM_VALUES, MAX_PROGRAM_VIEWS,
+    MAX_STAGE_ACCESSES, MAX_STAGE_COVERAGE,
 };
 
 /// The unforgeable semantic subject one kernel program must completely realize.
@@ -76,6 +76,7 @@ pub struct KernelProgramBuilder {
     dependencies: Vec<DependencyData>,
     partial_reductions: Vec<PartialReductionData>,
     publishing_copies: Vec<PublishingCopyData>,
+    staged_realizations: Vec<StagedRealizationData>,
     outputs: Vec<ProgramOutputData>,
     covered: Vec<SemanticOccurrence>,
     claimed_inputs: Vec<(InputKey, Option<EncodedComponentRole>)>,
@@ -139,6 +140,7 @@ impl KernelProgramBuilder {
             dependencies: Vec::new(),
             partial_reductions: Vec::new(),
             publishing_copies: Vec::new(),
+            staged_realizations: Vec::new(),
             outputs: Vec::new(),
             covered: Vec::new(),
             claimed_inputs: Vec::new(),
@@ -760,6 +762,71 @@ impl KernelProgramBuilder {
         Ok(())
     }
 
+    /// Declares that one stage continues another's realization of an occurrence.
+    ///
+    /// **Labelled draft**, on the acceptance [`StagedRealization`] records.
+    ///
+    /// The declaration is what accounts for the consumer's dispatch: it covers
+    /// no occurrence of the bound graph, because the stage that *began* the
+    /// realization claims it — coverage is an obligation of the occurrence,
+    /// discharged once — and whole-program verification refuses an
+    /// unaccounted-for uncovering stage. The ordering that makes the handed
+    /// value visible is the ordinary data dependency between the two stages,
+    /// which [`Self::push_data_dependency`] declares and verification requires
+    /// for the read.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle error, [`KernelProgramBuildError::SelfDependency`] when
+    /// one stage is named as both the producer and the consumer,
+    /// [`KernelProgramBuildError::CoverageOutOfRange`] when the named occurrence
+    /// is not an operation of the bound semantic program,
+    /// [`KernelProgramBuildError::DuplicateStagedRealization`] when the same
+    /// consuming stage already continues that occurrence, or a structural-limit
+    /// error.
+    pub fn push_staged_realization(
+        &mut self,
+        realization: StagedRealization,
+    ) -> Result<(), KernelProgramBuildError> {
+        self.resolve_stage(realization.producer)?;
+        self.resolve_stage(realization.consumer)?;
+        self.resolve_value(realization.handed)?;
+        // One stage cannot both begin a realization stage and continue it: the
+        // chain exists precisely because the two are separate dispatches, and a
+        // self-edge is what a program declares when it has not separated them.
+        if realization.producer.index == realization.consumer.index {
+            return Err(KernelProgramBuildError::SelfDependency);
+        }
+        // Range-checked here rather than at whole-program scope, for the reason
+        // `check_coverage` checks its own occurrences here: the bound subject's
+        // operation count is a builder fact, and an out-of-range occurrence
+        // names itself instead of surfacing later as a chain with no root.
+        if realization.occurrence.get() >= self.subject.operations {
+            return Err(KernelProgramBuildError::CoverageOutOfRange {
+                occurrence: realization.occurrence,
+                operations: self.subject.operations,
+            });
+        }
+        if self.staged_realizations.iter().any(|declared| {
+            declared.consumer == realization.consumer.index
+                && declared.occurrence == realization.occurrence.get()
+        }) {
+            return Err(KernelProgramBuildError::DuplicateStagedRealization);
+        }
+        limit(
+            self.staged_realizations.len().saturating_add(1),
+            MAX_PROGRAM_STAGED_REALIZATIONS,
+            ProgramLimitKind::StagedRealizations,
+        )?;
+        self.staged_realizations.push(StagedRealizationData {
+            producer: realization.producer.index,
+            consumer: realization.consumer.index,
+            handed: realization.handed.index,
+            occurrence: realization.occurrence.get(),
+        });
+        Ok(())
+    }
+
     /// Publishes one materialized value under a named semantic output key.
     ///
     /// # Errors
@@ -869,6 +936,7 @@ impl KernelProgramBuilder {
             dependencies: std::mem::take(&mut self.dependencies),
             partial_reductions: std::mem::take(&mut self.partial_reductions),
             publishing_copies: std::mem::take(&mut self.publishing_copies),
+            staged_realizations: std::mem::take(&mut self.staged_realizations),
             outputs: std::mem::take(&mut self.outputs),
             abi_expressions: std::mem::take(&mut self.expressions),
             applicability_guard: self.applicability_guard,
@@ -886,6 +954,7 @@ impl KernelProgramBuilder {
         self.dependencies = data.dependencies;
         self.partial_reductions = data.partial_reductions;
         self.publishing_copies = data.publishing_copies;
+        self.staged_realizations = data.staged_realizations;
         self.outputs = data.outputs;
         self.expressions = data.abi_expressions;
         self.routing_commit = data.routing_commit;

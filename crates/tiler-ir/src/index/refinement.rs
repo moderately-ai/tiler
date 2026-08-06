@@ -717,9 +717,10 @@ impl FrozenIndexRealizationLawRegistry {
 
     /// Returns the law registered for one operation family, if it carries one.
     ///
-    /// **Labelled draft.** The surface is implemented and tested; acceptance is
-    /// parked for Tom at
-    /// [`accept-the-registered-family-realization-law-query`](../../../../tickets/accept-the-registered-family-realization-law-query.md).
+    /// **Accepted public surface** — by Tom on 2026-08-06 at the live session's
+    /// decision round, as-is with no exclusion;
+    /// [`accept-the-registered-family-realization-law-query`](../../../../tickets/accept-the-registered-family-realization-law-query.md)
+    /// records the provenance.
     ///
     /// **Why a caller needs the law itself and not a predicate over it.** A
     /// physical planner spelling a staged family's stage has to know *what that

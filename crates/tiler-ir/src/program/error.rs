@@ -97,6 +97,8 @@ pub enum ProgramLimitKind {
     PartialReductions,
     /// Publishing-copy contract count of one program.
     PublishingCopies,
+    /// Staged-realization contract count of one program.
+    StagedRealizations,
     /// Named-output count of one program.
     Outputs,
     /// Access count of one stage.
@@ -346,6 +348,15 @@ pub enum KernelProgramBuildError {
     /// Two copies naming one published value would leave each unprovable against
     /// the other, exactly as two splits over one partial tensor would.
     DuplicatePublishingCopy,
+    /// A consuming stage already continues that occurrence's realization.
+    ///
+    /// The key is the pair, not the stage: one dispatch may legitimately
+    /// continue the realizations of several occurrences it claims stages of, and
+    /// a fused staged region is exactly that. What has no reading is one
+    /// dispatch continuing *one* occurrence twice — the two declarations would
+    /// name two handed values for one stage boundary, leaving which value
+    /// carries the realization undecided.
+    DuplicateStagedRealization,
     /// A named output used a key the bound semantic program does not declare.
     UnknownOutputKey {
         /// Rejected interface key.
@@ -530,13 +541,16 @@ pub enum KernelProgramDiagnostic {
     UnreferencedAbiExpression,
     /// A stage covers no semantic occurrence and has no declared account.
     ///
-    /// Two accounts exist, and both are declarations rather than relaxations. A
-    /// split reduction's final pass legitimately computes no operation of its
-    /// own: the pass it combines already claims the reduction, and claiming it
-    /// twice would double-cover the graph. A publishing copy's publisher is the
-    /// same shape one fold up — the stage that computed the value already claims
-    /// the occurrences, and the copy exists because [`ValueRole::Output`] is
-    /// exclusive of the temporary a consumer reads across. Any *other*
+    /// Three accounts exist, and all three are declarations rather than
+    /// relaxations. A split reduction's final pass legitimately computes no
+    /// operation of its own: the pass it combines already claims the reduction,
+    /// and claiming it twice would double-cover the graph. A publishing copy's
+    /// publisher is the same shape one fold up — the stage that computed the
+    /// value already claims the occurrences, and the copy exists because
+    /// [`ValueRole::Output`] is exclusive of the temporary a consumer reads
+    /// across. A staged realization's consumer is the third: the occurrence it
+    /// continues is claimed by the stage that began it, because coverage is an
+    /// obligation of the occurrence and is discharged once. Any *other*
     /// uncovering stage is a dispatch the program cannot account for.
     ///
     /// [`ValueRole::Output`]: super::ValueRole::Output
@@ -585,6 +599,31 @@ pub enum KernelProgramDiagnostic {
     /// reshape, a slice, or a reduction — none of which this declaration
     /// accounts for, and each of which is an operation some stage must cover.
     PublishedCopyExtentMismatch,
+    /// A staged realization's handed value is not initialized by its producer.
+    ///
+    /// Either no stage writes it, or the writer is not the producing stage the
+    /// contract names — so the consumer would continue from values some other
+    /// stage produced, or none at all.
+    HandedValueNotInitializedByProducer,
+    /// A staged realization's consumer never reads the handed value it names.
+    HandedValueNotReadByConsumer,
+    /// A staged realization hands a value the program may not hand.
+    ///
+    /// The handed value is internal to the realization: handing an externally
+    /// bound input or a published output would put a value the caller owns
+    /// between two stages of one operation, exactly as staging a split's
+    /// partials there would.
+    HandedValueNotMaterialized,
+    /// The declared staged realizations of one occurrence are not one ordered chain.
+    ///
+    /// A realization's stages run in order and each is computed once, so the
+    /// declarations naming an occurrence must form an unbroken path from the
+    /// stage that *covers* that occurrence — the one that began it — through one
+    /// consumer at a time. A chain rooted at a stage that covers something else,
+    /// two declarations continuing from one stage, a stage reached twice, and a
+    /// declaration the walk never reaches all fail it, and each is a program
+    /// whose later dispatches compute a stage nobody began, or one twice.
+    StagedRealizationChainBroken,
     /// The routing-commit transitions do not span the whole ordered lifecycle.
     IncompleteRoutingCommitContract {
         /// Transitions the program declares.
@@ -643,6 +682,10 @@ impl KernelProgramDiagnostic {
             Self::PublishedCopyNotWrittenByPublisher => "published-copy-not-written-by-publisher",
             Self::PublishedCopyNotOutput => "published-copy-not-output",
             Self::PublishedCopyExtentMismatch => "published-copy-extent-mismatch",
+            Self::HandedValueNotInitializedByProducer => "handed-value-not-initialized-by-producer",
+            Self::HandedValueNotReadByConsumer => "handed-value-not-read-by-consumer",
+            Self::HandedValueNotMaterialized => "handed-value-not-materialized",
+            Self::StagedRealizationChainBroken => "staged-realization-chain-broken",
             Self::IncompleteRoutingCommitContract { .. } => "incomplete-routing-commit-contract",
             Self::IdentityLimit { .. } => "identity-limit",
         }
