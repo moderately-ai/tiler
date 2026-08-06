@@ -55,7 +55,13 @@
 //! writes one owning tensor, so both are refused a layer down —
 //! [`a_published_output_value_cannot_fill_an_intermediate_buffer`] pins the
 //! mechanism — and `admit-elementwise-epilogues-over-a-materialized-intermediate`
-//! owns the copy stage that lifts the second.
+//! owns the copy stage that would lift the second. That copy stage is itself
+//! blocked in `tiler-ir` rather than here:
+//! `materialized_intermediate_epilogue_wall.rs` measures a pointwise region
+//! reading `TensorRole::Intermediate` being refused by the intrinsic schedule
+//! verifier, and
+//! `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
+//! owns the widening.
 //!
 //! One further limit is *not* about outputs at all and is recorded here because
 //! multi-output is what makes it reachable: an elementwise walk must read every
@@ -394,6 +400,10 @@ fn two_programs_differing_only_in_output_order_have_distinct_identities() {
 /// publishes `scaled` and reduces it into `reduced` — and it is also the shape
 /// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns, because
 /// no elementwise region this profile builds reads a materialized intermediate.
+/// The reason none does is a `tiler-ir` access contract rather than a compiler
+/// gap; `materialized_intermediate_epilogue_wall.rs` measures it, and
+/// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
+/// owns the widening.
 ///
 /// Pinned here so that a `ValueRole` widening which made publication and
 /// consumption compatible fails this test and reports itself, rather than
