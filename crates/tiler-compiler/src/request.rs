@@ -3211,12 +3211,34 @@ fn resolve_numerical_contract(
 ///   `operation-set` from the elementwise walk). Every elementwise region this
 ///   profile builds reads declared input tensors and nothing else, so a
 ///   contraction or a reduction feeding an elementwise epilogue has no region
-///   to be assembled into. That is a gap in the physical layer rather than in
-///   the schedule vocabulary — `tiler_ir::schedule::TensorRole::Intermediate`
-///   is a per-region role, so nothing about it forbids the chain — which is
-///   exactly why it is refused here instead of admitted and then dropped
-///   mid-pipeline. `admit-elementwise-epilogues-over-a-materialized-intermediate`
-///   owns the widening.
+///   to be assembled into.
+///
+///   **The wall is in the schedule vocabulary, not in this crate**, and the
+///   paragraph that used to stand here said the opposite. It reasoned from
+///   `tiler_ir::schedule::TensorRole::Intermediate` being a per-region role to
+///   the conclusion that nothing in `tiler-ir` forbids the chain. The role is
+///   indeed per-region; what forbids the chain is the *access contract* each
+///   scalar-program family declares around it.
+///   `tiler_ir::schedule`'s `verify_pointwise_region` requires read access `i`
+///   to be `TensorRole::Input { ordinal: i }` at every position, so no
+///   `ScalarProgram::PointwiseF32` region may read an intermediate at all; and
+///   `verify_access_and_semantics` admits a `ScalarProgram::StrictSerialSum`
+///   under a `ReductionTopology::Serial` only when its owning write targets
+///   `TensorRole::Output`, so the fold a reduction epilogue would read from
+///   cannot produce one. The multi-pass partial pass is the one fold that does
+///   write an intermediate, and it is a different topology declaring a split
+///   rather than a fold another region's epilogue may consume. A contraction
+///   *may* already write one, which is the single part of the chain that is
+///   expressible today. `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
+///   measures all three.
+///
+///   `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
+///   owns that widening and
+///   `admit-elementwise-epilogues-over-a-materialized-intermediate` is its
+///   compiler-side dependent — the same division
+///   `admit-multi-input-tensors-in-the-scheduled-region-vocabulary` and its own
+///   dependent already record. Refusing here rather than admitting and failing
+///   mid-pipeline is unchanged by the correction.
 /// - **A reduction reading a declared input directly** (`reduction-prologue`).
 ///   `tiler-ir`'s schedule verifier requires a `StrictSerialSum` region's
 ///   contributor access to read `TensorRole::Intermediate`, so this profile has
@@ -3256,10 +3278,17 @@ fn resolve_numerical_contract(
 /// region's owning write would have to serve both a materialization edge and a
 /// publication: two keys naming one value, and a published intermediate that is
 /// also consumed. [`tiler_ir::program::ValueRole`] is exclusive and a region
-/// writes one owning tensor, so both are refused a layer down, and
+/// writes one owning tensor, so both are refused a layer down.
 /// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
-/// stage that lifts the second. `crates/tiler-compiler/tests/multi_output_boundary.rs`
-/// holds the evidence for where that boundary now is.
+/// stage that would lift the second, and that copy stage is itself blocked in
+/// `tiler-ir`: it reads `TensorRole::Intermediate` and writes
+/// `TensorRole::Output`, and no scalar-program family admits that pair of roles
+/// — `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
+/// owns the widening.
+/// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence for
+/// where that boundary now is, and
+/// `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
+/// holds the evidence for which layer the remaining wall belongs to.
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
     // Program-wide properties first, each under the rule that names it. A
     // program failing one of these fails it for every shape below, so reporting
@@ -3358,7 +3387,11 @@ fn recognize_output(
 /// tensor, so both are refused a layer down — and refusing here instead is what
 /// keeps the boundary from admitting a program that dies mid-pipeline.
 /// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the copy
-/// stage that lifts it.
+/// stage that would lift it, behind
+/// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`:
+/// the copy stage reads `TensorRole::Intermediate` and writes
+/// `TensorRole::Output`, which the schedule vocabulary's pointwise access
+/// contract does not yet admit.
 ///
 /// Claimed counts are taken over the deduplicated per-output member sets, so one
 /// constant shared by two operands of the *same* walk contributes one member
@@ -4158,9 +4191,17 @@ fn normalize_contraction(
     // declared input tensors, and none reads a materialized intermediate. It is
     // refused rather than admitted-then-dropped, by `check_output_cover` when
     // the epilogue's occurrences belong to no walk and by the elementwise walk's
-    // own `operation-set` when the epilogue produces the output;
-    // `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the
-    // widening.
+    // own `operation-set` when the epilogue produces the output.
+    //
+    // The producer half of that chain is not the obstruction: `tiler-ir` already
+    // admits a contraction region whose owning write targets
+    // `TensorRole::Intermediate`, and `contraction_region`'s hard-coded
+    // `TensorRole::Output` is a compiler-side choice. The consumer half is,
+    // because no `ScalarProgram::PointwiseF32` region may read an intermediate —
+    // `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
+    // owns that widening and
+    // `admit-elementwise-epilogues-over-a-materialized-intermediate` is its
+    // compiler-side dependent.
     let (ordinal, operation) =
         producer(program, output.value(), &strict_tensor_contraction_f32_op())?;
     if operation.results().collect::<Vec<_>>() != [output.value()] {
@@ -5702,7 +5743,10 @@ mod tests {
     /// Their accepted neighbour is the independent two-output program above,
     /// which differs from both by exactly the sharing.
     /// `admit-elementwise-epilogues-over-a-materialized-intermediate` owns the
-    /// copy stage that lifts the second.
+    /// copy stage that would lift the second, behind
+    /// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
+    /// — the copy stage's `Intermediate`-read is not a region the schedule
+    /// vocabulary spells.
     #[test]
     fn two_outputs_sharing_one_walk_refuse_rather_than_publish_twice() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
