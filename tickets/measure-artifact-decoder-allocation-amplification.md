@@ -1,14 +1,17 @@
 ---
 id: measure-artifact-decoder-allocation-amplification
 title: Measure and reduce artifact-decoder allocation amplification
-status: todo
+status: in-progress
 priority: p2
 dependencies: [bind-stage-coverage-to-index-refinement-identity, bind-the-artifact-variant-abi-to-the-program-abi, carry-the-byte-offset-of-a-partial-binding-view, wire-the-delivered-realization-record-into-the-artifact]
 related: [prototype-neutral-artifact-codec]
 scopes: [research/artifacts, implementation/artifact]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, codec, measurement, performance]
+claimed_from: todo
+assignee: agent-alloc-amp
+lease_expires_at: 1786042476
 ---
 Bound the peak memory required to validate and expose a large artifact envelope,
 then remove allocation amplification that the measurement demonstrates.

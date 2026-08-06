@@ -1,7 +1,7 @@
 ---
 id: measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order
 title: Measure whether the Metal compiler preserves the emitted evaluation order
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [derive-the-oracle-for-a-permitted-divergence-candidate, admit-a-refutation-only-derived-bound-conformance-oracle]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, apple-targets, conformance, measurement]
+claimed_from: todo
+assignee: agent-eval-order
+lease_expires_at: 1786042476
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: declare-host-dtype-dispatchability-at-the-consumer-boundary
 title: Give every consumer a host-earned dtype-dispatchability declaration
-status: todo
+status: in-progress
 priority: p2
 dependencies: [validate-bf16-at-the-runtime-routing-boundary]
 related: [decide-per-dtype-dispatchability-as-a-target-capability]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, implementation/build, implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, runtime, routing, fail-closed, authority]
+claimed_from: todo
+assignee: agent-dtype-rows
+lease_expires_at: 1786042476
 ---
 ## User-visible outcome
 
