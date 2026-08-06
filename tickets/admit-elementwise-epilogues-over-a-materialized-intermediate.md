@@ -1,7 +1,7 @@
 ---
 id: admit-elementwise-epilogues-over-a-materialized-intermediate
 title: Admit an elementwise epilogue over a materialized intermediate
-status: in-progress
+status: review
 priority: p2
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary]
 related: [admit-a-strict-serial-fold-that-writes-a-materialized-intermediate]
@@ -115,3 +115,90 @@ Written by the worker on [`admit-a-strict-serial-fold-that-writes-a-materialized
 ## Unparked whole — 2026-08-06
 
 Both discovered prerequisites are done: the Intermediate-read widening and the cover-assigned fold commit. The superseding note above stands — no narrowing, all three shapes deliverable, with the compiler-side threading map (RegionWrite into the three reduction region builders, partial pass excluded) and the now-live regions-budget concern recorded there for the dispatch brief.
+
+## Outcome — delivered whole, 2026-08-06
+
+**Why this landed the way it did.** The two prerequisites the first dispatch discovered were both in place, so the wall was where the superseding note said: entirely compiler-side. The change has one shape behind it — **an elementwise walk that reaches a folding family has found a materialization boundary, not an unrecognizable program** — and everything else follows from naming the value it stopped at instead of discarding it.
+
+### What the caller can now compile
+
+**Fact — all three shapes the user-visible outcome names, each observed compiling through `tiler_compiler::session::compile` against the governed profile under all five statable numerical contracts.**
+
+| Shape | Dispatches | Evidence |
+| --- | --- | --- |
+| `matmul(a, b) * 2.0` | 2 | `materialized_intermediate_epilogue_wall::an_elementwise_epilogue_over_a_contraction_compiles_as_a_chain`, `contraction_direct_path::a_contraction_with_an_elementwise_epilogue_compiles_as_a_chain` |
+| `sum(x * x, axis 1) * 2.0` | 3 | `materialized_intermediate_epilogue_wall::an_elementwise_epilogue_over_a_reduction_compiles_as_a_chain` |
+| published-and-consumed copy stage | — | **not delivered; the wall is one crate down and is now filed.** See below. |
+
+**Measurement — bit agreement against `tiler-reference`, on the pinned nightly, governed baseline profile.** Each chain is interpreted stage by stage on the KIR machine and compared to `ReferenceEvaluator::standard().evaluate` bit for bit, and each also asserts an independently hand-derived value so a reference evaluator agreeing with a wrong compiler would still be caught:
+
+- `pipeline::tests::a_contraction_epilogue_chain_matches_the_reference_evaluator` — `contract(a,b) * 2.0`, one materialization edge, `[160, 1152, 640, 4608]`.
+- `pipeline::tests::a_reduction_epilogue_chain_matches_the_reference_evaluator` — `sum(x*x) * 2.0`, two materialization edges, `[170]`.
+- `pipeline::tests::an_epilogue_reading_a_staged_value_and_a_declared_input_matches_the_reference` — `contract(a,b) * a`, the one shape that exercises the access-position/declared-ordinal separation, `[80, 1152, 1280, 18432]`.
+- `pipeline::tests::an_epilogue_reaching_declared_inputs_out_of_order_still_compiles` — `contract(a,b) * b * a` beside `contract(a,b) * a * b`, which is what makes the canonical read order a requirement rather than a convention.
+- `pipeline::tests::a_chain_over_a_fused_prologue_and_fold_retains_both_producer_spellings` — `sum(a*2 + 1) * 3.0`, whose retained stage counts are `[2, 3]` because the fused producer may stage its result too, `[102]`.
+
+### What moved, by layer
+
+**`request.rs` — recognition.** `recognize_elementwise` split into `plan_elementwise` (all validation, linearized in mint order) and `mint_elementwise` (numbering only), because two callers need the same validation under different leaf numbering and a second walk would be a second classifier. `plan_elementwise` reports `ElementwiseRefusal::Folded(value)` naming the boundary; `recognize_epilogue` walks the epilogue against it and `recognize_epilogue_producer` recognizes the producer as its own shape. `NormalizedOutput::Epilogue` carries the producer as a whole `NormalizedOutput`, which is what lets every existing region builder, cost, and subject binding apply to it unchanged.
+
+**`physical.rs` — spelling and building.** `spell_region` recurses into a chain's producer through `spell_output`, so every producer part keeps the spelling it would have as a standalone output. `pointwise_region`'s access scaffolding factored into `elementwise_region`, parameterized by the read list; `epilogue_region` is the second caller. **`RegionWrite` threaded into five builders, not the three the unblocking note named**: `reduction_region`, `final_reduction_region`, `single_workgroup_tree_region` as recorded, and additionally `contraction_region` and `fused_region`, each at the access, its bounds proof, and its ownership proof. `partial_reduction_region` is untouched, as required.
+
+**Measurement — four of the five threaded sites are observable, and the fifth is not.** Hard-coding `TensorRole::Output` back into `contraction_region`, `reduction_region`, `fused_region`, or `final_reduction_region` fails a test (see the perturbation table). Doing it to `single_workgroup_tree_region` fails none: the tree is *offered* for a chain's fold exactly as for a standalone one, but the portfolio's structural cost prunes it before assembly for every shape this profile admits, so no retained plan places a cooperative tile under a materialized write. It is threaded anyway — a region built for a write the cover did not assign is refused at assembly and the alternative disappears with no diagnostic, which is the failure mode worth pre-empting — and the site says so in place. `calibrate-and-activate-parallel-reduction-selection` is what would make it observable.
+
+**Everything below is unchanged and was verified to need nothing**: cover enumeration, materialization-edge derivation, execution order, `CoverAssembly::from_plan`, named-output attribution, and `ProgramAlternativeKind`. The chain is placed by the ordinary cover search.
+
+### The regions budget — the answer, executed
+
+**Measurement — the widest plan this profile assembles is now four dispatches.** `pipeline::tests::the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue` compiles `sum(x*x, axis 1) * 2.0` at `[1, 4]` and reports retained stage counts `[3, 4]` under a reassociating contract and `[3]` under one that forbids reassociation — so the fourth stage is attributable to the split rather than to the epilogue. The four-region alternative the note called "spellable" is genuinely retained.
+
+**Fact — nothing silently dropped it, and that is why the literal had to move anyway.** `check_budget("regions", budgets.regions, 3)` measures no submitted program: the actual is a constant asserting that the budget admits the widest plan the profile assembles. Leaving it at three would not have lost the alternative; it would have made the assertion false, which is worse, because the next widening derives from it. Moved to `4`, with `DeterministicBudgets::governed().regions` moved with it and the derivation rewritten to cite the measurement.
+
+**Identity — one pin moved, recomputed on this tree.** Every budget is written into the request subject, so the budget value change moved every governed compilation's qualifier. `explain.rs`'s `deterministic_trace_is_sealed_and_rendered_separately` request qualifier moved `6dd42be71c6745fe` → `689c3aefc30f48d3`, recomputed by observing the failing value here and never copied. It is the only pin the request subject reaches; `grep -rnE '"[0-9a-f]{16}"|request=[0-9a-f]{16}' crates/ --include='*.rs'` returns that one site, and `crates/tiler-compiler/tests/` holds no hex literal at all. A ledger paragraph records the move beside the four earlier budget steps. `cargo nextest run --workspace` is green at 2801 tests, so no other crate pinned a subject-derived value.
+
+### Sub-tag determination — one added, none stepped
+
+**Determined at the owning site under the forced-not-chosen standard the `pointwise-f32.v4` and `serial-sum-f32.v3` comments state.** A fourth per-output arm was added, `epilogue-f32.v1`, and the enclosing `tiler.compiler.request-subject.v5` domain did **not** step — the contraction arm's argument, verbatim: no existing arm's bytes move, so a subject encoded before this variant existed still encodes to exactly what it did, and a reader reaching this tag is reading a subject the earlier vocabulary could not express. Neither `pointwise-f32` nor `serial-sum-f32` nor `contraction-f32` moved: the epilogue is a new arm, not a widening of an old one, and the nested producer is encoded through the same function so a chain's fold encodes exactly as a standalone fold does.
+
+One byte was added to the relation encoder — `LogicalAccess::LinearIdentity` gained tag `0x03` where it previously fell through the wildcard `0x00`. It moves no already-encodable subject's bytes, because `encode_access_maps`'s run records only the ordinals a structural occurrence interposed and an identity read was never written there. An epilogue read that interposes none reaches it directly, which is why it needed a name rather than the refusal tag.
+
+### A silent-wrongness defect found and closed fail-closed
+
+**Measurement, and it is not this ticket's shape.** At base `912b6058`, `out = a * permute(a)` over `[[1, 2], [4, 8]]` compiled and returned `[1, 16, 4, 64]` — `permute(a) * permute(a)` — where the reference evaluator gives `[1, 8, 8, 64]`. The region binds one read per declared input and the expression's two `Input { ordinal: 0 }` nodes share it, so the mapped relation served both leaves. Refused by name under `structural-access-conflict`, which is the rule that already refuses two *different* relations on one leaf; this is the same conflict with `LinearIdentity` as one of the two. Fixed here rather than filed-and-left because it returns an incorrect tensor, which the architectural contract does not admit deferring. The *widening* that would admit the program instead is filed as [`admit-two-reads-of-one-declared-input-in-an-elementwise-region`](admit-two-reads-of-one-declared-input-in-an-elementwise-region.md), and the regression row in `every_refusal_names_its_unrecognized_property` carries the measured wrong values.
+
+### The third shape: not delivered, and the wall is verified
+
+**Fact — every *region* the published-and-consumed copy stage needs is now built**; what it lacks is a program-scope *account*. A stage publishing a value another region computed claims no occurrence, and `verify_partial_reductions` in `crates/tiler-ir/src/program/verify.rs` refuses every empty-coverage stage that is not a declared split's combiner. The two compiler-side routes around it are both closed and were checked by reading: `attribute_named_outputs` refuses a region that materializes and publishes, and a duplicating cover is refused by `CoverPolicy::governed`. The widening is therefore `crates/tiler-ir/**`, outside this ticket's scope, and is filed as [`admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary`](admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary.md). `a_published_and_consumed_intermediate_refuses_by_name` is unchanged and still green; its doc now names the program-scope wall rather than the schedule-vocabulary one it had already outlived.
+
+**For the coordinator — the facade-gate row did not flip and its prose needs no edit from this branch.** `docs/correctness-and-testing.md` maps to `contracts/numerics`, which this ticket does not hold. The gate's two named open bounds both stand: this one for the reason above, and `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` untouched. What *is* worth recording there when someone holds that scope is that the row's stated cause moved — it was "no elementwise region this profile builds reads a materialized intermediate", and that is no longer true.
+
+### Renamed tests, each perturbed and observed failing
+
+Four assertions pinned refusals this landing lifts, and each was rewritten rather than deleted, keeping the measured history and gaining a still-refusing neighbour:
+
+- `an_elementwise_epilogue_over_a_contraction_refuses_at_the_request_boundary` → `..._compiles_as_a_chain`, with `nested_contraction_chain` refusing one boundary deeper.
+- `an_elementwise_epilogue_over_a_reduction_refuses_at_the_request_boundary` → `..._compiles_as_a_chain`, with `nested_reduction_chain`.
+- `a_contraction_with_an_extra_operation_refuses_with_a_typed_reason` → `a_contraction_with_an_elementwise_epilogue_compiles_as_a_chain`.
+- `every_refusal_names_its_unrecognized_property`'s contraction-epilogue row now asserts the chain, and a prologue reading a folded value replaces it as the `operation-set` row.
+
+**Six deliberate perturbations, applied one at a time and each observed failing before the file was restored** — and two of the first six did not fail, which is why there are six rather than four: perturbing `EPILOGUE_REGION` moved the builder and the binding together (vacuous), and reversing the read order was invisible because every recognized binary family is commutative. Both were replaced by perturbations that fire, and the read-order one is what motivated `an_epilogue_reaching_declared_inputs_out_of_order_still_compiles`.
+
+| Perturbation | Observed failing |
+| --- | --- |
+| the staged read binds `Input { 0 }` instead of `Intermediate` | both chain tests |
+| `epilogue_region` emits `RegionId::new(0)` while the binding expects `EPILOGUE_REGION` | both chain tests |
+| the read list left in walk order rather than canonical order | the out-of-order test |
+| `DeterministicBudgets::governed().regions` left at `3` | the widest-plan test |
+| the dense-and-mapped conflict guard removed | the refusal inventory |
+| the epilogue member match inverted, so the binding falls through to the producer | both chain tests |
+| `fused_region` hard-codes the output tensor | the fused-producer chain test |
+| `final_reduction_region` hard-codes the output tensor | the widest-plan test |
+| `single_workgroup_tree_region` hard-codes the output tensor | **nothing** — recorded above as a measurement boundary, not repaired by a weaker test |
+
+### Commands run
+
+`cargo fmt --check`; `cargo check --workspace --all-targets`; `cargo clippy -p tiler-compiler --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-compiler --no-deps`; `cargo nextest run --workspace`; `cargo test --workspace --doc`; `tkt lint`; `git diff --check`; `tkt guard`; `make full`.
+
+### Scope
+
+`crates/tiler-compiler/**` (exclusive `implementation/compiler`) and `tickets/**` (shared `project/tickets`) only. No `crates/tiler-ir/**` file was edited, and the two tickets filed above are why.

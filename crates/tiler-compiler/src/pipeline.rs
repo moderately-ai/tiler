@@ -1600,6 +1600,20 @@ fn region_role(
     let Some((_, output)) = request.output_for_region(members) else {
         return "unrecognized";
     };
+    output_region_role(output, members)
+}
+
+/// Names one region's role within the partition of the output that owns it.
+///
+/// Recursive over an epilogue chain, so a region of the producer's partition
+/// keeps the role it would carry if the producer were the whole declared output.
+/// A reader comparing two traces should see the fold called `"reduction"`
+/// whether or not an epilogue consumes it — the region is the same region, and
+/// only what happens after it differs.
+fn output_region_role(
+    output: &crate::request::NormalizedOutput,
+    members: &[crate::region::SemanticMemberId],
+) -> &'static str {
     match output {
         crate::request::NormalizedOutput::Pointwise(_)
         | crate::request::NormalizedOutput::Contraction(_) => "whole-program",
@@ -1611,6 +1625,13 @@ fn region_role(
                 "reduction"
             } else {
                 "whole-program"
+            }
+        }
+        crate::request::NormalizedOutput::Epilogue(chain) => {
+            if members == chain.members {
+                "epilogue"
+            } else {
+                output_region_role(&chain.producer, members)
             }
         }
     }

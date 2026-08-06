@@ -853,6 +853,30 @@ fn alternative(product: &CompilationProduct, kind: ProgramAlternativeKind) -> &P
         .unwrap_or_else(|| panic!("a retained {} alternative", kind.name()))
 }
 
+/// Returns the one retained alternative dispatching exactly `stages` kernels.
+///
+/// Selected by stage count rather than by [`ProgramAlternativeKind`], because
+/// every plan of an epilogue chain is `Materialized` — the kind is `Fused`
+/// exactly when one region covers the program, and a chain has at least two —
+/// so the kind cannot name which of them a bit comparison is about. The count
+/// can: it is the number of dispatches the assembled program declares, and the
+/// chain under test is the one whose dispatches are its recognized regions.
+fn alternative_dispatching(product: &CompilationProduct, stages: usize) -> &ProgramAlternative {
+    let retained: Vec<&ProgramAlternative> = product.targets[0]
+        .portfolio
+        .alternatives
+        .iter()
+        .filter(|alternative| alternative.program.stage_count() == stages)
+        .collect();
+    let [alternative] = retained.as_slice() else {
+        panic!(
+            "expected exactly one retained {stages}-stage alternative, found {}",
+            retained.len()
+        );
+    };
+    alternative
+}
+
 /// Returns the kind of the alternative the portfolio selected.
 fn selected_kind(product: &CompilationProduct) -> ProgramAlternativeKind {
     let target = &product.targets[0];
@@ -1064,6 +1088,478 @@ fn compiled_and_reference_bits(
         )
         .unwrap();
     (bits_of(&actual), tensor_bits(&expected[0]))
+}
+
+/// `scaled = contract(a, b) * 2.0` reaches a two-dispatch chain whose result is
+/// the reference evaluator's, bit for bit.
+///
+/// **This is `admit-elementwise-epilogues-over-a-materialized-intermediate`'s
+/// user-visible outcome at its smallest honest size.** The contraction stages
+/// its result into a program-owned temporary and the epilogue reads it back —
+/// one materialization boundary, two dispatches — and the chained interpretation
+/// below is what the assembled program's own stage order says to do.
+///
+/// **Bit-compared rather than approximately compared, and the fixture is chosen
+/// so that a wrong chain cannot pass.** The operands are exactly representable
+/// and the contraction's two products differ per output position, so an epilogue
+/// that read the wrong staged element, scaled before folding, or bound the
+/// intermediate to a declared input would disagree in the first row.
+#[test]
+fn a_contraction_epilogue_chain_matches_the_reference_evaluator() {
+    let operand = Shape::from_dims([2, 2]);
+    // Distinct powers of two, so every product and every sum below is exact.
+    // `right`'s last entry deliberately breaks the symmetry a geometric ladder
+    // would have: with it, the four output positions are pairwise distinct, so a
+    // chain that transposed the contraction's free indices disagrees.
+    let left: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+    let right: Vec<f32> = vec![16.0, 32.0, 64.0, 256.0];
+
+    let structure = tiler_ir::semantic::ContractionIndexStructure::new(
+        [
+            [
+                tiler_ir::semantic::ContractionIndex::new(19),
+                tiler_ir::semantic::ContractionIndex::new(3),
+            ],
+            [
+                tiler_ir::semantic::ContractionIndex::new(14),
+                tiler_ir::semantic::ContractionIndex::new(3),
+            ],
+        ],
+        [
+            tiler_ir::semantic::ContractionIndex::new(19),
+            tiler_ir::semantic::ContractionIndex::new(14),
+        ],
+    )
+    .unwrap();
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), operand.clone())
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), operand.clone())
+        .unwrap();
+    let projected =
+        tiler_ir::semantic::F32TensorContraction::apply(&mut builder, &structure, a, b).unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, projected, two).unwrap();
+    builder
+        .output(OutputKey::new("scaled").unwrap(), scaled)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let product =
+        compile(CompilationRequest::governed(&semantic)).expect("the epilogue chain compiles");
+    let chain = alternative_dispatching(&product, 2);
+    // The chain's own structure, stated rather than assumed: one materialized
+    // temporary between the two dispatches, and one published output.
+    assert_eq!(chain.plan.cover().materializations().len(), 1);
+
+    let staged = interpret_fused_inputs(&chain.kernels[0], &[&left, &right]);
+    let actual = interpret_fused(&chain.kernels[1], &staged);
+
+    let a_key = InputKey::new("a").unwrap();
+    let b_key = InputKey::new("b").unwrap();
+    let a_tensor = f32_tensor(operand.clone(), &left);
+    let b_tensor = f32_tensor(operand, &right);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(
+            &semantic,
+            &[
+                InputBinding::new(&a_key, &a_tensor),
+                InputBinding::new(&b_key, &b_tensor),
+            ],
+        )
+        .unwrap();
+    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
+    // Stated independently of the oracle as well, so a reference evaluator that
+    // agreed with a wrong compiler would still be caught. Row-major `mk,nk->mn`
+    // over these operands contracts axis 1 of both: output `[m][n]` is
+    // `a[m][0]*b[n][0] + a[m][1]*b[n][1]`, doubled.
+    assert_eq!(actual, vec![160.0, 1152.0, 640.0, 4608.0]);
+}
+
+/// `out = contract(a, b) * a` reaches a chain whose epilogue reads the staged
+/// value *and* a declared input, matching the reference bit for bit.
+///
+/// **This is the case the access-position/declared-ordinal separation exists
+/// for, and it is the only shape that currently reaches it.** The epilogue's
+/// expression has two leaves: leaf `0` is served by the read of the
+/// materialized intermediate and leaf `1` by the read of declared input `a`. A
+/// builder that kept the leaf index and the `TensorRole::Input` ordinal equal
+/// would bind leaf `1` to input `1` — `b` — and compute a different program over
+/// the same buffers, which the intrinsic region verifier cannot notice because
+/// both spellings are well-formed regions.
+///
+/// The fixture is chosen so that substitution is visible: `a` and `b` differ,
+/// and the contraction is square so its result shares `a`'s shape. `b` is not
+/// symmetric either, so an epilogue reading `b` disagrees rather than
+/// coincidentally agreeing.
+#[test]
+fn an_epilogue_reading_a_staged_value_and_a_declared_input_matches_the_reference() {
+    let square = Shape::from_dims([2, 2]);
+    let left: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+    let right: Vec<f32> = vec![16.0, 32.0, 64.0, 256.0];
+
+    let structure = tiler_ir::semantic::ContractionIndexStructure::new(
+        [
+            [
+                tiler_ir::semantic::ContractionIndex::new(19),
+                tiler_ir::semantic::ContractionIndex::new(3),
+            ],
+            [
+                tiler_ir::semantic::ContractionIndex::new(14),
+                tiler_ir::semantic::ContractionIndex::new(3),
+            ],
+        ],
+        [
+            tiler_ir::semantic::ContractionIndex::new(19),
+            tiler_ir::semantic::ContractionIndex::new(14),
+        ],
+    )
+    .unwrap();
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), square.clone())
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), square.clone())
+        .unwrap();
+    let projected =
+        tiler_ir::semantic::F32TensorContraction::apply(&mut builder, &structure, a, b).unwrap();
+    let root = F32Multiply::apply(&mut builder, projected, a).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), root)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let product =
+        compile(CompilationRequest::governed(&semantic)).expect("the epilogue chain compiles");
+    let chain = alternative_dispatching(&product, 2);
+    let staged = interpret_fused_inputs(&chain.kernels[0], &[&left, &right]);
+    // The epilogue's two buffers in its own access order: the staged value, then
+    // declared input `a`. That order is the region's, not this test's — the
+    // assertion below is what would fail if the region bound them the other way.
+    let actual = interpret_fused_inputs(&chain.kernels[1], &[&staged, &left]);
+
+    let a_key = InputKey::new("a").unwrap();
+    let b_key = InputKey::new("b").unwrap();
+    let a_tensor = f32_tensor(square.clone(), &left);
+    let b_tensor = f32_tensor(square, &right);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(
+            &semantic,
+            &[
+                InputBinding::new(&a_key, &a_tensor),
+                InputBinding::new(&b_key, &b_tensor),
+            ],
+        )
+        .unwrap();
+    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
+    // Stated independently of the oracle: the contraction's result is
+    // `[80, 576, 320, 2304]`, multiplied elementwise by `a`.
+    assert_eq!(actual, vec![80.0, 1152.0, 1280.0, 18432.0]);
+}
+
+/// An epilogue whose walk reaches declared input `b` before `a` still compiles.
+///
+/// **This is what makes the canonical read order a requirement rather than a
+/// convention.** `tiler_ir::schedule`'s pointwise access contract requires a
+/// region's declared input ordinals to ascend strictly across its read list —
+/// two reads naming one input, or a descending pair, are two spellings of one
+/// computation. The recognizer's walk mints leaves in operand order, so
+/// `projected * b * a` reaches `b` first; a read list in that order names input
+/// `1` before input `0` and the region is refused. Ordering the reads
+/// canonically — the staged value, then the declared inputs by declaration —
+/// makes admission a property of the program rather than of which operand the
+/// walk happened to pop.
+///
+/// Its accepted neighbour is `projected * a * b`, the same expression with the
+/// two factors exchanged, which the walk reaches in ascending order anyway. Both
+/// compile, and both are bit-compared, so a build that lost the canonical order
+/// fails on exactly one of them.
+#[test]
+fn an_epilogue_reaching_declared_inputs_out_of_order_still_compiles() {
+    let square = Shape::from_dims([2, 2]);
+    let left: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+    let right: Vec<f32> = vec![16.0, 32.0, 64.0, 256.0];
+
+    let structure = tiler_ir::semantic::ContractionIndexStructure::new(
+        [
+            [
+                tiler_ir::semantic::ContractionIndex::new(19),
+                tiler_ir::semantic::ContractionIndex::new(3),
+            ],
+            [
+                tiler_ir::semantic::ContractionIndex::new(14),
+                tiler_ir::semantic::ContractionIndex::new(3),
+            ],
+        ],
+        [
+            tiler_ir::semantic::ContractionIndex::new(19),
+            tiler_ir::semantic::ContractionIndex::new(14),
+        ],
+    )
+    .unwrap();
+    let program = |descending: bool| {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let a = builder
+            .input::<F32>(InputKey::new("a").unwrap(), square.clone())
+            .unwrap();
+        let b = builder
+            .input::<F32>(InputKey::new("b").unwrap(), square.clone())
+            .unwrap();
+        let projected =
+            tiler_ir::semantic::F32TensorContraction::apply(&mut builder, &structure, a, b)
+                .unwrap();
+        let (first, second) = if descending { (b, a) } else { (a, b) };
+        let scaled = F32Multiply::apply(&mut builder, projected, first).unwrap();
+        let root = F32Multiply::apply(&mut builder, scaled, second).unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), root)
+            .unwrap();
+        builder.build().unwrap()
+    };
+
+    for descending in [false, true] {
+        let semantic = program(descending);
+        let product = compile(CompilationRequest::governed(&semantic))
+            .unwrap_or_else(|error| panic!("descending={descending} refused: {error:?}"));
+        let chain = alternative_dispatching(&product, 2);
+        let staged = interpret_fused_inputs(&chain.kernels[0], &[&left, &right]);
+        // The epilogue's buffers in its own access order: the staged value, then
+        // declared input `a`, then `b` — regardless of which the walk reached
+        // first, which is the property under test.
+        let actual = interpret_fused_inputs(&chain.kernels[1], &[&staged, &left, &right]);
+
+        let a_key = InputKey::new("a").unwrap();
+        let b_key = InputKey::new("b").unwrap();
+        let a_tensor = f32_tensor(square.clone(), &left);
+        let b_tensor = f32_tensor(square.clone(), &right);
+        let expected = ReferenceEvaluator::standard()
+            .unwrap()
+            .evaluate(
+                &semantic,
+                &[
+                    InputBinding::new(&a_key, &a_tensor),
+                    InputBinding::new(&b_key, &b_tensor),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            bits_of(&actual),
+            tensor_bits(&expected[0]),
+            "descending={descending}",
+        );
+    }
+}
+
+/// `scaled = sum(x * x, axis 1) * 2.0` reaches a three-dispatch chain whose
+/// result is the reference evaluator's, bit for bit.
+///
+/// The reduction half of the same outcome, and it is three dispatches rather
+/// than two because the fold's contributors are themselves computed: the
+/// prologue stages `x * x`, the fold stages its result, and the epilogue reads
+/// that. Both materialization edges are exercised, which is what makes this the
+/// case that would catch a chain binding the second edge to the first's buffer.
+#[test]
+fn a_reduction_epilogue_chain_matches_the_reference_evaluator() {
+    let shape = Shape::from_dims([1, 4]);
+    // Exactly representable, and no two squares equal, so a fold that dropped or
+    // repeated a contributor disagrees.
+    let values: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let x = builder
+        .input::<F32>(InputKey::new("x").unwrap(), shape.clone())
+        .unwrap();
+    let squared = F32Multiply::apply(&mut builder, x, x).unwrap();
+    let reduced =
+        tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, squared, [Axis::new(1)])
+            .unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, reduced, two).unwrap();
+    builder
+        .output(OutputKey::new("scaled").unwrap(), scaled)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let product =
+        compile(CompilationRequest::governed(&semantic)).expect("the epilogue chain compiles");
+    let chain = alternative_dispatching(&product, 3);
+    assert_eq!(chain.plan.cover().materializations().len(), 2);
+
+    let prologue = interpret_fused(&chain.kernels[0], &values);
+    let folded = interpret_fused(&chain.kernels[1], &prologue);
+    let actual = interpret_fused(&chain.kernels[2], &folded);
+
+    let key = InputKey::new("x").unwrap();
+    let tensor = f32_tensor(shape, &values);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&semantic, &[InputBinding::new(&key, &tensor)])
+        .unwrap();
+    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
+    // `(1 + 4 + 16 + 64) * 2`, stated independently of the oracle.
+    assert_eq!(actual, vec![170.0]);
+}
+
+/// The widest plan this profile assembles is four dispatches, and the `regions`
+/// budget is checked against exactly that number.
+///
+/// **This is the measurement the `regions` budget's derivation rests on**, and
+/// it moved with the epilogue admission. Before it, the widest assembled plan
+/// was the split reduction's three stages — prologue, partial, final — and
+/// `check_program_budgets` spelled that three as a literal. A fold that stages
+/// its result can now feed an epilogue, so the same split plus its consumer is
+/// four, and the literal would otherwise assert a bound the profile exceeds.
+///
+/// The budget is not a bound on the caller's graph — the actual it is checked
+/// against is a constant, because a region count belongs to a plan and the
+/// request is admitted before any plan is chosen — so a stale literal would not
+/// have dropped this alternative. It would have made the assertion false, which
+/// is worse: the next widening would derive from a number nothing supported.
+///
+/// The reassociating contract is what admits the split, so the request states
+/// it explicitly. Under a contract forbidding reassociation the same program
+/// retains only the three-stage chain, which is the neighbour below.
+#[test]
+fn the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue() {
+    let shape = Shape::from_dims([1, 4]);
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let x = builder
+        .input::<F32>(InputKey::new("x").unwrap(), shape)
+        .unwrap();
+    let squared = F32Multiply::apply(&mut builder, x, x).unwrap();
+    let reduced =
+        tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, squared, [Axis::new(1)])
+            .unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, reduced, two).unwrap();
+    builder
+        .output(OutputKey::new("scaled").unwrap(), scaled)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let stage_counts = |contract: crate::request::StrictF32NumericalContract| {
+        let request = CompilationRequest::governed_preferring(
+            &semantic,
+            crate::request::NumericalContractPreference::ordered(vec![contract]).unwrap(),
+        );
+        let product = compile(request).expect("the epilogue chain compiles");
+        let mut counts: Vec<usize> = product.targets[0]
+            .portfolio
+            .alternatives
+            .iter()
+            .map(|alternative| alternative.program.stage_count())
+            .collect();
+        counts.sort_unstable();
+        counts
+    };
+
+    assert_eq!(
+        stage_counts(crate::request::StrictF32NumericalContract::governed_flush_and_reassociate()),
+        vec![3, 4],
+        "a reassociating contract retains the unsplit chain and the split one",
+    );
+    // The neighbour, so the four above is attributable to the split rather than
+    // to the epilogue alone: forbidding reassociation withdraws the split and
+    // exactly the four-stage alternative disappears.
+    assert_eq!(
+        stage_counts(crate::request::StrictF32NumericalContract::governed()),
+        vec![3],
+    );
+    assert_eq!(
+        crate::request::DeterministicBudgets::governed().regions,
+        4,
+        "the governed budget must admit the widest plan the profile assembles",
+    );
+}
+
+/// A chain whose producer is the *fused* prologue-and-fold region compiles, and
+/// both of its spellings match the reference bit for bit.
+///
+/// **This is what makes threading `RegionWrite` into `fused_region` a
+/// requirement rather than a tidy-up.** `sum(a * 2.0 + 1.0, axis 1) * 3.0` has
+/// two producer spellings — the prologue and the fold as separate regions, or
+/// the affine fold that absorbs the prologue — and a cover may materialize
+/// either for the epilogue to read. A `fused_region` that hard-coded
+/// `TensorRole::Output` would build a region writing the tensor the cover did
+/// not assign, `CoverAssembly::from_plan` would refuse it under
+/// `cover-materialization-unnamed`, and the two-dispatch alternative would
+/// disappear — silently, because a dropped alternative is not a refusal.
+///
+/// The stage counts below are therefore the assertion: `[2, 3]` is both
+/// spellings retained, and `[3]` alone would be the fused one lost.
+#[test]
+fn a_chain_over_a_fused_prologue_and_fold_retains_both_producer_spellings() {
+    let shape = Shape::from_dims([1, 4]);
+    // Exactly representable, and `scale * x + bias` is exact on each, so the
+    // fused and unfused producers agree bit for bit and the epilogue's result is
+    // attributable to the chain rather than to rounding.
+    let values: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), shape.clone())
+        .unwrap();
+    let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, a, scale).unwrap();
+    let shifted = F32Add::apply(&mut builder, scaled, bias).unwrap();
+    let reduced =
+        tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, shifted, [Axis::new(1)])
+            .unwrap();
+    let three = F32Constant::apply(&mut builder, 3.0_f32.to_bits()).unwrap();
+    let root = F32Multiply::apply(&mut builder, reduced, three).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), root)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let product =
+        compile(CompilationRequest::governed(&semantic)).expect("the epilogue chain compiles");
+    let mut counts: Vec<usize> = product.targets[0]
+        .portfolio
+        .alternatives
+        .iter()
+        .map(|alternative| alternative.program.stage_count())
+        .collect();
+    counts.sort_unstable();
+    assert_eq!(
+        counts,
+        vec![2, 3],
+        "the fused producer's chain was lost; only the unfused one survived",
+    );
+
+    let key = InputKey::new("a").unwrap();
+    let tensor = f32_tensor(shape, &values);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&semantic, &[InputBinding::new(&key, &tensor)])
+        .unwrap();
+
+    // The fused producer: one dispatch staging the fold's result, then the
+    // epilogue reading it.
+    let fused = alternative_dispatching(&product, 2);
+    let staged = interpret_fused(&fused.kernels[0], &values);
+    assert_eq!(
+        bits_of(&interpret_fused(&fused.kernels[1], &staged)),
+        tensor_bits(&expected[0]),
+    );
+
+    // The unfused producer: prologue, fold, epilogue.
+    let unfused = alternative_dispatching(&product, 3);
+    let prologue = interpret_fused(&unfused.kernels[0], &values);
+    let folded = interpret_fused(&unfused.kernels[1], &prologue);
+    assert_eq!(
+        bits_of(&interpret_fused(&unfused.kernels[2], &folded)),
+        tensor_bits(&expected[0]),
+    );
+
+    // `(3 + 5 + 9 + 17) * 3`, stated independently of the oracle.
+    assert_eq!(interpret_fused(&fused.kernels[1], &staged), vec![102.0]);
 }
 
 /// A widening broadcast reaches a kernel whose result is the reference
@@ -4966,9 +5462,12 @@ fn the_frontier_retains_the_workgroup_tree_beside_serial_and_the_split() {
 #[test]
 fn a_cooperative_region_declares_its_own_launch() {
     let (semantic, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
-    let (tree, members) =
-        crate::physical::single_workgroup_tree_region(&request, request.sole_output())
-            .expect("the tree is available");
+    let (tree, members) = crate::physical::single_workgroup_tree_region(
+        &request,
+        request.sole_output(),
+        crate::physical::RegionWrite::ProgramOutput,
+    )
+    .expect("the tree is available");
     let tree =
         crate::physical::verify_schedule(tree, members, &request).expect("the tree verifies");
     // The tree replaces the reduction of the materialized pair; its prologue is
@@ -5141,9 +5640,12 @@ fn each_way_the_tree_can_fail_rejects_before_admission_with_its_own_reason() {
 #[test]
 fn a_divergent_tile_is_refused_by_the_schedule_before_any_target_is_consulted() {
     let (_, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
-    let (region, members) =
-        crate::physical::single_workgroup_tree_region(&request, request.sole_output())
-            .expect("a reassociating eight-contributor request admits the tree");
+    let (region, members) = crate::physical::single_workgroup_tree_region(
+        &request,
+        request.sole_output(),
+        crate::physical::RegionWrite::ProgramOutput,
+    )
+    .expect("a reassociating eight-contributor request admits the tree");
     // The control: the tile the strategy actually emits verifies.
     assert!(crate::physical::verify_schedule(region.clone(), members.clone(), &request).is_ok());
 
@@ -5176,9 +5678,12 @@ fn a_divergent_tile_is_refused_by_the_schedule_before_any_target_is_consulted() 
 #[test]
 fn the_tree_subject_binding_refuses_a_region_that_does_not_realize_the_request() {
     let (_, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
-    let (region, members) =
-        crate::physical::single_workgroup_tree_region(&request, request.sole_output())
-            .expect("a reassociating eight-contributor request admits the tree");
+    let (region, members) = crate::physical::single_workgroup_tree_region(
+        &request,
+        request.sole_output(),
+        crate::physical::RegionWrite::ProgramOutput,
+    )
+    .expect("a reassociating eight-contributor request admits the tree");
     // The control: unperturbed, it binds.
     assert!(crate::physical::verify_schedule(region.clone(), members.clone(), &request).is_ok());
 
@@ -5269,9 +5774,12 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
         let values = REGROUPING_SENSITIVE_INPUT;
         let extent_usize = usize::try_from(extent).unwrap();
         let (_, request) = tree_request(Shape::from_dims([1, extent]), tree_target());
-        let (region, members) =
-            crate::physical::single_workgroup_tree_region(&request, request.sole_output())
-                .expect("a reassociating request admits the tree at this extent");
+        let (region, members) = crate::physical::single_workgroup_tree_region(
+            &request,
+            request.sole_output(),
+            crate::physical::RegionWrite::ProgramOutput,
+        )
+        .expect("a reassociating request admits the tree at this extent");
         let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { partition, .. } =
             &region.schedule.reduction
         else {
@@ -5320,7 +5828,12 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
     for extent in [1_u64, 0] {
         let (_, request) = tree_request(Shape::from_dims([1, extent]), tree_target());
         assert_eq!(
-            crate::physical::single_workgroup_tree_region(&request, request.sole_output()).err(),
+            crate::physical::single_workgroup_tree_region(
+                &request,
+                request.sole_output(),
+                crate::physical::RegionWrite::ProgramOutput,
+            )
+            .err(),
             Some(
                 crate::physical::WorkgroupTreeUnavailable::NoAdmissibleParticipantCount {
                     contributors: extent,
@@ -5357,7 +5870,12 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
     // than padded with identity elements or given a masked lane.
     let (_, prime) = tree_request(Shape::from_dims([1, 7]), tree_target());
     assert_eq!(
-        crate::physical::single_workgroup_tree_region(&prime, prime.sole_output()).err(),
+        crate::physical::single_workgroup_tree_region(
+            &prime,
+            prime.sole_output(),
+            crate::physical::RegionWrite::ProgramOutput,
+        )
+        .err(),
         Some(
             crate::physical::WorkgroupTreeUnavailable::NoAdmissibleParticipantCount {
                 contributors: 7,
@@ -5475,8 +5993,12 @@ fn split_regions(
     let mut regions = vec![
         crate::physical::verify_schedule(raw, members, request).expect("the prologue verifies"),
     ];
-    let split = crate::physical::split_reduction_regions(request, request.sole_output())
-        .expect("a four-contributor relaxed request admits the split");
+    let split = crate::physical::split_reduction_regions(
+        request,
+        request.sole_output(),
+        crate::physical::RegionWrite::ProgramOutput,
+    )
+    .expect("a four-contributor relaxed request admits the split");
     assert_eq!(split.partition.partitions, 2);
     assert_eq!(split.partition.contributors_per_partition, 2);
     for (raw, members) in split.stages {
@@ -5702,7 +6224,13 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
         .is_ok()
     );
     assert_eq!(request.budgets().buffers, 21);
-    assert_eq!(request.budgets().regions, 3);
+    // `regions` moved from `3` to `4` with the epilogue admission, and it moved
+    // for the reason this comment's `buffers` paragraph states for a different
+    // bound: it is sized to the widest plan the profile assembles, and a fold
+    // that stages its result for an elementwise epilogue made that plan one
+    // dispatch longer. This split program's own demand is still three, which is
+    // why nothing above this line moved.
+    assert_eq!(request.budgets().regions, 4);
 }
 
 /// **The closing evidence of

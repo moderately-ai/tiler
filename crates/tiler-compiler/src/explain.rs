@@ -4146,7 +4146,32 @@ mod tests {
                 // observing the failing value on the merged integration tree
                 // with the focused nextest command above, never copied from
                 // the producing branch.
-                "tiler-explain-v7 request=6dd42be71c6745fe\n",
+                // Rebaselined from `6dd42be71c6745fe` when
+                // `admit-elementwise-epilogues-over-a-materialized-intermediate`
+                // moved `DeterministicBudgets::governed().regions` from `3` to
+                // `4`. The budget is checked against a constant naming the widest
+                // plan the profile assembles, and a fold that stages its result
+                // for an elementwise epilogue made that plan four dispatches —
+                // prologue, partial, final, epilogue — where it had been three.
+                // Every budget is written into the request subject, so a budget
+                // value change moves every governed compilation's qualifier
+                // including this fixture's, whose program has no epilogue at all;
+                // that is the stated consequence of a budget being a property of
+                // the *request*, and the same reason the four earlier budget
+                // steps moved it. **No encoding version moved**: the budget field
+                // set, their widths, and their order in
+                // `canonical_explain_subject_bytes` are untouched, so a value
+                // change stays injective inside
+                // `tiler.compiler.request-subject.v5`, and the renderer version
+                // stays 7 because nothing about explain's rendering changed. The
+                // same branch added a fourth per-output sub-tag,
+                // `epilogue-f32.v1`, which moves no already-encodable subject's
+                // bytes and therefore does not reach this pin: this fixture's
+                // program is a serial sum and encodes under `serial-sum-f32.v3`
+                // exactly as before. Recomputed by observing the failing value on
+                // this branch tree with the focused nextest command above, never
+                // copied from another branch.
+                "tiler-explain-v7 request=689c3aefc30f48d3\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
