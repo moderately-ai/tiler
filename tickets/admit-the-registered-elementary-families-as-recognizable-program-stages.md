@@ -3,8 +3,8 @@ id: admit-the-registered-elementary-families-as-recognizable-program-stages
 title: Admit the registered elementary families as recognizable program stages
 status: in-progress
 priority: p1
-dependencies: []
-related: []
+dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage]
+related: [accept-the-governed-reciprocal-square-root-scalar-key]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -32,3 +32,33 @@ A program whose middle stage is a registered elementary family — a softmax, an
 ## Closes when
 
 At least one registered elementary family compiles as a middle stage through the ordinary path with reference bit-agreement, the recognition is law-derived rather than family-cased, the scalar-admission surfaces are parked for Tom, and the attention chain's remaining refusal (if any) names a wall outside this ticket with an owner.
+
+## Progress 2026-08-06 — two of this ticket's premises are refuted by source, and the stop is converted to structure
+
+Both of the stop conditions the dispatch named fired, and each is a fact about the tree rather than an estimate. What landed is the one prerequisite that is fully determined by already-accepted facts; the rest is filed with its derivation.
+
+### Landed
+
+- **`tiler.scalar::rsqrt-f32@1`, as a labelled draft** (`crates/tiler-ir/src/index/scalar.rs`, re-exported from `index/mod.rs`). Unary, homogeneous `f32`, no attributes, sharing the elementary fact record with `exp-f32` through the generalized `elementary_f32_scalar_facts`. Two tests, each watched failing under a deliberate perturbation: `the_reciprocal_square_root_shares_the_elementary_fact_record` (perturbed by registering `arithmetic_f32_scalar_facts` instead) and `the_reciprocal_square_root_refuses_a_foreign_operand_and_a_second_one` (perturbed by declaring `ScalarArity::exact(2)`).
+- **Exactly one pinned identity moved**, whole and in the same commit: `explain.rs`'s `deterministic_trace_is_sealed_and_rendered_separately`, `8966151e455093ea` → `ce6f9106c1c5933b`, with its ledger paragraph. No domain version stepped: `tiler.scalar-registry-snapshot.v1`'s framing and field order are untouched and a definition is self-delimiting, so the row addition is appends-only. No law-sidecar row and no semantic-snapshot row moved with it, and no reached-only projection moved at all — `cargo nextest run --workspace` is 2836 passed with that single pin edited.
+- Acceptance parked at [`accept-the-governed-reciprocal-square-root-scalar-key`](accept-the-governed-reciprocal-square-root-scalar-key.md).
+
+### Not landed, and why — the staged template expresses *neither* registered elementary family
+
+**Fact.** The bullet above claiming "the law registrations then use the accepted staged template" is false as written. `IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32` (`crates/tiler-ir/src/index/law.rs:106-111`, realized at `:953-1017`) folds operand zero with **no prologue** and applies exactly **one binary** scalar to operand one and the fold. The normalization needs a fold over `x_i * x_i`, an epilogue chain on the intermediate (`/ N`, `+ eps`, `Rsqrt`), and a *ternary* pointwise stage — and would silently drop its `eps` attribute if the template were registered for it, because `reduction_axes` reads by field ID and tolerates extra fields (`law.rs:1396-1402`). The softmax needs two distinct folds, the first with no registered scalar combiner at all.
+
+So the dispatch's fallback — "land the normalization half if it stands alone" — does not apply: the normalization half does not stand alone in the accepted vocabulary either. Filed with the full derivation as [`widen-the-staged-realization-law-to-the-registered-elementary-families`](widen-the-staged-realization-law-to-the-registered-elementary-families.md), and the softmax's missing scalar as [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`](admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md) — split out rather than guessed because its `SCALAR_FACT_NAN_RESULT_RULE` needs a third value in a published vocabulary, which is a decision rather than a registration.
+
+### Not landed, and why — law-derived recognition is an architecture fork, not a widening
+
+**Fact.** Region attribution is keyed on the exact set of semantic occurrences a region covers, and nothing finer exists: `NormalizedOutput::owns_region_members` (`crates/tiler-compiler/src/request.rs:1660-1680`) distinguishes an output's parts by *disjoint member sets*, `physical::spell_output` (`crates/tiler-compiler/src/physical.rs:442-518`) resolves a placed region by `members ==` and answers with the first matching arm, and `cover::derive_duplication` (`crates/tiler-compiler/src/cover.rs:1999-2018`) reads a repeated member as duplication of that occurrence rather than as a split of it.
+
+**Inference.** One elementary occurrence realizing as two regions gives both regions the same member set, so the second is unreachable. The existing epilogue chain works only because its parts come from different occurrences — `sum(x * x) * scale` is three occurrences the walk splits, `rms_norm(x, w)` is one. `RegionWrite` does not disambiguate them: `spell_output` matches members first, and the publishing-copy second dispatch copies a computed value rather than computing a second stage. Two coherent resolutions exist with different priorities; per AGENTS.md both are drafted and parked at [`resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage`](resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage.md).
+
+### The attention chain's remaining refusal, and its owner
+
+`softmax_recognizer_boundary.rs` still refuses under every contract, and the refusal is now attributed rather than described: the softmax has no registered realization law (owned by the law-widening ticket, itself waiting on the maximum key) and no representation as a multi-region stage (owned by the attribution fork). Neither wall is inside this ticket's scopes-as-dispatched, and neither is a property of the attention chain — `rms-norm`-after-anything hits both identically, which is what keeps this the general capability the outcome states rather than an attention feature.
+
+### What remains here
+
+This ticket's stated outcome is unsupported until the law widening and the attribution fork both land; those are its dependencies. The four checks it named are otherwise unchanged.

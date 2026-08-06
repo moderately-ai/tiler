@@ -66,6 +66,37 @@ pub fn exp_f32_scalar_op() -> ScalarOpKey {
     governed_scalar_op("exp-f32")
 }
 
+/// Returns the governed per-point `f32` reciprocal-square-root scalar operation key.
+///
+/// **Draft surface, not yet accepted.** The key, its name, its arity, and its
+/// fact record are a concrete draft pending Tom's acceptance of the boundary;
+/// admitting a new scalar operation is a semantic surface, not an
+/// implementation detail, because the key becomes part of every reached-
+/// definition projection a region carrying it derives an identity from.
+///
+/// The *precise* reciprocal square root, `1/sqrt(t)`. Like
+/// [`exp_f32_scalar_op`] its result is not a rational function of its operand,
+/// so what it may deliver is a resolved ADR 0042 accuracy contract rather than
+/// IEEE-754 alone — and that contract lives on the semantic operation this
+/// scalar realizes, `tiler::rms-norm-f32@1`, not here. The two elementary keys
+/// share a fact record for exactly that reason and differ in the contract their
+/// operations state: the exponential's is `BoundedPiecewise` at twelve ULP,
+/// this one's is `Faithful`.
+///
+/// **One operation, deliberately not a square root followed by a division and
+/// not a reciprocal of a square root.** Each of those rounds twice where this
+/// rounds once, so they are different binary32 functions;
+/// `tiler::rms-norm-f32@1` pins `Rsqrt` in its reference semantics and
+/// withholds the reciprocal-transform permission rather than leaving the
+/// substitution open. There is no square-root scalar key beside this one, so
+/// the substitution has nothing to name rather than being forbidden by a rule
+/// someone must remember — the argument [`divide_f32_scalar_op`] states for its
+/// own missing sibling.
+#[must_use]
+pub fn rsqrt_f32_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("rsqrt-f32")
+}
+
 /// Returns the governed per-point `f32` NaN-canonicalization scalar key.
 ///
 /// This is the index-region counterpart of the structured kernel's
@@ -1012,16 +1043,24 @@ fn arithmetic_f32_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> 
     ])
 }
 
-/// Facts of the governed precise binary32 exponential.
+/// Facts shared by the governed precise binary32 elementary functions.
 ///
-/// It states the same NaN rule and the same canonical payload as the arithmetic
-/// scalars, and it deliberately states **no rounding rule of its own**: an
+/// They state the same NaN rule and the same canonical payload as the arithmetic
+/// scalars, and they deliberately state **no rounding rule of their own**: an
 /// elementary function's admitted result set is its operation's resolved accuracy
 /// contract, and writing "round-to-nearest ties-to-even" here would claim a
-/// correctly rounded exponential that nothing establishes. The contraction field
-/// is absent for the same reason it is absent from a conversion — there is no
+/// correctly rounded result that nothing establishes. The contraction field is
+/// absent for the same reason it is absent from a conversion — there is no
 /// adjacent product to fuse into.
-fn exp_f32_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> {
+///
+/// One record rather than one per key, on the same ground
+/// [`arithmetic_f32_scalar_facts`] is shared by three: the three fields say the
+/// same thing about the exponential and the reciprocal square root, and two
+/// copies would be two authorities over one statement that could drift. What
+/// separates the two keys is not this record but the resolved accuracy contract
+/// their operations state, which is a different layer's authority — and the
+/// rounding field says so by naming that layer rather than a rule.
+fn elementary_f32_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> {
     scalar_facts([
         (
             SCALAR_FACT_ROUNDING,
@@ -1522,7 +1561,7 @@ impl ScalarRegistryBuilder {
     /// exact per-point scalar operations the governed semantic families lower
     /// to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`],
     /// [`add_f32_scalar_op`], [`divide_f32_scalar_op`], [`exp_f32_scalar_op`],
-    /// [`canonicalize_nan_f32_scalar_op`],
+    /// [`rsqrt_f32_scalar_op`], [`canonicalize_nan_f32_scalar_op`],
     /// [`strict_affine_u4_dequantize_scalar_op`], [`constant_bf16_scalar_op`],
     /// [`multiply_bf16_scalar_op`], and [`add_bf16_scalar_op`]. NaN
     /// canonicalization and the strict-affine decode are conversion operations
@@ -1597,7 +1636,27 @@ impl ScalarRegistryBuilder {
                  realizes; tiler.scalar::exp-f32@1",
                 ScalarAttributeSchema::empty(),
                 ScalarArity::exact(1)?,
-                exp_f32_scalar_facts()?,
+                elementary_f32_scalar_facts()?,
+                Arc::new(StandardF32Homogeneous),
+            )?,
+        )?;
+        // The second precise elementary key. Registering it widens this
+        // snapshot's identity and therefore every whole-snapshot provenance
+        // derived from it, exactly as the `bf16` triple's arrival did; it leaves
+        // reached-only projections alone, so every existing occurrence's
+        // executable coverage — and so its kernel-program and artifact identity
+        // — stays byte-identical.
+        builder.register(
+            provider.clone(),
+            standard_definition(
+                rsqrt_f32_scalar_op(),
+                "the reciprocal square root 1/sqrt(t) over IEEE 754-2019 binary32, precise family, \
+                 as one operation and deliberately not a square root followed by a division; its \
+                 admitted result set is the resolved accuracy contract of the semantic operation \
+                 it realizes; tiler.scalar::rsqrt-f32@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(1)?,
+                elementary_f32_scalar_facts()?,
                 Arc::new(StandardF32Homogeneous),
             )?,
         )?;
@@ -2758,6 +2817,146 @@ mod governed_fact_tests {
         assert_eq!(
             field(tensor, AttributeFieldId::new(1)).map(utf8).as_deref(),
             Some("tiler.conformance.add-f32")
+        );
+    }
+
+    /// The drafted reciprocal square root is registered and shares the
+    /// elementary fact record with the exponential.
+    ///
+    /// **The equality is the claim, not a convenience.** The two keys state one
+    /// record because the three fields say the same thing about both: neither
+    /// rounds under a rule this layer can name, both install the canonical
+    /// arithmetic NaN, and neither is an arithmetic-contraction participant.
+    /// What separates them is the resolved accuracy contract their *operations*
+    /// state — `BoundedPiecewise` at twelve ULP for `tiler::silu-f32@1`'s
+    /// exponential, `Faithful` for `tiler::rms-norm-f32@1`'s reciprocal square
+    /// root — and that is a different layer's authority. Asserting the equality
+    /// here is what makes a later divergence deliberate rather than accidental,
+    /// exactly as `the_two_exponential_tolerances_agree_because_the_derivation_is_one`
+    /// does for the tolerances one layer up.
+    #[test]
+    fn the_reciprocal_square_root_shares_the_elementary_fact_record() {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let rsqrt = registry
+            .definition(&super::rsqrt_f32_scalar_op())
+            .expect("the drafted reciprocal square root is registered");
+        let exp = registry
+            .definition(&super::exp_f32_scalar_op())
+            .expect("the governed exponential is registered");
+        assert_eq!(rsqrt.facts(), exp.facts());
+
+        // The rounding field names the deferral rather than a rule, which is
+        // the whole reason the record can be shared: a key that stated
+        // "round-to-nearest ties-to-even" here would claim a correctly rounded
+        // reciprocal square root that nothing establishes.
+        assert_eq!(
+            field(rsqrt.facts(), super::SCALAR_FACT_ROUNDING)
+                .map(utf8)
+                .as_deref(),
+            Some("resolved-by-the-operation-accuracy-contract"),
+        );
+        assert_eq!(
+            field(rsqrt.facts(), SCALAR_FACT_NAN_RESULT_RULE)
+                .map(utf8)
+                .as_deref(),
+            Some(CANONICAL_ARITHMETIC_NAN_PROFILE),
+        );
+        assert!(
+            field(rsqrt.facts(), SCALAR_FACT_CONTRACTION_PERMITTED).is_none(),
+            "an elementary function has no adjacent product to fuse into",
+        );
+        assert_eq!(rsqrt.operands().min(), 1);
+        assert_eq!(rsqrt.operands().max(), 1);
+        assert_eq!(
+            field(rsqrt.conformance(), AttributeFieldId::new(1))
+                .map(utf8)
+                .as_deref(),
+            Some("tiler.scalar.conformance.rsqrt-f32"),
+        );
+
+        // The two keys are nevertheless distinct definitions: a shared fact
+        // record must not make them one row, or the projection a region derives
+        // its identity from could not tell an exponential from a reciprocal
+        // square root.
+        assert_ne!(super::rsqrt_f32_scalar_op(), super::exp_f32_scalar_op());
+        assert_ne!(
+            registry
+                .project_reached([&super::rsqrt_f32_scalar_op()])
+                .expect("the drafted key projects")
+                .as_bytes(),
+            registry
+                .project_reached([&super::exp_f32_scalar_op()])
+                .expect("the governed exponential projects")
+                .as_bytes(),
+        );
+    }
+
+    /// The drafted key refuses the two applications a homogeneous unary
+    /// elementary scalar has no meaning for.
+    ///
+    /// Both perturbations were observed failing before the assertions were
+    /// written: a `bf16` operand and a second operand each reach a different
+    /// refusal, so neither check is satisfied by the other one firing.
+    #[test]
+    fn the_reciprocal_square_root_refuses_a_foreign_operand_and_a_second_one() {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let key = super::rsqrt_f32_scalar_op();
+        let f32_type = crate::semantic::F32::resolved_type();
+        let capacity = super::ScalarInferenceCapacity {
+            result_slots: 1,
+            result_count_before: 0,
+            result_limit: 1,
+            retained_bytes: usize::MAX,
+            retained_bytes_before: 0,
+            retained_byte_limit: usize::MAX,
+            per_result_overhead: 0,
+            byte_multiplier: 1,
+        };
+        let attributes = super::ScalarAttributes::empty();
+
+        let inferred = registry
+            .infer(&key, std::slice::from_ref(&f32_type), &attributes, capacity)
+            .expect("a unary f32 application is admitted");
+        assert_eq!(inferred, vec![f32_type.clone()]);
+
+        // A `bf16` operand: this family declares no mixed precision and no
+        // implicit promotion, so it is rejected rather than resolved to the
+        // operand's own type.
+        let foreign = registry
+            .infer(
+                &key,
+                &[crate::semantic::Bf16::resolved_type()],
+                &attributes,
+                capacity,
+            )
+            .expect_err("a bf16 operand is not an f32 one");
+        let super::ScalarApplyError::Authority(super::ScalarRegistryError::Inference(rejection)) =
+            foreign
+        else {
+            panic!("a foreign operand must be the inferencer's refusal, not a host one");
+        };
+        assert_eq!(rejection.key(), &key);
+        assert_eq!(
+            rejection.rejection().code(),
+            &crate::semantic::ProviderDiagnosticCode::new("tiler.scalar.operand-type")
+                .expect("the governed diagnostic code is valid"),
+        );
+
+        // A second operand: the reciprocal square root is unary, and an arity
+        // the definition does not admit is refused by the registered contract
+        // before the inferencer runs at all.
+        let arity = registry
+            .infer(&key, &[f32_type.clone(), f32_type], &attributes, capacity)
+            .expect_err("the reciprocal square root admits exactly one operand");
+        assert!(
+            matches!(
+                arity,
+                super::ScalarApplyError::Authority(super::ScalarRegistryError::OperandArity {
+                    actual: 2,
+                    ..
+                })
+            ),
+            "a second operand must be an arity refusal; observed {arity:?}",
         );
     }
 }
