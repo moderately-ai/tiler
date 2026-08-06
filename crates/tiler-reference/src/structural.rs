@@ -12,6 +12,16 @@
 //!
 //! [`canonicalize_arithmetic_f32`]: crate::canonicalize_arithmetic_f32
 //!
+//! **The declared numerical conformance is not read here for that same reason,
+//! and the omission is the answer rather than an oversight.** Both subnormal
+//! dimensions are functions on an arithmetic site: the input dimension replaces a
+//! subnormal *operand before an operation*, and the result dimension replaces a
+//! subnormal value an operation *produced*. These four families perform no
+//! operation, so a transported subnormal is neither. Applying a flush here would
+//! make a permissive contract silently rewrite payloads a program only moved,
+//! and it would do so for values no arithmetic ever touched — which is a stronger
+//! claim than any target's arithmetic makes about its own registers.
+//!
 //! All four evaluators recompute the family's own shape rule from the attribute
 //! rather than trusting the operand and result shapes the graph carries. The
 //! semantic registry already refused a malformed mapping at construction, so a

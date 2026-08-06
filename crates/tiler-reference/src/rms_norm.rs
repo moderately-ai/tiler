@@ -80,6 +80,7 @@ use tiler_ir::shape::{Axis, Shape};
 
 use super::accuracy::{CertifiedEnclosure, EnclosurePrecision, rsqrt_enclosure};
 use super::canonicalize_arithmetic_f32;
+use super::conformance::ReferenceNumericalConformance;
 use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{RowGeometry, decode_f32, f32_element, f32_elements};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
@@ -118,10 +119,17 @@ impl ReferenceOperation for RmsNormF32Reference {
             return Err(ReferenceOperationError::InvalidApplication);
         }
 
-        let mapped = normalize_dense(shape, axis, eps_payload, &values, &weights)?
-            .into_iter()
-            .map(f32_element)
-            .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;
+        let mapped = normalize_dense(
+            shape,
+            axis,
+            eps_payload,
+            &values,
+            &weights,
+            request.conformance(),
+        )?
+        .into_iter()
+        .map(f32_element)
+        .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;
         let tensor = Tensor::dense(F32::resolved_type(), shape.clone(), mapped)
             .map_err(|source| dense_result_error(&source))?;
         outputs.push(tensor)
@@ -135,6 +143,7 @@ impl RowGeometry {
         values: &[f32],
         row: usize,
         eps: f32,
+        conformance: ReferenceNumericalConformance,
     ) -> Result<f32, ReferenceOperationError> {
         // An empty normalized axis makes the fold empty, whose identity is the
         // `+0.0` the strict serial sum declares. It is stated rather than
@@ -142,7 +151,7 @@ impl RowGeometry {
         // proof, so a zero-extent occurrence is decided here.
         let mut accumulator: Option<f32> = None;
         for position in 0..self.extent {
-            let value = values[self.element_index(row, position)];
+            let value = conformance.apply_to_operand(values[self.element_index(row, position)]);
             // One rounding per square, then one per combine, in the canonical
             // contributor order — the strict left fold seeded at the first
             // contributor, which is what `tiler::strict-serial-sum-f32@1` also
@@ -150,10 +159,18 @@ impl RowGeometry {
             // single-contributor row, and while a square is never a negative
             // zero, the seeding rule is the reduction's and not this operation's
             // to vary.
-            let square = value * value;
+            //
+            // The squaring is where the declared input dimension becomes
+            // observable at this family's own scale: a row of `1e-40` squares to
+            // `+0.0` on a preserving host and reaches the squaring as zeros on a
+            // flushing one, which is exactly the divergence
+            // `RMS_NORM_F32_FACT_SUBNORMALS` records.
+            let square = conformance.apply_to_result(value * value);
             accumulator = Some(match accumulator {
                 None => square,
-                Some(total) => total + square,
+                Some(total) => conformance.apply_to_result(
+                    conformance.apply_to_operand(total) + conformance.apply_to_operand(square),
+                ),
             });
         }
         let total = accumulator.unwrap_or(0.0);
@@ -169,9 +186,16 @@ impl RowGeometry {
         let mean = if self.extent == 0 {
             total
         } else {
-            total / extent
+            conformance.apply_to_result(
+                conformance.apply_to_operand(total) / conformance.apply_to_operand(extent),
+            )
         };
-        certified_rsqrt_f32(mean + eps)
+        certified_rsqrt_f32_under(
+            conformance,
+            conformance.apply_to_result(
+                conformance.apply_to_operand(mean) + conformance.apply_to_operand(eps),
+            ),
+        )
     }
 }
 
@@ -198,6 +222,33 @@ impl RowGeometry {
 /// the refusal remains because that is a proof about the reference rather than
 /// about any particular enclosure's width.
 pub fn certified_rsqrt_f32(argument: f32) -> Result<f32, ReferenceOperationError> {
+    certified_rsqrt_f32_under(ReferenceNumericalConformance::strict(), argument)
+}
+
+/// Returns the correctly rounded binary32 `1 / sqrt(argument)` under one stated
+/// contract.
+///
+/// Two sites, as for the certified exponential: the argument is an operand
+/// entering an operation and the returned value is one an operation produced. The
+/// input dimension is load-bearing rather than formal here — at the positive
+/// subnormal argument `2^-149` the reciprocal square root is about `1.9e22`,
+/// while at the `+0.0` a flushing unit substitutes it is `+inf` — so a reference
+/// that dropped the dimension would answer a finite value where the declared
+/// contract's device answers an infinity. The exact-rational enclosure between
+/// them has no subnormal range and is untouched by either dimension.
+///
+/// # Errors
+///
+/// As [`certified_rsqrt_f32`].
+pub fn certified_rsqrt_f32_under(
+    conformance: ReferenceNumericalConformance,
+    argument: f32,
+) -> Result<f32, ReferenceOperationError> {
+    certified_rsqrt_strict(conformance.apply_to_operand(argument))
+        .map(|value| conformance.apply_to_result(value))
+}
+
+fn certified_rsqrt_strict(argument: f32) -> Result<f32, ReferenceOperationError> {
     if argument.is_nan() {
         return Ok(f32::NAN);
     }
@@ -363,13 +414,44 @@ pub fn rms_norm_f32(
     values: &[f32],
     weights: &[f32],
 ) -> Result<Vec<f32>, ReferenceOperationError> {
+    rms_norm_f32_under(
+        shape,
+        axis,
+        eps_bits,
+        values,
+        weights,
+        ReferenceNumericalConformance::strict(),
+    )
+}
+
+/// Evaluates the dense binary32 normalization under one stated contract.
+///
+/// **This family reaches both dimensions and its own declared fact says where.**
+/// `RMS_NORM_F32_FACT_SUBNORMALS` records that a row of `1e-40` squares to `+0.0`
+/// on a preserving host — so the mean of squares is zero and the row normalizes
+/// to a *normal* value through `rsqrt(eps)` — while on a target flushing input
+/// subnormals the same row reaches the squaring as zeros. Both readings are legal
+/// realizations of the same declared operation, and which one this returns is the
+/// contract's answer rather than the host's.
+///
+/// # Errors
+///
+/// As [`rms_norm_f32`].
+pub fn rms_norm_f32_under(
+    shape: &Shape,
+    axis: Axis,
+    eps_bits: u32,
+    values: &[f32],
+    weights: &[f32],
+    conformance: ReferenceNumericalConformance,
+) -> Result<Vec<f32>, ReferenceOperationError> {
     let count = shape
         .element_count()
         .ok_or(ReferenceOperationError::ShapeTooLarge)?;
     if values.len() != count || weights.len() != count {
         return Err(ReferenceOperationError::InvalidApplication);
     }
-    normalize_dense(shape, axis, eps_bits, values, weights)
+    normalize_dense(shape, axis, eps_bits, values, weights, conformance)
 }
 
 /// Evaluates the pinned formula over a dense row-major tensor.
@@ -379,6 +461,7 @@ fn normalize_dense(
     eps_bits: u32,
     values: &[f32],
     weights: &[f32],
+    conformance: ReferenceNumericalConformance,
 ) -> Result<Vec<f32>, ReferenceOperationError> {
     let eps = f32::from_bits(eps_bits);
     // The refusal the semantic inferencer already states, restated here because
@@ -390,7 +473,7 @@ fn normalize_dense(
     let geometry = RowGeometry::derive(shape, axis)?;
     let mut mapped = vec![0.0_f32; values.len()];
     for row in 0..geometry.rows {
-        let scale = geometry.row_scale(values, row, eps)?;
+        let scale = geometry.row_scale(values, row, eps, conformance)?;
         for position in 0..geometry.extent {
             let index = geometry.element_index(row, position);
             // Normalize first, then weight: the reference applies the weight
@@ -398,8 +481,13 @@ fn normalize_dense(
             // identity at binary32 and a rounding boundary at a narrower one.
             // Writing the two multiplies in this order is what carries that
             // ordering into a profile where it becomes observable.
-            let normalized = values[index] * scale;
-            mapped[index] = canonicalize_arithmetic_f32(weights[index] * normalized);
+            let normalized = conformance.apply_to_result(
+                conformance.apply_to_operand(values[index]) * conformance.apply_to_operand(scale),
+            );
+            mapped[index] = canonicalize_arithmetic_f32(conformance.apply_to_result(
+                conformance.apply_to_operand(weights[index])
+                    * conformance.apply_to_operand(normalized),
+            ));
         }
     }
     Ok(mapped)

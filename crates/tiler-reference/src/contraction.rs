@@ -56,6 +56,27 @@
 //! Saying so is the point: the check that can say no about the *site* is the
 //! signature decode, not a value comparison.
 //!
+//! # Where the declared numerical conformance applies in this fold
+//!
+//! The fold is one multiply and one add per contributor, so both subnormal
+//! dimensions have sites here and both are applied: each decoded factor and the
+//! running accumulator pass through
+//! [`ReferenceNumericalConformance::apply_to_operand`] as they enter an
+//! operation, and the product and every accumulation pass through
+//! [`ReferenceNumericalConformance::apply_to_result`]. The contract's own NaN
+//! canonicalization sits between them and commutes with both, because no NaN is
+//! subnormal and no subnormal is a NaN.
+//!
+//! This is *separate* from the three permissions the signature decode verifies.
+//! Those refuse a declaration whose result is a set rather than one value; the
+//! subnormal modes name one function each and are realized rather than refused.
+//! A contract resolving both to a flush and every permission to forbidden still
+//! determines exactly one value, and it is not the value a preserving fold
+//! computes.
+//!
+//! [`ReferenceNumericalConformance::apply_to_operand`]: crate::ReferenceNumericalConformance::apply_to_operand
+//! [`ReferenceNumericalConformance::apply_to_result`]: crate::ReferenceNumericalConformance::apply_to_result
+//!
 //! # Two ways to walk one fold, and the two numbers that bound them
 //!
 //! `ContractionFold` holds everything a contraction is parameterized by once the
@@ -98,6 +119,7 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Extent, Shape};
 
 use super::MAX_REFERENCE_TENSOR_ELEMENTS;
+use super::conformance::ReferenceNumericalConformance;
 use super::error::{
     ReferenceOperationError, StagedContractionError, UnsupportedContractionDeclaration,
     dense_result_error,
@@ -380,6 +402,7 @@ impl ReferenceOperation for StrictTensorContractionF32Reference {
             left,
             right,
             request.iteration_step_allowance(),
+            request.conformance(),
         )
         .and_then(|tensor| outputs.push(tensor))
     }
@@ -411,6 +434,7 @@ pub(crate) fn contract_operands(
     left: &Tensor,
     right: &Tensor,
     iteration_step_allowance: usize,
+    conformance: ReferenceNumericalConformance,
 ) -> Result<Tensor, ReferenceOperationError> {
     let fold = ContractionFold::plan(contract, structure, left, right)?;
     // The fold performs `output_count * contracted_count` multiply-accumulate
@@ -433,7 +457,7 @@ pub(crate) fn contract_operands(
             actual: steps,
         });
     }
-    let results = fold.evaluate_every_output(contract)?;
+    let results = fold.evaluate_every_output(contract, conformance)?;
     Tensor::dense(
         contract.result_type.clone(),
         fold.output_shape.clone(),
@@ -629,6 +653,7 @@ impl<'operands> ContractionFold<'operands> {
     fn evaluate_every_output(
         &self,
         contract: &ContractionContract,
+        conformance: ReferenceNumericalConformance,
     ) -> Result<Vec<ReferenceElement>, ReferenceOperationError> {
         let window = self.window_output_count();
         if window == 0 {
@@ -645,13 +670,13 @@ impl<'operands> ContractionFold<'operands> {
             });
         }
         if window >= self.output_count {
-            return self.evaluate_outputs(contract, 0, self.output_count);
+            return self.evaluate_outputs(contract, conformance, 0, self.output_count);
         }
         let mut results = Vec::with_capacity(self.output_count);
         let mut first_output = 0_usize;
         while first_output < self.output_count {
             let outputs = window.min(self.output_count - first_output);
-            results.extend(self.evaluate_outputs(contract, first_output, outputs)?);
+            results.extend(self.evaluate_outputs(contract, conformance, first_output, outputs)?);
             first_output += outputs;
         }
         Ok(results)
@@ -667,6 +692,7 @@ impl<'operands> ContractionFold<'operands> {
     fn evaluate_outputs(
         &self,
         contract: &ContractionContract,
+        conformance: ReferenceNumericalConformance,
         first_output: usize,
         outputs: usize,
     ) -> Result<Vec<ReferenceElement>, ReferenceOperationError> {
@@ -715,15 +741,20 @@ impl<'operands> ContractionFold<'operands> {
                     let element = self.elements[position]
                         .get(offset)
                         .ok_or(ReferenceOperationError::InvalidApplication)?;
-                    *factor = decode_f32(element)?;
+                    *factor = conformance.apply_to_operand(decode_f32(element)?);
                 }
                 // One rounding for the product and one for the accumulation, each
-                // canonicalized: the fused single-rounding form is the permission
-                // this family declares forbidden.
-                let product = contract.canonicalize(factors[0] * factors[1]);
+                // canonicalized and each committed through the declared result
+                // dimension: the fused single-rounding form is the permission this
+                // family declares forbidden, and the accumulator re-enters the add
+                // as an operand, so the input dimension applies to it too.
+                let product =
+                    conformance.apply_to_result(contract.canonicalize(factors[0] * factors[1]));
                 accumulator = Some(match accumulator {
                     None => product,
-                    Some(value) => contract.canonicalize(value + product),
+                    Some(value) => conformance.apply_to_result(contract.canonicalize(
+                        conformance.apply_to_operand(value) + conformance.apply_to_operand(product),
+                    )),
                 });
             }
             let value = accumulator.ok_or(ReferenceOperationError::InvalidApplication)?;
@@ -821,6 +852,7 @@ pub struct StagedStrictTensorContractionF32<'operands> {
     contract: ContractionContract,
     fold: ContractionFold<'operands>,
     slab_output_count: usize,
+    conformance: ReferenceNumericalConformance,
 }
 
 impl<'operands> StagedStrictTensorContractionF32<'operands> {
@@ -912,7 +944,30 @@ impl<'operands> StagedStrictTensorContractionF32<'operands> {
             contract,
             fold,
             slab_output_count,
+            conformance: ReferenceNumericalConformance::strict(),
         })
+    }
+
+    /// Returns this staged fold performed under one stated numerical contract.
+    ///
+    /// The planned fold is unchanged — the split, the slab width, the contributor
+    /// sequence, and the work bounds are all decisions the contract does not
+    /// touch — and what moves is the arithmetic each step performs. A caller
+    /// qualifying a candidate compiled under a flushing realization states it
+    /// here; a caller that states nothing gets the strict reading, which is what
+    /// [`Self::governed`] computed before it could be told anything.
+    #[must_use]
+    pub fn under(self, conformance: ReferenceNumericalConformance) -> Self {
+        Self {
+            conformance,
+            ..self
+        }
+    }
+
+    /// Returns the numerical contract every slab is folded under.
+    #[must_use]
+    pub const fn conformance(&self) -> ReferenceNumericalConformance {
+        self.conformance
     }
 
     /// Returns the shape the assembled result carries.
@@ -968,7 +1023,7 @@ impl<'operands> StagedStrictTensorContractionF32<'operands> {
             .slab_output_count
             .min(self.fold.output_count - first_output);
         self.fold
-            .evaluate_outputs(&self.contract, first_output, outputs)
+            .evaluate_outputs(&self.contract, self.conformance, first_output, outputs)
     }
 }
 
@@ -986,6 +1041,7 @@ impl fmt::Debug for StagedStrictTensorContractionF32<'_> {
             .field("contracted_count", &self.contracted_count())
             .field("slab_output_count", &self.slab_output_count())
             .field("slab_count", &self.slab_count())
+            .field("conformance", &self.conformance)
             .finish()
     }
 }

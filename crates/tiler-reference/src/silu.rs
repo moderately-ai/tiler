@@ -57,6 +57,7 @@ use std::sync::Arc;
 use tiler_ir::semantic::accuracy::ExactRational;
 
 use super::accuracy::{CertifiedEnclosure, EnclosurePrecision, exp_enclosure};
+use super::conformance::ReferenceNumericalConformance;
 use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{decode_f32, f32_element, f32_elements};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
@@ -87,6 +88,7 @@ impl ReferenceOperation for SiluF32Reference {
         if !request.attributes().fields().is_empty() {
             return Err(ReferenceOperationError::InvalidApplication);
         }
+        let conformance = request.conformance();
         let elements = f32_elements(input)?;
         let shape = input.shape();
         let count = shape
@@ -95,7 +97,10 @@ impl ReferenceOperation for SiluF32Reference {
         let mapped = (0..count)
             .map(|index| {
                 let value = decode_f32(&elements[index])?;
-                f32_element(canonicalize_arithmetic_f32(silu_f32(value)?))
+                f32_element(canonicalize_arithmetic_f32(silu_f32_under(
+                    conformance,
+                    value,
+                )?))
             })
             .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;
         let tensor = Tensor::dense(F32::resolved_type(), shape.clone(), mapped)
@@ -125,6 +130,34 @@ impl ReferenceOperation for SiluF32Reference {
 /// certified enclosure cannot prove which binary32 value the exponential rounds
 /// to.
 pub fn silu_f32(argument: f32) -> Result<f32, ReferenceOperationError> {
+    silu_f32_under(ReferenceNumericalConformance::strict(), argument)
+}
+
+/// Returns the binary32 `SiLU` reference value under one stated contract.
+///
+/// **This family reaches both subnormal dimensions, and the declared operation
+/// fact does not cover the case that reaches them.**
+/// `SILU_F32_FACT_SUBNORMALS` records that no subnormal arises in the
+/// large-negative tail, measured at `silu(-88.7228) = 0x82b173cc` and
+/// `silu(-88.73) = 0x80000000`. It does not cover a subnormal *argument*: near
+/// zero the reference is `x / 2`, so `silu(0x007fffff)` is `0x00400000` — a
+/// subnormal result from a subnormal operand — and under a flushing contract the
+/// same argument gives `0x00000000`. Preservation over the tail is therefore not
+/// preservation over the domain, and this evaluator applies the declared modes
+/// rather than relying on the narrower claim.
+///
+/// The three sites are the ones a flushing arithmetic unit has: the argument as
+/// it enters the exponential and the division, the exponential's own result, and
+/// each of the two remaining roundings. The negation is not one of them —
+/// flipping a sign bit is not an arithmetic operation and produces no new value.
+///
+/// # Errors
+///
+/// As [`silu_f32`].
+pub fn silu_f32_under(
+    conformance: ReferenceNumericalConformance,
+    argument: f32,
+) -> Result<f32, ReferenceOperationError> {
     if argument.is_nan() {
         return Ok(f32::NAN);
     }
@@ -134,14 +167,15 @@ pub fn silu_f32(argument: f32) -> Result<f32, ReferenceOperationError> {
     if argument == f32::NEG_INFINITY {
         return Ok(f32::NAN);
     }
+    let argument = conformance.apply_to_operand(argument);
     // Exact: negating a finite binary32 value flips the sign bit and changes
     // nothing else, so this introduces no rounding of its own.
     let exponent_argument = -argument;
-    let exponential = certified_exp_f32(exponent_argument)?;
+    let exponential = certified_exp_f32_under(conformance, exponent_argument)?;
     // Both remaining steps are binary32 round-to-nearest ties-to-even, which is
     // what ADR 0024 fixes and what the host performs exactly.
-    let divisor = 1.0_f32 + exponential;
-    Ok(argument / divisor)
+    let divisor = conformance.apply_to_result(1.0_f32 + conformance.apply_to_operand(exponential));
+    Ok(conformance.apply_to_result(argument / conformance.apply_to_operand(divisor)))
 }
 
 /// Returns the provably correctly rounded binary32 value of `e^argument`.
@@ -152,6 +186,37 @@ pub fn silu_f32(argument: f32) -> Result<f32, ReferenceOperationError> {
 /// enclosure straddles a rounding boundary or cannot be produced. Both are
 /// refusals rather than a nearest-side guess.
 pub fn certified_exp_f32(argument: f32) -> Result<f32, ReferenceOperationError> {
+    certified_exp_f32_under(ReferenceNumericalConformance::strict(), argument)
+}
+
+/// Returns the correctly rounded binary32 `e^argument` under one stated contract.
+///
+/// Two sites, and only two. The argument is an operand entering an operation, so
+/// the input dimension replaces it before the enclosure is taken — a flushing
+/// unit computes `e^0` where a preserving one computes `e^t` for subnormal `t`,
+/// and both are exactly `1.0` here, which is why this site is applied for
+/// composition rather than for any value it changes at this function's own
+/// operands. The returned value is one an operation produced, so the result
+/// dimension replaces it: `certified_exp_f32(-104.0 + eps)` reaches the subnormal
+/// band, and that is where a flushing target and a preserving one part.
+///
+/// The exact-rational interior is untouched by both. An enclosure is arbitrary
+/// precision rational arithmetic and has no subnormal range to flush; applying a
+/// binary32 mode inside it would be applying a format's rule to a value not in
+/// that format.
+///
+/// # Errors
+///
+/// As [`certified_exp_f32`].
+pub fn certified_exp_f32_under(
+    conformance: ReferenceNumericalConformance,
+    argument: f32,
+) -> Result<f32, ReferenceOperationError> {
+    certified_exp_strict(conformance.apply_to_operand(argument))
+        .map(|value| conformance.apply_to_result(value))
+}
+
+fn certified_exp_strict(argument: f32) -> Result<f32, ReferenceOperationError> {
     if argument.is_nan() {
         return Ok(f32::NAN);
     }

@@ -19,6 +19,7 @@ use tiler_ir::semantic::{
     OperationAttributes, ProviderIdentity, ResolvedValueType, SemanticCapabilityAuthority,
 };
 
+use super::conformance::ReferenceNumericalConformance;
 use super::error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,
     ReferenceValueError,
@@ -127,6 +128,7 @@ pub struct ReferenceEvaluationRequest<'a> {
     pub(crate) operands: &'a [&'a Tensor],
     pub(crate) attributes: &'a OperationAttributes,
     pub(crate) iteration_step_allowance: usize,
+    pub(crate) conformance: ReferenceNumericalConformance,
 }
 
 impl fmt::Debug for ReferenceEvaluationRequest<'_> {
@@ -136,6 +138,7 @@ impl fmt::Debug for ReferenceEvaluationRequest<'_> {
             .field("operand_count", &self.operands.len())
             .field("attributes", &self.attributes)
             .field("iteration_step_allowance", &self.iteration_step_allowance)
+            .field("conformance", &self.conformance)
             .finish()
     }
 }
@@ -171,6 +174,30 @@ impl<'a> ReferenceEvaluationRequest<'a> {
     #[must_use]
     pub const fn iteration_step_allowance(self) -> usize {
         self.iteration_step_allowance
+    }
+
+    /// Returns the numerical contract this evaluation is performed under.
+    ///
+    /// **A capability that performs host binary32 arithmetic must consult this**,
+    /// applying [`ReferenceNumericalConformance::apply_to_operand`] to each value
+    /// entering an arithmetic operation and
+    /// [`ReferenceNumericalConformance::apply_to_result`] to each value one
+    /// produces. The semantic evaluator and the index-region oracle answer the
+    /// same program, so one honouring the contract and the other ignoring it would
+    /// disagree on exactly the values the contract exists to decide — and a
+    /// capability that read nothing here would answer the strict reading whatever
+    /// its caller declared, which is the silent single-value oracle
+    /// [`ReferenceNumericalConformance::from_realization`] refuses to be.
+    ///
+    /// A capability that performs no host arithmetic has nothing to read here, and
+    /// says so at its own definition rather than by omission: the two dimensions
+    /// are functions on an arithmetic operand and on a newly produced arithmetic
+    /// result, so a family that only transports, selects, or reproduces a bit
+    /// pattern reaches neither site. That is the boundary this crate's arithmetic
+    /// NaN canonicalization is already drawn at.
+    #[must_use]
+    pub const fn conformance(self) -> ReferenceNumericalConformance {
+        self.conformance
     }
 }
 

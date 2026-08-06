@@ -46,6 +46,25 @@
 //! checks, not a behaviour borrowed from a host float type — BF16 has no host
 //! float type to borrow from, which is exactly why the rules had to be written
 //! down.
+//!
+//! # Why the declared numerical conformance is not read here
+//!
+//! [`ReferenceNumericalConformance`](crate::ReferenceNumericalConformance)'s two
+//! dimensions are **binary32** functions — `apply_to_operand` and
+//! `apply_to_result` take and return `f32` — and this family performs no binary32
+//! arithmetic to apply them to. Its operands are exact rationals decoded from BF16
+//! encodings and its one rounding is over BF16's value set, so a binary32
+//! subnormal mode has no site here in either direction.
+//!
+//! The behaviour is not therefore unstated: the family declares it. `BF16_FACT_SUBNORMALS`
+//! resolves to `preserved-operands-and-results-in-the-bf16-subnormal-range-are-not-flushed`
+//! and the value contract to
+//! `preserved-every-subnormal-encoding-denotes-a-distinct-constant`, so BF16
+//! preservation is a declared operation fact this evaluator realizes rather than
+//! a dimension it silently resolved. **A target that flushed BF16 subnormals would
+//! need a declaration neither the conformance type nor these facts carry**, which
+//! is filed as `carry-a-bf16-subnormal-realization-the-reference-can-be-told`
+//! rather than approximated with the binary32 modes.
 
 use std::sync::Arc;
 

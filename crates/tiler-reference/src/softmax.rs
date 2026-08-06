@@ -87,10 +87,11 @@ use tiler_ir::semantic::{CanonicalValueView, F32, SOFTMAX_REDUCED_AXES_ATTRIBUTE
 use tiler_ir::shape::{Axis, Shape};
 
 use super::canonicalize_arithmetic_f32;
+use super::conformance::ReferenceNumericalConformance;
 use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{RowGeometry, decode_f32, f32_element, f32_elements};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
-use super::silu::certified_exp_f32;
+use super::silu::certified_exp_f32_under;
 use super::tensor::{ReferenceElement, Tensor};
 
 /// Registers the governed softmax reference implementation.
@@ -124,7 +125,7 @@ impl ReferenceOperation for SoftmaxF32Reference {
             return Err(ReferenceOperationError::InvalidApplication);
         }
 
-        let mapped = softmax_dense(shape, axis, &values)?
+        let mapped = softmax_dense(shape, axis, &values, request.conformance())?
             .into_iter()
             .map(f32_element)
             .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;
@@ -152,6 +153,15 @@ impl ReferenceOperation for SoftmaxF32Reference {
 /// The `and` is deliberately not `if a.is_sign_negative() { b } else { a }`, which
 /// would be equivalent here but would state the zero rule as a sign test rather
 /// than as the ordering it is.
+///
+/// **Neither subnormal dimension applies here, and the reason is the same one
+/// this function's first sentence gives.** The extrema family selects one of its
+/// contributors' bit patterns; it produces no new value, so there is no
+/// arithmetic result for the result dimension to replace, and its contributors
+/// are compared rather than fed to an arithmetic unit, so there is no operand for
+/// the input dimension to replace either. A row's values do reach the input
+/// dimension — at the subtraction that consumes them, which is the next step and
+/// where the flush belongs.
 #[must_use]
 pub(crate) fn maximum_f32(left: f32, right: f32) -> f32 {
     if left.is_nan() || right.is_nan() {
@@ -190,13 +200,35 @@ pub fn softmax_f32(
     axis: Axis,
     values: &[f32],
 ) -> Result<Vec<f32>, ReferenceOperationError> {
+    softmax_f32_under(shape, axis, values, ReferenceNumericalConformance::strict())
+}
+
+/// Evaluates the dense binary32 softmax under one stated contract.
+///
+/// **This family reaches the result dimension on an ordinary input, and its own
+/// declared fact says exactly where.** `SOFTMAX_F32_FACT_SUBNORMALS` records that
+/// a contributor about 87 below the row maximum has an exponential of
+/// `0x00b33687` — a subnormal — and one about 104 below has exactly `+0.0`. On a
+/// target that flushes results the whole subnormal band collapses to zero, which
+/// changes the denominator and therefore every element of the row rather than
+/// only the flushed contributor's own.
+///
+/// # Errors
+///
+/// As [`softmax_f32`].
+pub fn softmax_f32_under(
+    shape: &Shape,
+    axis: Axis,
+    values: &[f32],
+    conformance: ReferenceNumericalConformance,
+) -> Result<Vec<f32>, ReferenceOperationError> {
     let count = shape
         .element_count()
         .ok_or(ReferenceOperationError::ShapeTooLarge)?;
     if values.len() != count {
         return Err(ReferenceOperationError::InvalidApplication);
     }
-    softmax_dense(shape, axis, values)
+    softmax_dense(shape, axis, values, conformance)
 }
 
 /// Evaluates the pinned formula over a dense row-major tensor.
@@ -204,6 +236,7 @@ fn softmax_dense(
     shape: &Shape,
     axis: Axis,
     values: &[f32],
+    conformance: ReferenceNumericalConformance,
 ) -> Result<Vec<f32>, ReferenceOperationError> {
     let geometry = RowGeometry::derive(shape, axis)?;
     let mut mapped = vec![0.0_f32; values.len()];
@@ -216,7 +249,7 @@ fn softmax_dense(
         return Ok(mapped);
     }
     for row in 0..geometry.rows {
-        row_softmax(&geometry, values, row, &mut mapped)?;
+        row_softmax(&geometry, values, row, &mut mapped, conformance)?;
     }
     Ok(mapped)
 }
@@ -227,6 +260,7 @@ fn row_softmax(
     values: &[f32],
     row: usize,
     mapped: &mut [f32],
+    conformance: ReferenceNumericalConformance,
 ) -> Result<(), ReferenceOperationError> {
     // The first fold: the strict left fold of the `Maximum` family over the
     // canonical contributor sequence, seeded at the first contributor. Seeding is
@@ -245,7 +279,10 @@ fn row_softmax(
     let mut exponentials = Vec::with_capacity(geometry.extent);
     for position in 0..geometry.extent {
         let score = values[geometry.element_index(row, position)];
-        exponentials.push(certified_exp_f32(score - maximum)?);
+        let shifted = conformance.apply_to_result(
+            conformance.apply_to_operand(score) - conformance.apply_to_operand(maximum),
+        );
+        exponentials.push(certified_exp_f32_under(conformance, shifted)?);
     }
 
     // The second fold: the strict left fold sum over the same sequence, seeded at
@@ -255,17 +292,22 @@ fn row_softmax(
     // reduction's and not this operation's to vary.
     let mut denominator = exponentials[0];
     for value in &exponentials[1..] {
-        denominator += *value;
+        denominator = conformance.apply_to_result(
+            conformance.apply_to_operand(denominator) + conformance.apply_to_operand(*value),
+        );
     }
 
     // One division of one by the denominator, then one multiply per element.
     // Written in this order because that *is* the pinned formula: `e_i / d` is a
     // different binary32 function, and it is the spelling this line exists to
     // exclude.
-    let reciprocal = 1.0_f32 / denominator;
+    let reciprocal =
+        conformance.apply_to_result(1.0_f32 / conformance.apply_to_operand(denominator));
     for (position, exponential) in exponentials.iter().enumerate() {
         let index = geometry.element_index(row, position);
-        mapped[index] = canonicalize_arithmetic_f32(exponential * reciprocal);
+        mapped[index] = canonicalize_arithmetic_f32(conformance.apply_to_result(
+            conformance.apply_to_operand(*exponential) * conformance.apply_to_operand(reciprocal),
+        ));
     }
     Ok(())
 }

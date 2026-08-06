@@ -20,6 +20,7 @@ use tiler_ir::shape::Shape;
 
 use super::{ContractionContract, ContractionSeed, contract_operands};
 use crate::MAX_REFERENCE_TENSOR_ELEMENTS;
+use crate::conformance::ReferenceNumericalConformance;
 use crate::error::{ReferenceOperationError, UnsupportedContractionDeclaration};
 use crate::evaluate::{f32_element, f32_elements};
 use crate::tensor::Tensor;
@@ -215,7 +216,8 @@ fn the_first_product_seed_and_a_positive_zero_seed_disagree_on_signed_zero() {
                 &structure,
                 &left,
                 &right,
-                MAX_REFERENCE_TENSOR_ELEMENTS
+                MAX_REFERENCE_TENSOR_ELEMENTS,
+                ReferenceNumericalConformance::strict()
             )
             .unwrap()
         ),
@@ -229,7 +231,8 @@ fn the_first_product_seed_and_a_positive_zero_seed_disagree_on_signed_zero() {
                 &structure,
                 &left,
                 &right,
-                MAX_REFERENCE_TENSOR_ELEMENTS
+                MAX_REFERENCE_TENSOR_ELEMENTS,
+                ReferenceNumericalConformance::strict()
             )
             .unwrap()
         ),
@@ -253,7 +256,8 @@ fn an_empty_contracted_domain_is_refused_rather_than_returning_a_seed() {
             &structure(),
             &left,
             &right,
-            MAX_REFERENCE_TENSOR_ELEMENTS
+            MAX_REFERENCE_TENSOR_ELEMENTS,
+            ReferenceNumericalConformance::strict()
         ),
         Err(ReferenceOperationError::InvalidApplication)
     );
@@ -268,7 +272,8 @@ fn an_empty_contracted_domain_is_refused_rather_than_returning_a_seed() {
                 &structure(),
                 &left,
                 &right,
-                MAX_REFERENCE_TENSOR_ELEMENTS
+                MAX_REFERENCE_TENSOR_ELEMENTS,
+                ReferenceNumericalConformance::strict()
             )
             .unwrap()
         ),
@@ -306,7 +311,8 @@ fn an_iteration_space_over_the_bound_is_refused_as_iteration_work() {
             &structure(),
             &left,
             &right,
-            MAX_REFERENCE_TENSOR_ELEMENTS
+            MAX_REFERENCE_TENSOR_ELEMENTS,
+            ReferenceNumericalConformance::strict()
         ),
         Err(ReferenceOperationError::OutputElementsExceeded {
             limit: MAX_REFERENCE_TENSOR_ELEMENTS,
@@ -327,7 +333,8 @@ fn an_iteration_space_over_the_bound_is_refused_as_iteration_work() {
             &structure(),
             &left,
             &right,
-            MAX_REFERENCE_TENSOR_ELEMENTS
+            MAX_REFERENCE_TENSOR_ELEMENTS,
+            ReferenceNumericalConformance::strict()
         ),
         Err(ReferenceOperationError::IterationStepsExceeded {
             limit: MAX_REFERENCE_TENSOR_ELEMENTS,
@@ -346,7 +353,8 @@ fn an_iteration_space_over_the_bound_is_refused_as_iteration_work() {
                 &structure(),
                 &left,
                 &right,
-                MAX_REFERENCE_TENSOR_ELEMENTS
+                MAX_REFERENCE_TENSOR_ELEMENTS,
+                ReferenceNumericalConformance::strict()
             )
             .unwrap()
         ),
@@ -429,15 +437,29 @@ fn a_fold_over_one_window_is_walked_in_several_when_the_allowance_admits_it() {
 
     // One step short of the fold, the allowance declines it and names both numbers.
     assert_eq!(
-        contract_operands(&contract, &structure(), &left, &right, STEPS - 1),
+        contract_operands(
+            &contract,
+            &structure(),
+            &left,
+            &right,
+            STEPS - 1,
+            ReferenceNumericalConformance::strict()
+        ),
         Err(ReferenceOperationError::IterationStepsExceeded {
             limit: STEPS - 1,
             actual: STEPS,
         })
     );
 
-    let folded = contract_operands(&contract, &structure(), &left, &right, STEPS)
-        .expect("the stated allowance admits this fold");
+    let folded = contract_operands(
+        &contract,
+        &structure(),
+        &left,
+        &right,
+        STEPS,
+        ReferenceNumericalConformance::strict(),
+    )
+    .expect("the stated allowance admits this fold");
     let folded = result_bits(&folded);
     assert_eq!(folded.len(), OUTPUTS, "every output element is produced");
     // Reported by position rather than as a whole-vector equality: a window that
@@ -476,7 +498,8 @@ fn a_contracted_extent_that_disagrees_between_operands_is_refused() {
             &structure(),
             &left,
             &right,
-            MAX_REFERENCE_TENSOR_ELEMENTS
+            MAX_REFERENCE_TENSOR_ELEMENTS,
+            ReferenceNumericalConformance::strict()
         ),
         Err(ReferenceOperationError::InvalidApplication)
     );
