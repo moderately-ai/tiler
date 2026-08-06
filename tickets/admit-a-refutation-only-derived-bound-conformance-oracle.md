@@ -39,3 +39,5 @@ A candidate class Tiler emits whose executed evaluation order is not pinnable an
 ## Graph maintenance
 
 Filed by [the permitted-divergence oracle derivation](../docs/research/reference/permitted-divergence-oracle.md), which retained this object rather than eliminating it outright.
+
+- 2026-08-06 — **not fired: the first clause fired and the second did not.** Finding 34 (the Apple record) measures the backend compiler re-serializing an emitted two-by-two split under `relaxed` and `fast` on both compilation paths, which is exactly the NotPreserved answer the first clause names. No decision to emit an unpinnable candidate has been taken — such candidates are still refused, and no workload is asking for qualification — so the caller this oracle needs still does not exist. Reproduce clause 1 with `grep -n 'finding 34\|NotPreserved' docs/research/apple-targets/numerical-behaviour.md`; clause 2 with the absence of any decision record admitting an unpinnable candidate.
