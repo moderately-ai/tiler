@@ -159,18 +159,16 @@ use metal::{
     Buffer, CommandBufferRef, ComputePipelineDescriptor, ComputePipelineState, Device,
     MTLCommandBufferStatus, MTLGPUFamily, MTLResourceOptions, MTLSize,
 };
-use std::collections::BTreeMap;
-
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, ArithmeticType, ArtifactCodecFailure, AvailabilityPhase, BackendKey,
-    BindingTarget, RecordedArtifactIdentityError, RecordedArtifactProgramIdentity,
-    RepresentationKey, RouteRequirement, RouteResourceDimension, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef,
+    AbiFactBinder, AbiFacts, ArtifactCodecFailure, AvailabilityPhase, BackendKey, BindingTarget,
+    RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
+    RouteRequirement, RouteResourceDimension, TargetProfileDescriptorDigest, TargetProfileKey,
+    TargetProfileRef,
 };
 use tiler_artifact::proof::{
     DecodedProofSidecar, ProofAssociationError, ProofCaseRef, ProofCodecError, decode_proof_sidecar,
 };
-use tiler_build::{BoundMetalCompileDeclaration, BoundMetalDeclarationError};
+use tiler_build::{BoundMetalCompileDeclaration, BoundMetalDeclarationError, DTypeDispatchability};
 use tiler_compiler::session::{
     Compilation, CompileFailure, CompileRequest as CompilerRequest, NumericalContract,
     PlanAlternative, compile,
@@ -1072,6 +1070,24 @@ fn require_derived_program(compilation: &Compilation, packaged: &[u8]) -> Result
 /// independent host statement while being a restatement of the producer's own
 /// authority, so a reader could mistake a green route for evidence about the
 /// machine. The declaration is the same authority stated once, out loud.
+///
+/// # The dtype rows are read from the declaration, and the gap that leaves
+///
+/// Every field here comes from `declaration`, the dtype rows included:
+/// [`BoundMetalCompileDeclaration::dtype_dispatchability_rows`] answers from the
+/// same `TargetProfile` the compile gate consults, so a widened, narrowed, or
+/// retracted ledger measurement moves this environment with it rather than
+/// leaving it stating a verdict the profile stopped holding.
+///
+/// **That removes a second copy of the rows and not the authority gap.** They
+/// remain *producer-declared*: this binary holds a real `MTLDevice` and asks it
+/// nothing about either dtype, so what is stated here is what the ledger measured
+/// on its own host and not what this machine demonstrated. Earning a host row
+/// would take a per-dtype observation on this device, and
+/// [`offer_the_declared_profile`] is why that is refused rather than merely
+/// unwritten — ADR 0086 keeps the applicability receipt out of reach on every
+/// macOS row currently observable, so no observation this binary could take would
+/// make the profile this host's to offer.
 fn declared_route_environment(
     declaration: &BoundMetalCompileDeclaration,
 ) -> Result<ExecutionEnvironment, ProofError> {
@@ -1087,18 +1103,33 @@ fn declared_route_environment(
         backend: BackendKey::new(BACKEND_KEY).map_err(|_| ProofError::HostProfile)?,
         representation: RepresentationKey::new(REPRESENTATION_KEY)
             .map_err(|_| ProofError::HostProfile)?,
-        // The same authority as every field above, and stated with the same
-        // caveat: these are the dtypes `tiler-build`'s `FIRST_MACOS_APPLE9`
-        // ledger rows *declare* for this profile, transcribed rather than
-        // observed. Nothing on this machine was asked whether it dispatches
-        // either one. Restating them keeps this function at one authority level
-        // — a host-earned dtype row beside a producer-declared profile would be
-        // two claims wearing one name.
-        dtype_dispatch: BTreeMap::from([
-            (ArithmeticType::F32, DTypeDispatch::Dispatchable),
-            (ArithmeticType::Bf16, DTypeDispatch::Dispatchable),
-        ]),
+        // The same authority as every field above, and under the same caveat
+        // this function's heading states: nothing on this machine was asked
+        // whether it dispatches either dtype. A dtype the declaration states
+        // nothing about produces no row at all, which is what keeps silence
+        // fail-closed here — the loader resolves an absent key as `Unknown` and
+        // refuses it rather than reading the absence as permission.
+        dtype_dispatch: declaration
+            .dtype_dispatchability_rows()
+            .into_iter()
+            .map(|(arithmetic, verdict)| (arithmetic, host_dtype_dispatch(verdict)))
+            .collect(),
     })
+}
+
+/// Restates one declared dispatchability verdict in the host's own vocabulary.
+///
+/// An exhaustive match rather than a conversion helper on either vocabulary's
+/// own crate: `tiler-build` states what a *profile* declares and `tiler-runtime`
+/// states what a *host* offers, neither depends on the other, and this is the one
+/// place this consumer turns the first into the second. Wildcard-free, so a
+/// verdict added to the compile-profile vocabulary stops this binary compiling
+/// instead of being guessed at.
+const fn host_dtype_dispatch(verdict: DTypeDispatchability) -> DTypeDispatch {
+    match verdict {
+        DTypeDispatchability::Dispatchable => DTypeDispatch::Dispatchable,
+        DTypeDispatchability::Unsupported => DTypeDispatch::Unsupported,
+    }
 }
 
 /// Reads one `sw_vers` field, or nothing when the tool does not answer.
@@ -5446,35 +5477,38 @@ mod tests {
     //! legal envelope, which is a weaker probe rather than a wrong one, and the
     //! hardware run is what would notice.
 
+    use std::collections::BTreeMap;
+
     use super::{
         BACKEND_KEY, BINDING_APPLE_FAMILIES, CONTRACTION_ACTIVATIONS_KEY, CONTRACTION_CLASS,
-        CONTRACTION_MEMBERS, CONTRACTION_OUTPUT_KEY, CONTRACTION_WEIGHTS_KEY, DeclaredInput,
-        DeclaredInterface, DeviceFacts, L3_CELL_CLASS, L3_CELL_RESULT_SHA256,
-        LiveDeviceObservation, LiveDeviceQualification, LoadRejection, METAL_MINIMUM_GPU_FAMILY,
-        METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily, MetalGpuFamilySupport,
-        MetalHostApplicabilityPolicy, PLAN_ROLES, Path, Placement, ProbeSubject, ProbedGpuFamily,
-        ProofError, REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS, RetainedComparison,
-        RoutePreparation, RouteRequirement, RouteResourceDimension, SOLE_DELIVERY,
-        bind_declared_interface, bind_interface, binding_apple_enumerator, compile_under,
-        contraction_program, decide_live_device_requirement, declaration,
+        CONTRACTION_MEMBERS, CONTRACTION_OUTPUT_KEY, CONTRACTION_WEIGHTS_KEY, DTypeDispatch,
+        DTypeDispatchability, DeclaredInput, DeclaredInterface, DeviceFacts, L3_CELL_CLASS,
+        L3_CELL_RESULT_SHA256, LiveDeviceObservation, LiveDeviceQualification, LoadRejection,
+        METAL_MINIMUM_GPU_FAMILY, METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily,
+        MetalGpuFamilySupport, MetalHostApplicabilityPolicy, PLAN_ROLES, Path, Placement,
+        ProbeSubject, ProbedGpuFamily, ProofError, REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS,
+        RetainedComparison, RoutePreparation, RouteRequirement, RouteResourceDimension,
+        SOLE_DELIVERY, bind_declared_interface, bind_interface, binding_apple_enumerator,
+        compile_under, contraction_program, decide_live_device_requirement, declaration,
         declared_route_environment, evaluate_metal_host_applicability, expected_shape,
-        normalized_architecture, observe_host_environment, probe_accepted_baseline,
-        probe_damaged_interior_byte, probe_damaged_section_content,
+        host_dtype_dispatch, normalized_architecture, observe_host_environment,
+        probe_accepted_baseline, probe_damaged_interior_byte, probe_damaged_section_content,
         probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_other_profile_key, probe_truncated_envelope,
         proof_member, require_contraction_interface, require_serial_sum_interface, result_digest,
         serial_sum_program, sha256_hex, stating_probed_family,
     };
     use tiler_artifact::program::{
-        AbiExprId, AbiFactBinder, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder,
-        AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey,
-        BindingKind, BindingSpec, BindingTarget, BufferAccess, CapabilityKey,
-        CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
-        FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata,
-        PayloadPlatform, PayloadProvenance, RecordedArtifactProgramIdentity, RepresentationKey,
-        RouteFeatureKey, RouteRequirementSubject, RouteResourceRequirement, SchemaVersion,
-        SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-        ToolComponent, VariantSpec, VerifiedArtifactProgram,
+        AbiExprId, AbiFactBinder, AbiFacts, ArithmeticType, ArtifactExecutionPolicy,
+        ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef,
+        BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec, BindingTarget,
+        BufferAccess, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
+        FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent,
+        PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
+        RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
+        RouteRequirementSubject, RouteResourceRequirement, SchemaVersion, SelectedProvider,
+        TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
+        VariantSpec, VerifiedArtifactProgram,
     };
     use tiler_build::BoundMetalCompileDeclaration;
     use tiler_build::realization::translate;
@@ -5490,7 +5524,7 @@ mod tests {
     use tiler_metal::applicability::{
         MetalHostApplicabilityRefusal, MetalHostObservation, MetalHostPredicate,
     };
-    use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment};
+    use tiler_runtime::load::{DTypeDispatchResolution, DecodedProgram, ExecutionEnvironment};
 
     /// Columns of the **loader** fixtures' input; the reduced axis.
     ///
@@ -7573,6 +7607,64 @@ mod tests {
         assert!(
             !outcome.contains("Mismatch"),
             "a backend-family exclusion must not report a profile classification: {outcome}",
+        );
+    }
+
+    /// The routed environment's dtype rows are the declaration's own.
+    ///
+    /// **What this pins is where the rows come from, and it is observable only
+    /// under a ledger that moved.** A transcribed literal and a read of
+    /// `dtype_dispatchability_rows` agree exactly while `FIRST_MACOS_APPLE9`
+    /// states what it states today, so no assertion over today's *values* could
+    /// tell the two apart. Deriving the expectation from the declaration is what
+    /// separates them: a widened, narrowed, or retracted measurement moves both
+    /// sides of this comparison together and would leave a literal stating a
+    /// verdict the profile stopped holding.
+    ///
+    /// The remaining assertions cover what that equality cannot. The verdict
+    /// translation is checked in both arms, because a [`host_dtype_dispatch`]
+    /// that answered `Dispatchable` for a refutation would satisfy the comparison
+    /// above on today's ledger — which refutes nothing — while inverting the
+    /// profile's answer on one that does. And `f16`, the dtype this ledger
+    /// deliberately does not measure, must be **absent** rather than present with
+    /// a permissive verdict: that is the fail-closed half, and it is asserted
+    /// through `classify_dtype` because resolving a missing key as `Unknown` is
+    /// what the loader acts on.
+    #[test]
+    fn the_routed_dtype_rows_are_the_declarations_own() {
+        let declaration = declared();
+        let environment =
+            declared_route_environment(&declaration).expect("the declared environment composes");
+        let from_declaration: BTreeMap<_, _> = declaration
+            .dtype_dispatchability_rows()
+            .into_iter()
+            .map(|(arithmetic, verdict)| (arithmetic, host_dtype_dispatch(verdict)))
+            .collect();
+        assert_eq!(
+            environment.dtype_dispatch, from_declaration,
+            "the routed rows must be the declaration's own, so a moved ledger row moves this \
+             environment rather than leaving a stale transcription beside it",
+        );
+        assert!(
+            !from_declaration.is_empty(),
+            "an empty row set would satisfy the comparison above while stating nothing",
+        );
+
+        assert_eq!(
+            host_dtype_dispatch(DTypeDispatchability::Dispatchable),
+            DTypeDispatch::Dispatchable,
+        );
+        assert_eq!(
+            host_dtype_dispatch(DTypeDispatchability::Unsupported),
+            DTypeDispatch::Unsupported,
+            "a refuted measurement must reach the host as a stated negative rather than as \
+             permission",
+        );
+
+        assert_eq!(
+            environment.classify_dtype(ArithmeticType::F16),
+            DTypeDispatchResolution::Unknown,
+            "a dtype this ledger does not measure earns no row, and the silence refuses",
         );
     }
 
