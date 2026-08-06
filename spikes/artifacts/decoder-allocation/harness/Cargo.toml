@@ -1,0 +1,19 @@
+[package]
+name = "artifact-decoder-allocation"
+description = "Measures what validating one artifact envelope allocates, through the real public codec"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "artifact-decoder-allocation"
+path = "src/main.rs"
+
+[dependencies]
+sha2.workspace = true
+tiler-artifact.workspace = true
+tiler-compiler.workspace = true
+tiler-ir.workspace = true
+
+[lints]
+workspace = true

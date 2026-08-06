@@ -614,11 +614,8 @@ fn check_variant(
     }
     check_route_requirements(variant)?;
     check_ordered(
-        &variant
-            .entries
-            .iter()
-            .map(|entry| entry.stage.as_bytes().to_vec())
-            .collect::<Vec<_>>(),
+        &variant.entries,
+        |entry| entry.stage.as_bytes(),
         OrderedSubject::Entry,
     )?;
     for (index, entry) in variant.entries.iter().enumerate() {
@@ -697,12 +694,8 @@ fn check_entry(
         true,
     )?;
     check_ordered(
-        &entry
-            .launch
-            .preconditions
-            .iter()
-            .map(|node| keys[position(*node)].clone())
-            .collect::<Vec<_>>(),
+        &entry.launch.preconditions,
+        |node| keys[position(*node)].as_slice(),
         OrderedSubject::LaunchPrecondition,
     )?;
     for precondition in &entry.launch.preconditions {
@@ -776,9 +769,19 @@ fn check_duplicate_variants(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
 }
 
 /// Proves a canonically ordered collection is sorted and free of repeats.
-fn check_ordered(keys: &[Vec<u8>], subject: OrderedSubject) -> Result<(), ArtifactCodecError> {
-    for pair in keys.windows(2) {
-        match pair[0].cmp(&pair[1]) {
+///
+/// The order key is borrowed from each item rather than collected first.
+/// Canonical order is decided by adjacent pairs alone, so materializing the key
+/// table would copy every stage subject an envelope carries — bounded by the
+/// manifest, and therefore by a quantity a producer chooses — to learn something
+/// two borrowed slices already answer.
+fn check_ordered<'a, T>(
+    items: &'a [T],
+    key: impl Fn(&'a T) -> &'a [u8],
+    subject: OrderedSubject,
+) -> Result<(), ArtifactCodecError> {
+    for pair in items.windows(2) {
+        match key(&pair[0]).cmp(key(&pair[1])) {
             std::cmp::Ordering::Less => {}
             std::cmp::Ordering::Equal => {
                 return Err(ArtifactCodecError::DuplicateItem { subject });

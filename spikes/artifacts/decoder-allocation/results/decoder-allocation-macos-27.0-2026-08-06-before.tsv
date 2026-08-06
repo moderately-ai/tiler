@@ -1,0 +1,94 @@
+object_bytes	arena_chain	envelope_bytes	phase	peak_bytes	peak_over_envelope	retained_bytes	requested_bytes	calls	largest_blocks	verdict
+0	0	114083	encode	402647	3.53	0	751072	191	176320 111020 88160 56320	encoded
+0	0	114083	decode	459256	4.03	62474	759209	263	176320 111020 88160 56320	decoded
+0	0	114083	identity	62136	0.54	56320	114336	30	56320 28160 10000 5000	derived
+0	0	114083	re-encode	343756	3.01	176320	601256	52	176320 111020 88160 56320	re-encoded
+0	0	114083	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 114083, actual: 57041 }
+0	0	114083	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+0	0	114083	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 114083 }
+0	0	114083	forged/manifest-length	72	0.00	72	135	4	-	artifact.malformed: Truncated { needed: 66060288, available: 114014 }
+0	0	114083	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+0	0	114083	forged/identity	177732	1.56	24	267842	227	56320 56117 28160 22903	artifact.integrity: ArtifactIdentityMismatch
+1048576	0	1162659	encode	5308322	4.57	0	7156611	197	1162659 1048576 1048576 1048576	encoded
+1048576	0	1162659	decode	2494171	2.15	1111050	2970444	265	1162659 1048576 176320 111020	decoded
+1048576	0	1162659	identity	62136	0.05	56320	114336	30	56320 28160 10000 5000	derived
+1048576	0	1162659	re-encode	1330095	1.14	1162659	1763915	53	1162659 176320 111020 88160	re-encoded
+1048576	0	1162659	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 1162659, actual: 581329 }
+1048576	0	1162659	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+1048576	0	1162659	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 1162659 }
+1048576	0	1162659	forged/manifest-length	72	0.00	72	135	4	-	artifact.malformed: Truncated { needed: 66060288, available: 1162590 }
+1048576	0	1162659	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+1048576	0	1162659	forged/object-byte	1164172	1.00	42	1168798	119	1048576 56117 22903 21520	artifact.integrity: SectionDigestMismatch { section: 2 }
+1048576	0	1162659	forged/identity	1226308	1.05	24	1316418	228	1048576 56320 56117 28160	artifact.integrity: ArtifactIdentityMismatch
+16777216	0	16891299	encode	83951522	4.97	0	101528451	197	16891299 16777216 16777216 16777216	encoded
+16777216	0	16891299	decode	33951451	2.01	16839690	34427724	265	16891299 16777216 176320 111020	decoded
+16777216	0	16891299	identity	62136	0.00	56320	114336	30	56320 28160 10000 5000	derived
+16777216	0	16891299	re-encode	17058735	1.01	16891299	17492555	53	16891299 176320 111020 88160	re-encoded
+16777216	0	16891299	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 16891299, actual: 8445649 }
+16777216	0	16891299	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+16777216	0	16891299	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 16891299 }
+16777216	0	16891299	forged/manifest-length	72	0.00	72	135	4	-	artifact.malformed: Truncated { needed: 66060288, available: 16891230 }
+16777216	0	16891299	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+16777216	0	16891299	forged/object-byte	16892812	1.00	42	16897438	119	16777216 56117 22903 21520	artifact.integrity: SectionDigestMismatch { section: 2 }
+16777216	0	16891299	forged/identity	16954948	1.00	24	17045058	228	16777216 56320 56117 28160	artifact.integrity: ArtifactIdentityMismatch
+67108864	0	67222947	encode	335609762	4.99	0	403518339	197	67222947 67108864 67108864 67108864	encoded
+67108864	0	67222947	decode	134614747	2.00	67171338	135091020	265	67222947 67108864 176320 111020	decoded
+67108864	0	67222947	identity	62136	0.00	56320	114336	30	56320 28160 10000 5000	derived
+67108864	0	67222947	re-encode	67390383	1.00	67222947	67824203	53	67222947 176320 111020 88160	re-encoded
+67108864	0	67222947	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 67222947, actual: 33611473 }
+67108864	0	67222947	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+67108864	0	67222947	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 67222947 }
+67108864	0	67222947	forged/manifest-length	22	0.00	22	22	1	-	artifact.integrity: ManifestDigestMismatch
+67108864	0	67222947	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+67108864	0	67222947	forged/object-byte	67224460	1.00	42	67229086	119	67108864 56117 22903 21520	artifact.integrity: SectionDigestMismatch { section: 2 }
+67108864	0	67222947	forged/identity	67286596	1.00	24	67376706	228	67108864 56320 56117 28160	artifact.integrity: ArtifactIdentityMismatch
+0	128	117798	encode	1748170	14.84	0	3284512	1118	183750 116464 91875 61004	encoded
+0	128	117798	decode	1790195	15.20	66737	5793911	1843	183750 116464 91875 61004	decoded
+0	128	117798	identity	69444	0.59	61004	132634	38	61004 30502 10000 5000	derived
+0	128	117798	re-encode	361314	3.07	183750	640922	61	183750 116464 91875 61004	re-encoded
+0	128	117798	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 117798, actual: 58899 }
+0	128	117798	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+0	128	117798	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 117798 }
+0	128	117798	forged/manifest-length	72	0.00	72	135	4	-	artifact.malformed: Truncated { needed: 66060288, available: 117729 }
+0	128	117798	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+0	128	117798	forged/identity	1790195	15.20	24	5281176	1806	61004 58467 30502 25268	artifact.integrity: ArtifactIdentityMismatch
+0	512	128550	encode	25962442	201.96	0	39740168	3811	55256 55060 54864 54668 (+481 unrecorded)	encoded
+0	512	128550	decode	26039794	202.57	79025	78650847	6456	55844 55648 55452 55256 (+1449 unrecorded)	decoded
+0	512	128550	identity	96120	0.75	80000	214920	41	80000 40000 20000 16384	derived
+0	512	128550	re-encode	387908	3.02	205254	717186	64	205254 102627 102558 80000	re-encoded
+0	512	128550	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 128550, actual: 64275 }
+0	512	128550	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+0	512	128550	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 128550 }
+0	512	128550	forged/manifest-length	72	0.00	72	135	4	-	artifact.malformed: Truncated { needed: 66060288, available: 128481 }
+0	512	128550	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+0	512	128550	forged/identity	26039794	202.57	24	78144134	6419	55844 55648 55452 55256 (+1441 unrecorded)	artifact.integrity: ArtifactIdentityMismatch
+0	1024	142886	encode	103205834	722.29	0	155945955	7398	54864 54668 54472 54276 (+1513 unrecorded)	encoded
+0	1024	142886	decode	103342066	723.25	95409	310828218	12603	55844 55648 55452 55256 (+3505 unrecorded)	decoded
+0	1024	142886	identity	121204	0.85	94844	285953	42	94844 47422 32768 23711	derived
+0	1024	142886	re-encode	496802	3.48	233926	980573	66	233926 167936 116963 94844	re-encoded
+0	1024	142886	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 142886, actual: 71443 }
+0	1024	142886	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+0	1024	142886	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 142886 }
+0	1024	142886	forged/manifest-length	72	0.00	72	135	4	-	artifact.malformed: Truncated { needed: 66060288, available: 142817 }
+0	1024	142886	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+0	1024	142886	forged/identity	103342066	723.25	24	310129151	12565	55844 55648 55452 55256 (+3496 unrecorded)	artifact.integrity: ArtifactIdentityMismatch
+0	2048	171558	encode	411833290	2400.55	0	619346915	14568	65856 54864 54668 54472 (+3563 unrecorded)	encoded
+0	2048	171558	decode	412087282	2402.03	128177	1237383354	24893	65856 55844 55648 55452 (+7603 unrecorded)	decoded
+0	2048	171558	identity	215412	1.26	168572	505089	43	168572 84286 65536 42143	derived
+0	2048	171558	re-encode	627874	3.66	291270	1285725	67	291270 168572 167936 145635	re-encoded
+0	2048	171558	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 171558, actual: 85779 }
+0	2048	171558	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+0	2048	171558	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 171558 }
+0	2048	171558	forged/manifest-length	72	0.00	72	135	4	-	artifact.malformed: Truncated { needed: 66060288, available: 171489 }
+0	2048	171558	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+0	2048	171558	forged/identity	412087282	2402.03	24	1236598271	24855	65856 55844 55648 55452 (+7594 unrecorded)	artifact.integrity: ArtifactIdentityMismatch
+0	4000	226214	encode	1569451274	6937.91	0	2356249349	28232	128320 96240 96240 54668 (+7467 unrecorded)	encoded
+0	4000	226214	decode	1569929746	6940.02	190641	4711118780	48317	128320 96240 55844 55648 (+15411 unrecorded)	decoded
+0	4000	226214	identity	240438	1.06	154558	488773	42	154558 77279 65536 64160	derived
+0	4000	226214	re-encode	755458	3.34	400582	1465663	66	400582 200291 200222 154558	re-encoded
+0	4000	226214	forged/truncated	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 226214, actual: 113107 }
+0	4000	226214	forged/magic	8	0.00	8	8	1	-	artifact.malformed: BadMagic
+0	4000	226214	forged/total-length	76	0.00	76	133	3	-	artifact.malformed: TotalLengthMismatch { declared: 18446744073709551615, actual: 226214 }
+0	4000	226214	forged/manifest-length	72	0.00	72	135	4	-	artifact.malformed: Truncated { needed: 66060288, available: 226145 }
+0	4000	226214	forged/section-count	64	0.00	64	120	4	-	artifact.limit: Limit { resource: Sections, actual: 4294967295, limit: 64 }
+0	4000	226214	forged/identity	1569929746	6940.02	24	4710137443	48279	128320 96240 55844 55648 (+15402 unrecorded)	artifact.integrity: ArtifactIdentityMismatch

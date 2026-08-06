@@ -1,0 +1,46 @@
+[workspace]
+members = ["harness"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+tiler-artifact = { path = "../../../crates/tiler-artifact" }
+tiler-compiler = { path = "../../../crates/tiler-compiler" }
+tiler-ir = { path = "../../../crates/tiler-ir" }
+sha2 = "0.11.0"
+
+# The spike mirrors the repository dev profile rather than inheriting it: this is
+# a separate workspace, so the root profile does not reach it.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+# Every number this harness reports is taken from a release build. Allocation
+# counts are not timings, but the optimizer decides how many temporaries a
+# decode materializes, so a debug build would report a different program's
+# allocations than the one a consumer runs.
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+# `warn` rather than the repository's `forbid`, and the exception is exactly one
+# item: a counting `GlobalAlloc` cannot be written in safe Rust, and an external
+# profiler was rejected by the ticket in favour of a number reproducible by
+# command. The single site carries its `#[allow]`, its bounding argument, and its
+# `SAFETY` explanation in the shape ADR 0079 requires. Nothing else in this
+# workspace may use it: a second `unsafe` block would be a second exception
+# nobody reviewed.
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

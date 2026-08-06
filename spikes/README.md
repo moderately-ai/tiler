@@ -84,6 +84,7 @@ Most harnesses are standard library plus `pytest`. Five are not, and each says s
 - [Expansion cache envelope-section digest coverage probe](cache/envelope-digest-coverage/README.md) — reproducible; exhaustive-finite, executable-model; supports: [Expansion cache hot-path efficiency](../docs/research/cache/hot-path-efficiency.md)
 - [Expansion cache hot-path efficiency probe](cache/hot-path-efficiency/README.md) — reproducible; bounded-measurement; supports: [Expansion cache hot-path efficiency](../docs/research/cache/hot-path-efficiency.md)
 - [Proc-macro environment and artifact-family spikes](macro-environment/README.md) — reproducible; bounded-measurement; supports: [Proc-macro build environment and freshness](../docs/research/macro-environment/proc-macro-build-environment.md)
+- [What validating one artifact envelope allocates](artifacts/decoder-allocation/README.md) — reproducible; bounded-measurement; supports: [Artifact decoder allocation amplification](../docs/research/artifacts/decoder-allocation-amplification.md)
 
 ### Runtime, integration, and placement
 

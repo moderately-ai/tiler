@@ -66,7 +66,7 @@ use super::decode::{Cursor, decode, parse_dependencies, parse_expression_arena};
 use super::digest::DigestAlgorithm;
 use super::encode::{
     ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA,
-    encode, encode_with_identity, envelope_digest, section_digest,
+    encode, encode_with_identity, envelope_digest, matches_canonical_encoding, section_digest,
 };
 use super::error::{
     ArtifactCodecError, CodecLimitKind, OrderedSubject, ReferenceSubject, TagSubject,
@@ -310,6 +310,74 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         MANIFEST_DOMAIN,
     );
     assert_eq!(MANIFEST_SCHEMA, (13, 0));
+}
+
+/// The canonicity backstop compares a derivation against bytes rather than
+/// against a second buffer, so its ability to *refuse* has to be exercised
+/// directly.
+///
+/// The check it replaced was `re-encoded != bytes`, which obviously compared
+/// everything; a walk that compares run by run could silently skip one. Every
+/// run the walk visits is perturbed here — the fixed header, the header's
+/// derived manifest digest, the first and last manifest byte, a section's
+/// framing, a section's content — plus the two length disagreements the walk
+/// short-circuits on. Nothing else in the suite reaches this boundary: the
+/// forgeries that would are rejected earlier by a named check, which is exactly
+/// what `super::decode`'s comment about this backstop records.
+#[test]
+fn the_canonicity_backstop_refuses_every_run_it_walks() {
+    let artifact = default_artifact();
+    let envelope = envelope_of(&artifact);
+    let digests: Vec<_> = envelope
+        .sections()
+        .iter()
+        .map(|section| section_digest(DigestAlgorithm::GOVERNED, section))
+        .collect();
+    let identity = envelope
+        .canonical_identity()
+        .expect("a verified artifact derives its identity");
+    let bytes = encode(&envelope).expect("a verified artifact encodes");
+    let matches = |candidate: &[u8]| {
+        matches_canonical_encoding(&envelope, &identity, &digests, candidate)
+            .expect("the fixture envelope encodes")
+    };
+    assert!(
+        matches(&bytes),
+        "the encoder's own output is the canonical encoding",
+    );
+
+    let manifest_len = usize::try_from(u64::from_be_bytes(
+        bytes[MANIFEST_LENGTH_AT..MANIFEST_LENGTH_AT + 8]
+            .try_into()
+            .expect("a fixed-width field"),
+    ))
+    .expect("the fixture manifest fits usize");
+    assert!(
+        bytes.len() > HEADER_BYTES + manifest_len,
+        "the fixture frames at least one section after its manifest",
+    );
+    for position in [
+        0,
+        MANIFEST_DIGEST_AT,
+        HEADER_BYTES,
+        HEADER_BYTES + manifest_len - 1,
+        HEADER_BYTES + manifest_len,
+        bytes.len() - 1,
+    ] {
+        let mut forged = bytes.clone();
+        forged[position] ^= 0xff;
+        assert!(
+            !matches(&forged),
+            "a flipped byte at offset {position} was accepted as canonical",
+        );
+    }
+
+    let mut short = bytes.clone();
+    short.pop();
+    assert!(!matches(&short), "a truncated encoding is not canonical");
+    let mut long = bytes.clone();
+    long.push(0);
+    assert!(!matches(&long), "an extended encoding is not canonical");
 }
 
 #[test]
