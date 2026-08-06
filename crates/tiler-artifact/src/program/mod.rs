@@ -545,13 +545,15 @@ pub use codec::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // crate-visible `mod codec`, so the codec's working vocabulary stays confined to
 // this module.
 pub(crate) use codec::envelope_digest;
-// The envelope's three governed digest domains, reachable only under test.
+// The envelope's four governed digest domains, reachable only under test.
 // `crate::proof::tests` checks the no-domain-prefixes-another property over the
 // *union* of both containers' domains rather than per container, because the
 // property is global: one algorithm hashes both, so a domain added to either
 // one could silently merge two subjects across the boundary.
 #[cfg(test)]
-pub(crate) use codec::{ENVELOPE_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN};
+pub(crate) use codec::{
+    ENVELOPE_DIGEST_DOMAIN, IDENTITY_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN,
+};
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
     ArtifactLimitKind, ArtifactVerificationError, ProvenanceField, RecordedArtifactIdentityError,

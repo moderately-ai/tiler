@@ -124,6 +124,26 @@ Everything measured below comes from [`spikes/artifacts/manifest-growth-attribut
 | Section framing (3 × 12) | 36 | 0.03% |
 | **Fixed content** | **114,043** | |
 
+### The composition after the digest step, measured 2026-08-06
+
+**Measurement, and it is this note's own harness re-run at both ends of the change.** [ADR 0103](../../decisions/0103-declare-the-manifests-artifact-identity-by-digest.md) replaced the trailing identity preimage with a thirty-two-byte digest under a fourth governed envelope domain, at manifest schema `15.0`. `probe.sh` at this branch's base `eee734cf` and at the changed tree give:
+
+| Part | At `eee734cf` | After the step | Change |
+| --- | ---: | ---: | ---: |
+| Framing header | 69 | 69 | — |
+| Manifest, less the trailing run | 31,956 | 31,956 | — |
+| **The trailing identity run, with its length prefix** | **56,113** | **32** | **−56,081** |
+| `KernelProgramSubject` section | 22,911 | 22,911 | — |
+| `BackendPayloadMetadata` section | 2,974 | 2,974 | — |
+| Section framing (3 × 12) | 36 | 36 | — |
+| **Fixed content** | **114,059** | **57,978** | **−56,081, −49.17%** |
+
+**The base is not this note's `8bd720b8` endpoint, and the difference is accounted for.** `eee734cf` carries the staged-realization step that took the kernel program to `tiler.kernel-program.v11`, which added eight bytes to the program-subject section and eight to the identity that folds it — 114,043 → 114,059, the same nine-plus-restatement shape Section 3's smallest row records.
+
+**Measurement — the derived identity did not move, and neither did any pin.** The probe reads the identity through the public decoded view, and it is 56,105 bytes on both sides. The complete workspace suite passes at the step with no identity constant, golden, or ledger value recomputed. That is Section 6's (b1) claim — the wire moves and the subject does not — checked rather than argued.
+
+**The multiplicity falls from four to two, which is the whole of the saving.** Section 3's four copies were the program-subject section, the manifest's per-entry stage subjects, the identity run's verbatim fold of the section, and the identity run's restatement of those stage subjects. The last two *are* the identity run, so removing it removes exactly copies 3 and 4 and leaves 1 and 2 untouched — which is why the measured reduction is the run and its prefix to the byte, rather than approximately so.
+
 **Measurement — how each part grew.** Manifest body ×3.4 (9,359 → 31,964), identity run ×4.2 (13,339 → 56,097), `KernelProgramSubject` ×8.3 (2,750 → 22,903), `BackendPayloadMetadata` ×1.0. The identity run's *share* barely moved, 46.8% → 49.2%, which is the doubling stated as a ratio: everything added to the manifest is added to the identity that folds it.
 
 **Fact — the identity run is derivable, and that is not an inference.** [`decode`](../../../crates/tiler-artifact/src/program/codec/decode.rs) parses the manifest, builds the envelope, validates it, then calls `envelope.canonical_identity()` and compares the **derived** bytes against the carried run, rejecting a disagreement as `ArtifactIdentityMismatch`. `encode_identity` reads the envelope — schema, routing policy, the three semantic subjects, the interface, providers, payloads, the arena, the variants, the realization record — and reads nothing from the manifest's own encoding, so the run is a pure function of the content that precedes it. [`DecodedArtifact::identity`](../../../crates/tiler-artifact/src/program/codec/view.rs) returns the re-derivation and documents that it is "re-derived, never read from the bytes", so **no consumer in the workspace reads the carried preimage at all**.
@@ -183,6 +203,8 @@ Two independent levers, at two layers, with very different sizes and owners.
 **The consumers.** All three, immediately and by the same factor: a hit's fail-closed integrity runs over 49% fewer bytes, an embedded artifact is 49% smaller against a fixed ceiling, and the cache's steady state halves at the same entry count.
 
 **Inference, and it is the reason neither lever is the answer on its own.** (b1) changes the multiplier from four to two, which moves the embedding-ceiling crossing of Section 5 from ~32 operations to ~50 — still below the decoder layer's ≥ 51 and well below the governed budget's 62. **A 49% one-off saving does not buy an order of magnitude against a quadratic.** The lever that changes the shape of the curve is (b2), and (b1) is a large constant factor in front of it.
+
+**Both were decided on 2026-08-06, and the crossings are now exact rather than approximate.** (b1) landed as [ADR 0103](../../decisions/0103-declare-the-manifests-artifact-identity-by-digest.md); the composition table above is its measurement. Solving the ceiling against the multiplier of two gives the crossing **between 50 and 51 operations** — `2 × (134·50² + 3650·50 + 719) = 1,036,438` and `2 × (134·51² + 3650·51 + 719) = 1,070,806` — which confirms the "~50" this paragraph estimated. (b2) was chosen as [ADR 0104](../../decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md) and **has not landed**: folding the per-record graph identity would make program identity `3525n + 719`, moving the crossing to **between 148 and 149 operations** and turning the curve linear, but it needs a governed digest inside `tiler-ir`, which is the workspace's bottom crate and reaches none. Siting the digest is a crate-boundary question that record puts to Tom. So the state this note describes is (b1) done, (b2) blocked, and the encoding still quadratic — at a ceiling that binds at the roadmap's own decoder-layer size.
 
 ### (c) Deliberately no budget while the ceiling stands
 

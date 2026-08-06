@@ -70,9 +70,9 @@ use super::super::{
 };
 use super::digest::{Digest, DigestAlgorithm};
 use super::encode::{
-    CANONICAL_ENCODING, ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN,
-    MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES, MAX_MANIFEST_BYTES,
-    matches_canonical_encoding, section_digest,
+    CANONICAL_ENCODING, ENVELOPE_FORMAT, HEADER_BYTES, IDENTITY_DIGEST_DOMAIN, MAGIC,
+    MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES,
+    MAX_MANIFEST_BYTES, matches_canonical_encoding, section_digest,
 };
 use super::error::{
     ArtifactCodecError, CodecLimitKind, ComponentSchemaKind, OrderedSubject, ReferenceSubject,
@@ -128,7 +128,16 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ArtifactEnvelope, ArtifactCodecErro
     let derived = envelope
         .canonical_identity()
         .map_err(|cause| ArtifactCodecError::IdentityDerivation { cause })?;
-    if derived.as_bytes() != parsed.identity {
+    // The manifest declares its identity by digest rather than by preimage, so
+    // the comparison digests the derivation rather than comparing it whole. The
+    // refused set is the same one: this has always been a check on whether a
+    // producer's two derivations of one artifact agree, never a check of the
+    // wire against the world, and nothing downstream reads the carried bytes.
+    if header
+        .algorithm
+        .digest(IDENTITY_DIGEST_DOMAIN, derived.as_bytes())
+        != parsed.identity_digest
+    {
         return Err(ArtifactCodecError::ArtifactIdentityMismatch);
     }
     // The manifest is fully understood, so re-deriving the canonical encoding
@@ -280,7 +289,11 @@ fn read_sections(
 struct ParsedManifest {
     body: DecodedBody,
     sections: Vec<SectionDescriptor>,
-    identity: Vec<u8>,
+    /// The producer's declared identity, carried as a digest of it.
+    ///
+    /// A *claim* until [`decode`] digests its own derivation and compares, in
+    /// exactly the sense [`Digest::from_wire`] documents.
+    identity_digest: Digest,
 }
 
 /// One section descriptor, held only until its framed bytes are validated.
@@ -362,7 +375,8 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
     })?;
 
     let sections = parse_section_descriptors(&mut cursor)?;
-    let identity = cursor.slice()?.to_vec();
+    // Fixed width and unframed, like every other digest the envelope carries.
+    let identity_digest = Digest::from_wire(cursor.array()?);
     if cursor.remaining() != 0 {
         return Err(ArtifactCodecError::TrailingManifestBytes {
             count: cursor.remaining(),
@@ -406,7 +420,7 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
             realization,
         },
         sections,
-        identity,
+        identity_digest,
     })
 }
 

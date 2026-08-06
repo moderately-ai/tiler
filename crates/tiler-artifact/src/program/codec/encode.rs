@@ -117,7 +117,47 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// numbers the arena through `canonical_arena_traversal`, which is invariant to
 /// arena permutation, and already ordered both expression-bearing sets with the
 /// comparator.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (14, 0);
+///
+/// Raised to `15.0` when the trailing canonical-identity **preimage** became a
+/// fixed-width digest of that identity under [`IDENTITY_DIGEST_DOMAIN`]. The run
+/// changes width *and* meaning: a `u64`-framed variable-length identity becomes
+/// thirty-two unframed digest bytes. Major for both of the reasons the steps
+/// above name, and this is the first step to need both. A `15.0` reader,
+/// admitted at `minor <= implemented`, would otherwise go on accepting a `14.0`
+/// manifest and read the eight bytes of that manifest's length prefix as the
+/// head of a digest — refusing a manifest that is well formed at its own schema,
+/// as `TrailingManifestBytes`, which names the wrong thing about it. And a
+/// manifest schema names one canonical byte spelling of an artifact, which this
+/// step changes for every artifact rather than for the arenas the `14.0` step
+/// reached.
+///
+/// **The refusal the run exists for survives whole.** The run was never read as
+/// an identity: a decoder derives the identity from the content above it and
+/// compares, so what the run buys is a *declaration* check that fires when a
+/// producer's two derivations of one artifact disagree. Digesting the derived
+/// identity and comparing digests refuses the identical set of disagreements, so
+/// [`ArtifactCodecError::ArtifactIdentityMismatch`] keeps its exact meaning. What
+/// is given up is that a reader holding only the wire can no longer lift the
+/// identity without running the derivation, and no such reader exists here —
+/// `super::view::DecodedArtifact::identity` returns the re-derivation and
+/// documents that it never reads the carried copy.
+///
+/// **The ADR 0074 convention-2 objection, and the answer.** A canonical identity
+/// is opaque bytes a receiving crate treats as opaque and never re-derives
+/// locally, so a digest standing where canonical bytes stood needs an argument
+/// that this site is a fold input rather than an identity a consumer compares.
+/// It is: the run is compared by the crate that is the *authority* for it,
+/// against bytes that same crate derives in the same call. It is a producer's
+/// declaration to its own decoder, not an identity crossing a boundary.
+///
+/// **Artifact identity does not move**, which is the `14.0` step's shape again
+/// and holds for the same reason: `encode_identity` reads the envelope and never
+/// the manifest, so no pinned identity, cache subject, or expansion-cache key
+/// changes. Only the wire moves — this time for every artifact rather than for
+/// none. ADR 0103 carries the step and
+/// `decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest` the
+/// decision behind it.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (15, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -132,6 +172,19 @@ pub(crate) const MANIFEST_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manif
 pub(crate) const SECTION_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.section-digest.v1\0";
 /// Domain separator of the external digest over a complete encoded envelope.
 pub(crate) const ENVELOPE_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.envelope-digest.v1\0";
+/// Domain separator of the manifest's trailing derived-identity digest.
+///
+/// The pre-image is the separator and then the exact canonical artifact
+/// identity, which opens with its own `tiler.artifact-program.vN\0` separator —
+/// so the identity domain's step is inside the digested bytes and a digest taken
+/// under a superseded artifact domain can never equal one taken under the
+/// current domain.
+///
+/// It is a fourth domain rather than a reuse of [`MANIFEST_DIGEST_DOMAIN`]
+/// because the two name different subjects: that one covers the manifest bytes
+/// this digest is written *into*, and a shared domain would let the two be
+/// confused by anything that ever compares them out of position.
+pub(crate) const IDENTITY_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.identity-digest.v1\0";
 
 /// Maximum bytes of one complete encoded envelope.
 pub(super) const MAX_ENVELOPE_BYTES: usize = 256 * 1024 * 1024;
@@ -328,7 +381,7 @@ fn encode_head(
     );
     check_budgets(envelope)?;
     let algorithm = DigestAlgorithm::GOVERNED;
-    let manifest = encode_manifest(envelope, identity, section_digests)?;
+    let manifest = encode_manifest(envelope, identity, section_digests, algorithm)?;
     codec_limit(
         manifest.len(),
         MAX_MANIFEST_BYTES,
@@ -391,11 +444,25 @@ pub(crate) fn envelope_digest(bytes: &[u8]) -> [u8; DIGEST_BYTES] {
         .as_bytes()
 }
 
+/// Derives the manifest's trailing digest of one derived artifact identity.
+///
+/// Fixed width and written unframed, exactly as the header's manifest digest and
+/// each section descriptor's content digest are: [`DIGEST_BYTES`] is a constant
+/// of the governed algorithm the header names, so a length prefix ahead of it
+/// would state what the algorithm tag already fixed.
+pub(super) fn identity_digest(
+    algorithm: DigestAlgorithm,
+    identity: &crate::program::CanonicalArtifactProgramIdentity,
+) -> Digest {
+    algorithm.digest(IDENTITY_DIGEST_DOMAIN, identity.as_bytes())
+}
+
 /// Encodes the canonical manifest bytes the framing header digests.
 fn encode_manifest(
     envelope: &ArtifactEnvelope,
     identity: &crate::program::CanonicalArtifactProgramIdentity,
     section_digests: &[Digest],
+    algorithm: DigestAlgorithm,
 ) -> Result<Vec<u8>, ArtifactCodecError> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MANIFEST_DOMAIN);
@@ -447,7 +514,14 @@ fn encode_manifest(
     push_slice(&mut bytes, &envelope.realization().canonical_bytes());
     encode_section_descriptors(&mut bytes, envelope, section_digests)?;
 
-    push_slice(&mut bytes, identity.as_bytes());
+    // The *digest* of the derived identity, not the identity. The run is a pure
+    // function of everything above it — `encode_identity` reads the envelope and
+    // never the manifest — so carrying the preimage restated half the manifest
+    // for a reader that does not exist, and every decode re-derives the identity
+    // anyway. What survives is the check the run is here for: a producer whose
+    // two derivations of one artifact disagree is refused, and thirty-two bytes
+    // refuse the identical set of disagreements.
+    bytes.extend_from_slice(identity_digest(algorithm, identity).as_bytes());
     Ok(bytes)
 }
 

@@ -461,8 +461,9 @@ fn no_governed_domain_of_either_container_prefixes_another() {
     // sidecar's domains and the envelope's live in one process and are hashed
     // by one algorithm. Checking the union here is what keeps a domain added to
     // either container from silently merging with one in the other.
-    let domains: [&[u8]; 7] = [
+    let domains: [&[u8]; 8] = [
         crate::program::ENVELOPE_DIGEST_DOMAIN,
+        crate::program::IDENTITY_DIGEST_DOMAIN,
         crate::program::MANIFEST_DIGEST_DOMAIN,
         crate::program::SECTION_DIGEST_DOMAIN,
         MANIFEST_DOMAIN,

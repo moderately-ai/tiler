@@ -606,8 +606,14 @@ pub struct PublishingCopy {
 
 /// One occurrence realized by an ordered chain of stages rather than by one.
 ///
-/// **Labelled draft.** The surface is implemented and tested; acceptance is
-/// parked for Tom at `accept-the-staged-realization-program-declaration`.
+/// **Accepted boundary** (Tom, 2026-08-06, at the live session's decision
+/// round; relayed and executed by the coordinator rather than witnessed at this
+/// site, and the provenance packet is the `## Outcome — accepted` section of the
+/// closed acceptance node `accept-the-staged-realization-program-declaration`,
+/// whose own "Closes when" routed this label flip here). Accepted as-is with no
+/// exclusion, three-vocabulary consequence included. Acceptance is not
+/// stabilization: this is accepted pre-alpha vocabulary, not a published API
+/// with compatibility obligations.
 ///
 /// This is the *program-scope* half of a staged realization. A registered
 /// elementary family whose index-realization law realizes a region **sequence**
@@ -1038,7 +1044,7 @@ impl VerifiedKernelProgram {
 
     /// Returns the declared staged-realization contracts in declaration order.
     ///
-    /// **Labelled draft**, on the acceptance [`StagedRealization`] records.
+    /// **Accepted boundary**, on the acceptance [`StagedRealization`] records.
     #[must_use]
     pub fn staged_realizations(&self) -> impl ExactSizeIterator<Item = StagedRealizationRef<'_>> {
         (0..self.data.staged_realizations.len()).map(move |index| StagedRealizationRef {
@@ -1588,7 +1594,7 @@ impl<'a> PublishingCopyRef<'a> {
 
 /// A read-only view of one staged-realization contract.
 ///
-/// **Labelled draft**, on the acceptance [`StagedRealization`] records.
+/// **Accepted boundary**, on the acceptance [`StagedRealization`] records.
 #[derive(Clone, Copy, Debug)]
 pub struct StagedRealizationRef<'a> {
     program: &'a VerifiedKernelProgram,

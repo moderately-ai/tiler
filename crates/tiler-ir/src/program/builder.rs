@@ -764,7 +764,7 @@ impl KernelProgramBuilder {
 
     /// Declares that one stage continues another's realization of an occurrence.
     ///
-    /// **Labelled draft**, on the acceptance [`StagedRealization`] records.
+    /// **Accepted boundary**, on the acceptance [`StagedRealization`] records.
     ///
     /// The declaration is what accounts for the consumer's dispatch: it covers
     /// no occurrence of the bound graph, because the stage that *began* the
