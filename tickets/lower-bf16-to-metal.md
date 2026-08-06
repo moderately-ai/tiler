@@ -1,7 +1,7 @@
 ---
 id: lower-bf16-to-metal
 title: Lower a BF16 kernel to Metal and dispatch it on the measured macOS row
-status: review
+status: done
 priority: p1
 dependencies: [admit-bf16-into-the-schedule-and-kernel-vocabulary, declare-the-bf16-rows-on-the-authoritative-metal-profile]
 related: [spike-bf16-through-the-second-dtype-seams, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, widen-the-f16-operation-vocabulary-to-contraction-and-reassociation]
@@ -9,9 +9,6 @@ scopes: [implementation/metal, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, metal, lowering, apple-targets]
-claimed_from: todo
-assignee: agent-bf16-metal
-lease_expires_at: 1785982711
 ---
 ## User-visible outcome
 
@@ -134,3 +131,7 @@ The `Backend lowering` cell for BF16 in `docs/roadmap.md` / `docs/dtype-support.
 ### Commands run
 
 `cargo fmt --check`; `cargo check --workspace --all-targets`; `cargo clippy -p tiler-metal -p tiler-metal-aot --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-metal -p tiler-metal-aot --no-deps`; `cargo nextest run --workspace`; `cargo test --workspace --doc`; `TILER_REQUIRE_METAL_TOOLCHAIN=1 cargo nextest run -p tiler-metal -E 'test(golden_compilation)' --no-capture`; `tkt lint`; `git diff --check`; `tkt guard`; `make full`.
+
+## Closed at the revised boundary
+
+The integrator closes this at the offline boundary on 2026-08-06: the `Closes when` above required dispatch, the flush-applied reference comparison, the execution witness, and the pre-submission dispatchability refusal, and none of those is reachable from this ticket's scopes — the worker's dependency-graph derivation in the Outcome shows `tiler-metal` reaches neither the runtime, the reference conformance machinery, nor the compiler's dispatchability type. Those four items were never absorbable here; they are owned, verbatim, by the two live dependents this ticket already names: `validate-bf16-at-the-runtime-routing-boundary` (dispatch and both pre-commit refusals) and `conform-the-bf16-vertical-end-to-end` (the flush-applied comparison with named moved elements, and the witness). With the remainder live, the revised outcome — offline `bfloat` emission, compilation, and every emission-side refusal, on the measured row — is fully supported by the merged diff, and the `Backend lowering` cell moved with exactly that qualifier while `Backend execution` did not move.
