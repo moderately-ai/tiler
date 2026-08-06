@@ -40,36 +40,84 @@ use crate::target::honourability::{
     DimensionBehaviour, NumericalDimension, NumericalRequirement, UnhonouredDimension,
 };
 
-/// The boundary role of a region reading the first declared program input.
+/// The boundary tensor one recognized fold's contributor read binds.
 ///
-/// It is the tensor a reduction folds when the recognizer found no elementwise
-/// prologue, and the tensor a fused serial sum reads: both are single-access
-/// contributor domains over one declared input.
-const FIRST_INPUT: TensorRole = TensorRole::Input {
-    ordinal: InputOrdinal::FIRST,
-};
-
-/// The boundary tensor holding one recognized fold's declared contributor domain.
+/// **The recognized ordinal, not the first declared input.** A fold with a
+/// prologue reads the intermediate that prologue region materialized; one
+/// without reads *the declared input its own contributor names*, which is the
+/// first only when the program declares one input for it to be. While every
+/// elementwise walk had to read every declared input, a prologue-less fold's
+/// walk read exactly one tensor and the program therefore declared exactly one,
+/// so `Input { ordinal: 0 }` and the recognized ordinal could not differ.
+/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` made
+/// them differ: `sum(b)` beside an independent `a * a` folds declared input `1`,
+/// and a region binding ordinal `0` for it would fold the wrong caller tensor
+/// under an intrinsically valid region.
 ///
-/// The first declared input when the program folds it directly, and the
-/// intermediate a prologue region materialized otherwise. It is the compiler side
-/// of the obligation `tiler-ir`'s schedule verifier states as
-/// `ContributorTensor::DeclaredDomain`: the verifier admits either tensor, and
-/// *which* one a region binds is a fact about the recognized program. Deriving it
-/// once here is what stops the serial region, the split's partial pass, and the
-/// cooperative tile from disagreeing about where the contributors live — three
-/// spellings of one fold, which the program assembler would then bind to three
-/// different buffers.
+/// It is the compiler side of the obligation `tiler-ir`'s schedule verifier
+/// states as `ContributorTensor::DeclaredDomain`: the verifier admits either
+/// tensor, and *which* one a region binds is a fact about the recognized
+/// program.
 ///
 /// The split's *final* pass deliberately does not ask: it folds partials its own
 /// partial pass staged, so its read is the intermediate whatever the fold's
 /// contributor domain is.
-fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
-    if serial.prologue.is_some() {
-        TensorRole::Intermediate
-    } else {
-        FIRST_INPUT
+const fn declared_contributor_tensor(contributor_input: Option<u32>) -> TensorRole {
+    match contributor_input {
+        Some(ordinal) => TensorRole::Input {
+            ordinal: InputOrdinal::new(ordinal),
+        },
+        None => TensorRole::Intermediate,
     }
+}
+
+/// The contributor tensor one recognized fold's regions bind.
+///
+/// Deriving it once here is what stops the serial region, the split's partial
+/// pass, and the cooperative tile from disagreeing about where the contributors
+/// live — three spellings of one fold, which the program assembler would then
+/// bind to three different buffers.
+const fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
+    declared_contributor_tensor(serial.contributor_input)
+}
+
+/// The declared input a *fused* region's contributor read binds, or `None` when
+/// the recognized prologue has no fused spelling at all.
+///
+/// **The fused region reads the tensor the prologue read.** It carries the
+/// prologue inside its own scalar program rather than staging it, so its single
+/// contributor access binds the declared input the prologue's read named — and
+/// that is the prologue's *sole* read rather than the first declared input,
+/// for the reason [`declared_contributor_tensor`] states.
+///
+/// The pattern is the fused vocabulary's own precondition rather than a
+/// narrowing. [`ScalarProgram::FusedMultiplyAddSerialSum`] applies `scale * x +
+/// bias` to each contributor of one tensor, so a prologue it can spell is a
+/// one-leaf expression and therefore carries exactly one read; and that read
+/// must be dense, because the fused region addresses its input through a
+/// [`LogicalAccess::ReductionContributor`] relation with nowhere to put a
+/// structural one. `sum(permute(a) * 2.0 + 1.0)` would otherwise fold `a` where
+/// the program said `permute(a)`.
+///
+/// **And the ordinal must be the first, which is a wall a crate down rather
+/// than a property of the fusion.** `tiler_ir::schedule`'s
+/// `verify_access_and_semantics` requires a `FusedMultiplyAddSerialSum` region's
+/// contributor read to be `FIRST_INPUT` exactly, so a fused region over
+/// `sum(b * 2.0 + 1.0)` beside an independent output reading `a` would be
+/// proposed and then rejected as invalid compiler output. Declining it here
+/// loses a *candidate* and never a program — the materialized prologue-and-fold
+/// pair realizes that prologue, reading declared input `1` from a region whose
+/// own vocabulary admits it —
+/// and `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
+/// is what makes the candidate reachable again.
+fn fused_contributor_tensor(prologue_reads: &[(u32, LogicalAccess)]) -> Option<TensorRole> {
+    let [(ordinal, LogicalAccess::LinearIdentity)] = prologue_reads else {
+        return None;
+    };
+    let tensor = TensorRole::Input {
+        ordinal: InputOrdinal::new(*ordinal),
+    };
+    (*ordinal == InputOrdinal::FIRST.get()).then_some(tensor)
 }
 
 /// Recovers the scale and bias a fused serial sum's scalar program can spell.
@@ -83,16 +131,18 @@ fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
 /// admitting one here would bind an unproved reassociation to the request's
 /// occurrences.
 ///
-/// **And the prologue's read must be dense, which is a correctness condition
-/// rather than a narrowing.** The fused region has no prologue read of its own:
-/// it addresses the declared input through a [`LogicalAccess::ReductionContributor`]
-/// relation and applies the affine body to each contributor. A prologue whose
-/// read carries a structural relation — `sum(permute(a) * 2.0 + 1.0)` — has that
-/// relation nowhere to go in the fused spelling, so fusing would silently fold
-/// `a` where the program said `permute(a)` and return a wrong tensor. The
-/// expression alone cannot report it: `permute(a) * 2.0 + 1.0` and `a * 2.0 +
-/// 1.0` are the same [`PointwiseF32Expression`], and only the read list
-/// separates them.
+/// **And the prologue's read list must be one dense read, which is a correctness
+/// condition rather than a narrowing.** The fused region has no prologue read of
+/// its own: it addresses the declared input through a
+/// [`LogicalAccess::ReductionContributor`] relation and applies the affine body
+/// to each contributor. A prologue whose read carries a structural relation —
+/// `sum(permute(a) * 2.0 + 1.0)` — has that relation nowhere to go in the fused
+/// spelling, so fusing would silently fold `a` where the program said
+/// `permute(a)` and return a wrong tensor. The expression alone cannot report
+/// it: `permute(a) * 2.0 + 1.0` and `a * 2.0 + 1.0` are the same
+/// [`PointwiseF32Expression`], and only the read list separates them.
+/// [`fused_contributor_tensor`] is that gate, and it answers the second half of
+/// the same question — *which* declared input the fused region reads.
 ///
 /// Returning `None` loses a candidate and never a program — the materialized
 /// two-region plan realizes every recognized prologue, and it is what a general
@@ -111,13 +161,7 @@ fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
 /// claimed" cannot disagree.
 pub(crate) fn fused_prologue_constants(output: &NormalizedOutput) -> Option<(u32, u32)> {
     let serial = output.try_serial_sum()?;
-    if serial
-        .prologue_reads
-        .iter()
-        .any(|(_, map)| *map != LogicalAccess::LinearIdentity)
-    {
-        return None;
-    }
+    fused_contributor_tensor(&serial.prologue_reads)?;
     affine_prologue(serial.prologue.as_ref()?)
 }
 
@@ -1294,6 +1338,10 @@ pub(crate) fn fused_region(
 ) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
     let (scale_bits, bias_bits) = fused_prologue_constants(output)?;
     let serial = output.serial_sum();
+    // The declared input the prologue read, which `fused_prologue_constants`
+    // already required to exist: asking again binds the access to the same
+    // derivation the alternative's existence was decided by.
+    let contributor = fused_contributor_tensor(&serial.prologue_reads)?;
     let write_tensor = write.tensor();
     let region = ScheduledRegion {
         index: IndexRegion {
@@ -1301,7 +1349,7 @@ pub(crate) fn fused_region(
             iteration_shape: serial.output_shape.clone(),
             accesses: vec![
                 Access {
-                    tensor: FIRST_INPUT,
+                    tensor: contributor,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
@@ -1325,7 +1373,7 @@ pub(crate) fn fused_region(
             bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId::new(0),
-                    tensor: FIRST_INPUT,
+                    tensor: contributor,
                     component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
                         input_shape: serial.input_shape.clone(),
@@ -2423,7 +2471,19 @@ fn verify_region_output_binding(
                         && normalized.prologue().and_then(affine_prologue)
                             == Some((*scale_bits, *bias_bits))
                         && axes == normalized.reduction_axes()
-                        && reduction_access_matches(&region.index.accesses[0], normalized, FIRST_INPUT)
+                        // The declared input the recognized prologue read, not
+                        // the first one: a fused region binding another tensor
+                        // folds a buffer the program never named, and only the
+                        // recognized read list says which it is.
+                        && fused_contributor_tensor(normalized.prologue_reads()).is_some_and(
+                            |contributor| {
+                                reduction_access_matches(
+                                    &region.index.accesses[0],
+                                    normalized,
+                                    contributor,
+                                )
+                            },
+                        )
                         && *canonical_nan_bits
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
                 }
@@ -2651,17 +2711,14 @@ fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContra
 /// a prologue reads the intermediate that prologue region materialized; one
 /// without reads the declared input directly.
 ///
-/// The *fused* region does not ask, and passes [`FIRST_INPUT`] explicitly: it
-/// carries the prologue inside its own scalar program, so it reads the original
-/// input precisely because a prologue exists.
+/// The *fused* region does not ask, and resolves
+/// [`fused_contributor_tensor`] instead: it carries the prologue inside its own
+/// scalar program, so it reads the tensor the prologue read precisely because a
+/// prologue exists.
 fn subject_contributor_tensor(
     normalized: &crate::request::NormalizedSerialSumSubject,
 ) -> TensorRole {
-    if normalized.prologue().is_some() {
-        TensorRole::Intermediate
-    } else {
-        FIRST_INPUT
-    }
+    declared_contributor_tensor(normalized.contributor_input())
 }
 
 /// Requires one fold's contributor read to realize the recognized reduction.
@@ -3044,6 +3101,72 @@ fn intrinsic<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError
 
 #[cfg(test)]
 mod tests {
+
+    /// A fold's contributor tensor is its recognized ordinal, not the first.
+    ///
+    /// **Driven directly at the derivation, because nothing else can reach its
+    /// general arm today.** `crate::request`'s `sum-contributor-ordinal`
+    /// refusal declines a recognized fold over any declared input but the
+    /// first, so every `contributor_input` a compilation produces is `Some(0)`
+    /// or `None` and a version of this function that ignored the ordinal
+    /// entirely would fail no end-to-end test — measured, not assumed: replacing
+    /// its `Some` arm with `InputOrdinal::FIRST` leaves the whole `tiler-compiler`
+    /// suite green. The general arm is *implemented and walled*, which is a
+    /// different claim from tested, and this is the test that makes the
+    /// difference small enough to state.
+    /// `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
+    /// removes the wall.
+    #[test]
+    fn a_folds_contributor_tensor_is_its_recognized_declared_ordinal() {
+        assert_eq!(
+            super::declared_contributor_tensor(None),
+            TensorRole::Intermediate,
+        );
+        for ordinal in [0_u32, 1, 7] {
+            assert_eq!(
+                super::declared_contributor_tensor(Some(ordinal)),
+                TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                },
+            );
+        }
+    }
+
+    /// The fused fold reads the tensor its prologue read, and declines the rest.
+    ///
+    /// Three refusals and one admission, each a different reason the fused
+    /// vocabulary cannot spell a prologue: a read list of any length but one has
+    /// no single contributor; a structural relation has nowhere to go in a
+    /// region that addresses its input through a reduction relation; and a
+    /// declared ordinal other than the first is refused by `tiler_ir::schedule`
+    /// itself.
+    #[test]
+    fn the_fused_fold_reads_its_prologues_own_dense_first_input() {
+        let dense = |ordinal| (ordinal, LogicalAccess::LinearIdentity);
+        assert_eq!(
+            super::fused_contributor_tensor(&[dense(0)]),
+            Some(TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            }),
+        );
+        assert_eq!(super::fused_contributor_tensor(&[dense(1)]), None);
+        assert_eq!(super::fused_contributor_tensor(&[]), None);
+        assert_eq!(super::fused_contributor_tensor(&[dense(0), dense(1)]), None);
+        assert_eq!(
+            super::fused_contributor_tensor(&[(
+                0,
+                LogicalAccess::ReindexBijection {
+                    operand_shape: Shape::from_dims([2, 2]),
+                    result_shape: Shape::from_dims([2, 2]),
+                    axes: vec![
+                        tiler_ir::schedule::AxisDecode::read(1, 2),
+                        tiler_ir::schedule::AxisDecode::read(2, 2),
+                    ],
+                },
+            )]),
+            None,
+        );
+    }
 
     /// Builds the five-node `input * scale + bias` expression as a forgery.
     ///

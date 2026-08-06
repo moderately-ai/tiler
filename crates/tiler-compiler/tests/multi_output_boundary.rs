@@ -64,12 +64,28 @@
 //! combiner. `admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary`
 //! owns that widening.
 //!
-//! One further limit is *not* about outputs at all and is recorded here because
-//! multi-output is what makes it reachable: an elementwise walk must read every
-//! declared input (`elementwise-reads`), so two outputs each reading a different
-//! subset of the program's inputs refuse even though neither shares an
-//! occurrence with the other. `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs`
-//! owns it, and [`disjoint_input_two_output_program`] is the fixture.
+//! One further limit was *not* about outputs at all and is recorded here
+//! because multi-output is what made it reachable: an elementwise walk had to
+//! read every declared input (`elementwise-reads`), so two outputs each reading
+//! a different subset of the program's inputs refused even though neither
+//! shared an occurrence with the other.
+//! `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` lifted
+//! it, and [`disjoint_input_two_output_program`] is the fixture that now
+//! compiles. What the rule protected survives one level out: `check_output_cover`
+//! requires every declared input to be read by *some* output under `input-set`,
+//! because an input no region reads is a buffer the caller binds, the ABI
+//! declares, and no kernel loads.
+//!
+//! **Its remainder is a fold's contributor, and it is a `tiler-ir` wall rather
+//! than a recognizer one.** `tiler_ir::schedule`'s `ContributorTensor` admits a
+//! fold's contributor read at `TensorRole::Intermediate` or the *first* declared
+//! input and nothing else, so a fold over a later declared input — reachable for
+//! the first time now that a walk may read a subset — is refused at the request
+//! boundary under `sum-contributor-ordinal` rather than proposed and rejected as
+//! invalid compiler output. The fused single-region alternative is withheld for
+//! the same reason and loses a candidate rather than a program.
+//! `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
+//! owns the widening.
 //!
 //! # Output order is identity at both layers, and this file pins the semantic half
 //!
@@ -93,7 +109,7 @@ use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
 };
 use tiler_compiler::target::{TargetProfile, TargetRequest};
-use tiler_ir::program::ValueRole;
+use tiler_ir::program::{MaterializedOrigin, StageAccessMode, ValueRole};
 use tiler_ir::schedule::{InputOrdinal, TensorRole};
 use tiler_ir::semantic::{
     F32, F32Add, F32Multiply, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
@@ -300,23 +316,37 @@ fn two_output_keys_publishing_one_value_refuse_for_their_shared_write() {
     }
 }
 
-/// Two independent outputs reading *different* declared inputs still refuse.
+/// Two independent outputs reading *different* declared inputs compile.
 ///
-/// Recorded here because multi-output admission is what makes this reachable and
-/// because it is the one refusal above that is not about outputs at all. Each
-/// elementwise walk must read every declared input (`elementwise-reads`), since
-/// the region it builds binds one buffer per declared program input and the
-/// expression's dense-ordinal rule refuses a gap. With one declared output the
-/// state cannot arise — a frozen program drops an input no output reaches — so
-/// nothing observed it until two outputs could split the input set between them.
+/// **This assertion was the inverse until
+/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs`
+/// landed**, and it is the same program either way: `doubled = a + a` and
+/// `squared = b * b` over two declared inputs. The wall it recorded was
+/// `elementwise-reads` — every elementwise walk had to read *every* declared
+/// input, because the region it built bound one buffer per declared program
+/// input. With one declared output that rule and "the program's inputs are all
+/// read" were the same requirement, since a frozen program drops an input no
+/// output reaches; with two they are different requirements, and only the
+/// second is true of this program. The first moved to `check_output_cover`
+/// under `input-set`, so an input *no* output reads is still refused.
 ///
-/// Its accepted neighbour is [`two_output_region`]: the same two inputs, the
-/// same two families, the same two independent outputs, differing only in that
-/// each walk there reads both inputs.
-/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` owns
-/// the widening.
+/// Its neighbour [`two_output_region`] travels with it and must also compile:
+/// the same two inputs, the same two families, the same independence, differing
+/// only in that each walk there reads both inputs. A green run is therefore
+/// evidence that which inputs a walk reads no longer decides admission, rather
+/// than evidence that the profile accepts everything — the sharing refusals
+/// above are unchanged and still refuse.
+///
+/// **Each region binds only what its own walk read**, which is the fact a bare
+/// `is_ok()` would not see: both walks here have one leaf, so a region-local
+/// renumbering would make both read declared input `0` and `squared` would
+/// square `a`. `pipeline::conformance`'s
+/// `outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read` is the
+/// in-crate half, which asserts the ordinals and compares both published
+/// outputs against the reference; this half asserts what a caller sees — the
+/// assembled program binds each stage to the input key its output names.
 #[test]
-fn two_outputs_reading_disjoint_declared_inputs_refuse_for_their_unread_buffers() {
+fn two_outputs_reading_disjoint_declared_inputs_compile_binding_only_what_they_read() {
     let region = disjoint_input_two_output_program();
     assert_eq!(region.input_count(), 2);
     assert_eq!(region.output_count(), 2);
@@ -324,13 +354,53 @@ fn two_outputs_reading_disjoint_declared_inputs_refuse_for_their_unread_buffers(
 
     for contract in CONTRACTS {
         assert_eq!(compile_under(&accepted, contract), Ok(()));
-        assert_eq!(
-            compile_under(&region, contract),
-            Err(CompileFailureClass::UnsupportedCapability {
-                rule: "elementwise-reads"
-            }),
-        );
+        assert_eq!(compile_under(&region, contract), Ok(()));
     }
+
+    // The two stages read one declared input each, and they are different ones.
+    // Read through the published kernel program rather than asserted from the
+    // recognizer, because the buffer a caller binds is what the stage's view
+    // resolves to.
+    let targets = TargetRequest::new([TargetProfile::governed()]).unwrap();
+    let batch = compile(CompileRequest::new(
+        &region,
+        NumericalContract::STRICT_F32,
+        targets,
+    ))
+    .expect("the disjoint-input program compiles");
+    let (_, outcome) = batch
+        .into_targets()
+        .pop()
+        .expect("one requested profile")
+        .into_parts();
+    let compilation = outcome.expect("the governed target compiles it");
+    let selected = compilation
+        .selected()
+        .expect("a successful compilation retains its selected plan");
+    let program = selected.abi().kernel_program();
+    let read_keys: Vec<Vec<String>> = program
+        .stages()
+        .map(|stage| {
+            stage
+                .accesses()
+                .filter(|access| access.mode() == StageAccessMode::Read)
+                .map(|access| match access.view().value().origin() {
+                    MaterializedOrigin::ProgramInput { key } => key.as_str().to_owned(),
+                    MaterializedOrigin::Internal => {
+                        panic!("both regions here read declared inputs only")
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(read_keys.len(), 2);
+    let mut sorted = read_keys.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted,
+        vec![vec!["a".to_owned()], vec!["b".to_owned()]],
+        "each stage must bind exactly the declared input its own output reads",
+    );
 }
 
 /// Output order is identity at the semantic layer.

@@ -8,7 +8,9 @@
 
 use std::sync::Arc;
 
-use super::tests::{bits_of, f32_tensor, interpret_fused, reduction_loop, tensor_bits};
+use super::tests::{
+    bits_of, f32_tensor, interpret_fused, interpret_fused_inputs, reduction_loop, tensor_bits,
+};
 use super::{
     CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind, compile,
 };
@@ -713,6 +715,188 @@ fn a_published_and_consumed_intermediate_compiles_and_agrees() {
     // agreed with a wrong compiler would still be caught.
     assert_eq!(scaled, vec![2.0, 4.0, 8.0, 16.0]);
     assert_eq!(reduced, vec![6.0, 24.0]);
+}
+
+/// Three declared inputs whose two outputs read different, non-contiguous
+/// subsets of them.
+///
+/// `product = a * c` reads declared inputs `0` and `2`; `folded = sum(b * 2.0 +
+/// 1.0)` reads declared input `1` through its prologue. Neither walk reaches the
+/// other's occurrences and every declared input is read by one of them, so both
+/// program-scoped obligations hold while no single output reads the whole
+/// declaration.
+///
+/// **Two different subset shapes in one fixture, deliberately.** `product`'s
+/// region binds ordinals that are not `0..n` — the case a region-local
+/// renumbering would silently get wrong at assembly — and the prologue's region
+/// binds a single ordinal that is not the first, which is what the *fused* fold
+/// vocabulary cannot spell. The affine prologue is chosen so a fused alternative
+/// would otherwise be offered: this fixture is therefore also the evidence that
+/// it is withheld rather than proposed and rejected.
+fn disjoint_input_subset_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let inputs: Vec<_> = ["a", "b", "c"]
+        .into_iter()
+        .map(|key| {
+            builder
+                .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([2, 2]))
+                .unwrap()
+        })
+        .collect();
+    let product =
+        tiler_ir::semantic::F32Multiply::apply(&mut builder, inputs[0], inputs[2]).unwrap();
+    let scale = tiler_ir::semantic::F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = tiler_ir::semantic::F32Multiply::apply(&mut builder, inputs[1], scale).unwrap();
+    let bias = tiler_ir::semantic::F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+    let biased = tiler_ir::semantic::F32Add::apply(&mut builder, scaled, bias).unwrap();
+    let folded =
+        tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, biased, [Axis::new(1)])
+            .unwrap();
+    builder
+        .output(OutputKey::new("product").unwrap(), product)
+        .unwrap();
+    builder
+        .output(OutputKey::new("folded").unwrap(), folded)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// The boundary tensors one verified region reads, in access order.
+fn read_tensors(
+    region: &crate::physical::VerifiedScheduledRegion,
+) -> Vec<crate::physical::TensorRole> {
+    region
+        .region()
+        .index
+        .accesses
+        .iter()
+        .filter(|access| access.mode == crate::physical::AccessMode::Read)
+        .map(|access| access.tensor)
+        .collect()
+}
+
+/// Outputs reading different subsets of the declared inputs compile, and each
+/// region binds exactly the inputs its own walk reached.
+///
+/// **This assertion was the inverse until
+/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs`
+/// landed**, and the wall it records was `elementwise-reads`: every elementwise
+/// walk had to read *every* declared input, which was the same requirement as
+/// "the program's inputs are read" while a program declared one output, and is
+/// not once two outputs can split the declaration. The obligation moved to
+/// [`crate::request`]'s `check_output_cover` under `input-set` rather than being
+/// deleted.
+///
+/// **The read lists are asserted, not just the admission.** Every region here
+/// would still compile if the recognizer renumbered its reads region-locally —
+/// a two-leaf expression reading `0, 1` is intrinsically as valid as one reading
+/// `0, 2` — and the program would then multiply `a * b` where the caller wrote
+/// `a * c`. The ordinals are the only fact separating them, which is exactly why
+/// a bare `is_ok()` here would report nothing.
+///
+/// **The fused fold is withheld, and that is a claim rather than an absence.**
+/// `b * 2.0 + 1.0` is the one prologue shape `FusedMultiplyAddSerialSum` spells,
+/// so a fused alternative would be offered were it not for the declared ordinal;
+/// `tiler_ir::schedule` requires that region's contributor read to be the first
+/// declared input exactly, and
+/// `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
+/// owns the widening that makes the candidate reachable again.
+///
+/// **Both published outputs are compared against the reference bit for bit**,
+/// and the payloads are chosen so that no two elements and no two row sums
+/// coincide: a region that bound the wrong buffer disagrees rather than
+/// accidentally matching. `folded` is the claim that catches a prologue whose
+/// read stayed at the first declared input — it would fold `a * 2.0 + 1.0`,
+/// giving `[8, 26]`, where `b`'s gives `[98, 386]`.
+#[test]
+fn outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read() {
+    use crate::physical::{InputOrdinal, TensorRole};
+
+    let shape = Shape::from_dims([2, 2]);
+    let a: [f32; 4] = [1.0, 2.0, 4.0, 8.0];
+    let b: [f32; 4] = [16.0, 32.0, 64.0, 128.0];
+    let c: [f32; 4] = [256.0, 512.0, 1024.0, 2048.0];
+    let program = disjoint_input_subset_program();
+    assert_eq!(program.input_count(), 3);
+    assert_eq!(program.output_count(), 2);
+    assert_eq!(program.operation_count(), 6);
+
+    let compiled = compile(CompilationRequest::governed(&program))
+        .expect("outputs reading input subsets compile through the ordinary path");
+    assert_eq!(compiled.targets[0].failure(), None);
+    assert!(
+        compiled.targets[0]
+            .portfolio
+            .alternatives
+            .iter()
+            .all(|retained| retained.kind != ProgramAlternativeKind::Fused),
+        "the affine fusion must be withheld for a prologue over a later declared input",
+    );
+    let retained: Vec<&ProgramAlternative> =
+        compiled.targets[0].portfolio.alternatives.iter().collect();
+    let [alternative] = retained.as_slice() else {
+        panic!(
+            "expected one retained alternative, found {}",
+            retained.len()
+        );
+    };
+
+    // Three regions and one materialization edge: the independent product, the
+    // prologue staging its contributors, and the fold reading them across.
+    assert_eq!(alternative.plan.cover().region_count(), 3);
+    assert_eq!(alternative.plan.cover().materializations().len(), 1);
+    assert_eq!(alternative.kernels.len(), 3);
+    assert_eq!(alternative.scheduled_regions.len(), 3);
+
+    // Each region against the declaration, and `assert_kernels_match_program`
+    // is what makes `kernels[i]` the kernel of `scheduled_regions[i]`.
+    let input = |ordinal| TensorRole::Input {
+        ordinal: InputOrdinal::new(ordinal),
+    };
+    let reads: Vec<Vec<TensorRole>> = alternative
+        .scheduled_regions
+        .iter()
+        .map(read_tensors)
+        .collect();
+    let find = |expected: &[TensorRole]| {
+        reads
+            .iter()
+            .position(|actual| actual == expected)
+            .unwrap_or_else(|| panic!("no region reads {expected:?}; regions read {reads:?}"))
+    };
+    let product_region = find(&[input(0), input(2)]);
+    let prologue_region = find(&[input(1)]);
+    let fold_region = find(&[TensorRole::Intermediate]);
+
+    let product = interpret_fused_inputs(&alternative.kernels[product_region], &[&a, &c]);
+    let staged = interpret_fused(&alternative.kernels[prologue_region], &b);
+    let folded = interpret_fused(&alternative.kernels[fold_region], &staged);
+
+    let tensors = [
+        f32_tensor(shape.clone(), &a),
+        f32_tensor(shape.clone(), &b),
+        f32_tensor(shape, &c),
+    ];
+    let keys: Vec<InputKey> = ["a", "b", "c"]
+        .into_iter()
+        .map(|key| InputKey::new(key).unwrap())
+        .collect();
+    let bindings: Vec<InputBinding<'_>> = keys
+        .iter()
+        .zip(&tensors)
+        .map(|(key, tensor)| InputBinding::new(key, tensor))
+        .collect();
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&program, &bindings)
+        .unwrap();
+    assert_eq!(bits_of(&product), tensor_bits(&expected[0]));
+    assert_eq!(bits_of(&folded), tensor_bits(&expected[1]));
+    // Stated independently of the oracle as well, with the answer a region that
+    // bound the first declared input would have produced named beside it.
+    assert_eq!(product, vec![256.0, 1024.0, 4096.0, 16384.0]);
+    assert_eq!(folded, vec![98.0, 386.0]);
+    assert_ne!(folded, vec![8.0, 26.0]);
 }
 
 /// ADR 0072 identity conformance for a provider-only revision change.

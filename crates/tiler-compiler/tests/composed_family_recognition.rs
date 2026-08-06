@@ -688,9 +688,13 @@ fn a_broadcast_widening_a_declared_weight_compiles_as_a_replication_relation() {
 /// The neighbouring *refusals* — two keys naming one value, and a publication
 /// inside one recognized part rather than at a part boundary — are driven at the
 /// recognizer in `request`'s `an_output_key_pair_naming_one_value_still_refuses_by_name`
-/// rather than here. Composing them into this fixture's three-input domain
-/// reaches `elementwise-reads` first, which would make the row report about the
-/// read arity instead of about the partition rule.
+/// rather than here, where they are stated over two declared inputs instead of
+/// three. Composing them into this fixture's three-input domain used to reach
+/// `elementwise-reads` first, which would have made the row report about the
+/// read arity instead of about the partition rule;
+/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` lifted
+/// that rule, so the obstruction is gone and the split is now only where the
+/// refusals are kept, not a constraint on where they could be.
 #[test]
 fn a_second_named_output_inside_the_first_s_walk_compiles() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
