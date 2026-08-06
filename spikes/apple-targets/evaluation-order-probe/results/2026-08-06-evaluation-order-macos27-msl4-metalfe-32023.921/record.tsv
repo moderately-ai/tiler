@@ -1,0 +1,503 @@
+key	value
+schema	tiler.apple-evaluation-order/v1
+probe.repository_base_revision	2c0c8501e799d4c0f14c2a0fc6f512412810e200
+probe.producer_sha256	6e3a6829cbc23e8bef50865bf8e53b9ad94128e352bc60a3f6528cfa03f971ea
+probe.host_source_sha256	31a3e02f6cba8628006e5d0f84e51890d2e00d98259f842432278b78f4bc4ee6
+probe.language	metal4.0
+probe.offline_target	air64-apple-macos26.0
+probe.runtime_language	4.0
+probe.fp32_functions	precise
+probe.math_modes	safe,relaxed,fast
+probe.contract_settings	off,on,fast
+probe.optimization_levels	O0,O2
+probe.runtime_optimization_levels	default,size
+probe.operands	3f400000,3e800000,33400000,33000000,3f800000,40000000,40800000,41000000,3eb97ef9,3fc00000,3f800000,3f800000
+probe.quads	seed,witness,contraction
+probe.kernels	serial_fold4,split_fold4,contraction_control
+environment.architecture	arm64
+environment.date_utc	2026-08-06T18:27:15Z
+environment.device	Apple M4 Max
+environment.device_family_apple9	supported
+environment.device_registry_id	4294968656
+environment.offline_compiler	Apple metal version 32023.921 (metalfe-32023.921)
+environment.offline_compiler_installed_dir	/Users/tsanterre/Library/Developer/DVTDownloads/MetalToolchain/mounts/e0303a069097c7034cc5befc63a7a7c2c8ee7720/Metal.xctoolchain/usr/metal/current/bin
+environment.os_build	26A5388g
+environment.os_version	27.0
+environment.runtime_compiler_image	/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libllvm-flatbuffers.dylib /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libGPUCompilerUtils.dylib
+environment.sdk	macosx 27.0 build 26A5388f
+environment.xcode	Xcode 27.0 Build version 27A5228h
+environment.xcode_path	/Applications/Xcode-beta.app/Contents/Developer
+summary.contraction_control.offline.as-written	12
+summary.contraction_control.offline.diverged	6
+summary.contraction_control.runtime.as-written	2
+summary.contraction_control.runtime.diverged	4
+summary.emitted_tree.serial_fold4.serial	9
+summary.emitted_tree.serial_fold4.unresolved-through-stack-slots	9
+summary.emitted_tree.split_fold4.serial	2
+summary.emitted_tree.split_fold4.split	7
+summary.emitted_tree.split_fold4.unresolved-through-stack-slots	9
+summary.serial_fold4.offline.as-written	18
+summary.serial_fold4.runtime.as-written	6
+summary.split_fold4.offline.as-written	16
+summary.split_fold4.offline.diverged	2
+summary.split_fold4.runtime.as-written	2
+summary.split_fold4.runtime.diverged	4
+reference.serial_fold4.seed	written=3f800000,alternatives=3f800001
+reference.serial_fold4.witness	written=41700000,alternatives=none
+reference.serial_fold4.contraction	written=40772fdf,alternatives=none
+reference.split_fold4.seed	written=3f800001,alternatives=3f800000
+reference.split_fold4.witness	written=41700000,alternatives=none
+reference.split_fold4.contraction	written=40772fdf,alternatives=none
+reference.contraction_control.seed	written=3e400003,alternatives=none
+reference.contraction_control.witness	written=40c00000,alternatives=none
+reference.contraction_control.contraction	written=3fc58f9e,alternatives=3fc58f9d
+case.offline.contraction_control.fast.O0.contract-fast.float_operations	fadd;fmul
+case.offline.contraction_control.fast.O0.contract-fast.fast_math_licences	fast
+case.offline.contraction_control.fast.O0.contract-fast.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.offline.contraction_control.fast.O0.contract-fast.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O0.contract-fast.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O0.contract-fast.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.offline.contraction_control.fast.O0.contract-off.float_operations	fadd;fmul
+case.offline.contraction_control.fast.O0.contract-off.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.contraction_control.fast.O0.contract-off.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.fast.O0.contract-off.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O0.contract-off.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O0.contract-off.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.fast.O0.contract-on.float_operations	fadd;fmul
+case.offline.contraction_control.fast.O0.contract-on.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.contraction_control.fast.O0.contract-on.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.fast.O0.contract-on.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O0.contract-on.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O0.contract-on.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.fast.O2.contract-fast.float_operations	fadd;fmul
+case.offline.contraction_control.fast.O2.contract-fast.fast_math_licences	fast
+case.offline.contraction_control.fast.O2.contract-fast.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.offline.contraction_control.fast.O2.contract-fast.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O2.contract-fast.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O2.contract-fast.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.offline.contraction_control.fast.O2.contract-off.float_operations	fadd;fmul
+case.offline.contraction_control.fast.O2.contract-off.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.contraction_control.fast.O2.contract-off.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.fast.O2.contract-off.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O2.contract-off.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O2.contract-off.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.fast.O2.contract-on.float_operations	fadd;fmul
+case.offline.contraction_control.fast.O2.contract-on.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.contraction_control.fast.O2.contract-on.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.fast.O2.contract-on.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O2.contract-on.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.fast.O2.contract-on.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.relaxed.O0.contract-fast.float_operations	fadd;fmul
+case.offline.contraction_control.relaxed.O0.contract-fast.fast_math_licences	reassoc nsz arcp contract afn
+case.offline.contraction_control.relaxed.O0.contract-fast.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.offline.contraction_control.relaxed.O0.contract-fast.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O0.contract-fast.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O0.contract-fast.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.offline.contraction_control.relaxed.O0.contract-off.float_operations	fadd;fmul
+case.offline.contraction_control.relaxed.O0.contract-off.fast_math_licences	reassoc nsz arcp afn
+case.offline.contraction_control.relaxed.O0.contract-off.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.relaxed.O0.contract-off.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O0.contract-off.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O0.contract-off.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.relaxed.O0.contract-on.float_operations	fadd;fmul
+case.offline.contraction_control.relaxed.O0.contract-on.fast_math_licences	reassoc nsz arcp afn
+case.offline.contraction_control.relaxed.O0.contract-on.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.relaxed.O0.contract-on.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O0.contract-on.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O0.contract-on.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.relaxed.O2.contract-fast.float_operations	fadd;fmul
+case.offline.contraction_control.relaxed.O2.contract-fast.fast_math_licences	reassoc nsz arcp contract afn
+case.offline.contraction_control.relaxed.O2.contract-fast.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.offline.contraction_control.relaxed.O2.contract-fast.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O2.contract-fast.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O2.contract-fast.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.offline.contraction_control.relaxed.O2.contract-off.float_operations	fadd;fmul
+case.offline.contraction_control.relaxed.O2.contract-off.fast_math_licences	reassoc nsz arcp afn
+case.offline.contraction_control.relaxed.O2.contract-off.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.relaxed.O2.contract-off.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O2.contract-off.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O2.contract-off.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.relaxed.O2.contract-on.float_operations	fadd;fmul
+case.offline.contraction_control.relaxed.O2.contract-on.fast_math_licences	reassoc nsz arcp afn
+case.offline.contraction_control.relaxed.O2.contract-on.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.relaxed.O2.contract-on.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O2.contract-on.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.relaxed.O2.contract-on.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.safe.O0.contract-fast.float_operations	fadd;fmul
+case.offline.contraction_control.safe.O0.contract-fast.fast_math_licences	contract
+case.offline.contraction_control.safe.O0.contract-fast.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.offline.contraction_control.safe.O0.contract-fast.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O0.contract-fast.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O0.contract-fast.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.offline.contraction_control.safe.O0.contract-off.float_operations	fadd;fmul
+case.offline.contraction_control.safe.O0.contract-off.fast_math_licences	none
+case.offline.contraction_control.safe.O0.contract-off.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.safe.O0.contract-off.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O0.contract-off.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O0.contract-off.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.safe.O0.contract-on.float_operations	fadd;fmul
+case.offline.contraction_control.safe.O0.contract-on.fast_math_licences	none
+case.offline.contraction_control.safe.O0.contract-on.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.safe.O0.contract-on.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O0.contract-on.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O0.contract-on.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.safe.O2.contract-fast.float_operations	fadd;fmul
+case.offline.contraction_control.safe.O2.contract-fast.fast_math_licences	contract
+case.offline.contraction_control.safe.O2.contract-fast.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.offline.contraction_control.safe.O2.contract-fast.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O2.contract-fast.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O2.contract-fast.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.offline.contraction_control.safe.O2.contract-off.float_operations	fadd;fmul
+case.offline.contraction_control.safe.O2.contract-off.fast_math_licences	none
+case.offline.contraction_control.safe.O2.contract-off.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.safe.O2.contract-off.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O2.contract-off.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O2.contract-off.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.contraction_control.safe.O2.contract-on.float_operations	fadd;fmul
+case.offline.contraction_control.safe.O2.contract-on.fast_math_licences	none
+case.offline.contraction_control.safe.O2.contract-on.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.offline.contraction_control.safe.O2.contract-on.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O2.contract-on.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.offline.contraction_control.safe.O2.contract-on.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.offline.serial_fold4.fast.O0.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.fast.O0.contract-fast.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.fast.O0.contract-fast.fast_math_licences	fast
+case.offline.serial_fold4.fast.O0.contract-fast.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.fast.O0.contract-fast.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.fast.O0.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O0.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O0.contract-off.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.fast.O0.contract-off.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.fast.O0.contract-off.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.serial_fold4.fast.O0.contract-off.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.fast.O0.contract-off.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.fast.O0.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O0.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O0.contract-on.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.fast.O0.contract-on.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.fast.O0.contract-on.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.serial_fold4.fast.O0.contract-on.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.fast.O0.contract-on.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.fast.O0.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O0.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O2.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.fast.O2.contract-fast.fold_shape	t0=a1+a0;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.fast.O2.contract-fast.fast_math_licences	fast
+case.offline.serial_fold4.fast.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.fast.O2.contract-fast.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.fast.O2.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O2.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O2.contract-off.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.fast.O2.contract-off.fold_shape	t0=a0+a1;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.fast.O2.contract-off.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.serial_fold4.fast.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.fast.O2.contract-off.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.fast.O2.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O2.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O2.contract-on.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.fast.O2.contract-on.fold_shape	t0=a0+a1;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.fast.O2.contract-on.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.serial_fold4.fast.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.fast.O2.contract-on.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.fast.O2.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.fast.O2.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O0.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.relaxed.O0.contract-fast.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.relaxed.O0.contract-fast.fast_math_licences	reassoc nsz arcp contract afn
+case.offline.serial_fold4.relaxed.O0.contract-fast.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.relaxed.O0.contract-fast.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.relaxed.O0.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O0.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O0.contract-off.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.relaxed.O0.contract-off.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.relaxed.O0.contract-off.fast_math_licences	reassoc nsz arcp afn
+case.offline.serial_fold4.relaxed.O0.contract-off.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.relaxed.O0.contract-off.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.relaxed.O0.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O0.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O0.contract-on.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.relaxed.O0.contract-on.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.relaxed.O0.contract-on.fast_math_licences	reassoc nsz arcp afn
+case.offline.serial_fold4.relaxed.O0.contract-on.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.relaxed.O0.contract-on.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.relaxed.O0.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O0.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O2.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.relaxed.O2.contract-fast.fold_shape	t0=a1+a0;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.relaxed.O2.contract-fast.fast_math_licences	reassoc nsz arcp contract afn
+case.offline.serial_fold4.relaxed.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.relaxed.O2.contract-fast.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.relaxed.O2.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O2.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O2.contract-off.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.relaxed.O2.contract-off.fold_shape	t0=a0+a1;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.relaxed.O2.contract-off.fast_math_licences	reassoc nsz arcp afn
+case.offline.serial_fold4.relaxed.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.relaxed.O2.contract-off.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.relaxed.O2.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O2.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O2.contract-on.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.relaxed.O2.contract-on.fold_shape	t0=a0+a1;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.relaxed.O2.contract-on.fast_math_licences	reassoc nsz arcp afn
+case.offline.serial_fold4.relaxed.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.relaxed.O2.contract-on.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.relaxed.O2.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.relaxed.O2.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O0.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.safe.O0.contract-fast.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.safe.O0.contract-fast.fast_math_licences	contract
+case.offline.serial_fold4.safe.O0.contract-fast.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.safe.O0.contract-fast.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.safe.O0.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O0.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O0.contract-off.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.safe.O0.contract-off.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.safe.O0.contract-off.fast_math_licences	none
+case.offline.serial_fold4.safe.O0.contract-off.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.safe.O0.contract-off.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.safe.O0.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O0.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O0.contract-on.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.safe.O0.contract-on.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.serial_fold4.safe.O0.contract-on.fast_math_licences	none
+case.offline.serial_fold4.safe.O0.contract-on.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.safe.O0.contract-on.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.safe.O0.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O0.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O2.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.safe.O2.contract-fast.fold_shape	t0=a0+a1;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.safe.O2.contract-fast.fast_math_licences	contract
+case.offline.serial_fold4.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.safe.O2.contract-fast.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.safe.O2.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O2.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O2.contract-off.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.safe.O2.contract-off.fold_shape	t0=a0+a1;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.safe.O2.contract-off.fast_math_licences	none
+case.offline.serial_fold4.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.safe.O2.contract-off.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.safe.O2.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O2.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O2.contract-on.float_operations	fadd;fadd;fadd
+case.offline.serial_fold4.safe.O2.contract-on.fold_shape	t0=a0+a1;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.serial_fold4.safe.O2.contract-on.fast_math_licences	none
+case.offline.serial_fold4.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.serial_fold4.safe.O2.contract-on.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.offline.serial_fold4.safe.O2.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.serial_fold4.safe.O2.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O0.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.fast.O0.contract-fast.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.fast.O0.contract-fast.fast_math_licences	fast
+case.offline.split_fold4.fast.O0.contract-fast.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.fast.O0.contract-fast.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.fast.O0.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O0.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O0.contract-off.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.fast.O0.contract-off.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.fast.O0.contract-off.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.split_fold4.fast.O0.contract-off.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.fast.O0.contract-off.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.fast.O0.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O0.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O0.contract-on.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.fast.O0.contract-on.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.fast.O0.contract-on.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.split_fold4.fast.O0.contract-on.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.fast.O0.contract-on.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.fast.O0.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O0.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O2.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.fast.O2.contract-fast.fold_shape	t0=a1+a0;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.split_fold4.fast.O2.contract-fast.fast_math_licences	fast
+case.offline.split_fold4.fast.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.fast.O2.contract-fast.verdict.seed	observed=3f800000,written=3f800001,verdict=diverged
+case.offline.split_fold4.fast.O2.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O2.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O2.contract-off.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.fast.O2.contract-off.fold_shape	t0=a0+a1;t1=a2+a3;t2=t0+t1,tree=split
+case.offline.split_fold4.fast.O2.contract-off.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.split_fold4.fast.O2.contract-off.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.fast.O2.contract-off.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.fast.O2.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O2.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O2.contract-on.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.fast.O2.contract-on.fold_shape	t0=a0+a1;t1=a2+a3;t2=t0+t1,tree=split
+case.offline.split_fold4.fast.O2.contract-on.fast_math_licences	reassoc nnan ninf nsz arcp afn
+case.offline.split_fold4.fast.O2.contract-on.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.fast.O2.contract-on.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.fast.O2.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.fast.O2.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O0.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.relaxed.O0.contract-fast.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.relaxed.O0.contract-fast.fast_math_licences	reassoc nsz arcp contract afn
+case.offline.split_fold4.relaxed.O0.contract-fast.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.relaxed.O0.contract-fast.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.relaxed.O0.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O0.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O0.contract-off.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.relaxed.O0.contract-off.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.relaxed.O0.contract-off.fast_math_licences	reassoc nsz arcp afn
+case.offline.split_fold4.relaxed.O0.contract-off.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.relaxed.O0.contract-off.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.relaxed.O0.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O0.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O0.contract-on.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.relaxed.O0.contract-on.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.relaxed.O0.contract-on.fast_math_licences	reassoc nsz arcp afn
+case.offline.split_fold4.relaxed.O0.contract-on.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.relaxed.O0.contract-on.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.relaxed.O0.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O0.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O2.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.relaxed.O2.contract-fast.fold_shape	t0=a1+a0;t1=t0+a2;t2=t1+a3,tree=serial
+case.offline.split_fold4.relaxed.O2.contract-fast.fast_math_licences	reassoc nsz arcp contract afn
+case.offline.split_fold4.relaxed.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.relaxed.O2.contract-fast.verdict.seed	observed=3f800000,written=3f800001,verdict=diverged
+case.offline.split_fold4.relaxed.O2.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O2.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O2.contract-off.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.relaxed.O2.contract-off.fold_shape	t0=a0+a1;t1=a2+a3;t2=t0+t1,tree=split
+case.offline.split_fold4.relaxed.O2.contract-off.fast_math_licences	reassoc nsz arcp afn
+case.offline.split_fold4.relaxed.O2.contract-off.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.relaxed.O2.contract-off.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.relaxed.O2.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O2.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O2.contract-on.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.relaxed.O2.contract-on.fold_shape	t0=a0+a1;t1=a2+a3;t2=t0+t1,tree=split
+case.offline.split_fold4.relaxed.O2.contract-on.fast_math_licences	reassoc nsz arcp afn
+case.offline.split_fold4.relaxed.O2.contract-on.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.relaxed.O2.contract-on.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.relaxed.O2.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.relaxed.O2.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O0.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.safe.O0.contract-fast.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.safe.O0.contract-fast.fast_math_licences	contract
+case.offline.split_fold4.safe.O0.contract-fast.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.safe.O0.contract-fast.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.safe.O0.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O0.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O0.contract-off.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.safe.O0.contract-off.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.safe.O0.contract-off.fast_math_licences	none
+case.offline.split_fold4.safe.O0.contract-off.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.safe.O0.contract-off.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.safe.O0.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O0.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O0.contract-on.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.safe.O0.contract-on.fold_shape	t0=L0+L1;t1=L2+L3;t2=L4+L5,tree=unresolved-through-stack-slots
+case.offline.split_fold4.safe.O0.contract-on.fast_math_licences	none
+case.offline.split_fold4.safe.O0.contract-on.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.safe.O0.contract-on.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.safe.O0.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O0.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O2.contract-fast.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.safe.O2.contract-fast.fold_shape	t0=a0+a1;t1=a2+a3;t2=t0+t1,tree=split
+case.offline.split_fold4.safe.O2.contract-fast.fast_math_licences	contract
+case.offline.split_fold4.safe.O2.contract-fast.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.safe.O2.contract-fast.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.safe.O2.contract-fast.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O2.contract-fast.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O2.contract-off.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.safe.O2.contract-off.fold_shape	t0=a0+a1;t1=a2+a3;t2=t0+t1,tree=split
+case.offline.split_fold4.safe.O2.contract-off.fast_math_licences	none
+case.offline.split_fold4.safe.O2.contract-off.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.safe.O2.contract-off.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.safe.O2.contract-off.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O2.contract-off.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O2.contract-on.float_operations	fadd;fadd;fadd
+case.offline.split_fold4.safe.O2.contract-on.fold_shape	t0=a0+a1;t1=a2+a3;t2=t0+t1,tree=split
+case.offline.split_fold4.safe.O2.contract-on.fast_math_licences	none
+case.offline.split_fold4.safe.O2.contract-on.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.offline.split_fold4.safe.O2.contract-on.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.offline.split_fold4.safe.O2.contract-on.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.offline.split_fold4.safe.O2.contract-on.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.fast.opt-default.applied	math=fast,fpfun=precise,lang=4.0,opt=default
+case.runtime.contraction_control.fast.opt-default.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.runtime.contraction_control.fast.opt-default.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.fast.opt-default.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.fast.opt-default.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.runtime.contraction_control.fast.opt-size.applied	math=fast,fpfun=precise,lang=4.0,opt=size
+case.runtime.contraction_control.fast.opt-size.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.runtime.contraction_control.fast.opt-size.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.fast.opt-size.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.fast.opt-size.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.runtime.contraction_control.relaxed.opt-default.applied	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.runtime.contraction_control.relaxed.opt-default.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.runtime.contraction_control.relaxed.opt-default.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.relaxed.opt-default.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.relaxed.opt-default.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.runtime.contraction_control.relaxed.opt-size.applied	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.runtime.contraction_control.relaxed.opt-size.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9d 3fc58f9d 3fc58f9d 3fc58f9d
+case.runtime.contraction_control.relaxed.opt-size.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.relaxed.opt-size.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.relaxed.opt-size.verdict.contraction	observed=3fc58f9d,written=3fc58f9e,verdict=diverged
+case.runtime.contraction_control.safe.opt-default.applied	math=safe,fpfun=precise,lang=4.0,opt=default
+case.runtime.contraction_control.safe.opt-default.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.runtime.contraction_control.safe.opt-default.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.safe.opt-default.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.safe.opt-default.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.runtime.contraction_control.safe.opt-size.applied	math=safe,fpfun=precise,lang=4.0,opt=size
+case.runtime.contraction_control.safe.opt-size.results	3e400003 3e400003 3e400003 3e400003 40c00000 40c00000 40c00000 40c00000 3fc58f9e 3fc58f9e 3fc58f9e 3fc58f9e
+case.runtime.contraction_control.safe.opt-size.verdict.seed	observed=3e400003,written=3e400003,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.safe.opt-size.verdict.witness	observed=40c00000,written=40c00000,verdict=as-written-and-freedom-independent
+case.runtime.contraction_control.safe.opt-size.verdict.contraction	observed=3fc58f9e,written=3fc58f9e,verdict=as-written
+case.runtime.serial_fold4.fast.opt-default.applied	math=fast,fpfun=precise,lang=4.0,opt=default
+case.runtime.serial_fold4.fast.opt-default.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.serial_fold4.fast.opt-default.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.runtime.serial_fold4.fast.opt-default.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.fast.opt-default.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.fast.opt-size.applied	math=fast,fpfun=precise,lang=4.0,opt=size
+case.runtime.serial_fold4.fast.opt-size.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.serial_fold4.fast.opt-size.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.runtime.serial_fold4.fast.opt-size.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.fast.opt-size.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.relaxed.opt-default.applied	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.runtime.serial_fold4.relaxed.opt-default.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.serial_fold4.relaxed.opt-default.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.runtime.serial_fold4.relaxed.opt-default.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.relaxed.opt-default.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.relaxed.opt-size.applied	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.runtime.serial_fold4.relaxed.opt-size.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.serial_fold4.relaxed.opt-size.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.runtime.serial_fold4.relaxed.opt-size.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.relaxed.opt-size.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.safe.opt-default.applied	math=safe,fpfun=precise,lang=4.0,opt=default
+case.runtime.serial_fold4.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.serial_fold4.safe.opt-default.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.runtime.serial_fold4.safe.opt-default.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.safe.opt-default.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.safe.opt-size.applied	math=safe,fpfun=precise,lang=4.0,opt=size
+case.runtime.serial_fold4.safe.opt-size.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.serial_fold4.safe.opt-size.verdict.seed	observed=3f800000,written=3f800000,verdict=as-written
+case.runtime.serial_fold4.safe.opt-size.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.serial_fold4.safe.opt-size.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.fast.opt-default.applied	math=fast,fpfun=precise,lang=4.0,opt=default
+case.runtime.split_fold4.fast.opt-default.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.split_fold4.fast.opt-default.verdict.seed	observed=3f800000,written=3f800001,verdict=diverged
+case.runtime.split_fold4.fast.opt-default.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.fast.opt-default.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.fast.opt-size.applied	math=fast,fpfun=precise,lang=4.0,opt=size
+case.runtime.split_fold4.fast.opt-size.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.split_fold4.fast.opt-size.verdict.seed	observed=3f800000,written=3f800001,verdict=diverged
+case.runtime.split_fold4.fast.opt-size.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.fast.opt-size.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.relaxed.opt-default.applied	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.runtime.split_fold4.relaxed.opt-default.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.split_fold4.relaxed.opt-default.verdict.seed	observed=3f800000,written=3f800001,verdict=diverged
+case.runtime.split_fold4.relaxed.opt-default.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.relaxed.opt-default.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.relaxed.opt-size.applied	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.runtime.split_fold4.relaxed.opt-size.results	3f800000 3f800000 3f800000 3f800000 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.split_fold4.relaxed.opt-size.verdict.seed	observed=3f800000,written=3f800001,verdict=diverged
+case.runtime.split_fold4.relaxed.opt-size.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.relaxed.opt-size.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.safe.opt-default.applied	math=safe,fpfun=precise,lang=4.0,opt=default
+case.runtime.split_fold4.safe.opt-default.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.split_fold4.safe.opt-default.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.runtime.split_fold4.safe.opt-default.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.safe.opt-default.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.safe.opt-size.applied	math=safe,fpfun=precise,lang=4.0,opt=size
+case.runtime.split_fold4.safe.opt-size.results	3f800001 3f800001 3f800001 3f800001 41700000 41700000 41700000 41700000 40772fdf 40772fdf 40772fdf 40772fdf
+case.runtime.split_fold4.safe.opt-size.verdict.seed	observed=3f800001,written=3f800001,verdict=as-written
+case.runtime.split_fold4.safe.opt-size.verdict.witness	observed=41700000,written=41700000,verdict=as-written-and-freedom-independent
+case.runtime.split_fold4.safe.opt-size.verdict.contraction	observed=40772fdf,written=40772fdf,verdict=as-written-and-freedom-independent
