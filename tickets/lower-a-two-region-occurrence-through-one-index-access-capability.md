@@ -1,7 +1,7 @@
 ---
 id: lower-a-two-region-occurrence-through-one-index-access-capability
 title: Lower a two-region occurrence through one index-access capability
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-the-rms-normalization-family, admit-the-softmax-family, reach-a-verified-kernel-through-the-structural-families]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, lowering, capability, normalization]
+claimed_from: todo
+assignee: agent-two-region
+lease_expires_at: 1785987075
 ---
 ## User-visible outcome
 
