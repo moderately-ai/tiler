@@ -381,6 +381,52 @@ fn no_argument_beyond_the_exponential_ceiling_has_a_subnormal_image() {
     );
 }
 
+/// The subordinate exponential's own subnormal band, bracketed at its two ends.
+///
+/// The fact's second reached region is the one clause a reader cannot check
+/// against the tree unless this exists, so it is stated as the inequality that
+/// decides it rather than as a sample: `e^-x` is below the minimum normal exactly
+/// when `x > 126 ln 2`, and it rounds to `+0.0` exactly when `e^-x` falls below
+/// `2^-150`, half the least positive subnormal, which is `x > 150 ln 2` — the tie
+/// at the midpoint itself going to even, which is zero. Both thresholds are
+/// irrational, so each falls strictly inside a binary32 gap and the bracket is a
+/// pair of representable neighbours. No host exponential is consulted: `LN_2`
+/// carries an error near `1e-17`, thirteen orders of magnitude below the `7.6e-6`
+/// gap between the neighbours being separated, so the brackets are decided by a
+/// margin nothing on this host disturbs.
+///
+/// Each neighbour is *derived* from the boundary under test rather than named
+/// beside it. Naming both ends independently would assert only that the threshold
+/// lies somewhere between two values, which any wider pair also satisfies — the
+/// first draft of this test passed with its lower end moved outward by one ULP.
+/// Taking `bits - 1` and `bits + 1` is what makes the assertion pin the boundary,
+/// because moving the boundary now breaks the other side of its own bracket.
+#[test]
+fn the_subordinate_exponential_enters_and_leaves_the_subnormal_band_at_the_stated_bits() {
+    let entry = 0x42ae_ac50_u32;
+    let minimum_normal_threshold = 126.0 * std::f64::consts::LN_2;
+    assert!(
+        f64::from(f32::from_bits(entry - 1)) < minimum_normal_threshold
+            && minimum_normal_threshold < f64::from(f32::from_bits(entry)),
+        "0x{entry:08x} is the least argument whose exponential is subnormal, and its immediate \
+         predecessor is the greatest whose exponential is still normal"
+    );
+
+    let exit = 0x42cf_f1b4_u32;
+    let flush_to_zero_threshold = 150.0 * std::f64::consts::LN_2;
+    assert!(
+        f64::from(f32::from_bits(exit)) < flush_to_zero_threshold
+            && flush_to_zero_threshold < f64::from(f32::from_bits(exit + 1)),
+        "0x{exit:08x} is the greatest argument whose exponential is still a nonzero subnormal, \
+         and its immediate successor is the least whose exponential rounds to +0.0"
+    );
+
+    assert!(
+        entry < exit,
+        "the band is nonempty, which is what makes it a region rather than a boundary case"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Application refusals
 // ---------------------------------------------------------------------------
