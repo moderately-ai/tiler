@@ -21,23 +21,26 @@
 //!   `IndexAccessSequenceContext`, and `refine_index_region` proves the whole
 //!   chain realizes the occurrence. The provider *is* driven, and the counter
 //!   that used to read zero is what shows it.
-//! - **The normalization's hold moved a second time.**
+//! - **The normalization's hold is gone.**
 //!   [`widen-the-staged-realization-law-to-the-registered-elementary-families`]
 //!   registered `tiler.scalar::rsqrt-f32@1` and gave `tiler::rms-norm-f32@1`
-//!   `IndexRealizationLaw::StagedRootMeanSquareScaleF32`, so the law now
-//!   resolves and the host drives the provider. The refusal for the family is
-//!   preserved below, flipped rather than deleted: what holds it today is what
-//!   a provider emits against the resolved law, not the law's absence.
+//!   `IndexRealizationLaw::StagedRootMeanSquareScaleF32`, and
+//!   [`admit-the-registered-elementary-families-as-recognizable-program-stages`]
+//!   gave the governed profile `GovernedRootMeanSquareScaleF32`, the provider
+//!   that emits that law's chain. The family has refinement evidence through the
+//!   ordinary path, asserted at
+//!   `governed::tests::the_governed_normalization_lowering_refines_its_two_stage_occurrence`.
 //!
-//! Keeping the two together is the assertion. A staged occurrence that refines
-//! and a normalization whose law resolves while its provider emits nothing, in
-//! one harness, is what distinguishes "the lowering vocabulary cannot express a
-//! chain" — false since this branch — from "no provider emits this family's
-//! two-stage chain", which is what remains and is a different ticket's work.
+//! What this file still owns is the *host's* half, exercised through fixtures
+//! rather than through a shipped family: a chain of the wrong stage count, a
+//! swallowed stage failure, a provider that emits nothing, and the governed
+//! stage ceiling. Each is a way a trusted provider can be wrong that no
+//! registered family exhibits, so each needs a fixture that is wrong on purpose.
 //!
 //! [`lower-a-two-region-occurrence-through-one-index-access-capability`]: ../../../tickets/lower-a-two-region-occurrence-through-one-index-access-capability.md
 //! [`admit-a-multi-region-index-realization-law`]: ../../../tickets/admit-a-multi-region-index-realization-law.md
 //! [`widen-the-staged-realization-law-to-the-registered-elementary-families`]: ../../../tickets/widen-the-staged-realization-law-to-the-registered-elementary-families.md
+//! [`admit-the-registered-elementary-families-as-recognizable-program-stages`]: ../../../tickets/admit-the-registered-elementary-families-as-recognizable-program-stages.md
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -987,20 +990,24 @@ fn the_stage_ceiling_refuses_before_building_past_it() {
     );
 }
 
-// ---- the half that has moved again ---------------------------------------
+// ---- a shipped family's law, driven through a substituted provider --------
 
-/// The normalization's law resolves, and its ceiling is the provider's emission.
+/// A shipped family's law resolves, and a substituted provider's own refusal is
+/// what the host reports.
 ///
-/// `tiler::rms-norm-f32@1` carries `StagedRootMeanSquareScaleF32`, so
-/// resolution succeeds, the host opens a stage, and the provider is driven
-/// exactly once before its own refusal is reported. The explicit `resolve`
-/// assertion is what keeps the refusal honest: without it, a regression that
-/// dropped the family's law row would surface here as a provider-shaped error
-/// wearing the wrong cause. What holds the family below R6 is that no provider
-/// emits its two-stage chain, and the driven counter is the evidence the wall
-/// is the provider's rather than the registry's.
+/// **This is the substitution affordance under test, not a ceiling.**
+/// `tiler::rms-norm-f32@1` carries `StagedRootMeanSquareScaleF32` and the
+/// governed profile ships a provider that realizes it; the capability registered
+/// here replaces that provider with one that emits nothing. Resolution
+/// succeeds, the host opens a stage, the substituted provider is driven exactly
+/// once, and *its* stated rule is reported — rather than a complaint about the
+/// chain, which is what a host that trusted the empty emission would produce.
+///
+/// The explicit `resolve` assertion keeps the refusal attributable: without it,
+/// a regression that dropped the family's law row would surface here as a
+/// provider-shaped error wearing the wrong cause.
 #[test]
-fn the_normalization_resolves_its_law_and_is_held_by_what_a_provider_emits() {
+fn a_substituted_provider_for_a_shipped_staged_family_reports_its_own_refusal() {
     let semantic =
         FrozenSemanticRegistry::standard().expect("the standard semantic registry is coherent");
     let scalars = scalar_registry(&semantic);
@@ -1018,7 +1025,7 @@ fn the_normalization_resolves_its_law_and_is_held_by_what_a_provider_emits() {
     let laws = realization_laws(&semantic, &scalars);
     assert!(
         laws.resolve(&subject).is_ok(),
-        "the family's realization law resolves; the ceiling below is not its absence"
+        "the family's realization law resolves; the refusal below is not its absence"
     );
 
     let error = refine_index_region(&resolved, &subject, &laws, &scalars)
