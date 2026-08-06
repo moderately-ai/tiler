@@ -1,7 +1,7 @@
 ---
 id: derive-the-capability-set-for-search-discovered-flash-class-attention-kernels
 title: Derive the capability set for search-discovered flash-class attention kernels
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode, calibrate-and-activate-parallel-reduction-selection, accept-adr-0100-multi-round-reduction-composition]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-flash-capability
+lease_expires_at: 1785986516
 ---
 ## User-visible outcome
 

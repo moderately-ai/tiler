@@ -1,7 +1,7 @@
 ---
 id: derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound
 title: Derive the tree-fold form of the online-softmax rescaling bound
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [connect-certified-rounding-error-bounds-to-rewrite-permissions, derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, accuracy, reductions]
+claimed_from: todo
+assignee: agent-treefold-bound
+lease_expires_at: 1785986516
 ---
 ## User-visible outcome
 
