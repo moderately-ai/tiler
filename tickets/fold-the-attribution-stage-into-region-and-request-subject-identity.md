@@ -1,7 +1,7 @@
 ---
 id: fold-the-attribution-stage-into-region-and-request-subject-identity
 title: Fold the attribution stage into region and request-subject identity
-status: in-progress
+status: deferred
 priority: p1
 dependencies: []
 related: [implement-stage-level-cover-atoms-for-multi-region-occurrences, widen-the-staged-realization-law-to-the-registered-elementary-families, admit-the-registered-elementary-families-as-recognizable-program-stages]
