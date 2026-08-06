@@ -1,7 +1,7 @@
 ---
 id: land-the-conversion-pair-decomposition-adr
 title: Land the conversion pair decomposition ADR
-status: review
+status: done
 priority: p2
 dependencies: [test-the-directional-conversion-pair-generalization]
 related: [scope-the-in-type-precision-reduction-family, derive-the-operation-family-and-signature-delivery-graph, preserve-the-float-to-integer-conversion-precedent-sources]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, adr, numerics, conversion, dtype]
-claimed_from: todo
-assignee: agent-conversion-adr
-lease_expires_at: 1786038040
 ---
 ## User-visible outcome
 
