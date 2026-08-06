@@ -1,23 +1,29 @@
 use tiler_ir::semantic::accuracy::{
-    AccuracyContract, AccuracyContractForm, ConformanceEvidenceClass, ConformanceEvidenceError,
-    ExactTolerance, ReferenceRoundingRule, RefinementBasis, RefinementOutcome, RefinementUnknown,
-    RegisteredImplicationRegistry, refines, ulp_reference_gap_metric_key,
+    AccuracyContract, AccuracyContractForm, AccuracyDomain, AccuracyDomainClause,
+    AccuracyPredicate, ConformanceEvidenceClass, ConformanceEvidenceError, DomainBound,
+    DomainInterval, ExactRational, ExactTolerance, NamedElementaryDescriptorDigest,
+    NamedElementaryProfileKey, OperandOrdinal, ReferenceResultClass, ReferenceResultConstraint,
+    ReferenceRoundingRule, RefinementBasis, RefinementOutcome, RefinementUnknown,
+    RegisteredImplicationRegistry, UlpFormat, refines, ulp_reference_gap_metric_key,
 };
 use tiler_ir::semantic::{
-    F32, SILU_F32_EXPONENTIAL_ULP_TOLERANCE, SOFTMAX_F32_EXPONENTIAL_ULP_TOLERANCE,
-    rms_norm_f32_op, rms_norm_f32_rsqrt_accuracy_contract, rms_norm_f32_rsqrt_exceptional_contract,
+    F32, NormativeDefinitionRef, SILU_F32_EXPONENTIAL_ULP_TOLERANCE,
+    SOFTMAX_F32_EXPONENTIAL_ULP_TOLERANCE, builtin_scalar_value_type_facts, rms_norm_f32_op,
+    rms_norm_f32_rsqrt_accuracy_contract, rms_norm_f32_rsqrt_exceptional_contract,
     rms_norm_f32_rsqrt_reference_semantics, silu_f32_exponential_accuracy_contract, silu_f32_op,
     softmax_f32_exponential_accuracy_contract, softmax_f32_op,
 };
 
 use super::{
     APPLE_MSL_EXP_F32_ULP_BOUND, APPLE_ULP_TRANSLATION_FACTOR, ElementaryRefusalReason,
-    apple_msl_ulp_metric_key, assess_elementary_accuracy, installed_elementary_realizations,
-    installed_implication_registry, metal_f32_exceptional_value_evidence,
-    metal_f32_exponential_bound_evidence, metal_f32_exponential_contract,
-    metal_f32_normalization_exceptional_value_evidence,
+    RelativeAccuracyDomain, RelativeAccuracyRefusalReason, apple_msl_ulp_metric_key,
+    assess_elementary_accuracy, elementary_relative_accuracy, elementary_relative_accuracy_from,
+    installed_elementary_realizations, installed_implication_registry,
+    metal_f32_exceptional_value_evidence, metal_f32_exponential_bound_evidence,
+    metal_f32_exponential_contract, metal_f32_normalization_exceptional_value_evidence,
     metal_f32_reciprocal_square_root_bound_evidence, metal_f32_reciprocal_square_root_contract,
     metal_f32_softmax_exceptional_value_evidence, metal_f32_softmax_exponential_contract,
+    relative_accuracy_of_contract,
 };
 
 fn required() -> AccuracyContract {
@@ -495,4 +501,465 @@ fn each_family_carries_its_own_exceptional_value_corpus() {
         );
         assert!(record.discharge().is_err());
     }
+}
+
+// ---------------------------------------------------------------------------
+// The numeric relative accuracy a parametric rewrite bound instantiates from
+// ---------------------------------------------------------------------------
+
+/// binary32's unit roundoff, `2^-24`, written once so no test restates it.
+fn unit_roundoff() -> ExactRational {
+    ExactRational::power_of_two(-24)
+}
+
+/// binary32's least normal magnitude, `2^-126`.
+fn least_normal() -> ExactRational {
+    ExactRational::power_of_two(-126)
+}
+
+fn f32_format() -> UlpFormat {
+    UlpFormat::from_value_type_facts(
+        &builtin_scalar_value_type_facts(&F32::resolved_type()).expect("f32 is a governed scalar"),
+    )
+    .expect("binary32 carries tiler::ulp-reference-gap@1")
+}
+
+fn justification() -> NormativeDefinitionRef {
+    NormativeDefinitionRef::new("a synthetic proof standing in for an operation-specific one")
+        .expect("the synthetic justification is canonical")
+}
+
+/// Builds a `BoundedPiecewise` contract over the supplied clauses.
+///
+/// The operation, dtypes, reference semantics, and exceptional contract are the
+/// normalization's, because none of them reaches the conversion under test; the
+/// clauses are the subject.
+fn piecewise(clauses: Vec<AccuracyDomainClause>) -> AccuracyContract {
+    AccuracyContract::new(
+        rms_norm_f32_op(),
+        vec![F32::resolved_type()],
+        F32::resolved_type(),
+        rms_norm_f32_rsqrt_reference_semantics(),
+        AccuracyContractForm::BoundedPiecewise(
+            AccuracyDomain::new([DomainInterval::unbounded()], clauses)
+                .expect("the synthetic domain is canonical"),
+        ),
+        rms_norm_f32_rsqrt_exceptional_contract(),
+    )
+}
+
+/// Builds one clause over the whole domain, proving nothing about the reference.
+fn whole_domain_clause(predicate: AccuracyPredicate) -> AccuracyDomainClause {
+    AccuracyDomainClause::new(
+        [(OperandOrdinal::new(0), DomainInterval::unbounded())],
+        ReferenceResultConstraint::unconstrained(),
+        predicate,
+    )
+    .expect("the synthetic clause is canonical")
+}
+
+/// The registered softmax requirement converts to twenty-four unit roundoffs.
+///
+/// **The number, and the ratio it implies, both asserted exactly.** Twelve ULPs
+/// under `tiler::ulp-reference-gap@1` is `12 * 2^-23`, which is `24u` — and both
+/// published bound records instantiate their prices at `eps_exp = u`, whose
+/// first-order price `(u + u)` is `12.5` times smaller than `(u + 24u)`. Asserting
+/// the ratio rather than describing it is what makes a query that quietly returned
+/// `u` fail here instead of looking right.
+#[test]
+fn the_registered_softmax_accuracy_is_twenty_four_unit_roundoffs() {
+    let accuracy =
+        elementary_relative_accuracy(&softmax_f32_op(), &crate::target::TargetProfile::governed())
+            .expect("the governed profile realizes the softmax's exponential");
+    assert_eq!(accuracy.operation(), &softmax_f32_op());
+    assert_eq!(
+        accuracy.bound().value(),
+        &ExactRational::from_integer(i128::from(SOFTMAX_F32_EXPONENTIAL_ULP_TOLERANCE))
+            .multiply(&ExactRational::power_of_two(-23))
+    );
+    assert_eq!(
+        accuracy.bound().value(),
+        &ExactRational::from_integer(24).multiply(&unit_roundoff())
+    );
+    // The first-order price ratio the two records' `eps_exp = u` instantiation
+    // costs, in exact rational arithmetic.
+    let published = unit_roundoff().add(&unit_roundoff());
+    let requirement_side = unit_roundoff().add(accuracy.bound().value());
+    assert_eq!(
+        requirement_side
+            .divide(&published)
+            .expect("twice the unit roundoff is nonzero"),
+        ExactRational::from_ratio(25, 2).expect("a nonzero denominator")
+    );
+    // The metric conversion's own obligation travels with the number.
+    assert_eq!(
+        accuracy.domain(),
+        &RelativeAccuracyDomain::ReferenceMagnitudeAtOrAbove(least_normal())
+    );
+    let RefinementBasis::RegisteredImplication { .. } = accuracy.admission_basis() else {
+        panic!("the number rests on the cross-metric admission: {accuracy:?}");
+    };
+}
+
+/// The activation's exponential gives the same number, because the bound is one.
+///
+/// The two requirements share a tolerance and a metric and differ in domain, and
+/// the domain does not reach this conversion — so agreement here is the expected
+/// answer rather than a coincidence, and a divergence would mean one family's
+/// tolerance moved without the other's.
+#[test]
+fn the_two_exponentials_yield_one_relative_accuracy() {
+    let activation =
+        elementary_relative_accuracy(&silu_f32_op(), &crate::target::TargetProfile::governed())
+            .expect("the governed profile realizes the activation's exponential");
+    let softmax =
+        elementary_relative_accuracy(&softmax_f32_op(), &crate::target::TargetProfile::governed())
+            .expect("the governed profile realizes the softmax's exponential");
+    assert_eq!(SILU_F32_EXPONENTIAL_ULP_TOLERANCE, 12);
+    assert_eq!(activation.bound(), softmax.bound());
+    assert_eq!(activation.domain(), softmax.domain());
+    assert_ne!(activation.operation(), softmax.operation());
+}
+
+/// A faithful requirement converts to two unit roundoffs, with no metric crossed.
+///
+/// The obligation is still conditional on the subnormal band: a faithful result in
+/// that band is a neighbour of the reference under a *constant* spacing, so the
+/// relative error is unbounded there exactly as the ULP conversion's is.
+#[test]
+fn the_faithful_normalization_requirement_gives_two_unit_roundoffs() {
+    let accuracy = elementary_relative_accuracy(
+        &rms_norm_f32_op(),
+        &crate::target::TargetProfile::governed(),
+    )
+    .expect("the governed profile realizes the reciprocal square root");
+    assert_eq!(
+        accuracy.bound().value(),
+        &ExactRational::from_integer(2).multiply(&unit_roundoff())
+    );
+    assert_eq!(
+        accuracy.domain(),
+        &RelativeAccuracyDomain::ReferenceMagnitudeAtOrAbove(least_normal())
+    );
+    assert_eq!(
+        accuracy.admission_basis(),
+        &RefinementBasis::IdenticalNormalizedContract
+    );
+}
+
+/// The number is gated on the admission, not on the requirement's existence.
+///
+/// **This is the perturbation that separates a requirement-side query from a
+/// requirement *lookup*.** The registered requirement is untouched and would still
+/// convert; only the registry loses the cross-metric derivation, so no installed
+/// realization refines and the target has declared nothing about the operation. A
+/// query that returned the requirement's tolerance regardless would pass every
+/// other test here and fail only this one.
+#[test]
+fn an_unrefined_realization_yields_no_number() {
+    let refusal = elementary_relative_accuracy_from(
+        &softmax_f32_op(),
+        &installed_elementary_realizations(),
+        &RegisteredImplicationRegistry::standard().expect("the governed registry composes"),
+    )
+    .expect_err("an unrefined declaration bounds nothing");
+    assert_eq!(
+        refusal.diagnostic_code(),
+        "accuracy.elementary.unrefined-realization"
+    );
+    assert_eq!(refusal.operation(), &softmax_f32_op());
+    let RelativeAccuracyRefusalReason::Unrealized(inner) = refusal.reason() else {
+        panic!("the refusal is the refinement authority's own: {refusal:?}");
+    };
+    assert!(matches!(
+        inner.reason(),
+        ElementaryRefusalReason::Unrefined { .. }
+    ));
+}
+
+/// A profile installing no realization at all is refused as undeclared.
+#[test]
+fn an_uninstalled_operation_yields_no_number() {
+    let refusal = elementary_relative_accuracy_from(
+        &softmax_f32_op(),
+        &[],
+        &installed_implication_registry(),
+    )
+    .expect_err("an empty installation declares no accuracy");
+    assert_eq!(
+        refusal.diagnostic_code(),
+        "accuracy.elementary.no-installed-realization"
+    );
+}
+
+/// An operation with no registered elementary obligation is refused by name.
+///
+/// Distinct from an unrealized one and deliberately so: an addition has no
+/// elementary evaluation, which is not the same claim as having a perfect one, and
+/// returning zero would let a bound charge nothing for a function nobody bounded.
+#[test]
+fn an_operation_with_no_registered_requirement_yields_no_number() {
+    let refusal = elementary_relative_accuracy(
+        &tiler_ir::semantic::add_f32_op(),
+        &crate::target::TargetProfile::governed(),
+    )
+    .expect_err("the addition carries no elementary accuracy obligation");
+    assert_eq!(
+        refusal.diagnostic_code(),
+        "accuracy.elementary.no-registered-requirement"
+    );
+    assert!(matches!(
+        refusal.reason(),
+        RelativeAccuracyRefusalReason::NoRegisteredRequirement
+    ));
+}
+
+/// A correctly rounded contract is the one that yields exactly `u`.
+///
+/// The instantiation both bound records label a choice about the target. Pinning it
+/// to the form that actually states correct rounding is what makes quoting `u` for
+/// a twelve-ULP requirement a detectable substitution.
+#[test]
+fn a_correctly_rounded_requirement_gives_exactly_one_unit_roundoff() {
+    let contract = AccuracyContract::new(
+        rms_norm_f32_op(),
+        vec![F32::resolved_type()],
+        F32::resolved_type(),
+        rms_norm_f32_rsqrt_reference_semantics(),
+        AccuracyContractForm::CorrectlyRounded {
+            rounding: ReferenceRoundingRule::NearestTiesToEven,
+        },
+        rms_norm_f32_rsqrt_exceptional_contract(),
+    );
+    let (bound, domain) = relative_accuracy_of_contract(&contract, &f32_format())
+        .expect("a correctly rounded contract converts");
+    assert_eq!(bound.value(), &unit_roundoff());
+    assert_eq!(
+        domain,
+        RelativeAccuracyDomain::ReferenceMagnitudeAtOrAbove(least_normal())
+    );
+}
+
+/// A relative predicate needs no metric step, so it carries no subnormal condition.
+#[test]
+fn a_relative_predicate_needs_no_metric_step() {
+    let tolerance = ExactTolerance::from_ratio(1, 1_000).expect("a nonnegative ratio");
+    let contract = piecewise(vec![whole_domain_clause(AccuracyPredicate::relative(
+        tolerance.clone(),
+    ))]);
+    let (bound, domain) = relative_accuracy_of_contract(&contract, &f32_format())
+        .expect("a relative predicate is already relative");
+    assert_eq!(bound, tolerance);
+    assert_eq!(domain, RelativeAccuracyDomain::EveryAdmittedReference);
+}
+
+/// A clause proving its reference is normal discharges the conversion's condition.
+///
+/// **The path no registered contract takes today, exercised so the discharge is a
+/// mechanism rather than a claim.** The proof is read from the clause's own
+/// reference-result constraint — ADR 0042 admits one only through an
+/// operation-specific proof — so this cannot be reached by inferring normality from
+/// an input domain.
+#[test]
+fn a_clause_proving_a_normal_reference_discharges_the_subnormal_condition() {
+    let proved = AccuracyDomainClause::new(
+        [(OperandOrdinal::new(0), DomainInterval::unbounded())],
+        ReferenceResultConstraint::new(
+            [ReferenceResultClass::Positive],
+            Some(
+                DomainInterval::new(
+                    OperandOrdinal::new(0),
+                    DomainBound::Closed(least_normal()),
+                    DomainBound::Unbounded,
+                )
+                .expect("the synthetic magnitude interval is nonempty"),
+            ),
+            Some(justification()),
+        )
+        .expect("the synthetic reference constraint is canonical"),
+        AccuracyPredicate::ulp(
+            ulp_reference_gap_metric_key(),
+            ExactTolerance::from_integer(4),
+        ),
+    )
+    .expect("the synthetic clause is canonical");
+    let (bound, domain) = relative_accuracy_of_contract(&piecewise(vec![proved]), &f32_format())
+        .expect("a governed ULP predicate converts");
+    assert_eq!(
+        bound.value(),
+        &ExactRational::from_integer(4).multiply(&ExactRational::power_of_two(-23))
+    );
+    assert_eq!(domain, RelativeAccuracyDomain::EveryAdmittedReference);
+
+    // The same predicate with nothing proved about the reference stays conditional,
+    // which is the control that keeps the assertion above about the proof rather
+    // than about the predicate.
+    let (_, unproved) = relative_accuracy_of_contract(
+        &piecewise(vec![whole_domain_clause(AccuracyPredicate::ulp(
+            ulp_reference_gap_metric_key(),
+            ExactTolerance::from_integer(4),
+        ))]),
+        &f32_format(),
+    )
+    .expect("a governed ULP predicate converts");
+    assert_eq!(
+        unproved,
+        RelativeAccuracyDomain::ReferenceMagnitudeAtOrAbove(least_normal())
+    );
+}
+
+/// The weakest clause decides, and one clause's proof does not cover another's.
+///
+/// A tighter clause binds only its own region, so a maximum is the sound fold and a
+/// minimum would price a rewrite against a region it does not stay inside. The
+/// second half is the sharper claim: a proved-normal clause beside an unproved one
+/// leaves the whole answer conditional.
+#[test]
+fn the_weakest_clause_decides_and_an_unproved_one_keeps_the_condition() {
+    let tight = whole_domain_clause(AccuracyPredicate::ulp(
+        ulp_reference_gap_metric_key(),
+        ExactTolerance::from_integer(1),
+    ));
+    let loose = AccuracyDomainClause::new(
+        [(
+            OperandOrdinal::new(0),
+            DomainInterval::new(
+                OperandOrdinal::new(0),
+                DomainBound::Closed(ExactRational::zero()),
+                DomainBound::Unbounded,
+            )
+            .expect("the synthetic operand interval is nonempty"),
+        )],
+        ReferenceResultConstraint::new(
+            [ReferenceResultClass::Positive],
+            Some(
+                DomainInterval::new(
+                    OperandOrdinal::new(0),
+                    DomainBound::Closed(least_normal()),
+                    DomainBound::Unbounded,
+                )
+                .expect("the synthetic magnitude interval is nonempty"),
+            ),
+            Some(justification()),
+        )
+        .expect("the synthetic reference constraint is canonical"),
+        AccuracyPredicate::ulp(
+            ulp_reference_gap_metric_key(),
+            ExactTolerance::from_integer(9),
+        ),
+    )
+    .expect("the synthetic clause is canonical");
+    let (bound, domain) =
+        relative_accuracy_of_contract(&piecewise(vec![tight, loose]), &f32_format())
+            .expect("both clauses convert");
+    assert_eq!(
+        bound.value(),
+        &ExactRational::from_integer(9).multiply(&ExactRational::power_of_two(-23)),
+        "the weakest obligation is the one every evaluation is held to"
+    );
+    assert_eq!(
+        domain,
+        RelativeAccuracyDomain::ReferenceMagnitudeAtOrAbove(least_normal()),
+        "one clause's proof does not discharge another clause's conversion"
+    );
+}
+
+/// A bound under another metric is refused rather than crossed.
+///
+/// The implication registry crosses one ULP definition to another; this conversion
+/// leaves the metric algebra entirely for a ratio against `|r|`, and a registered
+/// scaling factor says nothing about that ratio. Reusing the factor here would be
+/// the same name-matching ADR 0042 forbids, one level up.
+#[test]
+fn a_bound_under_another_metric_is_refused_rather_than_crossed() {
+    let contract = piecewise(vec![whole_domain_clause(AccuracyPredicate::ulp(
+        apple_msl_ulp_metric_key(),
+        ExactTolerance::from_integer(4),
+    ))]);
+    let reason = relative_accuracy_of_contract(&contract, &f32_format())
+        .expect_err("a vendor metric is not this conversion's");
+    let RelativeAccuracyRefusalReason::UnconvertibleMetric { metric } = reason else {
+        panic!("the refusal names the metric: {reason:?}");
+    };
+    assert_eq!(metric, apple_msl_ulp_metric_key());
+}
+
+/// Every predicate shape with no sound conversion refuses by its own name.
+///
+/// The population is named and counted rather than sampled: the four shapes below
+/// plus `Ulp` and `Relative` are the whole closed vocabulary, so a new predicate
+/// kind is a build error at the conversion's exhaustive match rather than a silent
+/// pass through this test.
+#[test]
+fn a_predicate_with_no_sound_relative_conversion_refuses_by_name() {
+    let half = ExactTolerance::from_ratio(1, 2).expect("a nonnegative ratio");
+    let cases: Vec<(AccuracyPredicate, &'static str)> = vec![
+        (AccuracyPredicate::absolute(half.clone()), "absolute"),
+        (
+            AccuracyPredicate::absolute_relative(half.clone(), half.clone()),
+            "absolute-relative",
+        ),
+        (
+            AccuracyPredicate::all_of([
+                AccuracyPredicate::absolute(half.clone()),
+                AccuracyPredicate::relative(half.clone()),
+            ])
+            .expect("a two-member conjunction is canonical"),
+            "all-of",
+        ),
+        (
+            AccuracyPredicate::any_of([
+                AccuracyPredicate::absolute(half.clone()),
+                AccuracyPredicate::relative(half),
+            ])
+            .expect("a two-member disjunction is canonical"),
+            "any-of",
+        ),
+    ];
+    assert_eq!(
+        cases.len(),
+        4,
+        "the unconvertible population is four shapes"
+    );
+    for (predicate, expected) in cases {
+        let reason = relative_accuracy_of_contract(
+            &piecewise(vec![whole_domain_clause(predicate)]),
+            &f32_format(),
+        )
+        .expect_err("this shape has no sound relative conversion");
+        let RelativeAccuracyRefusalReason::UnconvertiblePredicate { predicate } = reason else {
+            panic!("the refusal names the predicate kind: {reason:?}");
+        };
+        assert_eq!(predicate, expected);
+    }
+}
+
+/// A named-elementary profile refuses rather than guessing a tolerance.
+///
+/// The result set lives in a descriptor this build holds only a digest of, which is
+/// the same boundary `decide_contract` reports as `NamedProfileNotInterpretable`. A
+/// number invented here would be exactly the plausible constant the query exists to
+/// replace.
+#[test]
+fn a_named_elementary_requirement_refuses_rather_than_guessing() {
+    let contract = AccuracyContract::new(
+        rms_norm_f32_op(),
+        vec![F32::resolved_type()],
+        F32::resolved_type(),
+        rms_norm_f32_rsqrt_reference_semantics(),
+        AccuracyContractForm::NamedElementary {
+            profile: NamedElementaryProfileKey::new("vendor", "rsqrt-profile", 1)
+                .expect("the synthetic profile key is valid"),
+            descriptor_digest: NamedElementaryDescriptorDigest::new(b"sha256:synthetic")
+                .expect("a nonempty digest"),
+            descriptor_basis: justification(),
+        },
+        rms_norm_f32_rsqrt_exceptional_contract(),
+    );
+    let reason = relative_accuracy_of_contract(&contract, &f32_format())
+        .expect_err("a descriptor held by digest states no tolerance");
+    assert!(matches!(
+        reason,
+        RelativeAccuracyRefusalReason::NamedProfileNotInterpretable
+    ));
 }

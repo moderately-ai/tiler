@@ -1,6 +1,6 @@
 #![allow(
     dead_code,
-    reason = "the authority is now on the compile path — `request::require_elementary_accuracy` calls `assess_program_elementary_accuracy` per target, and the admitted `tiler::silu-f32@1` recognizer reaches it. What remains unconstructed is the *structured* reporting either outcome carries: an admission's refinement basis and per-half evidence discharge, and a refusal's typed reason and declaring-profile provenance. The compile path consumes only the refusal's stable diagnostic code, because no public surface yet carries the richer record — and adding one belongs with the `TargetProfileBuilder` declaration that would let a caller-built profile state an elementary realization at all"
+    reason = "the authority is now on the compile path — `request::require_elementary_accuracy` calls `assess_program_elementary_accuracy` per target, and the admitted `tiler::silu-f32@1` recognizer reaches it. What remains unconstructed is the *structured* reporting either outcome carries: an admission's refinement basis and per-half evidence discharge, and a refusal's typed reason and declaring-profile provenance. The compile path consumes only the refusal's stable diagnostic code, because no public surface yet carries the richer record — and adding one belongs with the `TargetProfileBuilder` declaration that would let a caller-built profile state an elementary realization at all. [`elementary_relative_accuracy`] is unconstructed for a different reason: its consumer is a parametric rewrite bound, and no rewrite rule carrying one is registered, because the two numerical dimensions such a rule would consume are declined and reserved rather than admitted"
 )]
 
 //! Which elementary-function accuracy contracts a target realization refines.
@@ -62,24 +62,82 @@
 //! implementations but does not prove an unmeasured worst-case bound", so it
 //! cannot discharge a hard requirement — and [`ElementaryRealization::discharge`]
 //! reports that rather than borrowing the bound the other half established.
+//!
+//! # The refinement verdict, and the number beside it
+//!
+//! [`assess_elementary_accuracy`] answers yes or no, which is the right answer to
+//! the obligation it decides. A *parametric rewrite bound* asks a different
+//! question: the online-softmax rescaling fold's price is a closed form in the
+//! fold shape, the format's unit roundoff, and `eps_exp`, the target's numeric
+//! relative accuracy for the exponential — and a bound written against a plausible
+//! constant instead of that number is the failure the certified-bounds record names
+//! as the one a reviewer is likeliest to wave through.
+//!
+//! [`elementary_relative_accuracy`] answers it, from the **requirement** rather
+//! than from the declaration, and that direction is the whole of its conservatism:
+//! an admission is a proof that the installed realization *refines* the registered
+//! requirement, so the realization's error is provably no worse than the
+//! requirement's tolerance. The requirement's number is therefore the weakest
+//! admissible one, which is exactly the direction a bound instantiated from it
+//! needs. Reading the declaration instead would be tighter and wrong — it would
+//! price a rewrite against one target's declaration while the requirement is what
+//! every admitted target is held to.
+//!
+//! **The number is gated on the admission, not merely on the requirement's
+//! existence.** A requirement no installed realization refines describes a target
+//! that has declared nothing about the operation, and quoting its tolerance as that
+//! target's accuracy would attribute an accuracy to a declaration nobody made. So
+//! the query re-establishes the admission and returns its
+//! [`RefinementBasis`] beside the number.
+//!
+//! # Why the metric is the part that refuses
+//!
+//! The registered requirements are *ULP* bounds and a bound consumes a *relative*
+//! one, so a conversion sits between them: `|z - r|/|r| <= t * sup(ulp(r)/|r|)`.
+//! Above the least normal that supremum is `2^(1 - p)` and the conversion is exact
+//! arithmetic. Below it — in the subnormal band, where the metric's scale is the
+//! fixed subnormal gap — the ratio is unbounded, and no finite relative bound
+//! follows from any ULP bound at all.
+//!
+//! That boundary is the returned object's own obligation rather than a caller's
+//! footnote: [`ElementaryRelativeAccuracy::domain`] states the exact reference
+//! magnitude at or above which the number holds, and a consumer that has not
+//! discharged it is holding a bound for a region it has not entered. The
+//! dependency is real rather than defensive — `tiler::softmax-f32@1` reaches a
+//! subnormal exponential on an ordinary attention row by its own registered fact,
+//! so this precondition and the fold bound's own no-subnormal side condition are
+//! one obligation seen twice, not two independent ones.
+//!
+//! # What the number turns out to be
+//!
+//! `tiler::softmax-f32@1`'s registered requirement is twelve ULPs under
+//! `tiler::ulp-reference-gap@1`, which converts to `12 * 2^-23 = 24u` at binary32.
+//! Both bound records instantiate their published prices at `eps_exp = u` — the
+//! correctly rounded number, which [`elementary_relative_accuracy`] returns only
+//! for a contract that actually states correct rounding — so those prices are
+//! `(u + 24u)/(2u) = 12.5` times optimistic at first order against the number the
+//! requirement gives. `the_registered_softmax_accuracy_is_twenty_four_unit_roundoffs`
+//! is that ratio made checkable rather than described.
 
 use std::sync::Arc;
 
 use tiler_ir::semantic::accuracy::{
     AccuracyContract, AccuracyContractForm, AccuracyDomain, AccuracyDomainClause,
-    AccuracyMetricKey, AccuracyPredicate, ConformanceEvidence, ConformanceEvidenceClass,
-    ConformanceEvidenceError, DomainBound, DomainInterval, ExactRational, ExactTolerance,
-    OperandOrdinal, ReferenceResultClass, ReferenceResultConstraint, RefinementBasis,
-    RefinementOutcome, RefinementUnknown, RegisteredImplication, RegisteredImplicationKey,
-    RegisteredImplicationRegistry, ulp_reference_gap_metric_key,
+    AccuracyMetricKey, AccuracyPredicate, AccuracyPredicateView, BooleanPredicateKind,
+    ConformanceEvidence, ConformanceEvidenceClass, ConformanceEvidenceError, DomainBound,
+    DomainInterval, ExactRational, ExactTolerance, OperandOrdinal, ReferenceResultClass,
+    ReferenceResultConstraint, ReferenceRoundingRule, RefinementBasis, RefinementOutcome,
+    RefinementUnknown, RegisteredImplication, RegisteredImplicationKey,
+    RegisteredImplicationRegistry, UlpFormat, ulp_reference_gap_metric_key,
 };
 use tiler_ir::semantic::{
     F32, NormativeDefinitionRef, OpKey, SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS,
-    SOFTMAX_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, rms_norm_f32_op,
-    rms_norm_f32_rsqrt_exceptional_contract, rms_norm_f32_rsqrt_reference_semantics,
-    silu_f32_exponential_exceptional_contract, silu_f32_exponential_reference_semantics,
-    silu_f32_op, softmax_f32_exponential_exceptional_contract,
-    softmax_f32_exponential_reference_semantics, softmax_f32_op,
+    SOFTMAX_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, builtin_scalar_value_type_facts,
+    rms_norm_f32_op, rms_norm_f32_rsqrt_exceptional_contract,
+    rms_norm_f32_rsqrt_reference_semantics, silu_f32_exponential_exceptional_contract,
+    silu_f32_exponential_reference_semantics, silu_f32_op,
+    softmax_f32_exponential_exceptional_contract, softmax_f32_exponential_reference_semantics,
+    softmax_f32_op,
 };
 
 use super::honourability::FactSourceProvenance;
@@ -746,6 +804,376 @@ pub(crate) fn required_elementary_accuracy(operation: &OpKey) -> Option<Accuracy
     } else {
         None
     }
+}
+
+/// Where one converted relative accuracy holds.
+///
+/// **Not an `Option` and not a footnote.** A ULP-to-relative conversion is valid
+/// only above the subnormal band, so a number handed over without its region is a
+/// number a consumer can use in a region where it is false. Making the region a
+/// field of the answer is what forces the consumer to see it; the two variants are
+/// the two honest states, and neither is a default.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RelativeAccuracyDomain {
+    /// The bound holds at every reference the contract admits.
+    ///
+    /// Reached when no clause needed the metric conversion — a contract stating a
+    /// relative predicate outright — or when every clause that needed it carries an
+    /// operation-specific proof that its own reference magnitude is at or above the
+    /// least normal. The first case rests on the contract's own definedness rule,
+    /// which `AccuracyContract::verify` decides and which excludes a zero reference
+    /// under a relative predicate.
+    EveryAdmittedReference,
+    /// The bound holds only where `|r|` is at or above this magnitude.
+    ///
+    /// Below it the metric's scale is the fixed subnormal gap while `|r|` keeps
+    /// shrinking, so `ulp(r)/|r|` is unbounded and *no* finite relative bound
+    /// follows from the ULP one. A consumer discharges this the way it discharges
+    /// any other value-domain precondition — by proof or by validation before
+    /// routing commit — never by assuming the region it happens to expect.
+    ReferenceMagnitudeAtOrAbove(ExactRational),
+}
+
+/// The numeric relative accuracy a parametric rewrite bound may instantiate from.
+///
+/// There is no constructor other than [`elementary_relative_accuracy`], so holding
+/// one is evidence that some installed realization was proved to refine the
+/// registered requirement and that the requirement's own tolerance converted
+/// exactly.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ElementaryRelativeAccuracy {
+    operation: OpKey,
+    bound: ExactTolerance,
+    domain: RelativeAccuracyDomain,
+    basis: RefinementBasis,
+}
+
+impl ElementaryRelativeAccuracy {
+    /// The operation whose subordinate elementary evaluation this bounds.
+    pub(crate) const fn operation(&self) -> &OpKey {
+        &self.operation
+    }
+
+    /// The exact relative accuracy, valid over [`Self::domain`].
+    ///
+    /// An exact rational rather than a host float, because a bound compared in
+    /// binary32 would put a rounding inside the constant that bounds roundings.
+    pub(crate) const fn bound(&self) -> &ExactTolerance {
+        &self.bound
+    }
+
+    /// Where [`Self::bound`] holds.
+    pub(crate) const fn domain(&self) -> &RelativeAccuracyDomain {
+        &self.domain
+    }
+
+    /// What established that some installed realization refines the requirement.
+    ///
+    /// Carried because the number is the *requirement's* and its conservatism is
+    /// the admission: without one, the requirement bounds nothing any target
+    /// declared.
+    pub(crate) const fn admission_basis(&self) -> &RefinementBasis {
+        &self.basis
+    }
+}
+
+/// Why no numeric relative accuracy could be derived.
+#[derive(Clone, Debug)]
+pub(crate) struct ElementaryRelativeAccuracyRefusal {
+    operation: OpKey,
+    reason: RelativeAccuracyRefusalReason,
+}
+
+impl ElementaryRelativeAccuracyRefusal {
+    /// The operation the query was asked about.
+    pub(crate) const fn operation(&self) -> &OpKey {
+        &self.operation
+    }
+
+    /// Why, in the shape the refusing step reported it.
+    pub(crate) const fn reason(&self) -> &RelativeAccuracyRefusalReason {
+        &self.reason
+    }
+
+    /// The stable provider diagnostic code naming this refusal.
+    ///
+    /// An unrealized operation reports the *refinement* authority's own code
+    /// rather than a second one, because the cause is that authority's and
+    /// renaming it here would give one condition two names.
+    pub(crate) fn diagnostic_code(&self) -> &'static str {
+        match &self.reason {
+            RelativeAccuracyRefusalReason::NoRegisteredRequirement => {
+                "accuracy.elementary.no-registered-requirement"
+            }
+            RelativeAccuracyRefusalReason::Unrealized(refusal) => refusal.diagnostic_code(),
+            RelativeAccuracyRefusalReason::UninterpretableResultFormat => {
+                "accuracy.elementary.uninterpretable-result-format"
+            }
+            RelativeAccuracyRefusalReason::NamedProfileNotInterpretable => {
+                "accuracy.elementary.named-profile-not-interpretable"
+            }
+            RelativeAccuracyRefusalReason::UnconvertibleMetric { .. } => {
+                "accuracy.elementary.unconvertible-metric"
+            }
+            RelativeAccuracyRefusalReason::UnconvertiblePredicate { .. } => {
+                "accuracy.elementary.unconvertible-predicate"
+            }
+        }
+    }
+}
+
+/// The ways a numeric relative accuracy goes underivable.
+///
+/// Every variant names what would close it, because a rewrite bound refused for an
+/// unavailable `eps_exp` is refused for a reason someone can act on.
+#[derive(Clone, Debug)]
+pub(crate) enum RelativeAccuracyRefusalReason {
+    /// No registered family places an accuracy obligation on the operation.
+    ///
+    /// The correct answer for every operation whose complete result is fixed by
+    /// IEEE-754 alone, and a refusal rather than a zero: an operation with no
+    /// elementary evaluation has no elementary accuracy, which is not the same as
+    /// having a perfect one.
+    NoRegisteredRequirement,
+    /// No installed realization was proved to refine the requirement.
+    Unrealized(Box<ElementaryAccuracyRefusal>),
+    /// The requirement's result dtype exposes no ULP-metric-compatible format.
+    ///
+    /// The conversion's `2^(1 - p)` needs a precision, and ADR 0042 requires a
+    /// dtype whose adjacent-value behaviour is not derivable to be rejected rather
+    /// than guessed.
+    UninterpretableResultFormat,
+    /// A named-elementary profile's result set lives in a descriptor held by digest.
+    ///
+    /// The same boundary `decide_contract` reports as
+    /// `NamedProfileNotInterpretable`: nothing here holds the descriptor's content,
+    /// so no tolerance can be read out of it. A number guessed here would be
+    /// exactly the plausible constant this query exists to replace.
+    NamedProfileNotInterpretable,
+    /// A clause states its bound under a metric this conversion does not define.
+    ///
+    /// Deliberately *not* routed through the implication registry. That registry
+    /// crosses a declaration's metric to the requirement's; this conversion leaves
+    /// the metric algebra entirely for a ratio against `|r|`, and a scaling factor
+    /// registered between two ULP definitions says nothing about that ratio.
+    UnconvertibleMetric {
+        /// The metric the requirement's bound is stated under.
+        metric: AccuracyMetricKey,
+    },
+    /// A clause's predicate shape has no conversion to a relative bound.
+    ///
+    /// `Absolute` and `AbsoluteRelative` need a proved *lower* bound on the
+    /// reference magnitude, which no registered contract states. `AllOf` and
+    /// `AnyOf` need a composition rule whose choice is unforced — a conjunction
+    /// admits any member as a sound bound, so preferring the tightest conditional
+    /// member over a looser unconditional one is a trade nothing yet has a caller
+    /// to decide. Both refuse rather than approximate.
+    UnconvertiblePredicate {
+        /// The predicate kind, in the vocabulary's own spelling.
+        predicate: &'static str,
+    },
+}
+
+/// Returns the numeric relative accuracy `target` is provably no worse than.
+///
+/// The requirement-side number, gated on an admission and carrying the region the
+/// metric conversion is valid over. See this module's header for why each of those
+/// three is load-bearing.
+///
+/// # Errors
+///
+/// Returns [`ElementaryRelativeAccuracyRefusal`] naming the operation and the
+/// refusing step. It is boxed for the same reason
+/// [`assess_elementary_accuracy`]'s is: an unrealized refusal carries the declaring
+/// profile's whole provenance record, and a rejection that named less would not be
+/// reproducible.
+pub(crate) fn elementary_relative_accuracy(
+    operation: &OpKey,
+    target: &super::TargetProfile,
+) -> Result<ElementaryRelativeAccuracy, Box<ElementaryRelativeAccuracyRefusal>> {
+    elementary_relative_accuracy_from(
+        operation,
+        &declared_elementary_realizations(target),
+        &installed_implication_registry(),
+    )
+}
+
+/// Decides the same question against an explicit installation and registry.
+///
+/// Split out on [`assess_elementary_accuracy`]'s own precedent, so the fail-closed
+/// direction can be watched failing against a stripped installation and a stripped
+/// registry rather than by arranging for a profile lookup to miss.
+///
+/// # Errors
+///
+/// Returns the refusal [`elementary_relative_accuracy`] documents.
+fn elementary_relative_accuracy_from(
+    operation: &OpKey,
+    installed: &[ElementaryRealization],
+    registry: &RegisteredImplicationRegistry,
+) -> Result<ElementaryRelativeAccuracy, Box<ElementaryRelativeAccuracyRefusal>> {
+    let refuse = |reason| {
+        Box::new(ElementaryRelativeAccuracyRefusal {
+            operation: operation.clone(),
+            reason,
+        })
+    };
+    let Some(required) = required_elementary_accuracy(operation) else {
+        return Err(refuse(
+            RelativeAccuracyRefusalReason::NoRegisteredRequirement,
+        ));
+    };
+    let admission = assess_elementary_accuracy(&required, installed, registry)
+        .map_err(|refusal| refuse(RelativeAccuracyRefusalReason::Unrealized(refusal)))?;
+    let Some(facts) = builtin_scalar_value_type_facts(required.result_type()) else {
+        return Err(refuse(
+            RelativeAccuracyRefusalReason::UninterpretableResultFormat,
+        ));
+    };
+    let Ok(format) = UlpFormat::from_value_type_facts(&facts) else {
+        return Err(refuse(
+            RelativeAccuracyRefusalReason::UninterpretableResultFormat,
+        ));
+    };
+    let (bound, domain) = relative_accuracy_of_contract(&required, &format).map_err(refuse)?;
+    Ok(ElementaryRelativeAccuracy {
+        operation: required.operation().clone(),
+        bound,
+        domain,
+        basis: admission.basis().clone(),
+    })
+}
+
+/// Converts one resolved contract's obligation into a relative accuracy.
+///
+/// **The weakest obligation the contract states anywhere on its admitted domain**,
+/// because the number bounds every evaluation the operation performs and a clause
+/// that binds only part of the domain cannot speak for the rest. Taking a maximum
+/// over clauses is what makes the answer sound where taking the tightest one would
+/// price a rewrite against a region it does not stay inside.
+fn relative_accuracy_of_contract(
+    contract: &AccuracyContract,
+    format: &UlpFormat,
+) -> Result<(ExactTolerance, RelativeAccuracyDomain), RelativeAccuracyRefusalReason> {
+    let precision = i32::try_from(format.precision()).expect("a bounded precision fits i32");
+    // `sup ulp(r)/|r|` over the normal range. For `|r|` in `[2^b, 2^(b+1))` the
+    // metric's scale is at most `2^(b - p + 1)` — less at a power of two, where
+    // ADR 0042 selects the predecessor gap — and `|r|` is at least `2^b`.
+    let ulp_ratio_ceiling = ExactRational::power_of_two(1 - precision);
+    let least_normal = ExactRational::power_of_two(format.min_exponent());
+    let tolerance = |value: ExactRational| {
+        ExactTolerance::try_from_rational(value).unwrap_or_else(|_| {
+            unreachable!("a product of nonnegative exact values is nonnegative")
+        })
+    };
+    match contract.form() {
+        // Correct rounding attains half the binade spacing, so the ratio is half
+        // the ceiling above. This is the `eps_exp = u` both bound records
+        // instantiate at — returned here only for a contract that states correct
+        // rounding, which is what makes quoting it for one that does not a
+        // detectable substitution rather than a plausible one.
+        AccuracyContractForm::CorrectlyRounded { rounding } => match rounding {
+            ReferenceRoundingRule::NearestTiesToEven => Ok((
+                tolerance(ulp_ratio_ceiling.scale_by_power_of_two(-1)),
+                RelativeAccuracyDomain::ReferenceMagnitudeAtOrAbove(least_normal),
+            )),
+        },
+        // A faithful result is a bracketing neighbour of an inexact reference, so
+        // the error is under one binade spacing — twice the correctly rounded
+        // number, and not the same obligation as a one-ULP bound even though the
+        // ratio coincides.
+        AccuracyContractForm::Faithful => Ok((
+            tolerance(ulp_ratio_ceiling),
+            RelativeAccuracyDomain::ReferenceMagnitudeAtOrAbove(least_normal),
+        )),
+        AccuracyContractForm::NamedElementary { .. } => {
+            Err(RelativeAccuracyRefusalReason::NamedProfileNotInterpretable)
+        }
+        AccuracyContractForm::BoundedPiecewise(domain) => {
+            let mut weakest: Option<ExactRational> = None;
+            let mut every_admitted_reference = true;
+            for clause in domain.clauses() {
+                let (bound, crossed_the_metric) =
+                    relative_bound_of_predicate(clause.predicate(), &ulp_ratio_ceiling)?;
+                if crossed_the_metric && !clause_proves_a_normal_reference(clause, &least_normal) {
+                    every_admitted_reference = false;
+                }
+                weakest = Some(match weakest {
+                    Some(held) if held >= bound => held,
+                    _ => bound,
+                });
+            }
+            let bound = weakest
+                .unwrap_or_else(|| unreachable!("an accuracy domain refuses an empty clause set"));
+            Ok((
+                tolerance(bound),
+                if every_admitted_reference {
+                    RelativeAccuracyDomain::EveryAdmittedReference
+                } else {
+                    RelativeAccuracyDomain::ReferenceMagnitudeAtOrAbove(least_normal)
+                },
+            ))
+        }
+    }
+}
+
+/// Returns one predicate's relative bound and whether reaching it crossed the metric.
+///
+/// The second half of the pair is what the caller needs to know: a bound derived
+/// through `ulp(r)/|r|` inherits the subnormal precondition and a relative
+/// predicate does not, so collapsing the two would either impose a precondition
+/// that is not there or drop one that is.
+fn relative_bound_of_predicate(
+    predicate: &AccuracyPredicate,
+    ulp_ratio_ceiling: &ExactRational,
+) -> Result<(ExactRational, bool), RelativeAccuracyRefusalReason> {
+    match predicate.view() {
+        AccuracyPredicateView::Ulp { metric, tolerance } => {
+            if !metric.is_ulp_reference_gap() {
+                return Err(RelativeAccuracyRefusalReason::UnconvertibleMetric {
+                    metric: metric.clone(),
+                });
+            }
+            Ok((tolerance.value().multiply(ulp_ratio_ceiling), true))
+        }
+        AccuracyPredicateView::Relative { tolerance } => Ok((tolerance.value().clone(), false)),
+        AccuracyPredicateView::Absolute { .. } => {
+            Err(RelativeAccuracyRefusalReason::UnconvertiblePredicate {
+                predicate: "absolute",
+            })
+        }
+        AccuracyPredicateView::AbsoluteRelative { .. } => {
+            Err(RelativeAccuracyRefusalReason::UnconvertiblePredicate {
+                predicate: "absolute-relative",
+            })
+        }
+        AccuracyPredicateView::Boolean { kind, .. } => {
+            Err(RelativeAccuracyRefusalReason::UnconvertiblePredicate {
+                predicate: match kind {
+                    BooleanPredicateKind::AllOf => "all-of",
+                    BooleanPredicateKind::AnyOf => "any-of",
+                },
+            })
+        }
+    }
+}
+
+/// Returns whether one clause proves its reference lies outside the subnormal band.
+///
+/// Read from the clause's own [`ReferenceResultConstraint`], which ADR 0042 admits
+/// only through an operation-specific proof — so a `true` here is a proof someone
+/// wrote, never an inference this module drew from the input domain. No registered
+/// contract states one today, and that is why the softmax's number arrives
+/// conditional.
+fn clause_proves_a_normal_reference(
+    clause: &AccuracyDomainClause,
+    least_normal: &ExactRational,
+) -> bool {
+    clause
+        .reference()
+        .magnitude()
+        .and_then(|interval| interval.lower().value())
+        .is_some_and(|lower| lower >= least_normal)
 }
 
 /// Returns the elementary realizations one target profile declares.
