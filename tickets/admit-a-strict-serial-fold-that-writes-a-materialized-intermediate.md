@@ -1,7 +1,7 @@
 ---
 id: admit-a-strict-serial-fold-that-writes-a-materialized-intermediate
 title: Admit a strict serial fold that writes a materialized intermediate
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-elementwise-epilogues-over-a-materialized-intermediate, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary, admit-a-reduction-over-a-declared-input-tensor]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, schedule]
+claimed_from: todo
+assignee: agent-fold-write
+lease_expires_at: 1786009603
 ---
 ## User-visible outcome
 
