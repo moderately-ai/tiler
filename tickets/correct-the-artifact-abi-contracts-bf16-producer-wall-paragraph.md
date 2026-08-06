@@ -1,7 +1,7 @@
 ---
 id: correct-the-artifact-abi-contracts-bf16-producer-wall-paragraph
 title: Correct the artifact ABI contract's bf16 producer-wall paragraph
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [admit-a-bf16-index-realization-law-and-refinement-contract, carry-the-pure-bf16-producer-path-into-artifact-packaging-evidence]
@@ -29,3 +29,7 @@ Rewrite the wall clause to state the current boundary — the refinement layer a
 ## Closes when
 
 The paragraph describes the current boundary, the measurements are unchanged, and its ticket link resolves to the work that actually remains.
+
+## Outcome
+
+Executed inline by the coordinator on 2026-08-06 — the correction was fully specified above. The wall clause now states the current boundary (refinement admits `bf16`; the artifact-layer packaging fixture is what remains), the ticket link points at the packaging work, the measurements are preserved verbatim, and the direct-assembly fixtures' remaining justification (refusal envelopes no correct producer emits) is stated where the old justification was.
