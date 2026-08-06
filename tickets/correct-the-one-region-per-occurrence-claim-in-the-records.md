@@ -1,7 +1,7 @@
 ---
 id: correct-the-one-region-per-occurrence-claim-in-the-records
 title: Correct the one-region-per-occurrence claim where four records still state it
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, research/numerics, research/semantic-graph]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: agent-records
-lease_expires_at: 1786051056
 ---
 ## What is stale
 
