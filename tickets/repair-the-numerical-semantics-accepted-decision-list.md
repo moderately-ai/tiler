@@ -1,7 +1,7 @@
 ---
 id: repair-the-numerical-semantics-accepted-decision-list
 title: Repair the numerical-semantics accepted-decision list
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [execute-the-adr-0102-acceptance-sweep]
@@ -9,9 +9,6 @@ scopes: [contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, numerics, documentation, adr]
-claimed_from: todo
-assignee: orchestrator
-lease_expires_at: 1786048130
 ---
 ## User-visible outcome
 
@@ -45,3 +42,11 @@ Whichever way it goes, state the choice in the paragraph so the next sweep knows
 ## Closes when
 
 The paragraph is true, and it says whether a future acceptance must update it.
+
+## Outcome — 2026-08-06
+
+**Measurement.** The reproducing command printed exactly the 45 numbers the ticket predicted over the 102-file population, confirming the six absentees (0076, 0080, 0091, 0095, 0101, 0102) before the edit.
+
+**Landed.** The recommendation was applied with one correction the ticket's own discipline required. The recommendation named the index's "Numerical operations" theme section as the authoritative list, but reading the index refutes that: governing decisions span at least three theme sections — 0059 sits under the typed-authoring section and 0029/0032/0034 under "Dtypes and quantization", all naming this contract. The paragraph therefore points at the [decisions index](../docs/decisions/README.md) with the selection criterion stated — the entries that name this contract, which each entry's own contract listing exposes — rather than at any one section. The paragraph now says it deliberately carries no ADR numbers, so future acceptance sweeps know they owe no edit here.
+
+**Check.** The frontmatter-based reproducing command in this ticket remains the validator for the index itself; it is recorded here and in the defect section above.

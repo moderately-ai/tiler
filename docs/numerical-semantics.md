@@ -22,10 +22,7 @@ of semantic meaning, legality, plan identity, artifact identity, and testing.
 
 This document owns Tiler's target-independent numerical meaning and legality.
 It does not claim that every recognized dtype or semantic tuple is implemented.
-The accepted decisions are [ADRs 0009–0042](decisions/README.md) together with
-ADRs 0055, 0059, 0060, 0062, and 0066, with primary support in the
-[numerical research corpus](research/numerics/). Implementation support remains
-capability-gated and unmeasured unless a linked experiment says otherwise.
+The accepted decisions are the entries of the [decisions index](decisions/README.md) that name this contract; each index entry lists the contracts it governs, and that index is the one authoritative enumeration — this paragraph deliberately carries no ADR numbers, so an acceptance sweep owes no edit here. Primary support is in the [numerical research corpus](research/numerics/). Implementation support remains capability-gated and unmeasured unless a linked experiment says otherwise.
 
 ## Three parts of the contract
 
