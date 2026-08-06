@@ -1,7 +1,7 @@
 ---
 id: resolve-which-authority-mints-a-multi-stage-region-candidate
 title: Resolve which authority mints a multi-stage region candidate
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages, fold-the-attribution-stage-into-region-and-request-subject-identity, implement-stage-level-cover-atoms-for-multi-region-occurrences, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage]
@@ -45,3 +45,9 @@ Pick one and implement it. The difference is whether the region graph is a view 
 ## Closes when
 
 Tom names the option. The chosen one is filed as its own implementation ticket with the surface it touches enumerated, and `fold-the-attribution-stage-into-region-and-request-subject-identity` records the resulting trigger evaluation.
+
+## Decided — 2026-08-06: Option A′, region formation enumerates stages
+
+**Tom decided at the live session's decision round, via the coordinator's presentation (AskUserQuestion) and witnessed first-hand by the coordinator:** region formation is the minting authority. Grounds as presented and accepted: the stage-atom decision's own purpose — a stage of one family fusing into a neighbouring region — requires the cover search to see stage-level candidates, which is A′'s architecture stated as one authority rather than routed through a second classifier; B′'s dual-authority cost is permanent and grows with every staged family, while its identity-stability advantage is a reversibility argument this repository does not weight pre-alpha; and the synthetic-value work is identical under both options, so it does not discriminate. The counterpoint was stated: region formation stops being a pure function of the semantic DAG, and a family carrying two alternative laws would multiply candidate enumeration per law — an exposure B′ shares one authority further from the truth.
+
+Implementation is filed as [`enumerate-region-candidates-over-realization-stages`](enumerate-region-candidates-over-realization-stages.md) with the surface enumerated; [`fold-the-attribution-stage-into-region-and-request-subject-identity`](fold-the-attribution-stage-into-region-and-request-subject-identity.md)'s trigger log records the resulting evaluation.

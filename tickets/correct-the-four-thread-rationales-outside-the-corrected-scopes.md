@@ -1,7 +1,7 @@
 ---
 id: correct-the-four-thread-rationales-outside-the-corrected-scopes
 title: Correct the four-thread rationales outside the corrected scopes
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-the-four-thread-grid-rationales-the-measured-row-falsified, establish-an-upper-bound-authority-for-the-metal-grid-axis-row, calibrate-and-activate-parallel-reduction-selection]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/integrations, contracts/navigation, 
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, defect, target-profiles]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1786043635
 ---
 ## User-visible outcome
 
