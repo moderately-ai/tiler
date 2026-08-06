@@ -16,17 +16,19 @@
 //! what keeps the refusal from being consistent with a broken session boundary.
 //!
 //! **It also records what is deliberately *not* here.** This vertical did not
-//! widen the recognizer, and it registered no index-access lowering capability,
-//! for the structural reason the normalization's landing recorded and this family
-//! shares more strongly: a softmax occurrence realizes as *three* regions — a
-//! maximum fold, an exponential-and-sum pass, and a normalizing pass — while
-//! `GovernedIndexAccess` emits exactly one region per occurrence, so a
-//! single-region lowering would re-evaluate both folds at every output point.
-//! [`lower-a-two-region-occurrence-through-one-index-access-capability`] owns
-//! that widening.
+//! widen the recognizer, and it registered no index-access lowering capability.
+//! A softmax occurrence realizes as *three* regions — a maximum fold, an
+//! exponential-and-sum pass, and a normalizing pass — and what once blocked that
+//! was `GovernedIndexAccess` emitting exactly one region per occurrence. That
+//! limit is gone: `IndexAccessLoweringProvider::lower_sequence` emits an ordered
+//! chain, and `GovernedRootMeanSquareScaleF32` is a shipped provider that does.
+//! What this family still lacks is its own `IndexRealizationLaw` — which needs a
+//! governed **maximum** scalar key that
+//! [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`] owns —
+//! and, above that, the recognizer widening this file's assertions pin.
 //!
 //! [`reach-a-verified-kernel-through-the-structural-families`]: ../../../tickets/reach-a-verified-kernel-through-the-structural-families.md
-//! [`lower-a-two-region-occurrence-through-one-index-access-capability`]: ../../../tickets/lower-a-two-region-occurrence-through-one-index-access-capability.md
+//! [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`]: ../../../tickets/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,

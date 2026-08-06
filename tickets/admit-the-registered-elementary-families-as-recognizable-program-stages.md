@@ -3,7 +3,7 @@ id: admit-the-registered-elementary-families-as-recognizable-program-stages
 title: Admit the registered elementary families as recognizable program stages
 status: in-progress
 priority: p1
-dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, implement-stage-level-cover-atoms-for-multi-region-occurrences]
+dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, implement-stage-level-cover-atoms-for-multi-region-occurrences, resolve-which-authority-mints-a-multi-stage-region-candidate]
 related: [accept-the-governed-reciprocal-square-root-scalar-key]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
@@ -64,3 +64,27 @@ So the dispatch's fallback — "land the normalization half if it stands alone" 
 ### What remains here
 
 This ticket's stated outcome is unsupported until the law widening and the attribution fork both land; those are its dependencies. The four checks it named are otherwise unchanged.
+
+## Progress 2026-08-06 (second round) — the family's lowering landed; the recognizer half is blocked on a fork the graph does not carry
+
+### Landed
+
+**`GovernedRootMeanSquareScaleF32`** (`crates/tiler-compiler/src/governed.rs`), the governed profile's tenth index-access capability and the first whose realization is a region *sequence*. It emits the chain `IndexRealizationLaw::StagedRootMeanSquareScaleF32` pins — a squaring fold, the `/N`, `+eps`, `Rsqrt` epilogue inside the producing stage, then the ternary weighted pass — and `refine_index_region` accepts it, which is a byte-for-byte canonical region-sequence identity match against the law rather than a structural resemblance.
+
+Supporting generalizations, each because the law generalized the same way and the two emissions must agree axis for axis: `SumPlan` gained `for_boundaries` (a fold whose published shape is a parameter, since a staged fold's result is nobody's occurrence result), `squaring_contributors`, a `square` step applied at both contributor reads, and a `fold` method that is now the single statement of the fold — `GovernedStrictSerialSumF32::lower` calls it instead of restating the empty/singleton/tail cases. `reduction_axes` takes its field identifier as a parameter, because attribute identifiers are record-local and both families number an axes field one.
+
+**Evidence.** `governed::tests::the_governed_normalization_lowering_refines_its_two_stage_occurrence`, which asserts the chain rather than success: two stages, one rank-zero-per-row intermediate at `[2]` from a `[2, 4]` occurrence reduced on axis one, the two stages' *different* reached scalar authorities (the fold reaches add, constant, divide, multiply, rsqrt; the pass reaches multiply alone), and operand bindings `[(0, 0), (0, 1), (1, 1)]` — the value operand read by both stages, the weight by the pass alone. Watched failing under a deliberate perturbation: dropping `.squaring_contributors(multiply_f32_scalar_op())` so the fold folds `x` rather than `x²`, which fails with `IrVerifier(SemanticRealizationSequenceMismatch { .. })`.
+
+**One pinned identity moved, whole and in the same commit:** `explain.rs`'s `deterministic_trace_is_sealed_and_rendered_separately`, `b88654bff9b673c1` → `6f153efeb2da5bb1`, recomputed on this tree from the observed failing value. The request subject binds the canonical lowering-registry identity, which gained this capability's row. No encoding version stepped and no other pin moved: `cargo nextest run --workspace` is 2848 passed, 7 skipped with that single value edited.
+
+**In-crate records rewritten in place to current truth**, because both stated the superseded limit as a live wall: `crates/tiler-compiler/tests/two_region_occurrence_lowering.rs`'s header (its normalization half is no longer a ceiling, and its `the_normalization_resolves_its_law_and_is_held_by_what_a_provider_emits` is now `a_substituted_provider_for_a_shipped_staged_family_reports_its_own_refusal` — the same assertions, reframed as the substitution affordance they actually exercise) and `crates/tiler-compiler/tests/softmax_recognizer_boundary.rs`'s header. Four records *outside* these scopes still state it and are filed as [`correct-the-one-region-per-occurrence-claim-in-the-records`](correct-the-one-region-per-occurrence-claim-in-the-records.md).
+
+### Not landed, and why — the recognizer half needs a decision nobody has made
+
+**Fact.** A recognized part is compared to a cover region's atoms by exact equality (`NormalizedOutput::owns_region_members`, `physical::spell_output`), so a partition naming a non-first stage is unusable unless a region *candidate* carries that atom. **Fact.** `region::assemble` is the sole constructor of a `RegionCandidate` and mints only first stages, and it states why: it observes the semantic DAG, where an occurrence is one operation. **Fact.** Splitting one occurrence into two candidates needs the region graph to carry a value the program does not have — the published `r` is inside the realization, not in the program's value list — which propagates to `RetainedOutput`, `MaterializationEdge::value`, program assembly's internal values, and the ABI. **Fact.** `verify_cover` would refuse such a cover anyway, counting per operation and reading two as `IllegalDuplication`; `cover::member_index`'s own doc records this and names the obligation.
+
+So the question "which authority mints the multi-stage claim" is open, two coherent answers exist, and they disagree about whether an identity domain moves at all — which is why the encoding half below reports *not fired* rather than fired. Drafted with the derivation and parked at [`resolve-which-authority-mints-a-multi-stage-region-candidate`](resolve-which-authority-mints-a-multi-stage-region-candidate.md), which is now this ticket's dependency.
+
+### What remains here
+
+This ticket's stated outcome — the normalization compiling as a middle stage with reference bit-agreement — is unsupported until that fork is decided and implemented. What moved is the wall the tree's own harness named: `tiler::rms-norm-f32@1` had a registered law and no provider, and now has both. The four checks this ticket named are otherwise unchanged.

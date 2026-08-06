@@ -21,27 +21,29 @@ use std::sync::Arc;
 
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
-    ScalarRegistryError, ScalarValueId, SourcedExtent, add_f32_scalar_op,
+    ScalarRegistryError, ScalarValueId, SourcedExtent, StagedInputSource, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
-    exp_f32_scalar_op, multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    exp_f32_scalar_op, multiply_f32_scalar_op, rsqrt_f32_scalar_op,
+    strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::semantic::{
-    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
+    AttributeFieldId, BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
     CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
     CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAttributes, ProviderIdentity,
-    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind,
-    ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
-    STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey, add_f32_op, broadcast_f32_op,
-    constant_f32_op, dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
+    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE,
+    RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType,
+    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+    StrictAffineU4, TypeKey, add_f32_op, broadcast_f32_op, constant_f32_op,
+    dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op,
     strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 
 use crate::capability::{
     FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
-    LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
-    LoweringRegistryError, LoweringSignature,
+    IndexAccessSequenceContext, LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision,
+    LoweringEmitError, LoweringRegistryError, LoweringSignature,
 };
 use crate::elementary::{ElementaryPointSink, silu_point_body};
 
@@ -213,14 +215,14 @@ impl GovernedIndexAccess {
     }
 }
 
-/// Returns the nine shipped index-access capabilities in canonical family order.
+/// Returns the ten shipped index-access capabilities in canonical family order.
 ///
 /// # Errors
 ///
 /// Returns [`GovernedRegistryError`] when a governed signature exceeds its
 /// governed structural bound.
 pub(crate) fn governed_index_access_capabilities()
--> Result<[GovernedIndexAccess; 9], GovernedRegistryError> {
+-> Result<[GovernedIndexAccess; 10], GovernedRegistryError> {
     let f32_type = F32::resolved_type();
     let pointwise =
         || LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type.clone()]);
@@ -322,6 +324,32 @@ pub(crate) fn governed_index_access_capabilities()
             // never emits.
             emitted: vec![multiply_f32_scalar_op(), add_f32_scalar_op()],
             implementation: Arc::new(GovernedStrictTensorContractionF32),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("rms-norm-f32"),
+            operation: rms_norm_f32_op(),
+            signature: LoweringSignature::new(
+                [F32::resolved_type(), F32::resolved_type()],
+                [F32::resolved_type()],
+            )?,
+            // The union over shapes of what the two stages reach. The constant
+            // is the folded extent and the declared bias; the multiply is the
+            // per-contributor square and both of the second stage's products;
+            // the add is the fold's combine and the bias; the canonicalization
+            // is the singleton fold's result boundary; the division and the
+            // reciprocal square root are the epilogue's. There is no reduction
+            // identity constant in the list beyond those two, because an empty
+            // fold is refused rather than seeded — `folded_extent_bits` says
+            // why.
+            emitted: vec![
+                constant_f32_scalar_op(),
+                multiply_f32_scalar_op(),
+                add_f32_scalar_op(),
+                canonicalize_nan_f32_scalar_op(),
+                divide_f32_scalar_op(),
+                rsqrt_f32_scalar_op(),
+            ],
+            implementation: Arc::new(GovernedRootMeanSquareScaleF32),
         },
         GovernedIndexAccess {
             provider: governed_provider("strict-affine-u4-dequantize"),
@@ -677,26 +705,7 @@ impl IndexAccessLoweringProvider for GovernedStrictSerialSumF32 {
         let input = context.input_tensor(plan.value_type.clone(), plan.input_shape.clone())?;
         let output = context.output_tensor(plan.value_type.clone(), plan.output_shape.clone())?;
 
-        let total = if plan.reduced_points == 0 {
-            plan.fold_empty(context, input, &kept, &kept_coordinates)?
-        } else {
-            let seed = plan.read_contributor(context, input, &kept, &kept_coordinates, None)?;
-            if plan.reduced_points == 1 {
-                // The lone contributor is the whole strict-serial value, and it
-                // is the one boundary value no combine has canonicalized. Every
-                // other path ends in the governed add, which canonicalizes its
-                // own result, so this is the only place the boundary rule has
-                // work to do.
-                let canonical = context.apply(
-                    canonicalize_nan_f32_scalar_op(),
-                    ScalarAttributes::empty(),
-                    &[seed],
-                )?;
-                single_result(&canonical, "reduction-result-canonicalization")?
-            } else {
-                plan.fold_tail(context, input, &kept, &kept_coordinates, seed)?
-            }
-        };
+        let total = plan.fold(context, input, &kept, &kept_coordinates)?;
         let write = context.write(output, &kept, &kept_coordinates)?;
         context.output(write, total)
     }
@@ -715,6 +724,14 @@ struct SumPlan {
     reduced_extents: Vec<u64>,
     /// Number of points in the reduced sub-shape.
     reduced_points: u64,
+    /// Scalar each contributor is squared with before the fold combines it.
+    ///
+    /// `None` folds the operand's own elements, which is every plain strict
+    /// serial sum. `Some(scalar)` applies `scalar(v, v)` to each contributor
+    /// first, which is the per-contributor prologue
+    /// `IndexRealizationLaw::StagedRootMeanSquareScaleF32` carries and this
+    /// provider must reproduce exactly.
+    contributor_square: Option<ScalarOpKey>,
 }
 
 impl SumPlan {
@@ -727,10 +744,26 @@ impl SumPlan {
         if occurrence.operands() != [0] {
             return Err(occurrence_error("sum-operand-binding"));
         }
-        let axes = reduction_axes(occurrence.attributes())?;
-        let input_shape = input.shape().clone();
+        let axes = reduction_axes(occurrence.attributes(), REDUCTION_AXES_ATTRIBUTE)?;
+        Self::for_boundaries(input.value_type(), input.shape(), result.shape(), &axes)
+    }
+
+    /// Derives the fold geometry from explicit boundaries rather than a result.
+    ///
+    /// A staged realization's fold publishes an intermediate, which is nobody's
+    /// occurrence result, so the shape it must produce is a parameter. This
+    /// mirrors `IndexRealizationLaw`'s own split for the same reason: the two
+    /// derivations must agree axis for axis or the emitted region is a different
+    /// region from the one the law builds.
+    fn for_boundaries(
+        value_type: &ResolvedValueType,
+        input_shape: &Shape,
+        output_shape: &Shape,
+        axes: &[Axis],
+    ) -> Result<Self, LoweringEmitError> {
+        let input_shape = input_shape.clone();
         let mut reduced = vec![false; input_shape.rank()];
-        for axis in &axes {
+        for axis in axes {
             let index = usize::try_from(axis.get()).map_err(|_| occurrence_error("sum-axis"))?;
             let Some(slot) = reduced.get_mut(index) else {
                 return Err(occurrence_error("sum-axis-range"));
@@ -739,7 +772,7 @@ impl SumPlan {
                 return Err(occurrence_error("sum-axis-duplicate"));
             }
         }
-        if &input_shape.without_axes(&axes) != result.shape() {
+        if &input_shape.without_axes(axes) != output_shape {
             return Err(occurrence_error("sum-result-shape"));
         }
         let reduced_extents: Vec<u64> = input_shape
@@ -758,14 +791,75 @@ impl SumPlan {
                 .ok_or_else(|| occurrence_error("sum-reduced-extent-overflow"))?;
         }
         Ok(Self {
-            value_type: input.value_type().clone(),
+            value_type: value_type.clone(),
             input_shape,
-            output_shape: result.shape().clone(),
+            output_shape: output_shape.clone(),
             reduced,
             reduced_strides,
             reduced_extents,
             reduced_points: stride,
+            contributor_square: None,
         })
+    }
+
+    /// Folds `scalar(v, v)` per contributor rather than the contributor itself.
+    fn squaring_contributors(mut self, scalar: ScalarOpKey) -> Self {
+        self.contributor_square = Some(scalar);
+        self
+    }
+
+    /// Emits the complete fold and returns its value, writing nothing.
+    ///
+    /// Separate from the serial sum's own `lower` because a staged realization
+    /// transforms the fold *inside the producing region* — the normalization
+    /// divides it, biases it, and takes its reciprocal square root before
+    /// anything is written — so a fold that could only write its own result
+    /// would force that epilogue into the consuming stage, where it would run
+    /// once per point instead of once per folded row.
+    fn fold(
+        &self,
+        context: &mut IndexAccessLoweringContext<'_>,
+        input: tiler_ir::index::TensorId,
+        kept: &[tiler_ir::index::DimensionId],
+        kept_coordinates: &[IndexExprId],
+    ) -> Result<ScalarValueId, LoweringEmitError> {
+        if self.reduced_points == 0 {
+            return self.fold_empty(context, input, kept, kept_coordinates);
+        }
+        let seed = self.read_contributor(context, input, kept, kept_coordinates, None)?;
+        if self.reduced_points == 1 {
+            // The lone contributor is the whole strict-serial value, and it is
+            // the one boundary value no combine has canonicalized. Every other
+            // path ends in the governed add, which canonicalizes its own result,
+            // so this is the only place the boundary rule has work to do.
+            apply_one(
+                context,
+                canonicalize_nan_f32_scalar_op(),
+                ScalarAttributes::empty(),
+                &[seed],
+                "reduction-result-canonicalization",
+            )
+        } else {
+            self.fold_tail(context, input, kept, kept_coordinates, seed)
+        }
+    }
+
+    /// Applies the per-contributor square, when this plan carries one.
+    fn square(
+        &self,
+        context: &mut IndexAccessLoweringContext<'_>,
+        contributor: ScalarValueId,
+    ) -> Result<ScalarValueId, LoweringEmitError> {
+        match &self.contributor_square {
+            Some(scalar) => apply_one(
+                context,
+                scalar.clone(),
+                ScalarAttributes::empty(),
+                &[contributor, contributor],
+                "reduction-contributor-square",
+            ),
+            None => Ok(contributor),
+        }
     }
 
     /// Reads one contributor at the reduced offset `tail + 1`, or at zero.
@@ -804,7 +898,8 @@ impl SumPlan {
         }
         let mut domain = kept.to_vec();
         domain.extend(tail);
-        context.read(input, &domain, &coordinates)
+        let contributor = context.read(input, &domain, &coordinates)?;
+        self.square(context, contributor)
     }
 
     /// Decodes one reduced axis coordinate from a linearized reduced offset.
@@ -863,6 +958,7 @@ impl SumPlan {
         let mut domain = kept.to_vec();
         domain.extend(reduced_dimensions.iter().copied());
         let contributor = context.read(input, &domain, &coordinates)?;
+        let contributor = self.square(context, contributor)?;
         let attributes = f32_constant_attributes(0.0_f32.to_bits())?;
         let identity = context.apply(constant_f32_scalar_op(), attributes, &[])?;
         let identity = single_result(&identity, "reduction-identity")?;
@@ -920,6 +1016,267 @@ impl SumPlan {
         })?;
         single_result(&folded, "reduction")
     }
+}
+
+/// Emits the ordered two-region realization of one `tiler::rms-norm-f32@1`
+/// occurrence.
+///
+/// **The first governed capability whose realization is a region *sequence*.**
+/// The registered law
+/// [`IndexRealizationLaw::StagedRootMeanSquareScaleF32`](tiler_ir::index::IndexRealizationLaw::StagedRootMeanSquareScaleF32)
+/// pins the chain: stage zero folds the *square* of the value operand over the
+/// declared axes, divides the fold by the folded contributor count, adds the
+/// declared bias, applies the reciprocal square root, and publishes the result;
+/// stage one reads the value operand, the weight operand, and that published
+/// value, and writes `weight * (value * published)` pointwise.
+///
+/// **Refinement compares exact canonical region identity, so this emission is
+/// the law's own order rather than an equivalent one.** Every step below is
+/// stated in the order [`SumPlan`] and the law's emitters state it — kept
+/// domain, input boundary, output boundary, fold, epilogue, write — because a
+/// different emission order is a different region and would be refused as one.
+///
+/// **Where the split falls is the law's, not a schedule choice.** The published
+/// value is read once per *point* and computed once per *folded row*, so stage
+/// zero carries the whole epilogue. Publishing the raw fold instead would put
+/// the division, the bias, and the reciprocal square root inside the pointwise
+/// pass, evaluating each once per contributor: a different scalar program.
+struct GovernedRootMeanSquareScaleF32;
+
+impl IndexAccessLoweringProvider for GovernedRootMeanSquareScaleF32 {
+    /// There is no single region realizing a staged occurrence, and saying so is
+    /// the honest answer rather than dead code: it is exactly what
+    /// `IndexRealizationLaw::realize` answers for the same law.
+    fn lower(
+        &self,
+        _context: &mut IndexAccessLoweringContext<'_>,
+    ) -> Result<(), LoweringEmitError> {
+        Err(occurrence_error("rms-scale-requires-a-region-sequence"))
+    }
+
+    fn lower_sequence(
+        &self,
+        sequence: &mut IndexAccessSequenceContext<'_>,
+    ) -> Result<(), LoweringEmitError> {
+        let plan = RootMeanSquarePlan::derive(sequence.occurrence())?;
+        sequence.stage(&[StagedInputSource::Occurrence(0)], |context| {
+            plan.emit_fold(context)
+        })?;
+        sequence.stage(
+            &[
+                StagedInputSource::Occurrence(0),
+                StagedInputSource::Occurrence(1),
+                StagedInputSource::Intermediate(0),
+            ],
+            |context| plan.emit_scale(context),
+        )
+    }
+}
+
+/// The exact geometry one root-mean-square-scale occurrence describes.
+struct RootMeanSquarePlan {
+    /// The squaring fold stage zero publishes.
+    sum: SumPlan,
+    /// Exact binary32 payload of the folded contributor count.
+    extent_bits: u32,
+    /// The declared bias, forwarded as the constant's own attribute payload.
+    eps: CanonicalValue,
+    /// Shape of the published value, which is the occurrence shape less the
+    /// reduced axes.
+    intermediate_shape: Shape,
+    /// The occurrence's common operand and result shape.
+    shape: Shape,
+    value_type: ResolvedValueType,
+}
+
+impl RootMeanSquarePlan {
+    fn derive(
+        occurrence: crate::capability::IndexAccessOccurrence<'_>,
+    ) -> Result<Self, LoweringEmitError> {
+        let ([value, weight], [result]) = (occurrence.inputs(), occurrence.results()) else {
+            return Err(occurrence_error("rms-scale-arity"));
+        };
+        if occurrence.operands() != [0, 1] {
+            return Err(occurrence_error("rms-scale-operand-binding"));
+        }
+        let expected = F32::resolved_type();
+        if value.value_type() != &expected
+            || weight.value_type() != &expected
+            || result.value_type() != &expected
+        {
+            return Err(occurrence_error("rms-scale-value-type"));
+        }
+        if value.shape() != result.shape() || weight.shape() != result.shape() {
+            return Err(occurrence_error("rms-scale-shape"));
+        }
+        // The law requires the occurrence's declared field set to be exactly the
+        // two it names, so the axes reader's tolerance for a record carrying
+        // more fields than it reads cannot silently drop the bias. A region
+        // emitted without that requirement would realize a different operation
+        // and be refused by the comparison; refusing here names the occurrence.
+        let fields = occurrence.attributes().fields();
+        if fields.len() != 2
+            || !fields.iter().all(|field| {
+                field.id() == RMS_NORM_REDUCED_AXES_ATTRIBUTE
+                    || field.id() == RMS_NORM_EPS_BITS_ATTRIBUTE
+            })
+        {
+            return Err(occurrence_error("rms-scale-attributes"));
+        }
+        let Some(eps) = occurrence.attributes().get(RMS_NORM_EPS_BITS_ATTRIBUTE) else {
+            return Err(occurrence_error("rms-scale-eps-missing"));
+        };
+        if !matches!(eps.view(), CanonicalValueView::FloatBits(_)) {
+            return Err(occurrence_error("rms-scale-eps-kind"));
+        }
+        let axes = reduction_axes(occurrence.attributes(), RMS_NORM_REDUCED_AXES_ATTRIBUTE)?;
+        let intermediate_shape = value.shape().without_axes(&axes);
+        let sum = SumPlan::for_boundaries(
+            value.value_type(),
+            value.shape(),
+            &intermediate_shape,
+            &axes,
+        )?
+        .squaring_contributors(multiply_f32_scalar_op());
+        let extent_bits = folded_extent_bits(sum.reduced_points)?;
+        Ok(Self {
+            sum,
+            extent_bits,
+            eps: eps.clone(),
+            intermediate_shape,
+            shape: result.shape().clone(),
+            value_type: expected,
+        })
+    }
+
+    /// Emits stage zero: the squared fold and the epilogue it publishes.
+    fn emit_fold(
+        &self,
+        context: &mut IndexAccessLoweringContext<'_>,
+    ) -> Result<(), LoweringEmitError> {
+        let kept = declare_kept_domain(context, &self.sum)?;
+        let kept_coordinates = dimension_expressions(context, &kept)?;
+        let input = context.input_tensor(self.value_type.clone(), self.sum.input_shape.clone())?;
+        let output =
+            context.output_tensor(self.value_type.clone(), self.sum.output_shape.clone())?;
+        let total = self.sum.fold(context, input, &kept, &kept_coordinates)?;
+        let extent = apply_one(
+            context,
+            constant_f32_scalar_op(),
+            f32_constant_attributes(self.extent_bits)?,
+            &[],
+            "rms-scale-extent-constant",
+        )?;
+        let mean = apply_one(
+            context,
+            divide_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[total, extent],
+            "rms-scale-mean",
+        )?;
+        let bias = apply_one(
+            context,
+            constant_f32_scalar_op(),
+            scalar_attributes(self.eps.clone())?,
+            &[],
+            "rms-scale-eps-constant",
+        )?;
+        let biased = apply_one(
+            context,
+            add_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[mean, bias],
+            "rms-scale-bias",
+        )?;
+        let root = apply_one(
+            context,
+            rsqrt_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[biased],
+            "rms-scale-root",
+        )?;
+        let write = context.write(output, &kept, &kept_coordinates)?;
+        context.output(write, root)
+    }
+
+    /// Emits stage one: the weighted scale over the published value.
+    fn emit_scale(
+        &self,
+        context: &mut IndexAccessLoweringContext<'_>,
+    ) -> Result<(), LoweringEmitError> {
+        let dimensions = declare_parallel_domain(context, &self.shape)?;
+        let coordinates = dimension_expressions(context, &dimensions)?;
+        // The published value is one per folded row, so it is read at the kept
+        // coordinates of this stage's own point domain rather than pointwise or
+        // once for the whole region.
+        let kept: Vec<_> = dimensions
+            .iter()
+            .zip(&self.sum.reduced)
+            .filter(|(_, reduced)| !**reduced)
+            .map(|(dimension, _)| *dimension)
+            .collect();
+        let kept_coordinates: Vec<_> = coordinates
+            .iter()
+            .zip(&self.sum.reduced)
+            .filter(|(_, reduced)| !**reduced)
+            .map(|(coordinate, _)| *coordinate)
+            .collect();
+        let value_tensor = context.input_tensor(self.value_type.clone(), self.shape.clone())?;
+        let weight_tensor = context.input_tensor(self.value_type.clone(), self.shape.clone())?;
+        let root_tensor =
+            context.input_tensor(self.value_type.clone(), self.intermediate_shape.clone())?;
+        let element = context.read(value_tensor, &dimensions, &coordinates)?;
+        let weight_element = context.read(weight_tensor, &dimensions, &coordinates)?;
+        let root = context.read(root_tensor, &kept, &kept_coordinates)?;
+        let scaled = apply_one(
+            context,
+            multiply_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[element, root],
+            "rms-scale-scaled",
+        )?;
+        let weighted = apply_one(
+            context,
+            multiply_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[weight_element, scaled],
+            "rms-scale-weighted",
+        )?;
+        let output = context.output_tensor(self.value_type.clone(), self.shape.clone())?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, weighted)
+    }
+}
+
+/// Returns the exact binary32 payload of the folded contributor count.
+///
+/// The pinned reference divides by the extent itself — never by a reciprocal,
+/// and therefore never by a divisor that is merely close to it. Above the
+/// binary32 significand's width the integers are not all representable, so a
+/// count whose nearest binary32 is not the count would make the emitted division
+/// a different function from the one the operation pins; it is refused rather
+/// than rounded. The representability test is integer-only, so it does not
+/// depend on the rounding it exists to detect: an integer is a binary32 value
+/// exactly when its odd part fits in the twenty-four-bit significand.
+///
+/// An empty fold is refused because it has no first contributor to seed at, so
+/// the reference's own fold is undefined before the division by zero is reached.
+/// This is the same derivation the registered law states, restated here because
+/// the provider must refuse what the law refuses rather than emit a region the
+/// comparison would then reject for a reason naming the wrong authority.
+fn folded_extent_bits(points: u64) -> Result<u32, LoweringEmitError> {
+    if points == 0 {
+        return Err(occurrence_error("rms-scale-empty-fold"));
+    }
+    if points >> points.trailing_zeros() >= 1 << 24 {
+        return Err(occurrence_error("rms-scale-extent-not-exact"));
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the representability test above proves this conversion is exact"
+    )]
+    let extent = points as f32;
+    Ok(extent.to_bits())
 }
 
 /// Emits the region realizing one `tiler::strict-tensor-contraction-f32@1`
@@ -1674,8 +2031,16 @@ fn f32_format() -> TypeKey {
 }
 
 /// Reads the strictly ascending reduction axes an occurrence declares.
-fn reduction_axes(attributes: &OperationAttributes) -> Result<Vec<Axis>, LoweringEmitError> {
-    let Some(value) = attributes.get(REDUCTION_AXES_ATTRIBUTE) else {
+///
+/// The field identifier is a parameter because attribute identifiers are
+/// record-local: the strict serial sum numbers its axes field one and so does
+/// the normalization, and a reader hard-coding either would build the other
+/// family's record correctly only by that coincidence.
+fn reduction_axes(
+    attributes: &OperationAttributes,
+    field: AttributeFieldId,
+) -> Result<Vec<Axis>, LoweringEmitError> {
+    let Some(value) = attributes.get(field) else {
         return Err(occurrence_error("sum-axes-missing"));
     };
     let CanonicalValueView::Sequence(values) = value.view() else {
@@ -1717,7 +2082,8 @@ mod tests {
     use std::sync::Arc;
     use tiler_ir::index::{
         DomainRole, IndexInteger, IndexRefinementSubject, NumericalContractIdentity,
-        ScalarAttributes, add_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+        ScalarAttributes, add_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
+        multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
     };
     use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
@@ -1726,11 +2092,12 @@ mod tests {
         CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue, ContractionIndex,
         ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
         OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
-        REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ResolvedValueType, STRICT_AFFINE_CODES_ROLE,
-        STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgramBuilder,
-        StrictAffineU4, TypeKey, U4, add_f32_op, broadcast_f32_op, constant_f32_op,
-        dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op, strict_serial_sum_f32_op,
-        strict_tensor_contraction_f32_op,
+        REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+        ReindexForm, ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+        STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgramBuilder, StrictAffineU4, TypeKey, U4,
+        add_f32_op, broadcast_f32_op, constant_f32_op, dequantize_strict_affine_op,
+        multiply_f32_op, reindex_f32_op, rms_norm_f32_eps_attribute, rms_norm_f32_op,
+        strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
     };
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2010,6 +2377,25 @@ mod tests {
         .unwrap()
     }
 
+    /// The normalization's own two-field attribute record.
+    ///
+    /// Its field identifiers are the family's, not the serial sum's: attribute
+    /// identifiers are record-local and both families number an axes field one.
+    fn rms_norm_attributes(axes: &[u32], eps_bits: u32) -> OperationAttributes {
+        OperationAttributes::new([
+            CanonicalField::new(
+                RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                CanonicalValue::sequence(axes.iter().copied().map(CanonicalValue::unsigned_u32))
+                    .unwrap(),
+            ),
+            CanonicalField::new(
+                RMS_NORM_EPS_BITS_ATTRIBUTE,
+                rms_norm_f32_eps_attribute(eps_bits),
+            ),
+        ])
+        .unwrap()
+    }
+
     /// Refines one occurrence through the governed registry.
     fn refine(
         operation: OpKey,
@@ -2075,6 +2461,90 @@ mod tests {
             .unwrap_or_else(|error| panic!("governed lowering must refine: {error:?}"))
             .into_refined()
             .expect("governed lowering discharges every index-domain predicate")
+    }
+
+    /// The normalization's two-region realization refines through the ordinary
+    /// path, and both stages are the ones the registered law requires.
+    ///
+    /// **What this moves.** `tiler::rms-norm-f32@1` carried a registered law and
+    /// no provider, so `refine_index_region` reached a resolved capability that
+    /// emitted nothing — the wall
+    /// `crates/tiler-compiler/tests/two_region_occurrence_lowering.rs` records
+    /// with a counting fixture. The governed profile now emits the chain, so the
+    /// family has refinement evidence.
+    ///
+    /// **Every assertion below is about the chain rather than about success.**
+    /// A refinement that merely returned would be consistent with a one-region
+    /// realization certified against the wrong law, so the stage count, the one
+    /// handed value's producer, consumer, and reduced shape, the two stages'
+    /// genuinely different reached scalar authorities, and the operand bindings
+    /// naming two different stages are each checked. The reached sets are the
+    /// sharpest of these: the fold reaches the square, the combine, the
+    /// division, the bias, and the root, while the pass reaches the multiply
+    /// alone — so a provider that put the epilogue in the pass would fail here
+    /// even though its arithmetic composes to the same values.
+    #[test]
+    fn the_governed_normalization_lowering_refines_its_two_stage_occurrence() {
+        let shape = Shape::from_dims([2, 4]);
+        let refinement = refine(
+            rms_norm_f32_op(),
+            vec![
+                OccurrenceOperand::new(OccurrenceValueId(0), f32_type(), shape.clone()),
+                OccurrenceOperand::new(OccurrenceValueId(1), f32_type(), shape.clone()),
+            ],
+            vec![OccurrenceResult::new(f32_type(), shape)],
+            rms_norm_attributes(&[1], 1.0e-6_f32.to_bits()),
+        );
+
+        let realization = refinement.realization();
+        assert_eq!(realization.stage_count(), 2);
+        let [intermediate] = realization.intermediates() else {
+            panic!("a two-stage chain hands exactly one value on")
+        };
+        assert_eq!(intermediate.producer(), 0);
+        assert_eq!(intermediate.consumer(), 1);
+        assert_eq!(
+            intermediate.shape(),
+            &Shape::from_dims([2]),
+            "the published value is one per folded row"
+        );
+        assert_eq!(intermediate.value_type(), &f32_type());
+
+        let authorities = refinement.content().scalar_authorities();
+        assert_eq!(authorities.len(), 2);
+        assert_eq!(
+            authorities[0].reached_operations(),
+            // Canonical key order, which is what a reached set is retained in.
+            [
+                add_f32_scalar_op(),
+                constant_f32_scalar_op(),
+                divide_f32_scalar_op(),
+                multiply_f32_scalar_op(),
+                rsqrt_f32_scalar_op(),
+            ],
+            "the fold stage carries the square, the combine, and the whole epilogue"
+        );
+        assert_eq!(
+            authorities[1].reached_operations(),
+            [multiply_f32_scalar_op()],
+            "the pass stage carries the two products and nothing else"
+        );
+
+        assert_eq!(
+            refinement
+                .operand_bindings()
+                .iter()
+                .map(|binding| (binding.operand(), binding.stage()))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (0, 1), (1, 1)],
+            "the value operand is read by both stages — the fold squares it and \
+             the pass scales it — while the weight is the pass's alone"
+        );
+        assert_eq!(refinement.result_bindings().len(), 1);
+        assert!(
+            refinement.single_region().is_none(),
+            "no single-region view of a chain is offered"
+        );
     }
 
     #[test]
