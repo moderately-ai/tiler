@@ -21,7 +21,7 @@
     "system": "Darwin"
   },
   "imported_probe": "online_softmax_bound_probe.py",
-  "imported_probe_sha256": "4ae534b8a203f61f9840f42de21f493ee701f079c49725c7dc871657245be1ea",
+  "imported_probe_sha256": "0ba915749bc09bdc325fbe110e24e5b6d4b669f386dd030c3937ec6bfcf0fb97",
   "oracle": {
     "digits": 120,
     "library": "decimal (Python standard library)"
