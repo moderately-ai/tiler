@@ -17,9 +17,9 @@
 
 use crate::schedule::{
     Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, LogicalAccess, NumericalRealization,
-    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32Node, ReductionPass, ReductionTopology,
-    ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole, VerifiedScheduledRegion,
-    contributor_count,
+    OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16Node, PointwiseF32Expression,
+    PointwiseF32Node, ReductionPass, ReductionTopology, ResourceRequirements, ScalarProgram,
+    ScheduledRegion, TensorRole, VerifiedScheduledRegion, contributor_count,
 };
 use crate::shape::Shape;
 
@@ -30,6 +30,7 @@ use super::model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BufferAccess, BufferParameter, Builtin,
     CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelData, KernelType, MemoryScope,
     PackedExtractOp, SerialLoopSpec, StagingParameter, UnaryOp, VerifiedKernel,
+    region_element_type,
 };
 use super::verify::{access_elements, boundary_accesses};
 
@@ -650,12 +651,17 @@ fn emit(
     // rather than being copied from the access: these families read dense
     // values, and `verify_signature` compares the two, so copying it would make
     // that comparison agree with itself instead of checking anything.
+    //
+    // The element type is derived from the region's scalar program through the
+    // same authority `verify_signature` reads, so a widened dtype cannot declare
+    // one type here and be checked against another there.
+    let element_type = region_element_type(plan.scalar);
     let mut read_buffers = Vec::with_capacity(plan.reads.len());
     for (read, elements) in plan.reads.iter().zip(&plan.read_elements) {
         read_buffers.push(builder.declare_buffer(BufferParameter {
             tensor: read.tensor,
             component_role: None,
-            element_type: KernelType::F32,
+            element_type,
             address_space: AddressSpace::Device,
             access: BufferAccess::Read,
             element_count: *elements,
@@ -664,7 +670,7 @@ fn emit(
     let write_buffer = builder.declare_buffer(BufferParameter {
         tensor: plan.write_tensor,
         component_role: None,
-        element_type: KernelType::F32,
+        element_type,
         address_space: AddressSpace::Device,
         access: BufferAccess::Write,
         element_count: plan.write_elements,
@@ -716,6 +722,24 @@ fn emit_guarded(
                 inputs.push(builder.load(*buffer, invocation, read.bounds)?);
             }
             let mapped = emit_pointwise(builder, expression, &inputs)?;
+            builder.store(
+                write_buffer,
+                invocation,
+                mapped,
+                plan.write_bounds,
+                plan.ownership,
+            )
+        }
+        // The same shape at the other width, and deliberately a separate arm
+        // rather than a shared one parameterized by an operation table: the two
+        // node vocabularies are different sets, so one emitter would have to
+        // decide what an `f32`-only node means at `bf16`.
+        ScalarProgram::PointwiseBf16(expression) => {
+            let mut inputs = Vec::with_capacity(read_buffers.len());
+            for (buffer, read) in read_buffers.iter().zip(plan.reads) {
+                inputs.push(builder.load(*buffer, invocation, read.bounds)?);
+            }
+            let mapped = emit_pointwise_bf16(builder, expression, &inputs)?;
             builder.store(
                 write_buffer,
                 invocation,
@@ -942,10 +966,16 @@ fn emit_cooperative(
     let fold = reduction_fold(plan.scalar).ok_or(KernelLoweringError::UnsupportedRegion {
         rule: "cooperative-scalar-program",
     })?;
+    // Derived from the scalar program for the reason `emit` states. Every
+    // cooperative region is a reduction and every reduction is `f32` today, so
+    // this resolves to `F32` at present; deriving it keeps the declaration and
+    // `verify_signature`'s expectation reading one authority rather than two
+    // literals that a later widening would have to move together.
+    let element_type = region_element_type(plan.scalar);
     let read_buffer = builder.declare_buffer(BufferParameter {
         tensor: read.tensor,
         component_role: None,
-        element_type: KernelType::F32,
+        element_type,
         address_space: AddressSpace::Device,
         access: BufferAccess::Read,
         element_count: plan.read_elements.first().copied().unwrap_or(0),
@@ -953,7 +983,7 @@ fn emit_cooperative(
     let write_buffer = builder.declare_buffer(BufferParameter {
         tensor: plan.write_tensor,
         component_role: None,
-        element_type: KernelType::F32,
+        element_type,
         address_space: AddressSpace::Device,
         access: BufferAccess::Write,
         element_count: plan.write_elements,
@@ -1333,6 +1363,7 @@ const fn reduction_fold(program: &ScalarProgram) -> Option<ReductionFold> {
             combiner: ReductionCombiner::F32Maximum,
         }),
         ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictTensorContraction { .. } => None,
     }
@@ -1537,6 +1568,71 @@ fn emit_pointwise(
         values.push(value);
     }
     pointwise_value(&values, expression.root())
+}
+
+/// Emits the scalar body of a `bf16` pointwise expression over its loaded inputs.
+///
+/// The `f32` emission's structure, with two deliberate differences that are the
+/// family's rather than this lowering's.
+///
+/// **Every arithmetic result is canonicalized with
+/// [`ConvertOp::CanonicalizeBf16Nan`], never the `f32` conversion.** The two
+/// install different-width patterns, and `CanonicalizeF32Nan` is not even
+/// spellable over a `bf16` value — its `source_type` is `F32`, so the builder
+/// refuses it with a type mismatch. That is what makes "the BF16 canonicalization
+/// rather than `CanonicalizeF32Nan`" a property of the vocabulary and not a rule
+/// this function has to be trusted to follow.
+///
+/// **The constant is a [`KernelConstant::Bf16Bits`], carrying the node's own
+/// sixteen-bit payload unchanged.** A constant is not an arithmetic result, so it
+/// is deliberately *not* canonicalized: `tiler::constant-bf16@1` declares its
+/// payload preserved exactly, and the family's canonicalization applies to
+/// arithmetic results alone.
+fn emit_pointwise_bf16(
+    builder: &mut KernelBuilder,
+    expression: &PointwiseBf16Expression,
+    inputs: &[KernelValueId],
+) -> Result<KernelValueId, KernelBuildError> {
+    let mut values = Vec::with_capacity(expression.nodes().len());
+    for node in expression.nodes() {
+        let value = match node {
+            PointwiseBf16Node::Input { ordinal } => usize::try_from(ordinal.get())
+                .ok()
+                .and_then(|ordinal| inputs.get(ordinal).copied())
+                .ok_or(KernelBuildError::InvalidHandle {
+                    entity: super::error::KernelEntityKind::Buffer,
+                })?,
+            PointwiseBf16Node::Constant { bits } => {
+                builder.constant(KernelConstant::Bf16Bits(*bits))?
+            }
+            PointwiseBf16Node::Add { lhs, rhs } => {
+                let lhs = pointwise_bf16_value(&values, *lhs)?;
+                let rhs = pointwise_bf16_value(&values, *rhs)?;
+                let result = builder.binary(BinaryOp::Bf16Add, lhs, rhs)?;
+                builder.convert(ConvertOp::CanonicalizeBf16Nan, result)?
+            }
+            PointwiseBf16Node::Multiply { lhs, rhs } => {
+                let lhs = pointwise_bf16_value(&values, *lhs)?;
+                let rhs = pointwise_bf16_value(&values, *rhs)?;
+                let result = builder.binary(BinaryOp::Bf16Multiply, lhs, rhs)?;
+                builder.convert(ConvertOp::CanonicalizeBf16Nan, result)?
+            }
+        };
+        values.push(value);
+    }
+    pointwise_bf16_value(&values, expression.root())
+}
+
+fn pointwise_bf16_value(
+    values: &[KernelValueId],
+    node: crate::schedule::PointwiseBf16NodeId,
+) -> Result<KernelValueId, KernelBuildError> {
+    usize::try_from(node.index())
+        .ok()
+        .and_then(|index| values.get(index).copied())
+        .ok_or(KernelBuildError::InvalidHandle {
+            entity: super::error::KernelEntityKind::Value,
+        })
 }
 
 fn pointwise_value(

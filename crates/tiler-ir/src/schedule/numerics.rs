@@ -209,6 +209,31 @@ pub struct NumericalRealization {
     /// Stable key of the governing numerical contract.
     pub profile_key: &'static str,
     /// Canonical arithmetic NaN bit pattern for produced values.
+    ///
+    /// **The pattern of the region's own arithmetic type, zero-extended into
+    /// this field.** The field is thirty-two bits wide and a `bf16` canonical
+    /// arithmetic NaN is the sixteen-bit
+    /// [`CANONICAL_BF16_ARITHMETIC_NAN_BITS`](crate::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+    /// so a `bf16` region carries `0x0000_7fc0` here — the payload in the low
+    /// sixteen bits and zeros above it — while an `f32` region carries the whole
+    /// [`CANONICAL_F32_ARITHMETIC_NAN_BITS`](crate::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS).
+    ///
+    /// Zero-extension rather than a widened field, deliberately. Widening this
+    /// field to sixty-four bits would move every schedule identity and every
+    /// kernel identity ever encoded — an identity-domain step paid to carry
+    /// information no reading needs, since the *arithmetic type* that fixes how
+    /// many of these bits are significant is already a total function of the
+    /// region's scalar program
+    /// (`region_arithmetic_type`). The reading is checked rather than assumed:
+    /// the intrinsic schedule verifier requires a `bf16` region to declare
+    /// exactly this value, so a region stating an `f32` payload under a `bf16`
+    /// program is refused instead of reaching a lowering that would canonicalize
+    /// to a pattern the format cannot hold.
+    ///
+    /// `carry-bf16-through-the-artifact-encoding-and-identity` reaches the same
+    /// question at the artifact's own delivered-realization record and defers it
+    /// to `redesign-the-delivered-realization-record-from-typed-evidence`; this
+    /// answer is the one that layer must stay consistent with.
     pub canonical_arithmetic_nan_bits: u32,
     /// Treatment of subnormal inputs.
     pub input_subnormals: SubnormalMode,

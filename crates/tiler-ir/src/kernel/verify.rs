@@ -29,7 +29,7 @@ use crate::schedule::{
 use super::error::KernelDiagnostic;
 use super::model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BufferAccess, Builtin, CompareOp, ExecutionScope,
-    KernelConstant, KernelData, KernelType, MemoryScope, OperationKind,
+    KernelConstant, KernelData, KernelType, MemoryScope, OperationKind, region_element_type,
 };
 
 /// Returns the number of addressable elements one scheduled access spans.
@@ -235,26 +235,34 @@ fn verify_signature(
         .ok_or(KernelDiagnostic::BufferContract)?;
     // The strict-affine signature is fixed by its three named components; the
     // reduction families read one contributor domain. A pointwise region reads
-    // one dense `f32` tensor per expression leaf, so its expected signature is
-    // as wide as its own access list rather than a constant — and the schedule
-    // verifier already proved that width equals the expression's input count.
+    // one dense tensor per expression leaf, so its expected signature is as wide
+    // as its own access list rather than a constant — and the schedule verifier
+    // already proved that width equals the expression's input count.
+    //
+    // The element type comes from `region_element_type`, the same authority the
+    // canonical lowering declares its buffers from, so a widened dtype cannot be
+    // declared as one type and checked against another. The *arities* stay
+    // written out per family, because an arity read back from the region would
+    // agree with whatever the region declared.
+    let element_type = region_element_type(&schedule.index.scalar_program);
     let expected_types: Vec<KernelType> = match schedule.index.scalar_program {
         crate::schedule::ScalarProgram::StrictAffineU4Dequantize { .. } => {
             vec![KernelType::U8, KernelType::F32, KernelType::U8]
         }
-        crate::schedule::ScalarProgram::PointwiseF32(_) => vec![KernelType::F32; reads.len()],
+        crate::schedule::ScalarProgram::PointwiseF32(_)
+        | crate::schedule::ScalarProgram::PointwiseBf16(_) => vec![element_type; reads.len()],
         crate::schedule::ScalarProgram::StrictSerialSum { .. }
         | crate::schedule::ScalarProgram::SquaredSerialSum { .. }
         | crate::schedule::ScalarProgram::StrictSerialMaximum { .. }
         | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
-            vec![KernelType::F32]
+            vec![element_type]
         }
         // Two, stated as two rather than as `reads.len()`: the count is the
         // contraction family's own arity, so a region declaring some other
         // number of reads must fail this comparison instead of agreeing with
         // itself.
         crate::schedule::ScalarProgram::StrictTensorContraction { .. } => {
-            vec![KernelType::F32, KernelType::F32]
+            vec![element_type, element_type]
         }
     };
     let expected_elements = reads
@@ -276,7 +284,7 @@ fn verify_signature(
         || write_buffer.tensor != write.tensor
         || write_buffer.component_role != write.component_role
         || write_buffer.access != BufferAccess::Write
-        || write_buffer.element_type != KernelType::F32
+        || write_buffer.element_type != element_type
         || write_buffer.element_count != access_elements(write, schedule)?
     {
         return Err(KernelDiagnostic::BufferContract);

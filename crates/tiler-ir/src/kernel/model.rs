@@ -105,10 +105,14 @@ pub enum KernelType {
     /// A bfloat16 value: binary32's sign and exponent over a seven-bit
     /// significand, in two bytes.
     ///
-    /// Admitted as a *type*, not as a lowerable one. Nothing in this workspace
-    /// produces a `Bf16`-typed value yet, and a backend that cannot yet lower it
-    /// refuses it by name rather than spelling it, so the widened vocabulary
-    /// cannot make an unimplemented path look reachable.
+    /// A `Bf16`-typed value is now produced: a region whose scalar program is
+    /// [`ScalarProgram::PointwiseBf16`](crate::schedule::ScalarProgram::PointwiseBf16)
+    /// lowers to a kernel whose buffers, constants, arithmetic, and NaN
+    /// canonicalization are all `Bf16`. What is still absent is a *backend* that
+    /// can emit one: `crates/tiler-metal` refuses this type by name rather than
+    /// spelling `bfloat`, because it carries no BF16 constant reinterpretation,
+    /// canonicalization helper, or dispatch route. Verified and emittable are
+    /// separate claims, and only the first holds here.
     Bf16,
 }
 
@@ -148,6 +152,34 @@ pub enum AddressSpace {
     InvocationPrivate,
     /// Read-only memory constant for the whole dispatch.
     Constant,
+}
+
+/// The element type of the boundary values one scheduled region reads and writes.
+///
+/// The **one** derivation both the canonical lowering and `verify_signature`
+/// read, so a kernel's declared buffer types cannot drift from the types the
+/// verifier expects. Both used to name [`KernelType::F32`] at each site, which
+/// was correct only while every region was `f32`.
+///
+/// It answers for the region's *dense boundary* values. The strict-affine decode
+/// is the one program whose reads are not all one type — its signature is fixed
+/// at `[U8, F32, U8]` by `verify_signature`'s own arm and its lowering declares
+/// each buffer explicitly — so what this states for that program is the type of
+/// its written value, which is the `f32` its scale multiply produces.
+///
+/// Exhaustive, so a new scalar program states its element type here rather than
+/// inheriting whichever one it resembles.
+pub(super) const fn region_element_type(program: &crate::schedule::ScalarProgram) -> KernelType {
+    match program {
+        crate::schedule::ScalarProgram::PointwiseBf16(_) => KernelType::Bf16,
+        crate::schedule::ScalarProgram::PointwiseF32(_)
+        | crate::schedule::ScalarProgram::StrictAffineU4Dequantize { .. }
+        | crate::schedule::ScalarProgram::StrictSerialSum { .. }
+        | crate::schedule::ScalarProgram::SquaredSerialSum { .. }
+        | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. }
+        | crate::schedule::ScalarProgram::StrictTensorContraction { .. }
+        | crate::schedule::ScalarProgram::StrictSerialMaximum { .. } => KernelType::F32,
+    }
 }
 
 impl AddressSpace {
@@ -284,6 +316,24 @@ pub enum KernelConstant {
     Index(u64),
     /// An `f32` constant given by its exact bit pattern.
     F32Bits(u32),
+    /// A `bf16` constant given by its exact bit pattern.
+    ///
+    /// **Sixteen bits, not a `u32` carrying a narrow value.** A `bf16` constant
+    /// declaring a 32-bit payload is a value the format has no encoding for, and
+    /// making the payload the format's own width refuses it at the type rather
+    /// than at a check some producer could route around:
+    ///
+    /// ```compile_fail,E0308
+    /// use tiler_ir::kernel::KernelConstant;
+    /// // An `f32` bit pattern is not a `bf16` payload.
+    /// let _ = KernelConstant::Bf16Bits(1.0_f32.to_bits());
+    /// ```
+    ///
+    /// The narrower payload is also what keeps the identity encoding honest: the
+    /// constant is encoded at its own width, so two `bf16` constants that differ
+    /// nowhere in sixteen bits cannot be given distinct identities by padding
+    /// nobody can observe.
+    Bf16Bits(u16),
 }
 
 impl KernelConstant {
@@ -294,6 +344,7 @@ impl KernelConstant {
             Self::Bool(_) => KernelType::Bool,
             Self::Index(_) => KernelType::Index,
             Self::F32Bits(_) => KernelType::F32,
+            Self::Bf16Bits(_) => KernelType::Bf16,
         }
     }
 
@@ -302,7 +353,7 @@ impl KernelConstant {
     pub const fn as_index(self) -> Option<u64> {
         match self {
             Self::Index(value) => Some(value),
-            Self::Bool(_) | Self::F32Bits(_) => None,
+            Self::Bool(_) | Self::F32Bits(_) | Self::Bf16Bits(_) => None,
         }
     }
 }
@@ -356,6 +407,23 @@ pub enum BinaryOp {
     /// obligation, because a target that flushed a subnormal operand before
     /// comparing would select a different one.
     F32Maximum,
+    /// Ordered `bf16` addition.
+    ///
+    /// A construct of its own rather than [`Self::F32Add`] over `bf16` operands,
+    /// because the operand type is part of an operation's identity: this one
+    /// realizes `tiler::add-bf16@1`, which rounds once to eight significand bits
+    /// and declares contraction, fused multiply-add, and reassociation all
+    /// forbidden. An emitter handed one construct for both widths would have to
+    /// reconstruct the width from its operands, which is exactly the inference
+    /// this vocabulary exists to remove.
+    Bf16Add,
+    /// Ordered `bf16` multiplication.
+    ///
+    /// `tiler::multiply-bf16@1`, under the same separation [`Self::Bf16Add`]
+    /// states. There is deliberately no `bf16` division, maximum, or fused form
+    /// beside the pair: no registered `bf16` operation means one, so a construct
+    /// here would name an obligation nothing states.
+    Bf16Multiply,
 }
 
 impl BinaryOp {
@@ -381,6 +449,14 @@ impl BinaryOp {
             // kernel identity domain does not step. A reader that reaches `0x09`
             // is reading a kernel the earlier vocabulary could not express.
             Self::F32Maximum => 0x09,
+            // Appended for the same reason and with the same consequence: `0x01`
+            // through `0x09` keep their meanings and every field keeps its
+            // position, so no previously encodable kernel's bytes move and the
+            // kernel identity domain does not step. A reader that reaches `0x0a`
+            // or `0x0b` is reading a kernel the earlier vocabulary could not
+            // express — no earlier kernel could hold a `bf16` operand at all.
+            Self::Bf16Add => 0x0a,
+            Self::Bf16Multiply => 0x0b,
         }
     }
 
@@ -394,6 +470,7 @@ impl BinaryOp {
             Self::F32Add | Self::F32Multiply | Self::F32Divide | Self::F32Maximum => {
                 KernelType::F32
             }
+            Self::Bf16Add | Self::Bf16Multiply => KernelType::Bf16,
             Self::I32Subtract => KernelType::I32,
         }
     }
@@ -532,6 +609,24 @@ pub enum ConvertOp {
     U8ToI32,
     /// Exactly converts an I32 in `-255..=255` into F32.
     I32ToF32,
+    /// Replaces a `bf16` NaN result with the realization's canonical `bf16` NaN.
+    ///
+    /// **A conversion of its own, not [`Self::CanonicalizeF32Nan`] at another
+    /// width.** The two write different bit patterns into different-width
+    /// values, and the payload each installs comes from the same field: the
+    /// kernel's
+    /// [`NumericalRealization::canonical_arithmetic_nan_bits`], read as this
+    /// region's own arithmetic type's pattern zero-extended into thirty-two
+    /// bits. A `bf16` region declaring an `f32` payload is refused by the
+    /// intrinsic schedule verifier, so the low sixteen bits this construct
+    /// installs are the whole declared pattern rather than a truncation.
+    ///
+    /// It is *not* a narrowing conversion between the two formats: no value
+    /// crosses a width here. [ADR
+    /// 0091](../../../../docs/decisions/0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md)
+    /// owns the directional BF16/binary32 conversion families, and neither is
+    /// registered or spellable in this vocabulary.
+    CanonicalizeBf16Nan,
 }
 
 impl ConvertOp {
@@ -540,6 +635,11 @@ impl ConvertOp {
             Self::CanonicalizeF32Nan => 0x01,
             Self::U8ToI32 => 0x02,
             Self::I32ToF32 => 0x03,
+            // Appended, like `BinaryOp::Bf16Add`: `0x01` through `0x03` keep
+            // their meanings and every field keeps its position, so no
+            // previously encodable kernel's bytes move and the kernel identity
+            // domain does not step.
+            Self::CanonicalizeBf16Nan => 0x04,
         }
     }
 
@@ -550,6 +650,7 @@ impl ConvertOp {
             Self::CanonicalizeF32Nan => KernelType::F32,
             Self::U8ToI32 => KernelType::U8,
             Self::I32ToF32 => KernelType::I32,
+            Self::CanonicalizeBf16Nan => KernelType::Bf16,
         }
     }
 
@@ -559,6 +660,7 @@ impl ConvertOp {
         match self {
             Self::U8ToI32 => KernelType::I32,
             Self::CanonicalizeF32Nan | Self::I32ToF32 => KernelType::F32,
+            Self::CanonicalizeBf16Nan => KernelType::Bf16,
         }
     }
 }
@@ -1604,6 +1706,16 @@ fn push_constant(bytes: &mut Vec<u8>, value: KernelConstant) {
             bytes.push(0x03);
             bytes.extend_from_slice(&pattern.to_be_bytes());
         }
+        // Appended: `0x01` through `0x03` keep their meanings and their payload
+        // widths, so no previously encodable kernel's bytes move. Injectivity
+        // survives the two float payloads having different widths because the
+        // tag precedes the payload and fixes it — a decoder at `0x04` reads two
+        // bytes and at `0x03` reads four, so no `bf16` constant's encoding is a
+        // prefix or a re-reading of an `f32` one.
+        KernelConstant::Bf16Bits(pattern) => {
+            bytes.push(0x04);
+            bytes.extend_from_slice(&pattern.to_be_bytes());
+        }
     }
 }
 
@@ -1907,6 +2019,7 @@ fn constant_encoded_len(value: KernelConstant) -> usize {
         KernelConstant::Bool(_) => 1,
         KernelConstant::Index(index) => size_of_val(&index),
         KernelConstant::F32Bits(pattern) => size_of_val(&pattern),
+        KernelConstant::Bf16Bits(pattern) => size_of_val(&pattern),
     })
 }
 

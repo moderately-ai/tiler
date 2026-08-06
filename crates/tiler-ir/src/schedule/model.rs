@@ -20,6 +20,7 @@ use super::numerics::{
     NumericalRealization, SubnormalFreedom, SubnormalMode, ValueDomainProvenance,
 };
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
+use super::pointwise_bf16::{PointwiseBf16Expression, PointwiseBf16Node};
 use super::synchronization::{
     SynchronizationPlacement, SynchronizationPoint, SynchronizationSubject, required_subject,
 };
@@ -285,6 +286,7 @@ pub struct OwnershipProof {
 /// fn is_reduction(program: &ScalarProgram) -> bool {
 ///     match program {
 ///         ScalarProgram::PointwiseF32(_) => false,
+///         ScalarProgram::PointwiseBf16(_) => false,
 ///         ScalarProgram::StrictAffineU4Dequantize { .. } => false,
 ///         ScalarProgram::StrictSerialSum { .. }
 ///         | ScalarProgram::SquaredSerialSum { .. }
@@ -305,6 +307,24 @@ pub struct OwnershipProof {
 pub enum ScalarProgram {
     /// An exact physical IEEE-754 binary32 pointwise expression.
     PointwiseF32(PointwiseF32Expression),
+    /// An exact physical `bf16` pointwise expression.
+    ///
+    /// A variant of its own rather than a width field on [`Self::PointwiseF32`],
+    /// and the separation is the same one
+    /// [`PointwiseBf16Expression`](super::PointwiseBf16Expression) states: the
+    /// two vocabularies are different node sets, their constants are different
+    /// widths, and the arithmetic each names belongs to a different registered
+    /// operation family. Every consumer that classifies a region by dtype —
+    /// the boundary carrier, the kernel signature, the emitted arithmetic —
+    /// therefore decides on the variant rather than on a field it could forget
+    /// to read.
+    ///
+    /// The region's own
+    /// [`NumericalRealization::canonical_arithmetic_nan_bits`](super::NumericalRealization::canonical_arithmetic_nan_bits)
+    /// must carry the `bf16` canonical arithmetic NaN payload zero-extended into
+    /// the 32-bit field, which the intrinsic verifier requires rather than
+    /// assumes.
+    PointwiseBf16(PointwiseBf16Expression),
     /// Strict per-tensor affine U4-to-F32 dequantization.
     ///
     /// Codes use packed U4 in LSB-first, zero-tail U8 carriers; scale is an
@@ -991,6 +1011,12 @@ pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFr
             SubnormalFreedom::StrictAffineNormalScaleDecode
         }
         ScalarProgram::PointwiseF32(_)
+        // Nothing bounds a dense `bf16` payload away from the subnormal range
+        // either, and the one freedom this vocabulary states is explicitly
+        // `f32`-only: `SubnormalFreedom::discharges` answers `false` for
+        // `ArithmeticType::Bf16`, because the decode derivation rests on `f32`'s
+        // exponent range. `Unproven` is therefore the only honest answer here.
+        | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
@@ -1000,6 +1026,35 @@ pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFr
         // changed, so nothing here is proved and `Unproven` is the honest answer
         // rather than a discharge this variant has not earned.
         | ScalarProgram::StrictSerialMaximum { .. } => SubnormalFreedom::Unproven,
+    }
+}
+
+/// The arithmetic type one scalar program's own operations are performed at.
+///
+/// The **one** derivation of a region's width, read by the schedule verifier's
+/// accumulation gates and by the structured-kernel signature. Both used to
+/// compare against `F32` directly, which was correct only while every program was
+/// `f32`; a hard-coded width is exactly the check that keeps passing for the
+/// wrong reason once a second one exists.
+///
+/// It answers for the *arithmetic*, not for every value a region touches: the
+/// strict-affine decode loads `u8` codes and a `u8` zero point, and the only
+/// arithmetic it performs after the exact widening is the `f32` multiply by its
+/// scale. That is why it is not a boundary-carrier derivation — `boundary_carrier`
+/// in the compiler is, and it refuses the decode rather than answering for it.
+///
+/// Exhaustive, so a new scalar program states its own width here instead of
+/// inheriting whichever one it resembles.
+pub(super) const fn region_arithmetic_type(program: &ScalarProgram) -> ArithmeticType {
+    match program {
+        ScalarProgram::PointwiseBf16(_) => ArithmeticType::Bf16,
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::StrictAffineU4Dequantize { .. }
+        | ScalarProgram::StrictSerialSum { .. }
+        | ScalarProgram::SquaredSerialSum { .. }
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+        | ScalarProgram::StrictTensorContraction { .. }
+        | ScalarProgram::StrictSerialMaximum { .. } => ArithmeticType::F32,
     }
 }
 
@@ -1219,6 +1274,22 @@ const TAG_SCALAR_TENSOR_CONTRACTION: u8 = 0x27;
 /// domain does not step. A reader that reaches `0x28` is reading a region the
 /// earlier vocabulary could not express.
 const TAG_SCALAR_SERIAL_MAXIMUM: u8 = 0x28;
+/// Scalar-program tag of the physical `bf16` pointwise expression.
+///
+/// Appended for the same reason and with the same consequence as `0x26` through
+/// `0x28`: `0x22` through `0x28` keep their meanings and their field positions,
+/// so no previously encodable region's bytes move and the schedule identity
+/// domain does not step. A reader that reaches `0x29` is reading a region the
+/// earlier vocabulary could not express — no `f32` region can carry this tag,
+/// because the variant it names holds a `bf16` expression.
+///
+/// Its node payloads are written by [`push_pointwise_bf16_node`], a separate
+/// encoder from the `f32` one. The two node tag spaces overlap deliberately and
+/// harmlessly: a node run is only ever read inside the scalar-program variant
+/// that framed it, so `0x03` under `0x29` and `0x03` under `0x24` are never
+/// reachable from one another. Sharing one encoder would instead couple two
+/// vocabularies whose widenings are independent.
+const TAG_SCALAR_POINTWISE_BF16: u8 = 0x29;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 /// Reduction-topology tag of a split, multi-dispatch reduction pass.
@@ -1422,6 +1493,17 @@ fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
             }
             push_slice(bytes, &expression.root().index().to_be_bytes());
         }
+        // Appended for the reason `TAG_SCALAR_POINTWISE_BF16` records: the tag is
+        // one no earlier region could carry, and the node run it frames is read
+        // only inside it.
+        ScalarProgram::PointwiseBf16(expression) => {
+            bytes.push(TAG_SCALAR_POINTWISE_BF16);
+            push_len(bytes, expression.nodes().len());
+            for node in expression.nodes() {
+                push_pointwise_bf16_node(bytes, node);
+            }
+            push_slice(bytes, &expression.root().index().to_be_bytes());
+        }
         ScalarProgram::StrictAffineU4Dequantize {
             codes_role,
             scale_role,
@@ -1567,6 +1649,57 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
         PointwiseF32Node::Rsqrt { argument } => {
             push_slice(bytes, &[0x07]);
             push_slice(bytes, &argument.index().to_be_bytes());
+        }
+    }
+    debug_assert_eq!(bytes.len() - start, encoded_len);
+}
+
+/// Encodes one node of a physical `bf16` pointwise expression.
+///
+/// A **second, independent encoder** rather than a widened
+/// [`push_pointwise_f32_node`], for the reason `push_tensor_role` is duplicated
+/// between the schedule and kernel identity domains: the two node vocabularies
+/// grow independently, and one encoder would make either vocabulary's widening a
+/// change to the other's bytes. The tag values restart at `0x01` because a `bf16`
+/// node run is only ever read inside the `TAG_SCALAR_POINTWISE_BF16` variant that
+/// framed it, so no reader can confuse the two spaces.
+///
+/// The constant payload is two bytes, which is the whole reason a shared node
+/// type was rejected: it is the `bf16` format's own width, so an over-wide
+/// payload is unrepresentable rather than encodable-and-refused.
+fn push_pointwise_bf16_node(bytes: &mut Vec<u8>, node: &PointwiseBf16Node) {
+    const LENGTH_BYTES: usize = size_of::<u64>();
+    const TAG_FIELD_BYTES: usize = LENGTH_BYTES + size_of::<u8>();
+    const U16_FIELD_BYTES: usize = LENGTH_BYTES + size_of::<u16>();
+    const U32_FIELD_BYTES: usize = LENGTH_BYTES + size_of::<u32>();
+
+    let encoded_len = match node {
+        PointwiseBf16Node::Input { .. } => TAG_FIELD_BYTES + U32_FIELD_BYTES,
+        PointwiseBf16Node::Constant { .. } => TAG_FIELD_BYTES + U16_FIELD_BYTES,
+        PointwiseBf16Node::Add { .. } | PointwiseBf16Node::Multiply { .. } => {
+            TAG_FIELD_BYTES + 2 * U32_FIELD_BYTES
+        }
+    };
+    push_len(bytes, encoded_len);
+    let start = bytes.len();
+    match node {
+        PointwiseBf16Node::Input { ordinal } => {
+            push_slice(bytes, &[0x01]);
+            push_slice(bytes, &ordinal.get().to_be_bytes());
+        }
+        PointwiseBf16Node::Constant { bits } => {
+            push_slice(bytes, &[0x02]);
+            push_slice(bytes, &bits.to_be_bytes());
+        }
+        PointwiseBf16Node::Add { lhs, rhs } => {
+            push_slice(bytes, &[0x03]);
+            push_slice(bytes, &lhs.index().to_be_bytes());
+            push_slice(bytes, &rhs.index().to_be_bytes());
+        }
+        PointwiseBf16Node::Multiply { lhs, rhs } => {
+            push_slice(bytes, &[0x04]);
+            push_slice(bytes, &lhs.index().to_be_bytes());
+            push_slice(bytes, &rhs.index().to_be_bytes());
         }
     }
     debug_assert_eq!(bytes.len() - start, encoded_len);

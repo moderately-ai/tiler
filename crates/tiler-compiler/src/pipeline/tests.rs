@@ -175,6 +175,14 @@ enum KirValue {
     Bool(bool),
     Index(u64),
     F32(f32),
+    /// A `bf16` value, carried as its exact encoding.
+    ///
+    /// Bits rather than a host float, because there is no host `bf16` type whose
+    /// arithmetic could stand in for the format's: modelling it as an `f32`
+    /// would round to twenty-four significand bits where the format has eight,
+    /// and would agree with the reference only where the extra precision
+    /// happened not to be observable.
+    Bf16(u16),
 }
 
 impl KirValue {
@@ -190,12 +198,61 @@ impl KirValue {
             other => panic!("expected an f32-typed value, found {other:?}"),
         }
     }
+    fn bf16(self) -> u16 {
+        match self {
+            Self::Bf16(value) => value,
+            other => panic!("expected a bf16-typed value, found {other:?}"),
+        }
+    }
     fn boolean(self) -> bool {
         match self {
             Self::Bool(value) => value,
             other => panic!("expected a predicate value, found {other:?}"),
         }
     }
+}
+
+/// The typed boundary payload one interpreted kernel reads and writes.
+///
+/// A typed pair rather than one byte run, because the machine has to produce
+/// typed SSA values from a load and cannot recover a width from raw bytes. The
+/// kernel's own buffer parameters state the element type, and a fixture whose
+/// payload disagrees with them fails on the value kind rather than by silently
+/// reinterpreting the bytes.
+#[derive(Clone, Copy, Debug)]
+enum KirElements<'a> {
+    F32(&'a [f32]),
+    Bf16(&'a [u16]),
+}
+
+impl KirElements<'_> {
+    fn len(self) -> usize {
+        match self {
+            Self::F32(values) => values.len(),
+            Self::Bf16(values) => values.len(),
+        }
+    }
+}
+
+/// The written boundary payload one interpreted kernel produces.
+#[derive(Clone, Debug)]
+enum KirOutputs {
+    F32(Vec<f32>),
+    Bf16(Vec<u16>),
+}
+
+/// Whether the machine honours the kernel's BF16 NaN canonicalization.
+///
+/// **[`Self::Omitted`] exists for one deliberate perturbation and nothing else.**
+/// It models a lowering that emitted the BF16 arithmetic without the
+/// `CanonicalizeBf16Nan` conversion beside it, so the reference comparison that
+/// passes under [`Self::Applied`] can be watched failing — and failing at exactly
+/// the element whose result is a NaN, which is what makes the conversion's
+/// obligation the reason rather than a coincidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Bf16Canonicalization {
+    Applied,
+    Omitted,
 }
 
 /// A backend-shaped interpreter that reads only the structured kernel IR.
@@ -208,8 +265,9 @@ impl KirValue {
 /// graph-specific reconstruction.
 struct KirMachine<'a> {
     kernel: &'a VerifiedKernel,
-    input: &'a [f32],
-    output: Vec<f32>,
+    input: KirElements<'a>,
+    output: KirOutputs,
+    canonicalization: Bf16Canonicalization,
     values: BTreeMap<tiler_ir::kernel::VerifiedValueId, KirValue>,
     /// The lane's local coordinate within its workgroup.
     ///
@@ -223,7 +281,11 @@ struct KirMachine<'a> {
 }
 
 impl<'a> KirMachine<'a> {
-    fn run(kernel: &'a VerifiedKernel, input: &'a [f32]) -> Vec<f32> {
+    fn run(
+        kernel: &'a VerifiedKernel,
+        input: KirElements<'a>,
+        canonicalization: Bf16Canonicalization,
+    ) -> KirOutputs {
         let mut buffers = kernel.buffers();
         let read = buffers.next().expect("a read buffer parameter");
         let write = buffers.next().expect("a write buffer parameter");
@@ -239,10 +301,18 @@ impl<'a> KirMachine<'a> {
             .next()
             .map_or(1, |staging| staging.element_count.max(1));
         let participants = usize::try_from(slots).unwrap();
+        // The written payload's type is the *write buffer's* own, so a kernel
+        // whose two boundaries differed in width would still be modelled at each
+        // one rather than at whichever the input happened to be.
+        let output = match write.element_type {
+            tiler_ir::kernel::KernelType::Bf16 => KirOutputs::Bf16(vec![0; outputs]),
+            _ => KirOutputs::F32(vec![f32::NAN; outputs]),
+        };
         let mut machine = KirMachine {
             kernel,
             input,
-            output: vec![f32::NAN; outputs],
+            output,
+            canonicalization,
             values: BTreeMap::new(),
             local: 0,
             staged: vec![f32::NAN; participants],
@@ -299,6 +369,10 @@ impl<'a> KirMachine<'a> {
                         KernelConstant::Bool(flag) => KirValue::Bool(flag),
                         KernelConstant::Index(index) => KirValue::Index(index),
                         KernelConstant::F32Bits(bits) => KirValue::F32(f32::from_bits(bits)),
+                        // Carried through unchanged: a constant is not an
+                        // arithmetic result, and `tiler::constant-bf16@1`
+                        // declares its payload preserved exactly.
+                        KernelConstant::Bf16Bits(bits) => KirValue::Bf16(bits),
                         other => panic!("unsupported constant {other:?}"),
                     };
                     self.define(&mut results, value);
@@ -331,6 +405,21 @@ impl<'a> KirMachine<'a> {
                         BinaryOp::F32Divide => {
                             KirValue::F32(self.get(lhs).float() / self.get(rhs).float())
                         }
+                        // The `bf16` arithmetic, computed at the format's own
+                        // precision rather than at a host float's. See
+                        // [`bf16_binary`] for why an exact `f64` intermediate
+                        // followed by one rounding is the format's function and
+                        // not an approximation of it.
+                        BinaryOp::Bf16Add => KirValue::Bf16(bf16_binary(
+                            self.get(lhs).bf16(),
+                            self.get(rhs).bf16(),
+                            |lhs, rhs| lhs + rhs,
+                        )),
+                        BinaryOp::Bf16Multiply => KirValue::Bf16(bf16_binary(
+                            self.get(lhs).bf16(),
+                            self.get(rhs).bf16(),
+                            |lhs, rhs| lhs * rhs,
+                        )),
                         other => panic!("unsupported binary operation {other:?}"),
                     };
                     self.define(&mut results, value);
@@ -362,29 +451,52 @@ impl<'a> KirMachine<'a> {
                     self.define(&mut results, value);
                 }
                 OperationView::Convert { op, source } => {
-                    let value = self.get(source).float();
                     let value = match op {
                         ConvertOp::CanonicalizeF32Nan => {
-                            if value.is_nan() {
+                            let value = self.get(source).float();
+                            KirValue::F32(if value.is_nan() {
                                 f32::from_bits(
                                     self.kernel.numerical().canonical_arithmetic_nan_bits,
                                 )
                             } else {
                                 value
-                            }
+                            })
+                        }
+                        // The payload is read from the kernel's own realization
+                        // and taken as this region's arithmetic type's pattern
+                        // zero-extended, which is the invariant the schedule
+                        // verifier requires of a BF16 region — so a realization
+                        // carrying an `f32` payload could not have reached here.
+                        ConvertOp::CanonicalizeBf16Nan => {
+                            let bits = self.get(source).bf16();
+                            let canonical = u16::try_from(
+                                self.kernel.numerical().canonical_arithmetic_nan_bits,
+                            )
+                            .expect("a bf16 region declares a sixteen-bit canonical payload");
+                            KirValue::Bf16(match (self.canonicalization, bf16_is_nan(bits)) {
+                                (Bf16Canonicalization::Applied, true) => canonical,
+                                _ => bits,
+                            })
                         }
                         other => panic!("unsupported conversion {other:?}"),
                     };
-                    self.define(&mut results, KirValue::F32(value));
+                    self.define(&mut results, value);
                 }
                 OperationView::Load { offset, .. } => {
                     let offset = usize::try_from(self.get(offset).index()).unwrap();
-                    let value = KirValue::F32(self.input[offset]);
+                    let value = match self.input {
+                        KirElements::F32(values) => KirValue::F32(values[offset]),
+                        KirElements::Bf16(values) => KirValue::Bf16(values[offset]),
+                    };
                     self.define(&mut results, value);
                 }
                 OperationView::Store { offset, value, .. } => {
                     let offset = usize::try_from(self.get(offset).index()).unwrap();
-                    self.output[offset] = self.get(value).float();
+                    let value = self.get(value);
+                    match &mut self.output {
+                        KirOutputs::F32(values) => values[offset] = value.float(),
+                        KirOutputs::Bf16(values) => values[offset] = value.bf16(),
+                    }
                 }
                 OperationView::Predicated { predicate, body } => {
                     if self.get(predicate).boolean() {
@@ -446,7 +558,172 @@ impl<'a> KirMachine<'a> {
 }
 
 pub(super) fn interpret_fused(kernel: &VerifiedKernel, input: &[f32]) -> Vec<f32> {
-    KirMachine::run(kernel, input)
+    match KirMachine::run(
+        kernel,
+        KirElements::F32(input),
+        Bf16Canonicalization::Applied,
+    ) {
+        KirOutputs::F32(values) => values,
+        KirOutputs::Bf16(_) => panic!("an f32 fixture produced a bf16 boundary"),
+    }
+}
+
+/// Interprets one BF16 kernel over a BF16 boundary payload.
+fn interpret_bf16(
+    kernel: &VerifiedKernel,
+    input: &[u16],
+    canonicalization: Bf16Canonicalization,
+) -> Vec<u16> {
+    match KirMachine::run(kernel, KirElements::Bf16(input), canonicalization) {
+        KirOutputs::Bf16(values) => values,
+        KirOutputs::F32(_) => panic!("a bf16 fixture produced an f32 boundary"),
+    }
+}
+
+/// Whether one `bf16` encoding is a NaN.
+///
+/// Decided from the format's own fields — a saturated exponent over a nonzero
+/// significand — because there is no host `bf16` whose `is_nan` could be asked.
+const fn bf16_is_nan(bits: u16) -> bool {
+    bits & 0x7f80 == 0x7f80 && bits & 0x007f != 0
+}
+
+/// The exact value of one `bf16` encoding, as an `f64`.
+///
+/// Exact, not approximate: `bf16` has eight significand bits and an exponent
+/// range inside `f64`'s, so every finite encoding — including every subnormal —
+/// is an `f64` value. Infinities and NaNs never reach here; [`bf16_binary`]
+/// decides those from the encoding.
+fn bf16_exact_value(bits: u16) -> f64 {
+    let sign = if bits & 0x8000 == 0 { 1.0_f64 } else { -1.0 };
+    let exponent = i32::from((bits >> 7) & 0xff);
+    let fraction = f64::from(bits & 0x007f);
+    if exponent == 0 {
+        // Subnormal or zero: `fraction` quanta of `2^-133`.
+        sign * fraction * 2.0_f64.powi(-133)
+    } else {
+        sign * (1.0 + fraction / 128.0) * 2.0_f64.powi(exponent - 127)
+    }
+}
+
+/// Rounds one exact `f64` to `bf16`, round-to-nearest ties-to-even.
+///
+/// The rounding is performed on the `f64` significand rather than by a host
+/// narrowing conversion, so subnormals, the tie rule, and the overflow-to-
+/// infinity boundary are the format's own rather than whatever a two-step
+/// conversion through `f32` would produce.
+fn bf16_round(value: f64) -> u16 {
+    let sign: u16 = if value.is_sign_negative() { 0x8000 } else { 0 };
+    if value.is_infinite() {
+        return sign | 0x7f80;
+    }
+    if value == 0.0 {
+        return sign;
+    }
+    let bits = value.abs().to_bits();
+    let biased = i32::try_from((bits >> 52) & 0x7ff).expect("an eleven-bit field");
+    assert!(
+        biased != 0,
+        "no product or sum of two bf16 values is subnormal in f64"
+    );
+    let exponent = biased - 1023;
+    // `|value| == mantissa * 2^(exponent - 52)`, with the implicit bit restored.
+    let mantissa = (1_u64 << 52) | (bits & ((1_u64 << 52) - 1));
+    // The bf16 grid's quantum at this exponent, floored at the subnormal one.
+    let quantum = (exponent - 7).max(-133);
+    let shift = u32::try_from(quantum - (exponent - 52))
+        .expect("the bf16 quantum is never finer than the f64 one");
+    let rounded = round_half_to_even(mantissa, shift);
+    if quantum == -133 {
+        // A subnormal count, or — when the rounding carried into the eighth bit
+        // — the smallest normal, whose encoding is exactly that count.
+        return sign | u16::try_from(rounded).expect("a subnormal count is below 2^8");
+    }
+    // `rounded` is the eight-bit significand in `[2^7, 2^8]`; the upper end is
+    // the carry that increments the exponent.
+    let (exponent, fraction) = if rounded == 256 {
+        (exponent + 1, 0)
+    } else {
+        (
+            exponent,
+            u16::try_from(rounded - 128).expect("a seven-bit fraction"),
+        )
+    };
+    let biased = exponent + 127;
+    if biased > 254 {
+        return sign | 0x7f80;
+    }
+    sign | (u16::try_from(biased).expect("a biased exponent below 255") << 7) | fraction
+}
+
+/// Rounds `mantissa >> shift` half-to-even.
+fn round_half_to_even(mantissa: u64, shift: u32) -> u64 {
+    if shift >= 64 {
+        // The mantissa is below `2^53` and the half is at least `2^63`, so every
+        // bit is under the rounding boundary and the result is zero.
+        return 0;
+    }
+    let half = 1_u64 << (shift - 1);
+    let low = mantissa & (half - 1 + half);
+    let truncated = mantissa >> shift;
+    if low > half || (low == half && truncated & 1 == 1) {
+        truncated + 1
+    } else {
+        truncated
+    }
+}
+
+/// One ordered `bf16` binary operation, shaped like hardware rather than like
+/// the contract.
+///
+/// **The arithmetic is exact and rounds once.** `f64` holds the product of two
+/// `bf16` values exactly — eight significand bits times eight is sixteen, well
+/// inside fifty-three, and the exponent range is `f64`'s with room to spare — so
+/// the multiply's only rounding is [`bf16_round`]'s. The sum is exact whenever
+/// the operands' exponents differ by at most forty-five and otherwise rounds in
+/// `f64` by less than `2^-53` relative, which cannot cross a `bf16` rounding
+/// boundary sitting at `2^-9` relative granularity: the result is the larger
+/// operand either way. So one rounding, at the format's own precision, in both
+/// cases.
+///
+/// **A NaN result keeps the operand's payload rather than the contract's.** That
+/// is what hardware does and it is the whole reason the kernel emits a
+/// `CanonicalizeBf16Nan` beside every arithmetic operation; a machine that
+/// canonicalized here would satisfy the reference comparison for a reason that
+/// has nothing to do with the kernel, and would make the conversion's
+/// perturbation unobservable.
+fn bf16_binary(lhs: u16, rhs: u16, op: impl Fn(f64, f64) -> f64) -> u16 {
+    if bf16_is_nan(lhs) {
+        return lhs | 0x0040;
+    }
+    if bf16_is_nan(rhs) {
+        return rhs | 0x0040;
+    }
+    let value = op(
+        bf16_exact_value_or_infinity(lhs),
+        bf16_exact_value_or_infinity(rhs),
+    );
+    if value.is_nan() {
+        // An invalid operation on non-NaN operands — infinity times zero, or
+        // opposite infinities added. Hardware's default quiet NaN, which happens
+        // to be the canonical payload, so this case is deliberately *not* the
+        // one the canonicalization perturbation is watched on.
+        return 0x7fc0;
+    }
+    bf16_round(value)
+}
+
+/// The exact value of one non-NaN `bf16` encoding, infinities included.
+fn bf16_exact_value_or_infinity(bits: u16) -> f64 {
+    if bits & 0x7fff == 0x7f80 {
+        if bits & 0x8000 == 0 {
+            f64::INFINITY
+        } else {
+            f64::NEG_INFINITY
+        }
+    } else {
+        bf16_exact_value(bits)
+    }
 }
 
 /// Splits one kernel body's top-level operations at each barrier.
@@ -1731,6 +2008,320 @@ fn a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary() {
     // request path: the same shape of program in f32 compiles.
     compile(CompilationRequest::governed(&semantic(false)))
         .expect("the governed f32 fixture still compiles");
+}
+
+/// The `bf16` encodings this vertical's witnesses are stated in.
+mod bf16_bits {
+    /// `3.0`, the scale: a multiplier that forces a rounding at every ordinary
+    /// operand rather than one that would pass under any implementation.
+    pub(super) const THREE: u16 = 0x4040;
+    /// `-0.0`, the bias: chosen so a signed zero and a subnormal survive the
+    /// whole expression instead of being swallowed by a nonzero addend.
+    pub(super) const NEGATIVE_ZERO: u16 = 0x8000;
+    pub(super) const LEAST_POSITIVE_SUBNORMAL: u16 = 0x0001;
+    pub(super) const LEAST_NEGATIVE_SUBNORMAL: u16 = 0x8001;
+    /// A quiet NaN whose payload is *not* the family's canonical one.
+    pub(super) const NONCANONICAL_NAN: u16 = 0x7fc1;
+    pub(super) const CANONICAL_NAN: u16 = 0x7fc0;
+    pub(super) const POSITIVE_INFINITY: u16 = 0x7f80;
+    pub(super) const NEGATIVE_INFINITY: u16 = 0xff80;
+    pub(super) const MAX_FINITE: u16 = 0x7f7f;
+    /// `1 + 2^-7`, whose product with `3.0` lands exactly on a rounding tie.
+    pub(super) const ONE_PLUS_ULP: u16 = 0x3f81;
+}
+
+/// The boundary payload the BF16 vertical is driven over.
+///
+/// Every class the region's arithmetic can distinguish, in one tensor: a signed
+/// zero, both least subnormals, a non-canonical NaN, both infinities, the
+/// overflow boundary from both sides, and a tie the rounding rule has to break.
+const BF16_WITNESSES: [u16; 10] = [
+    bf16_bits::NEGATIVE_ZERO,
+    bf16_bits::LEAST_POSITIVE_SUBNORMAL,
+    bf16_bits::LEAST_NEGATIVE_SUBNORMAL,
+    bf16_bits::NONCANONICAL_NAN,
+    bf16_bits::POSITIVE_INFINITY,
+    bf16_bits::NEGATIVE_INFINITY,
+    bf16_bits::MAX_FINITE,
+    0xff7f,
+    bf16_bits::ONE_PLUS_ULP,
+    0x3f80,
+];
+
+/// The semantic `(x * 3.0) + (-0.0)` program in BF16, for the reference oracle.
+fn bf16_semantic_program(key: &InputKey, elements: u64) -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<Bf16>(key.clone(), Shape::from_dims([elements]))
+        .unwrap();
+    let scale = Bf16Constant::apply(&mut builder, bf16_bits::THREE).unwrap();
+    let product = Bf16Multiply::apply(&mut builder, input, scale).unwrap();
+    let bias = Bf16Constant::apply(&mut builder, bf16_bits::NEGATIVE_ZERO).unwrap();
+    let root = Bf16Add::apply(&mut builder, product, bias).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), root)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// The same computation as a verified BF16 scheduled region.
+///
+/// Assembled through `tiler-ir`'s public builders rather than through
+/// `compile()`, and that is the measurement boundary this vertical carries: the
+/// recognizer refuses every non-`f32` program under `dtype-f32` before a subject
+/// is ever normalized, so no BF16 region is reachable from the request boundary
+/// at this commit. What is established here is that the schedule, kernel, and
+/// physical-carrier vocabularies admit and verify one — not that a caller can
+/// ask for it.
+fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduledRegion {
+    use tiler_ir::schedule::{
+        Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
+        ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
+        LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
+        OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology,
+        ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    };
+
+    let mut expression = PointwiseBf16ExpressionBuilder::new();
+    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let scale = expression.constant(bf16_bits::THREE).unwrap();
+    let product = expression.multiply(input, scale).unwrap();
+    let bias = expression.constant(bf16_bits::NEGATIVE_ZERO).unwrap();
+    let root = expression.add(product, bias).unwrap();
+    let expression = expression.build(root).unwrap();
+
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+    builder
+        .iteration_shape(Shape::from_dims([elements]))
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Output),
+    ] {
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::PointwiseBf16(expression))
+        .unwrap();
+    // The accepted `tiler.contract.bf16.v1` strict vector, restated as the
+    // region's own realization: preserving subnormals in both dimensions, every
+    // numeric-reshaping permission withheld, no exceptional value assumed
+    // absent, and the family's canonical arithmetic NaN payload zero-extended
+    // into the thirty-two-bit field. `NumericalContract::STRICT_BF16` resolves
+    // exactly these dimensions; the region carries them rather than the contract
+    // because a schedule preserves a realization, not a caller's request.
+    builder
+        .numerical(NumericalRealization::new(
+            "tiler.test.strict-bf16",
+            u32::from(tiler_ir::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+            SubnormalMode::Preserve,
+            SubnormalMode::Preserve,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption,
+        ))
+        .unwrap();
+    builder
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: elements,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: elements,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+fn bf16_tensor(elements: &[u16]) -> Tensor {
+    Tensor::dense(
+        Bf16::resolved_type(),
+        Shape::from_dims([u64::try_from(elements.len()).unwrap()]),
+        elements
+            .iter()
+            .map(|encoding| {
+                ReferenceElement::from_float_bits(
+                    encoding.to_be_bytes(),
+                    FloatBitOrder::MostSignificantByteFirst,
+                )
+                .expect("a two-byte payload is a bounded element")
+            })
+            .collect(),
+    )
+    .expect("a bounded bf16 tensor")
+}
+
+fn bf16_tensor_bits(tensor: &Tensor) -> Vec<u16> {
+    let TensorPayloadView::Dense(elements) = tensor.payload() else {
+        panic!("a bf16 result is dense");
+    };
+    elements
+        .iter()
+        .map(|element| {
+            u16::from_be_bytes(
+                <[u8; 2]>::try_from(element.as_bytes()).expect("a bf16 element is two bytes"),
+            )
+        })
+        .collect()
+}
+
+/// A BF16 kernel's interpreted result agrees bit for bit with the reference.
+///
+/// **The two sides are independent.** The reference decodes each operand to its
+/// exact rational value from the registered descriptor's own fields and rounds
+/// once; the machine holds `bf16` encodings, computes in `f64`, and rounds with
+/// its own half-to-even implementation. Neither consults the other, and neither
+/// consults the semantic graph while executing the kernel: the machine resolves
+/// buffer extents, addressing, predication, the constants, the arithmetic width,
+/// and the NaN canonicalization from the structured kernel alone.
+///
+/// **The comparison runs in `tiler-compiler`** because it is the only crate that
+/// sees both `tiler-ir`'s lowering and `tiler-reference`'s oracle: `tiler-ir`
+/// declares no dependency on the reference and the reference depends on
+/// `tiler-ir`, so an in-crate comparison would be against an oracle that is not
+/// independent — the weaker claim, recorded as the stronger one.
+#[test]
+fn a_bf16_kernel_agrees_with_the_reference_oracle_bit_for_bit() {
+    let elements = u64::try_from(BF16_WITNESSES.len()).unwrap();
+    let scheduled = bf16_scheduled_region(elements);
+    let kernel = tiler_ir::kernel::lower_scheduled_region(&scheduled)
+        .expect("the bf16 region lowers to a verified kernel");
+
+    // The physical carrier the compiler derives for this region is two bytes
+    // wide, which is the other half of this ticket's stated outcome.
+    assert_eq!(
+        tiler_ir::program::StorageScalar::Bf16.byte_width(),
+        2,
+        "the bf16 carrier is two bytes at its single width authority"
+    );
+
+    let key = InputKey::new("x").unwrap();
+    let program = bf16_semantic_program(&key, elements);
+    let tensor = bf16_tensor(&BF16_WITNESSES);
+    let outputs = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&program, &[InputBinding::new(&key, &tensor)])
+        .unwrap();
+    let expected = bf16_tensor_bits(&outputs[0]);
+
+    let interpreted = interpret_bf16(&kernel, &BF16_WITNESSES, Bf16Canonicalization::Applied);
+    assert_eq!(
+        interpreted, expected,
+        "the kernel's interpreted result differs from the reference"
+    );
+
+    // The witnesses reached the classes they were chosen for, so a fixture that
+    // silently stopped exercising them would fail here rather than pass.
+    assert_eq!(interpreted[0], bf16_bits::NEGATIVE_ZERO);
+    assert_eq!(interpreted[1], 0x0003, "three least positive quanta");
+    assert_eq!(interpreted[2], 0x8003, "three least negative quanta");
+    assert_eq!(interpreted[3], bf16_bits::CANONICAL_NAN);
+    assert_eq!(interpreted[4], bf16_bits::POSITIVE_INFINITY);
+    assert_eq!(interpreted[5], bf16_bits::NEGATIVE_INFINITY);
+    assert_eq!(
+        interpreted[6],
+        bf16_bits::POSITIVE_INFINITY,
+        "three times the greatest finite value overflows"
+    );
+    assert_eq!(interpreted[7], bf16_bits::NEGATIVE_INFINITY);
+    // `(1 + 2^-7) * 3` is exactly `193.5` quanta of the grid at that exponent,
+    // so the tie rule decides it: half-to-even rounds up to `194`, which is
+    // `3.03125`. A machine rounding half-away-from-zero agrees here, and one
+    // rounding half-to-odd does not — this is the witness that makes the rule
+    // observable rather than assumed.
+    assert_eq!(interpreted[8], 0x4042);
+    assert_eq!(interpreted[9], bf16_bits::THREE);
+}
+
+/// Dropping the BF16 canonicalization fails on exactly the NaN element.
+///
+/// The perturbation the CPU vertical uses, applied at this width: the same
+/// kernel is interpreted by a machine modelling a lowering that emitted the BF16
+/// arithmetic without its `CanonicalizeBf16Nan` beside it, and the reference
+/// comparison is watched failing. What makes it evidence rather than a red test
+/// is *where* it fails — the one element whose arithmetic result is a NaN, and
+/// no other — so the conversion's obligation is the reason rather than a
+/// coincidence.
+#[test]
+fn deleting_the_bf16_canonicalization_disagrees_at_exactly_the_nan_element() {
+    let elements = u64::try_from(BF16_WITNESSES.len()).unwrap();
+    let scheduled = bf16_scheduled_region(elements);
+    let kernel = tiler_ir::kernel::lower_scheduled_region(&scheduled).unwrap();
+
+    let canonical = interpret_bf16(&kernel, &BF16_WITNESSES, Bf16Canonicalization::Applied);
+    let perturbed = interpret_bf16(&kernel, &BF16_WITNESSES, Bf16Canonicalization::Omitted);
+
+    let disagreements: Vec<usize> = canonical
+        .iter()
+        .zip(&perturbed)
+        .enumerate()
+        .filter_map(|(index, (left, right))| (left != right).then_some(index))
+        .collect();
+    assert_eq!(
+        disagreements,
+        vec![3],
+        "only the non-canonical NaN witness depends on the canonicalization"
+    );
+    assert_eq!(canonical[3], bf16_bits::CANONICAL_NAN);
+    assert_eq!(
+        perturbed[3],
+        bf16_bits::NONCANONICAL_NAN,
+        "without the conversion the operand's own payload reaches the boundary"
+    );
 }
 
 #[test]
