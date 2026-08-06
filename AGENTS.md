@@ -120,7 +120,7 @@ An acceptance is a relayed fact, and its provenance is part of the record: the a
 
 A doc comment is a claim, and it is load-bearing: the next worker reads it as fact, and an overstated one makes unreachable work look reachable. Describe what the code does now; when a comment and the source disagree, the source wins and the comment is the defect.
 
-Examples are design work. Prefer a small end-to-end tensor program showing inputs, typed operations, multiple values or outputs when relevant, logical properties, candidate and rejected physical plans, and the observable result — and never let an example quietly introduce semantics the normative text has not defined.
+Examples are design work. Prefer a small end-to-end tensor program showing inputs, typed operations, multiple values or outputs when relevant, logical properties, candidate and rejected physical plans, and the observable result — and never let an example quietly introduce semantics the normative text has not defined. The converse holds for capabilities: an example program Tom supplies (attention was the first) is novel test data exercising the general machinery, never a specialization target — a ticket or brief driven by one states the capability as the general construct with the example as its worked instance, and vocabulary that lands shaped around one example has silently narrowed the semantic space the next example will refute.
 
 ## Toolchain and environment
 
