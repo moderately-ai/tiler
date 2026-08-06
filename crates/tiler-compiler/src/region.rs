@@ -51,6 +51,10 @@ use std::fmt;
 use std::sync::Arc;
 
 use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::index::{
+    FrozenIndexRealizationLawRegistry, IndexRefinementSubject, NumericalContractIdentity,
+    StagedInputSource,
+};
 use tiler_ir::semantic::{
     CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, OpKey,
     OperationAttributes, OperationEffect, SemanticProgram, ValueId,
@@ -209,6 +213,16 @@ impl SemanticStage {
             member: self.member,
             stage: self.stage.next(),
         }
+    }
+
+    /// Binds an arbitrary stage of one occurrence.
+    ///
+    /// The caller owns the bound: nothing here checks the ordinal against the
+    /// occurrence's realized stage count, because the atom is a coordinate and
+    /// the graph carrying the topology is the authority on which coordinates
+    /// exist. [`RegionGraph::atom_node`] is where an out-of-range stage refuses.
+    pub(crate) const fn at(member: SemanticMemberId, stage: StageOrdinal) -> Self {
+        Self { member, stage }
     }
 }
 
@@ -399,7 +413,7 @@ pub(crate) struct RegionCandidate {
     /// Shared rather than owned: every cover that places this region copies the
     /// label, so an `Arc<str>` makes that copy a refcount bump.
     label: Arc<str>,
-    program_operation_count: u32,
+    program_node_count: u32,
 }
 
 impl RegionCandidate {
@@ -451,9 +465,9 @@ impl RegionCandidate {
         Arc::clone(&self.label)
     }
 
-    /// Returns whether the region covers every operation of its program.
+    /// Returns whether the region covers every stage atom of its program.
     pub(crate) fn covers_whole_program(&self) -> bool {
-        u32::try_from(self.members.len()).is_ok_and(|count| count == self.program_operation_count)
+        u32::try_from(self.members.len()).is_ok_and(|count| count == self.program_node_count)
     }
 }
 
@@ -740,6 +754,50 @@ struct GraphValue {
     input_position: Option<u32>,
     consumers: Vec<u32>,
     named_result: bool,
+    /// The intra-occurrence site of a staged realization's published value.
+    ///
+    /// `Some((member, index))` marks a value that exists only inside the
+    /// registered law's realization of `member` — the normalization's published
+    /// root, the softmax's row maximum — appended to the value table after
+    /// every program value so boundary and identity encodings can name it. It
+    /// takes no part in operation adjacency: `producer` and `consumers` stay
+    /// empty, because its producer and consumer are *stage atoms* of one
+    /// occurrence and the topology map is their authority.
+    synthetic_site: Option<(u32, u32)>,
+}
+
+/// The stage structure one registered law gives one occurrence.
+///
+/// Present only for a member whose resolved realization law realizes a region
+/// *sequence*; every absent member is single-stage. Derived from the law's own
+/// realization — [`VerifiedIndexRegionSequence::stage_sources`] names each
+/// stage's reads and [`intermediates`] each handed value — so the compiler
+/// carries the law's topology rather than a second derivation of it.
+///
+/// [`VerifiedIndexRegionSequence::stage_sources`]: tiler_ir::index::VerifiedIndexRegionSequence::stage_sources
+/// [`intermediates`]: tiler_ir::index::VerifiedIndexRegionSequence::intermediates
+#[derive(Clone, Debug)]
+struct StageTopology {
+    /// Number of stages the law realizes this occurrence as. Always at least 2.
+    stage_count: u32,
+    /// Which stage reads each occurrence operand, as `(operand position, stage)`.
+    ///
+    /// One entry per `StagedInputSource::Occurrence` across every stage's
+    /// source list; an operand read by two stages appears twice.
+    operand_stages: Vec<(u32, u32)>,
+    /// The handed values, in the sequence's own intermediate order.
+    intermediates: Vec<SyntheticIntermediate>,
+}
+
+/// One value a staged realization hands from a producing to a consuming stage.
+#[derive(Clone, Copy, Debug)]
+struct SyntheticIntermediate {
+    /// Ordinal of the appended [`GraphValue`] carrying its type and shape.
+    value: u32,
+    /// Stage that publishes it.
+    producer_stage: u32,
+    /// Stage that reads it.
+    consumer_stage: u32,
 }
 
 /// A dataflow view over a verified semantic program.
@@ -762,6 +820,18 @@ pub(crate) struct RegionGraph {
     /// canonical positions so it names a graph site rather than an authoring
     /// accident.
     canonical_positions: Vec<u32>,
+    /// Stage structure per staged member; an absent member is single-stage.
+    stage_topology: BTreeMap<u32, StageTopology>,
+    /// First formation node id of each member, member-major, plus one trailing
+    /// entry holding the total node count.
+    ///
+    /// Formation enumerates dense node ids rather than operation ordinals so a
+    /// staged occurrence contributes one node per stage. For a program with no
+    /// staged member every member has exactly one node and a node id *is* its
+    /// member ordinal, which is what keeps every single-stage enumeration —
+    /// growth order, budgets, visited sets, and emitted candidates — identical
+    /// to what this stage produced before stages existed.
+    node_base: Vec<u32>,
 }
 
 impl RegionGraph {
@@ -788,6 +858,7 @@ impl RegionGraph {
                 input_position: None,
                 consumers: Vec::new(),
                 named_result: false,
+                synthetic_site: None,
             })
             .collect();
         for (position, input) in program.inputs().enumerate() {
@@ -854,6 +925,8 @@ impl RegionGraph {
             operations,
             values,
             canonical_positions: Vec::new(),
+            stage_topology: BTreeMap::new(),
+            node_base: Vec::new(),
         };
         let whole: Vec<u32> = (0..graph.operation_count()).collect();
         let order = canonical_member_order(&graph, &whole)?;
@@ -867,7 +940,328 @@ impl RegionGraph {
                 })?;
             *slot = index(position)?;
         }
+        graph.rebuild_node_base()?;
         Ok(graph)
+    }
+
+    /// Derives the dataflow view together with each occurrence's realization
+    /// stage structure.
+    ///
+    /// This is [`Self::from_program`] plus one question per operation, asked of
+    /// the registered realization-law authority: does this occurrence's law
+    /// realize a region *sequence*, and if so what is its stage topology? A
+    /// member whose law is absent, unresolvable, or single-region stays
+    /// single-stage exactly as `from_program` leaves it — the law's own
+    /// refusals fire later, at refinement, where they are attributable; region
+    /// formation only needs the shape of what a realization would be.
+    ///
+    /// The topology is read off the law's own realized sequence rather than
+    /// re-derived: `stage_sources` names each stage's occurrence reads and
+    /// handed values, and `intermediates` each handed value's type and shape.
+    /// One synthetic [`GraphValue`] is appended per handed value so boundary
+    /// derivation and identity encoding can name it; it takes no part in
+    /// operation adjacency.
+    pub(crate) fn with_realizations(
+        program: &SemanticProgram,
+        laws: &FrozenIndexRealizationLawRegistry,
+        contract: &NumericalContractIdentity,
+    ) -> Result<Self, RegionError> {
+        let mut graph = Self::from_program(program)?;
+        for (member, operation) in program.operations().enumerate() {
+            let member = index(member)?;
+            // A subject this program cannot derive is refinement's refusal to
+            // make, with its own typed reason; formation treats the occurrence
+            // as single-stage rather than duplicating it.
+            let Ok(subject) =
+                IndexRefinementSubject::derive(program, operation.id(), contract.clone())
+            else {
+                continue;
+            };
+            let Ok(resolved) = laws.resolve(&subject) else {
+                continue;
+            };
+            // The cheap filter first: nine of the ten registered laws are
+            // single-region, and realizing one builds a verified region this
+            // constructor would discard.
+            if !resolved.realizes_region_sequence() {
+                continue;
+            }
+            let Ok(sequence) = resolved.realize_sequence() else {
+                continue;
+            };
+            let stage_count = index(sequence.stage_count())?;
+            if stage_count < 2 {
+                continue;
+            }
+            let mut operand_stages = Vec::new();
+            for stage in 0..sequence.stage_count() {
+                let sources = sequence
+                    .stage_sources(stage)
+                    .ok_or(RegionError::Structure {
+                        rule: "stage-sources",
+                    })?;
+                for source in sources {
+                    if let StagedInputSource::Occurrence(operand) = source {
+                        operand_stages.push((index(*operand)?, index(stage)?));
+                    }
+                }
+            }
+            let mut intermediates = Vec::with_capacity(sequence.intermediates().len());
+            for (position, handed) in sequence.intermediates().iter().enumerate() {
+                let position = index(position)?;
+                let value = index(graph.values.len())?;
+                graph.values.push(GraphValue {
+                    type_encoding: handed
+                        .value_type()
+                        .canonical_encoding()
+                        .as_bytes()
+                        .to_vec()
+                        .into_boxed_slice(),
+                    shape: handed.shape().clone(),
+                    producer: None,
+                    input_position: None,
+                    consumers: Vec::new(),
+                    named_result: false,
+                    synthetic_site: Some((member, position)),
+                });
+                intermediates.push(SyntheticIntermediate {
+                    value,
+                    producer_stage: index(handed.producer())?,
+                    consumer_stage: index(handed.consumer())?,
+                });
+            }
+            graph.stage_topology.insert(
+                member,
+                StageTopology {
+                    stage_count,
+                    operand_stages,
+                    intermediates,
+                },
+            );
+        }
+        graph.rebuild_node_base()?;
+        Ok(graph)
+    }
+
+    /// Recomputes the member-major node index over the current stage topology.
+    fn rebuild_node_base(&mut self) -> Result<(), RegionError> {
+        let count = self.operations.len();
+        let mut base = Vec::with_capacity(count + 1);
+        let mut next = 0_u32;
+        for member in 0..count {
+            base.push(next);
+            let stages = self
+                .stage_topology
+                .get(&index(member)?)
+                .map_or(1, |topology| topology.stage_count);
+            next = next
+                .checked_add(stages)
+                .ok_or(RegionError::Structure { rule: "node-count" })?;
+        }
+        base.push(next);
+        self.node_base = base;
+        Ok(())
+    }
+
+    /// Returns the number of formation nodes — one per stage atom.
+    ///
+    /// Equal to [`Self::operation_count`] exactly when no member is staged,
+    /// which is what keeps every single-stage enumeration identical to the
+    /// pre-stage one.
+    pub(crate) fn node_count(&self) -> u32 {
+        self.node_base.last().copied().unwrap_or(0)
+    }
+
+    /// Returns the attribution atom a formation node id denotes.
+    pub(crate) fn node_atom(&self, node: u32) -> Result<SemanticStage, RegionError> {
+        // The base list is strictly ascending, so the owning member is the last
+        // base at or below the node.
+        let member = self
+            .node_base
+            .partition_point(|base| *base <= node)
+            .checked_sub(1)
+            .ok_or(RegionError::Structure { rule: "node-id" })?;
+        if member >= self.operations.len() {
+            return Err(RegionError::Structure { rule: "node-id" });
+        }
+        let base = self.node_base[member];
+        let member = index(member)?;
+        let stage = node - base;
+        Ok(SemanticStage::at(
+            SemanticMemberId(member),
+            StageOrdinal(stage),
+        ))
+    }
+
+    /// Returns the formation node id of one attribution atom.
+    pub(crate) fn atom_node(&self, atom: SemanticStage) -> Result<u32, RegionError> {
+        let member = usize::try_from(atom.member().0).unwrap_or(usize::MAX);
+        let base = self
+            .node_base
+            .get(member)
+            .copied()
+            .ok_or(RegionError::Structure { rule: "node-id" })?;
+        let stage = atom.stage().get();
+        if stage >= self.member_stage_count(atom.member().0) {
+            return Err(RegionError::Structure { rule: "node-stage" });
+        }
+        base.checked_add(stage)
+            .ok_or(RegionError::Structure { rule: "node-id" })
+    }
+
+    /// Returns how many realization stages one member's occurrence has.
+    pub(crate) fn member_stage_count(&self, member: u32) -> u32 {
+        self.stage_topology
+            .get(&member)
+            .map_or(1, |topology| topology.stage_count)
+    }
+
+    /// Returns the stage of one member that publishes its occurrence results.
+    ///
+    /// The final stage, by the sequence contract: every earlier stage publishes
+    /// exactly one handed value and only the last writes the occurrence's own
+    /// results.
+    fn result_publishing_stage(&self, member: u32) -> u32 {
+        self.member_stage_count(member).saturating_sub(1)
+    }
+
+    /// Returns whether one stage of one member reads the operand at `position`.
+    ///
+    /// A single-stage member reads every operand at its only stage; a staged
+    /// member reads it at exactly the stages its law's source lists name.
+    fn stage_reads_operand(&self, member: u32, stage: u32, position: u32) -> bool {
+        match self.stage_topology.get(&member) {
+            None => stage == 0,
+            Some(topology) => topology
+                .operand_stages
+                .iter()
+                .any(|(operand, reader)| *operand == position && *reader == stage),
+        }
+    }
+
+    /// Returns the node id of the atom that publishes one member's results.
+    fn result_node(&self, member: u32) -> Result<u32, RegionError> {
+        self.atom_node(SemanticStage::at(
+            SemanticMemberId(member),
+            StageOrdinal(self.result_publishing_stage(member)),
+        ))
+    }
+
+    /// Appends the node ids of every atom of `consumer` that reads `value`.
+    fn reading_nodes(
+        &self,
+        consumer: u32,
+        value: u32,
+        into: &mut Vec<u32>,
+    ) -> Result<(), RegionError> {
+        let operation = self.operation(consumer)?;
+        for (position, operand) in operation.operands.iter().enumerate() {
+            if *operand != value {
+                continue;
+            }
+            let position = index(position)?;
+            for stage in 0..self.member_stage_count(consumer) {
+                if self.stage_reads_operand(consumer, stage, position) {
+                    into.push(self.atom_node(SemanticStage::at(
+                        SemanticMemberId(consumer),
+                        StageOrdinal(stage),
+                    ))?);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Appends the directed successors of one node — the atoms that read what
+    /// it publishes.
+    ///
+    /// A result-publishing atom's successors are every atom reading one of the
+    /// occurrence's results; any atom's successors additionally include the
+    /// consuming stage of each handed value it publishes. For a single-stage
+    /// program this is exactly the operation's consumer set.
+    fn node_successors(&self, node: u32, into: &mut Vec<u32>) -> Result<(), RegionError> {
+        let atom = self.node_atom(node)?;
+        let member = atom.member().0;
+        let stage = atom.stage().get();
+        if stage == self.result_publishing_stage(member) {
+            for result in &self.operation(member)?.results {
+                for consumer in &self.value(*result)?.consumers {
+                    self.reading_nodes(*consumer, *result, into)?;
+                }
+            }
+        }
+        if let Some(topology) = self.stage_topology.get(&member) {
+            for handed in &topology.intermediates {
+                if handed.producer_stage == stage {
+                    into.push(self.atom_node(SemanticStage::at(
+                        SemanticMemberId(member),
+                        StageOrdinal(handed.consumer_stage),
+                    ))?);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Appends the directed predecessors of one node — the atoms publishing
+    /// what it reads.
+    fn node_predecessors(&self, node: u32, into: &mut Vec<u32>) -> Result<(), RegionError> {
+        let atom = self.node_atom(node)?;
+        let member = atom.member().0;
+        let stage = atom.stage().get();
+        let operation = self.operation(member)?;
+        for (position, operand) in operation.operands.iter().enumerate() {
+            if !self.stage_reads_operand(member, stage, index(position)?) {
+                continue;
+            }
+            if let Some(producer) = self.value(*operand)?.producer {
+                into.push(self.result_node(producer.operation)?);
+            }
+        }
+        if let Some(topology) = self.stage_topology.get(&member) {
+            for handed in &topology.intermediates {
+                if handed.consumer_stage == stage {
+                    into.push(self.atom_node(SemanticStage::at(
+                        SemanticMemberId(member),
+                        StageOrdinal(handed.producer_stage),
+                    ))?);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns whether every atom of `consumer` that reads `value` is in the set.
+    ///
+    /// The consumers list names operation ordinals; under stages the reading
+    /// entity is an atom, and a value read by a stage outside the set is an
+    /// external consumption even when the consumer's other stages are inside.
+    fn consumer_reads_inside(
+        &self,
+        nodes: &[u32],
+        consumer: u32,
+        value: u32,
+    ) -> Result<bool, RegionError> {
+        let operation = self.operation(consumer)?;
+        for (position, operand) in operation.operands.iter().enumerate() {
+            if *operand != value {
+                continue;
+            }
+            let position = index(position)?;
+            for stage in 0..self.member_stage_count(consumer) {
+                if !self.stage_reads_operand(consumer, stage, position) {
+                    continue;
+                }
+                let node = self.atom_node(SemanticStage::at(
+                    SemanticMemberId(consumer),
+                    StageOrdinal(stage),
+                ))?;
+                if !is_member(nodes, node) {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     /// Returns the number of operations in the observed program.
@@ -888,9 +1282,15 @@ impl RegionGraph {
     /// Returns the canonical site coordinate of one value.
     ///
     /// A produced value is named by its producer's canonical position and result
-    /// position; a program input is named by its ordered interface position.
+    /// position; a program input is named by its ordered interface position; a
+    /// staged realization's handed value is named by its occurrence's canonical
+    /// position and its intermediate index, under its own tag so no handed
+    /// value can collide with a result or an input.
     fn canonical_value(&self, value: u32) -> Result<(u8, u32, u32), RegionError> {
         let value = self.value(value)?;
+        if let Some((member, position)) = value.synthetic_site {
+            return Ok((3, self.canonical_position(member)?, position));
+        }
         if let Some(producer) = value.producer {
             return Ok((
                 1,
@@ -920,26 +1320,20 @@ impl RegionGraph {
             })
     }
 
-    /// Returns operations adjacent to `members` through one value edge.
+    /// Returns nodes adjacent to the node set through one value edge.
     ///
     /// The result is ascending and deduplicated, which is the order growth
     /// relies on to generate each connected set exactly once.
-    fn neighbours(&self, members: &[u32]) -> Result<Vec<u32>, RegionError> {
+    fn neighbours(&self, nodes: &[u32]) -> Result<Vec<u32>, RegionError> {
         let mut adjacent = Vec::new();
-        for member in members {
-            let operation = self.operation(*member)?;
-            for operand in &operation.operands {
-                if let Some(producer) = self.value(*operand)?.producer
-                    && !is_member(members, producer.operation)
-                {
-                    adjacent.push(producer.operation);
-                }
-            }
-            for result in &operation.results {
-                for consumer in &self.value(*result)?.consumers {
-                    if !is_member(members, *consumer) {
-                        adjacent.push(*consumer);
-                    }
+        let mut edges = Vec::new();
+        for node in nodes {
+            edges.clear();
+            self.node_predecessors(*node, &mut edges)?;
+            self.node_successors(*node, &mut edges)?;
+            for edge in &edges {
+                if !is_member(nodes, *edge) {
+                    adjacent.push(*edge);
                 }
             }
         }
@@ -949,21 +1343,22 @@ impl RegionGraph {
     }
 
     /// Returns whether `members` is connected through producer/consumer edges.
-    fn is_connected(&self, members: &[u32]) -> Result<bool, RegionError> {
-        let Some(start) = members.first().copied() else {
+    fn is_connected(&self, nodes: &[u32]) -> Result<bool, RegionError> {
+        let Some(start) = nodes.first().copied() else {
             return Ok(false);
         };
-        // Reachedness is marked by position within the member set rather than by
+        // Reachedness is marked by position within the node set rather than by
         // graph ordinal, so the mark vector is the size of the region and the
         // whole traversal touches one cache line for a region of any usual size.
-        let mut reached = vec![false; members.len()];
+        let mut reached = vec![false; nodes.len()];
         let mut count = 0_usize;
         let mut queue = VecDeque::from([start]);
-        while let Some(member) = queue.pop_front() {
-            // Every enqueued ordinal is a member, so a miss here is invalid
+        let mut edges = Vec::new();
+        while let Some(node) = queue.pop_front() {
+            // Every enqueued id is a set node, so a miss here is invalid
             // compiler state rather than a set element to skip.
-            let position = members
-                .binary_search(&member)
+            let position = nodes
+                .binary_search(&node)
                 .map_err(|_| RegionError::Structure {
                     rule: "member-ordinal",
                 })?;
@@ -974,52 +1369,46 @@ impl RegionGraph {
                 continue;
             }
             count = count.saturating_add(1);
-            let operation = self.operation(member)?;
-            for operand in &operation.operands {
-                if let Some(producer) = self.value(*operand)?.producer
-                    && is_member(members, producer.operation)
-                {
-                    queue.push_back(producer.operation);
-                }
-            }
-            for result in &operation.results {
-                for consumer in &self.value(*result)?.consumers {
-                    if is_member(members, *consumer) {
-                        queue.push_back(*consumer);
-                    }
+            edges.clear();
+            self.node_predecessors(node, &mut edges)?;
+            self.node_successors(node, &mut edges)?;
+            for edge in &edges {
+                if is_member(nodes, *edge) {
+                    queue.push_back(*edge);
                 }
             }
         }
-        Ok(count == members.len())
+        Ok(count == nodes.len())
     }
 
-    /// Returns whether no directed path leaves `members` and re-enters it.
+    /// Returns whether no directed path leaves the node set and re-enters it.
     ///
     /// The forward closure of the region through non-members is computed once;
     /// the region is non-convex exactly when that closure reaches a member.
-    fn is_convex(&self, members: &[u32]) -> Result<bool, RegionError> {
-        // Indexed by graph ordinal, because the closure ranges over the whole
-        // graph rather than over the region.
-        let mut visited = vec![false; self.operations.len()];
+    fn is_convex(&self, nodes: &[u32]) -> Result<bool, RegionError> {
+        // Indexed by node id, because the closure ranges over the whole graph
+        // rather than over the region.
+        let mut visited = vec![false; usize::try_from(self.node_count()).unwrap_or(usize::MAX)];
         let mut queue = VecDeque::new();
-        for member in members {
-            for result in &self.operation(*member)?.results {
-                for consumer in &self.value(*result)?.consumers {
-                    if !is_member(members, *consumer) && mark(&mut visited, *consumer)? {
-                        queue.push_back(*consumer);
-                    }
+        let mut edges = Vec::new();
+        for node in nodes {
+            edges.clear();
+            self.node_successors(*node, &mut edges)?;
+            for successor in &edges {
+                if !is_member(nodes, *successor) && mark(&mut visited, *successor)? {
+                    queue.push_back(*successor);
                 }
             }
         }
         while let Some(outside) = queue.pop_front() {
-            for result in &self.operation(outside)?.results {
-                for consumer in &self.value(*result)?.consumers {
-                    if is_member(members, *consumer) {
-                        return Ok(false);
-                    }
-                    if mark(&mut visited, *consumer)? {
-                        queue.push_back(*consumer);
-                    }
+            edges.clear();
+            self.node_successors(outside, &mut edges)?;
+            for successor in &edges {
+                if is_member(nodes, *successor) {
+                    return Ok(false);
+                }
+                if mark(&mut visited, *successor)? {
+                    queue.push_back(*successor);
                 }
             }
         }
@@ -1159,14 +1548,54 @@ struct RegionShape {
 /// The program is never mutated. Candidates are returned in ascending member
 /// order, and every emitted candidate is connected, convex, and within the
 /// declared budgets.
+#[cfg(test)]
 pub(crate) fn form_region_candidates(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
     numerical_contract: StrictF32NumericalContract,
 ) -> Result<RegionFormationOutcome, RegionError> {
+    form_over_graph(
+        RegionGraph::from_program(program)?,
+        budgets,
+        numerical_contract,
+    )
+}
+
+/// Runs region formation with each occurrence's realization stage structure.
+///
+/// This is the production entry: an occurrence whose registered law realizes a
+/// region *sequence* enumerates one node per stage, so the cover search sees
+/// the family's internal boundary — the capability Tom's Option A′ decision on
+/// `resolve-which-authority-mints-a-multi-stage-region-candidate` makes region
+/// formation's to mint. [`form_region_candidates`] stays the law-blind entry
+/// for callers exercising formation structure alone; the two differ only in
+/// the graph they build.
+pub(crate) fn form_region_candidates_with_realizations(
+    program: &SemanticProgram,
+    budgets: DeterministicBudgets,
+    numerical_contract: StrictF32NumericalContract,
+    laws: &FrozenIndexRealizationLawRegistry,
+) -> Result<RegionFormationOutcome, RegionError> {
+    let contract =
+        NumericalContractIdentity::try_from_key(numerical_contract.key).map_err(|_| {
+            RegionError::Structure {
+                rule: "contract-identity",
+            }
+        })?;
+    form_over_graph(
+        RegionGraph::with_realizations(program, laws, &contract)?,
+        budgets,
+        numerical_contract,
+    )
+}
+
+fn form_over_graph(
+    graph: RegionGraph,
+    budgets: DeterministicBudgets,
+    numerical_contract: StrictF32NumericalContract,
+) -> Result<RegionFormationOutcome, RegionError> {
     #[cfg(test)]
     crate::workcount::REGION_FORMATIONS.record();
-    let graph = RegionGraph::from_program(program)?;
     let formed = {
         let mut formation = Formation {
             graph: &graph,
@@ -1196,47 +1625,36 @@ struct FormedRegions {
     rejections: RegionRejectionTally,
 }
 
-/// Recomputes one candidate from its exact member set and compares it.
+/// Recomputes one candidate from its exact atom set and compares it.
 ///
 /// A stored candidate is never trusted structurally: identity, boundaries,
 /// retained outputs, and duplication policy are all rederived from the graph.
-///
-/// **A non-first attribution stage is refused here rather than rebuilt.** The
-/// rebuild reads occurrences alone, and [`encode_occurrence`] states why that is
-/// complete only for single-stage candidates: two candidates differing in a
-/// stage ordinal would recompute to one identity, so verification would confirm
-/// a candidate against another candidate's bytes. Refusing by name is the
-/// fail-closed direction and is what the ticket minting the first multi-stage
-/// candidate must lift together with the encoding.
+/// A staged candidate rebuilds exactly as a single-stage one does, because the
+/// identity encodings carry the stage trailer whenever any covered member is
+/// staged — the premise the earlier `unencoded-member-stage` refusal guarded
+/// is now the encoding rather than a wall.
 pub(crate) fn verify_candidate(
     graph: &RegionGraph,
     budgets: DeterministicBudgets,
     numerical_contract: StrictF32NumericalContract,
     candidate: &RegionCandidate,
 ) -> Result<(), RegionError> {
-    if let Some(staged) = candidate.members.iter().find(|atom| !atom.is_first()) {
-        return Err(RegionError::Invalid {
-            region: format!(
-                "{} member {} stage {}",
-                candidate.label,
-                staged.member().0,
-                staged.stage().get()
-            ),
-            rule: "unencoded-member-stage",
-        });
-    }
-    let members: Vec<u32> = candidate
+    let nodes: Vec<u32> = candidate
         .members
         .iter()
-        .map(|atom| atom.member().0)
-        .collect();
-    if members.is_empty() || members.windows(2).any(|pair| pair[0] >= pair[1]) {
+        .map(|atom| graph.atom_node(*atom))
+        .collect::<Result<_, _>>()
+        .map_err(|_| RegionError::Invalid {
+            region: candidate.label.to_string(),
+            rule: "membership",
+        })?;
+    if nodes.is_empty() || nodes.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(RegionError::Invalid {
             region: candidate.label.to_string(),
             rule: "membership",
         });
     }
-    let rebuilt = form_candidate(graph, budgets, numerical_contract, &members)?;
+    let rebuilt = form_candidate(graph, budgets, numerical_contract, &nodes)?;
     match rebuilt {
         Err(rejection) => Err(RegionError::Invalid {
             region: candidate.label.to_string(),
@@ -1267,8 +1685,8 @@ impl Formation<'_> {
     /// Singleton coverage is unconditional: a budget stops a growth path, and it
     /// never removes the unfused plan.
     fn retain_singleton_coverage(&mut self) -> Result<(), RegionError> {
-        for member in 0..self.graph.operation_count() {
-            match form_candidate(self.graph, self.budgets, self.numerical_contract, &[member])? {
+        for node in 0..self.graph.node_count() {
+            match form_candidate(self.graph, self.budgets, self.numerical_contract, &[node])? {
                 Ok(candidate) => self.candidates.push(candidate),
                 Err(rejection) => {
                     return Err(RegionError::Structure {
@@ -1282,7 +1700,7 @@ impl Formation<'_> {
 
     /// Grows multi-member regions from every seed in stable topological order.
     fn grow(&mut self) -> Result<(), RegionError> {
-        for seed in 0..self.graph.operation_count() {
+        for seed in 0..self.graph.node_count() {
             if self.grow_from(seed)? == GrowthOutcome::ExpansionsExhausted {
                 return Ok(());
             }
@@ -1446,51 +1864,51 @@ const fn singleton_defect(rejection: RegionRejection) -> &'static str {
     }
 }
 
-/// Classifies one member set and assembles its candidate when it is legal.
+/// Classifies one node set and assembles its candidate when it is legal.
 fn form_candidate(
     graph: &RegionGraph,
     budgets: DeterministicBudgets,
     numerical_contract: StrictF32NumericalContract,
-    members: &[u32],
+    nodes: &[u32],
 ) -> Result<Result<RegionCandidate, RegionRejection>, RegionError> {
     // The set is *required* ascending and distinct rather than sorted into that
     // shape here. Every caller already produces it that way — singleton
     // coverage, growth, and re-verification alike — so a set arriving in another
     // spelling is invalid compiler state rather than something to canonicalize
-    // silently, and requiring it is what lets the stage carry a member set as a
+    // silently, and requiring it is what lets the stage carry a node set as a
     // slice instead of building a `BTreeSet` per candidate.
-    if members.is_empty() || members.windows(2).any(|pair| pair[0] >= pair[1]) {
+    if nodes.is_empty() || nodes.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(RegionError::Structure {
             rule: "member-multiset",
         });
     }
-    for member in members {
-        graph.operation(*member)?;
+    for node in nodes {
+        graph.node_atom(*node)?;
     }
-    if let Some(rejection) = classify(graph, budgets, members)? {
+    if let Some(rejection) = classify(graph, budgets, nodes)? {
         return Ok(Err(rejection));
     }
-    let shape = region_shape(graph, members)?;
+    let shape = region_shape(graph, nodes)?;
     // Singleton coverage is unconditional, so a boundary or live-value budget
     // bounds fused growth without ever removing the unfused plan.
-    if members.len() > 1
+    if nodes.len() > 1
         && let Some(rejection) = classify_shape(budgets, &shape)
     {
         return Ok(Err(rejection));
     }
-    assemble(graph, numerical_contract, members, shape).map(Ok)
+    assemble(graph, numerical_contract, nodes, shape).map(Ok)
 }
 
 /// Decides the structural legality rules that do not need boundary derivation.
 fn classify(
     graph: &RegionGraph,
     budgets: DeterministicBudgets,
-    members: &[u32],
+    nodes: &[u32],
 ) -> Result<Option<RegionRejection>, RegionError> {
     let member_limit = u64::from(budgets.region_members);
-    let member_count = count(members.len());
-    // A singleton is the operation alone, so its multiplicity and evaluation
-    // order are unchanged and no member budget or purity rule can remove it.
+    let member_count = count(nodes.len());
+    // A singleton is one atom alone, so its multiplicity and evaluation order
+    // are unchanged and no member budget or purity rule can remove it.
     if member_count > 1 {
         if member_count > member_limit {
             return Ok(Some(RegionRejection::Budget(RegionBudgetStop {
@@ -1499,16 +1917,17 @@ fn classify(
                 actual: member_count,
             })));
         }
-        for member in members {
-            if !graph.operation(*member)?.pure {
+        for node in nodes {
+            let member = graph.node_atom(*node)?.member().0;
+            if !graph.operation(member)?.pure {
                 return Ok(Some(RegionRejection::ImpureMember));
             }
         }
-        if !graph.is_connected(members)? {
+        if !graph.is_connected(nodes)? {
             return Ok(Some(RegionRejection::Disconnected));
         }
     }
-    if !graph.is_convex(members)? {
+    if !graph.is_convex(nodes)? {
         return Ok(Some(RegionRejection::NonConvex));
     }
     Ok(None)
@@ -1536,37 +1955,93 @@ fn classify_shape(budgets: DeterministicBudgets, shape: &RegionShape) -> Option<
     None
 }
 
-/// Derives boundary inputs, retained outputs, and live values for one set.
-fn region_shape(graph: &RegionGraph, members: &[u32]) -> Result<RegionShape, RegionError> {
+/// Derives boundary inputs, retained outputs, and live values for one node set.
+///
+/// The set is formation node ids. For a single-stage program every node is its
+/// member ordinal and this derives exactly what it always has. A staged member
+/// contributes per-stage: an operand is read by the atoms its law attributes it
+/// to, results are published by the final stage, and a handed intermediate
+/// crossing the set's stage boundary becomes a boundary input (consumer inside,
+/// producer outside) or a retained output (producer inside, consumer outside)
+/// exactly as a real value crossing an occurrence boundary would.
+fn region_shape(graph: &RegionGraph, nodes: &[u32]) -> Result<RegionShape, RegionError> {
     let mut boundary_inputs = Vec::new();
     let mut retained_outputs = Vec::new();
     let mut member_results = 0_u64;
-    for member in members {
-        let operation = graph.operation(*member)?;
-        for operand in &operation.operands {
-            let produced_inside = graph
-                .value(*operand)?
-                .producer
-                .is_some_and(|producer| is_member(members, producer.operation));
+    for node in nodes {
+        let atom = graph.node_atom(*node)?;
+        let member = atom.member().0;
+        let stage = atom.stage().get();
+        let operation = graph.operation(member)?;
+        for (position, operand) in operation.operands.iter().enumerate() {
+            if !graph.stage_reads_operand(member, stage, index(position)?) {
+                continue;
+            }
+            let produced_inside =
+                graph.value(*operand)?.producer.is_some_and(|producer| {
+                    match graph.result_node(producer.operation) {
+                        Ok(producing) => is_member(nodes, producing),
+                        Err(_) => false,
+                    }
+                });
             if !produced_inside && !boundary_inputs.contains(operand) {
                 boundary_inputs.push(*operand);
             }
         }
-        member_results = member_results.saturating_add(count(operation.results.len()));
-        for (result_position, result) in operation.results.iter().enumerate() {
-            let value = graph.value(*result)?;
-            let external_consumers = value
-                .consumers
-                .iter()
-                .any(|consumer| !is_member(members, *consumer));
-            if value.named_result || external_consumers {
-                retained_outputs.push(RetainedOutput {
-                    value: SemanticValueId(*result),
-                    producer: SemanticMemberId(*member),
-                    result_position: index(result_position)?,
-                    named_result: value.named_result,
-                    external_consumers,
+        if stage == graph.result_publishing_stage(member) {
+            member_results = member_results.saturating_add(count(operation.results.len()));
+            for (result_position, result) in operation.results.iter().enumerate() {
+                let value = graph.value(*result)?;
+                let external_consumers = value.consumers.iter().any(|consumer| {
+                    !graph
+                        .consumer_reads_inside(nodes, *consumer, *result)
+                        .unwrap_or(false)
                 });
+                if value.named_result || external_consumers {
+                    retained_outputs.push(RetainedOutput {
+                        value: SemanticValueId(*result),
+                        producer: SemanticMemberId(member),
+                        result_position: index(result_position)?,
+                        named_result: value.named_result,
+                        external_consumers,
+                    });
+                }
+            }
+        }
+        // A handed value crossing the set's stage boundary is a real boundary:
+        // the producing atom retains it, the consuming atom reads it.
+        if let Some(topology) = graph.stage_topology.get(&member) {
+            for (position, handed) in topology.intermediates.iter().enumerate() {
+                let produced_here = handed.producer_stage == stage;
+                let consumed_here = handed.consumer_stage == stage;
+                if !produced_here && !consumed_here {
+                    continue;
+                }
+                let producer_node = graph.atom_node(SemanticStage::at(
+                    SemanticMemberId(member),
+                    StageOrdinal(handed.producer_stage),
+                ))?;
+                let consumer_node = graph.atom_node(SemanticStage::at(
+                    SemanticMemberId(member),
+                    StageOrdinal(handed.consumer_stage),
+                ))?;
+                let producer_inside = is_member(nodes, producer_node);
+                let consumer_inside = is_member(nodes, consumer_node);
+                if produced_here {
+                    member_results = member_results.saturating_add(1);
+                    if !consumer_inside {
+                        retained_outputs.push(RetainedOutput {
+                            value: SemanticValueId(handed.value),
+                            producer: SemanticMemberId(member),
+                            result_position: index(position)?,
+                            named_result: false,
+                            external_consumers: true,
+                        });
+                    }
+                }
+                if consumed_here && !producer_inside && !boundary_inputs.contains(&handed.value) {
+                    boundary_inputs.push(handed.value);
+                }
             }
         }
     }
@@ -1578,28 +2053,36 @@ fn region_shape(graph: &RegionGraph, members: &[u32]) -> Result<RegionShape, Reg
     })
 }
 
-/// Builds the identity-bearing candidate for one legal member set.
+/// Builds the identity-bearing candidate for one legal node set.
 fn assemble(
     graph: &RegionGraph,
     numerical_contract: StrictF32NumericalContract,
-    members: &[u32],
+    nodes: &[u32],
     shape: RegionShape,
 ) -> Result<RegionCandidate, RegionError> {
     let duplication = DuplicationPolicy::Disabled;
-    let content = encode_content(graph, numerical_contract, members, &shape, duplication)?;
-    let occurrence = encode_occurrence(graph, &content, members, &shape)?;
+    let atoms = nodes
+        .iter()
+        .map(|node| graph.node_atom(*node))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut members: Vec<u32> = atoms.iter().map(|atom| atom.member().0).collect();
+    members.dedup();
+    let content = encode_content(
+        graph,
+        numerical_contract,
+        &members,
+        &atoms,
+        &shape,
+        duplication,
+    )?;
+    // Occurrence identity inherits the stage distinction through the content
+    // bytes it embeds — two node sets differing in any atom differ in the
+    // content trailer — and a handed value in either site group encodes under
+    // its own canonical tag, so no occurrence-side trailer is needed.
+    let occurrence = encode_occurrence(graph, &content, &members, &shape)?;
     let label = occurrence.label();
     Ok(RegionCandidate {
-        // One first-stage atom per covered operation. This stage observes the
-        // semantic DAG alone, where an occurrence is one operation and its
-        // realization has not been chosen, so it has nothing to number stages
-        // from; a family whose law realizes an occurrence as a region sequence
-        // is what mints a second stage, and `encode_occurrence` states what
-        // that will require of identity.
-        members: members
-            .iter()
-            .map(|member| SemanticStage::first(SemanticMemberId(*member)))
-            .collect(),
+        members: atoms,
         boundary_inputs: shape
             .boundary_inputs
             .iter()
@@ -1610,8 +2093,72 @@ fn assemble(
         content,
         occurrence,
         label,
-        program_operation_count: graph.operation_count(),
+        program_node_count: graph.node_count(),
     })
+}
+
+/// Returns whether any covered member's realization is staged.
+///
+/// This — not the presence of a non-first atom — is what keys the identity
+/// trailer, because a candidate covering only the *first* stage of a staged
+/// occurrence computes something different from a candidate covering a
+/// single-region occurrence of the same operations, and the two must not share
+/// bytes. A graph with no staged member never trips it, which is what keeps
+/// every pre-stage encoding byte-identical.
+fn covers_staged_member(graph: &RegionGraph, members: &[u32]) -> bool {
+    members
+        .iter()
+        .any(|member| graph.member_stage_count(*member) > 1)
+}
+
+/// Appends the stage trailer both identity encodings carry for staged sets.
+///
+/// Emitted exactly when [`covers_staged_member`] answers true, which is a fact
+/// of the graph's registered laws rather than of one candidate's atom spelling
+/// — so its presence is decidable from the base bytes' member population and
+/// the encoding stays injective: two node sets over one member population
+/// differ in the per-atom stage list, and a synthetic value crossing the
+/// boundary differs in the site-and-facts list. Appending under a domain
+/// marker rather than stepping either domain string is the appended-construct
+/// shape: no previously encodable candidate's bytes move.
+fn append_stage_trailer(
+    bytes: &mut Vec<u8>,
+    graph: &RegionGraph,
+    canonical: &[u32],
+    atoms: &[SemanticStage],
+    shape: &RegionShape,
+) -> Result<(), RegionError> {
+    bytes.extend_from_slice(b"stages\0");
+    push_len(bytes, atoms.len());
+    for atom in atoms {
+        let position = local_position(canonical, atom.member().0, "trailer-local-member")?;
+        bytes.extend_from_slice(&position.to_be_bytes());
+        bytes.extend_from_slice(&atom.stage().get().to_be_bytes());
+    }
+    // The synthetic values crossing this candidate's boundary, by canonical
+    // site, each with the facts a boundary encoding carries for a real value.
+    let mut synthetic: Vec<u32> = shape
+        .boundary_inputs
+        .iter()
+        .chain(shape.retained_outputs.iter().map(|output| &output.value.0))
+        .copied()
+        .filter(|value| {
+            graph
+                .value(*value)
+                .is_ok_and(|value| value.synthetic_site.is_some())
+        })
+        .collect();
+    synthetic.sort_unstable();
+    synthetic.dedup();
+    push_len(bytes, synthetic.len());
+    for value in synthetic {
+        let (tag, first, second) = graph.canonical_value(value)?;
+        bytes.push(tag);
+        bytes.extend_from_slice(&first.to_be_bytes());
+        bytes.extend_from_slice(&second.to_be_bytes());
+        encode_value_facts(bytes, graph.value(value)?);
+    }
+    Ok(())
 }
 
 /// Encodes the region's computation with members in canonical local order.
@@ -1624,6 +2171,7 @@ fn encode_content(
     graph: &RegionGraph,
     numerical_contract: StrictF32NumericalContract,
     members: &[u32],
+    atoms: &[SemanticStage],
     shape: &RegionShape,
     duplication: DuplicationPolicy,
 ) -> Result<RegionContentIdentity, RegionError> {
@@ -1668,9 +2216,16 @@ fn encode_content(
     for value in &boundary_order {
         encode_value_facts(&mut bytes, graph.value(*value)?);
     }
+    // The base tuple list carries real values only; a staged candidate's handed
+    // values live in the stage trailer, which every staged candidate carries.
     let mut retained: Vec<(u32, u32, bool, bool)> = shape
         .retained_outputs
         .iter()
+        .filter(|output| {
+            graph
+                .value(output.value.0)
+                .is_ok_and(|value| value.synthetic_site.is_none())
+        })
         .map(|output| {
             let position = local_position(&canonical, output.producer.0, "content-local-output")?;
             Ok((
@@ -1688,6 +2243,9 @@ fn encode_content(
         bytes.extend_from_slice(&result_position.to_be_bytes());
         bytes.push(u8::from(named_result));
         bytes.push(u8::from(external_consumers));
+    }
+    if covers_staged_member(graph, members) {
+        append_stage_trailer(&mut bytes, graph, &canonical, atoms, shape)?;
     }
     Ok(RegionContentIdentity {
         canonical: bytes.into(),
@@ -2283,6 +2841,320 @@ mod tests {
         budgets: DeterministicBudgets,
     ) -> RegionFormationOutcome {
         form_region_candidates(program, budgets, StrictF32NumericalContract::governed()).unwrap()
+    }
+
+    /// A normalization feeding a pointwise consumer: constant, `rms_norm`, multiply.
+    ///
+    /// The normalization's registered law realizes two stages, so this program's
+    /// four formation nodes over three operations are the smallest staged node
+    /// space the standard registries can produce.
+    fn rms_norm_program() -> SemanticProgram {
+        use tiler_ir::semantic::{
+            RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, multiply_f32_op,
+            rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
+        };
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let value = builder
+            .input_resolved(
+                InputKey::new("value").unwrap(),
+                Shape::from_dims([2, 4]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let weight = builder
+            .input_resolved(
+                InputKey::new("weight").unwrap(),
+                Shape::from_dims([2, 4]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let attributes = OperationAttributes::new([
+            CanonicalField::new(
+                RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                rms_norm_f32_axis_attribute(Axis::new(1)),
+            ),
+            CanonicalField::new(
+                RMS_NORM_EPS_BITS_ATTRIBUTE,
+                rms_norm_f32_eps_attribute(1.0e-6_f32.to_bits()),
+            ),
+        ])
+        .unwrap();
+        let normalized = builder
+            .apply(rms_norm_f32_op(), attributes, &[value, weight])
+            .unwrap()[0];
+        let scaled = builder
+            .apply(
+                multiply_f32_op(),
+                OperationAttributes::new([]).unwrap(),
+                &[normalized, value],
+            )
+            .unwrap()[0];
+        builder
+            .output_resolved(OutputKey::new("result").unwrap(), scaled)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn form_staged(program: &SemanticProgram) -> RegionFormationOutcome {
+        let laws = tiler_ir::index::FrozenIndexRealizationLawRegistry::from_semantic(
+            program.semantic_registry().clone(),
+            tiler_ir::index::FrozenScalarRegistry::standard().unwrap(),
+        )
+        .unwrap();
+        form_region_candidates_with_realizations(
+            program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed(),
+            &laws,
+        )
+        .unwrap()
+    }
+
+    /// Returns the graph ordinal of the one normalization member.
+    fn rms_member(outcome: &RegionFormationOutcome) -> u32 {
+        (0..outcome.graph().operation_count())
+            .find(|member| outcome.graph().member_stage_count(*member) > 1)
+            .expect("the fixture registers one staged family")
+    }
+
+    #[test]
+    fn a_staged_occurrence_enumerates_one_node_per_stage() {
+        let program = rms_norm_program();
+        let outcome = form_staged(&program);
+        let graph = outcome.graph();
+        // Two operations, one of them two-stage: three nodes.
+        assert_eq!(graph.operation_count(), 2);
+        assert_eq!(graph.node_count(), 3);
+        let member = rms_member(&outcome);
+        assert_eq!(graph.member_stage_count(member), 2);
+        let topology = graph.stage_topology.get(&member).unwrap();
+        // One handed value, published by the fold and read by the scale pass,
+        // one element per folded row.
+        assert_eq!(topology.intermediates.len(), 1);
+        let handed = topology.intermediates[0];
+        assert_eq!(handed.producer_stage, 0);
+        assert_eq!(handed.consumer_stage, 1);
+        let synthetic = graph.value(handed.value).unwrap();
+        assert_eq!(synthetic.shape, Shape::from_dims([2]));
+        assert_eq!(synthetic.synthetic_site, Some((member, 0)));
+        // The value operand is read by both stages; the weight by the pass alone.
+        let reads = |position: u32| -> Vec<u32> {
+            (0..2)
+                .filter(|stage| graph.stage_reads_operand(member, *stage, position))
+                .collect()
+        };
+        assert_eq!(
+            reads(0),
+            vec![0, 1],
+            "the fold squares the value and the pass scales it"
+        );
+        assert_eq!(reads(1), vec![1], "the weight belongs to the pass alone");
+        // Every node round-trips through its atom, and coordinates past the
+        // topology refuse rather than alias.
+        for node in 0..graph.node_count() {
+            let atom = graph.node_atom(node).unwrap();
+            assert_eq!(graph.atom_node(atom).unwrap(), node);
+        }
+        assert!(graph.node_atom(graph.node_count()).is_err());
+        assert!(
+            graph
+                .atom_node(SemanticStage::at(SemanticMemberId(member), StageOrdinal(2)))
+                .is_err(),
+            "a stage the realization does not have is not an atom"
+        );
+    }
+
+    #[test]
+    fn staged_candidates_cover_stages_and_split_boundaries_carry_the_handed_value() {
+        let program = rms_norm_program();
+        let outcome = form_staged(&program);
+        let graph = outcome.graph();
+        let member = rms_member(&outcome);
+        let handed = graph.stage_topology.get(&member).unwrap().intermediates[0].value;
+        let fold = SemanticStage::at(SemanticMemberId(member), StageOrdinal(0));
+        let pass = SemanticStage::at(SemanticMemberId(member), StageOrdinal(1));
+
+        let candidate_for = |atoms: &[SemanticStage]| {
+            outcome
+                .candidates()
+                .iter()
+                .find(|candidate| candidate.members() == atoms)
+        };
+
+        // The fold alone: reads the value input, not the weight, and retains
+        // the handed value for the uncovered pass.
+        let fold_alone = candidate_for(&[fold]).expect("the fold's singleton is enumerated");
+        assert_eq!(
+            fold_alone.retained_outputs().len(),
+            1,
+            "the fold publishes the handed value and nothing else"
+        );
+        assert_eq!(
+            fold_alone.retained_outputs()[0].value,
+            SemanticValueId(handed)
+        );
+        assert!(
+            fold_alone
+                .boundary_inputs()
+                .iter()
+                .all(|value| value.0 != handed),
+            "the fold does not read what it publishes"
+        );
+        let weight_ordinal = graph.operation(member).unwrap().operands[1];
+        assert!(
+            fold_alone
+                .boundary_inputs()
+                .iter()
+                .all(|value| value.0 != weight_ordinal),
+            "the weight is not a boundary of a candidate that never reads it"
+        );
+
+        // The pass alone: reads the value, the weight, and the handed value.
+        let pass_alone = candidate_for(&[pass]).expect("the pass's singleton is enumerated");
+        assert!(
+            pass_alone
+                .boundary_inputs()
+                .contains(&SemanticValueId(handed)),
+            "the pass reads the handed value across the stage boundary"
+        );
+        assert!(
+            pass_alone
+                .boundary_inputs()
+                .contains(&SemanticValueId(weight_ordinal))
+        );
+
+        // Both stages together: the handed value is internal — neither boundary
+        // nor retained — and the occurrence's real result is retained for the
+        // outside multiply.
+        let whole = candidate_for(&[fold, pass]).expect("the whole occurrence is enumerated");
+        assert!(
+            whole
+                .boundary_inputs()
+                .iter()
+                .chain(whole.retained_outputs().iter().map(|output| &output.value))
+                .all(|value| value.0 != handed),
+            "a handed value both published and consumed inside crosses no boundary"
+        );
+        assert_eq!(whole.retained_outputs().len(), 1);
+
+        // The fold cannot fuse with the downstream multiply around the pass:
+        // the value path fold -> pass -> multiply re-enters, so the set is
+        // non-convex and formation never emits it.
+        let multiply_node = (0..graph.node_count())
+            .find(|node| {
+                graph.node_atom(*node).is_ok_and(|atom| {
+                    atom.member().0 != member
+                        && !graph
+                            .operation(atom.member().0)
+                            .unwrap()
+                            .operands
+                            .is_empty()
+                })
+            })
+            .expect("the multiply consumes operands");
+        let fold_node = graph.atom_node(fold).unwrap();
+        let mut set = [fold_node, multiply_node];
+        set.sort_unstable();
+        let formed = form_candidate(
+            graph,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed(),
+            &set,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                formed,
+                Err(RegionRejection::NonConvex | RegionRejection::Disconnected)
+            ),
+            "the fold and the downstream consumer cannot enclose the uncovered pass"
+        );
+    }
+
+    #[test]
+    fn the_stage_trailer_separates_what_shared_bytes_would_conflate() {
+        let program = rms_norm_program();
+        let staged = form_staged(&program);
+        let member = rms_member(&staged);
+        let fold = SemanticStage::at(SemanticMemberId(member), StageOrdinal(0));
+        let pass = SemanticStage::at(SemanticMemberId(member), StageOrdinal(1));
+        let content_of = |outcome: &RegionFormationOutcome, atoms: &[SemanticStage]| {
+            outcome
+                .candidates()
+                .iter()
+                .find(|candidate| candidate.members() == atoms)
+                .map(|candidate| candidate.content().as_bytes().to_vec())
+        };
+        let fold_bytes = content_of(&staged, &[fold]).unwrap();
+        let pass_bytes = content_of(&staged, &[pass]).unwrap();
+        let whole_bytes = content_of(&staged, &[fold, pass]).unwrap();
+        assert_ne!(fold_bytes, pass_bytes);
+        assert_ne!(fold_bytes, whole_bytes);
+        assert_ne!(pass_bytes, whole_bytes);
+
+        // The hazard the trailer condition exists for: a candidate covering
+        // only the *first* stage of the staged occurrence must not share bytes
+        // with a law-blind candidate over the same operation — the two compute
+        // different things. The law-blind formation is the stand-in for a
+        // program whose registry carries no law for the family.
+        let blind = form(&program);
+        let blind_bytes = content_of(&blind, &[SemanticStage::first(SemanticMemberId(member))])
+            .expect("the law-blind formation covers the member single-stage");
+        assert_ne!(
+            blind_bytes, fold_bytes,
+            "first-stage-only bytes must not collide with single-stage bytes"
+        );
+        assert_ne!(blind_bytes, whole_bytes);
+    }
+
+    #[test]
+    fn an_unstaged_program_forms_identically_with_and_without_the_law_authority() {
+        for program in [
+            serial_sum_program(),
+            diamond_program(),
+            shared_producer_program(),
+        ] {
+            let blind = form(&program);
+            let staged = form_staged(&program);
+            assert_eq!(
+                blind.candidates().len(),
+                staged.candidates().len(),
+                "a program with no staged member enumerates the same candidates"
+            );
+            for (left, right) in blind.candidates().iter().zip(staged.candidates()) {
+                assert_eq!(left, right, "every candidate is byte-identical");
+            }
+        }
+    }
+
+    #[test]
+    fn staged_candidates_rederive_from_their_exact_atoms() {
+        let program = rms_norm_program();
+        let outcome = form_staged(&program);
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed();
+        for candidate in outcome.candidates() {
+            verify_candidate(outcome.graph(), budgets, contract, candidate).unwrap();
+        }
+        let member = rms_member(&outcome);
+        let fold = SemanticStage::at(SemanticMemberId(member), StageOrdinal(0));
+        let pass = SemanticStage::at(SemanticMemberId(member), StageOrdinal(1));
+        // A candidate wearing another atom set's identity is refused: the fold
+        // singleton relabelled as the pass rebuilds to different bytes.
+        let mut forged = outcome
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.members() == [fold])
+            .unwrap()
+            .clone();
+        forged.members = vec![pass];
+        assert!(matches!(
+            verify_candidate(outcome.graph(), budgets, contract, &forged),
+            Err(RegionError::Invalid {
+                rule: "identity",
+                ..
+            })
+        ));
     }
 
     fn member_sets(outcome: &RegionFormationOutcome) -> Vec<Vec<u32>> {
@@ -2903,17 +3775,18 @@ mod tests {
             })
         ));
 
-        // A candidate carrying a later attribution stage is refused rather than
-        // rebuilt: the rebuild reads occurrences alone, so it would confirm this
-        // candidate against the bytes of the one covering the same occurrence's
-        // first stage. `encode_occurrence` records what lifting the refusal
-        // requires of identity.
+        // A candidate carrying a stage its member's realization does not have
+        // is refused as bad membership: the graph's stage topology is the
+        // authority on which atoms exist, and every member of this program is
+        // single-stage. A *real* later stage rebuilds like any other atom set,
+        // because the identity encodings carry the stage trailer for any
+        // candidate touching a staged member.
         let mut staged = whole.clone();
         staged.members[0] = staged.members[0].next_stage();
         assert!(matches!(
             verify_candidate(outcome.graph(), budgets, contract, &staged),
             Err(RegionError::Invalid {
-                rule: "unencoded-member-stage",
+                rule: "membership",
                 ..
             })
         ));

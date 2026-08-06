@@ -778,6 +778,42 @@ impl ResolvedIndexRealization {
     pub const fn subject(&self) -> &IndexRefinementSubject {
         &self.subject
     }
+    /// Returns whether this law realizes a region *sequence*.
+    ///
+    /// The cheap half of [`Self::realize_sequence`]'s answer: a consumer that
+    /// only wants single-region occurrences filtered out asks this before
+    /// paying for a realization it would discard.
+    #[must_use]
+    pub const fn realizes_region_sequence(&self) -> bool {
+        self.law.realizes_region_sequence()
+    }
+
+    /// Realizes the resolved law's canonical region sequence for its subject.
+    ///
+    /// The same realization refinement performs internally when it compares a
+    /// provider's emission against the law, over the same law, subject, and
+    /// frozen scalar authority this resolution already binds — exposed so a
+    /// consumer that needs the realization's *shape* (its stage count, each
+    /// stage's reads, and the handed values) reads it from the one authority
+    /// that owns it instead of deriving a second account of the law.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexRefinementVerificationError::SemanticRealizationLawRefused`]
+    /// carrying the law's own refusal rule when the subject does not realize —
+    /// the identical refusal refinement reports for the same subject.
+    pub fn realize_sequence(
+        &self,
+    ) -> Result<super::VerifiedIndexRegionSequence, IndexRefinementVerificationError> {
+        self.law
+            .realize_sequence(&self.subject, &self.registry.0.scalars)
+            .map_err(
+                |source| IndexRefinementVerificationError::SemanticRealizationLawRefused {
+                    operation: Box::new(self.subject.operation().clone()),
+                    rule: source.rule(),
+                },
+            )
+    }
     /// Returns the independent verifier provider.
     #[must_use]
     pub fn provider(&self) -> &ProviderIdentity {
