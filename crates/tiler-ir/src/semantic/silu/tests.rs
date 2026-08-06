@@ -231,6 +231,203 @@ fn the_contract_names_the_registered_key() {
 }
 
 // ---------------------------------------------------------------------------
+// The declared subnormal behaviour
+// ---------------------------------------------------------------------------
+
+/// Returns the subnormal policy exactly as the *registered* definition carries it.
+///
+/// Read through the registry rather than from [`silu_f32_facts`], so a
+/// registration carrying some other record than the declared one fails here
+/// instead of agreeing with itself.
+fn registered_subnormal_fact() -> String {
+    let registry = registry();
+    let facts = registry
+        .operation_facts(&silu_f32_op())
+        .expect("the SiLU definition carries facts");
+    let CanonicalValueView::Record(fields) = facts.value().view() else {
+        panic!("the governed facts are a record");
+    };
+    let carried = fields
+        .iter()
+        .find(|field| field.id() == SILU_F32_FACT_SUBNORMALS)
+        .map(CanonicalField::value)
+        .expect("the facts carry the subnormal policy");
+    let CanonicalValueView::Utf8(text) = carried.view() else {
+        panic!("the subnormal policy is a fact string");
+    };
+    text.to_owned()
+}
+
+/// The declared subnormal policy is true over the whole domain it quantifies.
+///
+/// Four assertions, each refusing a different defect, ordered so the specific
+/// diagnosis fires before the opaque one. The `unreachable` assertion refuses the
+/// claim this fact carried before —
+/// `preserved-and-unreachable-no-binary32-silu-result-or-intermediate-is-subnormal`,
+/// which generalized from the large-negative tail alone. The two region assertions
+/// refuse a replacement that repairs one region and then generalizes from *it* in
+/// the same way: near zero it is the *result* that is subnormal, and for large
+/// positive arguments it is the *subordinate exponential*, so a spelling naming
+/// one of the two is as untrue over the domain as one naming neither. Only then
+/// does the exact value pin the spelling.
+#[test]
+fn the_declared_subnormal_policy_covers_every_region_of_the_domain() {
+    let value = registered_subnormal_fact();
+    assert!(
+        !value.contains("unreachable"),
+        "the band is reached in two regions, so no spelling may declare it unreachable: {value}"
+    );
+    assert!(
+        value.contains("near-zero"),
+        "the near-zero region, where the reference is x / 2, produces subnormal results: {value}"
+    );
+    assert!(
+        value.contains("subordinate-exponential"),
+        "the subordinate exponential is itself subnormal for large positive arguments: {value}"
+    );
+    assert_eq!(
+        value,
+        "preserved-by-this-contract-and-reached-as-a-result-near-zero-where-the-reference-is-x-\
+         over-two-and-as-the-subordinate-exponential-for-large-positive-arguments-and-flushed-\
+         on-a-declared-flushing-realization-a-recorded-divergence"
+    );
+}
+
+/// The near-zero region the fact names, evaluated at the exact bits that bound it.
+///
+/// The divisor is *derived* rather than taken from a host exponential, so this
+/// case pins the composition and not a library. For `0 < |x| <= 2^-25` the
+/// reference `e^-x` lies strictly between `1 - 2^-25` and `1`, because
+/// `e^-t > 1 - t` at every `t > 0`. The predecessor of `1.0` is `1 - 2^-24`, so
+/// `1 - 2^-25` is exactly the rounding midpoint below `1.0` and the correctly
+/// rounded exponential over the whole region is `1.0`. Everything after that is
+/// binary32 division by exactly `2.0`, which the host performs exactly.
+#[test]
+fn the_near_zero_region_produces_subnormal_results_at_the_pinned_bits() {
+    let region_ceiling = f32::from_bits(0x3300_0000);
+    let predecessor_of_one = f32::from_bits(0x3f7f_ffff);
+    let midpoint_below_one = f64::midpoint(f64::from(predecessor_of_one), 1.0);
+    assert_eq!(
+        midpoint_below_one.to_bits(),
+        (1.0 - f64::from(region_ceiling)).to_bits(),
+        "the region ceiling is exactly the distance from 1.0 down to its rounding midpoint, \
+         which is what makes the correctly rounded exponential 1.0 over the whole region"
+    );
+    let divisor = 1.0_f32 + 1.0_f32;
+    assert_eq!(
+        divisor.to_bits(),
+        2.0_f32.to_bits(),
+        "1.0 + 1.0 is exact, so the divisor is exactly 2.0"
+    );
+
+    for (argument, result, subnormal) in [
+        (0x0000_0001_u32, 0x0000_0000_u32, false),
+        (0x0000_0002, 0x0000_0001, true),
+        (0x007f_fffe, 0x003f_ffff, true),
+        (0x007f_ffff, 0x0040_0000, true),
+        (0x0080_0000, 0x0040_0000, true),
+        (0x00ff_fffe, 0x007f_ffff, true),
+        (0x00ff_ffff, 0x0080_0000, false),
+        (0x807f_ffff, 0x8040_0000, true),
+        (0x8080_0000, 0x8040_0000, true),
+    ] {
+        let value = f32::from_bits(argument) / divisor;
+        assert_eq!(
+            value.to_bits(),
+            result,
+            "silu(0x{argument:08x}) is 0x{result:08x}"
+        );
+        assert_eq!(
+            value.is_subnormal(),
+            subnormal,
+            "silu(0x{argument:08x}) subnormality"
+        );
+    }
+
+    assert!(
+        !f32::from_bits(0x0080_0000).is_subnormal() && !f32::from_bits(0x00ff_fffe).is_subnormal(),
+        "the arguments from 0x00800000 to 0x00fffffe are normal and their images are subnormal, \
+         so a subnormal result does not require a subnormal operand"
+    );
+    assert!(
+        f32::from_bits(0x0000_0001) != 0.0,
+        "0x00000001 is a nonzero argument whose image is exactly zero by ties-to-even, which is \
+         a rounding and not a flush"
+    );
+}
+
+/// No argument at or beyond the exponential's argument ceiling has a subnormal image.
+///
+/// The old spelling of the subnormal fact generalized over this whole region from
+/// two samples in it. Two samples cannot establish a region, so this states the
+/// bound instead: a finite divisor is `fl(1 + e)` for a finite non-negative `e`
+/// and is therefore at most `f32::MAX`, so an argument of magnitude at least the
+/// ceiling has an image of magnitude at least `ceiling / f32::MAX`. An infinite
+/// divisor gives an exact signed zero, which is not subnormal either.
+#[test]
+fn no_argument_beyond_the_exponential_ceiling_has_a_subnormal_image() {
+    assert_eq!(
+        (1.0_f32 + f32::MAX).to_bits(),
+        f32::MAX.to_bits(),
+        "a finite divisor cannot exceed f32::MAX, which is what bounds the image below"
+    );
+    let ceiling = f32::from_bits(SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS);
+    let smallest_magnitude = f64::from(ceiling) / f64::from(f32::MAX);
+    assert!(
+        smallest_magnitude > 20.0 * f64::from(f32::MIN_POSITIVE),
+        "the smallest magnitude the tail can produce is {smallest_magnitude:e}, more than twenty \
+         times the minimum normal {:e}, so the region holds no subnormal at all",
+        f64::from(f32::MIN_POSITIVE)
+    );
+}
+
+/// The subordinate exponential's own subnormal band, bracketed at its two ends.
+///
+/// The fact's second reached region is the one clause a reader cannot check
+/// against the tree unless this exists, so it is stated as the inequality that
+/// decides it rather than as a sample: `e^-x` is below the minimum normal exactly
+/// when `x > 126 ln 2`, and it rounds to `+0.0` exactly when `e^-x` falls below
+/// `2^-150`, half the least positive subnormal, which is `x > 150 ln 2` — the tie
+/// at the midpoint itself going to even, which is zero. Both thresholds are
+/// irrational, so each falls strictly inside a binary32 gap and the bracket is a
+/// pair of representable neighbours. No host exponential is consulted: `LN_2`
+/// carries an error near `1e-17`, thirteen orders of magnitude below the `7.6e-6`
+/// gap between the neighbours being separated, so the brackets are decided by a
+/// margin nothing on this host disturbs.
+///
+/// Each neighbour is *derived* from the boundary under test rather than named
+/// beside it. Naming both ends independently would assert only that the threshold
+/// lies somewhere between two values, which any wider pair also satisfies — the
+/// first draft of this test passed with its lower end moved outward by one ULP.
+/// Taking `bits - 1` and `bits + 1` is what makes the assertion pin the boundary,
+/// because moving the boundary now breaks the other side of its own bracket.
+#[test]
+fn the_subordinate_exponential_enters_and_leaves_the_subnormal_band_at_the_stated_bits() {
+    let entry = 0x42ae_ac50_u32;
+    let minimum_normal_threshold = 126.0 * std::f64::consts::LN_2;
+    assert!(
+        f64::from(f32::from_bits(entry - 1)) < minimum_normal_threshold
+            && minimum_normal_threshold < f64::from(f32::from_bits(entry)),
+        "0x{entry:08x} is the least argument whose exponential is subnormal, and its immediate \
+         predecessor is the greatest whose exponential is still normal"
+    );
+
+    let exit = 0x42cf_f1b4_u32;
+    let flush_to_zero_threshold = 150.0 * std::f64::consts::LN_2;
+    assert!(
+        f64::from(f32::from_bits(exit)) < flush_to_zero_threshold
+            && flush_to_zero_threshold < f64::from(f32::from_bits(exit + 1)),
+        "0x{exit:08x} is the greatest argument whose exponential is still a nonzero subnormal, \
+         and its immediate successor is the least whose exponential rounds to +0.0"
+    );
+
+    assert!(
+        entry < exit,
+        "the band is nonempty, which is what makes it a region rather than a boundary case"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Application refusals
 // ---------------------------------------------------------------------------
 
