@@ -26,7 +26,7 @@ The exact value-domain predicate that discharges the online-softmax rescaling bo
 
 - The complete predicate over the operation's operands that discharges the clause at every exposed site, for the sequential fold and for a merge tree, with the tree's roughly doubled site count carried rather than assumed away.
 - Its [ADR 0021](../docs/decisions/0021-validated-value-assumptions.md) provenance route, derived: caller-declared is ineligible; compiler-proven is unavailable while the logits are unbounded external inputs; so what remains is runtime validation before routing commit, and this ticket states its cost and its refusal rather than asserting it is affordable.
-- What the price collapses to when the precondition holds, since the certified-bounds measurement shows an observed price of exactly zero once the running maximum stops moving — the sharpening is a separate claim from the discharge and must not be conflated with it.
+- What the price collapses to when the precondition holds, since the certified-bounds measurement shows an observed divergence of exactly zero once the running maximum stops moving — the sharpening is a separate claim from the discharge and must not be conflated with it.
 - Any public boundary reached stops at a draft with an acceptance node; nothing is self-accepted.
 
 ## Non-goals

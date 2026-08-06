@@ -19,6 +19,18 @@ these numbers. What the numbers add is the other half a bound needs to be
 usable: how loose it is, which is the quantity that decides whether a caller's
 tolerance can actually be met.
 
+One check here is deliberately weaker than the others and is named as such. The
+*divergence* between the two folds, `|online - two_pass| / R`, is checked against
+two quantities: the sum of the two folds' derived bounds, which is rigorous
+because two results each inside their own bracket around the shared real
+reference can differ by at most the sum of the brackets; and the rewrite price,
+which is the *ratio* of those two bounds and therefore bounds the extra relative
+budget the rewrite consumes rather than the realized divergence. The price check
+is retained because it is the detector that fires on a structurally wrong fold,
+but a violation of it would be a signal to investigate rather than a refutation.
+The distinction is derived in `docs/research/numerics/tree-fold-online-softmax-bound.md`
+Part 5 and stated in the certified-bounds record's Part 2 Step 4.
+
 Every arithmetic operation below is computed exactly in `Decimal` and then
 rounded once to binary32, so the simulation carries no host floating-point
 behaviour of its own. `exp` is correctly rounded to binary32, which is the
@@ -303,19 +315,25 @@ def evaluate(name: str, logits: list[float]) -> dict[str, object]:
 
     two_pass_error = abs(two_pass - reference) / reference
     online_error = abs(online - reference) / reference
-    observed_price = abs(online - two_pass) / reference
+    # Named for what it is: the divergence between two computed results, which is
+    # not the quantity `rewrite_price` bounds. See the two checks in `check`.
+    divergence = abs(online - two_pass) / reference
+
+    two_pass_derived = two_pass_bound(count, spread)
+    online_derived = online_bound(count, spread)
 
     return {
         "case": name,
         "contributors": count,
         "argument_spread": float(spread),
         "two_pass_relative_error": _magnitude(two_pass_error),
-        "two_pass_bound": _magnitude(two_pass_bound(count, spread)),
-        "two_pass_bound_over_observed": _ratio(two_pass_bound(count, spread), two_pass_error),
+        "two_pass_bound": _magnitude(two_pass_derived),
+        "two_pass_bound_over_observed": _ratio(two_pass_derived, two_pass_error),
         "online_relative_error": _magnitude(online_error),
-        "online_bound": _magnitude(online_bound(count, spread)),
-        "online_bound_over_observed": _ratio(online_bound(count, spread), online_error),
-        "observed_price": _magnitude(observed_price),
+        "online_bound": _magnitude(online_derived),
+        "online_bound_over_observed": _ratio(online_derived, online_error),
+        "observed_divergence": _magnitude(divergence),
+        "sum_of_bounds": _magnitude(online_derived + two_pass_derived),
         "derived_price": _magnitude(rewrite_price(count)),
     }
 
@@ -348,10 +366,24 @@ def check(rows: list[dict[str, object]]) -> list[str]:
             failures.append(f"{name}: two-pass error exceeds its derived bound")
         if Decimal(str(row["online_relative_error"])) > Decimal(str(row["online_bound"])):
             failures.append(f"{name}: online error exceeds its derived bound")
-        # The price is what a caller's tolerance is compared against, so it is
-        # checked separately from the two absolute bounds it was factored out of.
-        if Decimal(str(row["observed_price"])) > Decimal(str(row["derived_price"])):
-            failures.append(f"{name}: observed price exceeds the derived price")
+        # The divergence between the two folds is checked against two quantities,
+        # and they are not the same kind of claim.
+        #
+        # Derived and rigorous: each fold's result lies inside its own bracket
+        # around the shared real reference, so the two can differ by at most the
+        # sum of the two brackets.
+        if Decimal(str(row["observed_divergence"])) > Decimal(str(row["sum_of_bounds"])):
+            failures.append(f"{name}: divergence exceeds the sum of the two derived bounds")
+        # Heuristic detector, not a derived bound: the price is the *ratio* of the
+        # two bounds, so it bounds the extra relative budget the rewrite consumes
+        # against the reference and not the realized divergence, whose own bound
+        # `sum_of_bounds` is 2.00 to 83.0 times larger over this corpus. It is
+        # retained because it fires on a structurally wrong fold, and a violation
+        # of it is a signal to investigate rather than a refutation.
+        if Decimal(str(row["observed_divergence"])) > Decimal(str(row["derived_price"])):
+            failures.append(
+                f"{name}: divergence exceeds the derived price (heuristic detector)"
+            )
     if len(rows) != DECLARED_CASES:
         failures.append(
             f"population mismatch: evaluated {len(rows)} cases, expected {DECLARED_CASES}"
