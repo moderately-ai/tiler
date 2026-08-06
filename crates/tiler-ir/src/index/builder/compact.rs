@@ -21,6 +21,7 @@ impl IndexRegionBuilder {
         reachable_values: BTreeSet<u32>,
         reachable_accesses: BTreeSet<u32>,
         mut index_domain_predicates: Vec<PendingIndexDomainPredicate>,
+        partition_proofs: &BTreeMap<u32, JointPartitionProof>,
     ) -> Result<VerifiedIndexRegion, IndexRegionDiagnostic> {
         let order = self.compaction_order(reachable_values, reachable_accesses);
         let CompactionOrder {
@@ -56,6 +57,7 @@ impl IndexRegionBuilder {
                     &expr_map,
                     &dimension_map,
                     &index_domain_predicates,
+                    partition_proofs,
                 )
             })
             .collect();
@@ -331,6 +333,7 @@ impl IndexRegionBuilder {
         expression_map: &BTreeMap<u32, u32>,
         dimension_map: &BTreeMap<u32, u32>,
         index_domain_predicates: &[PendingIndexDomainPredicate],
+        partition_proofs: &BTreeMap<u32, JointPartitionProof>,
     ) -> VerifiedAccessData {
         let access = &self.accesses[old as usize];
         let shape = &self.tensors[access.tensor as usize].shape;
@@ -381,8 +384,19 @@ impl IndexRegionBuilder {
                     points: enumerated_points(points),
                 })
             },
+            // The partition arm comes first because it is the verifier's own
+            // precedence: for an output several roots share, the joint
+            // obligation is the only thing that was decided, and neither of the
+            // other two forms was even asked. A partition member cannot
+            // incidentally satisfy `write_is_permutation` — a permutation
+            // covers the whole boundary, which would have collided with every
+            // sibling — but recording the form the verifier actually used keeps
+            // the retained evidence a fact about the proof rather than about
+            // whichever predicate happened to be tried first.
             ownership_proof: (access.mode == AccessMode::Write).then(|| {
-                if self.write_is_permutation(access, shape) {
+                if let Some(joint) = partition_proofs.get(&access.tensor) {
+                    WriteOwnershipProof::PartitionMember { joint: *joint }
+                } else if self.write_is_permutation(access, shape) {
                     WriteOwnershipProof::CoordinatePermutation
                 } else {
                     WriteOwnershipProof::Exhaustive {

@@ -8,12 +8,13 @@ use tiler_ir::CheckedBuildError;
 use tiler_ir::index::{
     BoundsProofView, DomainRole, IndexBuildError, IndexDomainPredicate, IndexDomainUnknownReason,
     IndexInteger, IndexIntegerSign, IndexLimitKind, IndexRegionBuilder, IndexRegionDiagnostic,
-    MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS, MAX_INDEX_EXPRESSION_DEPTH,
-    MAX_INDEX_INTEGER_BYTES, MAX_TENSOR_RANK, ProofResource, ScalarArity, ScalarAttributeField,
-    ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
-    ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
-    ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder,
-    ScalarRegistryError, SourcedExtent, SymbolicExtentError, TensorRole, WriteOwnershipProofView,
+    JointPartitionProofView, MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS,
+    MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_INTEGER_BYTES, MAX_TENSOR_RANK, ProofResource,
+    ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
+    ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
+    ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
+    ScalarRegistryBuilder, ScalarRegistryError, SourcedExtent, SymbolicExtentError, TensorRole,
+    WriteOwnershipProofView,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, FrozenSemanticRegistry,
@@ -1413,8 +1414,11 @@ fn every_output_tensor_requires_exactly_one_root() {
     );
 }
 
+/// A root repeated verbatim is admitted at construction and refused at
+/// verification, which is the whole shape of the relaxation: whether two roots
+/// over one boundary partition it is not a question `output` can answer.
 #[test]
-fn duplicate_output_roots_are_rejected_transactionally() {
+fn a_repeated_output_root_is_admitted_then_refused_as_an_overlap() {
     let (_, registry) = registries();
     let mut builder = IndexRegionBuilder::new(registry).unwrap();
     let output = builder
@@ -1423,11 +1427,180 @@ fn duplicate_output_roots_are_rejected_transactionally() {
     let value = constant_value(&mut builder);
     let write = builder.write(output, &[], &[]).unwrap();
     builder.output(write, value).unwrap();
-    assert_eq!(
-        builder.output(write, value).unwrap_err(),
-        IndexBuildError::DuplicateOutputTensor
+    builder.output(write, value).unwrap();
+    let error = builder.build().unwrap_err();
+    assert!(
+        error.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionRangesOverlap { .. }
+        )),
+        "two roots occupying one rectangle overlap: {:?}",
+        error.diagnostics()
     );
-    assert!(builder.build().is_ok());
+}
+
+/// Builds one output written by several roots over a single parallel dimension,
+/// so the partition cases below differ only in the coordinates that are the
+/// subject.
+fn partitioned_output_region(
+    extent: u64,
+    parallel_extent: u64,
+    roots: &[(i128, i128)],
+) -> IndexRegionBuilder {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let output = builder
+        .tensor(TensorRole::Output, test_type(), Shape::from_dims([extent]))
+        .unwrap();
+    let dimension = builder
+        .dimension(DomainRole::Parallel, Extent::new(parallel_extent))
+        .unwrap();
+    let expression = builder.dimension_expr(dimension).unwrap();
+    let value = constant_value(&mut builder);
+    for (coefficient, offset) in roots {
+        let coordinate = builder
+            .linear_combination((*offset).into(), &[((*coefficient).into(), expression)])
+            .unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+    }
+    builder
+}
+
+fn partition_ownership(
+    region: &tiler_ir::index::VerifiedIndexRegion,
+) -> Vec<WriteOwnershipProofView> {
+    region
+        .accesses()
+        .filter(|access| access.mode() == tiler_ir::index::AccessMode::Write)
+        .map(|access| access.write_ownership_proof().unwrap())
+        .collect()
+}
+
+/// Unit-coefficient displaced dimensions are contiguous static ranges, so the
+/// joint obligation closes without enumerating anything.
+#[test]
+fn contiguous_partitions_are_admitted_by_interval_reasoning() {
+    // `k` and `k + 2` over a domain of two points tile `[0, 4)` as `[0, 2)` and
+    // `[2, 4)`.
+    let region = partitioned_output_region(4, 2, &[(1, 0), (1, 2)])
+        .build()
+        .unwrap();
+    assert_eq!(
+        partition_ownership(&region),
+        vec![
+            WriteOwnershipProofView::PartitionMember {
+                joint: JointPartitionProofView::Interval
+            };
+            2
+        ]
+    );
+}
+
+/// A coordinate outside the displaced-dimension vocabulary declines interval
+/// reasoning rather than refuting the region, and the joint walk decides it.
+#[test]
+fn strided_partitions_fall_back_to_the_recorded_joint_walk() {
+    // `2k` and `2k + 1` interleave rather than tile, so no rectangle describes
+    // either root; together they still cover `[0, 4)` exactly once.
+    let region = partitioned_output_region(4, 2, &[(2, 0), (2, 1)])
+        .build()
+        .unwrap();
+    assert_eq!(
+        partition_ownership(&region),
+        vec![
+            WriteOwnershipProofView::PartitionMember {
+                joint: JointPartitionProofView::Exhaustive { points: 4 }
+            };
+            2
+        ]
+    );
+}
+
+#[test]
+fn an_uncovered_element_refuses_under_interval_reasoning() {
+    // `[0, 2)` and `[2, 4)` leave element 4 of a five-element boundary bare.
+    let error = partitioned_output_region(5, 2, &[(1, 0), (1, 2)])
+        .build()
+        .unwrap_err();
+    assert!(
+        error.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionUncovered { .. }
+        )),
+        "{:?}",
+        error.diagnostics()
+    );
+}
+
+#[test]
+fn an_uncovered_element_refuses_under_the_joint_walk() {
+    // `2k` covers {0, 2} and `3k + 1` covers {1, 4}; element 3 is bare, and
+    // neither coefficient admits a rectangle.
+    let error = partitioned_output_region(5, 2, &[(2, 0), (3, 1)])
+        .build()
+        .unwrap_err();
+    assert!(
+        error.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionUncovered { .. }
+        )),
+        "{:?}",
+        error.diagnostics()
+    );
+}
+
+#[test]
+fn overlapping_ranges_refuse_before_coverage_is_considered() {
+    // `[0, 2)` and `[1, 3)` share element 1. The summed volume also misses the
+    // boundary's element count, and the overlap is what must be reported.
+    let error = partitioned_output_region(3, 2, &[(1, 0), (1, 1)])
+        .build()
+        .unwrap_err();
+    let diagnostics = error.diagnostics();
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionRangesOverlap { .. }
+        )),
+        "{diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionUncovered { .. }
+        )),
+        "coverage is derived from disjointness, so a refuted pair reports the \
+         overlap alone: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn a_double_written_element_refuses_under_the_joint_walk() {
+    // `2k` covers {0, 2} and `3k` covers {0, 3}; both claim element 0, and
+    // neither coefficient admits a rectangle.
+    let error = partitioned_output_region(4, 2, &[(2, 0), (3, 0)])
+        .build()
+        .unwrap_err();
+    assert!(
+        error.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::OutputPartitionDoubleWritten { .. }
+        )),
+        "{:?}",
+        error.diagnostics()
+    );
+}
+
+/// A sole root is unaffected by the partition path: its evidence is still the
+/// form the verifier recorded before partitions existed.
+#[test]
+fn a_sole_root_keeps_its_whole_boundary_evidence() {
+    let region = partitioned_output_region(4, 4, &[(1, 0)]).build().unwrap();
+    assert_eq!(
+        partition_ownership(&region),
+        vec![WriteOwnershipProofView::CoordinatePermutation]
+    );
 }
 
 #[test]

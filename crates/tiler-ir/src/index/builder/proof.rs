@@ -83,7 +83,8 @@ impl IndexRegionBuilder {
                 });
             }
         }
-        let index_domain_predicates = self.verify_accesses(&reachable_accesses, &mut diagnostics);
+        let (index_domain_predicates, partition_proofs) =
+            self.verify_accesses(&reachable_accesses, &mut diagnostics);
         if !diagnostics.is_empty() {
             diagnostics.sort_by_key(|d| format!("{d:?}"));
             diagnostics.dedup();
@@ -93,8 +94,30 @@ impl IndexRegionBuilder {
             reachable_values,
             reachable_accesses,
             index_domain_predicates,
+            &partition_proofs,
         )
         .map_err(|diagnostic| vec![diagnostic])
+    }
+
+    /// Groups the write accesses of every output whose roots partition it.
+    ///
+    /// A tensor appears only when more than one root names it, so a region
+    /// nothing partitions produces an empty map and every path below it is the
+    /// one that existed before partitions did. Roots are **not** deduplicated:
+    /// two roots naming one access are two members occupying one rectangle,
+    /// which the joint obligation refuses as an overlap. Collapsing them here
+    /// would instead admit a region whose second root writes a different value
+    /// to the elements the first already owns.
+    pub(super) fn partitioned_outputs(&self) -> BTreeMap<u32, Vec<u32>> {
+        let mut roots: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+        for output in &self.outputs {
+            roots
+                .entry(self.accesses[output.access as usize].tensor)
+                .or_default()
+                .push(output.access);
+        }
+        roots.retain(|_, accesses| accesses.len() > 1);
+        roots
     }
 
     pub(super) fn verify_output_tensors(&self, diagnostics: &mut Vec<IndexRegionDiagnostic>) {
@@ -145,14 +168,25 @@ impl IndexRegionBuilder {
         &self,
         accesses: &BTreeSet<u32>,
         diagnostics: &mut Vec<IndexRegionDiagnostic>,
-    ) -> Vec<PendingIndexDomainPredicate> {
+    ) -> (
+        Vec<PendingIndexDomainPredicate>,
+        BTreeMap<u32, JointPartitionProof>,
+    ) {
         let mut cells = 0_u128;
         let mut integer_bytes = 0_u128;
         let mut predicates = Vec::new();
         let mut exhaustive_accesses = Vec::new();
+        let partitioned = self.partitioned_outputs();
         for access_index in accesses {
             let access = &self.accesses[*access_index as usize];
             let shape = &self.tensors[access.tensor as usize].shape;
+            // A partition member owes totality over its own rectangle, not over
+            // the boundary, so every per-access ownership demand below is asked
+            // only of a root that owns its output alone. Reading the condition
+            // once here keeps the four places that consume it from drifting
+            // into disagreement about which roots the joint obligation covers.
+            let owns_alone =
+                access.mode == AccessMode::Write && !partitioned.contains_key(&access.tensor);
             let points = self.domain_points(&access.domain);
             let predicate_start = predicates.len();
             predicates.extend(self.cheap_index_domain_predicates(
@@ -162,8 +196,7 @@ impl IndexRegionBuilder {
                 points,
             ));
             if points == Some(0) {
-                if access.mode == AccessMode::Write && self.boundary_element_count(shape) != Some(0)
-                {
+                if owns_alone && self.boundary_element_count(shape) != Some(0) {
                     diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
                         access: TensorAccessId {
                             owner: self.owner,
@@ -196,8 +229,7 @@ impl IndexRegionBuilder {
                     PendingIndexDomainDisposition::Unknown(_)
                 )
             });
-            let unresolved_ownership =
-                access.mode == AccessMode::Write && !self.write_is_permutation(access, shape);
+            let unresolved_ownership = owns_alone && !self.write_is_permutation(access, shape);
             if unresolved_bounds || unresolved_ownership {
                 // The finite fallback walks the domain point by point and checks
                 // each coordinate against a boundary axis, so it needs an exact
@@ -231,7 +263,7 @@ impl IndexRegionBuilder {
                 let (plan_len, bytes_per_point) = self.proof_plan_size(&access.coordinates);
                 cells = cells.saturating_add(u128::from(points).saturating_mul(plan_len as u128));
                 let coordinate_bytes = u128::from(points).saturating_mul(bytes_per_point.max(1));
-                let dense_bytes = if access.mode == AccessMode::Write {
+                let dense_bytes = if owns_alone {
                     // Every axis is determined here, so a `None` is an element
                     // count this host cannot represent — the pre-existing
                     // unbounded-proof case, kept on its pre-existing path.
@@ -246,12 +278,69 @@ impl IndexRegionBuilder {
                     integer_bytes.saturating_add(coordinate_bytes.saturating_add(dense_bytes));
             }
         }
+        // Interval reasoning runs before the budget because it takes none: it
+        // closes over each root's rectangle rather than over the boundary's
+        // elements. Only the outputs it cannot place are scheduled for the
+        // joint walk, and their cost joins the same accumulator the per-access
+        // enumerations use — two independent budgets would each admit a proof
+        // the pair of them exceeds.
+        let mut partition_proofs = BTreeMap::new();
+        let mut partition_walks = Vec::new();
+        for (tensor, roots) in &partitioned {
+            match self.decide_partition_by_interval(*tensor, roots, diagnostics) {
+                PartitionVerdict::Interval => {
+                    partition_proofs.insert(*tensor, JointPartitionProof::Interval);
+                }
+                PartitionVerdict::Refuted => {}
+                PartitionVerdict::Enumerate => {
+                    let Some(elements) = self.partition_walk_elements(*tensor, roots) else {
+                        // No enumeration exists, and interval reasoning already
+                        // declined. Nothing proved these roots own the output,
+                        // which is the absent-proof outcome rather than a
+                        // resource one — no walk was available to stop.
+                        for root in roots {
+                            diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
+                                access: TensorAccessId {
+                                    owner: self.owner,
+                                    index: *root,
+                                },
+                            });
+                        }
+                        continue;
+                    };
+                    for root in roots {
+                        let access = &self.accesses[*root as usize];
+                        let points = u128::from(
+                            self.domain_points(&access.domain)
+                                .expect("a scheduled walk has determined domain extents"),
+                        );
+                        let (plan_len, bytes_per_point) = self.proof_plan_size(&access.coordinates);
+                        cells = cells.saturating_add(points.saturating_mul(plan_len as u128));
+                        integer_bytes = integer_bytes
+                            .saturating_add(points.saturating_mul(bytes_per_point.max(1)));
+                    }
+                    integer_bytes = integer_bytes
+                        .saturating_add(elements.div_ceil(64).saturating_mul(8) as u128);
+                    partition_walks.push(*tensor);
+                }
+            }
+        }
         let admitted = with_admitted_proof_budget(
             cells,
             integer_bytes,
             MAX_EXHAUSTIVE_PROOF_CELLS,
             MAX_EXHAUSTIVE_PROOF_BYTES,
             || {
+                for tensor in &partition_walks {
+                    if let Some(points) = self.verify_partition_exhaustively(
+                        *tensor,
+                        &partitioned[tensor],
+                        diagnostics,
+                    ) {
+                        partition_proofs
+                            .insert(*tensor, JointPartitionProof::Exhaustive { points });
+                    }
+                }
                 for access_index in &exhaustive_accesses {
                     let access = &self.accesses[*access_index as usize];
                     let shape = &self.tensors[access.tensor as usize].shape;
@@ -277,6 +366,8 @@ impl IndexRegionBuilder {
                         &plan,
                         &extents,
                         &axes,
+                        access.mode == AccessMode::Write
+                            && !partitioned.contains_key(&access.tensor),
                         diagnostics,
                     );
                     if discharged {
@@ -314,6 +405,7 @@ impl IndexRegionBuilder {
             for access_index in &exhaustive_accesses {
                 let access = &self.accesses[*access_index as usize];
                 if access.mode == AccessMode::Write
+                    && !partitioned.contains_key(&access.tensor)
                     && !self
                         .write_is_permutation(access, &self.tensors[access.tensor as usize].shape)
                 {
@@ -326,11 +418,27 @@ impl IndexRegionBuilder {
                     });
                 }
             }
+            // A scheduled joint walk that the budget stopped leaves its output
+            // owned by nothing. Reported per root rather than per output,
+            // because the root is the entity the caller can act on and the
+            // resource diagnostic beside it already names the boundary that was
+            // too large to walk.
+            for tensor in &partition_walks {
+                blocked_write = true;
+                for root in &partitioned[tensor] {
+                    diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
+                        access: TensorAccessId {
+                            owner: self.owner,
+                            index: *root,
+                        },
+                    });
+                }
+            }
             if blocked_write || !diagnostics.is_empty() {
                 diagnostics.push(excess.diagnostic());
             }
         }
-        predicates
+        (predicates, partition_proofs)
     }
 
     fn cheap_index_domain_predicates(
@@ -608,18 +716,28 @@ impl IndexRegionBuilder {
         u128::try_from(magnitude_bound.to_signed_bytes_be().len().max(1)).unwrap_or(u128::MAX)
     }
 
+    /// Walks one access's domain, proving bounds and — when `owns_alone` —
+    /// that this write covers its whole boundary exactly once.
+    ///
+    /// `owns_alone` is false for a root whose output several roots partition.
+    /// Such a root still needs its coordinates walked for bounds, but a
+    /// per-access coverage bitset would demand it cover the whole boundary,
+    /// which is precisely what a partition member does not do and must not be
+    /// refused for. Its ownership is decided once for the whole root set by
+    /// [`Self::verify_partition_exhaustively`].
     pub(super) fn verify_access_exhaustively(
         &self,
         access_index: u32,
         expression_plan: &[u32],
         extents: &[u64],
         axes: &[u64],
+        owns_alone: bool,
         diagnostics: &mut Vec<IndexRegionDiagnostic>,
     ) -> bool {
         let access = &self.accesses[access_index as usize];
         let shape = &self.tensors[access.tensor as usize].shape;
         let Some(elements) = self.boundary_element_count(shape) else {
-            if access.mode == AccessMode::Write {
+            if owns_alone {
                 diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
                     access: TensorAccessId {
                         owner: self.owner,
@@ -637,8 +755,7 @@ impl IndexRegionBuilder {
         let Some(divisors) = self.plan_divisors(expression_plan) else {
             return false;
         };
-        let mut seen =
-            (access.mode == AccessMode::Write).then(|| vec![0_u64; elements.div_ceil(64)]);
+        let mut seen = owns_alone.then(|| vec![0_u64; elements.div_ceil(64)]);
         let mut point = vec![0_u64; extents.len()];
         loop {
             let assignments: BTreeMap<_, _> = access
@@ -821,4 +938,331 @@ impl IndexRegionBuilder {
         }
         true
     }
+
+    /// Reads one coordinate as a domain dimension displaced by a literal.
+    ///
+    /// The whole vocabulary interval reasoning admits for a partition, and it
+    /// is deliberately narrow: `d`, `d + c`, and a bare `c`, each with a unit
+    /// coefficient and a non-negative displacement. That is exactly the form
+    /// whose image over a dimension is a *contiguous* range, which is what
+    /// makes a rectangle the right description of the root's partition. A
+    /// coordinate outside it — a scaled dimension, a quotient, a sum of two
+    /// dimensions — may still be a legal partition member, and it is not
+    /// refused here: it returns `None`, and the joint enumeration decides it.
+    ///
+    /// A zero displacement arrives as [`IndexNode::Dimension`] rather than as a
+    /// one-term combination, because `linear_combination` normalizes `1 * d`
+    /// back to `d` before interning; the combination arm therefore never has to
+    /// consider a zero constant.
+    fn coordinate_offset_dimension(&self, expression: u32) -> Option<(u64, Option<u32>)> {
+        match &*self.expressions[expression as usize].node {
+            IndexNode::Constant(value) => value.0.to_u64().map(|offset| (offset, None)),
+            IndexNode::Dimension(dimension) => Some((0, Some(*dimension))),
+            IndexNode::LinearCombination { constant, terms } => {
+                let [term] = terms.as_slice() else {
+                    return None;
+                };
+                if term.coefficient.0 != BigInt::from(1_u8) {
+                    return None;
+                }
+                let IndexNode::Dimension(dimension) = *self.expressions[term.value as usize].node
+                else {
+                    return None;
+                };
+                constant.0.to_u64().map(|offset| (offset, Some(dimension)))
+            }
+            IndexNode::FloorDiv { .. } | IndexNode::Modulo { .. } => None,
+        }
+    }
+
+    /// Places one write root as a rectangle of half-open coordinate ranges.
+    ///
+    /// `None` means "interval reasoning cannot place this root", never "this
+    /// root is unsound": an undetermined extent, a coordinate outside the
+    /// displaced-dimension vocabulary, a rectangle the boundary does not
+    /// contain, or a dimension used twice all decline rather than refute. Every
+    /// one of them is a case the joint enumeration can still decide, and
+    /// turning a declined placement into a refusal would refuse legal regions
+    /// for the mechanism's convenience.
+    ///
+    /// The root's own injectivity is established here rather than assumed: each
+    /// axis consumes at most one domain dimension, and the consumed set is the
+    /// whole domain. Two distinct domain points then differ in some dimension,
+    /// that dimension appears in exactly one axis, and the unit coefficient
+    /// carries the difference into that coordinate — so the point-to-coordinate
+    /// map is injective and the rectangle's volume *is* the number of distinct
+    /// elements this root writes. Coverage arithmetic downstream depends on
+    /// that equality, so it cannot be left to the enumeration that does not run.
+    fn write_partition_box(
+        &self,
+        access: &AccessData,
+        shape: &SourcedShape,
+    ) -> Option<Vec<(u64, u64)>> {
+        if access.coordinates.len() != shape.rank() {
+            return None;
+        }
+        let axes = self.boundary_extents(shape)?;
+        let mut consumed = BTreeSet::new();
+        let mut ranges = Vec::with_capacity(access.coordinates.len());
+        for (coordinate, axis) in access.coordinates.iter().zip(&axes) {
+            let (offset, dimension) = self.coordinate_offset_dimension(*coordinate)?;
+            let span = match dimension {
+                Some(dimension) => {
+                    if !access.domain.contains(&dimension) || !consumed.insert(dimension) {
+                        return None;
+                    }
+                    self.determined_extent(dimension)?
+                }
+                None => 1,
+            };
+            let end = offset.checked_add(span)?;
+            if end > *axis {
+                return None;
+            }
+            ranges.push((offset, end));
+        }
+        // `consumed` is a subset of the domain by the containment check above,
+        // so equal cardinality is equal sets.
+        if consumed.len() != access.domain.len() {
+            return None;
+        }
+        Some(ranges)
+    }
+
+    /// Decides one output's joint partition obligation by interval reasoning.
+    ///
+    /// Disjointness first, then coverage, and the order is not an optimization.
+    /// Two axis-aligned rectangles intersect exactly when their ranges overlap
+    /// on *every* axis, so one separating axis refutes an intersection and the
+    /// absence of one establishes it — the test is exact in both directions
+    /// rather than conservative in either. Coverage is then the volume
+    /// identity: rectangles that are pairwise disjoint and contained in the
+    /// boundary have a union of exactly the summed volume, so a sum equal to
+    /// the boundary's element count means the union *is* the boundary. Applied
+    /// without the disjointness premise the same sum would admit a set that
+    /// double-covers one element and leaves another bare, which is why
+    /// coverage is derived from disjointness rather than checked beside it.
+    ///
+    /// Containment also makes the summed volume an upper bound, so an inequality
+    /// can only be a shortfall — which is what lets the mismatch be reported as
+    /// an uncovered boundary rather than as an unexplained arithmetic
+    /// disagreement.
+    fn decide_partition_by_interval(
+        &self,
+        tensor: u32,
+        roots: &[u32],
+        diagnostics: &mut Vec<IndexRegionDiagnostic>,
+    ) -> PartitionVerdict {
+        let shape = &self.tensors[tensor as usize].shape;
+        let Some(elements) = self.boundary_element_count(shape) else {
+            return PartitionVerdict::Enumerate;
+        };
+        let mut boxes = Vec::with_capacity(roots.len());
+        for root in roots {
+            let Some(placed) = self.write_partition_box(&self.accesses[*root as usize], shape)
+            else {
+                return PartitionVerdict::Enumerate;
+            };
+            boxes.push(placed);
+        }
+        for (position, left) in boxes.iter().enumerate() {
+            for right in &boxes[position.saturating_add(1)..] {
+                let separated = left.iter().zip(right).any(
+                    |((left_start, left_end), (right_start, right_end))| {
+                        left_end <= right_start || right_end <= left_start
+                    },
+                );
+                if !separated {
+                    diagnostics.push(IndexRegionDiagnostic::OutputPartitionRangesOverlap {
+                        tensor: TensorId {
+                            owner: self.owner,
+                            index: tensor,
+                        },
+                    });
+                    return PartitionVerdict::Refuted;
+                }
+            }
+        }
+        let covered = boxes.iter().fold(0_u128, |total, placed| {
+            total.saturating_add(placed.iter().fold(1_u128, |volume, (start, end)| {
+                volume.saturating_mul(u128::from(end.saturating_sub(*start)))
+            }))
+        });
+        if covered != elements as u128 {
+            diagnostics.push(IndexRegionDiagnostic::OutputPartitionUncovered {
+                tensor: TensorId {
+                    owner: self.owner,
+                    index: tensor,
+                },
+            });
+            return PartitionVerdict::Refuted;
+        }
+        PartitionVerdict::Interval
+    }
+
+    /// Returns the boundary element count a joint walk would need, when every
+    /// part of that walk is available.
+    ///
+    /// `None` when the boundary or any root's domain is undetermined, or when a
+    /// divisor the environment does not fix leaves a coordinate with no value
+    /// at a point. Decided before any budget is taken, for the reason the
+    /// per-access gate states: charging a budget for a walk that cannot happen
+    /// would report an absent proof as a resource limit.
+    fn partition_walk_elements(&self, tensor: u32, roots: &[u32]) -> Option<usize> {
+        let shape = &self.tensors[tensor as usize].shape;
+        self.boundary_extents(shape)?;
+        let elements = self.boundary_element_count(shape)?;
+        for root in roots {
+            let access = &self.accesses[*root as usize];
+            self.domain_extents(&access.domain)?;
+            self.domain_points(&access.domain)?;
+            if !self.coordinates_are_evaluable(&access.coordinates) {
+                return None;
+            }
+        }
+        Some(elements)
+    }
+
+    /// Decides one output's joint partition obligation by enumeration.
+    ///
+    /// One bitset shared across every root, which is what makes this a *joint*
+    /// proof rather than a sequence of per-root ones: a bit already set is a
+    /// second root writing an element the first owns, and a bit still clear
+    /// after every root has walked is an element nothing wrote. Returns the
+    /// enumerated point count, or `None` after pushing the diagnostic that
+    /// names which of those two happened — every `None` path here records a
+    /// refusal, because a silent one would let the region build with an
+    /// output no proof covers.
+    fn verify_partition_exhaustively(
+        &self,
+        tensor: u32,
+        roots: &[u32],
+        diagnostics: &mut Vec<IndexRegionDiagnostic>,
+    ) -> Option<u64> {
+        let tensor_id = TensorId {
+            owner: self.owner,
+            index: tensor,
+        };
+        let shape = &self.tensors[tensor as usize].shape;
+        // The scheduler proved each of these available before budgeting the
+        // walk, so a `None` here is a fail-closed floor rather than a reachable
+        // path; it still refuses rather than assuming.
+        let (Some(elements), Some(axes)) = (
+            self.boundary_element_count(shape),
+            self.boundary_extents(shape),
+        ) else {
+            return self.refuse_unproved_partition(roots, diagnostics);
+        };
+        let mut seen = vec![0_u64; elements.div_ceil(64)];
+        let mut walked = 0_u64;
+        for root in roots {
+            let access = &self.accesses[*root as usize];
+            let mut reached = BTreeSet::new();
+            for coordinate in &access.coordinates {
+                self.mark_expr(*coordinate, &mut reached);
+            }
+            let plan = reached.into_iter().collect::<Vec<_>>();
+            let (Some(extents), Some(divisors)) = (
+                self.domain_extents(&access.domain),
+                self.plan_divisors(&plan),
+            ) else {
+                return self.refuse_unproved_partition(roots, diagnostics);
+            };
+            // An empty root visits no point and therefore owns nothing. That is
+            // not a refusal on its own: the elements it would have covered are
+            // left clear, and the coverage scan below reports them.
+            if extents.contains(&0) {
+                continue;
+            }
+            let mut point = vec![0_u64; extents.len()];
+            loop {
+                let assignments: BTreeMap<_, _> = access
+                    .domain
+                    .iter()
+                    .copied()
+                    .zip(point.iter().copied())
+                    .collect();
+                let evaluated = self.evaluate_expressions(&plan, &assignments, &divisors);
+                let mut linear = 0_usize;
+                for (coordinate, extent) in access.coordinates.iter().zip(&axes) {
+                    let Some(value) = evaluated.get(coordinate).and_then(ToPrimitive::to_usize)
+                    else {
+                        return self.refuse_out_of_bounds(*root, diagnostics);
+                    };
+                    let Ok(axis_extent) = usize::try_from(*extent) else {
+                        return self.refuse_out_of_bounds(*root, diagnostics);
+                    };
+                    if value >= axis_extent {
+                        return self.refuse_out_of_bounds(*root, diagnostics);
+                    }
+                    let Some(next) = linear
+                        .checked_mul(axis_extent)
+                        .and_then(|base| base.checked_add(value))
+                    else {
+                        return self.refuse_out_of_bounds(*root, diagnostics);
+                    };
+                    linear = next;
+                }
+                let word = linear / 64;
+                let mask = 1_u64 << (linear % 64);
+                if seen.get(word).is_none_or(|bits| bits & mask != 0) {
+                    diagnostics.push(IndexRegionDiagnostic::OutputPartitionDoubleWritten {
+                        tensor: tensor_id,
+                    });
+                    return None;
+                }
+                seen[word] |= mask;
+                walked = walked.saturating_add(1);
+                if !advance_point(&mut point, &extents) {
+                    break;
+                }
+            }
+        }
+        if (0..elements).any(|index| seen[index / 64] & (1_u64 << (index % 64)) == 0) {
+            diagnostics.push(IndexRegionDiagnostic::OutputPartitionUncovered { tensor: tensor_id });
+            return None;
+        }
+        Some(walked)
+    }
+
+    fn refuse_unproved_partition(
+        &self,
+        roots: &[u32],
+        diagnostics: &mut Vec<IndexRegionDiagnostic>,
+    ) -> Option<u64> {
+        for root in roots {
+            diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
+                access: TensorAccessId {
+                    owner: self.owner,
+                    index: *root,
+                },
+            });
+        }
+        None
+    }
+
+    fn refuse_out_of_bounds(
+        &self,
+        root: u32,
+        diagnostics: &mut Vec<IndexRegionDiagnostic>,
+    ) -> Option<u64> {
+        diagnostics.push(IndexRegionDiagnostic::CoordinateOutOfBounds {
+            access: TensorAccessId {
+                owner: self.owner,
+                index: root,
+            },
+        });
+        None
+    }
+}
+
+/// What interval reasoning concluded about one output's write roots.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PartitionVerdict {
+    /// The rectangles are pairwise disjoint and cover the boundary exactly.
+    Interval,
+    /// Interval reasoning declined; the joint enumeration must decide.
+    Enumerate,
+    /// Interval reasoning refuted the set and recorded its diagnostic.
+    Refuted,
 }

@@ -48,10 +48,11 @@ use crate::shape::{Extent, Shape};
 use super::error::invalid_handle;
 use super::handles::{BuilderId, next_builder_id};
 use super::model::{
-    AccessData, BoundsProof, DimensionData, IndexExprData, IndexNode, LinearTermData, OutputData,
-    ReducerBodyOperationData, ReducerBodyValueData, ReducerBodyValueSource, ScalarOperationData,
-    ScalarOperationKindData, ScalarReducerBodyData, ScalarValueData, ScalarValueDefinition,
-    TensorData, VerifiedAccessData, VerifiedIndexRegionData, WriteOwnershipProof,
+    AccessData, BoundsProof, DimensionData, IndexExprData, IndexNode, JointPartitionProof,
+    LinearTermData, OutputData, ReducerBodyOperationData, ReducerBodyValueData,
+    ReducerBodyValueSource, ScalarOperationData, ScalarOperationKindData, ScalarReducerBodyData,
+    ScalarValueData, ScalarValueDefinition, TensorData, VerifiedAccessData,
+    VerifiedIndexRegionData, WriteOwnershipProof,
 };
 use super::scalar::{
     ScalarApplyError, ScalarInferenceCapacity, ScalarInferenceHostFailure, encode_canonical,
@@ -1875,9 +1876,28 @@ impl IndexRegionBuilder {
 
     /// Adds one ordered output root.
     ///
+    /// **Several roots may name one output tensor.** A repeat is not a
+    /// construction error because whether two roots over one boundary are a
+    /// legal partition is not decidable here: it depends on the coordinates
+    /// every root will carry and on extents the environment resolves, neither
+    /// of which is settled while the draft is still open. Refusing the second
+    /// root at this site would have refused the legal partition along with the
+    /// illegal one, and it also refused it for the wrong reason — the caller
+    /// would read "this tensor already has a root" where the real question is
+    /// whether the roots jointly own the boundary. The obligation is discharged
+    /// at verification instead, where every coordinate exists, and an unsound
+    /// set is refused under a diagnostic naming what is actually wrong with it:
+    /// [`IndexRegionDiagnostic::OutputPartitionUncovered`],
+    /// [`OutputPartitionRangesOverlap`](IndexRegionDiagnostic::OutputPartitionRangesOverlap),
+    /// or
+    /// [`OutputPartitionDoubleWritten`](IndexRegionDiagnostic::OutputPartitionDoubleWritten).
+    /// A root repeated verbatim is the degenerate partition whose two members
+    /// occupy one rectangle, and it refuses as an overlap.
+    ///
     /// # Errors
     ///
-    /// Returns an error for foreign handles, duplicate roots, or type mismatch.
+    /// Returns an error for foreign handles, a read access, a type mismatch, or
+    /// an exceeded root limit.
     pub fn output(
         &mut self,
         access: TensorAccessId,
@@ -1896,9 +1916,7 @@ impl IndexRegionBuilder {
         if self.tensors[access_data.tensor as usize].value_type != value_data.value_type {
             return Err(IndexBuildError::OutputTypeMismatch);
         }
-        if !self.output_tensors.insert(access_data.tensor) {
-            return Err(IndexBuildError::DuplicateOutputTensor);
-        }
+        self.output_tensors.insert(access_data.tensor);
         self.outputs.push(OutputData {
             access: access.index,
             value: value.index,

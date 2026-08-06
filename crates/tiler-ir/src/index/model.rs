@@ -141,6 +141,12 @@ pub(super) enum BoundsProof {
 pub(super) enum WriteOwnershipProof {
     CoordinatePermutation,
     Exhaustive { points: u64 },
+    PartitionMember { joint: JointPartitionProof },
+}
+#[derive(Clone, Copy, Debug)]
+pub(super) enum JointPartitionProof {
+    Interval,
+    Exhaustive { points: u64 },
 }
 #[derive(Clone, Debug)]
 pub(super) struct VerifiedAccessData {
@@ -936,6 +942,16 @@ impl<'a> TensorAccessRef<'a> {
             WriteOwnershipProof::Exhaustive { points } => {
                 WriteOwnershipProofView::Exhaustive { points }
             }
+            WriteOwnershipProof::PartitionMember { joint } => {
+                WriteOwnershipProofView::PartitionMember {
+                    joint: match joint {
+                        JointPartitionProof::Interval => JointPartitionProofView::Interval,
+                        JointPartitionProof::Exhaustive { points } => {
+                            JointPartitionProofView::Exhaustive { points }
+                        }
+                    },
+                }
+            }
         })
     }
 }
@@ -975,6 +991,50 @@ pub enum WriteOwnershipProofView {
     /// Finite enumeration proved total, injective ownership.
     Exhaustive {
         /// Enumerated domain points.
+        points: u64,
+    },
+    /// This root is total and injective over its own partition of an output
+    /// that several roots jointly own.
+    ///
+    /// A partition member proves strictly less on its own than the two forms
+    /// above do: it covers its declared partition rather than the whole
+    /// boundary. What makes the *output* owned is the joint obligation across
+    /// the root set — pairwise disjoint partitions whose union is the boundary
+    /// exactly — so the mechanism that discharged it is carried here rather
+    /// than left for a consumer to assume. A root carrying this form and no
+    /// sibling is unrepresentable: the verifier records it only for a boundary
+    /// whose roots it decided together.
+    PartitionMember {
+        /// How the joint obligation across this output's roots was discharged.
+        joint: JointPartitionProofView,
+    },
+}
+
+/// Public view of the mechanism that discharged one output's joint partition
+/// obligation.
+///
+/// Recorded rather than derived, because the two mechanisms decide different
+/// populations and a consumer that must re-derive the obligation needs to know
+/// which one answered. [`Self::Interval`] closes over the ranges themselves and
+/// says nothing about any individual element; [`Self::Exhaustive`] visited every
+/// element of the boundary and is available only where every extent is
+/// determined.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum JointPartitionProofView {
+    /// Interval reasoning over contiguous coordinate ranges decided the set.
+    ///
+    /// Each root's partition is a rectangle of static ranges, pairwise
+    /// disjointness was decided by finding a separating axis for every pair,
+    /// and coverage followed from the disjoint volumes summing to the
+    /// boundary's element count. Nothing was enumerated.
+    Interval,
+    /// Finite enumeration over the boundary decided the set.
+    ///
+    /// One shared bitset across every root: a second write to one element is a
+    /// refusal and an element no root reached is a refusal.
+    Exhaustive {
+        /// Domain points enumerated across every root of this output.
         points: u64,
     },
 }
