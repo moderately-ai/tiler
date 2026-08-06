@@ -4087,7 +4087,22 @@ mod tests {
                 // stays 7 because nothing about explain's rendering changed.
                 // Recomputed by observing the failing value on this branch tree
                 // with the focused nextest command above.
-                "tiler-explain-v7 request=8e06e11fdc3a2889\n",
+                // Rebaselined from `8e06e11fdc3a2889` when the BF16
+                // index-realization rows entered the standard provider's law
+                // sidecar. The request subject binds
+                // `FrozenIndexRealizationLawRegistry::identity()`, which folds
+                // the scalar snapshot and the whole law sidecar, so registering
+                // the three BF16 scalar operations and their laws moves this
+                // qualifier for every governed compilation. **No encoding
+                // version moved**: the sidecar's rendering is unchanged and row
+                // addition is appends-only under its per-tag framing, so the
+                // change stays injective inside the existing domains. The
+                // semantic snapshot did not move — the BF16 operation families
+                // were already registered; only the law rows are new.
+                // Recomputed by observing the failing value on the merged
+                // integration tree with the focused nextest command above,
+                // never copied from the producing branch.
+                "tiler-explain-v7 request=b2d55d5a36e0159b\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

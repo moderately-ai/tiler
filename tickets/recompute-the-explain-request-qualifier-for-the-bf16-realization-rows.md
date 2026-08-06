@@ -1,7 +1,7 @@
 ---
 id: recompute-the-explain-request-qualifier-for-the-bf16-realization-rows
 title: Recompute the explain request qualifier for the bf16 realization rows
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [admit-a-bf16-index-realization-law-and-refinement-contract]
@@ -42,3 +42,7 @@ The producing branch holds `implementation/ir` only. `crates/tiler-compiler/**` 
 ## Closes when
 
 The literal is updated with its ledger paragraph and a full-workspace run is green.
+
+## Outcome
+
+Executed by the coordinator at the integration of the producing branch, per the sequencing the filing predicted: the pin moved `8e06e11fdc3a2889` → `b2d55d5a36e0159b`, recomputed by observing the failing value on the merged tree (not copied from the branch), with the ledger comment in the same commit. The compiler scope had freed one landing earlier, so no live-claim edit was needed.
