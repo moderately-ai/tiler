@@ -4180,7 +4180,30 @@ mod tests {
                 // exactly as before. Recomputed by observing the failing value on
                 // this branch tree with the focused nextest command above, never
                 // copied from another branch.
-                "tiler-explain-v7 request=689c3aefc30f48d3\n",
+                // Rebaselined from `689c3aefc30f48d3` when
+                // `bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals`
+                // made all three plan-derived budgets functions of the declared
+                // *output* arity and resized them to the decoder layer's three
+                // ordered named outputs: `regions` 4 → 12, `host_expression_nodes`
+                // 43 → 51, and `buffers` 21 → 30. Three of the five values in
+                // `DeterministicBudgets::governed` moved at once, where the four
+                // earlier budget steps each moved one or four; the reason the
+                // qualifier moves is unchanged and is the one those steps
+                // recorded — every budget is written into the request subject, so
+                // a budget value change moves every governed compilation's
+                // qualifier including this fixture's, whose program is nowhere
+                // near any of the five. **No encoding version moved**: the budget
+                // field set, their widths, and their order in
+                // `canonical_explain_subject_bytes` are untouched, so a value
+                // change stays injective inside
+                // `tiler.compiler.request-subject.v5`, and the renderer version
+                // stays 7 because nothing about explain's rendering changed. The
+                // same branch gave `regions` a plan-side enforcement site beside
+                // its two siblings in `verify_host_contract`, which is not part
+                // of any subject and reaches no pin. Recomputed by observing the
+                // failing value on this branch tree with the focused nextest
+                // command above, never copied from another branch.
+                "tiler-explain-v7 request=8966151e455093ea\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

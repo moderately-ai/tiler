@@ -1407,61 +1407,112 @@ fn a_reduction_epilogue_chain_matches_the_reference_evaluator() {
     assert_eq!(actual, vec![170.0]);
 }
 
-/// The widest plan this profile assembles is four dispatches, and the `regions`
-/// budget is checked against exactly that number.
+/// `sum(x * x, axis 1) * k` published as one ordered named output.
+///
+/// The widest producer chain the recognizer can spell for one output: a prologue
+/// staging `x * x`, a split fold's partial and final passes, and an elementwise
+/// epilogue reading the fold's staged result. Used below both alone and beside a
+/// second copy, which is what makes a two-output program out of two
+/// independently widest ones.
+fn epilogue_chain_output(
+    builder: &mut SemanticProgramBuilder,
+    key: &str,
+    output: &str,
+    scale_bits: u32,
+    columns: u64,
+) {
+    let x = builder
+        .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([1, columns]))
+        .unwrap();
+    let squared = F32Multiply::apply(builder, x, x).unwrap();
+    let reduced = StrictSerialF32Sum::apply(builder, squared, [Axis::new(1)]).unwrap();
+    let scale = F32Constant::apply(builder, scale_bits).unwrap();
+    let scaled = F32Multiply::apply(builder, reduced, scale).unwrap();
+    builder
+        .output(OutputKey::new(output).unwrap(), scaled)
+        .unwrap();
+}
+
+/// One epilogue chain, published as the program's only output.
+fn one_chain_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    epilogue_chain_output(&mut builder, "x", "scaled", 2.0_f32.to_bits(), 4);
+    builder.build().unwrap()
+}
+
+/// Two independent epilogue chains, published as two ordered named outputs.
+///
+/// The two fold different declared inputs at different extents, and the extents
+/// are what keep them distinct rather than a stylistic choice: two chains of
+/// identical shape assemble two stages carrying one canonical key, which the
+/// shared program layer refuses under `AmbiguousCanonicalKey` — a caller's valid
+/// program reported as invalid compiler output. That is a separate defect, filed
+/// as
+/// `refuse-two-structurally-identical-output-chains-by-name-not-as-compiler-output`;
+/// this fixture stays clear of it so it measures the budget and nothing else.
+///
+/// The second chain folds two columns rather than four, so its fold has no split
+/// to offer and its chain is three dispatches against the first's four. Seven is
+/// therefore this program's widest assembled plan against a derived bound of
+/// eight, because the derivation is an upper bound over every plan the request
+/// could reach rather than each plan's exact count.
+fn two_chain_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    epilogue_chain_output(&mut builder, "x", "scaled", 2.0_f32.to_bits(), 4);
+    epilogue_chain_output(&mut builder, "y", "halved", 3.0_f32.to_bits(), 2);
+    builder.build().unwrap()
+}
+
+/// Every retained alternative's stage count for one program, ascending.
+fn retained_stage_counts(
+    semantic: &SemanticProgram,
+    contract: crate::request::StrictF32NumericalContract,
+) -> Vec<usize> {
+    let request = CompilationRequest::governed_preferring(
+        semantic,
+        crate::request::NumericalContractPreference::ordered(vec![contract]).unwrap(),
+    );
+    let product = compile(request).expect("the chain compiles");
+    let mut counts: Vec<usize> = product.targets[0]
+        .portfolio
+        .alternatives
+        .iter()
+        .map(|alternative| alternative.program.stage_count())
+        .collect();
+    counts.sort_unstable();
+    counts
+}
+
+/// The widest chain one declared output reaches is four dispatches, and the
+/// `regions` budget derives its actual as exactly that number per output.
 ///
 /// **This is the measurement the `regions` budget's derivation rests on**, and
-/// it moved with the epilogue admission. Before it, the widest assembled plan
+/// it moved with the epilogue admission. Before it, the widest assembled chain
 /// was the split reduction's three stages — prologue, partial, final — and
 /// `check_program_budgets` spelled that three as a literal. A fold that stages
 /// its result can now feed an epilogue, so the same split plus its consumer is
-/// four, and the literal would otherwise assert a bound the profile exceeds.
+/// four.
 ///
-/// The budget is not a bound on the caller's graph — the actual it is checked
-/// against is a constant, because a region count belongs to a plan and the
-/// request is admitted before any plan is chosen — so a stale literal would not
-/// have dropped this alternative. It would have made the assertion false, which
-/// is worse: the next widening would derive from a number nothing supported.
+/// **The literal is gone and the four survives inside a derivation**, because a
+/// plan covers every declared output: the constant was a bound on the whole plan
+/// only while recognition could name one output, and since multi-output
+/// admission it bounds one output's chain. So the budget is a bound on the
+/// caller's declaration after all, which
+/// `the_two_chain_program_is_refused_by_regions_until_the_budget_admits_both`
+/// drives from the other side.
 ///
 /// The reassociating contract is what admits the split, so the request states
 /// it explicitly. Under a contract forbidding reassociation the same program
 /// retains only the three-stage chain, which is the neighbour below.
 #[test]
 fn the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue() {
-    let shape = Shape::from_dims([1, 4]);
-    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-    let x = builder
-        .input::<F32>(InputKey::new("x").unwrap(), shape)
-        .unwrap();
-    let squared = F32Multiply::apply(&mut builder, x, x).unwrap();
-    let reduced =
-        tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, squared, [Axis::new(1)])
-            .unwrap();
-    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
-    let scaled = F32Multiply::apply(&mut builder, reduced, two).unwrap();
-    builder
-        .output(OutputKey::new("scaled").unwrap(), scaled)
-        .unwrap();
-    let semantic = builder.build().unwrap();
-
-    let stage_counts = |contract: crate::request::StrictF32NumericalContract| {
-        let request = CompilationRequest::governed_preferring(
-            &semantic,
-            crate::request::NumericalContractPreference::ordered(vec![contract]).unwrap(),
-        );
-        let product = compile(request).expect("the epilogue chain compiles");
-        let mut counts: Vec<usize> = product.targets[0]
-            .portfolio
-            .alternatives
-            .iter()
-            .map(|alternative| alternative.program.stage_count())
-            .collect();
-        counts.sort_unstable();
-        counts
-    };
+    let semantic = one_chain_program();
 
     assert_eq!(
-        stage_counts(crate::request::StrictF32NumericalContract::governed_flush_and_reassociate()),
+        retained_stage_counts(
+            &semantic,
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ),
         vec![3, 4],
         "a reassociating contract retains the unsplit chain and the split one",
     );
@@ -1469,13 +1520,231 @@ fn the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue() {
     // to the epilogue alone: forbidding reassociation withdraws the split and
     // exactly the four-stage alternative disappears.
     assert_eq!(
-        stage_counts(crate::request::StrictF32NumericalContract::governed()),
+        retained_stage_counts(
+            &semantic,
+            crate::request::StrictF32NumericalContract::governed(),
+        ),
         vec![3],
     );
     assert_eq!(
         crate::request::DeterministicBudgets::governed().regions,
-        4,
-        "the governed budget must admit the widest plan the profile assembles",
+        12,
+        "the governed budget is four dispatches for each of the layer's three outputs",
+    );
+
+    // The refusing direction, and the verdict this one output had before
+    // `regions` became a derivation: `4 × 1` is exactly the literal it replaced,
+    // so a bound of three refuses this program now as it did then. Driving both
+    // directions is what separates a derivation from a removed check.
+    let mut narrow = CompilationRequest::governed_preferring(
+        &semantic,
+        crate::request::NumericalContractPreference::ordered(vec![
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ])
+        .unwrap(),
+    );
+    narrow.budgets.regions = 3;
+    assert_eq!(
+        crate::request::verify_request(narrow).err(),
+        Some(crate::request::RequestError::BudgetExceeded {
+            resource: "regions",
+            limit: 3,
+            actual: 4,
+        }),
+    );
+}
+
+/// The widest assembled plan binds four buffers for each declared output, and
+/// the `buffers` budget derives its actual as exactly that.
+///
+/// **This is the measurement the per-output four rests on, and it corrects an
+/// under-report that predates multi-output.** The derivation enumerated the
+/// prologue's materialized temporary, a split's staged partial tensor, and the
+/// output — three — and stopped there, missing the fold's staged result an
+/// elementwise epilogue reads across. One declared input under the widest chain
+/// assembles five values against a derived four, which is a boundary admitting a
+/// request assembly then refuses: exactly the failure the derivation exists to
+/// prevent.
+///
+/// Both programs are asserted, because one output cannot separate "four per
+/// output" from "four plus a program-scoped constant". The two-output program's
+/// widest plan binds nine values over two declared inputs, which only the
+/// per-output reading predicts.
+///
+/// **Each measurement is tied to the derivation rather than left beside it**, by
+/// stating a budget one below the measured count and requiring the *boundary* to
+/// report. A derivation that under-reports admits that request and lets assembly
+/// refuse it, so the assertion fails the moment the per-output term is wrong —
+/// which a pair of bare `assert_eq!`s on the measured counts would not do.
+#[test]
+fn the_widest_assembled_plan_binds_four_buffers_per_declared_output() {
+    let reassociating = || {
+        crate::request::NumericalContractPreference::ordered(vec![
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ])
+        .unwrap()
+    };
+    let widest_value_count = |semantic: &SemanticProgram| {
+        let product = compile(CompilationRequest::governed_preferring(
+            semantic,
+            reassociating(),
+        ))
+        .expect("the chain compiles");
+        product.targets[0]
+            .portfolio
+            .alternatives
+            .iter()
+            .map(|alternative| alternative.program.core().values().len())
+            .max()
+            .expect("at least one alternative is retained")
+    };
+    // A budget one below the widest plan's own value count must be refused by
+    // the *request boundary*, which is only true when the derived actual covers
+    // that plan.
+    let refuses_one_below = |semantic: &SemanticProgram, widest: usize| {
+        let mut narrow = CompilationRequest::governed_preferring(semantic, reassociating());
+        let limit = u32::try_from(widest).unwrap() - 1;
+        narrow.budgets.buffers = limit;
+        assert_eq!(
+            crate::request::verify_request(narrow).err(),
+            Some(crate::request::RequestError::BudgetExceeded {
+                resource: "buffers",
+                limit,
+                actual: semantic.input_count() + 4 * semantic.output_count(),
+            }),
+            "the boundary must refuse a budget the widest plan exceeds",
+        );
+    };
+
+    let one = one_chain_program();
+    assert_eq!(one.input_count(), 1);
+    assert_eq!(one.output_count(), 1);
+    let widest = widest_value_count(&one);
+    assert_eq!(widest, 5, "one input plus four per output");
+    refuses_one_below(&one, widest);
+
+    let two = two_chain_program();
+    assert_eq!(two.input_count(), 2);
+    assert_eq!(two.output_count(), 2);
+    let widest = widest_value_count(&two);
+    assert_eq!(
+        widest, 9,
+        "two inputs, four buffers for the split chain and three for the unsplit one",
+    );
+    refuses_one_below(&two, widest);
+
+    // The derivation is the bound those two sit under, and the governed value is
+    // that derivation over the eighteen-input, three-output decoder layer.
+    assert_eq!(crate::request::DeterministicBudgets::governed().buffers, 30);
+}
+
+/// A two-chain program is refused by name under the pre-widening `regions`
+/// budget and compiles once the governed value admits both chains.
+///
+/// **This is the failure the derivation exists to prevent, driven from both
+/// sides.** Under the literal four the boundary admitted this program — a region
+/// count was not a function of the declaration — and assembly then had to refuse
+/// a seven-dispatch plan it had promised to build. The refusal is now at
+/// `verify_request`, by name, before any plan is chosen.
+///
+/// Four is deliberately the *pre-widening* value rather than an arbitrary narrow
+/// one: it is exactly the bound that was correct for one output and silently
+/// wrong for two, so the assertion is about the change and not about budgets in
+/// general.
+#[test]
+fn the_two_chain_program_is_refused_by_regions_until_the_budget_admits_both() {
+    let semantic = two_chain_program();
+    assert_eq!(semantic.output_count(), 2);
+
+    let mut narrow = CompilationRequest::governed_preferring(
+        &semantic,
+        crate::request::NumericalContractPreference::ordered(vec![
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ])
+        .unwrap(),
+    );
+    narrow.budgets.regions = 4;
+    assert_eq!(
+        crate::request::verify_request(narrow).err(),
+        Some(crate::request::RequestError::BudgetExceeded {
+            resource: "regions",
+            limit: 4,
+            actual: 8,
+        }),
+        "the pre-widening bound must refuse two widest chains by name",
+    );
+
+    // And the governed value admits it, so the refusal above is attributable to
+    // the bound rather than to anything else about the program.
+    assert_eq!(
+        retained_stage_counts(
+            &semantic,
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ),
+        vec![6, 7],
+    );
+}
+
+/// A two-output program exceeding a stated `buffers` budget is refused at
+/// `verify_request`, and never reaches `verify_host_contract`.
+///
+/// **Which stage refuses is the whole assertion.** Both stages check the same
+/// resource, and only one of them can report a caller's request as a caller's
+/// request: `verify_request` returns [`RequestError::BudgetExceeded`] naming the
+/// resource, its limit, and the actual, while `verify_host_contract` returns
+/// `ProgramError::Storage { rule: "buffer-budget" }`, which reaches the caller
+/// as `InvalidCompilerOutput` — the compiler accusing itself of a defect the
+/// caller caused. An actual derived over one output alone under-reports a
+/// two-output program and moves the refusal to the second stage.
+///
+/// The stated budget is one below this program's derived actual, so the boundary
+/// refuses; the governed budget admits it, which is what makes the refusal
+/// attributable.
+#[test]
+fn a_two_output_program_over_its_buffer_budget_is_refused_at_the_request_boundary() {
+    let semantic = two_chain_program();
+    // Two declared inputs and four per declared output.
+    let derived = semantic.input_count() + 4 * semantic.output_count();
+    assert_eq!(derived, 10);
+
+    let mut narrow = CompilationRequest::governed_preferring(
+        &semantic,
+        crate::request::NumericalContractPreference::ordered(vec![
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ])
+        .unwrap(),
+    );
+    narrow.budgets.buffers = u32::try_from(derived).unwrap() - 1;
+
+    let failure = compile(narrow).expect_err("the stated buffer budget refuses this program");
+    let source = match &failure {
+        CompileError::Explained { source, .. } => source.as_ref(),
+        other => other,
+    };
+    assert_eq!(
+        source,
+        &CompileError::BudgetExhausted(crate::request::RequestError::BudgetExceeded {
+            resource: "buffers",
+            limit: 9,
+            actual: 10,
+        }),
+        "the refusal must be the request boundary's, not assembly's",
+    );
+    // Stated as its own claim rather than left implicit in the equality above:
+    // reaching `verify_host_contract` would have produced this instead.
+    assert!(
+        !matches!(source, CompileError::InvalidCompilerOutput(_)),
+        "a caller's budget was reported as a compiler-output defect",
+    );
+
+    // The same program under the governed budget compiles, so what the stated
+    // budget refused is the budget and not the program.
+    assert_eq!(
+        retained_stage_counts(
+            &semantic,
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ),
+        vec![6, 7],
     );
 }
 
@@ -6369,15 +6638,17 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
     // widened buffer budget admits the split, one stating less does not reach
     // it at all, so the value that separates them is the one that moved.
     //
-    // The budget is `21` rather than the `4` this test first pinned, then the
-    // `6` it pinned next, because it is sized to the largest program shape the
-    // profile may be asked to admit and that is now the eighteen-input decoder
-    // layer. The *requirement* this one-input program places on it is still
-    // four — every declared input, the prologue's temporary, the split's staged
-    // partial tensor, and the output — and `verify_program` derives that from
-    // the declared arity, which is what the `buffers: 3` refusal above drives.
-    // That is the point of the pair: the bound moved and the derived demand did
-    // not, so a widening that had removed the check would fail the loop above.
+    // The budget is `30` rather than the `4` this test first pinned, then the
+    // `6`, then the `21`, because it is sized to the largest program shape the
+    // profile may be asked to admit and that is the eighteen-input, three-output
+    // decoder layer under a per-output derivation. The *requirement* this
+    // one-input, one-output program places on it is five — the declared input,
+    // the prologue's temporary, the split's staged partial tensor, the fold's
+    // staged result an epilogue would read, and the output — and
+    // `verify_program` derives that from the declared arities, which is what the
+    // `buffers: 3` refusal above drives. That is the point of the pair: the
+    // bound moved and the derived demand did not, so a widening that had removed
+    // the check would fail the loop above.
     let (semantic, request) = split_request(Shape::from_dims([1, 4]));
     let scheduled = split_regions(&request);
     assert!(
@@ -6388,14 +6659,14 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
         )
         .is_ok()
     );
-    assert_eq!(request.budgets().buffers, 21);
-    // `regions` moved from `3` to `4` with the epilogue admission, and it moved
-    // for the reason this comment's `buffers` paragraph states for a different
-    // bound: it is sized to the widest plan the profile assembles, and a fold
-    // that stages its result for an elementwise epilogue made that plan one
-    // dispatch longer. This split program's own demand is still three, which is
-    // why nothing above this line moved.
-    assert_eq!(request.budgets().regions, 4);
+    assert_eq!(request.budgets().buffers, 30);
+    // `regions` moved from `3` to `4` with the epilogue admission and from a
+    // literal `4` to a derived four *per declared output* with multi-output
+    // admission, so the governed value is the decoder layer's three outputs
+    // times that chain. This split program's own demand is still four by the
+    // derivation and three by the plan it actually assembles, which is why
+    // nothing above this line moved.
+    assert_eq!(request.budgets().regions, 12);
 }
 
 /// **The closing evidence of
