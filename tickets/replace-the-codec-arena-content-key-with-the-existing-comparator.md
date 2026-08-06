@@ -1,7 +1,7 @@
 ---
 id: replace-the-codec-arena-content-key-with-the-existing-comparator
 title: Replace the codec arena content key with the existing comparator
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [measure-artifact-decoder-allocation-amplification]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets, research/artifacts, contracts/navigation]
 paths: []
 tags: [artifact, codec, performance, security]
-claimed_from: todo
-assignee: agent-codec-key
-lease_expires_at: 1786048130
 ---
 `decode_artifact` allocates a peak of **1,569,620,906 bytes** while validating a
 **226,214-byte** envelope, and a forged envelope that will be *rejected*
