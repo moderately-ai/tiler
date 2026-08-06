@@ -1,9 +1,15 @@
 //! The public compiler boundary: compile a semantic program, read its plans.
 //!
-//! This is a **reviewed draft** under ADR 0075 and ADR 0074 convention 7. It is
-//! the first surface over which a caller outside this crate can compile
-//! anything at all, and until it existed nothing downstream — MSL emission,
-//! offline compilation, bundle assembly, execution — could be reached from a
+//! This boundary is **accepted** under ADR 0075 and ADR 0074 convention 7 —
+//! `session::compile`, [`CompileRequest`] and its installation methods,
+//! [`InstalledCapabilities`], [`Compilation`] and its accessors, and the
+//! [`CompileFailureClass`] vocabulary on 2026-08-05, and [`compile_governed`]
+//! on 2026-08-06 as the returned exclusion once its error type widened.
+//! Acceptance is not stabilization: this is accepted pre-alpha vocabulary,
+//! not a published API with compatibility obligations. It is the first
+//! surface over which a caller outside this crate can compile anything at
+//! all, and until it existed nothing downstream — MSL emission, offline
+//! compilation, bundle assembly, execution — could be reached from a
 //! producer, because this crate's `pipeline` module is private and both its
 //! entry point and its request type are `pub(crate)`.
 //!

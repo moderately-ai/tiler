@@ -93,7 +93,7 @@ Forty tracks. Twelve have exact owners already and gain no ticket, one is a cros
 | **O-04** Strict-affine quantization transitions | F-20 | delivered for two per-tensor contracts | delivered | delivered | owed; live tickets |
 | **O-05** Axis-structural bijections and broadcast | F-22, F-23 | delivered | delivered, six mapping forms and three relations | delivered, bit-preserving | delivered (`CoordinateRelation`) |
 | **O-06** Sub-tensor selection | F-24 | delivered for the literal-offset form | delivered, nine named refusals | delivered | owed |
-| **O-07** Sequence extension | F-26 | delivered | delivered | delivered | **owed, and newly owned** |
+| **O-07** Sequence extension | F-26 | delivered | delivered | delivered | delivered (`CoordinateRelation`), 2026-08-06 |
 | **O-08** Indirect gather | F-34 | owed; live ticket | owed | owed | owed |
 | **O-09** Predicate-producing and predicate-consuming families | F-13, F-14, F-16, F-17, F-28{`any`, `all`} | owed, gated on `RQ-OP-03` | owed | owed | owed |
 | **O-10** Integer data arithmetic and division | F-08, F-09 | owed; ADRs 0039 and 0040 accepted, no key | owed; `RQ-OP-01` fixes the checked form's arity | owed | owed |
