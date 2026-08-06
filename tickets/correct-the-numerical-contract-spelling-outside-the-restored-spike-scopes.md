@@ -1,12 +1,12 @@
 ---
 id: correct-the-numerical-contract-spelling-outside-the-restored-spike-scopes
 title: Correct the composed numerical contract's spelling in ADR 0011 and the apple-targets probe quotation
-status: in-progress
+status: review
 priority: p3
 dependencies: []
 related: [restore-the-spikes-against-the-composed-numerical-contract]
 scopes: [contracts/decisions, research/apple-targets]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [maintenance, numerics, docs]
 claimed_from: todo
@@ -42,3 +42,32 @@ ADR 0011's realization paragraph describes the composed `NumericalContract` stru
 ## Graph maintenance
 
 Do not sweep the three migration-explaining paragraphs under `spikes/` or the `bf16-second-dtype` survey row — the reasoning above is why each is correct as it stands. If a later reader wants the survey row refreshed, that is a re-run of that spike and needs its own ticket.
+
+`project/tickets` was added as a shared scope so this Outcome could be written; the two editing scopes are unchanged.
+
+## Outcome
+
+**2026-08-06.** Both filed sites corrected at base `6cc4c242`. The diff touches `docs/decisions/`, `spikes/apple-targets/`, and `tickets/` and nothing else — no crate, prototype, manifest, or configuration file — so no repository gate is reachable from it.
+
+**Fact — the realization paragraph was rewritten from the source, not from this ticket's enumeration.** `crates/tiler-compiler/src/session.rs:1331-1894` and `crates/tiler-compiler/src/request.rs:233-525` were read in full at base. The ticket's list of seven associated constants is exact and unchanged, but the sentence had drifted on two counts the body did not name, both found by reading:
+
+- `governed_profile` no longer exists anywhere in `crates/` — `grep -rn 'governed_profile' crates/` returns only `governed_profile_source`, an unrelated target-fact provenance helper. Admission is `StrictF32NumericalContract::is_governed` (`request.rs:421`), and it is deliberately *not* set membership: its own documentation records that "membership in a table of four is deliberately not among them: that test is what made an unnamed corner unreachable". The successor of the named set, `named_profile` (`request.rs:391`), is `#[cfg(test)]` and is documented as "documentation and test population, no longer an admission authority". So "a contract outside the registered set is rejected" was wrong in kind, not only in spelling.
+- The dependency direction is inverted from what the sentence claimed. `NumericalContract::resolve` (`session.rs:1624`) composes the internal record field by field and ends at `keyed()`; it is `request.rs`'s four `#[cfg(test)]` named constructors — `governed_flush_to_zero`, `governed_relaxed`, `governed_reassociating`, `governed_flush_and_reassociate` — that resolve *through* the public constants, which `session.rs:1620` states is why a named vector is spelled once.
+
+The three call sites the old sentence named do survive, and each was read: `verify_request` (`request.rs:3500`, the request boundary), `VerifiedRequest::for_target` (`request.rs:3061`, the per-target verification), and `verify_schedule_with_feasibility` (`physical.rs:2183`, the physical schedule verifier). The struct's eleven dimensions were counted against the fields of `NumericalContract` (`session.rs:1408-1418`) and cross-checked against the exhaustive `behaviour` match over `NumericalDimension` (`request.rs:437-465`), which projects exactly those eleven and deliberately not `key`, `arithmetic`, or `canonical_arithmetic_nan_bits`.
+
+The rewritten paragraph is `docs/decisions/0011-per-operation-numerical-permissions.md:78`, followed at `:80` by a dated correction marker in the ADR 0090 house style — bold `**Corrected <date> by [ticket](…):**`, quoting the superseded wording, naming each way it drifted, and stating what the item still claims. The Decision, Consequences, Alternatives, both `Unrealized` items, the final `Consequently unrealized` item, and the whole frontmatter including `decision_status: accepted` and `implementation_status: partial` are byte-identical to base; `git diff --stat` on the file is `4 +++-`, two lines removed and four added.
+
+**Fact — the quotation was repaired against its source's current text.** `spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py:121-125` now reads:
+
+> "if the scale is a normal F32, the decode is bit-identical under `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32` and under a subnormal-preserving F32" is the derivation the profile record states over 256 codes and 256 zero points. Here it is evaluated over all 65,536 cells for every normal scale in the corpus.
+
+The source is `docs/research/numerics/first-quantized-lm-profile.md:134`, whose current sentence is "**Inference — exhaustive over the finite code domain: if the scale is a normal F32, the decode is bit-identical under `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32` and under a subnormal-preserving F32.**" — corrected there by `restore-the-spikes-against-the-composed-numerical-contract` at `d5960e81`. Two characters beyond the identifier changed, and deliberately: the quoted fragment begins mid-sentence in the source, so the docstring's sentence-initial `If` became the source's `if`. Quoting a fragment verbatim was the standard this ticket asked for, and the capitalization was the remaining infidelity; the surrounding docstring sentence is unchanged and reads the same with a lower-case opening.
+
+**Measurement — the spike still runs, device-free.** `uv run --with pytest pytest spikes/apple-targets -q` from the worktree root: **165 passed, 1 skipped in 68.24s**. The skip is the device-dispatch case, which needs the Metal toolchain. This is evidence the file still imports and collects; the docstring is not read by any assertion, so it could not have changed a verdict.
+
+**Fact — the closing grep, and why it is a weak check.** `grep -rn 'NumericalContract::[A-Z][a-z]' docs/decisions spikes/apple-targets` reports **no match** at completion. It also reported no match at base: both filed sites spelled the stale name *bare* — `FlushSubnormalsToZeroF32`, not `NumericalContract::FlushSubnormalsToZeroF32` — so the qualified pattern never matched either of them. The check as filed is a regression guard against the qualified form, not a discriminator for the work; what verified this ticket was reading the two sites and their sources. The discriminating grep is `grep -rn 'FlushSubnormalsToZeroF32' docs/decisions spikes/apple-targets`, which returned two lines at base — ADR 0011:78 and `test_decode_probe.py:122` — and returns one at completion: ADR 0011:80, the correction marker quoting the wording it supersedes, which is the same convention the ADR 0090 markers use.
+
+**Fact — the excluded sites were left alone.** `spikes/numerics/bf16-second-dtype/README.md` and the three migration-explaining paragraphs under `spikes/` are untouched; `git status --porcelain` lists exactly three modified files and no others.
+
+**Checks.** `git diff --check` clean; `tkt lint` clean; `tkt guard` reports only the declared scopes.

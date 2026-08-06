@@ -118,10 +118,11 @@ def test_the_rounder_agrees_with_the_platform_conversion_over_the_whole_measured
 def test_a_normal_scale_makes_the_two_reference_models_identical():
     """The exhaustive-finite claim, recomputed rather than cited.
 
-    "If the scale is a normal F32, the decode is bit-identical under
-    `FlushSubnormalsToZeroF32` and under a subnormal-preserving F32" is the
-    derivation the profile record states over 256 codes and 256 zero points. Here
-    it is evaluated over all 65,536 cells for every normal scale in the corpus.
+    "if the scale is a normal F32, the decode is bit-identical under
+    `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32` and under a
+    subnormal-preserving F32" is the derivation the profile record states over 256
+    codes and 256 zero points. Here it is evaluated over all 65,536 cells for every
+    normal scale in the corpus.
     """
     for scale in probe.SCALES:
         if not scale.normal:
