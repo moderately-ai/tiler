@@ -1,7 +1,7 @@
 ---
 id: admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary
 title: Admit a materialized-intermediate read in the scheduled-region vocabulary
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [admit-elementwise-epilogues-over-a-materialized-intermediate, admit-a-reduction-over-a-declared-input-tensor, admit-multi-input-tensors-in-the-scheduled-region-vocabulary, accept-the-public-compiler-facade-boundary, admit-a-strict-serial-fold-that-writes-a-materialized-intermediate, admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, schedule]
-claimed_from: todo
-assignee: agent-intermediate-read
-lease_expires_at: 1786007380
 ---
 ## User-visible outcome
 
