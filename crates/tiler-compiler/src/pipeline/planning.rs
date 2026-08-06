@@ -65,7 +65,7 @@ pub(super) struct CompletePlans {
 /// region and target; and only [`select_physical_plans`] joins them.
 #[allow(
     clippy::too_many_lines,
-    reason = "keeps the cover, legality, frontier, and join stages and their phase-local failure contexts in one readable transaction"
+    reason = "keeps the lowering-resolution, cover, legality, frontier, and join stages and their phase-local failure contexts in one readable transaction"
 )]
 pub(super) fn enumerate_complete_plans(
     semantic: &tiler_ir::semantic::SemanticProgram,

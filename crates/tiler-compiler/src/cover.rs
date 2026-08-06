@@ -1677,6 +1677,11 @@ impl Partitioner<'_> {
             let candidate = candidates.get(index).ok_or(CoverError::Structure {
                 rule: "candidate-index",
             })?;
+            // An out-of-range member reads as *covered*, the mirror of the
+            // default [`Self::refused_duplication`] takes, so a member the
+            // coverage vector cannot hold never makes a candidate look like an
+            // augmentation. It cannot happen, for the reason that method's doc
+            // states.
             let covers_new = candidate.members().iter().any(|member| {
                 self.covered
                     .get(member_index(*member))
@@ -1691,6 +1696,9 @@ impl Partitioner<'_> {
                 continue;
             }
             if let Some((member, cause)) = self.refused_duplication(candidate) {
+                // The blanket policy refusal goes unrecorded here for the reason
+                // the anchored loop above states: it is the exact-partition rule
+                // itself rather than a fact about this candidate.
                 if cause != DuplicationRefusal::PolicyForbids {
                     let position = self.graph.member_canonical_position(member)?;
                     self.record_refusal(CoverRefusal::Duplication {

@@ -11,7 +11,7 @@
 //! layer. It takes MSL and a target as input and produces bytes and provenance
 //! as output.
 //!
-//! Two contracts are load-bearing:
+//! Four contracts are load-bearing:
 //!
 //! - **One selected platform.** A [`input::MetalTarget`] names exactly one
 //!   artifact family and derives the SDK both tool invocations use.

@@ -2,12 +2,15 @@
 //!
 //! The vocabulary is deliberately explicit: a consumer reads stages bound to
 //! exact verified structured kernels, the semantic occurrences each stage
-//! covers, materialized values with their origin, role, storage requirements
-//! and defining stage, byte views through which stages address those values,
-//! storage allocations with ownership, typed dependency edges that state *why*
-//! two stages are ordered, and an ordered list of named outputs. Nothing here
-//! requires a consumer to reconstruct a schedule, a kernel body, an access
-//! relation, or a semantic graph.
+//! covers, the derived execution order, materialized values with their origin,
+//! role, storage requirements and defining stage, byte views through which
+//! stages address those values, storage allocations with ownership, typed
+//! dependency edges that state *why* two stages are ordered, the declared split
+//! reductions and publishing copies that account for a stage covering no
+//! occurrence, an ordered list of named outputs, and the entry ABI — its
+//! expression arena, its applicability guard, and its routing-commit contract.
+//! Nothing here requires a consumer to reconstruct a schedule, a kernel body, an
+//! access relation, or a semantic graph.
 //!
 //! Only [`super::KernelProgramBuilder::build`] can bind a draft into an opaque
 //! [`VerifiedKernelProgram`]. The verified wrapper exposes read-only meaning

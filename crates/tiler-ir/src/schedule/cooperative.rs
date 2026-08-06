@@ -97,9 +97,11 @@
 //! make per-round coverage a shrinking subset rather than a bijection, which is
 //! a different decision procedure and not a wider parameter for this one.
 //!
-//! A *strided* staged span is likewise absent: [`StagedSpan::count`] addresses
-//! contiguous slots, and the blocked tile's transposed write is what keeps its
-//! reads contiguous, so nothing needs the strided form yet.
+//! A stride *within* one participant's run is likewise absent. [`StagedSpan`]
+//! already places participants' first slots by a per-dimension stride vector;
+//! what each participant then addresses is [`StagedSpan::count`] contiguous
+//! slots, and the blocked tile's transposed write is what keeps its reads
+//! contiguous, so nothing needs the per-participant strided form yet.
 
 use super::MAX_COOPERATIVE_PARTICIPANT_RANK;
 use super::handles::{PhaseId, StagingId, SyncPointId};
@@ -576,7 +578,9 @@ pub struct VisibilityEdge {
 /// the content: the rewrite is in the *next* round, so it follows the read in
 /// program order however the two phases are ordered within a round. A tile whose
 /// read is in phase 1 and whose rewrite is in phase 0 has the edge, and so does
-/// one whose read is in phase 0 and whose rewrite is in phase 2.
+/// one whose read is in phase 1 and whose rewrite is in phase 2. A read in phase
+/// 0 is what cannot occur: `StagedProducer` requires every read's writer in a
+/// strictly earlier phase, so the first phase never reads at all.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct AntiDependencyEdge {
     /// Allocation whose slots are reused.

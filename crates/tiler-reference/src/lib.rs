@@ -21,6 +21,8 @@
 //! | `bf16` | the exact-rational pure-BF16 value set, arithmetic, and rounding |
 //! | `tensor` | what a reference value *is* — elements, components, tensors |
 //! | `value_conformance` | presenting a tensor as a logical view, and the proofs one evaluation holds |
+//! | `conformance` | the numerical contract and conformance level one evaluation is performed under |
+//! | `quantization` | exact reference semantics for the governed strict-affine proof profile |
 //! | `registry` | the semantic capability registry and its dispatch vocabulary |
 //! | `evaluate` | executing a semantic program against that registry |
 //! | `silu` | the certified binary32 `SiLU` reference and its exponential |

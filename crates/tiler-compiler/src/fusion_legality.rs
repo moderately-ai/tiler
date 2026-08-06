@@ -34,8 +34,13 @@
 //!
 //! Scope boundary: this authority derives legality of one candidate. It selects
 //! no cover, chooses no physical implementation, schedules nothing, and costs
-//! nothing. Every item is a reviewed *draft* boundary, not a stable compiler
-//! API, until Tom accepts the exact interface.
+//! nothing.
+//!
+//! Nothing here is a compiler API: `fusion_legality` is a private module
+//! carrying no `pub` item and no re-export, so this is a crate-internal draft
+//! vocabulary. The draft discipline still holds — every shape below is
+//! provisional and carries no compatibility story — and the acceptance a public
+//! boundary owes Tom is owed at the point any of it is first exported, not here.
 
 use std::collections::BTreeMap;
 use std::error::Error;

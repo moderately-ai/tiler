@@ -86,9 +86,10 @@ pub const MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS: usize = 4_096;
 /// rank-wide accesses, each with at most [`super::MAX_TENSOR_RANK`] coordinates
 /// and two predicates per coordinate; rank-zero component reads retain no
 /// coordinate obligations. Its widest staged template is a two-access fold
-/// followed by a three-access pointwise pass, so six accesses bounds the whole
-/// vocabulary rather than three. The bound is over the realization because that
-/// is what one caller funds one completion budget for.
+/// followed by a three-access pointwise pass, so five accesses is the widest any
+/// realization of this vocabulary reaches, and the six below is a margin over
+/// that rather than a tight bound. The bound is over the realization because
+/// that is what one caller funds one completion budget for.
 pub const MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS: usize = 6 * super::MAX_TENSOR_RANK * 2;
 /// Maximum cells the closed exact-finite residual proof algorithm may evaluate.
 pub const MAX_FINITE_DOMAIN_PROOF_CELLS: u64 = 16 * 1024 * 1024;
@@ -1503,8 +1504,12 @@ impl ResolvedIndexRealization {
     ///
     /// # Errors
     ///
-    /// Returns a typed refusal when scalar authority, effect, or ordered tensor
-    /// interfaces disagree.
+    /// Returns
+    /// [`IndexRefinementVerificationError::SemanticRealizationLawRefused`] under
+    /// `staged-law-requires-region-sequence` when the registered law realizes a
+    /// region *sequence*, which one region cannot satisfy — [`Self::verify_sequence`]
+    /// is the method for those. Otherwise returns a typed refusal when scalar
+    /// authority, effect, or ordered tensor interfaces disagree.
     pub fn verify(
         &self,
         lowering: &IndexRealizationAuthority,

@@ -37,10 +37,11 @@ use super::synchronization::{
 /// identity; this states it instead of deriving it.
 ///
 /// **Do not add `#[non_exhaustive]`.** This is an ADR 0074 convention 5b type
-/// for the same reason [`AccessMode`] is: `tensor_role_tag` in `tiler-compiler`'s
-/// `selection.rs` and `frontier.rs`, and `tensor_role_name` in its
-/// `call_registry.rs`, map it *totally* onto identity tags and subject strings
-/// from outside this crate with no wildcard arm. A wildcard there would have to
+/// for the same reason [`AccessMode`] is: `push_tensor_role` in
+/// `tiler-compiler`'s `selection.rs` and `frontier.rs`, and
+/// `push_tensor_role_name` and `tensor_role_name_len` in its `call_registry.rs`,
+/// map it *totally* onto identity tags and subject strings from outside this
+/// crate with no wildcard arm. A wildcard there would have to
 /// invent a tag the variant alone determines, so a variant added later would
 /// encode under some other variant's bytes instead of failing the build.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -163,6 +164,19 @@ pub enum ContractionAxisSource {
 /// - `ReverseAxis` is the same decode with `mirrored` set, which is exactly the
 ///   affine `i -> extent − 1 − i` D-10 admits and the one form that needs the
 ///   flag at all.
+///
+/// **The form is not closed under composition, and a chain is refused rather
+/// than approximated.** Every bullet above is one *occurrence*; composing them
+/// can produce a bijection this vocabulary cannot spell. Splitting `[4]` into
+/// `[2, 2]`, permuting by `[1, 0]`, then merging back to `[4]` sends
+/// `0, 1, 2, 3` to `0, 2, 1, 3`, and no single `(linear / divisor) % modulus`,
+/// mirrored or not, produces that permutation over an operand axis of extent
+/// four. Nothing composes such a chain today: the request boundary's
+/// `recognize_structural_read` admits a structural operand only when it is a
+/// declared input or the staged value, so a reindex whose operand is another
+/// reindex's result refuses under `structural-operand` before any decode is
+/// derived. Widening that admission needs a form that can state the composed
+/// map, not a looser reading of this one.
 ///
 /// **Do not add `#[non_exhaustive]`, and do not give it a default.** A decode is
 /// three independent facts and every one of them participates in canonical
@@ -630,7 +644,13 @@ pub struct IndexRegion {
     pub id: RegionId,
     /// Parallel iteration domain of the region.
     pub iteration_shape: Shape,
-    /// Logical accesses, one read followed by one owning write.
+    /// Logical accesses: the region's reads, followed by its one owning write.
+    ///
+    /// The read count is the scalar program's rather than a constant — one per
+    /// expression leaf for a pointwise family, exactly one for a serial
+    /// reduction, two for a contraction, three for the affine `u4` dequantize —
+    /// and `verify_intrinsic` refuses a list whose length disagrees with the
+    /// family the region declares.
     pub accesses: Vec<Access>,
     /// Bounds proofs, one per access.
     pub bounds_proofs: Vec<BoundsProof>,
@@ -1015,7 +1035,7 @@ pub struct ScheduledRegion {
 /// These feed a separate phased target-feasibility assessment; deriving them is
 /// part of intrinsic verification and never a target decision (ADR 0007).
 ///
-/// The four numerical fields carry the region's declared realization forward
+/// The eight numerical fields carry the region's declared realization forward
 /// per dimension rather than as one summary bit. A single `requires_strict_f32`
 /// boolean cannot name which dimension a target failed to honour, and the
 /// boolean these replaced was derived from contraction and reassociation alone
@@ -1261,8 +1281,12 @@ pub fn partial_reduction_axis(output_shape: &Shape) -> Option<Axis> {
 
 /// Returns the cooperative tile one reduction topology carries, if any.
 ///
-/// The one place the topology is matched to reach its tile, so a consumer that
-/// needs the dataflow cannot accidentally read it from some other variant.
+/// The accessor for a consumer that needs the tile alone, so it cannot
+/// accidentally read a tile from some other variant. It is not the only match on
+/// the topology: four sites in this crate destructure `CooperativeWorkgroup`
+/// whole because they need its other fields in the same breath — `push_schedule`
+/// below, `verify_cooperative_semantics` in the schedule builder, and
+/// `verify_reduction` and `cooperative_plan` in `crate::kernel`.
 #[must_use]
 pub fn cooperative_tile(reduction: &ReductionTopology) -> Option<&CooperativeTile> {
     match reduction {
@@ -2209,7 +2233,7 @@ fn push_cooperative_phase(bytes: &mut Vec<u8>, phase: &CooperativePhase) {
 
 /// Encodes the complete realization one synchronization point requires.
 ///
-/// Five tag bytes plus the two fence flags, in the field order
+/// Six bytes: four tags and the two fence flags, in the field order
 /// [`SynchronizationSubject`] declares. Every enumeration goes through its own
 /// `tag` method, so widening one is a build error at that method rather than a
 /// silent renumbering here.

@@ -3,9 +3,11 @@
 #![allow(incomplete_features)]
 //! Target-independent representations and verifiers for Tiler.
 //!
-//! This crate currently implements the bounded semantic and canonical-index
-//! slices selected for the first value proof. It is intentionally not yet the
-//! complete tensor compiler IR.
+//! This crate currently implements the bounded slices selected for the first
+//! value proof, layer by layer: shapes and numerics, the semantic graph, the
+//! canonical index vocabulary, scheduled regions, structured kernel IR, and the
+//! target-neutral kernel program. It is intentionally not yet the complete
+//! tensor compiler IR.
 //!
 //! Construction and read APIs are grouped by the invariants they protect:
 //!

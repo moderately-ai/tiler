@@ -242,8 +242,11 @@ impl IndexRealizationLaw {
 
     /// Standard staged strict-serial-sum-then-multiply-f32 law.
     ///
-    /// A constructor for the governed spelling of the staged form, beside the
-    /// nine single-region ones. No standard operation carries this row today —
+    /// A constructor for the governed spelling of the staged form, which is the
+    /// only one of this law's nine variants whose realization is a region
+    /// *sequence*; the other eight are single-region, and
+    /// `realizes_region_sequence` decides which is which in one match. No
+    /// standard operation carries this row today —
     /// registering the family that will is [`admit-the-rms-normalization-family`]'s
     /// work — so the law-registry sidecar is unchanged by its existence.
     ///

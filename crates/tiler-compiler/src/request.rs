@@ -47,22 +47,6 @@ pub(crate) use crate::target::{TargetProfile, TargetProfileKey};
 
 const REQUEST_SCHEMA_VERSION: u32 = 2;
 
-/// The versioned domain of the canonical numerical-contract key scheme.
-///
-/// **A scheme rather than a name, and that is the change this domain records.**
-/// Four hand-written strings — `tiler.strict-f32.v1` and its three siblings —
-/// used to be the whole contract vocabulary, because a caller could only name
-/// one of four presets. A caller now resolves the dimensions directly, so the
-/// number of statable contracts is the size of the dimension space and no
-/// hand-written name can cover it. The key is therefore *derived* from the
-/// dimension vector by [`canonical_contract_key`], and this domain is the
-/// version of that derivation.
-///
-/// The version is `v2` because a `v1` key named a preset and a `v2` key spells a
-/// vector: a reader holding either can tell which it has from the prefix, and no
-/// `v1` key is reachable any more. The domain moves whenever the rendering
-/// moves, which is what keeps a key minted by one build comparable to a key
-/// minted by another — the whole reason a contract has a key at all.
 /// Maximum distinct numerical contracts admitted in one preference.
 ///
 /// **Four, and now retained rather than derived.** It used to be
@@ -4369,8 +4353,10 @@ fn elementwise_family(
 /// vocabulary cannot spell, `elementwise-shape` for a read at another domain,
 /// `elementwise-attributes` for an attribute this projection would drop,
 /// `elementwise-arity` for an operand count the vocabulary has no node for, and
-/// `elementwise-expression` when the assembled expression is not one a region
-/// can bind.
+/// every rule [`resolve_elementwise`] reports for the numbering that follows —
+/// which is where `elementwise-expression` comes from, along with
+/// `elementwise-reads`, `input-ordinal`, `elementwise-operand`, and
+/// `elementwise-node-limit`.
 fn recognize_elementwise(
     program: &SemanticProgram,
     root: ValueId,
@@ -4691,8 +4677,10 @@ fn plan_elementwise(
 ///
 /// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads` for
 /// a leaf the order does not name, `input-ordinal` for a position no expression
-/// ordinal can hold, `elementwise-node-limit` for an expression exceeding
-/// [`tiler_ir::schedule::MAX_POINTWISE_F32_EXPRESSION_NODES`], and
+/// ordinal can hold, `elementwise-operand` for an operand no earlier step of the
+/// plan minted, `elementwise-arity` for a family and operand count this
+/// projection has no node for, `elementwise-node-limit` for an expression
+/// exceeding [`tiler_ir::schedule::MAX_POINTWISE_F32_EXPRESSION_NODES`], and
 /// `elementwise-expression` for an assembled expression no region can bind.
 fn mint_elementwise(
     plan: &ElementwisePlan,
@@ -5138,9 +5126,12 @@ const fn expression_bound() -> RequestError {
 /// # Errors
 ///
 /// Returns [`RequestError::UnsupportedCapability`] naming the unrecognized
-/// property: `elementwise-rank` for a rank-zero domain no region iterates,
-/// `operation-set` when a reachable occurrence is outside the recognized
-/// expression, and every rule [`recognize_elementwise`] reports.
+/// property — every rule [`resolve_elementwise`] reports, the planning half
+/// having already run in the caller — or [`RequestError::ShapeProductOverflow`]
+/// under `input` for a domain whose extents do not multiply into a `u64`. The
+/// rank and occurrence-coverage obligations are the caller's:
+/// [`recognize_elementwise_output`] reports `elementwise-rank` and
+/// [`check_output_cover`] reports `operation-set`.
 fn recognize_pointwise(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
@@ -5179,8 +5170,12 @@ fn recognize_pointwise(
 ///
 /// Returns [`RequestError::UnsupportedCapability`] naming the property that was
 /// not recognized: every rule [`plan_elementwise`], [`mint_elementwise`], and
-/// [`declared_ordinal`] report for the epilogue's own walk, and every rule the
-/// producing family's recognizer reports.
+/// [`declared_ordinal`] report for the epilogue's own walk, and every rule
+/// [`recognize_epilogue_producer`] reports for the staged half — `operation-set`
+/// for a folded family it has no producer recognizer for,
+/// [`producer_for_value`]'s `missing-producer` and `operation-ordinal`, and the
+/// producing family's own rules. Returns [`RequestError::ShapeProductOverflow`]
+/// under `output` for a domain whose extents do not multiply into a `u64`.
 fn recognize_epilogue(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
