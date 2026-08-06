@@ -1,7 +1,7 @@
 ---
 id: reconcile-which-quantity-the-admission-rule-compares-against-a-caller-s-tolerance
 title: Reconcile which quantity the admission rule compares against a caller's tolerance
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [separate-the-rescaling-price-from-the-observed-fold-divergence, connect-certified-rounding-error-bounds-to-rewrite-permissions]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, accuracy]
+claimed_from: todo
+assignee: agent-tolerance
+lease_expires_at: 1786052103
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: correct-the-one-region-premise-in-the-concatenate-absence-check
 title: Correct the one-region premise in the concatenate lowering record's absence check
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [lower-a-two-region-occurrence-through-one-index-access-capability, correct-the-one-region-per-occurrence-claim-in-the-records]
@@ -9,6 +9,9 @@ scopes: [research/indexing]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
+claimed_from: todo
+assignee: agent-concat-premise
+lease_expires_at: 1786052103
 ---
 ## What is stale
 
