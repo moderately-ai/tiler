@@ -19,9 +19,12 @@ manifest="$here/expected-sources.tsv"
 # The expected population, declared here rather than derived from the manifest, so that a manifest
 # that lost rows fails instead of agreeing with itself.
 expect_total=30
-expect_vendored=9
+expect_vendored=10
 expect_metadata_only=20
-expect_pending=1
+# Zero since 2026-08-06, and declared rather than dropped: the pending class is the record's own
+# work-item channel, so asserting it is empty is what makes a re-opened request fail this check
+# instead of passing unnoticed.
+expect_pending=0
 
 # Files that are the record itself rather than preserved upstream bytes.
 self_files=("README.md" "expected-sources.tsv" "verify-sources.sh" ".gitattributes")
