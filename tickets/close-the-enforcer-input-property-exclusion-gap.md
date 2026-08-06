@@ -1,7 +1,7 @@
 ---
 id: close-the-enforcer-input-property-exclusion-gap
 title: Close the enforcer input-property exclusion gap
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature, admit-an-excluding-property-parameter-when-a-goal-directed-input-search-lands, catalog-the-enforcer-input-property-exclusion-record]
@@ -9,9 +9,6 @@ scopes: [research/region-search]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, optimizer, enforcers, boundary-properties]
-claimed_from: todo
-assignee: agent-enforcer-gap
-lease_expires_at: 1786031121
 ---
 ## User-visible outcome
 
