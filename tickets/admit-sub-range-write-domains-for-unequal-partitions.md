@@ -45,3 +45,7 @@ A region whose roots partition one output into unequally sized contiguous pieces
 
 - `implementation/ir` alone: the refusal site, the proof code, and the two arguments to re-derive are all in `crates/tiler-ir/`.
 - Filed by the partition-contract ticket on discovering that preserving `InvalidWriteDomain` — which its own body instructed — leaves the unequal case unstatable. Recorded there rather than absorbed silently.
+
+## Oracle site note — 2026-08-06
+
+The oracle correction (`correct-the-reference-oracle-for-partitioned-output-writes`, done) rests its admit-everything decision on `InvalidWriteDomain` holding: every root iterates the whole parallel domain, so grouped filling reproduces every statable partition, and no unsupported-feature refusal exists because none is reachable. This ticket relaxes exactly that premise. The failure mode is closed rather than silent — a sub-domain root's coordinates cannot name the missing dimensions, so the full-space walk revisits an element and `DuplicateWrite` refuses — but a refusal by accident is not a contract: re-read `output_plans` (`crates/tiler-reference/src/oracle.rs`) and its "Which partitioned regions this admits" doc when relaxing, and decide the oracle's admitting boundary for sub-range roots deliberately.
