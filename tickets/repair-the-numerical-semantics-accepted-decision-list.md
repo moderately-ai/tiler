@@ -1,7 +1,7 @@
 ---
 id: repair-the-numerical-semantics-accepted-decision-list
 title: Repair the numerical-semantics accepted-decision list
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [execute-the-adr-0102-acceptance-sweep]
@@ -9,6 +9,9 @@ scopes: [contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, numerics, documentation, adr]
+claimed_from: todo
+assignee: orchestrator
+lease_expires_at: 1786048130
 ---
 ## User-visible outcome
 
