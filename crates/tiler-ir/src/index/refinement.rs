@@ -1182,10 +1182,14 @@ impl IndexRefinementDomainProof {
 /// realization.
 ///
 /// A realization is an *ordered sequence* of verified regions, and every field
-/// below that names a region names all of them. The single-region accessors are
-/// retained beside the sequence ones and answer the final stage, which for the
-/// one-stage realization every registered law produces is the only stage; a
-/// consumer that must see the whole chain reads [`Self::regions`].
+/// below that names a region names all of them. [`Self::final_stage`] and
+/// [`Self::final_scalar_authority`] answer the last stage alone and never the
+/// realization; a consumer that must see the whole chain reads
+/// [`Self::regions`], [`Self::scalar_authorities`], or [`Self::realization`].
+/// The accessors are named for what they return because the one-stage
+/// realization every registered law produces makes stage and realization
+/// indistinguishable, and a reader who learned the accessor there would
+/// otherwise carry that reading into the first chain met.
 #[derive(Clone, Debug)]
 pub struct IndexRefinementReceipt {
     graph: SemanticGraphIdentity,
@@ -1221,10 +1225,14 @@ impl IndexRefinementReceipt {
     /// Returns the final stage's verified-region identity.
     ///
     /// The final stage is the one whose writes are the occurrence's results. For
-    /// a one-stage realization it is the only region, and this is the identity
-    /// the receipt has always bound.
+    /// a one-stage realization it is the only region, and its identity is the
+    /// realization identity byte for byte. For a chain it identifies one stage
+    /// of several and is **not** the realization: the leading stages leave no
+    /// trace in it, so two chains that merely end alike agree here. Compare
+    /// [`Self::realization`] to compare realizations, and read [`Self::regions`]
+    /// for every stage in order.
     #[must_use]
-    pub const fn region(&self) -> &CanonicalIndexRegionIdentity {
+    pub const fn final_stage(&self) -> &CanonicalIndexRegionIdentity {
         &self.region
     }
     /// Returns every verified-region identity in stage order.
@@ -1239,9 +1247,15 @@ impl IndexRefinementReceipt {
     pub const fn realization(&self) -> &CanonicalIndexRegionSequenceIdentity {
         &self.realization
     }
-    /// Returns the checked scalar authority bound to the final stage.
+    /// Returns the checked scalar authority bound to the final stage alone.
+    ///
+    /// A chain's stages reach their own scalar operations and need not overlap:
+    /// the governed staged template's fold reaches the add and its pass reaches
+    /// the multiply, and neither reaches the other's. So this is one stage's
+    /// reached vocabulary, not the realization's;
+    /// [`Self::scalar_authorities`] answers that, in stage order.
     #[must_use]
-    pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
+    pub const fn final_scalar_authority(&self) -> &ScalarAuthorityEvidence {
         &self.scalar_authority
     }
     /// Returns the checked scalar authority of every stage, in stage order.
@@ -1322,9 +1336,16 @@ impl PendingIndexRefinementReceipt {
     /// Returns the exact retained final-stage verified region.
     ///
     /// For the one-stage realization every registered law produces this is the
-    /// only region; [`Self::realization`] exposes the whole ordered chain.
+    /// only region, and evaluating it evaluates the occurrence. For a chain it
+    /// is one stage of several and evaluating it does not: at least one of its
+    /// input boundaries reads the value the preceding stage handed on, which no
+    /// operand named by [`Self::operand_bindings`] carries. A consumer that can
+    /// run exactly one region must therefore establish that
+    /// [`Self::realization`] has exactly one stage before it runs this one —
+    /// otherwise it runs part of a realization and reports the result as the
+    /// occurrence's.
     #[must_use]
-    pub const fn region(&self) -> &VerifiedIndexRegion {
+    pub const fn final_stage(&self) -> &VerifiedIndexRegion {
         self.realization.final_stage()
     }
     /// Returns the exact retained ordered realization.
@@ -1332,9 +1353,14 @@ impl PendingIndexRefinementReceipt {
     pub const fn realization(&self) -> &VerifiedIndexRegionSequence {
         &self.realization
     }
-    /// Returns the final stage's checked scalar authority evidence.
+    /// Returns the final stage's checked scalar authority evidence alone.
+    ///
+    /// Each stage carries its own reached vocabulary, so for a chain this omits
+    /// every scalar operation only a leading stage reaches;
+    /// [`Self::scalar_authorities`] answers the whole realization, in stage
+    /// order.
     #[must_use]
-    pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
+    pub const fn final_scalar_authority(&self) -> &ScalarAuthorityEvidence {
         &self.scalar_authority
     }
     /// Returns every stage's checked scalar authority evidence, in stage order.
@@ -3965,8 +3991,8 @@ mod tests {
         let (_, _, _, reached_semantic_revision) = reached_semantic_fixture(2);
         assert_eq!(reached_semantic.graph(), reached_semantic_revision.graph());
         assert_eq!(
-            reached_semantic.region(),
-            reached_semantic_revision.region()
+            reached_semantic.final_stage(),
+            reached_semantic_revision.final_stage()
         );
         assert_ne!(
             reached_semantic.executable_coverage_identity(),
@@ -4458,7 +4484,7 @@ mod tests {
         );
         assert_eq!(receipt.realization(), realization.identity());
         assert_eq!(
-            receipt.region(),
+            receipt.final_stage(),
             realization.final_stage().canonical_identity()
         );
         // Both stages' scalar authorities are retained, and they genuinely
@@ -5494,10 +5520,10 @@ mod tests {
         // projection reads, so a coverage identity that failed to separate them
         // would be crossable between real, equally-shaped occurrences.
         assert_eq!(first_receipt.graph(), second_receipt.graph());
-        assert_eq!(first_receipt.region(), second_receipt.region());
+        assert_eq!(first_receipt.final_stage(), second_receipt.final_stage());
         assert_eq!(
-            first_receipt.scalar_authority(),
-            second_receipt.scalar_authority()
+            first_receipt.final_scalar_authority(),
+            second_receipt.final_scalar_authority()
         );
         assert_eq!(
             first_receipt.operand_bindings(),
@@ -5583,7 +5609,7 @@ mod tests {
             unprovable.scalar_authorities(),
             unprovable.operand_bindings.clone(),
             unprovable.result_bindings.clone(),
-            proofs_for(unprovable.region()),
+            proofs_for(unprovable.final_stage()),
         );
         assert_eq!(discharged.index_domain_proofs().len(), 1);
         let unproved = mint_receipt(
