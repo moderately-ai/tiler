@@ -1,7 +1,7 @@
 ---
 id: accept-the-composed-realization-evaluation-surface
 title: Accept the composed realization evaluation surface
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [compose-a-declared-reduction-topology-into-a-semantic-program-evaluation, accept-the-realization-witness-surface, decide-how-a-pinned-pointwise-grouping-becomes-evaluable, implement-the-realization-witness-vocabulary]
@@ -38,6 +38,10 @@ Implementing either item; re-deciding the pointwise evaluability fork, which is 
 ## Closes when
 
 Tom has accepted, excluded, or redirected each item by name, and the record's Part 7 states which.
+
+## Outcome — decided
+
+**Decided by Tom on 2026-08-06 at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket): item A is accepted as the sole public composition entry, and item B is kept crate-internal — crate-private or `#[doc(hidden)]` — exactly the first shape the discipline admitted.** The record's Part 7 states the decision in place. The rationale Tom accepted is the ordering argument: a public pinning primitive is a hole where an oracle should be, and making the driver the only public entry closes it structurally. Implementation is unchanged by this decision and waits on the retention ([`retain-the-selected-semantic-candidate-for-the-conformance-oracle`](retain-the-selected-semantic-candidate-for-the-conformance-oracle.md)); whichever ticket implements the surface builds to this accepted shape.
 
 ## Graph maintenance
 

@@ -1,7 +1,7 @@
 ---
 id: accept-the-registered-family-region-sequence-query
 title: Accept the registered-family region-sequence query
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages, accept-the-root-mean-square-scale-realization-law, accept-the-multi-region-index-realization-surface]
@@ -43,3 +43,9 @@ Nothing else moves. No type, no variant, no existing signature, and no encoding:
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the method is in use from `tiler-compiler` and labelled a draft at its definition.
+
+## Outcome — accepted
+
+**Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** The exact surface above — `family_realizes_region_sequence(&OpKey) -> bool`, `false` for an unregistered operation — is accepted public surface on `FrozenIndexRealizationLawRegistry`.
+
+**One alignment deliberately deferred, with its trigger.** The method's own doc-comment still opens "**Labelled draft.**" and points here; rewriting it to record this acceptance is a `crates/tiler-ir` edit, and `implementation/ir` is exclusively held by the in-flight [`admit-a-scheduled-region-for-a-staged-elementary-family`](admit-a-scheduled-region-for-a-staged-elementary-family.md) worker. The coordinator applies the doc-comment update at that ticket's integration, and this ticket's closure is complete when that lands.
