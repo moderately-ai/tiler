@@ -33,16 +33,18 @@
 //! storage, which already exists: comparing it costs nothing and refusing on it
 //! is still a route another artifact could satisfy.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
-    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
-    RoutedEntry, TargetPropertyRequest,
+    DTypeDispatch, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
+    RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 
 use tiler_artifact::program::{
-    BackendKey, RepresentationKey, RouteRequirement, RouteResourceDimension, TargetProfileRef,
+    ArithmeticType, BackendKey, RepresentationKey, RouteRequirement, RouteResourceDimension,
+    TargetProfileRef,
 };
 
 use crate::fixture;
@@ -74,6 +76,54 @@ pub enum Stage {
     AllocateDispatch,
     /// The committed route was encoded, run, and observed.
     Dispatch,
+}
+
+/// One measured target family's dtype-dispatchability row.
+///
+/// The three answers `decide-per-dtype-dispatchability-as-a-target-capability`
+/// established the mechanism produces, named after the families that produced
+/// them rather than after the verdicts, because the point of routing three of
+/// them through one adapter is that the refusal is the mechanism saying no on a
+/// real family's behalf and not a second code path.
+///
+/// **Measurement boundary.** The two positive and negative rows restate the
+/// verdicts the [BF16 spike](../../../../spikes/numerics/bf16-second-dtype/README.md)
+/// declares from the retained Apple record — macOS Apple9 dispatches `bfloat`,
+/// the iOS Simulator refuses it at pipeline creation — for the fixture's own
+/// scalar-host profile. Nothing here measures an Apple device; what is under
+/// test is what a loader does with such a row, not whether the row is true.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DispatchFamily {
+    /// Declares both `f32` and `bf16` dispatchable, as the macOS row does.
+    DispatchesBf16,
+    /// Declares `bf16` explicitly unsupported and `f32` dispatchable.
+    ///
+    /// `f32` is declared beside it deliberately: a family that said nothing at
+    /// all would make every refusal below indistinguishable from an unmeasured
+    /// one, and it is the accepted neighbour that makes the `bf16` answer
+    /// evidence about `bf16`.
+    RefusesBf16,
+    /// Declares `f32` alone, saying nothing about `bf16`.
+    ///
+    /// The `Unknown` control: a family nobody measured for this dtype.
+    UnmeasuredForBf16,
+}
+
+impl DispatchFamily {
+    fn declarations(self) -> BTreeMap<ArithmeticType, DTypeDispatch> {
+        let mut declared = BTreeMap::new();
+        declared.insert(ArithmeticType::F32, DTypeDispatch::Dispatchable);
+        match self {
+            Self::DispatchesBf16 => {
+                declared.insert(ArithmeticType::Bf16, DTypeDispatch::Dispatchable);
+            }
+            Self::RefusesBf16 => {
+                declared.insert(ArithmeticType::Bf16, DTypeDispatch::Unsupported);
+            }
+            Self::UnmeasuredForBf16 => {}
+        }
+        declared
+    }
 }
 
 /// A deliberate perturbation of the adapter's own behaviour.
@@ -230,6 +280,13 @@ pub struct ScalarHostAdapter {
     profile: TargetProfileRef,
     backend: BackendKey,
     representation: RepresentationKey,
+    /// Which dtypes this host's family states it can dispatch.
+    ///
+    /// An adapter field rather than a fixture constant, because it is the one
+    /// thing the three measured target families in this suite differ by: the
+    /// macOS row declares BF16 dispatchable, the iOS-Simulator row declares it
+    /// unsupported, and an unmeasured family declares nothing at all.
+    dtype_dispatch: BTreeMap<ArithmeticType, DTypeDispatch>,
     /// The caller-supplied storage for the one named program input.
     input: Vec<u8>,
     /// The largest grid this single-threaded interpreter admits.
@@ -279,6 +336,7 @@ impl ScalarHostAdapter {
             profile: fixture::profile(),
             backend: fixture::backend(),
             representation: fixture::representation(),
+            dtype_dispatch: fixture::dispatches_f32_and_bf16(),
             input,
             invocation_budget: 64,
             perturbation: None,
@@ -306,6 +364,17 @@ impl ScalarHostAdapter {
             _ => {}
         }
         self.perturbation = Some(perturbation);
+        self
+    }
+
+    /// Returns the same adapter reporting one measured target family's dtype row.
+    ///
+    /// Not a [`Perturbation`]: a perturbation is a deliberate defect, and each of
+    /// these is a correct report from a family that was actually measured. The
+    /// refusals they produce are the mechanism working, not the adapter lying.
+    #[must_use]
+    pub fn on_family(mut self, family: DispatchFamily) -> Self {
+        self.dtype_dispatch = family.declarations();
         self
     }
 
@@ -451,6 +520,7 @@ impl RuntimeAdapter for ScalarHostAdapter {
             } else {
                 self.representation.clone()
             },
+            dtype_dispatch: self.dtype_dispatch.clone(),
         })
     }
 

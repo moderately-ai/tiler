@@ -146,7 +146,7 @@
 mod host;
 mod route;
 
-pub use host::{ExecutionEnvironment, TargetCompatibility};
+pub use host::{DTypeDispatch, DTypeDispatchResolution, ExecutionEnvironment, TargetCompatibility};
 pub use route::{
     EntrySlot, LiveDeviceObservation, LiveDeviceQualification, LiveDeviceRequest, Preflight,
     RoutePreparation, RoutedBinding, RoutedDispatch, RoutedEntry, RoutedLaunch, SharedAllocation,
@@ -155,11 +155,12 @@ pub use route::{
 
 use route::RouteRequirementRefusal;
 use tiler_artifact::program::{
-    AbiEvaluationError, AbiFacts, AbiValue, ArtifactCodecFailure, ArtifactExecutionPolicy,
-    BackendPayloadDescriptor, BindingTarget, BufferAccess, CanonicalArtifactProgramIdentity,
-    DecodedArtifact, DecodedEntry, DecodedExpr, DecodedInput, DecodedOutput, DecodedVariant,
-    RecordedArtifactProgramIdentity, RouteRequirement, RouteRequirementSubject, RoutingPolicy,
-    SectionView, StageDependencyReason, decode_artifact,
+    AbiEvaluationError, AbiFacts, AbiValue, ArithmeticType, ArtifactCodecFailure,
+    ArtifactExecutionPolicy, BackendPayloadDescriptor, BindingTarget, BufferAccess,
+    CanonicalArtifactProgramIdentity, DecodedArtifact, DecodedEntry, DecodedExpr, DecodedInput,
+    DecodedOutput, DecodedVariant, NumericalPolicySubject, RecordedArtifactProgramIdentity,
+    RouteRequirement, RouteRequirementSubject, RoutingPolicy, SectionView, StageDependencyReason,
+    decode_artifact,
 };
 
 use std::error::Error;
@@ -654,10 +655,22 @@ impl DecodedProgram {
     /// before this filter existed. Positions are reported in execution order, as
     /// everything else this loader reports about an entry is.
     ///
-    /// The three subjects stay separate classes rather than one boolean: a
+    /// The four subjects stay separate classes rather than one boolean: a
     /// backend and representation pair this host does not execute, a *plan*
-    /// assessed for another profile, and an *object* built for one are three
-    /// different things to go and fix.
+    /// assessed for another profile, an *object* built for one, and a *dtype*
+    /// this host's family does not dispatch are four different things to go and
+    /// fix.
+    ///
+    /// **The dtype check is not made redundant by the profile classification,
+    /// and the reason is worth stating because the redundancy argument is
+    /// superficially sound.** A dispatchability verdict participates in the
+    /// compile profile's complete descriptor, so a family that refuses BF16 and
+    /// one that dispatches it cannot share a descriptor, and
+    /// [`ExecutionEnvironment::classify`] would already separate them — for a
+    /// host that states its *own* profile. Both consumer paths that build an
+    /// environment today restate the artifact producer's declaration instead, so
+    /// the classification is tautological exactly where it would have to bite.
+    /// See [`crate::load::ExecutionEnvironment`]'s module documentation.
     fn variant_eligibility(
         &self,
         variant: DecodedVariant<'_>,
@@ -667,6 +680,7 @@ impl DecodedProgram {
         if !classification.is_compatible() {
             return Err(VariantIneligibility::AssessedProfile { classification });
         }
+        let canonical = CanonicalEntryOrdinals::of(&self.decoded, variant);
         for (entry, decoded) in variant.execution_order().enumerate() {
             // This program's delivery position, so eligibility is decided about
             // the objects this consumer would actually load rather than about a
@@ -706,8 +720,116 @@ impl DecodedProgram {
                     classification,
                 });
             }
+            // The dtype this entry's kernel computes in, read from the
+            // delivered-realization record's own association rather than
+            // inferred from a storage carrier: a carrier is not a semantic type,
+            // and the record is the only place the artifact says which
+            // arithmetic governs an entry.
+            let arithmetic = self.entry_arithmetic(canonical.of_entry(decoded));
+            let resolution = environment.classify_dtype(arithmetic);
+            if !resolution.is_dispatchable() {
+                return Err(VariantIneligibility::UndispatchableDType {
+                    entry,
+                    arithmetic,
+                    resolution,
+                    host_profile: environment.target_profile.key.as_str().to_owned(),
+                });
+            }
         }
         Ok(())
+    }
+
+    /// Returns the arithmetic type governing one packaged entry.
+    ///
+    /// Reached through the delivered-realization record, which every executable
+    /// artifact carries and whose entry bindings a decode already proved
+    /// complete: each names an existing policy subject and every packaged entry
+    /// is bound. Both lookups are therefore `expect`ed rather than returned as
+    /// caller errors — either failing would be a defect in `tiler-artifact`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the decoded artifact contradicts either invariant.
+    fn entry_arithmetic(&self, canonical_ordinal: u32) -> ArithmeticType {
+        let record = self.decoded.delivered_realization();
+        let binding = record
+            .bindings()
+            .binary_search_by_key(&canonical_ordinal, |binding| binding.entry())
+            .map(|index| record.bindings()[index])
+            .expect("a decode proved every packaged entry is bound to a policy subject");
+        let subject = record
+            .subjects()
+            .get(binding.subject() as usize)
+            .expect("a decode proved every entry binding names an existing policy subject");
+        // Exhaustive rather than `NumericalPolicySubject::scalar_arithmetic`'s
+        // `Option`: the enum is deliberately not `#[non_exhaustive]`, so a record
+        // family added to the artifact layer is a build failure here (ADR 0074
+        // convention 5b) instead of an `Option` arm that would have to invent a
+        // dtype for a subject whose vocabulary this loader has never seen.
+        let NumericalPolicySubject::ScalarArithmetic(scalar) = subject;
+        scalar.subject().arithmetic()
+    }
+}
+
+/// The flat canonical packaged-entry ordinals of one variant's entries.
+///
+/// The delivered-realization record keys its entry bindings by an ordinal flat
+/// over (routing rank, canonical stage-key entry), and every other position this
+/// loader reports is in *execution* order. Those are two permutations of one set,
+/// so an ordinal taken from the wrong one selects a real binding belonging to
+/// another entry — which is worse than a lookup failure, because it would
+/// attribute one stage's dtype to another and still resolve.
+///
+/// **The permutation half of that is a claim about this code, not a measured
+/// one.** The flat base across variants is pinned by a test — a portfolio whose
+/// second member resolved against the first member's bindings does not route —
+/// but no fixture in this workspace packages a variant whose execution order
+/// differs from its canonical stage-key order, so substituting one for the other
+/// here changes nothing any suite observes. It is written against the ordinal
+/// space [`DecodedArtifact::delivered_realization`] documents rather than against
+/// that coincidence, which is what makes a widened fixture a refusal instead of a
+/// silent misattribution.
+///
+/// Built once per variant rather than searched per entry, and keyed by stage key
+/// because that is the entry identity the artifact publishes.
+struct CanonicalEntryOrdinals<'a> {
+    base: u32,
+    stage_keys: Vec<&'a [u8]>,
+}
+
+impl<'a> CanonicalEntryOrdinals<'a> {
+    /// Derives the ordinals of one variant's entries from the whole portfolio.
+    ///
+    /// The base is every preceding variant's entry count, because the ordinal
+    /// space is flat across the portfolio in routing-priority order.
+    fn of(decoded: &'a DecodedArtifact, variant: DecodedVariant<'a>) -> Self {
+        let base = decoded
+            .variants()
+            .take(variant.routing_rank())
+            .map(|earlier| earlier.entries().len())
+            .sum::<usize>();
+        Self {
+            base: u32::try_from(base).expect("a decode bounded the packaged entry table"),
+            stage_keys: variant.entries().map(DecodedEntry::stage_key).collect(),
+        }
+    }
+
+    /// Returns the flat canonical ordinal of one entry of that variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the entry is not one of the variant's own. A decode proved the
+    /// execution order is a permutation of the entry table, so an entry of this
+    /// variant always has a canonical position.
+    fn of_entry(&self, entry: DecodedEntry<'_>) -> u32 {
+        let position = self
+            .stage_keys
+            .iter()
+            .position(|key| *key == entry.stage_key())
+            .expect("a decode proved the execution order permutes the variant's entry table");
+        self.base
+            .checked_add(u32::try_from(position).expect("a decode bounded the variant entry table"))
+            .expect("a decode bounded the packaged entry table below u32::MAX")
     }
 }
 
@@ -1134,6 +1256,31 @@ pub enum VariantIneligibility {
         /// How that payload's declared profile relates to the host's own.
         classification: TargetCompatibility,
     },
+    /// One entry computes in a dtype this host's target family does not dispatch.
+    ///
+    /// Distinct from every class above because the repair is different in kind:
+    /// a backend, representation, or profile exclusion sends a reader to find or
+    /// rebuild an artifact, and this one says no artifact will help — the family
+    /// itself cannot run this dtype, or nobody has established that it can. The
+    /// [`DTypeDispatchResolution`] carried is which of those two it is.
+    ///
+    /// The measured case is the iOS Simulator, which compiles and links a
+    /// `bfloat` module and fails at pipeline creation — one phase after ADR
+    /// 0051's routing commit. Reported from the host's stated declaration here,
+    /// so the refusal arrives while a fallback is still permitted.
+    UndispatchableDType {
+        /// Position of the entry in the variant's own execution order.
+        entry: usize,
+        /// The arithmetic type that entry's kernel computes in.
+        arithmetic: ArithmeticType,
+        /// How it resolved against this host's own statement.
+        ///
+        /// Never [`DTypeDispatchResolution::Dispatchable`]: that resolution does
+        /// not produce this class.
+        resolution: DTypeDispatchResolution,
+        /// Governed target profile key this host stated, naming the family.
+        host_profile: String,
+    },
 }
 
 impl fmt::Display for VariantIneligibility {
@@ -1161,6 +1308,21 @@ impl fmt::Display for VariantIneligibility {
                 formatter,
                 "entry {entry}'s payload was built for a profile this host does not offer: \
                  {classification:?}",
+            ),
+            // The dtype is rendered as its governed, versioned type key rather
+            // than as a Rust variant name, because that is the spelling the
+            // compile profile declares it under and the one an explain record
+            // has to be able to join on.
+            Self::UndispatchableDType {
+                entry,
+                arithmetic,
+                resolution,
+                host_profile,
+            } => write!(
+                formatter,
+                "entry {entry} computes in {} and this host's {host_profile} family resolves it \
+                 {resolution:?}",
+                arithmetic.canonical_type_key(),
             ),
         }
     }

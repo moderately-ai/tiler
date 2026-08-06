@@ -30,20 +30,21 @@ mod adapter;
 mod fixture;
 mod image;
 
-use adapter::{Perturbation, ScalarHostAdapter, Stage};
+use adapter::{DispatchFamily, Perturbation, ScalarHostAdapter, Stage};
 use fixture::{FixtureSpec, PackagedPlan, assemble, assemble_portfolio};
 use image::{ScalarEntry, ScalarImage, ScalarPayloadRefusal, encode};
 
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, AvailabilityPhase, BackendKey, RecordedArtifactProgramIdentity,
-    RouteFeatureKey, RouteRequirementSubject,
+    AbiFactBinder, AbiFacts, ArithmeticType, AvailabilityPhase, BackendKey,
+    RecordedArtifactProgramIdentity, RouteFeatureKey, RouteRequirementSubject,
 };
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
 use tiler_runtime::adapter::{AdapterRouteFailure, route_with_adapter};
 use tiler_runtime::load::{
-    DecodedProgram, LoadRejection, TargetCompatibility, VariantIneligibility,
+    DTypeDispatch, DTypeDispatchResolution, DecodedProgram, LoadRejection, TargetCompatibility,
+    VariantIneligibility,
 };
 
 /// The one delivery position every artifact here is built for.
@@ -1606,5 +1607,267 @@ fn the_multi_entry_outcomes_sit_on_the_side_of_the_commit_they_belong_on() {
     assert!(
         !host.stages.contains(&Stage::Dispatch),
         "a route whose storage failed must not be dispatched",
+    );
+}
+
+// -------------------------------------------------------------------------
+// Per-dtype dispatchability, before the routing commit
+// -------------------------------------------------------------------------
+//
+// The measured case these stand for: finding 26 of the Apple numerical-behaviour
+// record has the iOS Simulator compiling and linking every `bfloat` module and
+// *then* failing pipeline creation. That failure lands at
+// `AvailabilityPhase::PreparedKernelPreflight`, one phase after ADR 0051's
+// one-way routing commit, so a design that discovered it there would already
+// have committed and could not fall back. Resolving the dtype from what the host
+// states about its family moves the refusal ahead of selection.
+//
+// Every case here asserts the *phase* through the adapter's own stage log rather
+// than only the returned class, because a refusal that moved one phase later
+// still refuses and still looks green — which the ticket names as the property
+// most likely to regress silently.
+//
+// **What these fixtures vary is the recorded arithmetic**, which is the whole of
+// what a loader reads: see `FixtureSpec::arithmetic`. No case here claims BF16
+// executes, and `docs/dtype-support.md` records BF16 backend execution as absent.
+
+/// Returns the sole dtype exclusion a one-variant portfolio was filtered for.
+///
+/// Asserts the class and hands back the resolution, so a case states which of
+/// the two refusing resolutions it expects instead of restating the destructure.
+fn sole_dtype_exclusion(outcome: Outcome) -> (ArithmeticType, DTypeDispatchResolution, String) {
+    match sole_exclusion(outcome, 1) {
+        VariantIneligibility::UndispatchableDType {
+            entry,
+            arithmetic,
+            resolution,
+            host_profile,
+        } => {
+            assert_eq!(entry, 0, "this fixture packages one entry");
+            (arithmetic, resolution, host_profile)
+        }
+        other => panic!("expected a dtype exclusion, got {other}"),
+    }
+}
+
+/// A family stating BF16 unsupported refuses a BF16 route before the commit.
+#[test]
+fn a_family_that_refuses_bf16_filters_a_bf16_variant_before_the_commit() {
+    let (outcome, host) = route(
+        &FixtureSpec::default().recording(ArithmeticType::Bf16),
+        ScalarHostAdapter::new(&OPERANDS).on_family(DispatchFamily::RefusesBf16),
+    );
+    let (arithmetic, resolution, profile) = sole_dtype_exclusion(outcome);
+    assert_eq!(arithmetic, ArithmeticType::Bf16);
+    assert_eq!(resolution, DTypeDispatchResolution::Unsupported);
+    assert_eq!(
+        profile,
+        fixture::PROFILE_KEY,
+        "the refusal names the family that refused, not the one the artifact was built for",
+    );
+    assert_eq!(
+        host.stages,
+        [Stage::Bind],
+        "the dtype is decided inside selection, so nothing is validated, prepared, or allocated",
+    );
+}
+
+/// A family that states nothing about BF16 refuses it too, and separately.
+///
+/// The `Unknown` control. ADR 0043's disposal of an unknown predicate applied
+/// rather than amended: nobody measured this family for this dtype, so the route
+/// is refused rather than attempted. A design that admitted silence would reach
+/// the simulator's pipeline-creation failure with no fallback left.
+#[test]
+fn a_family_that_never_measured_bf16_filters_a_bf16_variant_before_the_commit() {
+    let (outcome, host) = route(
+        &FixtureSpec::default().recording(ArithmeticType::Bf16),
+        ScalarHostAdapter::new(&OPERANDS).on_family(DispatchFamily::UnmeasuredForBf16),
+    );
+    let (arithmetic, resolution, _) = sole_dtype_exclusion(outcome);
+    assert_eq!(arithmetic, ArithmeticType::Bf16);
+    assert_eq!(resolution, DTypeDispatchResolution::Unknown);
+    assert_eq!(host.stages, [Stage::Bind]);
+}
+
+/// The two refusals are told apart by what they carry, not only by refusing.
+///
+/// Both fail closed, and a caller acts differently on each: a measured negative
+/// says no rebuild will help, and an unmeasured family says go and measure it.
+/// A refusal that reported one class for both would send half of its readers to
+/// the wrong repair, so the *rendered* forms are compared as well — a reader
+/// reads the message, not the discriminant.
+#[test]
+fn a_refuted_bf16_family_and_an_unmeasured_one_are_distinguishable() {
+    let spec = FixtureSpec::default().recording(ArithmeticType::Bf16);
+    let refused = route(
+        &spec,
+        ScalarHostAdapter::new(&OPERANDS).on_family(DispatchFamily::RefusesBf16),
+    );
+    let unmeasured = route(
+        &spec,
+        ScalarHostAdapter::new(&OPERANDS).on_family(DispatchFamily::UnmeasuredForBf16),
+    );
+    let refused = sole_exclusion(refused.0, 1);
+    let unmeasured = sole_exclusion(unmeasured.0, 1);
+    assert_ne!(refused, unmeasured);
+    assert_ne!(refused.to_string(), unmeasured.to_string());
+    for reason in [&refused, &unmeasured] {
+        let text = reason.to_string();
+        assert!(
+            text.contains("tiler::bf16@1"),
+            "{text:?} must name the dtype under its governed key",
+        );
+        assert!(
+            text.contains(fixture::PROFILE_KEY),
+            "{text:?} must name the family that refused",
+        );
+    }
+}
+
+/// A family that dispatches BF16 routes the same artifact end to end.
+///
+/// What stops every case above from being a blanket refusal: the only thing that
+/// changed is the host's own row, and the identical bytes now reach the commit
+/// and every post-commit stage.
+#[test]
+fn a_family_that_dispatches_bf16_routes_the_same_artifact() {
+    let (outcome, host) = route(
+        &FixtureSpec::default().recording(ArithmeticType::Bf16),
+        ScalarHostAdapter::new(&OPERANDS).on_family(DispatchFamily::DispatchesBf16),
+    );
+    outcome.expect("a family declaring bf16 dispatchable routes a bf16-recorded artifact");
+    assert_eq!(
+        host.stages, COMPLETE_ROUTE,
+        "a dispatchable dtype leaves every later stage exactly where it was",
+    );
+}
+
+/// An `f32` route is unaffected on all three families.
+///
+/// The mechanism is dtype-neutral, so this asserts the neutrality rather than
+/// assuming it: each family declares `f32` dispatchable and differs only about
+/// BF16, and an implementation that refused on the *presence* of a declaration —
+/// or on any dtype once one was refused — would fail here.
+#[test]
+fn an_f32_route_is_unaffected_by_every_bf16_verdict() {
+    for family in [
+        DispatchFamily::DispatchesBf16,
+        DispatchFamily::RefusesBf16,
+        DispatchFamily::UnmeasuredForBf16,
+    ] {
+        let (outcome, host) = route(
+            &FixtureSpec::default(),
+            ScalarHostAdapter::new(&OPERANDS).on_family(family),
+        );
+        let completion = outcome.unwrap_or_else(|failure| {
+            panic!("an f32 route must be unaffected by {family:?}: {failure}")
+        });
+        assert_eq!(completion.result_bits, reference_bits(), "{family:?}");
+        assert_eq!(host.stages, COMPLETE_ROUTE, "{family:?}");
+    }
+}
+
+/// A portfolio ranking BF16 first falls through to the width this family runs.
+///
+/// The filter's own semantics reaching the dtype: an undispatchable variant is a
+/// non-candidate rather than a refusal, so its guard is never evaluated and the
+/// producer's next-ranked plan is selected. A terminal refusal here would make a
+/// portfolio that packages a fallback width unroutable — the exact defect
+/// `select-executable-variants-across-registered-backend-families` corrected for
+/// backend families.
+#[test]
+fn a_portfolio_ranking_bf16_first_falls_through_to_a_dispatchable_width() {
+    let portfolio = [
+        selectable(FixtureSpec::for_plan(PackagedPlan::Fused)).recording(ArithmeticType::Bf16),
+        selectable(FixtureSpec::materialized()),
+    ];
+    let mut host = fixture::scalar_host();
+    host.dtype_dispatch
+        .insert(ArithmeticType::Bf16, DTypeDispatch::Unsupported);
+    assert_eq!(
+        select(&portfolio, &host),
+        [fixture::POINTWISE_SYMBOL, fixture::REDUCTION_SYMBOL],
+        "a width this family cannot dispatch is a non-candidate, not the end of the walk",
+    );
+    // The same portfolio on a family that dispatches both selects rank 0, so the
+    // fall-through above is the host's row and not the guard or the ranking.
+    assert_eq!(
+        select(&portfolio, &fixture::scalar_host()),
+        [fixture::ENTRY_SYMBOL],
+        "a family dispatching both widths takes the producer's first choice",
+    );
+}
+
+/// Every packaged entry's dtype is resolved, not only the first one's.
+///
+/// The materialized member packages two entries, and this records the *second*
+/// at BF16 while leaving the first at `f32`. A check resolving one dtype per
+/// variant, or stopping at the first entry, would route this — so an exclusion
+/// naming entry 1 is what makes "every entry" a measured property rather than a
+/// restatement of the loop's shape.
+///
+/// **The within-variant ordinal permutation is not covered, and saying so is the
+/// point.** The delivered-realization record keys its bindings in canonical
+/// stage-key order while every position reported here is in execution order, and
+/// for every variant this suite can build those two orders coincide — the
+/// materialized member's included. So reading the wrong one is caught by nothing
+/// here, and `CanonicalEntryOrdinals` is written against the ordinal space the
+/// artifact layer documents rather than against a test. What this case does pin
+/// is the *flat* ordinal within a variant, since the second entry's binding must
+/// be found at all.
+#[test]
+fn a_later_entrys_dtype_is_resolved_as_well_as_the_first() {
+    let (outcome, host) = route(
+        &FixtureSpec::materialized().recording_each(&[ArithmeticType::F32, ArithmeticType::Bf16]),
+        ScalarHostAdapter::new(&OPERANDS).on_family(DispatchFamily::RefusesBf16),
+    );
+    let Err(AdapterRouteFailure::Load(LoadRejection::NoEligibleVariant { filtered, .. })) = outcome
+    else {
+        panic!("a variant whose second entry is bf16 must not route on a family that refuses it");
+    };
+    let [only] = filtered.as_slice() else {
+        panic!("this fixture packages one variant, and {filtered:?} names another number");
+    };
+    assert!(
+        matches!(
+            only.reason,
+            VariantIneligibility::UndispatchableDType {
+                entry: 1,
+                arithmetic: ArithmeticType::Bf16,
+                resolution: DTypeDispatchResolution::Unsupported,
+                ..
+            },
+        ),
+        "expected the second entry's dtype exclusion, got {}",
+        only.reason,
+    );
+    assert_eq!(host.stages, [Stage::Bind]);
+    // The same two-entry member with both entries at `f32` routes whole on the
+    // same family, so the refusal above is the recorded width and not the entry
+    // count, the plan, or the shared allocation the materialized member carries.
+    let (outcome, host) = route(
+        &FixtureSpec::materialized(),
+        ScalarHostAdapter::new(&OPERANDS).on_family(DispatchFamily::RefusesBf16),
+    );
+    outcome.expect("an f32 two-entry route is unaffected by a bf16 refusal");
+    assert!(host.stages.contains(&Stage::Dispatch));
+}
+
+/// A dtype refusal still permits the fallback ADR 0051 allows.
+///
+/// The property the phase ordering exists for, asserted through the failure's own
+/// classification rather than inferred from the stage log: reaching the commit is
+/// what forecloses a fallback, and this refusal is reached before selection ends.
+#[test]
+fn a_dtype_refusal_arrives_while_a_fallback_is_still_permitted() {
+    let (outcome, _) = route(
+        &FixtureSpec::default().recording(ArithmeticType::Bf16),
+        ScalarHostAdapter::new(&OPERANDS).on_family(DispatchFamily::RefusesBf16),
+    );
+    let failure = outcome.expect_err("a refused dtype must not route");
+    assert!(
+        failure.fallback_permitted(),
+        "a dtype is decided inside selection, long before the commit: {failure}",
     );
 }

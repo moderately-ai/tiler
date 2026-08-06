@@ -159,11 +159,13 @@ use metal::{
     Buffer, CommandBufferRef, ComputePipelineDescriptor, ComputePipelineState, Device,
     MTLCommandBufferStatus, MTLGPUFamily, MTLResourceOptions, MTLSize,
 };
+use std::collections::BTreeMap;
+
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, ArtifactCodecFailure, AvailabilityPhase, BackendKey, BindingTarget,
-    RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
-    RouteRequirement, RouteResourceDimension, TargetProfileDescriptorDigest, TargetProfileKey,
-    TargetProfileRef,
+    AbiFactBinder, AbiFacts, ArithmeticType, ArtifactCodecFailure, AvailabilityPhase, BackendKey,
+    BindingTarget, RecordedArtifactIdentityError, RecordedArtifactProgramIdentity,
+    RepresentationKey, RouteRequirement, RouteResourceDimension, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef,
 };
 use tiler_artifact::proof::{
     DecodedProofSidecar, ProofAssociationError, ProofCaseRef, ProofCodecError, decode_proof_sidecar,
@@ -196,9 +198,9 @@ use tiler_reference::{
     strict_partitioned_sum,
 };
 use tiler_runtime::load::{
-    DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceQualification,
-    LiveDeviceRequest, LoadRejection, Preflight, RoutePreparation, RoutedDispatch, RoutedEntry,
-    TargetCompatibility, VariantIneligibility,
+    DTypeDispatch, DecodedProgram, ExecutionEnvironment, LiveDeviceObservation,
+    LiveDeviceQualification, LiveDeviceRequest, LoadRejection, Preflight, RoutePreparation,
+    RoutedDispatch, RoutedEntry, TargetCompatibility, VariantIneligibility,
 };
 
 /// The one delivery position every artifact here is built for.
@@ -1085,6 +1087,17 @@ fn declared_route_environment(
         backend: BackendKey::new(BACKEND_KEY).map_err(|_| ProofError::HostProfile)?,
         representation: RepresentationKey::new(REPRESENTATION_KEY)
             .map_err(|_| ProofError::HostProfile)?,
+        // The same authority as every field above, and stated with the same
+        // caveat: these are the dtypes `tiler-build`'s `FIRST_MACOS_APPLE9`
+        // ledger rows *declare* for this profile, transcribed rather than
+        // observed. Nothing on this machine was asked whether it dispatches
+        // either one. Restating them keeps this function at one authority level
+        // — a host-earned dtype row beside a producer-declared profile would be
+        // two claims wearing one name.
+        dtype_dispatch: BTreeMap::from([
+            (ArithmeticType::F32, DTypeDispatch::Dispatchable),
+            (ArithmeticType::Bf16, DTypeDispatch::Dispatchable),
+        ]),
     })
 }
 
@@ -2639,6 +2652,7 @@ fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, 
         },
         backend: subject.environment.backend.clone(),
         representation: subject.environment.representation.clone(),
+        dtype_dispatch: subject.environment.dtype_dispatch.clone(),
     };
     let name = "another profile descriptor";
     let (reason, rendered) = sole_exclusion(
@@ -2679,6 +2693,7 @@ fn probe_other_profile_key(subject: &ProbeSubject<'_>) -> Result<String, ProofEr
         },
         backend: subject.environment.backend.clone(),
         representation: subject.environment.representation.clone(),
+        dtype_dispatch: subject.environment.dtype_dispatch.clone(),
     };
     let name = "another profile key";
     let (reason, rendered) = sole_exclusion(
@@ -2710,6 +2725,7 @@ fn probe_other_backend_family(subject: &ProbeSubject<'_>) -> Result<String, Proo
         backend: BackendKey::new("tiler.some-other-backend")
             .map_err(|_| ProofError::HostProfile)?,
         representation: subject.environment.representation.clone(),
+        dtype_dispatch: subject.environment.dtype_dispatch.clone(),
     };
     let name = "another backend family";
     let (reason, rendered) = sole_exclusion(
