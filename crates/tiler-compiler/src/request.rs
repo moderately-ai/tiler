@@ -1236,6 +1236,19 @@ pub(crate) struct NormalizedSerialSum {
     /// no read list to state and an inhabited one would describe a region no
     /// cover places.
     pub(crate) prologue_reads: Vec<(u32, LogicalAccess)>,
+    /// The declared input ordinal the fold reads directly, or `None` when a
+    /// prologue region materializes its contributors.
+    ///
+    /// **`Some` exactly when [`Self::prologue`] is `None`, and it is the
+    /// recognized ordinal rather than zero.** A prologue-less fold's own read is
+    /// the one access no read list describes — `prologue_reads` belongs to a
+    /// region this program does not have — so without this field the physical
+    /// layer had nothing but the declared arity to derive the contributor buffer
+    /// from, and derived `Input { ordinal: 0 }`. That was right while every
+    /// elementwise walk read every declared input, because such a program
+    /// declared exactly one; `sum(b)` beside an independent `a * a` declares two
+    /// and folds the second.
+    pub(crate) contributor_input: Option<u32>,
     pub(crate) members: RecognizedSerialSumMembers,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) pointwise_result: ValueId,
@@ -1534,6 +1547,45 @@ impl NormalizedOutput {
                     (Some(elements), _) | (None, Some(elements)) => Some(elements),
                     (None, None) => None,
                 }
+            }
+        }
+    }
+
+    /// Returns whether some region of this output's partition reads one
+    /// declared input tensor.
+    ///
+    /// **Read from the recognized read lists, not from the declared arity.** An
+    /// output's regions bind the inputs its own walk reached, so "this program
+    /// declares three inputs" says nothing about which of them this output
+    /// loads. It is exhaustive over the recognized shapes rather than projected
+    /// through one of them, because each carries the fact differently: an
+    /// elementwise region in its read list, a fold in its prologue's read list
+    /// *or* its own contributor ordinal, a contraction in its operand count, and
+    /// a chain in both halves of the chain.
+    fn reads_declared_input(&self, ordinal: u32) -> bool {
+        match self {
+            Self::Pointwise(normalized) => {
+                normalized.reads.iter().any(|(read, _)| *read == ordinal)
+            }
+            Self::SerialSum(normalized) => {
+                normalized.contributor_input == Some(ordinal)
+                    || normalized
+                        .prologue_reads
+                        .iter()
+                        .any(|(read, _)| *read == ordinal)
+            }
+            // A contraction's region binds one access per declared input
+            // ordinal, so it reads every ordinal the declaration holds; the
+            // recognizer proved both operands are declared inputs.
+            Self::Contraction(normalized) => {
+                usize::try_from(ordinal).is_ok_and(|ordinal| ordinal < normalized.input_keys.len())
+            }
+            Self::Epilogue(chain) => {
+                chain
+                    .reads
+                    .iter()
+                    .any(|(read, _)| *read == EpilogueRead::Input(ordinal))
+                    || chain.producer.reads_declared_input(ordinal)
             }
         }
     }
@@ -1877,6 +1929,7 @@ pub(crate) struct NormalizedSerialSumSubject {
     reduction_axes: Vec<Axis>,
     prologue: Option<PointwiseF32Expression>,
     prologue_reads: Vec<(u32, LogicalAccess)>,
+    contributor_input: Option<u32>,
     members: RecognizedSerialSumMembers,
     input_elements: u64,
     output_elements: u64,
@@ -2270,7 +2323,28 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
             }
             bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
             bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
-            encode_elementwise_reads(bytes, &normalized.prologue_reads);
+            // The declared inputs this fold's own regions read: the prologue
+            // region's read list, or — when there is no prologue region — the
+            // fold's own contributor read. One run rather than two fields
+            // because what the arm must separate is *which* declared inputs
+            // this output reads, and `sum(a)` and `sum(b)` over the same two
+            // declarations agree on every other field here.
+            //
+            // The contributor read's relation is spelled `LinearIdentity`
+            // rather than the `ReductionContributor` the region carries, and
+            // that is not one fact encoded twice: the arm has already written
+            // the contributor domain, the published domain, and the canonical
+            // reduction axes, which is everything that relation is derived
+            // from. What the entry contributes is the ordinal — and the run
+            // omits a lone dense read, so what reaches the bytes is the marker
+            // for each declared input the fold does not read.
+            let contributor = normalized
+                .contributor_input
+                .map(|ordinal| [(ordinal, LogicalAccess::LinearIdentity)]);
+            let reads = contributor
+                .as_ref()
+                .map_or(normalized.prologue_reads.as_slice(), <[_; 1]>::as_slice);
+            encode_elementwise_reads(bytes, normalized.input_keys.len(), reads);
         }
         NormalizedOutputSubject::Pointwise(normalized) => {
             // The sub-tag steps to `v4` because the arm gained each read's
@@ -2302,7 +2376,7 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
                 bytes.extend_from_slice(&member.0.to_be_bytes());
             }
             bytes.extend_from_slice(&normalized.elements.to_be_bytes());
-            encode_elementwise_reads(bytes, &normalized.reads);
+            encode_elementwise_reads(bytes, normalized.input_keys.len(), &normalized.reads);
         }
         // A third sub-tag rather than a step of the enclosing
         // `request-subject.v2` domain: neither existing arm's bytes move, so
@@ -2479,36 +2553,67 @@ fn encode_binary_node(
     bytes.extend_from_slice(&rhs.index().to_be_bytes());
 }
 
-/// Encodes one whole-program or prologue region's read list.
+/// The run entry naming a declared input this region's read list does not read.
 ///
-/// The count leads, then each written entry gives its input ordinal and its
-/// relation. **One read of an ordinal, addressing densely, is written as
-/// nothing**: the ordinal's absence from the run is that read's canonical
-/// spelling, so the empty run means "every declared input is read once, densely"
-/// and every already-recognized program encodes one.
+/// It occupies the relation slot, and the slot's tag space is
+/// [`encode_access_relation`]'s: that function writes `0x01`, `0x02`, `0x03`, or
+/// the wildcard `0x00`, and nothing else, so `0x04` is a byte no run could carry
+/// before this entry existed. That disjointness is the whole argument holding
+/// `pointwise-f32.v4` and `serial-sum-f32.v3` where they are — a relation added
+/// to that encoder must take the wildcard or a tag above this one, never this
+/// one.
+const UNREAD_DECLARED_INPUT_TAG: u8 = 0x04;
+
+/// Encodes which declared inputs one whole-program, prologue, or fold region
+/// reads, and how.
 ///
-/// **The projection is injective, and stating why is what holds the sub-tags
-/// where they are.** The declared input count is written earlier in the same
-/// arm, and the read list is recovered from the run against it: an ordinal
-/// absent from the run has one dense read, and an ordinal present `k` times has
-/// exactly those `k` reads in run order. The one byte string that would be
-/// ambiguous — a lone entry writing `LinearIdentity` — is the one this
-/// projection never emits.
+/// The count leads, then each entry gives an input ordinal and either its
+/// relation or [`UNREAD_DECLARED_INPUT_TAG`]. **One read of an ordinal,
+/// addressing densely, is written as nothing**: the ordinal's absence from the
+/// run is that read's canonical spelling, so the empty run means "every declared
+/// input is read once, densely".
 ///
-/// **And it moves no already-encodable subject's bytes.** Before a region could
-/// read one declared input twice, a run held exactly the ordinals a structural
-/// occurrence interposed, which is what this projection still writes for such a
-/// program. A run reaches [`LogicalAccess::LinearIdentity`]'s tag only for a
-/// repeated ordinal, and no subject encodable before could produce that tag
-/// here at all — so per-tag injectivity closes over the widened domain, and
+/// **A declared input read by no leaf is written explicitly, and that entry is
+/// what keeps the projection injective across this widening.** The recovery rule
+/// is "an ordinal absent from the run has one dense read", and its premise was
+/// the `elementwise-reads` completeness rule
+/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` lifted.
+/// Without the marker, three declared inputs and two dense reads would encode
+/// alike whether the pair read is `{0, 1}`, `{0, 2}`, or `{1, 2}` — one arm, one
+/// byte string, three programs — and leaning on the enclosing subject's graph
+/// identity to separate them is exactly the unstated invariant an identity
+/// encoder must not rest on.
+///
+/// **The step is therefore not forced, and this is why.** Writing every read
+/// positionally would separate them too, but it moves the bytes of every subject
+/// already encodable — an all-dense complete read list writes an empty run today
+/// and would write one entry per input — so it costs both sub-tags a version and
+/// every governed compilation its request qualifier. The marker moves nothing:
+/// a program reading every declared input emits no marker at all, so its bytes
+/// are what they were, and a byte string carrying one is a subject the earlier
+/// vocabulary could not express. Per-tag injectivity closes, so
 /// `pointwise-f32.v4` and `serial-sum-f32.v3` hold rather than step.
+///
+/// **The recovery, stated so a reader can refute it.** The declared input count
+/// is written earlier in the same arm. For each ordinal in `0..declared`: it is
+/// read not at all when the run carries its marker; it has one dense read when
+/// the run does not name it; and it has exactly its `k` run entries, in run
+/// order, otherwise. The two byte strings that would be ambiguous — a lone entry
+/// writing `LinearIdentity`, and a marker beside any other entry for one ordinal
+/// — are the two this projection never emits.
 ///
 /// The relation is written through a per-variant tag and its own framed payload,
 /// so two reads differing in operand shape, result shape, or any decode differ
 /// in these bytes. The two structural relations get distinct tags for the reason
 /// they are distinct variants: a bijection and a replication are different facts
 /// about what a read consumes.
-fn encode_elementwise_reads(output: &mut Vec<u8>, reads: &[(u32, LogicalAccess)]) {
+///
+/// `declared` is a count rather than an ordinal list because the arm writes the
+/// declared input keys immediately before, in the same order. It saturates at
+/// [`u32::MAX`] rather than truncating, which no request reaches:
+/// [`check_program_budgets`] bounds a program's declared inputs far below it, so
+/// the saturation is unreachable rather than a collision this encoder tolerates.
+fn encode_elementwise_reads(output: &mut Vec<u8>, declared: usize, reads: &[(u32, LogicalAccess)]) {
     let written = || {
         reads
             .iter()
@@ -2521,10 +2626,16 @@ fn encode_elementwise_reads(output: &mut Vec<u8>, reads: &[(u32, LogicalAccess)]
                         .any(|(other, (seen, _))| other != *position && seen == ordinal)
             })
     };
-    push_len(output, written().count());
+    let declared = u32::try_from(declared).unwrap_or(u32::MAX);
+    let unread = || (0..declared).filter(|ordinal| !reads.iter().any(|(seen, _)| seen == ordinal));
+    push_len(output, written().count() + unread().count());
     for (_, (ordinal, map)) in written() {
         output.extend_from_slice(&ordinal.to_be_bytes());
         encode_access_relation(output, map);
+    }
+    for ordinal in unread() {
+        output.extend_from_slice(&ordinal.to_be_bytes());
+        output.push(UNREAD_DECLARED_INPUT_TAG);
     }
 }
 
@@ -2539,6 +2650,12 @@ fn encode_elementwise_reads(output: &mut Vec<u8>, reads: &[(u32, LogicalAccess)]
 /// through the wildcard, which is what keeps the dense read distinguishable from
 /// a relation this encoder refuses. Both callers reach it: an epilogue read that
 /// interposes no relation, and the dense half of a declared input read twice.
+///
+/// **The tag space stops at `0x03`, and that is load-bearing elsewhere.**
+/// [`UNREAD_DECLARED_INPUT_TAG`] occupies this slot's `0x04` in
+/// [`encode_elementwise_reads`]'s run precisely because no relation can write it
+/// here; a relation added later takes the wildcard or a tag above `0x04`, never
+/// `0x04` itself, or two arms of that run become one byte string.
 fn encode_access_relation(output: &mut Vec<u8>, map: &LogicalAccess) {
     match map {
         LogicalAccess::ReindexBijection {
@@ -2606,6 +2723,11 @@ impl NormalizedSerialSumSubject {
     /// prologue.
     pub(crate) fn prologue_reads(&self) -> &[(u32, LogicalAccess)] {
         &self.prologue_reads
+    }
+    /// The declared input ordinal a prologue-less fold reads directly, or
+    /// `None` when a prologue region materializes its contributors.
+    pub(crate) const fn contributor_input(&self) -> Option<u32> {
+        self.contributor_input
     }
     pub(crate) const fn members(&self) -> &RecognizedSerialSumMembers {
         &self.members
@@ -2817,6 +2939,7 @@ fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputSubject {
                 reduction_axes: normalized.reduction_axes.clone(),
                 prologue: normalized.prologue.clone(),
                 prologue_reads: normalized.prologue_reads.clone(),
+                contributor_input: normalized.contributor_input,
                 members: normalized.members.clone(),
                 input_elements: normalized.input_elements,
                 output_elements: normalized.output_elements,
@@ -3862,9 +3985,10 @@ fn recognize_elementwise_output(
     }
 }
 
-/// Requires the recognized walks to partition the program's occurrences.
+/// Requires the recognized walks to partition the program's occurrences and to
+/// read every declared input between them.
 ///
-/// **Two obligations, and they are separate claims about different failures.**
+/// **Three obligations, and they are separate claims about different failures.**
 ///
 /// *Every occurrence is claimed by some walk* (`operation-set`). A built program
 /// retains only output-reachable operations, so an unclaimed one is work no
@@ -3895,6 +4019,29 @@ fn recognize_elementwise_output(
 /// assertion and `an_output_key_pair_naming_one_value_still_refuses_by_name` is
 /// the neighbour that must keep refusing.
 ///
+/// *Every declared input is read by some walk* (`input-set`). This is the
+/// obligation [`canonical_input_reads`] used to state per walk, under
+/// `elementwise-reads`, and it was the same requirement while a program had one
+/// declared output: that walk's read set was the program's. With several
+/// outputs the walks split the declared inputs between them, so the per-walk
+/// form refused a program whose *union* was complete —
+/// `admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs` is
+/// what moved it here rather than deleting it. What it protects is unchanged:
+/// a declared input no region reads is a buffer the caller binds, the ABI
+/// declares, and no kernel loads.
+///
+/// **It is defence in depth here, and the derivation says so rather than the
+/// check pretending otherwise.** `SemanticProgramBuilder` freezes only
+/// output-reachable values, so a retained declared input is an operand of some
+/// retained occurrence; the `operation-set` obligation above claims every
+/// retained occurrence for some walk; and every way a walk consumes an operand
+/// — an elementwise node, a structural occurrence, a fold's contributor, a
+/// contraction's operand — records a read of it. So no program the public
+/// builder can construct reaches this refusal, and `tiler_ir::program`'s
+/// `verify_usage` refuses the same shape a layer down under `unused-value`.
+/// Stating it here is what makes the boundary report the program property
+/// instead of letting an assembled program die naming a different authority.
+///
 /// Claimed counts are taken over the deduplicated per-output member sets, so one
 /// constant shared by two operands of the *same* walk contributes one member
 /// rather than two — the normalized spelling of one program, not a duplicate.
@@ -3915,6 +4062,17 @@ fn check_output_cover(
     }
     if program.operation_count() != distinct.len() {
         return mismatch("operation-set");
+    }
+    for position in 0..program.input_count() {
+        let Ok(ordinal) = u32::try_from(position) else {
+            return mismatch("input-ordinal");
+        };
+        if !outputs
+            .iter()
+            .any(|output| output.reads_declared_input(ordinal))
+        {
+            return mismatch("input-set");
+        }
     }
     Ok(())
 }
@@ -4236,17 +4394,20 @@ fn recognize_elementwise(
 /// declared inputs.
 ///
 /// Declaration order is the *group* order here: the region's reads walk the
-/// declared inputs in the order the ABI binds them. It is no longer a
-/// one-to-one correspondence with the leaves, because one declared input may be
-/// read twice — [`canonical_input_reads`] states the order the pair takes. An
-/// epilogue additionally reads a staged value, and [`recognize_epilogue`] states
-/// its own order rather than relaxing this one.
+/// declared inputs in the order the ABI binds them. It is not a one-to-one
+/// correspondence with the leaves in either direction — one declared input may
+/// be read twice, and one this walk does not reach is read not at all, so the
+/// list is a *map* from the expression's dense leaf ordinals to the program's
+/// input ordinals. [`canonical_input_reads`] states both orders.
+///
+/// An epilogue additionally reads a staged value, and [`recognize_epilogue`]
+/// states its own order rather than relaxing this one.
 ///
 /// # Errors
 ///
 /// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads` for
-/// a walk that did not read every declared input, `input-ordinal` for a
-/// declaration position no expression ordinal can hold, and every rule
+/// a leaf that is not a declared input, `input-ordinal` for a declaration
+/// position no expression ordinal can hold, and every rule
 /// [`mint_elementwise`] reports.
 fn resolve_elementwise(
     plan: ElementwisePlan,
@@ -4277,20 +4438,30 @@ fn resolve_elementwise(
 /// two spellings — and one of them would be refused by the region verifier for
 /// no property of the program.
 ///
+/// **A declared input this walk never reads contributes no read, and the
+/// ordinals stay the program's.** An output whose expression names two of three
+/// declared inputs binds those two, carrying the ordinals the program declared
+/// them at rather than a region-local renumbering — which is what
+/// `crate::program::CoverAssembly::from_plan` resolves against the declared
+/// interface and what `reads_bind_boundary_tensors_in_order` admits, its rule
+/// being that declared input ordinals ascend strictly with a gap allowed. This
+/// walk therefore skips an unread group instead of refusing it: the obligation
+/// that no declared input goes unread by *every* output is a program-scoped
+/// property and lives in [`check_output_cover`], where the other program-scoped
+/// obligations moved when several ordered outputs became statable.
+///
 /// # Errors
 ///
 /// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads`
-/// when some declared input is read by no leaf, or some leaf reads a value that
-/// is not a declared input. The first would bind a buffer the kernel never
-/// loads; the second is unreachable for these walks, whose leaf set is the
-/// declared inputs by construction, and is refused rather than assumed away.
+/// when some leaf reads a value that is not a declared input. That is
+/// unreachable for these walks, whose leaf set is the declared inputs by
+/// construction, and is refused rather than assumed away.
 fn canonical_input_reads(
     leaves: &[LeafRead],
     declared: &[ValueId],
 ) -> Result<Vec<LeafRead>, RequestError> {
     let mut order: Vec<LeafRead> = Vec::with_capacity(leaves.len());
     for input in declared {
-        let group = order.len();
         for dense in [true, false] {
             order.extend(
                 leaves
@@ -4300,9 +4471,6 @@ fn canonical_input_reads(
                     })
                     .cloned(),
             );
-        }
-        if order.len() == group {
-            return mismatch("elementwise-reads");
         }
     }
     if order.len() != leaves.len() {
@@ -5026,11 +5194,13 @@ fn recognize_epilogue(
     };
     let plan =
         plan_elementwise(program, output.value(), &leaves, &shape).map_err(RequestError::from)?;
-    // The staged read, then whichever declared inputs the expression names. Only
-    // the inputs it reads appear, which is what an epilogue's read list differs
-    // in from a whole-program one — so the group walk is spelled here rather
-    // than through `canonical_input_reads`, whose `elementwise-reads` refusal is
-    // exactly the rule an epilogue does not owe.
+    // The staged read, then whichever declared inputs the expression names. The
+    // *declared* half is now the same rule `canonical_input_reads` states —
+    // groups in declaration order, dense before mapped, an unread input
+    // contributing nothing — and what keeps the walk spelled here is the staged
+    // read: it leads, it binds no declared input, and that function refuses a
+    // leaf which is not one. Reusing it would mean handing it a leaf set it is
+    // defined to reject.
     let mut order: Vec<LeafRead> = plan
         .leaves
         .iter()
@@ -5174,6 +5344,34 @@ fn recognize_reduction(
     } else {
         Vec::new()
     };
+    // The fold's own contributor read, recorded exactly when there is no
+    // prologue region to describe it. It is resolved here because this is the
+    // only place that holds both the contributor value and the declaration
+    // order; every physical spelling of the fold asks for the answer.
+    let contributor_input = if prologue.is_some() {
+        None
+    } else {
+        Some(declared_ordinal(&declared, *contributor)?)
+    };
+    // **A fold over any declared input but the first has no region to be built
+    // from, and it is refused here rather than proposed and rejected.**
+    // `tiler_ir::schedule`'s `ContributorTensor::DeclaredDomain` admits
+    // `TensorRole::Intermediate` or `Input { ordinal: 0 }` and nothing else, and
+    // its split and cooperative topologies name `Exactly(FIRST_INPUT)`, so a
+    // region reading `Input { ordinal: 1 }` under a `StrictSerialSum` fails the
+    // intrinsic verifier as `numerical-or-access-refinement` — which reaches a
+    // caller as invalid compiler output naming a provider, not as a property of
+    // its program.
+    //
+    // The state became reachable with this ticket and not before: a
+    // prologue-less fold's walk reads exactly one tensor, so while every walk
+    // had to read every declared input, such a program declared exactly one and
+    // the recognized ordinal could only be zero.
+    // [`admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`](../../../tickets/admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary.md)
+    // owns the widening; deleting this refusal is what it lands.
+    if contributor_input.is_some_and(|ordinal| ordinal != 0) {
+        return mismatch("sum-contributor-ordinal");
+    }
     let members = RecognizedSerialSumMembers::new(recognized.members, sum_member);
 
     let input_elements = element_count_u64(&input_shape, "input")?;
@@ -5186,6 +5384,7 @@ fn recognize_reduction(
         reduction_axes: axes,
         prologue,
         prologue_reads,
+        contributor_input,
         members,
         inputs: declared,
         pointwise_result: *contributor,
@@ -7055,6 +7254,205 @@ mod tests {
             ),
             None,
         );
+    }
+
+    /// Two declared inputs and one expression naming both of the outer ones.
+    ///
+    /// `product = a * c` and `doubled = b + b` over three declared `[2, 3]`
+    /// inputs. The first walk reads ordinals `0` and `2`, which is deliberately
+    /// not a prefix and not contiguous: a region-local renumbering would give
+    /// its two leaves reads `0` and `1` and the assembled program would multiply
+    /// `a * b`, and every other recognized fact would agree.
+    fn non_contiguous_subset_program(outer: bool) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let inputs: Vec<_> = ["a", "b", "c"]
+            .into_iter()
+            .map(|key| {
+                builder
+                    .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([2, 3]))
+                    .unwrap()
+            })
+            .collect();
+        let (paired, doubled) = if outer { (2, 1) } else { (1, 2) };
+        let product = F32Multiply::apply(&mut builder, inputs[0], inputs[paired]).unwrap();
+        let sum = F32Add::apply(&mut builder, inputs[doubled], inputs[doubled]).unwrap();
+        builder
+            .output(OutputKey::new("product").unwrap(), product)
+            .unwrap();
+        builder
+            .output(OutputKey::new("doubled").unwrap(), sum)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// A walk reading a subset carries the program's ordinals, not its own.
+    ///
+    /// **The read list is the map this ticket asked for.** `mint_elementwise`
+    /// numbers the expression's leaves by position in the canonical read order,
+    /// and the read at that position names the declared input ordinal it binds,
+    /// so `reads` *is* the leaf-ordinal-to-input-ordinal correspondence and
+    /// nothing further had to be carried. What changed is that it is no longer
+    /// the identity on `0..declared`.
+    ///
+    /// The neighbour swaps which of the two later inputs each output reads, so
+    /// the recognized ordinals move with the program while the expression, the
+    /// declared keys, the domain, and the member sets all stay put — which is
+    /// what makes the assertion about the read list rather than about the
+    /// program being recognized at all.
+    #[test]
+    fn a_walk_reading_a_subset_carries_the_program_input_ordinals_it_reached() {
+        for (outer, expected) in [(true, 2_u32), (false, 1)] {
+            let program = non_contiguous_subset_program(outer);
+            assert_eq!(program.input_count(), 3);
+            let recognized = recognize_outputs(&program).expect("a subset walk is recognized");
+            let [product, doubled] = recognized.outputs() else {
+                panic!("the fixture declares two outputs");
+            };
+            let NormalizedOutput::Pointwise(product) = product else {
+                panic!("an elementwise output recognizes as an elementwise program");
+            };
+            let NormalizedOutput::Pointwise(doubled) = doubled else {
+                panic!("an elementwise output recognizes as an elementwise program");
+            };
+            // The declared interface stays whole: the ordinals index it, so a
+            // region reading two of three inputs still resolves against all
+            // three at assembly.
+            assert_eq!(product.input_keys.len(), 3);
+            assert_eq!(
+                product.reads,
+                vec![
+                    (0, LogicalAccess::LinearIdentity),
+                    (expected, LogicalAccess::LinearIdentity),
+                ],
+            );
+            assert_eq!(product.expression.input_count(), 2);
+            // The other output reads the remaining input at one leaf, twice.
+            let other = if outer { 1 } else { 2 };
+            assert_eq!(doubled.reads, vec![(other, LogicalAccess::LinearIdentity)]);
+            assert_eq!(doubled.expression.input_count(), 1);
+        }
+    }
+
+    /// A declared input no output reads is refused at program scope.
+    ///
+    /// **The removal-shaped perturbation, and it has to be forged.** The
+    /// obligation `canonical_input_reads` used to state per walk moved to
+    /// [`check_output_cover`], and no program the public builder can construct
+    /// reaches it: a frozen program retains only output-reachable values, the
+    /// `operation-set` rule claims every retained occurrence for some walk, and
+    /// every way a walk consumes an operand records a read of it. So the check
+    /// is driven against a recognized program whose read list has had one entry
+    /// removed — which is exactly the state deleting the check would admit —
+    /// and its unforged neighbour is asserted to pass, so a check that refused
+    /// everything would fail here too.
+    #[test]
+    fn a_declared_input_no_output_reads_is_refused_at_program_scope() {
+        let program = non_contiguous_subset_program(true);
+        let recognized = recognize_outputs(&program).expect("a subset walk is recognized");
+        assert_eq!(check_output_cover(&program, recognized.outputs()), Ok(()));
+
+        let mut forged = recognized.clone();
+        let NormalizedOutput::Pointwise(product) = &mut forged.outputs[0] else {
+            panic!("the first declared output is elementwise");
+        };
+        product.reads.retain(|(ordinal, _)| *ordinal != 2);
+        assert_eq!(
+            check_output_cover(&program, &forged.outputs),
+            mismatch("input-set"),
+        );
+    }
+
+    /// A fold over a declared input other than the first refuses by name.
+    ///
+    /// **A `tiler-ir` wall reported as a program property rather than as invalid
+    /// compiler output.** `ContributorTensor::DeclaredDomain` admits a fold's
+    /// contributor read at `TensorRole::Intermediate` or the first declared
+    /// input and nothing else, so the region this program needs fails the
+    /// intrinsic verifier — which reaches a caller naming a provider instead of
+    /// naming their program.
+    ///
+    /// Its accepted neighbour folds the *first* declared input over the same two
+    /// declarations and the same two families, so the difference between them is
+    /// exactly which input the fold names.
+    /// `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
+    /// is what turns this row into an admission.
+    #[test]
+    fn a_fold_over_a_later_declared_input_refuses_by_name() {
+        let folded = |first: bool| {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let inputs: Vec<_> = ["a", "b"]
+                .into_iter()
+                .map(|key| {
+                    builder
+                        .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([2, 3]))
+                        .unwrap()
+                })
+                .collect();
+            let (folded, doubled) = if first { (0, 1) } else { (1, 0) };
+            let sum =
+                StrictSerialF32Sum::apply(&mut builder, inputs[folded], [Axis::new(1)]).unwrap();
+            let pair = F32Add::apply(&mut builder, inputs[doubled], inputs[doubled]).unwrap();
+            builder
+                .output(OutputKey::new("folded").unwrap(), sum)
+                .unwrap();
+            builder
+                .output(OutputKey::new("doubled").unwrap(), pair)
+                .unwrap();
+            builder.build().unwrap()
+        };
+        let accepted = recognize_outputs(&folded(true)).expect("a fold over the first input");
+        let [fold, _] = accepted.outputs() else {
+            panic!("the fixture declares two outputs");
+        };
+        let NormalizedOutput::SerialSum(fold) = fold else {
+            panic!("a reduction output recognizes as a serial sum");
+        };
+        assert_eq!(fold.prologue, None);
+        assert_eq!(fold.contributor_input, Some(0));
+
+        assert_eq!(
+            recognize_outputs(&folded(false)).unwrap_err(),
+            "sum-contributor-ordinal",
+        );
+    }
+
+    /// The read run separates two subsets and leaves a complete one empty.
+    ///
+    /// **Both halves of the sub-tag determination, driven at the encoder.** The
+    /// complete read list writes the framed zero it has always written, which is
+    /// the "no already-encodable subject's bytes move" half; the three
+    /// two-element subsets of three declared inputs write three different runs,
+    /// which is the injectivity half the marker exists for. Without the marker
+    /// all three would be that same framed zero, and one arm would encode three
+    /// programs.
+    #[test]
+    fn the_read_run_marks_unread_declared_inputs_and_leaves_a_complete_list_empty() {
+        let dense = |ordinal| (ordinal, LogicalAccess::LinearIdentity);
+        let run = |reads: &[(u32, LogicalAccess)]| {
+            let mut bytes = Vec::new();
+            encode_elementwise_reads(&mut bytes, 3, reads);
+            bytes
+        };
+        // The framed zero every already-encodable subject wrote, byte for byte.
+        assert_eq!(run(&[dense(0), dense(1), dense(2)]), vec![0_u8; 8]);
+        // One marker, naming the ordinal no leaf read.
+        let mut expected = vec![0_u8; 7];
+        expected.push(1);
+        expected.extend_from_slice(&1_u32.to_be_bytes());
+        expected.push(UNREAD_DECLARED_INPUT_TAG);
+        assert_eq!(run(&[dense(0), dense(2)]), expected);
+        // The three subsets of the same size are three distinct runs, which is
+        // the collision the marker closes.
+        let subsets = [
+            run(&[dense(0), dense(1)]),
+            run(&[dense(0), dense(2)]),
+            run(&[dense(1), dense(2)]),
+        ];
+        for (position, first) in subsets.iter().enumerate() {
+            for second in &subsets[position + 1..] {
+                assert_ne!(first, second);
+            }
+        }
     }
 
     /// Both claimants of a published-and-consumed part resolve to one region.
