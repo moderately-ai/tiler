@@ -1,7 +1,7 @@
 ---
 id: record-the-purchased-754-and-higham-identities-and-verify-the-survey-restatements
 title: Record the purchased IEEE 754 and Higham identities and verify the survey restatements
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [sources, numerics, acquisition]
-claimed_from: todo
-assignee: agent-754-higham
-lease_expires_at: 1786042934
 ---
 
 ## What Tom pulled (2026-08-06)
