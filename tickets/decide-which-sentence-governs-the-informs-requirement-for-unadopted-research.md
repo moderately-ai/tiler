@@ -1,7 +1,7 @@
 ---
 id: decide-which-sentence-governs-the-informs-requirement-for-unadopted-research
 title: Decide which sentence governs the informs requirement for unadopted research
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [repair-the-four-mistyped-typed-frontmatter-edges]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, metadata, schema]
-claimed_from: todo
-assignee: agent-informs-rule
-lease_expires_at: 1786057673
 ---
 ## User-visible outcome
 

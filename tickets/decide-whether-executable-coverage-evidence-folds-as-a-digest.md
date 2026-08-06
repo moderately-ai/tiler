@@ -1,14 +1,17 @@
 ---
 id: decide-whether-executable-coverage-evidence-folds-as-a-digest
 title: Decide whether executable-coverage evidence folds as a digest
-status: awaiting-decision
+status: in-progress
 priority: p2
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound, bind-stage-coverage-to-index-refinement-identity]
-scopes: [contracts/decisions, implementation/ir]
+scopes: [contracts/decisions, implementation/ir, implementation/build, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, decision, program-planning, deferred]
+claimed_from: todo
+assignee: agent-identity-campaign
+lease_expires_at: 1786061768
 ---
 ## User-visible outcome
 

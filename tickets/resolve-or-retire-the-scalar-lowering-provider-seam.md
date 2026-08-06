@@ -1,7 +1,7 @@
 ---
 id: resolve-or-retire-the-scalar-lowering-provider-seam
 title: Resolve or retire the scalar-lowering provider seam
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [own-or-close-the-adr-internal-open-questions, drive-an-external-physical-implementation-provider-through-compilation]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/optimizer, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, extension-seams]
+claimed_from: todo
+assignee: agent-scalar-seam
+lease_expires_at: 1786061768
 ---
 ## User-visible outcome
 

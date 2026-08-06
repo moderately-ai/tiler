@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest
 title: Decide whether the manifest carries the identity preimage or its digest
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [attribute-the-canonical-manifest-growth-and-decide-whether-the-encoding-owes-a-budget, decide-whether-executable-coverage-evidence-folds-as-a-digest]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, decision, artifacts, encoding]
+claimed_from: todo
+assignee: agent-identity-campaign
+lease_expires_at: 1786061758
 ---
 ## User-visible outcome
 
