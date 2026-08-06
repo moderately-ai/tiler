@@ -1,7 +1,7 @@
 ---
 id: re-price-the-envelope-band-consumers-against-the-re-derived-band
 title: Re-price the envelope-band consumers against the re-derived band
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [re-derive-the-measured-envelope-band-the-cache-hot-path-sweeps, admit-an-age-bounded-automatic-eviction-into-the-expansion-cache, wire-the-env-configured-eviction-policy-through-the-deliver-path]
@@ -9,6 +9,9 @@ scopes: [implementation/cache, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, artifacts, measurement, documentation]
+claimed_from: todo
+assignee: agent-reprice
+lease_expires_at: 1786052636
 ---
 `re-derive-the-measured-envelope-band-the-cache-hot-path-sweeps` re-derived the envelope band `docs/research/embedding/self-contained-embedding.md` measured, by re-running `prototypes/serial-sum-compile` at `8bd720b8` and taking the minimum and maximum of its members' envelope lengths, the same derivation the original used.
 
