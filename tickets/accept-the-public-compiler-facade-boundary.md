@@ -214,3 +214,7 @@ Accepted by Tom on 2026-08-05 at the live decision review in the coordination se
 ## The exclusion's delta — 2026-08-06, for Tom's next round
 
 The widening landed: `session::compile_governed` returns `Result<Compilation, TargetCompileFailure>`, reporting the identical typed refusal detail as the general path (asserted equal, not same-class) and honestly `None` where no target was rejected. One surface item; nothing else moves. Accepting it completes the facade with no exclusions.
+
+## The delta — accepted, completing the facade
+
+Accepted by Tom on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator: `session::compile_governed` returning `Result<Compilation, TargetCompileFailure>`, the exact repair the 2026-08-05 exclusion named. The facade boundary is now accepted in full — the five originally accepted items plus the returned exclusion — and acceptance remains not-stabilization. Sweep: the conformance-gate disclosure at `docs/correctness-and-testing.md` is corrected in this change; the `session.rs` module-header disclosure still reads "reviewed draft" and its correction is deferred to the integration of `admit-a-fusion-role-for-the-sequence-extension-concatenate`, whose live claim holds `implementation/compiler` exclusively — deferred with this named execution point rather than edited under a live exclusive scope on a vacuous disjointness verdict.

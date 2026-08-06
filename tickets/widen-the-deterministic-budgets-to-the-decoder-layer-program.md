@@ -35,3 +35,7 @@ So the number of widenings is itself a cost. **This is L6's D-18 and it is Tom's
 ## Closes when
 
 The values are chosen from the layer program's measured counts, Tom has answered D-18, `RequestError::BudgetExceeded` still fires against a program one step larger than the new bound, and the identity movement is recorded.
+
+## D-18 — answered
+
+Answered by Tom on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator: **one widening, sized to the layer program** — values justified by the largest program shape this profile may assemble, per the split-reduction precedent, with the identity movement stated in the change. The ticket is dispatchable once `implementation/compiler` frees (held by the concatenate fusion-role claim at the time of the answer).

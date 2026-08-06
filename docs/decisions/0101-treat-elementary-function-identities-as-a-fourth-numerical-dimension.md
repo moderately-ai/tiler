@@ -5,7 +5,7 @@ kind: "decision"
 title: "Treat elementary-function identities as a fourth numerical dimension"
 topics: ["numerics", "transcendentals", "accuracy", "optimizer"]
 catalog_group: "numerical-operations"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.elementary-identity-rewrite-dimension", "tiler.research.numerics.certified-bounds-as-rewrite-permissions"]
@@ -15,7 +15,7 @@ ticket: "carry-the-elementary-identity-dimension-adr"
 
 # 0101: Treat elementary-function identities as a fourth numerical dimension
 
-**Status:** proposed. Every clause below is derived from the numerical contract's own definitions, from ADRs 0011, 0014, 0015, 0042, and 0080, and from a measurement recorded in the evidence. The one product choice in the neighbourhood — whether to admit a permission for the dimension — is explicitly reserved by item 5 and owned elsewhere. This record supersedes nothing: no accepted decision claims the dimension set is exhaustive, so adding a fourth contradicts none of them.
+**Status:** accepted by Tom on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator. Every clause below is derived from the numerical contract's own definitions, from ADRs 0011, 0014, 0015, 0042, and 0080, and from a measurement recorded in the evidence. The one product choice in the neighbourhood — whether to admit a permission for the dimension — is explicitly reserved by item 5 and owned elsewhere. This record supersedes nothing: no accepted decision claims the dimension set is exhaustive, so adding a fourth contradicts none of them.
 
 ## Context
 
@@ -75,7 +75,7 @@ ticket: "carry-the-elementary-identity-dimension-adr"
 
 ## Open questions
 
-**This record is `proposed` and decides nothing until Tom accepts it.** The research record carries six open axes, each with a filed destination, and this record adopts them unchanged rather than restating them. One of the six was "the drafted ADR body has no carrier", which this record discharges; the remaining five are below.
+**This record was `proposed` until Tom accepted it on 2026-08-06 at the live decision review, witnessed first-hand by the coordinator.** The research record carries six open axes, each with a filed destination, and this record adopts them unchanged rather than restating them. One of the six was "the drafted ADR body has no carrier", which this record discharges; the remaining five are below.
 
 The one that is this record's own is **whether to admit a permission for the dimension**, which decision 5 reserves rather than answers: [`decide-whether-to-admit-an-elementary-identity-permission`](../../tickets/decide-whether-to-admit-an-elementary-identity-permission.md) is filed `deferred` with its trigger and a trigger check log, because its trigger is another decision's outcome and the board must not offer non-work. That trigger is the distributivity reassessment resolving in the admitting direction, or a workload whose natural spelling consumes an elementary identity without also consuming distributivity — and [`reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller`](../../tickets/reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller.md) is Tom's and is open. **Nothing here presumes its outcome**; the research record states what each of its four outcomes implies, and only the both-admitted corner makes the online-softmax fold reachable.
 

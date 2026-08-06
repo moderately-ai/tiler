@@ -46,3 +46,7 @@ Superseding any ADR from a worker branch; making the choice on an agent's author
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** Clause 1 cannot have fired: `reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller` is `todo` and unclaimed, so no reassessment has resolved in any direction. Clause 2 has not fired: the record's Part 6 enumerates the candidate rewrites and every one either is unstatable in the registered operation set or consumes distributivity too. Recheck with `tkt show reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller --format json | grep '"status"'`, which answers `todo` while clause 1 is unfired.
+
+## Trigger check log
+
+- 2026-08-06 — not fired. ADR 0101's acceptance names the dimension but is neither trigger: (1) the distributivity reassessment is unresolved — `reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller` is not `done` and ADR 0095 stands; (2) no workload spelling consuming an elementary identity without distributivity has been identified. Reproduce: `tkt show reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller --format json | grep '"status"'`.

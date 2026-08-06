@@ -72,3 +72,7 @@ Ratified by Tom on 2026-08-05 at the live decision review in the coordination se
 ## Landed-surface delta — 2026-08-06, for Tom's next round
 
 The wiring landed the ratified packet with the exact surface enumerated in `wire-the-delivered-realization-record-into-the-artifact`'s final report. Three changes to already-ratified shapes need Tom's eye as the delta: `overlapping_behaviour`'s second parameter and `ArtifactCrossCheck.entries` moved from `NumericalRealization` to the new `EntryRealization` (a decoder cannot hold the former — the eight behaviours both sides hold are the honest comparand), and `ArtifactDiagnostic` lost `Copy` (its realization variant boxes the codec's typed cause rather than erasing it). The additive surface follows the packet; the three moves are where ratification and landing differ.
+
+## The delta — accepted
+
+Accepted by Tom on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator: all three moves in the landed-surface delta above — `overlapping_behaviour`'s second parameter and `ArtifactCrossCheck.entries` at `EntryRealization`, and `ArtifactDiagnostic` without `Copy`. The acceptance record is complete: nothing about this surface remains a draft, and the ratified packet plus this delta together name the accepted shape. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.
