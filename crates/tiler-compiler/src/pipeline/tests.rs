@@ -5716,3 +5716,128 @@ fn the_reassociating_contract_reaches_the_split_through_compile() {
         .expect("the strict contract compiles the same program");
     assert_eq!(retained_stage_counts(&strict), vec![1, 2]);
 }
+
+/// A staged realization's explain record names both regions and the handed value.
+///
+/// **Stated against the fact derivation rather than a compilation, and the
+/// boundary is deliberate.** No standard operation carries the staged
+/// realization law today — the normalization that will needs a governed
+/// reciprocal square root that does not exist — and the recognizer admits only
+/// the pointwise, serial-sum, and contraction families, so no program a caller
+/// can state reaches `record_refinement` with a chain. Testing the derivation is
+/// therefore what is reachable; the one-line call site in `record_refinement` is
+/// not covered by this and is stated as such rather than implied.
+#[test]
+fn a_staged_realization_names_its_regions_and_its_handed_value() {
+    use tiler_ir::index::{
+        DomainRole, IndexRegionBuilder, ScalarAttributes, StagedInputSource, TensorRole as IrRole,
+        VerifiedIndexRegion, VerifiedIndexRegionSequence, multiply_f32_scalar_op,
+    };
+    use tiler_ir::shape::Extent;
+
+    let scalars = crate::governed::governed_scalars().unwrap();
+    // Emits `out[i] = mul(in[0][i], in[last][i])` over `[extent]`, so a
+    // one-input region squares and a two-input region multiplies its operands.
+    let product = |inputs: &[u64], extent: u64| -> VerifiedIndexRegion {
+        let mut builder = IndexRegionBuilder::new(scalars.clone()).unwrap();
+        let point = builder
+            .dimension(DomainRole::Parallel, Extent::new(extent))
+            .unwrap();
+        let coordinate = builder.dimension_expr(point).unwrap();
+        let tensors: Vec<_> = inputs
+            .iter()
+            .map(|input| {
+                builder
+                    .tensor(
+                        IrRole::Input,
+                        F32::resolved_type(),
+                        Shape::from_dims([*input]),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let left = builder.read(tensors[0], &[point], &[coordinate]).unwrap();
+        let right = builder
+            .read(*tensors.last().unwrap(), &[point], &[coordinate])
+            .unwrap();
+        let value = builder
+            .apply(
+                multiply_f32_scalar_op(),
+                ScalarAttributes::empty(),
+                &[left, right],
+            )
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let output = builder
+            .tensor(
+                IrRole::Output,
+                F32::resolved_type(),
+                Shape::from_dims([extent]),
+            )
+            .unwrap();
+        let write = builder.write(output, &[point], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+        builder.build().unwrap()
+    };
+
+    let fold = product(&[4], 4);
+    let pass = product(&[4, 4], 4);
+    let chained = VerifiedIndexRegionSequence::try_new(
+        vec![fold.clone(), pass.clone()],
+        vec![
+            vec![StagedInputSource::Occurrence(0)],
+            vec![
+                StagedInputSource::Occurrence(1),
+                StagedInputSource::Intermediate(0),
+            ],
+        ],
+    )
+    .unwrap();
+
+    let base = || {
+        PredicateAssessment::proven(
+            "kernel.index-region-refines-occurrence",
+            EvidenceBasis::ExhaustiveFinite,
+        )
+        .unwrap()
+    };
+    let staged = super::trace::with_realization_facts(base(), &chained).unwrap();
+    let facts: BTreeMap<String, crate::explain::FactValue> = staged
+        .facts()
+        .iter()
+        .map(|fact| (fact.key().as_str().to_owned(), fact.value().clone()))
+        .collect();
+
+    assert_eq!(
+        facts.get("realization-stages"),
+        Some(&crate::explain::FactValue::Count(2))
+    );
+    // Both regions are named, and they are named *distinctly*: a derivation that
+    // reported one stage twice would satisfy a count assertion alone.
+    let named = |ordinal: usize| match facts.get(&format!("realization-stage-{ordinal}-region")) {
+        Some(crate::explain::FactValue::Identity(key)) => key.clone(),
+        other => panic!("stage {ordinal} is not named: {other:?}"),
+    };
+    assert_ne!(named(0), named(1));
+    assert_eq!(
+        facts.get("realization-intermediate-0-producer"),
+        Some(&crate::explain::FactValue::Count(0))
+    );
+    assert_eq!(
+        facts.get("realization-intermediate-0-consumer"),
+        Some(&crate::explain::FactValue::Count(1))
+    );
+    assert_eq!(
+        facts.get("realization-intermediate-0-elements"),
+        Some(&crate::explain::FactValue::Count(4))
+    );
+
+    // The perturbation that keeps every existing record's rendering unmoved: a
+    // one-stage realization adds nothing at all, so no governed compilation's
+    // explain output changes because this derivation exists.
+    let single =
+        super::trace::with_realization_facts(base(), &VerifiedIndexRegionSequence::single(pass))
+            .unwrap();
+    assert!(single.facts().is_empty());
+}

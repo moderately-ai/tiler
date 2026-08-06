@@ -2100,7 +2100,7 @@ mod tests {
                 constant_attributes(bits),
             )
             .content()
-            .region_identity()
+            .realization_identity()
             .clone()
         };
         assert_ne!(region(2.0_f32.to_bits()), region(1.0_f32.to_bits()));
@@ -2205,7 +2205,9 @@ mod tests {
         );
         let evaluation = evaluator
             .evaluate(
-                refinement.region(),
+                refinement
+                    .single_region()
+                    .expect("every governed family realizes its occurrence in one region"),
                 IndexRegionAuthority::new(&scalars),
                 &inputs,
             )
@@ -2250,7 +2252,9 @@ mod tests {
                 FrozenScalarReferenceRegistry::standard().unwrap(),
             )
             .evaluate(
-                refinement.region(),
+                refinement
+                    .single_region()
+                    .expect("every governed family realizes its occurrence in one region"),
                 IndexRegionAuthority::new(&scalars),
                 &inputs,
             )
@@ -2300,7 +2304,9 @@ mod tests {
             ];
             assert!(matches!(
                 evaluator.evaluate(
-                    refinement.region(),
+                    refinement
+                        .single_region()
+                        .expect("every governed family realizes its occurrence in one region"),
                     IndexRegionAuthority::new(&scalars),
                     &inputs,
                 ),
@@ -2693,7 +2699,9 @@ mod tests {
             .collect();
         let evaluation = evaluator
             .evaluate(
-                refinement.region(),
+                refinement
+                    .single_region()
+                    .expect("every governed family realizes its occurrence in one region"),
                 IndexRegionAuthority::new(&scalars),
                 &bound,
             )
