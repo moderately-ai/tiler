@@ -802,12 +802,15 @@ mod tests {
     /// `tiler::concatenate-f32@1` is here for a different reason than the BF16
     /// three, and the difference is worth keeping. BF16 is unplanned because no
     /// arithmetic in this build realizes it. Concatenate is unplanned because
-    /// nothing *physical* realizes it at all — the family is semantic and
-    /// reference-evaluable, with no lowering, fusion role, or kernel construct —
-    /// and it consumes no numerical freedom for a stronger reason than the BF16
-    /// rows do: it performs no arithmetic, so there is no dimension a capability
-    /// row could list. A row would be a claim about a target that concatenating
-    /// elements never asks of one.
+    /// nothing *physical* realizes it — the family has no index-access lowering
+    /// and no kernel construct — and it consumes no numerical freedom for a
+    /// stronger reason than the BF16 rows do: it performs no arithmetic, so
+    /// there is no dimension a capability row could list. A row would be a claim
+    /// about a target that concatenating elements never asks of one. It does now
+    /// hold a `CoordinateRelation` fusion role, and that is not in tension with
+    /// its place here: a fusion role answers whether fusing an occurrence
+    /// preserves the numerical contract, which for a family performing no
+    /// arithmetic is answerable without any target being asked anything.
     const UNPLANNED_OPERATIONS: &[&str] = &[
         "tiler::add-bf16@1",
         "tiler::concatenate-f32@1",

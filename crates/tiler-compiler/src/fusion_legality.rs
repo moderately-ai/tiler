@@ -45,8 +45,8 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{
     F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
-    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
-    rms_norm_f32_op, silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
+    add_f32_op, broadcast_f32_op, concatenate_f32_op, constant_f32_op, multiply_f32_op,
+    reindex_f32_op, rms_norm_f32_op, silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
 };
 
 use crate::region::{
@@ -261,9 +261,11 @@ pub(crate) struct FusionNumericalCapabilities {
 impl FusionNumericalCapabilities {
     /// Builds the governed strict-`f32` fusion-capability registry.
     ///
-    /// The governed provider declares the initial profile's constant,
-    /// elementwise arithmetic, and strict serial-sum reduction roles. No other
-    /// operation family has a fusion capability.
+    /// The table below is the complete set of families the governed provider
+    /// declares a role for; every registered family absent from it resolves to
+    /// no fusion legality at all. Each entry states the derivation that placed
+    /// it, because resolution is a checked lookup and a role is therefore
+    /// decided per family rather than inferred from a neighbour.
     #[must_use]
     pub(crate) fn governed() -> Self {
         let provider = ProviderIdentity::new(
@@ -327,6 +329,45 @@ impl FusionNumericalCapabilities {
         );
         roles.insert(reindex_f32_op(), FusionOperationRole::CoordinateRelation);
         roles.insert(broadcast_f32_op(), FusionOperationRole::CoordinateRelation);
+        // The sequence-extension concatenate is a third coordinate relation, and
+        // the classification is derived from what the derivation below actually
+        // asks rather than from the family's name.
+        //
+        // *Why a role at all.* Without one, `derive_member` returns `Ok(None)`
+        // and every region holding a concatenate resolves to no legality at all
+        // — a fail-closed refusal with no premise behind it, because the family
+        // is pure, dtype-homogeneous by construction, and reduction-free, so
+        // every obligation this authority can ask already has an answer.
+        //
+        // *Why not `ValueSource`.* Every element of the result is an element of
+        // an operand, unchanged. The role doc's distinction decides it: a value
+        // source contributes a value the region did not otherwise have, while a
+        // coordinate relation contributes an access map over a value the region
+        // already has. Counting a concatenate as a value source would make
+        // `region_structure` report one more independent value than the region
+        // holds.
+        //
+        // *Why not a seventh role.* A new variant must either derive an
+        // obligation differently or fall outside the four structural buckets,
+        // and this family does neither: purity is declared, homogeneity is
+        // guaranteed by an inferencer that refuses a non-`f32` operand at
+        // construction, the join performs no arithmetic and so reaches no
+        // result boundary at which a NaN canonicalization could be added or
+        // removed, and `is_reduction` is false, so all four reduction
+        // obligations discharge exactly as they do for a reindex. A fifth
+        // `FusionRegionStructure` count would move the content identity of
+        // every region this vocabulary can already encode, paid for no
+        // derivational difference.
+        //
+        // *Why the two-through-eight arity is not an obstacle.* Nothing in the
+        // derivation is arity-sensitive: `region_structure` counts members by
+        // role and reads `boundary_inputs` from the candidate rather than from
+        // any operation's arity, and `member_is_homogeneous` iterates whatever
+        // operand encodings the member has.
+        roles.insert(
+            concatenate_f32_op(),
+            FusionOperationRole::CoordinateRelation,
+        );
         Self {
             provider,
             revision: GOVERNED_PROVIDER_REVISION,
@@ -1168,6 +1209,7 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
     let multiply = multiply_f32_op();
     let reindex = reindex_f32_op();
     let broadcast = broadcast_f32_op();
+    let concatenate = concatenate_f32_op();
     let mut arithmetic_count = 0_usize;
     let mut all_add = true;
     let mut all_multiply = true;
@@ -1184,9 +1226,21 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
             // Closed over the exact governed keys for the same reason the
             // constant arm is: a future capability could classify another
             // contraction-capable family as a coordinate relation.
+            //
+            // The concatenate is admitted here by deciding that transfer for
+            // its key rather than by inheriting it from the role: a join
+            // introduces no multiply, no add, and therefore no adjacency
+            // between them, so inserting one between two adds cannot create a
+            // product to fuse either. Declining to decide it is not free —
+            // under a contraction-permitting contract a member that falls
+            // through returns `unrealized-contraction` below and `first_unknown`
+            // makes the whole candidate unknown, deferring every fused
+            // candidate containing a concatenate for a reason the family's own
+            // semantics refute.
             FusionOperationRole::CoordinateRelation
-                if member.reached.operation == reindex || member.reached.operation == broadcast => {
-            }
+                if member.reached.operation == reindex
+                    || member.reached.operation == broadcast
+                    || member.reached.operation == concatenate => {}
             FusionOperationRole::ElementwiseArithmetic => {
                 arithmetic_count = arithmetic_count.saturating_add(1);
                 all_add &= member.reached.operation == add;
@@ -2315,5 +2369,249 @@ mod softmax_role_tests {
         // And it is not a value source or a coordinate relation, which are the
         // two roles whose obligations a reduction must not inherit.
         assert!(!FusionOperationRole::ExtremumShiftedOrderedReduction.is_value_source());
+    }
+}
+
+#[cfg(test)]
+mod concatenate_role_tests {
+    use super::{
+        DerivedObligation, FusionEvidenceClass, FusionLegality, FusionNumericalCapabilities,
+        FusionObligation, FusionOperationRole, MemberDerivation, ObligationAssessment,
+        ReachedDefinition, derive_fusion_legality, derive_obligations,
+    };
+    use crate::region::form_region_candidates;
+    use crate::request::{DeterministicBudgets, NumericalPermission, StrictF32NumericalContract};
+    use tiler_ir::semantic::{
+        F32, F32Concatenate, F32Multiply, InputKey, OpKey, OutputKey, SemanticProgram,
+        SemanticProgramBuilder, broadcast_f32_op, concatenate_f32_op, multiply_f32_op,
+        reindex_f32_op,
+    };
+    use tiler_ir::shape::{Axis, Shape};
+
+    /// One decode step appended to a retained cache, beside the arithmetic that
+    /// produced the step.
+    ///
+    /// The join is what the family exists for and the multiply is the "another
+    /// operation" the outcome names: a region holding only a concatenate would
+    /// leave the interesting half — whether the join disqualifies a neighbour's
+    /// evidence — unexercised.
+    fn sequence_extension_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let cache = builder
+            .input::<F32>(InputKey::new("cache").unwrap(), Shape::from_dims([2, 2, 4]))
+            .unwrap();
+        let step = builder
+            .input::<F32>(InputKey::new("step").unwrap(), Shape::from_dims([2, 1, 4]))
+            .unwrap();
+        let gain = builder
+            .input::<F32>(InputKey::new("gain").unwrap(), Shape::from_dims([2, 1, 4]))
+            .unwrap();
+        let scaled = F32Multiply::apply(&mut builder, step, gain).unwrap();
+        let extended = F32Concatenate::apply(&mut builder, &[cache, scaled], Axis::new(1)).unwrap();
+        builder
+            .output(OutputKey::new("extended").unwrap(), extended)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// The concatenate resolves to the coordinate-relation role.
+    ///
+    /// Asserting the role by name is what keeps a later change from quietly
+    /// reclassifying it as a value source, whose contract would make the
+    /// structural counts report a region as holding one more independent value
+    /// than it does. The two neighbours are asserted with it so the insertion is
+    /// shown to have widened the map rather than moved an entry.
+    #[test]
+    fn the_concatenate_resolves_to_the_coordinate_relation_role() {
+        let capabilities = FusionNumericalCapabilities::governed();
+        assert_eq!(
+            capabilities.classify(&concatenate_f32_op()),
+            Some(FusionOperationRole::CoordinateRelation)
+        );
+        assert_eq!(
+            capabilities.classify(&reindex_f32_op()),
+            Some(FusionOperationRole::CoordinateRelation)
+        );
+        assert_eq!(
+            capabilities.classify(&broadcast_f32_op()),
+            Some(FusionOperationRole::CoordinateRelation)
+        );
+        assert_eq!(
+            capabilities.classify(&multiply_f32_op()),
+            Some(FusionOperationRole::ElementwiseArithmetic)
+        );
+    }
+
+    /// A region holding a concatenate derives legality instead of failing closed.
+    ///
+    /// The perturbation is the same region with the role withdrawn: it returns
+    /// to `unsupported-operation-capability`, which is what makes the positive
+    /// result a property of the registered role rather than of the region.
+    #[test]
+    fn a_region_holding_a_concatenate_derives_legality_instead_of_failing_closed() {
+        let program = sequence_extension_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("a governed sequence-extension region is legal, not {outcome:?}");
+        };
+
+        let structure = proof.content().structure();
+        assert_eq!(structure.members, 2);
+        assert_eq!(structure.arithmetic, 1);
+        assert_eq!(structure.coordinate_relations, 1);
+        assert_eq!(structure.value_sources, 0);
+        assert_eq!(structure.reductions, 0);
+        assert_eq!(
+            structure.members,
+            structure.value_sources
+                + structure.arithmetic
+                + structure.reductions
+                + structure.coordinate_relations,
+            "the four role counts account for every member, and the join is \
+             counted as the coordinate relation it is"
+        );
+
+        // Every one of the nine obligations is discharged, counted rather than
+        // filtered: a population assertion that named no obligation would pass
+        // over an empty list.
+        let obligations = proof.content().obligations();
+        assert_eq!(obligations.len(), 9);
+        assert!(
+            obligations
+                .iter()
+                .all(|derived| matches!(derived.assessment(), ObligationAssessment::Discharged)),
+            "{obligations:?}"
+        );
+
+        let perturbed = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed_without(&concatenate_f32_op()),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Unknown(unknown) = perturbed else {
+            panic!("withdrawing the concatenate's role must fail closed, not {perturbed:?}");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::OperationCapabilitiesResolved
+        );
+        assert_eq!(unknown.reason(), "unsupported-operation-capability");
+    }
+
+    /// The contraction proof passes over a concatenate by its exact key.
+    ///
+    /// The arm is closed over keys rather than over the role, so the decision
+    /// that a join introduces no multiply-plus-add adjacency has to be stated
+    /// for this key. The counterfactual is a coordinate relation the arm does
+    /// *not* name, which is what the concatenate would have reached had the arm
+    /// been left unextended: under a contraction-permitting contract it returns
+    /// `unrealized-contraction`, which `first_unknown` would make the whole
+    /// candidate's verdict.
+    #[test]
+    fn the_contraction_arm_reads_the_concatenate_key_rather_than_its_role() {
+        let permitting = StrictF32NumericalContract::governed_relaxed();
+        assert!(
+            !matches!(permitting.contraction, NumericalPermission::Forbidden),
+            "a contract forbidding contraction discharges the obligation on its \
+             own, which would make this perturbation vacuous"
+        );
+
+        let member = |role, operation| MemberDerivation {
+            role,
+            reached: ReachedDefinition {
+                operation,
+                normative_definition: String::new(),
+                effect_tag: 1,
+            },
+            pure: true,
+            homogeneous: true,
+        };
+        let contraction = |members: &[MemberDerivation]| -> DerivedObligation {
+            *derive_obligations(members, permitting)
+                .iter()
+                .find(|derived| derived.obligation() == FusionObligation::ArithmeticContraction)
+                .expect("the contraction obligation is always derived")
+        };
+
+        let extended = contraction(&[
+            member(
+                FusionOperationRole::CoordinateRelation,
+                concatenate_f32_op(),
+            ),
+            member(
+                FusionOperationRole::ElementwiseArithmetic,
+                multiply_f32_op(),
+            ),
+        ]);
+        assert_eq!(extended.assessment(), ObligationAssessment::Discharged);
+        assert_eq!(extended.evidence(), FusionEvidenceClass::SoundProof);
+
+        let unextended = contraction(&[
+            member(
+                FusionOperationRole::CoordinateRelation,
+                OpKey::new("example", "unnamed-relation", 1).unwrap(),
+            ),
+            member(
+                FusionOperationRole::ElementwiseArithmetic,
+                multiply_f32_op(),
+            ),
+        ]);
+        assert_eq!(
+            unextended.assessment(),
+            ObligationAssessment::Unknown {
+                reason: "unrealized-contraction"
+            }
+        );
+
+        // End to end under the same permitting contract: the region stays legal
+        // and its contraction obligation carries the structural proof rather
+        // than the contract's normative guarantee, which is only available when
+        // contraction is forbidden.
+        let program = sequence_extension_program();
+        let budgets = DeterministicBudgets::governed();
+        let formation = form_region_candidates(&program, budgets, permitting).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region");
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            permitting,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("a permitting contract leaves the region legal, not {outcome:?}");
+        };
+        let derived = proof
+            .content()
+            .obligations()
+            .iter()
+            .find(|derived| derived.obligation() == FusionObligation::ArithmeticContraction)
+            .unwrap();
+        assert_eq!(derived.assessment(), ObligationAssessment::Discharged);
+        assert_eq!(derived.evidence(), FusionEvidenceClass::SoundProof);
     }
 }
