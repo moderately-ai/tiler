@@ -9,7 +9,6 @@ research_status: "complete"
 disposition: "pending"
 implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis"]
-informs: ["tiler.portal.status"]
 ---
 
 # Open-ticket accuracy, scope, and outcome-language audit

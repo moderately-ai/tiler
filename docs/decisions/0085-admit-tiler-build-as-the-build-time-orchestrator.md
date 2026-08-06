@@ -8,7 +8,7 @@ catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
 implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.artifact-abi", "tiler.contract.metal-backend"]
-evidence: ["tiler.research.cache.crash-race-protocol", "tiler.research.artifacts.target-neutral-artifact-envelope", "tiler.research.workspace.prototype-crate-layout-and-msrv"]
+evidence: ["tiler.research.cache.crash-race-protocol", "tiler.research.artifacts.target-neutral-envelope", "tiler.research.workspace.prototype-crate-layout-and-msrv"]
 depends_on: ["ADR-0050", "ADR-0077", "ADR-0082"]
 ticket: "bind-the-cache-subject-to-the-carried-payload-provenance"
 ---
