@@ -3224,7 +3224,10 @@ fn resolve_numerical_contract(
 ///   `ScalarProgram::PointwiseF32` region may read an intermediate at all; and
 ///   `verify_access_and_semantics` admits a `ScalarProgram::StrictSerialSum`
 ///   under a `ReductionTopology::Serial` only when its owning write targets
-///   `TensorRole::Output`, so no fold may produce one either. A contraction
+///   `TensorRole::Output`, so the fold a reduction epilogue would read from
+///   cannot produce one. The multi-pass partial pass is the one fold that does
+///   write an intermediate, and it is a different topology declaring a split
+///   rather than a fold another region's epilogue may consume. A contraction
 ///   *may* already write one, which is the single part of the chain that is
 ///   expressible today. `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`
 ///   measures all three.
