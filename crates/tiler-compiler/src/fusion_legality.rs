@@ -47,6 +47,7 @@ use tiler_ir::semantic::{
     F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
     add_f32_op, broadcast_f32_op, concatenate_f32_op, constant_f32_op, multiply_f32_op,
     reindex_f32_op, rms_norm_f32_op, silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
+    strict_tensor_contraction_f32_op,
 };
 
 use crate::region::{
@@ -152,21 +153,38 @@ enum FusionOperationRole {
     ///
     /// `tiler::rms-norm-f32@1` squares each contributor before the fold and then
     /// divides, adds `eps`, takes a reciprocal square root, and applies two
-    /// multiplies after it. Every reduction obligation
-    /// [`Self::OrderedReduction`] carries is carried here too — the embedded fold
-    /// is the same strict left fold over the same canonical contributor sequence,
-    /// so [`Self::is_reduction`] answers `true` for both and the four reduction
-    /// obligations are derived identically.
+    /// multiplies after it. `tiler::strict-tensor-contraction-f32@1` carries the
+    /// prologue alone: each contributor is the separately rounded binary32
+    /// product of two operand elements, and the fold over the canonically
+    /// ordered contracted index space is followed by nothing. Every reduction
+    /// obligation [`Self::OrderedReduction`] carries is carried here too — the
+    /// embedded fold is the same strict left fold over the same canonical
+    /// contributor sequence, so [`Self::is_reduction`] answers `true` for both
+    /// families and the four reduction obligations are derived identically.
     ///
-    /// **Why it is nevertheless not the same role.** `OrderedReduction`'s
-    /// contract is that the operation *is* a fold: nothing else about it rounds.
-    /// Classifying a normalization as one would state that fusing it can only
-    /// move a fold order, when it also carries seven per-point roundings whose
-    /// exceptional-value behaviour a fused realization must preserve. The
-    /// distinction is what keeps `is_exact_governed_same_family_pointwise`
-    /// closed: its match is exhaustive, so a role added later has to decide
-    /// whether it introduces a multiply-plus-add adjacency rather than inherit an
-    /// answer.
+    /// **Why the prologue's operand arity does not split the role.** A
+    /// contraction assembles each contributor from two operands read at
+    /// coordinates that drop different free iteration coordinates, where a
+    /// normalization reads one operand. That difference lives in the access
+    /// relation, and this authority discharges no access obligation: every
+    /// obligation here is about a rounding, a fold order, a conversion boundary,
+    /// or an exceptional value, and a per-contributor product of two loaded
+    /// values commits exactly the same separate rounding a per-contributor
+    /// square does. The contributor domain is still *one* domain folded in one
+    /// declared order, so one permission still answers for the whole operation,
+    /// which is this role's actual contract rather than the operand count its
+    /// first holder happened to have.
+    ///
+    /// **Why it is nevertheless not the same role as [`Self::OrderedReduction`].**
+    /// That role's contract is that the operation *is* a fold: nothing else about
+    /// it rounds. Classifying a normalization as one would state that fusing it
+    /// can only move a fold order, when it also carries seven per-point roundings
+    /// whose exceptional-value behaviour a fused realization must preserve;
+    /// classifying a contraction as one would state the same falsehood about its
+    /// `K` products. The distinction is what keeps
+    /// `is_exact_governed_same_family_pointwise` closed: its match is exhaustive,
+    /// so a role added later has to decide whether it introduces a
+    /// multiply-plus-add adjacency rather than inherit an answer.
     ///
     /// It is counted under the reduction total rather than given a count of its
     /// own, because [`FusionRegionStructure`]'s four role counts sum to the
@@ -368,6 +386,81 @@ impl FusionNumericalCapabilities {
             concatenate_f32_op(),
             FusionOperationRole::CoordinateRelation,
         );
+        // The tensor contraction widens the prologue-carrying reduction rather
+        // than taking a role of its own, and the classification is derived from
+        // what the derivation below actually asks rather than from the family's
+        // arity.
+        //
+        // *Why a role at all.* Without one, `derive_member` returns `Ok(None)`
+        // and every region holding a contraction beside another member resolves
+        // to no legality at all. The whole-program shape never asks — planning
+        // skips `derive_fusion_legality` below two members and the recognized
+        // contraction is one operation — so the refusal only fires for the
+        // fused prologue and epilogue shapes Milestone 6 names, which is exactly
+        // where it would be a fail-closed refusal with no premise behind it:
+        // the family is `OperationEffect::Pure`, `tiler::f32@1` throughout, and
+        // its fold is the same strict left fold the serial sum declares.
+        //
+        // *Why not `OrderedReduction`.* That role's contract is that the whole
+        // of the operation is the fold. A contraction rounds `K` products before
+        // the fold ever runs, and its declared computation precision says so:
+        // "binary32-operands-and-binary32-products". Classifying it there would
+        // state that fusing it can only move a fold order.
+        //
+        // *Why not `ExtremumShiftedOrderedReduction`.* That role exists for two
+        // folds over one contributor sequence carrying *different* order
+        // obligations. A contraction carries one fold and nothing in it is
+        // order-insensitive, so that role would claim a freedom — the softmax
+        // maximum's permission-free reassociation — this family's own
+        // `reassociation-permitted: false` withholds.
+        //
+        // *Why not `ElementwiseArithmetic`.* `is_reduction` would answer false
+        // and all four reduction obligations would discharge vacuously as a
+        // structural fact, so a region containing a contraction would derive
+        // `Legal` under a reassociating contract that grants exactly the
+        // regrouping this family forbids. That is a silently wrong accept, which
+        // is the one outcome this authority may not produce.
+        //
+        // *Why not a seventh role.* A new variant must derive some obligation
+        // differently or fall outside the four structural buckets. This one does
+        // neither. The role is consulted in exactly six places — the four
+        // `is_*` predicates, the match in
+        // `is_exact_governed_same_family_pointwise`, and `region_structure`'s
+        // counts — and a contraction and a normalization produce the same answer
+        // from all six: neither is arithmetic, a value source, or a coordinate
+        // relation; both are reductions; both fall to the closed proof's
+        // disqualifying arm; and both count under `reductions`. A variant whose
+        // only content is a name would be a distinction with no consumer.
+        //
+        // *The nine obligations, decided rather than inherited.* Capabilities
+        // resolve by this entry. Referential transparency holds because the
+        // definition declares `Pure`, and `derive_member` errors rather than
+        // guesses when the graph disagrees. Conversion-boundary preservation
+        // holds because every operand, product, accumulator, and result is
+        // `tiler::f32@1` — the family's declared conversion behaviour is "none"
+        // — and `member_is_homogeneous` iterates the member's actual operand
+        // encodings, so the two-operand arity is not an obstacle. Exceptional
+        // values: the family installs the canonical arithmetic-NaN payload after
+        // every combine and at the result boundary, which is a per-combine
+        // rewrite the fused body must still apply and which fusion neither adds
+        // nor removes, and the obligation's own test is the contract's payload
+        // against the governed one. Identity and empty domain are defined by
+        // refusal — the fold is unseeded and a zero contracted extent is
+        // rejected at construction — which is a stated behaviour rather than an
+        // absent one. Contributor order is declared ascending-lexicographic over
+        // the canonically ordered contracted index space. Reassociation resolves
+        // against the caller's permission exactly as it does for every other
+        // reduction, so a permitting contract leaves it unknown rather than
+        // discharged. Operand permutation is discharged from the role: the
+        // ordered left fold fixes the contributor sequence, and the family's own
+        // `permutation-permitted: false` agrees. The ninth — ADR 0015's
+        // arithmetic contraction — is decided in
+        // `is_exact_governed_same_family_pointwise` below, where this family is
+        // the case that closure was written for.
+        roles.insert(
+            strict_tensor_contraction_f32_op(),
+            FusionOperationRole::PrologueCarryingOrderedReduction,
+        );
         Self {
             provider,
             revision: GOVERNED_PROVIDER_REVISION,
@@ -560,10 +653,10 @@ pub(crate) struct FusionRegionStructure {
     arithmetic: u32,
     /// Number of members carrying an ordered reduction.
     ///
-    /// Both reduction roles count here — the bare fold and the prologue-carrying
-    /// one — so that the four counts still sum to `members`. Distinguishing them
-    /// would need a fifth field, which would move the content identity of every
-    /// region this vocabulary can already encode.
+    /// Every reduction role counts here — the bare fold, the prologue-carrying
+    /// one, and the extremum-shifted one — so that the four counts still sum to
+    /// `members`. Distinguishing them would need a fifth field, which would move
+    /// the content identity of every region this vocabulary can already encode.
     reductions: u32,
     /// Number of pure coordinate-relation members.
     ///
@@ -1139,7 +1232,11 @@ fn derive_obligations(
     // a future capability could classify another contraction-capable operation
     // as arithmetic. Only constant-f32 sources plus an add-only or
     // multiply-only family, with no reduction or other member, prove there is
-    // no multiply-plus-add contraction opportunity.
+    // no multiply-plus-add contraction opportunity. The governed vocabulary
+    // holds one family that is contraction-capable within a single operation —
+    // `tiler::strict-tensor-contraction-f32@1`, whose per-contributor step is
+    // `accumulator + a * b` — so the closure guards a live case and not only a
+    // hypothetical one.
     obligations.push(if is_exact_governed_same_family_pointwise(members) {
         DerivedObligation::discharged(
             FusionObligation::ArithmeticContraction,
@@ -1248,9 +1345,32 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
             }
             // Every remaining role disqualifies the sound proof, and the
             // prologue-carrying reduction disqualifies it for its own reason
-            // rather than the fold's: its epilogue puts a multiply next to an add
-            // — `u + eps` after `a / N` — so a region containing one has a
-            // contraction opportunity that this closed proof cannot rule out.
+            // rather than the fold's. For `tiler::rms-norm-f32@1` the epilogue
+            // puts a multiply next to an add — `u + eps` after `a / N` — so a
+            // region containing one has a contraction opportunity that this
+            // closed proof cannot rule out. For
+            // `tiler::strict-tensor-contraction-f32@1` the adjacency is not in an
+            // epilogue at all but in the per-contributor step itself:
+            // `accumulator + a * b` is a multiply feeding an add, which is
+            // precisely the shape ADR 0015's permission is about. So this family
+            // is the case the arm's closure was written for, and it is decided
+            // here in the *opposite* direction from the governed coordinate
+            // relations above — admitting it would hand a region the very
+            // conclusion the proof exists to withhold, and would contradict
+            // `policy`'s `TENSOR_CONTRACTION` capability row, the only admitted
+            // operation declaring `NumericalDimension::Contraction` and declaring
+            // it on exactly this step. Declining is not merely
+            // conservative: the family's own facts declare ADR 0015 contraction
+            // *forbidden* for it, so under a permitting contract a fused body is
+            // free to emit a fused multiply-add its normative definition refuses,
+            // and nothing in this bounded profile proves it will not. The honest
+            // outcome is the `unrealized-contraction` unknown below, not a
+            // rejection — a realization that carries `-ffp-contract=off` through
+            // to the emitted text satisfies the obligation, so no violation is
+            // proved. Under any contract that forbids contraction — which is
+            // every governed contract except the relaxed one — the obligation
+            // discharges by normative guarantee and a contraction-bearing region
+            // is legal.
             // The extremum-shifted reduction disqualifies it for its own reason
             // as well: its epilogue puts a multiply next to a division —
             // `e_i * (1 / d)` — so a region containing one has an arithmetic
@@ -2613,5 +2733,395 @@ mod concatenate_role_tests {
             .unwrap();
         assert_eq!(derived.assessment(), ObligationAssessment::Discharged);
         assert_eq!(derived.evidence(), FusionEvidenceClass::SoundProof);
+    }
+}
+
+#[cfg(test)]
+mod contraction_role_tests {
+    use super::{
+        DerivedObligation, FusionEvidenceClass, FusionLegality, FusionNumericalCapabilities,
+        FusionObligation, FusionOperationRole, MemberDerivation, ObligationAssessment,
+        ReachedDefinition, derive_fusion_legality, derive_obligations,
+    };
+    use crate::region::form_region_candidates;
+    use crate::request::{DeterministicBudgets, NumericalPermission, StrictF32NumericalContract};
+    use tiler_ir::semantic::{
+        ContractionIndex, ContractionIndexStructure, F32, F32Multiply, F32Softmax,
+        F32TensorContraction, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
+        add_f32_op, multiply_f32_op, rms_norm_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
+        strict_tensor_contraction_f32_op,
+    };
+    use tiler_ir::shape::{Axis, Shape};
+
+    /// The projection structure `td,od->to`, spelled with arbitrary labels so the
+    /// renaming-invariant canonicalization is exercised rather than assumed.
+    fn projection_structure() -> ContractionIndexStructure {
+        ContractionIndexStructure::new(
+            [
+                [ContractionIndex::new(19), ContractionIndex::new(3)],
+                [ContractionIndex::new(14), ContractionIndex::new(3)],
+            ],
+            [ContractionIndex::new(19), ContractionIndex::new(14)],
+        )
+        .unwrap()
+    }
+
+    /// A projection followed by an elementwise gate, in one connected region.
+    ///
+    /// Two members, one of them the contraction: a region holding the
+    /// contraction alone is the shape planning already skips, so it would leave
+    /// the whole question — whether the contraction disqualifies a neighbour's
+    /// evidence, and whether its own obligations discharge — unexercised. The
+    /// extents stay inside the governed baseline profile's launch bound.
+    fn gated_projection_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let activations = builder
+            .input::<F32>(
+                InputKey::new("activations").unwrap(),
+                Shape::from_dims([2, 3]),
+            )
+            .unwrap();
+        let weights = builder
+            .input::<F32>(InputKey::new("weights").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let gain = builder
+            .input::<F32>(InputKey::new("gain").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let projected = F32TensorContraction::apply(
+            &mut builder,
+            &projection_structure(),
+            activations,
+            weights,
+        )
+        .unwrap();
+        let gated = F32Multiply::apply(&mut builder, projected, gain).unwrap();
+        builder
+            .output(OutputKey::new("gated").unwrap(), gated)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// The contraction resolves to the prologue-carrying reduction role.
+    ///
+    /// Asserting the role by name is what keeps a later change from quietly
+    /// reclassifying it: as `OrderedReduction` it would claim the whole
+    /// operation is the fold, and as `ElementwiseArithmetic` its four reduction
+    /// obligations would discharge vacuously and a reassociating contract would
+    /// derive `Legal` for a family whose own facts forbid regrouping. The four
+    /// neighbours are asserted with it so the insertion is shown to have widened
+    /// the map rather than moved an entry.
+    #[test]
+    fn the_contraction_resolves_to_the_prologue_carrying_role() {
+        let capabilities = FusionNumericalCapabilities::governed();
+        assert_eq!(
+            capabilities.classify(&strict_tensor_contraction_f32_op()),
+            Some(FusionOperationRole::PrologueCarryingOrderedReduction)
+        );
+        assert_eq!(
+            capabilities.classify(&rms_norm_f32_op()),
+            Some(FusionOperationRole::PrologueCarryingOrderedReduction)
+        );
+        assert_eq!(
+            capabilities.classify(&softmax_f32_op()),
+            Some(FusionOperationRole::ExtremumShiftedOrderedReduction)
+        );
+        assert_eq!(
+            capabilities.classify(&strict_serial_sum_f32_op()),
+            Some(FusionOperationRole::OrderedReduction)
+        );
+        assert_eq!(
+            capabilities.classify(&multiply_f32_op()),
+            Some(FusionOperationRole::ElementwiseArithmetic)
+        );
+        // Sharing a role is not sharing an identity: the role is a reduction, so
+        // the four reduction obligations are derived for it, and it is neither of
+        // the two roles whose obligations a contraction must not inherit.
+        assert!(FusionOperationRole::PrologueCarryingOrderedReduction.is_reduction());
+        assert!(!FusionOperationRole::PrologueCarryingOrderedReduction.is_arithmetic());
+        assert!(!FusionOperationRole::PrologueCarryingOrderedReduction.is_coordinate_relation());
+    }
+
+    /// A region holding a contraction derives legality instead of failing closed.
+    ///
+    /// The perturbation is the same region with the role withdrawn: it returns
+    /// to `unsupported-operation-capability`, which is what makes the positive
+    /// result a property of the registered role rather than of the region.
+    #[test]
+    fn a_region_holding_a_contraction_derives_legality_instead_of_failing_closed() {
+        let program = gated_projection_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("a governed gated-projection region is legal, not {outcome:?}");
+        };
+
+        let structure = proof.content().structure();
+        assert_eq!(structure.members, 2);
+        assert_eq!(structure.reductions, 1);
+        assert_eq!(structure.arithmetic, 1);
+        assert_eq!(structure.value_sources, 0);
+        assert_eq!(structure.coordinate_relations, 0);
+        assert_eq!(
+            structure.members,
+            structure.value_sources
+                + structure.arithmetic
+                + structure.reductions
+                + structure.coordinate_relations,
+            "the four role counts account for every member, and the contraction \
+             is counted under the reduction total rather than needing a fifth"
+        );
+
+        // Every one of the nine obligations is discharged, counted rather than
+        // filtered: a population assertion that named no obligation would pass
+        // over an empty list.
+        let obligations = proof.content().obligations();
+        assert_eq!(obligations.len(), 9);
+        assert!(
+            obligations
+                .iter()
+                .all(|derived| matches!(derived.assessment(), ObligationAssessment::Discharged)),
+            "{obligations:?}"
+        );
+        // The reduction obligations rest on the reached normative definition, so
+        // they must carry the guarantee class rather than the vacuous structural
+        // one a non-reducing region would produce.
+        for obligation in [
+            FusionObligation::ReductionIdentityAndEmptyDomain,
+            FusionObligation::ReductionContributorOrder,
+        ] {
+            let derived = obligations
+                .iter()
+                .find(|derived| derived.obligation() == obligation)
+                .unwrap();
+            assert_eq!(derived.evidence(), FusionEvidenceClass::NormativeGuarantee);
+        }
+        assert!(proof.reached_definitions().iter().any(|reached| {
+            reached
+                .normative_definition()
+                .contains("strict-tensor-contraction-f32")
+        }));
+
+        let perturbed = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed_without(&strict_tensor_contraction_f32_op()),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Unknown(unknown) = perturbed else {
+            panic!("withdrawing the contraction's role must fail closed, not {perturbed:?}");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::OperationCapabilitiesResolved
+        );
+        assert_eq!(unknown.reason(), "unsupported-operation-capability");
+    }
+
+    /// The same-family pointwise proof refuses the contraction by its own step.
+    ///
+    /// This is the arm's decision in the direction opposite to the governed
+    /// coordinate relations': a contraction's per-contributor step *is* the
+    /// multiply-plus-add adjacency the closed proof exists to rule out, so
+    /// admitting its key would hand a region the conclusion the proof withholds.
+    /// Under the governed contract the outcome is invisible — contraction is
+    /// forbidden, so the obligation discharges by normative guarantee either way
+    /// — which is why the refusal is stated against a permitting contract, and
+    /// why that contract is asserted to permit before anything rests on it.
+    #[test]
+    fn the_contraction_disqualifies_the_same_family_proof_by_its_own_step() {
+        let permitting = StrictF32NumericalContract::governed_relaxed();
+        assert!(
+            !matches!(permitting.contraction, NumericalPermission::Forbidden),
+            "a contract forbidding contraction discharges the obligation on its \
+             own, which would make this perturbation vacuous"
+        );
+
+        let member = |role, operation| MemberDerivation {
+            role,
+            reached: ReachedDefinition {
+                operation,
+                normative_definition: String::new(),
+                effect_tag: 1,
+            },
+            pure: true,
+            homogeneous: true,
+        };
+        let contraction_obligation = |members: &[MemberDerivation]| -> DerivedObligation {
+            *derive_obligations(members, permitting)
+                .iter()
+                .find(|derived| derived.obligation() == FusionObligation::ArithmeticContraction)
+                .expect("the contraction obligation is always derived")
+        };
+
+        // The add-only neighbour would carry the sound proof on its own; the
+        // contraction removes it, so the assertion is about the contraction and
+        // not about the region being uninteresting.
+        let alone = contraction_obligation(&[member(
+            FusionOperationRole::ElementwiseArithmetic,
+            add_f32_op(),
+        )]);
+        assert_eq!(alone.assessment(), ObligationAssessment::Discharged);
+        assert_eq!(alone.evidence(), FusionEvidenceClass::SoundProof);
+
+        let with_contraction = contraction_obligation(&[
+            member(
+                FusionOperationRole::PrologueCarryingOrderedReduction,
+                strict_tensor_contraction_f32_op(),
+            ),
+            member(FusionOperationRole::ElementwiseArithmetic, add_f32_op()),
+        ]);
+        assert_eq!(
+            with_contraction.assessment(),
+            ObligationAssessment::Unknown {
+                reason: "unrealized-contraction"
+            }
+        );
+
+        // End to end: the same region that is legal under the governed contract
+        // is unknown under a permitting one, and the obligation named is the
+        // contraction rather than any of the other eight.
+        let program = gated_projection_program();
+        let budgets = DeterministicBudgets::governed();
+        let formation = form_region_candidates(&program, budgets, permitting).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region");
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            permitting,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            candidate,
+        )
+        .unwrap();
+        let FusionLegality::Unknown(unknown) = outcome else {
+            panic!("a permitting contract cannot establish the contraction, not {outcome:?}");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::ArithmeticContraction
+        );
+        assert_eq!(unknown.reason(), "unrealized-contraction");
+    }
+
+    /// The attention shape `Contraction -> Softmax -> Contraction`.
+    ///
+    /// Three members, all of them reductions, which is the region the flash
+    /// capability record names as the case that makes the missing contraction
+    /// role fire: `derive_fusion_legality` is skipped below two members, so a
+    /// two-member region is enough to observe the refusal but only this shape is
+    /// the one the record's axis 2 is about.
+    fn attention_scores_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let queries = builder
+            .input::<F32>(InputKey::new("queries").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let keys = builder
+            .input::<F32>(InputKey::new("keys").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let values = builder
+            .input::<F32>(InputKey::new("values").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let scores =
+            F32TensorContraction::apply(&mut builder, &projection_structure(), queries, keys)
+                .unwrap();
+        let weights = F32Softmax::apply(&mut builder, scores, Axis::new(1)).unwrap();
+        // `ts,sd->td`: the contracted index is the key position, which is the
+        // softmax's own reduced axis and the values' leading axis.
+        let attended_structure = ContractionIndexStructure::new(
+            [
+                [ContractionIndex::new(7), ContractionIndex::new(2)],
+                [ContractionIndex::new(2), ContractionIndex::new(5)],
+            ],
+            [ContractionIndex::new(7), ContractionIndex::new(5)],
+        )
+        .unwrap();
+        let attended =
+            F32TensorContraction::apply(&mut builder, &attended_structure, weights, values)
+                .unwrap();
+        builder
+            .output(OutputKey::new("attended").unwrap(), attended)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// The flash-shaped three-member region derives legality end to end.
+    ///
+    /// Before the role it failed closed at the first contraction with
+    /// `unsupported-operation-capability`, which the perturbation reproduces one
+    /// role at a time so the positive result belongs to the contraction's entry
+    /// and not to the softmax's.
+    #[test]
+    fn the_flash_shaped_region_derives_legality_rather_than_failing_closed() {
+        let program = attention_scores_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("a governed attention region is legal, not {outcome:?}");
+        };
+        let structure = proof.content().structure();
+        assert_eq!(structure.members, 3);
+        assert_eq!(structure.reductions, 3);
+        assert_eq!(
+            structure.members,
+            structure.value_sources
+                + structure.arithmetic
+                + structure.reductions
+                + structure.coordinate_relations
+        );
+
+        for excluded in [strict_tensor_contraction_f32_op(), softmax_f32_op()] {
+            let perturbed = derive_fusion_legality(
+                &program,
+                budgets,
+                contract,
+                &FusionNumericalCapabilities::governed_without(&excluded),
+                &formation,
+                &candidate,
+            )
+            .unwrap();
+            let FusionLegality::Unknown(unknown) = perturbed else {
+                panic!("withdrawing {excluded}'s role must fail closed, not {perturbed:?}");
+            };
+            assert_eq!(
+                unknown.obligation(),
+                FusionObligation::OperationCapabilitiesResolved
+            );
+            assert_eq!(unknown.reason(), "unsupported-operation-capability");
+        }
     }
 }
