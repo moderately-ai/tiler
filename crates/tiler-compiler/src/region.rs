@@ -964,22 +964,28 @@ impl RegionGraph {
     pub(crate) fn with_realizations(
         program: &SemanticProgram,
         laws: &FrozenIndexRealizationLawRegistry,
-        contract: NumericalContractIdentity,
+        contract: &NumericalContractIdentity,
     ) -> Result<Self, RegionError> {
         let mut graph = Self::from_program(program)?;
         for (member, operation) in program.operations().enumerate() {
             let member = index(member)?;
-            let subject = match IndexRefinementSubject::derive(program, operation.id(), contract.clone())
-            {
-                Ok(subject) => subject,
-                // A subject this program cannot derive is refinement's refusal
-                // to make, with its own typed reason; formation treats the
-                // occurrence as single-stage rather than duplicating it.
-                Err(_) => continue,
+            // A subject this program cannot derive is refinement's refusal to
+            // make, with its own typed reason; formation treats the occurrence
+            // as single-stage rather than duplicating it.
+            let Ok(subject) =
+                IndexRefinementSubject::derive(program, operation.id(), contract.clone())
+            else {
+                continue;
             };
             let Ok(resolved) = laws.resolve(&subject) else {
                 continue;
             };
+            // The cheap filter first: nine of the ten registered laws are
+            // single-region, and realizing one builds a verified region this
+            // constructor would discard.
+            if !resolved.realizes_region_sequence() {
+                continue;
+            }
             let Ok(sequence) = resolved.realize_sequence() else {
                 continue;
             };
@@ -989,9 +995,11 @@ impl RegionGraph {
             }
             let mut operand_stages = Vec::new();
             for stage in 0..sequence.stage_count() {
-                let sources = sequence.stage_sources(stage).ok_or(RegionError::Structure {
-                    rule: "stage-sources",
-                })?;
+                let sources = sequence
+                    .stage_sources(stage)
+                    .ok_or(RegionError::Structure {
+                        rule: "stage-sources",
+                    })?;
                 for source in sources {
                     if let StagedInputSource::Occurrence(operand) = source {
                         operand_stages.push((index(*operand)?, index(stage)?));
@@ -1046,9 +1054,9 @@ impl RegionGraph {
                 .stage_topology
                 .get(&index(member)?)
                 .map_or(1, |topology| topology.stage_count);
-            next = next.checked_add(stages).ok_or(RegionError::Structure {
-                rule: "node-count",
-            })?;
+            next = next
+                .checked_add(stages)
+                .ok_or(RegionError::Structure { rule: "node-count" })?;
         }
         base.push(next);
         self.node_base = base;
@@ -1106,23 +1114,6 @@ impl RegionGraph {
         self.stage_topology
             .get(&member)
             .map_or(1, |topology| topology.stage_count)
-    }
-
-    /// Returns the stage of one member that reads its operand at `position`.
-    ///
-    /// A single-stage member reads every operand at its only stage. A staged
-    /// member reads it at every stage the law's source lists name; the first
-    /// listed stage is returned for adjacency, which is sound because growth
-    /// needs *an* edge between the producer and a reading atom and boundary
-    /// derivation walks the complete lists itself.
-    fn operand_reading_stage(&self, member: u32, position: u32) -> u32 {
-        self.stage_topology.get(&member).map_or(0, |topology| {
-            topology
-                .operand_stages
-                .iter()
-                .find(|(operand, _)| *operand == position)
-                .map_or(0, |(_, stage)| *stage)
-        })
     }
 
     /// Returns the stage of one member that publishes its occurrence results.
@@ -1557,14 +1548,54 @@ struct RegionShape {
 /// The program is never mutated. Candidates are returned in ascending member
 /// order, and every emitted candidate is connected, convex, and within the
 /// declared budgets.
+#[cfg(test)]
 pub(crate) fn form_region_candidates(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
     numerical_contract: StrictF32NumericalContract,
 ) -> Result<RegionFormationOutcome, RegionError> {
+    form_over_graph(
+        RegionGraph::from_program(program)?,
+        budgets,
+        numerical_contract,
+    )
+}
+
+/// Runs region formation with each occurrence's realization stage structure.
+///
+/// This is the production entry: an occurrence whose registered law realizes a
+/// region *sequence* enumerates one node per stage, so the cover search sees
+/// the family's internal boundary — the capability Tom's Option A′ decision on
+/// `resolve-which-authority-mints-a-multi-stage-region-candidate` makes region
+/// formation's to mint. [`form_region_candidates`] stays the law-blind entry
+/// for callers exercising formation structure alone; the two differ only in
+/// the graph they build.
+pub(crate) fn form_region_candidates_with_realizations(
+    program: &SemanticProgram,
+    budgets: DeterministicBudgets,
+    numerical_contract: StrictF32NumericalContract,
+    laws: &FrozenIndexRealizationLawRegistry,
+) -> Result<RegionFormationOutcome, RegionError> {
+    let contract =
+        NumericalContractIdentity::try_from_key(numerical_contract.key).map_err(|_| {
+            RegionError::Structure {
+                rule: "contract-identity",
+            }
+        })?;
+    form_over_graph(
+        RegionGraph::with_realizations(program, laws, &contract)?,
+        budgets,
+        numerical_contract,
+    )
+}
+
+fn form_over_graph(
+    graph: RegionGraph,
+    budgets: DeterministicBudgets,
+    numerical_contract: StrictF32NumericalContract,
+) -> Result<RegionFormationOutcome, RegionError> {
     #[cfg(test)]
     crate::workcount::REGION_FORMATIONS.record();
-    let graph = RegionGraph::from_program(program)?;
     let formed = {
         let mut formation = Formation {
             graph: &graph,
@@ -1946,12 +1977,12 @@ fn region_shape(graph: &RegionGraph, nodes: &[u32]) -> Result<RegionShape, Regio
             if !graph.stage_reads_operand(member, stage, index(position)?) {
                 continue;
             }
-            let produced_inside = graph
-                .value(*operand)?
-                .producer
-                .is_some_and(|producer| match graph.result_node(producer.operation) {
-                    Ok(producing) => is_member(nodes, producing),
-                    Err(_) => false,
+            let produced_inside =
+                graph.value(*operand)?.producer.is_some_and(|producer| {
+                    match graph.result_node(producer.operation) {
+                        Ok(producing) => is_member(nodes, producing),
+                        Err(_) => false,
+                    }
                 });
             if !produced_inside && !boundary_inputs.contains(operand) {
                 boundary_inputs.push(*operand);
@@ -1962,7 +1993,9 @@ fn region_shape(graph: &RegionGraph, nodes: &[u32]) -> Result<RegionShape, Regio
             for (result_position, result) in operation.results.iter().enumerate() {
                 let value = graph.value(*result)?;
                 let external_consumers = value.consumers.iter().any(|consumer| {
-                    !graph.consumer_reads_inside(nodes, *consumer, *result).unwrap_or(false)
+                    !graph
+                        .consumer_reads_inside(nodes, *consumer, *result)
+                        .unwrap_or(false)
                 });
                 if value.named_result || external_consumers {
                     retained_outputs.push(RetainedOutput {
@@ -2006,10 +2039,7 @@ fn region_shape(graph: &RegionGraph, nodes: &[u32]) -> Result<RegionShape, Regio
                         });
                     }
                 }
-                if consumed_here
-                    && !producer_inside
-                    && !boundary_inputs.contains(&handed.value)
-                {
+                if consumed_here && !producer_inside && !boundary_inputs.contains(&handed.value) {
                     boundary_inputs.push(handed.value);
                 }
             }
@@ -2037,7 +2067,14 @@ fn assemble(
         .collect::<Result<Vec<_>, _>>()?;
     let mut members: Vec<u32> = atoms.iter().map(|atom| atom.member().0).collect();
     members.dedup();
-    let content = encode_content(graph, numerical_contract, &members, &atoms, &shape, duplication)?;
+    let content = encode_content(
+        graph,
+        numerical_contract,
+        &members,
+        &atoms,
+        &shape,
+        duplication,
+    )?;
     // Occurrence identity inherits the stage distinction through the content
     // bytes it embeds — two node sets differing in any atom differ in the
     // content trailer — and a handed value in either site group encodes under
@@ -2804,6 +2841,320 @@ mod tests {
         budgets: DeterministicBudgets,
     ) -> RegionFormationOutcome {
         form_region_candidates(program, budgets, StrictF32NumericalContract::governed()).unwrap()
+    }
+
+    /// A normalization feeding a pointwise consumer: constant, `rms_norm`, multiply.
+    ///
+    /// The normalization's registered law realizes two stages, so this program's
+    /// four formation nodes over three operations are the smallest staged node
+    /// space the standard registries can produce.
+    fn rms_norm_program() -> SemanticProgram {
+        use tiler_ir::semantic::{
+            RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, multiply_f32_op,
+            rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
+        };
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let value = builder
+            .input_resolved(
+                InputKey::new("value").unwrap(),
+                Shape::from_dims([2, 4]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let weight = builder
+            .input_resolved(
+                InputKey::new("weight").unwrap(),
+                Shape::from_dims([2, 4]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let attributes = OperationAttributes::new([
+            CanonicalField::new(
+                RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                rms_norm_f32_axis_attribute(Axis::new(1)),
+            ),
+            CanonicalField::new(
+                RMS_NORM_EPS_BITS_ATTRIBUTE,
+                rms_norm_f32_eps_attribute(1.0e-6_f32.to_bits()),
+            ),
+        ])
+        .unwrap();
+        let normalized = builder
+            .apply(rms_norm_f32_op(), attributes, &[value, weight])
+            .unwrap()[0];
+        let scaled = builder
+            .apply(
+                multiply_f32_op(),
+                OperationAttributes::new([]).unwrap(),
+                &[normalized, value],
+            )
+            .unwrap()[0];
+        builder
+            .output_resolved(OutputKey::new("result").unwrap(), scaled)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn form_staged(program: &SemanticProgram) -> RegionFormationOutcome {
+        let laws = tiler_ir::index::FrozenIndexRealizationLawRegistry::from_semantic(
+            program.semantic_registry().clone(),
+            tiler_ir::index::FrozenScalarRegistry::standard().unwrap(),
+        )
+        .unwrap();
+        form_region_candidates_with_realizations(
+            program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed(),
+            &laws,
+        )
+        .unwrap()
+    }
+
+    /// Returns the graph ordinal of the one normalization member.
+    fn rms_member(outcome: &RegionFormationOutcome) -> u32 {
+        (0..outcome.graph().operation_count())
+            .find(|member| outcome.graph().member_stage_count(*member) > 1)
+            .expect("the fixture registers one staged family")
+    }
+
+    #[test]
+    fn a_staged_occurrence_enumerates_one_node_per_stage() {
+        let program = rms_norm_program();
+        let outcome = form_staged(&program);
+        let graph = outcome.graph();
+        // Two operations, one of them two-stage: three nodes.
+        assert_eq!(graph.operation_count(), 2);
+        assert_eq!(graph.node_count(), 3);
+        let member = rms_member(&outcome);
+        assert_eq!(graph.member_stage_count(member), 2);
+        let topology = graph.stage_topology.get(&member).unwrap();
+        // One handed value, published by the fold and read by the scale pass,
+        // one element per folded row.
+        assert_eq!(topology.intermediates.len(), 1);
+        let handed = topology.intermediates[0];
+        assert_eq!(handed.producer_stage, 0);
+        assert_eq!(handed.consumer_stage, 1);
+        let synthetic = graph.value(handed.value).unwrap();
+        assert_eq!(synthetic.shape, Shape::from_dims([2]));
+        assert_eq!(synthetic.synthetic_site, Some((member, 0)));
+        // The value operand is read by both stages; the weight by the pass alone.
+        let reads = |position: u32| -> Vec<u32> {
+            (0..2)
+                .filter(|stage| graph.stage_reads_operand(member, *stage, position))
+                .collect()
+        };
+        assert_eq!(
+            reads(0),
+            vec![0, 1],
+            "the fold squares the value and the pass scales it"
+        );
+        assert_eq!(reads(1), vec![1], "the weight belongs to the pass alone");
+        // Every node round-trips through its atom, and coordinates past the
+        // topology refuse rather than alias.
+        for node in 0..graph.node_count() {
+            let atom = graph.node_atom(node).unwrap();
+            assert_eq!(graph.atom_node(atom).unwrap(), node);
+        }
+        assert!(graph.node_atom(graph.node_count()).is_err());
+        assert!(
+            graph
+                .atom_node(SemanticStage::at(SemanticMemberId(member), StageOrdinal(2)))
+                .is_err(),
+            "a stage the realization does not have is not an atom"
+        );
+    }
+
+    #[test]
+    fn staged_candidates_cover_stages_and_split_boundaries_carry_the_handed_value() {
+        let program = rms_norm_program();
+        let outcome = form_staged(&program);
+        let graph = outcome.graph();
+        let member = rms_member(&outcome);
+        let handed = graph.stage_topology.get(&member).unwrap().intermediates[0].value;
+        let fold = SemanticStage::at(SemanticMemberId(member), StageOrdinal(0));
+        let pass = SemanticStage::at(SemanticMemberId(member), StageOrdinal(1));
+
+        let candidate_for = |atoms: &[SemanticStage]| {
+            outcome
+                .candidates()
+                .iter()
+                .find(|candidate| candidate.members() == atoms)
+        };
+
+        // The fold alone: reads the value input, not the weight, and retains
+        // the handed value for the uncovered pass.
+        let fold_alone = candidate_for(&[fold]).expect("the fold's singleton is enumerated");
+        assert_eq!(
+            fold_alone.retained_outputs().len(),
+            1,
+            "the fold publishes the handed value and nothing else"
+        );
+        assert_eq!(
+            fold_alone.retained_outputs()[0].value,
+            SemanticValueId(handed)
+        );
+        assert!(
+            fold_alone
+                .boundary_inputs()
+                .iter()
+                .all(|value| value.0 != handed),
+            "the fold does not read what it publishes"
+        );
+        let weight_ordinal = graph.operation(member).unwrap().operands[1];
+        assert!(
+            fold_alone
+                .boundary_inputs()
+                .iter()
+                .all(|value| value.0 != weight_ordinal),
+            "the weight is not a boundary of a candidate that never reads it"
+        );
+
+        // The pass alone: reads the value, the weight, and the handed value.
+        let pass_alone = candidate_for(&[pass]).expect("the pass's singleton is enumerated");
+        assert!(
+            pass_alone
+                .boundary_inputs()
+                .contains(&SemanticValueId(handed)),
+            "the pass reads the handed value across the stage boundary"
+        );
+        assert!(
+            pass_alone
+                .boundary_inputs()
+                .contains(&SemanticValueId(weight_ordinal))
+        );
+
+        // Both stages together: the handed value is internal — neither boundary
+        // nor retained — and the occurrence's real result is retained for the
+        // outside multiply.
+        let whole = candidate_for(&[fold, pass]).expect("the whole occurrence is enumerated");
+        assert!(
+            whole
+                .boundary_inputs()
+                .iter()
+                .chain(whole.retained_outputs().iter().map(|output| &output.value))
+                .all(|value| value.0 != handed),
+            "a handed value both published and consumed inside crosses no boundary"
+        );
+        assert_eq!(whole.retained_outputs().len(), 1);
+
+        // The fold cannot fuse with the downstream multiply around the pass:
+        // the value path fold -> pass -> multiply re-enters, so the set is
+        // non-convex and formation never emits it.
+        let multiply_node = (0..graph.node_count())
+            .find(|node| {
+                graph.node_atom(*node).is_ok_and(|atom| {
+                    atom.member().0 != member
+                        && !graph
+                            .operation(atom.member().0)
+                            .unwrap()
+                            .operands
+                            .is_empty()
+                })
+            })
+            .expect("the multiply consumes operands");
+        let fold_node = graph.atom_node(fold).unwrap();
+        let mut set = [fold_node, multiply_node];
+        set.sort_unstable();
+        let formed = form_candidate(
+            graph,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed(),
+            &set,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                formed,
+                Err(RegionRejection::NonConvex | RegionRejection::Disconnected)
+            ),
+            "the fold and the downstream consumer cannot enclose the uncovered pass"
+        );
+    }
+
+    #[test]
+    fn the_stage_trailer_separates_what_shared_bytes_would_conflate() {
+        let program = rms_norm_program();
+        let staged = form_staged(&program);
+        let member = rms_member(&staged);
+        let fold = SemanticStage::at(SemanticMemberId(member), StageOrdinal(0));
+        let pass = SemanticStage::at(SemanticMemberId(member), StageOrdinal(1));
+        let content_of = |outcome: &RegionFormationOutcome, atoms: &[SemanticStage]| {
+            outcome
+                .candidates()
+                .iter()
+                .find(|candidate| candidate.members() == atoms)
+                .map(|candidate| candidate.content().as_bytes().to_vec())
+        };
+        let fold_bytes = content_of(&staged, &[fold]).unwrap();
+        let pass_bytes = content_of(&staged, &[pass]).unwrap();
+        let whole_bytes = content_of(&staged, &[fold, pass]).unwrap();
+        assert_ne!(fold_bytes, pass_bytes);
+        assert_ne!(fold_bytes, whole_bytes);
+        assert_ne!(pass_bytes, whole_bytes);
+
+        // The hazard the trailer condition exists for: a candidate covering
+        // only the *first* stage of the staged occurrence must not share bytes
+        // with a law-blind candidate over the same operation — the two compute
+        // different things. The law-blind formation is the stand-in for a
+        // program whose registry carries no law for the family.
+        let blind = form(&program);
+        let blind_bytes = content_of(&blind, &[SemanticStage::first(SemanticMemberId(member))])
+            .expect("the law-blind formation covers the member single-stage");
+        assert_ne!(
+            blind_bytes, fold_bytes,
+            "first-stage-only bytes must not collide with single-stage bytes"
+        );
+        assert_ne!(blind_bytes, whole_bytes);
+    }
+
+    #[test]
+    fn an_unstaged_program_forms_identically_with_and_without_the_law_authority() {
+        for program in [
+            serial_sum_program(),
+            diamond_program(),
+            shared_producer_program(),
+        ] {
+            let blind = form(&program);
+            let staged = form_staged(&program);
+            assert_eq!(
+                blind.candidates().len(),
+                staged.candidates().len(),
+                "a program with no staged member enumerates the same candidates"
+            );
+            for (left, right) in blind.candidates().iter().zip(staged.candidates()) {
+                assert_eq!(left, right, "every candidate is byte-identical");
+            }
+        }
+    }
+
+    #[test]
+    fn staged_candidates_rederive_from_their_exact_atoms() {
+        let program = rms_norm_program();
+        let outcome = form_staged(&program);
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed();
+        for candidate in outcome.candidates() {
+            verify_candidate(outcome.graph(), budgets, contract, candidate).unwrap();
+        }
+        let member = rms_member(&outcome);
+        let fold = SemanticStage::at(SemanticMemberId(member), StageOrdinal(0));
+        let pass = SemanticStage::at(SemanticMemberId(member), StageOrdinal(1));
+        // A candidate wearing another atom set's identity is refused: the fold
+        // singleton relabelled as the pass rebuilds to different bytes.
+        let mut forged = outcome
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.members() == [fold])
+            .unwrap()
+            .clone();
+        forged.members = vec![pass];
+        assert!(matches!(
+            verify_candidate(outcome.graph(), budgets, contract, &forged),
+            Err(RegionError::Invalid {
+                rule: "identity",
+                ..
+            })
+        ));
     }
 
     fn member_sets(outcome: &RegionFormationOutcome) -> Vec<Vec<u32>> {

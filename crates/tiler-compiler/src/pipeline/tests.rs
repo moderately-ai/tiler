@@ -4562,7 +4562,7 @@ fn plan_formation(
     semantic: &SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
 ) -> crate::region::RegionFormationOutcome {
-    form_region_candidates(semantic, request.budgets(), request.numerical_contract())
+    crate::region::form_region_candidates(semantic, request.budgets(), request.numerical_contract())
         .expect("the fixture forms regions")
 }
 
@@ -4572,8 +4572,12 @@ fn plan_portfolio(
     request: &crate::request::VerifiedTargetRequest,
 ) -> crate::selection::SelectedPortfolio {
     let mut explain = ExplainWriter::new(request).unwrap();
-    let formation =
-        form_region_candidates(semantic, request.budgets(), request.numerical_contract()).unwrap();
+    let formation = crate::region::form_region_candidates(
+        semantic,
+        request.budgets(),
+        request.numerical_contract(),
+    )
+    .unwrap();
     let root = test_root(&mut explain);
     enumerate_complete_plans(
         semantic,

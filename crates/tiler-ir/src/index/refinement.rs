@@ -778,6 +778,16 @@ impl ResolvedIndexRealization {
     pub const fn subject(&self) -> &IndexRefinementSubject {
         &self.subject
     }
+    /// Returns whether this law realizes a region *sequence*.
+    ///
+    /// The cheap half of [`Self::realize_sequence`]'s answer: a consumer that
+    /// only wants single-region occurrences filtered out asks this before
+    /// paying for a realization it would discard.
+    #[must_use]
+    pub const fn realizes_region_sequence(&self) -> bool {
+        self.law.realizes_region_sequence()
+    }
+
     /// Realizes the resolved law's canonical region sequence for its subject.
     ///
     /// The same realization refinement performs internally when it compares a

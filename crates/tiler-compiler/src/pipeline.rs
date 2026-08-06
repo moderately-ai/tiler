@@ -77,7 +77,7 @@ use crate::program::{
 };
 use crate::region::{
     REGION_FORMATION_SUBJECT, RegionCandidate, RegionError, RegionFormationOutcome,
-    form_region_candidates,
+    form_region_candidates_with_realizations,
 };
 #[cfg(test)]
 use crate::request::verify_planned_request;
@@ -1688,15 +1688,19 @@ fn compile_target_with_explain(
     // `EnumerateRegionCandidates` runs immediately after normalization and only
     // proposes regions. Cover selection, implementation choice, index lowering,
     // physical planning, and costing all remain later authorities.
-    let formation =
-        form_region_candidates(semantic, verified.budgets(), verified.numerical_contract())
-            .map_err(|source| {
-                failure_at_source(
-                    source.into(),
-                    ExplainStage::RegionFormation,
-                    record_cause(semantic_record),
-                )
-            })?;
+    let formation = form_region_candidates_with_realizations(
+        semantic,
+        verified.budgets(),
+        verified.numerical_contract(),
+        verified.realization_laws(),
+    )
+    .map_err(|source| {
+        failure_at_source(
+            source.into(),
+            ExplainStage::RegionFormation,
+            record_cause(semantic_record),
+        )
+    })?;
     let region_records = explain_step(
         formation
             .record(explain, semantic_record)
