@@ -1,7 +1,7 @@
 ---
 id: apply-the-declared-numerical-conformance-on-every-reference-evaluation-path
 title: Apply the declared numerical conformance on every reference evaluation path
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [derive-the-oracle-for-a-permitted-divergence-candidate, drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reference, conformance]
+claimed_from: todo
+assignee: agent-conformance-thread
+lease_expires_at: 1785989597
 ---
 ## User-visible outcome
 
