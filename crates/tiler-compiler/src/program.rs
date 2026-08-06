@@ -949,6 +949,21 @@ impl AttributionFailure {
 /// and `named_output_attribution_can_say_no_in_every_direction` is what proves
 /// meanwhile that they can say no.
 ///
+/// **[`AttributionFailure::MaterializesAndPublishes`] is the arm nearest the
+/// surface, and it is one recognizer rule away rather than a profile away.**
+/// Disabling `check_output_cover`'s `output-partition-overlap` against a governed
+/// published-and-consumed program — publish `scaled`, reduce it into `reduced` —
+/// reaches this arm directly: recognition, region formation, cover enumeration
+/// and selection all succeed, and the cover legally places the scaling region as
+/// both the producer of the edge the fold reads and the retainer of `scaled`.
+/// Admitting it in turn reaches [`derive_dependencies`]'s `internal-unwritten`,
+/// because that region's one owning write goes to the edge and nothing writes the
+/// published value. That missing second dispatch is the publishing copy stage,
+/// and supplying it is a widening of this crate's physical and frontier layers
+/// before it is one of `tiler_ir::program`'s uncovering-stage account.
+/// `crate::pipeline::conformance`'s
+/// `a_published_and_consumed_intermediate_refuses_by_name` records the order.
+///
 /// # Errors
 ///
 /// Returns the [`AttributionFailure`] naming which pairing obligation failed and
