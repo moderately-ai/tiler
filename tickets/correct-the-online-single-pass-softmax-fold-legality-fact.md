@@ -1,7 +1,7 @@
 ---
 id: correct-the-online-single-pass-softmax-fold-legality-fact
 title: Correct the online single-pass softmax fold-legality fact
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [name-the-elementary-identity-rewrite-dimension, connect-certified-rounding-error-bounds-to-rewrite-permissions, reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, identity, correctness]
-claimed_from: todo
-assignee: agent-softmax-fact
-lease_expires_at: 1785978598
 ---
 ## User-visible outcome
 
