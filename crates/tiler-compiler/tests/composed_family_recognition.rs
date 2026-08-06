@@ -38,27 +38,37 @@
 //! class. Asserting them together is the point: the decline reads the adjacency
 //! and not the composition.
 //!
-//! # Where the boundary still is: the two structural families
+//! # Where the boundary was: the two structural families
 //!
 //! Recognition generalized over the *expression* vocabulary, and the families
-//! that compute nothing did not come with it. `tiler::reindex-f32@1` and
-//! `tiler::broadcast-f32@1` each carry registered semantics and a registered
-//! index-access lowering capability, and each resolves a `CoordinateRelation`
-//! fusion role — but `tiler_ir::schedule::LogicalAccess` spells no reindex map
-//! and no widening broadcast, so a region containing either cannot be written
-//! down. Both walls are pinned here, each beside an elementary neighbour that
-//! differs from it in one occurrence, so `operation-set` is attributable to the
-//! missing *access relation* rather than to arity or registration.
-//! `admit-the-structural-families-into-the-scheduled-region-vocabulary` owns the
-//! widening that flips both assertions.
+//! that compute nothing did not come with it: `tiler::reindex-f32@1` and
+//! `tiler::broadcast-f32@1` each carried registered semantics, a registered
+//! index-access lowering capability, and a `CoordinateRelation` fusion role, but
+//! `tiler_ir::schedule::LogicalAccess` spelled no reindex map and no widening
+//! broadcast, so a region containing either could not be written down and both
+//! refused under `operation-set`. Two assertions here pinned those walls.
+//!
+//! `admit-the-structural-families-into-the-scheduled-region-vocabulary` landed
+//! `LogicalAccess::ReindexBijection` and `LogicalAccess::BroadcastReplication`
+//! and both assertions are flipped: each structural program now compiles, and
+//! each still travels with the elementary neighbour it differs from in one
+//! occurrence. **The pairs are kept rather than retired, and their purpose
+//! inverts.** They no longer attribute a refusal; they show that a family
+//! contributing *addressing* and a family contributing *arithmetic* reach a
+//! region by different routes, which is what makes the two refusals this file
+//! still carries — a structural operand the region would have to materialize,
+//! and two outputs one walk would publish — attributable to their own rules
+//! rather than to the structural family being present at all.
 //!
 //! # What is deliberately not asserted here
 //!
 //! Bit-level agreement with the reference evaluator is the in-crate conformance
-//! work's, because it needs the crate-private lowering registry. Which *plan*
-//! wins is `selection`'s. What this file does record about plans is a
-//! vocabulary fact rather than a preference: a general prologue has no fused
-//! single-region alternative at all, because
+//! work's, because it needs the crate-private lowering registry;
+//! `pipeline::tests::a_broadcast_reaches_a_kernel_matching_the_reference_evaluator`
+//! and its reindex siblings are where the programs below are compared against
+//! the oracle. Which *plan* wins is `selection`'s. What this file does record
+//! about plans is a vocabulary fact rather than a preference: a general prologue
+//! has no fused single-region alternative at all, because
 //! `ScalarProgram::FusedMultiplyAddSerialSum` applies one scale and one bias per
 //! contributor and cannot spell `(a * b) + c`.
 
@@ -227,16 +237,14 @@ fn composed_region_with_an_activation() -> SemanticProgram {
 ///
 /// `sum(reverse(a) + c, axis 1)`: the activation becomes `tiler::reindex-f32@1`
 /// over an axis reversal, which preserves the shape, so the two programs differ
-/// in exactly one occurrence's operation and in nothing else. The reindex is
-/// registered semantics *and* a registered index-access lowering capability, so
-/// what refuses it is the region vocabulary — `LogicalAccess` has no reindex map
-/// — rather than an unknown operation.
+/// in exactly one occurrence's operation and in nothing else.
 ///
-/// **The pair is what makes the rule attributable.** Both perturbed occurrences
-/// are registered unary families with registered lowering capabilities; one
-/// compiles and one refuses, so `operation-set` reads which vocabulary is
-/// missing rather than the family's arity or its registration.
-fn composed_region_with_an_unspellable_occurrence() -> SemanticProgram {
+/// **The pair is what makes each program's route attributable.** Both perturbed
+/// occurrences are registered unary families with registered lowering
+/// capabilities, and both now compile — but by different routes: the
+/// activation's per-point body is *projected* into the expression vocabulary,
+/// while the reindex contributes a read map and no body at all.
+fn composed_region_with_a_structural_occurrence() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
         .input::<F32>(InputKey::new("a").unwrap(), domain())
@@ -348,10 +356,14 @@ fn weighted_by_an_activation() -> SemanticProgram {
 /// is the `[1024]`-against-`[T, 1024]` shape of the RMS-normalization weight
 /// multiply — 113 of the pinned workload's 197 broadcast occurrences. It is the
 /// program `reach-a-verified-kernel-through-the-structural-families` names, and
-/// it refuses: `LogicalAccess` carries `ScalarBroadcast`, a rank-zero operand
-/// read once, and no relation that reads a rank-one operand across a widened
-/// axis. `admit-the-structural-families-into-the-scheduled-region-vocabulary`
-/// owns the widening that flips this assertion.
+/// it compiles: `LogicalAccess::BroadcastReplication` reads the rank-one operand
+/// across the widened axis, where the older `ScalarBroadcast` could only read a
+/// rank-zero operand once.
+///
+/// This file asserts that it is *recognized*; its result is bit-compared against
+/// the reference evaluator by
+/// `pipeline::tests::a_broadcast_reaches_a_kernel_matching_the_reference_evaluator`,
+/// which is the same program at the same extents.
 fn weighted_by_a_broadcast() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let activations = builder
@@ -491,24 +503,26 @@ fn a_reduction_over_a_declared_input_refuses_under_the_prologue_rule() {
     }
 }
 
-/// Perturbing one occurrence's operation set fires the rule that names it.
+/// A structural occurrence beside an elementary one compiles as a mapped read.
 ///
 /// The perturbed program differs from [`composed_region_with_an_activation`] in
-/// exactly one occurrence, and that occurrence is the only reason it refuses.
-/// The rule is `operation-set` — the property that was not recognized — and the
-/// refusal precedes any target-qualified trace, which `compile_under` asserts.
+/// exactly one occurrence. It used to refuse under `operation-set` because
+/// `LogicalAccess` spelled no reindex map; with
+/// `LogicalAccess::ReindexBijection` landed it compiles, and this is the
+/// assertion that records the flip.
 ///
-/// **Both halves run under every contract, and the pair is the assertion.** Two
-/// registered unary families with registered index-access lowering capabilities
-/// sit in the same position of the same program; the one whose per-point body
-/// the expression vocabulary can express compiles, and the one whose *access
-/// relation* it cannot express refuses. Without the accepted half this would be
-/// consistent with the boundary refusing every unary family, which is what it
-/// used to do.
+/// **Both halves run under every contract, and the pair is still the
+/// assertion.** Two registered unary families with registered index-access
+/// lowering capabilities sit in the same position of the same program, and each
+/// reaches a region by its own route — one by projecting a per-point body into
+/// the expression vocabulary, one by contributing a coordinate map and no body.
+/// Keeping the accepted half is what makes the structural half's *contract*
+/// behaviour readable: they resolve differently under the contraction-permitting
+/// contract, and only a pair shows why.
 #[test]
-fn perturbing_one_occurrence_out_of_the_vocabulary_refuses_by_name() {
+fn a_structural_occurrence_beside_an_elementary_one_compiles_as_a_mapped_read() {
     let accepted = composed_region_with_an_activation();
-    let perturbed = composed_region_with_an_unspellable_occurrence();
+    let perturbed = composed_region_with_a_structural_occurrence();
     assert_eq!(accepted.operation_count(), 3);
     assert_eq!(perturbed.operation_count(), 3);
 
@@ -576,35 +590,32 @@ fn a_structural_occurrence_over_a_computed_value_refuses_by_name() {
     }
 }
 
-/// The broadcast that widens a declared weight refuses under the same rule.
+/// The broadcast that widens a declared weight compiles as a replication
+/// relation.
 ///
-/// **This is the wall in front of the workload's dominant structural
-/// occurrence, and until now it was observed nowhere at the compile boundary.**
-/// The sibling assertions in this file and in `multi_input_elementwise_boundary`
-/// pin `tiler::reindex-f32@1`; `tiler::broadcast-f32@1` reaches the request
-/// boundary only through `fusion_legality`'s in-crate derivation, which proves a
-/// region containing it is *legal* to fuse and says nothing about whether one
-/// can be spelled. So the family the pinned workload cannot be written without
-/// had its refusal asserted by no test, and a widening that admitted the
-/// occurrence without a `LogicalAccess` relation would have had nothing here to
-/// contradict it.
+/// **This is the workload's dominant structural occurrence, and until the
+/// vocabulary landed it was the wall in front of it.** `tiler::broadcast-f32@1`
+/// used to reach the request boundary only through `fusion_legality`'s in-crate
+/// derivation, which proves a region containing it is *legal* to fuse and says
+/// nothing about whether one can be spelled; the trio below was added to observe
+/// its refusal, and now records its admission.
 ///
-/// **The trio is the assertion.** `a * w` compiles, so neither the widened
-/// domain nor the two declared inputs is what refuses. `a * silu(w)` compiles,
-/// so a registered unary family with a registered index-access lowering
-/// capability in that exact position is admitted — which is what leaves
-/// `operation-set` reading the missing *access relation* rather than the
-/// family's arity, its registration, or its position. `a * broadcast(w)`
-/// refuses, under every contract, before any target-qualified trace exists.
+/// **The trio is still the assertion.** `a * w` compiles, so neither the widened
+/// domain nor the two declared inputs is what decides the widened row. `a *
+/// silu(w)` compiles, so a registered unary family with a registered
+/// index-access lowering capability in that exact position is admitted. `a *
+/// broadcast(w)` compiles under every contract, and it tracks the *plain
+/// control* rather than the activation — which is the readable difference: a
+/// broadcast introduces no arithmetic, so it carries no multiply/add adjacency
+/// for the contraction-permitting contract to decline.
 ///
-/// The activation declines under the contraction-permitting contract for the
-/// reason the module header states — its body carries the multiply/add adjacency
-/// — and it declines as `NoFeasiblePlan`, *after* recognition admitted it, which
-/// is itself the evidence that recognition admitted it. The plain control
-/// carries no such adjacency and compiles under all five, so the accepted half
-/// of the pair never stands alone.
+/// The activation declines under that contract for the reason the module header
+/// states — its body carries the multiply/add adjacency — and it declines as
+/// `NoFeasiblePlan`, *after* recognition admitted it, which is itself the
+/// evidence that recognition admitted it. The plain control carries no such
+/// adjacency and compiles under all five.
 #[test]
-fn a_broadcast_widening_a_declared_weight_refuses_under_the_vocabulary_rule() {
+fn a_broadcast_widening_a_declared_weight_compiles_as_a_replication_relation() {
     let control = weighted_by_a_declared_tensor();
     let accepted = weighted_by_an_activation();
     let widened = weighted_by_a_broadcast();

@@ -28,7 +28,7 @@ A program stating `tiler::silu-f32@1` reaches the optimizer and compiles, instea
 
 - Refinement stays the authority that proves a provider's region realizes its occurrence. Whichever route is chosen, the compiler must not restate a provider's per-point arithmetic as its own.
 - Each family's registered accuracy contract must reach whatever the region records, or the compiled program would make a tolerance claim nothing carries.
-- Until it lands, `operation-set` remains the refusal, and the `a_family_outside_the_expression_vocabulary_refuses_with_a_typed_reason` test in `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` is what keeps it observed. **That test now carries both halves**: the activation compiles and the reindex refuses, under the same request, so the rule stays attributable after the boundary moved.
+- Until it lands, `operation-set` remains the refusal, and the `a_family_outside_the_expression_vocabulary_refuses_with_a_typed_reason` test in `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` is what keeps it observed. **That test now carries both halves**: the activation compiles and the reindex refuses, under the same request, so the rule stays attributable after the boundary moved. **Citation repointed 2026-08-06** — that test is now `a_family_with_no_node_of_its_own_compiles_by_projection_or_by_addressing`, renamed by [`reach-a-verified-kernel-through-the-structural-families`](reach-a-verified-kernel-through-the-structural-families.md) because its reindex half stopped refusing once `LogicalAccess::ReindexBijection` landed. The sentence above records what was true while this ticket ran and is left standing for that reason; only the symbol is repointed.
 
 ## Closes when
 
