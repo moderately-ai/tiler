@@ -1,7 +1,7 @@
 ---
 id: emit-the-structural-region-on-metal
 title: Emit the structural region on Metal
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [reach-a-verified-kernel-through-the-structural-families, admit-the-structural-families-into-the-scheduled-region-vocabulary, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, structural, backend]
+claimed_from: todo
+assignee: agent-metal-structural
+lease_expires_at: 1785994006
 ---
 ## User-visible outcome
 
