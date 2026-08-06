@@ -1,7 +1,7 @@
 ---
 id: reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller
 title: Reassess the distributivity decline against the online-softmax rescaling caller
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [connect-certified-rounding-error-bounds-to-rewrite-permissions, decide-whether-to-admit-a-distributivity-permission, decide-whether-distributivity-directions-share-one-permission, derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, optimizer, decision]
-claimed_from: todo
-assignee: agent-distrib-reassess
-lease_expires_at: 1785983286
 ---
 ## User-visible outcome
 
@@ -175,3 +172,7 @@ Per the dispatch's stop conditions, none of these was closed by a new measuremen
 **If Tom's answer is to admit, the recommendation is that it be outcome 4 taken as one step, never outcome 3.** Outcome 3 pays the full identity-domain price for the smaller gain, leaves the softmax fold refused, and re-opens the directions question for a rewrite nobody is asking for — while ground 2, which survives entirely, says the pinned workload asks for no contraction-chain regroup.
 
 **Proposal — what a recorded reaffirmation should say**, offered so the ticket's Closes-when is discharged concretely and not as a gesture. Either an amendment to ADR 0095 or a superseding record that (a) states that the "No caller exists" ground met a derived caller on 2026-08-06 and records what replaced it — that no caller can *spend* a distributivity permission alone while ADR 0101's sibling dimension is unpermissioned; (b) carries the price, `(V-1)(u + eps_exp)` first order and `2^-14` at `V = 512`, so the next reader does not re-derive it; (c) keeps the contraction-chain trigger unchanged as one reopening condition, since ground 2 is undisturbed; and (d) adds a second reopening condition written on the actual fact pattern — that the two permissions be considered *together* when a rewrite rule with a derived bound instantiable at a schedulable fold shape is ready to consume them, which is the point at which ground 3's "admitting later is additive" stops being an argument for waiting. Whether that second condition is worded that way is Tom's; the point is that a reaffirmation whose trigger still names only contraction chains would leave the next reader re-deriving this packet from scratch, which is what the ticket forbids.
+
+## Decided — reaffirmed and recorded
+
+Tom answered on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator: **reaffirm the decline, with the reaffirmation recorded** — the packet's recommendation. Executed in the same change: ADR 0095 gained a "Reaffirmation — 2026-08-06" section carrying the answered ground and its narrowed replacement, the `(V-1)(u + eps_exp)` price with its `2^-14` instantiation, the unchanged contraction-chain trigger, and the second joint reopening condition; the Numerical semantics reopening-trigger sentence was extended with the same condition; and the elementary-identity permission deferral's trigger log records this resolution as not-fired per its own text. The Closes-when is discharged: Tom has answered and ADR 0095's reasoning is amended with what replaced ground 1.
