@@ -22,7 +22,13 @@ use crate::target::honourability::NumericalRefusalEvidence;
 // Schema v9 appends the complete refusing honourability fact — its declared
 // behaviour, means, availability phase, authority, validity scope, versioned
 // authority identity, and governed-guarantee or measured
-// compiler-build/environment basis — to every unhonourable record. Under v8 two
+// compiler-build/environment basis — to every unhonourable record. v9 also
+// carries event tag 13, the complete synchronization-realization subject, which
+// renderer v7 spells on its own `synchronization:` line; that tag was appended
+// under the already-published v9 rather than by moving it. No previously encoded
+// trace's bytes move — every earlier record keeps its tag and field layout — but
+// it does mean a v9 trace's event vocabulary is not decided by the version alone.
+// Under v8 two
 // profiles refusing the same behaviour on different measured builds produced
 // identical trace identities. v8 appended exact prepared-entry deferred target
 // requirements; v7 appends the bits quantity used for exact widths; v6 adds the
@@ -1219,11 +1225,14 @@ impl FailureDescriptor {
 impl ExplainWriter {
     pub(crate) fn new(request: &VerifiedTargetRequest) -> Result<Self, ExplainError> {
         let subject = CompilationSubject::from_request(request);
-        // Every authority whose rules this compilation may attribute to a
-        // provider: every provider the request's installed lowering registry
-        // admits, plus the compiler's own governed physical-implementation and
-        // fusion-capability providers. A rule attributed to any other provider is
-        // a provenance forgery and fails closed (ADR 0072).
+        // The authorities this compilation may attribute a rule to *besides* its
+        // own: every provider the request's installed lowering registry admits,
+        // plus the compiler's governed physical-implementation and
+        // fusion-capability providers. The compiler's builtin authority is not
+        // listed here — `push` admits `ProviderRef::builtin` ahead of this
+        // membership test — so the closed set is this list plus that one
+        // authority. A rule attributed to any provider outside that set is a
+        // provenance forgery and fails closed (ADR 0072).
         let mut allowed_providers = vec![
             ProviderRef::registered(&crate::frontier::GovernedPhysicalProvider::identity())?,
             ProviderRef::registered(

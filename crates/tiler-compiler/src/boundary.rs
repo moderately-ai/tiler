@@ -84,8 +84,11 @@
 //! than being silently approximated: a requirement no guarantee discharges
 //! becomes an [`UnsatisfiedProperty`], never a satisfied one at a higher cost.
 //!
-//! Every item here is a reviewed *draft* boundary, not a stable compiler API,
-//! until Tom accepts the exact interface (ADR 0074 convention 7).
+//! Nothing here is a compiler API: `boundary` is a private module carrying no
+//! `pub` item and no re-export, so this is a crate-internal draft vocabulary.
+//! The draft discipline still holds — every shape below is provisional and
+//! carries no compatibility story — and the acceptance ADR 0074 convention 7
+//! requires is owed at the point any of it is first exported, not here.
 
 use std::fmt;
 

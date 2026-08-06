@@ -391,7 +391,7 @@ fn carry_all(
 /// the workgroup bound it depends on is a *deferred* predicate the compiler
 /// minted, which the neutral facade carries from the plan and no backend
 /// restates. These are exactly the three statements
-/// [ADR 0090](../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+/// [ADR 0090](../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
 /// item 11 names as not yet neutral; they are now this backend's answer rather
 /// than the orchestrator's assumption.
 ///

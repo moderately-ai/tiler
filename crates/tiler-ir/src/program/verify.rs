@@ -1,5 +1,5 @@
-//! Whole-program structural, coverage, dependency, storage, and lifetime
-//! verification.
+//! Whole-program coverage, dependency, split, storage, lifetime, output, ABI,
+//! and routing-commit verification.
 //!
 //! Region-local and kernel-local verification is necessary but not sufficient:
 //! it cannot see fan-out lifetimes, output completeness, cross-stage storage, or

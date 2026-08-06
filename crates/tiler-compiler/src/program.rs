@@ -353,13 +353,16 @@ pub(crate) struct AssemblyStage {
     /// The occurrences this stage covers, taken from the cover region it
     /// realizes.
     ///
-    /// Empty for every pass of a subprogram after the first, which is the one
-    /// documented exception: the first pass already claims the occurrences the
-    /// passes jointly realize, and claiming them twice would double-cover the
-    /// semantic graph. Whole-program verification admits the uncovering pass
-    /// only because [`KernelProgramBuilder::push_partial_reduction`] declares
-    /// the split; without that declaration it is a stage computing nothing and
-    /// `UncoveringStage` rejects it.
+    /// Empty for every pass of a subprogram after the first: the first pass
+    /// already claims the occurrences the passes jointly realize, and claiming
+    /// them twice would double-cover the semantic graph. Whole-program
+    /// verification admits an uncovering pass only when a declaration accounts
+    /// for it, and this profile has exactly two such declarations — the split
+    /// [`KernelProgramBuilder::push_partial_reduction`] states, whose partial
+    /// pass already claims the reduction both passes realize, and the copy
+    /// [`KernelProgramBuilder::push_publishing_copy`] states, whose source stage
+    /// already claims the occurrences that computed the published value. Without
+    /// either, it is a stage computing nothing and `UncoveringStage` rejects it.
     pub(crate) coverage: Vec<SemanticMemberId>,
     pub(crate) bindings: Vec<AssemblyBinding>,
 }

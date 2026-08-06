@@ -103,9 +103,10 @@ pub(crate) const RELAXED_APPROXIMATION_ENVELOPE: ApproximationEnvelope =
 /// The key a composed contract carries before one is derived for it.
 ///
 /// A spelling no canonical key can collide with — every derived key opens with
-/// `crate::request::CONTRACT_KEY_DOMAIN` — so a contract that reached admission
-/// without being keyed is refused by name rather than admitted under a plausible
-/// string. Nothing outside [`strict_contract`] writes it.
+/// [`tiler_ir::schedule::F32_NUMERICAL_CONTRACT_KEY_DOMAIN`] or its `bf16`
+/// sibling, and neither of those domains is this string — so a contract that
+/// reached admission without being keyed is refused by name rather than admitted
+/// under a plausible string. Nothing outside [`strict_contract`] writes it.
 pub(crate) const UNKEYED_CONTRACT: &str = "tiler.contract.unkeyed";
 
 /// The dimensions [`tiler_ir::schedule::NumericalRealization`] carries.

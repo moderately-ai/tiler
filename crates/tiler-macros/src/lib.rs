@@ -16,7 +16,7 @@
 //! as one coherent public compiler facade is an undecided boundary owned by
 //! `accept-the-public-compiler-facade-boundary`.
 //!
-//! # The pipeline, and why it is four modules
+//! # The pipeline, and why it is three modules and this file
 //!
 //! An expansion runs `tokens` → `grammar` → `region` → emission, and each step
 //! is separated from the next by what it is allowed to know:
@@ -35,12 +35,16 @@
 //! - emission, below, turns that into tokens, keeping each operand's own span on
 //!   the identifier that names the Rust value it will be supplied from.
 //!
-//! `binding` owns what `sym n;` means, `delivery` owns the artifact-family
-//! policy an expansion states, `numerics` owns the numerical contract it states,
-//! `cache_root` owns where an expansion would look for an expansion cache,
-//! `preflight` owns whether that root can do what the cache's publication
-//! protocol needs, and `eviction` owns when and under what bound that cache is
-//! trimmed.
+//! The remaining eight modules own the facts an expansion states or resolves
+//! around that pipeline. `binding` owns what `sym n;` means, `delivery` owns the
+//! artifact-family policy an expansion states, `family_cfg` owns the versioned
+//! map from a family to the consumer `#[cfg]` predicate that selects it,
+//! `numerics` owns the numerical contract the expansion states, `cache_root`
+//! owns where an expansion would look for an expansion cache, `preflight` owns
+//! whether that root can do what the cache's publication protocol needs,
+//! `eviction` owns when and under what bound that cache is trimmed, and `aot`
+//! owns the expansion-time compile flow that runs between `region` and
+//! `delivery`.
 //!
 //! # What an invocation evaluates to
 //!

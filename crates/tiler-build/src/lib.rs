@@ -15,7 +15,7 @@
 //! # The two surfaces here that are not Metal's
 //!
 //! [`assemble_plan_artifact`] is the backend-neutral build-time *assembly* seam
-//! [ADR 0090](../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+//! [ADR 0090](../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
 //! item 11 promotes. It names no backend and takes no Metal type; a producer
 //! supplies its delivery-ordered payload run and, per stage, the binding
 //! transports, the zero-work dispatch policy, and the launch preconditions,

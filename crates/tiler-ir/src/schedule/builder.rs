@@ -6,8 +6,10 @@
 //! [`VerifiedScheduledRegion`]. The verifier proves domain coverage, output
 //! ownership and race freedom, tail and launch legality, bounds-proof
 //! refinement, reduction contributor and order legality, numerical/access
-//! agreement, and zero-domain behaviour. No later cost or feasibility query can
-//! repair a schedule this verifier rejects.
+//! agreement, zero-domain behaviour, and — for a cooperative tile — its
+//! participant space, staging dataflow, and the synchronization realization its
+//! visibility and anti-dependency edges require. No later cost or feasibility
+//! query can repair a schedule this verifier rejects.
 
 use super::cooperative::{
     AntiDependencyEdge, ContributorArrival, CooperativeTile, ParticipantRange, ParticipantSpace,
@@ -945,8 +947,10 @@ fn verify_access_and_semantics(
     // Every arm below differs in what it reads and agrees on what it writes.
     // The read obligation is per family, because a family's scalar program is
     // what decides which tensor holds its contributors — three of these four
-    // carry a prologue that reads the original input, and the bare sum carries
-    // none. The write obligation is [`CommittedTensor::CoverAssigned`] at all
+    // bind the first input tensor, two because they carry a prologue over the
+    // original input and the extrema fold because its pass reads the original
+    // scores, while the bare sum reads whichever tensor holds its declared
+    // contributor domain. The write obligation is [`CommittedTensor::CoverAssigned`] at all
     // four, because no fold's algebra distinguishes committing the caller's
     // answer from committing a value a later region reads, so widening one arm
     // and not its siblings would state a difference between them that does not
@@ -1828,8 +1832,12 @@ fn verify_cooperative_tile(tile: &CooperativeTile) -> Result<(), ScheduledRegion
             addressed_slots(space, read.span, staging.slots)?;
             // Coverage above already proved every in-range slot has a writer, so
             // what remains is the *ordering*: the writer must be in an earlier
-            // phase, or the read observes values its own phase is still
-            // producing and no synchronization point could ever separate them.
+            // phase of the same round, or the read observes values its own phase
+            // is still producing and no synchronization point could ever
+            // separate them. A loop-carried tile does not widen this. Admitting
+            // a same- or later-phase writer would leave the read observing the
+            // previous round's value, which the first round has not written at
+            // all.
             if !tile.phases.iter().any(|producer| {
                 producer.id < phase.id
                     && producer
@@ -3284,8 +3292,8 @@ mod tests {
     /// Completing the encoding over both subnormal dimensions and re-encoding
     /// each permission as a tagged value changed these bytes. Pinning them
     /// keeps a later reordering or omission from slipping past the distinctness
-    /// test above, which only proves that the six realizations differ from each
-    /// other.
+    /// test above, which only proves that its eleven realizations differ from
+    /// each other.
     #[test]
     fn the_strict_f32_region_has_its_recorded_canonical_identity() {
         let verified = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6)
@@ -4733,7 +4741,7 @@ mod tests {
 
     /// A split whose product does not cover the contributor sequence rejects.
     ///
-    /// The two cases reach different rules, and both are the right one. A split
+    /// The cases reach two different rules, and both are the right one. A split
     /// that changes the *partition count* also changes the partial tensor the
     /// region iterates, so its bounds proof stops refining its access first; a
     /// split that keeps the count and misstates the per-partition share reaches
@@ -4768,7 +4776,8 @@ mod tests {
                 },
                 ScheduledRegionDiagnostic::NumericalOrAccessRefinement,
             ),
-            // The same count, four covered where the access supplies six.
+            // The same partition count, three covered where the access supplies
+            // six.
             (
                 ContributorPartition {
                     partitions: 3,

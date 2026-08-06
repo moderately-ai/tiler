@@ -2188,8 +2188,11 @@ fn map_schedule_build_error(error: &ScheduledRegionBuildError, region: RegionId)
 /// **The subject is a list, so the binding is a search with no fallback.** A
 /// region binds when it binds against *some* declared output's recognized
 /// partition; a region that binds against none is rejected, and the reported
-/// cause is the first output's, which is the only one there is for a program the
-/// request boundary admits. Nothing here weakens what a binding proves: each
+/// cause is the refusal of the first declared output. The request boundary
+/// admits ordered multi-output programs, so a region that binds against none has
+/// one refusal per declared output and the search reports the first in
+/// declaration order rather than synthesizing a combined cause. Nothing here
+/// weakens what a binding proves: each
 /// candidate is checked whole, so admitting a region still requires it to be the
 /// exact realization of one recognized partition rather than a plausible one.
 fn verify_region_subject_binding(
