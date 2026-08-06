@@ -68,11 +68,21 @@ pub fn exp_f32_scalar_op() -> ScalarOpKey {
 
 /// Returns the governed per-point `f32` reciprocal-square-root scalar operation key.
 ///
-/// **Draft surface, not yet accepted.** The key, its name, its arity, and its
-/// fact record are a concrete draft pending Tom's acceptance of the boundary;
-/// admitting a new scalar operation is a semantic surface, not an
+/// **Accepted boundary** (Tom, 2026-08-06, at the live session's decision
+/// round; relayed and executed by the coordinator rather than witnessed at this
+/// site, and the provenance packet is the `## Accepted 2026-08-06` section of
+/// the closed acceptance node
+/// [`accept-the-governed-reciprocal-square-root-scalar-key`], whose own
+/// "Closes when" routed this label flip here). Acceptance is not stabilization:
+/// this is accepted pre-alpha vocabulary, not a published API with
+/// compatibility obligations.
+///
+/// What was accepted is the key, its name, its arity, and its fact record.
+/// Admitting a scalar operation is a semantic surface rather than an
 /// implementation detail, because the key becomes part of every reached-
 /// definition projection a region carrying it derives an identity from.
+///
+/// [`accept-the-governed-reciprocal-square-root-scalar-key`]: ../../../../tickets/accept-the-governed-reciprocal-square-root-scalar-key.md
 ///
 /// The *precise* reciprocal square root, `1/sqrt(t)`. Like
 /// [`exp_f32_scalar_op`] its result is not a rational function of its operand,
@@ -2820,8 +2830,8 @@ mod governed_fact_tests {
         );
     }
 
-    /// The drafted reciprocal square root is registered and shares the
-    /// elementary fact record with the exponential.
+    /// The reciprocal square root is registered and shares the elementary fact
+    /// record with the exponential.
     ///
     /// **The equality is the claim, not a convenience.** The two keys state one
     /// record because the three fields say the same thing about both: neither
@@ -2882,7 +2892,7 @@ mod governed_fact_tests {
         assert_ne!(
             registry
                 .project_reached([&super::rsqrt_f32_scalar_op()])
-                .expect("the drafted key projects")
+                .expect("the governed reciprocal square root projects")
                 .as_bytes(),
             registry
                 .project_reached([&super::exp_f32_scalar_op()])
@@ -2891,7 +2901,7 @@ mod governed_fact_tests {
         );
     }
 
-    /// The drafted key refuses the two applications a homogeneous unary
+    /// The reciprocal square root refuses the two applications a homogeneous unary
     /// elementary scalar has no meaning for.
     ///
     /// Both perturbations were observed failing before the assertions were

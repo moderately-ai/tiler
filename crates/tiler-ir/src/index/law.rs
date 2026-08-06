@@ -17,8 +17,9 @@ use crate::semantic::{
     BroadcastAxisMapping, BroadcastAxisSource, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
     CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, ContractionIndex,
     ContractionIndexStructure, EncodedComponentRole, F32_CONSTANT_BITS_ATTRIBUTE,
-    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
-    ReindexFormKind, ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
+    RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind,
+    ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
     STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey,
 };
 use crate::shape::{Axis, Extent, Shape};
@@ -31,7 +32,7 @@ use super::{
     VerifiedIndexRegion, VerifiedIndexRegionSequence, add_bf16_scalar_op, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op, constant_f32_scalar_op,
     divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op, multiply_f32_scalar_op,
-    strict_affine_u4_dequantize_scalar_op,
+    rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 
 /// A bounded semantic template for one canonical logical index realization.
@@ -95,19 +96,55 @@ pub enum IndexRealizationLaw {
     /// Which memory the intermediate occupies, and whether a target can keep it
     /// in registers, remain physical planning's questions.
     ///
-    /// This is the reduction-then-elementwise shape a normalization needs. It is
-    /// deliberately *not* the normalization's own law: that family's fold is a
-    /// sum of squares and its second stage applies a reciprocal square root, and
-    /// no governed scalar operation spells either. Admitting them is
-    /// [`admit-the-rms-normalization-family`]'s work, and this form is the
-    /// vocabulary it will be stated in.
-    ///
-    /// [`admit-the-rms-normalization-family`]: ../../../../tickets/admit-the-rms-normalization-family.md
+    /// This is the reduction-then-elementwise *shape*, and it is deliberately not
+    /// the normalization's own law. `tiler::rms-norm-f32@1` folds a square rather
+    /// than the operand's own elements, transforms the published fold three times
+    /// before the pass consumes it, and reads three values in that pass; this form
+    /// expresses none of the three, so the normalization carries
+    /// [`Self::StagedRootMeanSquareScaleF32`] instead. What the two share is the
+    /// staged emitters below, not a template.
     StagedStrictSerialSumThenPointwiseF32 {
         /// Attribute containing the ordered axes stage zero folds over.
         axes_attribute: AttributeFieldId,
         /// Scalar operation stage one applies to operand one and the fold.
         scalar: ScalarOpKey,
+    },
+    /// The governed root-mean-square scale: a squared fold, an epilogue, a weight.
+    ///
+    /// Stage zero folds the *square* of operand zero over the axes the named
+    /// attribute carries, divides that fold by the folded contributor count,
+    /// adds the exact payload the second named attribute carries, applies the
+    /// reciprocal square root, and publishes the result. Stage one reads operand
+    /// zero, operand one, and that published value, and writes
+    /// `weight * (value * published)` pointwise over the result shape.
+    ///
+    /// **Why the chain is fixed and only the two attributes are law data.** Every
+    /// other shape was eliminated against this vocabulary's own contract. Carrying
+    /// the epilogue and the pass as *data* would need a scalar-program language
+    /// inside a law, which is the universal IR this module's header refuses; and a
+    /// template with five independently settable scalar keys is one whose complete
+    /// interpretation is no longer owned here, because most of its 5-tuples denote
+    /// programs nothing means. Fixing the chain and naming the attributes is the
+    /// same split [`Self::ConstantFromFloatBits`] draws: what a second row of one
+    /// template varies is its record-local field identifiers, which are
+    /// record-local precisely because two families number them alike.
+    ///
+    /// **What generalizes instead is the emission machinery.** A fold carrying a
+    /// per-contributor square, a fold whose value an epilogue transforms inside
+    /// the producing region, and a pass reading a reduced-rank published value at
+    /// its kept coordinates are three capabilities the staged vocabulary did not
+    /// have. They are stated as reusable emitters, so the next staged family
+    /// instantiates them rather than this template.
+    StagedRootMeanSquareScaleF32 {
+        /// Attribute containing the ordered axes stage zero folds over.
+        axes_attribute: AttributeFieldId,
+        /// Attribute containing the exact bias added inside the root's argument.
+        ///
+        /// Named rather than assumed, and checked against the occurrence's exact
+        /// declared field set: the payload is part of the semantic operation's
+        /// identity, so a realization that read the axes and ignored this would be
+        /// a different operation wearing this one's law.
+        eps_attribute: AttributeFieldId,
     },
     /// Per-point decode of one governed compound strict-affine U4 value.
     StrictAffineU4Dequantize {
@@ -149,6 +186,7 @@ impl IndexRealizationLaw {
             | Self::Reindex { .. }
             | Self::Broadcast { .. }
             | Self::StagedStrictSerialSumThenPointwiseF32 { .. }
+            | Self::StagedRootMeanSquareScaleF32 { .. }
             | Self::StrictTensorContractionF32 { .. } => governs_result_arithmetic(subject),
         }
     }
@@ -242,20 +280,32 @@ impl IndexRealizationLaw {
 
     /// Standard staged strict-serial-sum-then-multiply-f32 law.
     ///
-    /// A constructor for the governed spelling of the staged form, which is the
-    /// only one of this law's nine variants whose realization is a region
-    /// *sequence*; the other eight are single-region, and
-    /// `realizes_region_sequence` decides which is which in one match. No
-    /// standard operation carries this row today —
-    /// registering the family that will is [`admit-the-rms-normalization-family`]'s
-    /// work — so the law-registry sidecar is unchanged by its existence.
-    ///
-    /// [`admit-the-rms-normalization-family`]: ../../../../tickets/admit-the-rms-normalization-family.md
+    /// A constructor for the governed spelling of the staged form, one of the two
+    /// of this law's ten variants whose realization is a region *sequence*; the
+    /// other eight are single-region, and `realizes_region_sequence` decides which
+    /// is which in one match. No standard operation carries this row: the
+    /// normalization, which is the family this shape was derived for, needs a fold
+    /// prologue, an epilogue, and a ternary pass that this form does not express
+    /// and carries [`Self::staged_root_mean_square_scale_f32`] instead. So the
+    /// law-registry sidecar is unchanged by this row's existence.
     #[must_use]
     pub fn staged_strict_serial_sum_then_multiply_f32() -> Self {
         Self::StagedStrictSerialSumThenPointwiseF32 {
             axes_attribute: REDUCTION_AXES_ATTRIBUTE,
             scalar: multiply_f32_scalar_op(),
+        }
+    }
+
+    /// Standard root-mean-square scale law, as `tiler::rms-norm-f32@1` registers it.
+    ///
+    /// Names that family's own two attribute identifiers. They are record-local,
+    /// so this constructor is what ties the general template to the one family
+    /// whose record numbers its axes field one and its `eps` field two.
+    #[must_use]
+    pub const fn staged_root_mean_square_scale_f32() -> Self {
+        Self::StagedRootMeanSquareScaleF32 {
+            axes_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+            eps_attribute: RMS_NORM_EPS_BITS_ATTRIBUTE,
         }
     }
 
@@ -277,7 +327,11 @@ impl IndexRealizationLaw {
     /// boundaries disagree with the occurrence — which is true, but names the
     /// symptom instead of the mismatch.
     pub(crate) const fn realizes_region_sequence(&self) -> bool {
-        matches!(self, Self::StagedStrictSerialSumThenPointwiseF32 { .. })
+        matches!(
+            self,
+            Self::StagedStrictSerialSumThenPointwiseF32 { .. }
+                | Self::StagedRootMeanSquareScaleF32 { .. }
+        )
     }
 
     /// Builds the exact canonical region sequence required by this law.
@@ -300,6 +354,10 @@ impl IndexRealizationLaw {
             } => {
                 realize_staged_sum_then_pointwise(subject, scalars, *axes_attribute, scalar.clone())
             }
+            Self::StagedRootMeanSquareScaleF32 {
+                axes_attribute,
+                eps_attribute,
+            } => realize_root_mean_square_scale(subject, scalars, *axes_attribute, *eps_attribute),
             _ => Ok(VerifiedIndexRegionSequence::single(
                 self.realize(subject, scalars)?,
             )),
@@ -354,7 +412,8 @@ impl IndexRealizationLaw {
                     [*codes_role, *scale_role, *zero_point_role],
                     scalar.clone(),
                 )?,
-                Self::StagedStrictSerialSumThenPointwiseF32 { .. } => {
+                Self::StagedStrictSerialSumThenPointwiseF32 { .. }
+                | Self::StagedRootMeanSquareScaleF32 { .. } => {
                     return Err(unsupported("staged-law-requires-region-sequence"));
                 }
             }
@@ -425,6 +484,32 @@ impl IndexRealizationLaw {
                 output.push(9);
                 output.extend_from_slice(&axes_attribute.get().to_be_bytes());
                 encode_scalar(output, scalar);
+            }
+            Self::StagedRootMeanSquareScaleF32 {
+                axes_attribute,
+                eps_attribute,
+            } => {
+                // Tag 10 is append-only. Tags 1..=9 and their payloads are
+                // unchanged, so every sidecar byte a law registry has ever
+                // encoded is byte-identical under this addition; only the row
+                // this variant newly occupies is added.
+                //
+                // Injectivity at this site. The first byte discriminates, so no
+                // other variant's encoding can be read as this one whatever
+                // follows. Within this tag the payload is two fixed-width
+                // attribute identifiers written in a fixed order and nothing
+                // else, so the map from `(axes_attribute, eps_attribute)` to
+                // bytes is a pair of injections on disjoint fixed offsets and is
+                // therefore itself injective: two rows differing in either field
+                // differ in the four bytes that field owns. The pair is ordered
+                // rather than a set, so the transposed row — axes and `eps`
+                // exchanged — encodes distinctly, which matters because that
+                // transposition is a real construction error rather than a
+                // hypothetical one and `realize_root_mean_square_scale` must be
+                // able to refuse it as a different law rather than the same one.
+                output.push(10);
+                output.extend_from_slice(&axes_attribute.get().to_be_bytes());
+                output.extend_from_slice(&eps_attribute.get().to_be_bytes());
             }
         }
     }
@@ -923,16 +1008,7 @@ fn emit_serial_sum(
         plan.value_type.clone(),
         plan.output_shape.clone(),
     )?;
-    let total = if plan.reduced_points == 0 {
-        plan.fold_empty(context, input, &kept, &kept_coordinates)?
-    } else {
-        let seed = plan.read_contributor(context, input, &kept, &kept_coordinates, None)?;
-        if plan.reduced_points == 1 {
-            apply_one(context, canonicalize_nan_f32_scalar_op(), &[seed])?
-        } else {
-            plan.fold_tail(context, input, &kept, &kept_coordinates, seed)?
-        }
-    };
+    let total = plan.fold(context, input, &kept, &kept_coordinates)?;
     let write = context.write(output, &kept, &kept_coordinates)?;
     context.output(write, total)
 }
@@ -1014,6 +1090,206 @@ fn realize_staged_sum_then_pointwise(
         ],
     )
     .map_err(IndexRealizationLawError::Sequence)
+}
+
+/// Builds the two-stage root-mean-square scale realization.
+///
+/// The occurrence is `(operand 0 = value, operand 1 = weight) -> result`, and the
+/// realization is the pinned reference in order: `q_i = square(x_i)`, `a` the
+/// strict left fold of `q`, `u = a / N`, `t = u + eps`, `r = Rsqrt(t)`, and
+/// `y_i = w_i * (x_i * r)`.
+///
+/// **Where the split falls, and why there.** `r` is read once per *point* and
+/// computed once per *folded row*, so stage zero carries the whole epilogue and
+/// publishes `r` rather than publishing `a` and leaving the epilogue to stage
+/// one. Publishing `a` would put the division, the bias, and the reciprocal
+/// square root inside the pointwise pass, evaluating each `N` times per row: a
+/// different scalar program, not a different schedule for this one.
+///
+/// **Every declared attribute is consumed by name.** The occurrence's field set
+/// is required to be exactly the two this law names, so the tolerance of
+/// [`reduction_axes`] for a record carrying more fields than it reads cannot
+/// silently drop the `eps` payload here — which is the whole reason the plain
+/// staged template is not this family's law.
+fn realize_root_mean_square_scale(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+    axes_attribute: AttributeFieldId,
+    eps_attribute: AttributeFieldId,
+) -> Result<VerifiedIndexRegionSequence, IndexRealizationLawError> {
+    let ([value, weight], [result]) = (subject.inputs(), subject.results()) else {
+        return Err(unsupported("rms-scale-arity"));
+    };
+    if subject.operands() != [0, 1] {
+        return Err(unsupported("rms-scale-operand-binding"));
+    }
+    let expected = crate::semantic::F32::resolved_type();
+    if value.value_type() != &expected
+        || weight.value_type() != &expected
+        || result.value_type() != &expected
+    {
+        return Err(unsupported("rms-scale-value-type"));
+    }
+    if value.shape() != result.shape() || weight.shape() != result.shape() {
+        return Err(unsupported("rms-scale-shape"));
+    }
+
+    // Two distinct named identifiers, and a record of exactly two fields both of
+    // which are named, means each is present exactly once. Aliased identifiers
+    // would satisfy the count while leaving one of the two unread, so they are
+    // refused first rather than left to make the inference false.
+    if axes_attribute == eps_attribute {
+        return Err(unsupported("rms-scale-attribute-aliasing"));
+    }
+    let fields = subject.attributes().fields();
+    if fields.len() != 2
+        || !fields
+            .iter()
+            .all(|field| field.id() == axes_attribute || field.id() == eps_attribute)
+    {
+        return Err(unsupported("rms-scale-attributes"));
+    }
+    let eps = subject
+        .attributes()
+        .get(eps_attribute)
+        .ok_or_else(|| unsupported("rms-scale-eps-missing"))?
+        .clone();
+    if !matches!(eps.view(), CanonicalValueView::FloatBits(_)) {
+        return Err(unsupported("rms-scale-eps-kind"));
+    }
+    let axes = reduction_axes(subject.attributes(), axes_attribute)?;
+
+    let intermediate_shape = value.shape().without_axes(&axes);
+    let plan = SumPlan::for_boundaries(
+        value.value_type(),
+        value.shape(),
+        &intermediate_shape,
+        &axes,
+    )?
+    .squaring_contributors(multiply_f32_scalar_op());
+    let extent_bits = folded_extent_bits(plan.reduced_points)?;
+
+    let mut fold = IndexRegionBuilder::new(scalars.clone())?;
+    {
+        let mut context = LawContext {
+            builder: &mut fold,
+            subject,
+        };
+        let kept = plan.declare_kept_domain(&mut context)?;
+        let kept_coordinates = dimension_expressions(&mut context, &kept)?;
+        let input = context.tensor(
+            TensorRole::Input,
+            plan.value_type.clone(),
+            plan.input_shape.clone(),
+        )?;
+        let output = context.tensor(
+            TensorRole::Output,
+            plan.value_type.clone(),
+            plan.output_shape.clone(),
+        )?;
+        let total = plan.fold(&mut context, input, &kept, &kept_coordinates)?;
+        let extent = scalar_constant(&mut context, extent_bits)?;
+        let mean = apply_one(&mut context, divide_f32_scalar_op(), &[total, extent])?;
+        let bias = single_result(
+            &context.apply(
+                constant_f32_scalar_op(),
+                scalar_attributes(F32_CONSTANT_BITS_ATTRIBUTE, eps)?,
+                &[],
+            )?,
+            "rms-scale-eps-constant",
+        )?;
+        let biased = apply_one(&mut context, add_f32_scalar_op(), &[mean, bias])?;
+        let root = apply_one(&mut context, rsqrt_f32_scalar_op(), &[biased])?;
+        let write = context.write(output, &kept, &kept_coordinates)?;
+        context.output(write, root)?;
+    }
+    let fold = fold.build().map_err(IndexRealizationLawError::Build)?;
+
+    let mut scale = IndexRegionBuilder::new(scalars.clone())?;
+    {
+        let mut context = LawContext {
+            builder: &mut scale,
+            subject,
+        };
+        let shape = result.shape().clone();
+        let dimensions = declare_parallel_domain(&mut context, &shape)?;
+        let coordinates = dimension_expressions(&mut context, &dimensions)?;
+        // The published value is one per folded row, so it is read at the kept
+        // coordinates of this stage's own point domain. That is neither the
+        // rank-zero nor the whole-shape case the binary pointwise emitter admits,
+        // which is the third thing this family needs that the staged template
+        // cannot state.
+        let kept = dimensions
+            .iter()
+            .zip(&plan.reduced)
+            .filter(|(_, reduced)| !**reduced)
+            .map(|(dimension, _)| *dimension)
+            .collect::<Vec<_>>();
+        let kept_coordinates = coordinates
+            .iter()
+            .zip(&plan.reduced)
+            .filter(|(_, reduced)| !**reduced)
+            .map(|(coordinate, _)| *coordinate)
+            .collect::<Vec<_>>();
+        let value_tensor = context.tensor(TensorRole::Input, expected.clone(), shape.clone())?;
+        let weight_tensor = context.tensor(TensorRole::Input, expected.clone(), shape.clone())?;
+        let root_tensor =
+            context.tensor(TensorRole::Input, expected.clone(), intermediate_shape)?;
+        let element = context.read(value_tensor, &dimensions, &coordinates)?;
+        let weight_element = context.read(weight_tensor, &dimensions, &coordinates)?;
+        let root = context.read(root_tensor, &kept, &kept_coordinates)?;
+        let scaled = apply_one(&mut context, multiply_f32_scalar_op(), &[element, root])?;
+        let weighted = apply_one(
+            &mut context,
+            multiply_f32_scalar_op(),
+            &[weight_element, scaled],
+        )?;
+        let output = context.tensor(TensorRole::Output, expected, shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, weighted)?;
+    }
+    let scale = scale.build().map_err(IndexRealizationLawError::Build)?;
+
+    VerifiedIndexRegionSequence::try_new(
+        vec![fold, scale],
+        vec![
+            vec![StagedInputSource::Occurrence(0)],
+            vec![
+                StagedInputSource::Occurrence(0),
+                StagedInputSource::Occurrence(1),
+                StagedInputSource::Intermediate(0),
+            ],
+        ],
+    )
+    .map_err(IndexRealizationLawError::Sequence)
+}
+
+/// Returns the exact binary32 payload of the folded contributor count.
+///
+/// The reference divides by the extent itself — never by a reciprocal, and
+/// therefore never by a divisor that is merely close to it. Above the binary32
+/// significand's width the integers are not all representable, so a count whose
+/// nearest binary32 is not the count would make the emitted division a different
+/// function from the one the operation pins; it is refused rather than rounded.
+///
+/// The representability test is integer-only, so it does not depend on the
+/// rounding it exists to detect: an integer is a binary32 value exactly when its
+/// odd part fits in the twenty-four-bit significand.
+fn folded_extent_bits(points: u64) -> Result<u32, IndexRealizationLawError> {
+    if points == 0 {
+        // An empty fold has no first contributor to seed at, so the reference's
+        // own fold is undefined here before the division by zero is reached.
+        return Err(unsupported("rms-scale-empty-fold"));
+    }
+    if points >> points.trailing_zeros() >= 1 << 24 {
+        return Err(unsupported("rms-scale-extent-not-exact"));
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the representability test above proves this conversion is exact"
+    )]
+    let extent = points as f32;
+    Ok(extent.to_bits())
 }
 
 fn realize_reindex(
@@ -1187,6 +1463,15 @@ struct SumPlan {
     reduced_strides: Vec<u64>,
     reduced_extents: Vec<u64>,
     reduced_points: u64,
+    /// Scalar each contributor is squared with before the fold combines it.
+    ///
+    /// `None` folds the operand's own elements, which is every plain strict
+    /// serial sum. `Some(scalar)` applies `scalar(v, v)` to each contributor
+    /// first, which is the only per-contributor transform the registered scalar
+    /// vocabulary can spell as one application to one read value — a wider
+    /// prologue would need a scalar-program language in law data, which this
+    /// module deliberately does not have.
+    contributor_square: Option<ScalarOpKey>,
 }
 
 impl SumPlan {
@@ -1251,7 +1536,53 @@ impl SumPlan {
             reduced_strides,
             reduced_extents,
             reduced_points: stride,
+            contributor_square: None,
         })
+    }
+
+    /// Folds `scalar(v, v)` per contributor rather than the contributor itself.
+    fn squaring_contributors(mut self, scalar: ScalarOpKey) -> Self {
+        self.contributor_square = Some(scalar);
+        self
+    }
+
+    /// Emits the complete fold and returns its value, writing nothing.
+    ///
+    /// Separate from [`emit_serial_sum`] because a staged realization transforms
+    /// the fold *inside the producing region* — the normalization divides it,
+    /// biases it, and takes its reciprocal square root before anything is
+    /// written — and a fold that could only write its own result would force
+    /// that epilogue into the consuming stage, where it would run once per point
+    /// instead of once per folded row. That is a different scalar program, not a
+    /// different placement.
+    fn fold(
+        &self,
+        context: &mut LawContext<'_>,
+        input: TensorId,
+        kept: &[DimensionId],
+        kept_coordinates: &[IndexExprId],
+    ) -> Result<ScalarValueId, IndexRealizationLawError> {
+        if self.reduced_points == 0 {
+            return self.fold_empty(context, input, kept, kept_coordinates);
+        }
+        let seed = self.read_contributor(context, input, kept, kept_coordinates, None)?;
+        if self.reduced_points == 1 {
+            apply_one(context, canonicalize_nan_f32_scalar_op(), &[seed])
+        } else {
+            self.fold_tail(context, input, kept, kept_coordinates, seed)
+        }
+    }
+
+    /// Applies the per-contributor square, when this plan carries one.
+    fn square(
+        &self,
+        context: &mut LawContext<'_>,
+        contributor: ScalarValueId,
+    ) -> Result<ScalarValueId, IndexRealizationLawError> {
+        match &self.contributor_square {
+            Some(scalar) => apply_one(context, scalar.clone(), &[contributor, contributor]),
+            None => Ok(contributor),
+        }
     }
 
     fn declare_kept_domain(
@@ -1301,7 +1632,8 @@ impl SumPlan {
         }
         let mut domain = kept.to_vec();
         domain.extend(tail);
-        context.read(input, &domain, &coordinates)
+        let contributor = context.read(input, &domain, &coordinates)?;
+        self.square(context, contributor)
     }
 
     fn decode_reduced(
@@ -1350,6 +1682,7 @@ impl SumPlan {
         let mut domain = kept.to_vec();
         domain.extend(reduced_dimensions.iter().copied());
         let contributor = context.read(input, &domain, &coordinates)?;
+        let contributor = self.square(context, contributor)?;
         let identity = scalar_constant(context, 0.0_f32.to_bits())?;
         let folded = context.reduce(
             &reduced_dimensions,
@@ -1785,10 +2118,15 @@ fn reindex_operand_coordinates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{FrozenScalarRegistry, NumericalContractIdentity};
+    use crate::index::{
+        FrozenScalarRegistry, NumericalContractIdentity, ScalarOperationKindRef,
+        ScalarOperationRef, ScalarValueDefinitionView, VerifiedScalarOperationId,
+        VerifiedScalarValueId,
+    };
     use crate::semantic::{
-        InputKey, OperationAttributes, OutputKey, SemanticProgramBuilder, StrictAffineU8,
-        dequantize_strict_affine_op,
+        F32, InputKey, OperationAttributes, OutputKey, RMS_NORM_F32_QWEN3_EPS_BITS,
+        SemanticProgramBuilder, StrictAffineU8, dequantize_strict_affine_op,
+        rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
     };
 
     fn strict_contract() -> NumericalContractIdentity {
@@ -1945,6 +2283,445 @@ mod tests {
         let subject = subject(StrictAffineU4::resolved_type());
         assert_eq!(
             IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32()
+                .realize(&subject, &scalars)
+                .unwrap_err()
+                .rule(),
+            "staged-law-requires-region-sequence"
+        );
+    }
+
+    /// Derives one `tiler::rms-norm-f32@1` occurrence's refinement subject.
+    fn rms_norm_subject(dims: &[u64], axis: u32, eps_bits: u32) -> IndexRefinementSubject {
+        let shape = Shape::try_new(dims.iter().copied().map(Extent::new).collect::<Vec<_>>())
+            .expect("the test shape is canonical");
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let value = program
+            .input_resolved(
+                InputKey::new("value").unwrap(),
+                shape.clone(),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let weight = program
+            .input_resolved(
+                InputKey::new("weight").unwrap(),
+                shape,
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let attributes = OperationAttributes::new([
+            CanonicalField::new(
+                RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                rms_norm_f32_axis_attribute(Axis::new(axis)),
+            ),
+            CanonicalField::new(
+                RMS_NORM_EPS_BITS_ATTRIBUTE,
+                rms_norm_f32_eps_attribute(eps_bits),
+            ),
+        ])
+        .unwrap();
+        let result = program
+            .apply(rms_norm_f32_op(), attributes, &[value, weight])
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("normalized").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap()
+    }
+
+    /// Names one stage's scalar steps in emission order.
+    fn stage_steps(stage: &VerifiedIndexRegion) -> Vec<String> {
+        stage
+            .scalar_operations()
+            .map(|operation| match operation.kind() {
+                ScalarOperationKindRef::Apply { key, .. } => key.name().to_owned(),
+                ScalarOperationKindRef::Reduce(_) => "reduce".to_owned(),
+            })
+            .collect()
+    }
+
+    /// Returns the operation defining one value, or `None` when it is a read.
+    fn defined_by(
+        region: &VerifiedIndexRegion,
+        value: VerifiedScalarValueId,
+    ) -> Option<VerifiedScalarOperationId> {
+        match region.scalar_value(value).unwrap().definition() {
+            ScalarValueDefinitionView::OperationResult { operation, .. } => Some(operation),
+            ScalarValueDefinitionView::AccessRead(_) => None,
+        }
+    }
+
+    fn operand_definitions(
+        region: &VerifiedIndexRegion,
+        operation: ScalarOperationRef<'_>,
+    ) -> Vec<Option<VerifiedScalarOperationId>> {
+        operation
+            .operands()
+            .map(|value| defined_by(region, value))
+            .collect()
+    }
+
+    /// Returns the boundary one read value comes from, or `None` for a computed value.
+    fn read_boundary(
+        region: &VerifiedIndexRegion,
+        value: VerifiedScalarValueId,
+    ) -> Option<super::super::VerifiedTensorId> {
+        match region.scalar_value(value).unwrap().definition() {
+            ScalarValueDefinitionView::AccessRead(access) => {
+                Some(region.access(access).unwrap().tensor())
+            }
+            ScalarValueDefinitionView::OperationResult { .. } => None,
+        }
+    }
+
+    fn by_id(
+        region: &VerifiedIndexRegion,
+        id: VerifiedScalarOperationId,
+    ) -> ScalarOperationRef<'_> {
+        region.scalar_operation(id).unwrap()
+    }
+
+    /// Returns the operation defining one value, refusing a read.
+    fn operation_defining(
+        region: &VerifiedIndexRegion,
+        value: VerifiedScalarValueId,
+    ) -> ScalarOperationRef<'_> {
+        by_id(
+            region,
+            defined_by(region, value).expect("this value is computed rather than read"),
+        )
+    }
+
+    fn applied_key(operation: ScalarOperationRef<'_>) -> String {
+        match operation.kind() {
+            ScalarOperationKindRef::Apply { key, .. } => key.name().to_owned(),
+            ScalarOperationKindRef::Reduce(_) => "reduce".to_owned(),
+        }
+    }
+
+    fn applied_attributes(operation: ScalarOperationRef<'_>) -> &CanonicalValue {
+        match operation.kind() {
+            ScalarOperationKindRef::Apply { attributes, .. } => attributes.value(),
+            ScalarOperationKindRef::Reduce(_) => panic!("a reduction carries no attribute record"),
+        }
+    }
+
+    fn f32_bits_record(bits: u32) -> CanonicalValue {
+        CanonicalValue::record([CanonicalField::new(
+            F32_CONSTANT_BITS_ATTRIBUTE,
+            CanonicalValue::float_bits(
+                TypeKey::new("tiler", "f32", 1).unwrap(),
+                bits.to_be_bytes(),
+            )
+            .unwrap(),
+        )])
+        .unwrap()
+    }
+
+    /// The realization is the pinned reference, in the pinned order.
+    ///
+    /// `rms_norm_f32_reference_semantics` fixes `q_i = x_i * x_i`, `a = fold(q)`,
+    /// `u = a / N`, `t = u + eps`, `r = Rsqrt(t)`, `y_i = w_i * (x_i * r)`. This
+    /// walks the two realized stages and pins each of those six steps: the scalar
+    /// applied, the values it consumes, and — for the two constants, which are the
+    /// only places an exact payload enters — the payload itself.
+    #[test]
+    fn the_normalization_law_realizes_the_pinned_reference_step_for_step() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let subject = rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS);
+        let realization = IndexRealizationLaw::staged_root_mean_square_scale_f32()
+            .realize_sequence(&subject, &scalars)
+            .expect("the normalization's law realizes its own occurrence");
+
+        assert_eq!(realization.stage_count(), 2);
+        let [intermediate] = realization.intermediates() else {
+            panic!("the normalization hands exactly one value on")
+        };
+        // One published value per folded row, not one per point and not one per
+        // program: `r` is rank one over the kept axis of a rank-two operand.
+        assert_eq!(intermediate.shape(), &Shape::from_dims([3]));
+        assert_eq!(
+            realization.stage_sources(1),
+            Some(
+                [
+                    StagedInputSource::Occurrence(0),
+                    StagedInputSource::Occurrence(1),
+                    StagedInputSource::Intermediate(0),
+                ]
+                .as_slice()
+            ),
+            "the scale stage reads the value again, the weight, and the fold"
+        );
+
+        let fold = realization.stage(0).expect("the folding stage");
+        // The population first, so a walk that missed a step could not pass: a
+        // verified region orders its operations canonically rather than in
+        // emission order, which is why the walk below navigates by definition
+        // rather than by position.
+        assert_eq!(
+            stage_steps(fold),
+            [
+                "constant-f32",
+                "constant-f32",
+                "multiply-f32",
+                "multiply-f32",
+                "reduce",
+                "divide-f32",
+                "add-f32",
+                "rsqrt-f32",
+            ]
+        );
+
+        // r = Rsqrt(t) is exactly what the stage publishes.
+        let root = operation_defining(fold, fold.outputs().next().unwrap().value());
+        assert_eq!(applied_key(root), "rsqrt-f32");
+        // t = u + eps, with the exact declared payload and no other.
+        let [biased] = operand_definitions(fold, root)[..] else {
+            panic!("the reciprocal square root takes one argument")
+        };
+        let biased = by_id(fold, biased.expect("t is computed"));
+        assert_eq!(applied_key(biased), "add-f32");
+        let [mean, bias] = operand_definitions(fold, biased)[..] else {
+            panic!("the bias is an addition")
+        };
+        let bias = by_id(fold, bias.expect("eps enters as a constant"));
+        assert_eq!(
+            applied_attributes(bias),
+            &f32_bits_record(RMS_NORM_F32_QWEN3_EPS_BITS)
+        );
+        // u = a / N, a division by the extent itself and never by a reciprocal.
+        let mean = by_id(fold, mean.expect("u is computed"));
+        assert_eq!(applied_key(mean), "divide-f32");
+        let [total, extent] = operand_definitions(fold, mean)[..] else {
+            panic!("the mean is a division")
+        };
+        let extent = by_id(fold, extent.expect("the extent enters as a constant"));
+        assert_eq!(
+            applied_attributes(extent),
+            &f32_bits_record(4.0_f32.to_bits())
+        );
+        // a = the strict left fold of q seeded at the first contributor: the
+        // reduction's state starts at a squared seed and combines squared tail
+        // contributors, so nothing unsquared reaches the accumulator.
+        let total = by_id(fold, total.expect("a is computed"));
+        let ScalarOperationKindRef::Reduce(reduction) = total.kind() else {
+            panic!("the fold is a reduction")
+        };
+        let seed = reduction
+            .init()
+            .map(|value| operation_defining(fold, value))
+            .collect::<Vec<_>>();
+        let contributors = reduction
+            .contributors()
+            .map(|value| operation_defining(fold, value))
+            .collect::<Vec<_>>();
+        assert_eq!(seed.len(), 1);
+        assert_eq!(contributors.len(), 1);
+        // q_i = x_i * x_i: one read squared against itself, at both the seed and
+        // the tail. A square of two different reads would be a product.
+        for square in [seed[0], contributors[0]] {
+            assert_eq!(applied_key(square), "multiply-f32");
+            let operands = square.operands().collect::<Vec<_>>();
+            assert_eq!(operands.len(), 2);
+            assert_eq!(operands[0], operands[1]);
+            assert_eq!(defined_by(fold, operands[0]), None);
+        }
+        assert_ne!(
+            seed[0].id(),
+            contributors[0].id(),
+            "the seed and the tail read different contributors"
+        );
+
+        let scale = realization.final_stage();
+        assert_eq!(stage_steps(scale), ["multiply-f32", "multiply-f32"]);
+        let scale_steps = scale.scalar_operations().collect::<Vec<_>>();
+        let boundaries = scale
+            .tensors()
+            .filter(|tensor| tensor.role() == TensorRole::Input)
+            .map(super::super::model::TensorRef::id)
+            .collect::<Vec<_>>();
+        // y_i = w_i * (x_i * r): the inner product is the value and the published
+        // root — in that order — and the outer applies the weight to it. The
+        // boundary each read comes from is what separates the value from the
+        // weight, which agree on element type and shape.
+        let inner = scale_steps[0].operands().collect::<Vec<_>>();
+        assert_eq!(
+            inner
+                .iter()
+                .map(|value| read_boundary(scale, *value))
+                .collect::<Vec<_>>(),
+            vec![Some(boundaries[0]), Some(boundaries[2])]
+        );
+        let outer = scale_steps[1].operands().collect::<Vec<_>>();
+        assert_eq!(read_boundary(scale, outer[0]), Some(boundaries[1]));
+        assert_eq!(defined_by(scale, outer[1]), Some(scale_steps[0].id()));
+        assert_eq!(
+            defined_by(scale, scale.outputs().next().unwrap().value()),
+            Some(scale_steps[1].id())
+        );
+    }
+
+    /// The `eps` payload is consumed, and the template that would drop it is not.
+    ///
+    /// **The hazard is watched here rather than described.** `reduction_axes`
+    /// reads its attribute by field identifier and tolerates a record carrying
+    /// more, so the plain staged template realizes this very occurrence while
+    /// never looking at `eps` — the first assertion below is that silent success.
+    /// `eps` is part of the operation's identity, so a law that did that would be
+    /// realizing a different operation. The normalization's own law therefore
+    /// pins the exact declared field set, and the remaining assertions watch that
+    /// refusal fire for every way the pair can fail to name the record.
+    #[test]
+    fn the_normalization_law_consumes_eps_where_the_staged_template_drops_it() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        // Rank one so the plain template's own broadcast rule does not refuse
+        // first: the fold removes the only axis, so what it publishes is rank
+        // zero and legible to a binary pointwise pass.
+        let subject = rms_norm_subject(&[4], 0, RMS_NORM_F32_QWEN3_EPS_BITS);
+        assert!(
+            IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32 {
+                axes_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                scalar: multiply_f32_scalar_op(),
+            }
+            .realize_sequence(&subject, &scalars)
+            .is_ok(),
+            "the hazard this law exists to close: the staged template realizes the \
+             normalization's occurrence without ever reading its eps attribute"
+        );
+
+        // Every way of failing to name the declared record refuses, by name.
+        for (law, rule) in [
+            (
+                IndexRealizationLaw::StagedRootMeanSquareScaleF32 {
+                    axes_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                    eps_attribute: AttributeFieldId::new(RMS_NORM_EPS_BITS_ATTRIBUTE.get() + 1),
+                },
+                "rms-scale-attributes",
+            ),
+            (
+                IndexRealizationLaw::StagedRootMeanSquareScaleF32 {
+                    axes_attribute: AttributeFieldId::new(
+                        RMS_NORM_REDUCED_AXES_ATTRIBUTE.get() + 8,
+                    ),
+                    eps_attribute: RMS_NORM_EPS_BITS_ATTRIBUTE,
+                },
+                "rms-scale-attributes",
+            ),
+            (
+                // Aliased identifiers would satisfy a field count while leaving
+                // one of the two declared payloads unread.
+                IndexRealizationLaw::StagedRootMeanSquareScaleF32 {
+                    axes_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                    eps_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                },
+                "rms-scale-attribute-aliasing",
+            ),
+            (
+                // The transposed pair names both declared fields, so the field-set
+                // check passes and the payloads are read as each other's.
+                IndexRealizationLaw::StagedRootMeanSquareScaleF32 {
+                    axes_attribute: RMS_NORM_EPS_BITS_ATTRIBUTE,
+                    eps_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                },
+                "rms-scale-eps-kind",
+            ),
+        ] {
+            assert_eq!(
+                law.realize_sequence(&subject, &scalars)
+                    .expect_err("a law that does not name this record's fields realizes nothing")
+                    .rule(),
+                rule
+            );
+        }
+    }
+
+    /// The division is by the extent, so an extent that is not one is refused.
+    #[test]
+    fn a_folded_extent_no_binary32_value_equals_is_refused_rather_than_rounded() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        // 2^24 + 1 is odd and above the significand's width, so its nearest
+        // binary32 is 2^24 — a divisor that is not the extent.
+        let subject = rms_norm_subject(&[16_777_217], 0, RMS_NORM_F32_QWEN3_EPS_BITS);
+        assert_eq!(
+            IndexRealizationLaw::staged_root_mean_square_scale_f32()
+                .realize_sequence(&subject, &scalars)
+                .unwrap_err()
+                .rule(),
+            "rms-scale-extent-not-exact"
+        );
+        // The neighbouring even extent is exactly representable and realizes.
+        let subject = rms_norm_subject(&[16_777_216], 0, RMS_NORM_F32_QWEN3_EPS_BITS);
+        assert!(
+            IndexRealizationLaw::staged_root_mean_square_scale_f32()
+                .realize_sequence(&subject, &scalars)
+                .is_ok(),
+            "the bound is representability, not size"
+        );
+    }
+
+    #[test]
+    fn the_root_mean_square_law_tag_is_append_only_and_distinct() {
+        let mut normalization = Vec::new();
+        IndexRealizationLaw::staged_root_mean_square_scale_f32().encode(&mut normalization);
+        assert_eq!(normalization.first(), Some(&10));
+        for old in [
+            IndexRealizationLaw::constant_f32(),
+            IndexRealizationLaw::constant_bf16(),
+            IndexRealizationLaw::multiply_f32(),
+            IndexRealizationLaw::add_f32(),
+            IndexRealizationLaw::multiply_bf16(),
+            IndexRealizationLaw::add_bf16(),
+            IndexRealizationLaw::PreciseSiluF32,
+            IndexRealizationLaw::strict_serial_sum_f32(),
+            IndexRealizationLaw::reindex_f32(),
+            IndexRealizationLaw::broadcast_f32(),
+            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::strict_affine_u4_dequantize(),
+            IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32(),
+        ] {
+            let mut encoded = Vec::new();
+            old.encode(&mut encoded);
+            assert_ne!(encoded, normalization);
+            assert!((1..=9).contains(encoded.first().unwrap()));
+        }
+        // Within the tag, each field owns four fixed bytes, so a row differing in
+        // either one encodes distinctly — and the pair is ordered, so the
+        // transposition encodes as a third distinct row rather than the same one.
+        let mut moved_axes = Vec::new();
+        IndexRealizationLaw::StagedRootMeanSquareScaleF32 {
+            axes_attribute: AttributeFieldId::new(RMS_NORM_REDUCED_AXES_ATTRIBUTE.get() + 1),
+            eps_attribute: RMS_NORM_EPS_BITS_ATTRIBUTE,
+        }
+        .encode(&mut moved_axes);
+        let mut moved_eps = Vec::new();
+        IndexRealizationLaw::StagedRootMeanSquareScaleF32 {
+            axes_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+            eps_attribute: AttributeFieldId::new(RMS_NORM_EPS_BITS_ATTRIBUTE.get() + 1),
+        }
+        .encode(&mut moved_eps);
+        let mut transposed = Vec::new();
+        IndexRealizationLaw::StagedRootMeanSquareScaleF32 {
+            axes_attribute: RMS_NORM_EPS_BITS_ATTRIBUTE,
+            eps_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+        }
+        .encode(&mut transposed);
+        let rows = [&normalization, &moved_axes, &moved_eps, &transposed];
+        for (position, row) in rows.iter().enumerate() {
+            for other in &rows[position + 1..] {
+                assert_ne!(row, other);
+            }
+        }
+    }
+
+    /// A staged law cannot answer the single-region realization API.
+    #[test]
+    fn the_root_mean_square_law_refuses_the_single_region_realization() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let subject = rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS);
+        assert_eq!(
+            IndexRealizationLaw::staged_root_mean_square_scale_f32()
                 .realize(&subject, &scalars)
                 .unwrap_err()
                 .rule(),
