@@ -25,12 +25,13 @@ use crate::shape::{Axis, Extent, Shape};
 
 use super::{
     DimensionId, DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
-    IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder, ScalarAttributes,
-    ScalarOpKey, ScalarReducerBodyBuilder, ScalarValueId, SourcedExtent, SymbolicExtentError,
-    TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion, add_bf16_scalar_op,
-    add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op,
-    constant_f32_scalar_op, divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op,
-    multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder, IndexRegionSequenceError,
+    ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder, ScalarValueId, SourcedExtent,
+    StagedInputSource, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
+    VerifiedIndexRegion, VerifiedIndexRegionSequence, add_bf16_scalar_op, add_f32_scalar_op,
+    canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op, constant_f32_scalar_op,
+    divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op, multiply_f32_scalar_op,
+    strict_affine_u4_dequantize_scalar_op,
 };
 
 /// A bounded semantic template for one canonical logical index realization.
@@ -78,6 +79,36 @@ pub enum IndexRealizationLaw {
         /// Attribute containing the canonical contraction structure.
         structure_attribute: AttributeFieldId,
     },
+    /// A strict serial sum whose materialized result a pointwise pass consumes.
+    ///
+    /// The first law form whose realization is an ordered *sequence* of regions
+    /// rather than one region. Stage zero folds operand zero over the axes the
+    /// named attribute carries and publishes the fold; stage one applies `scalar`
+    /// to operand one and that published value, pointwise over the result shape.
+    ///
+    /// **Why the sequence is the law's shape and not a physical choice.** The
+    /// intermediate is *read more than once* — every point of stage one consumes
+    /// the same fold — so a single-region spelling would either recompute the
+    /// fold per point, which is a different scalar program, or need a value with
+    /// no region-local definition. The materialization is therefore part of what
+    /// the realization means, and the region sequence is where it is stated.
+    /// Which memory the intermediate occupies, and whether a target can keep it
+    /// in registers, remain physical planning's questions.
+    ///
+    /// This is the reduction-then-elementwise shape a normalization needs. It is
+    /// deliberately *not* the normalization's own law: that family's fold is a
+    /// sum of squares and its second stage applies a reciprocal square root, and
+    /// no governed scalar operation spells either. Admitting them is
+    /// [`admit-the-rms-normalization-family`]'s work, and this form is the
+    /// vocabulary it will be stated in.
+    ///
+    /// [`admit-the-rms-normalization-family`]: ../../../../tickets/admit-the-rms-normalization-family.md
+    StagedStrictSerialSumThenPointwiseF32 {
+        /// Attribute containing the ordered axes stage zero folds over.
+        axes_attribute: AttributeFieldId,
+        /// Scalar operation stage one applies to operand one and the fold.
+        scalar: ScalarOpKey,
+    },
     /// Per-point decode of one governed compound strict-affine U4 value.
     StrictAffineU4Dequantize {
         /// Ordered logical codes component role.
@@ -117,6 +148,7 @@ impl IndexRealizationLaw {
             | Self::StrictSerialSumF32 { .. }
             | Self::Reindex { .. }
             | Self::Broadcast { .. }
+            | Self::StagedStrictSerialSumThenPointwiseF32 { .. }
             | Self::StrictTensorContractionF32 { .. } => governs_result_arithmetic(subject),
         }
     }
@@ -208,6 +240,22 @@ impl IndexRealizationLaw {
         }
     }
 
+    /// Standard staged strict-serial-sum-then-multiply-f32 law.
+    ///
+    /// A constructor for the governed spelling of the staged form, beside the
+    /// nine single-region ones. No standard operation carries this row today —
+    /// registering the family that will is [`admit-the-rms-normalization-family`]'s
+    /// work — so the law-registry sidecar is unchanged by its existence.
+    ///
+    /// [`admit-the-rms-normalization-family`]: ../../../../tickets/admit-the-rms-normalization-family.md
+    #[must_use]
+    pub fn staged_strict_serial_sum_then_multiply_f32() -> Self {
+        Self::StagedStrictSerialSumThenPointwiseF32 {
+            axes_attribute: REDUCTION_AXES_ATTRIBUTE,
+            scalar: multiply_f32_scalar_op(),
+        }
+    }
+
     /// Standard strict-affine U4-to-F32 decode law.
     #[must_use]
     pub fn strict_affine_u4_dequantize() -> Self {
@@ -219,10 +267,49 @@ impl IndexRealizationLaw {
         }
     }
 
-    /// Builds the exact canonical logical region required by this law.
+    /// Whether this law's realization is an ordered sequence of regions.
+    ///
+    /// Asked *before* any interface checking, so a caller offering one region
+    /// for a staged law is told that rather than being told its lone region's
+    /// boundaries disagree with the occurrence — which is true, but names the
+    /// symptom instead of the mismatch.
+    pub(crate) const fn realizes_region_sequence(&self) -> bool {
+        matches!(self, Self::StagedStrictSerialSumThenPointwiseF32 { .. })
+    }
+
+    /// Builds the exact canonical region sequence required by this law.
     ///
     /// The candidate is intentionally absent from this API. A law can describe
     /// expected work but cannot inspect or approve provider output.
+    ///
+    /// Every single-region template answers a one-stage sequence, whose identity
+    /// is its region's identity byte for byte, so the sequence vocabulary changes
+    /// nothing a single-region law ever produced.
+    pub(crate) fn realize_sequence(
+        &self,
+        subject: &IndexRefinementSubject,
+        scalars: &FrozenScalarRegistry,
+    ) -> Result<VerifiedIndexRegionSequence, IndexRealizationLawError> {
+        match self {
+            Self::StagedStrictSerialSumThenPointwiseF32 {
+                axes_attribute,
+                scalar,
+            } => {
+                realize_staged_sum_then_pointwise(subject, scalars, *axes_attribute, scalar.clone())
+            }
+            _ => Ok(VerifiedIndexRegionSequence::single(
+                self.realize(subject, scalars)?,
+            )),
+        }
+    }
+
+    /// Builds the exact canonical logical region required by a one-region law.
+    ///
+    /// # Errors
+    ///
+    /// A law whose realization is a region sequence refuses here rather than
+    /// answering one of its stages, which would be a truncated realization
+    /// wearing the shape of a complete one.
     pub(crate) fn realize(
         &self,
         subject: &IndexRefinementSubject,
@@ -264,6 +351,9 @@ impl IndexRealizationLaw {
                     [*codes_role, *scale_role, *zero_point_role],
                     scalar.clone(),
                 )?,
+                Self::StagedStrictSerialSumThenPointwiseF32 { .. } => {
+                    return Err(unsupported("staged-law-requires-region-sequence"));
+                }
             }
         }
         builder.build().map_err(IndexRealizationLawError::Build)
@@ -313,6 +403,24 @@ impl IndexRealizationLaw {
                 for role in [codes_role, scale_role, zero_point_role] {
                     output.extend_from_slice(&role.get().to_be_bytes());
                 }
+                encode_scalar(output, scalar);
+            }
+            Self::StagedStrictSerialSumThenPointwiseF32 {
+                axes_attribute,
+                scalar,
+            } => {
+                // Tag 9 is append-only. Tags 1..=8 and their payloads are
+                // unchanged, and no registered row carries this tag, so every
+                // sidecar byte a law registry has ever encoded is untouched.
+                //
+                // Injectivity at this site: the first byte discriminates, and the
+                // payload that follows is a fixed-width attribute identifier
+                // followed by the self-delimiting scalar encoding — the same
+                // shape tag 4 writes for its attribute and tag 2 for its scalar,
+                // but no other tag writes both, so this form is reachable from
+                // exactly one variant.
+                output.push(9);
+                output.extend_from_slice(&axes_attribute.get().to_be_bytes());
                 encode_scalar(output, scalar);
             }
         }
@@ -375,6 +483,11 @@ pub(crate) enum IndexRealizationLawError {
     },
     /// Whole-region verification rejected the expected construction.
     Build(IndexRegionBuildError),
+    /// The staged regions this law built do not compose into a chain.
+    ///
+    /// Reaching this is a defect in the law's own construction rather than in
+    /// any candidate: the sequence is built from the law's regions alone.
+    Sequence(IndexRegionSequenceError),
 }
 
 impl fmt::Display for IndexRealizationLawError {
@@ -384,6 +497,7 @@ impl fmt::Display for IndexRealizationLawError {
             Self::Extent(source) => write!(formatter, "law extent failed: {source}"),
             Self::Unsupported { rule } => write!(formatter, "law does not support {rule}"),
             Self::Build(source) => write!(formatter, "law region failed verification: {source}"),
+            Self::Sequence(source) => write!(formatter, "law sequence is not chained: {source}"),
         }
     }
 }
@@ -394,6 +508,7 @@ impl Error for IndexRealizationLawError {
             Self::Emit(source) => Some(source),
             Self::Extent(source) => Some(source),
             Self::Build(source) => Some(source),
+            Self::Sequence(source) => Some(source),
             Self::Unsupported { .. } => None,
         }
     }
@@ -406,6 +521,7 @@ impl IndexRealizationLawError {
             Self::Extent(_) => "extent-authority",
             Self::Unsupported { rule } => rule,
             Self::Build(_) => "expected-region-verification",
+            Self::Sequence(_) => "expected-sequence-chaining",
         }
     }
 }
@@ -560,29 +676,51 @@ fn realize_pointwise(
     let [result] = context.subject.results() else {
         return Err(unsupported("pointwise-result-arity"));
     };
-    if context.subject.operands().len() != 2 {
+    let result = ((*result).value_type().clone(), (*result).shape().clone());
+    let inputs = context
+        .subject
+        .inputs()
+        .iter()
+        .map(|input| (input.value_type().clone(), input.shape().clone()))
+        .collect::<Vec<_>>();
+    let operands = context.subject.operands().to_vec();
+    emit_pointwise(context, scalar, &inputs, &operands, &result)
+}
+
+/// Emits `result[i] = scalar(operands[0][i], operands[1][i])` over explicit
+/// boundaries.
+///
+/// The boundaries are parameters rather than reads of the subject because a
+/// staged realization's later stage consumes a value that is not an occurrence
+/// input at all: the fold an earlier stage published. Deriving them from the
+/// subject would make that stage unstatable.
+fn emit_pointwise(
+    context: &mut LawContext<'_>,
+    scalar: ScalarOpKey,
+    inputs: &[(ResolvedValueType, Shape)],
+    operands: &[usize],
+    result: &(ResolvedValueType, Shape),
+) -> Result<(), IndexRealizationLawError> {
+    if operands.len() != 2 {
         return Err(unsupported("pointwise-operand-arity"));
     }
-    let shape = result.shape().clone();
+    let shape = result.1.clone();
     let dimensions = declare_parallel_domain(context, &shape)?;
     let coordinates = dimension_expressions(context, &dimensions)?;
-    let inputs = context.subject.inputs().to_vec();
-    let operands = context.subject.operands().to_vec();
     let mut tensors = Vec::with_capacity(inputs.len());
-    for input in &inputs {
-        tensors.push(context.tensor(
-            TensorRole::Input,
-            input.value_type().clone(),
-            input.shape().clone(),
-        )?);
+    for (value_type, input_shape) in inputs {
+        tensors.push(context.tensor(TensorRole::Input, value_type.clone(), input_shape.clone())?);
     }
     let mut values = Vec::with_capacity(2);
-    for position in operands {
-        let boundary = &inputs[position];
-        let value = if boundary.shape() == &shape {
-            context.read(tensors[position], &dimensions, &coordinates)?
-        } else if boundary.shape().rank() == 0 {
-            context.read(tensors[position], &[], &[])?
+    for position in operands.iter().copied() {
+        let (_, boundary) = inputs
+            .get(position)
+            .ok_or_else(|| unsupported("pointwise-operand-binding"))?;
+        let tensor = tensors[position];
+        let value = if boundary == &shape {
+            context.read(tensor, &dimensions, &coordinates)?
+        } else if boundary.rank() == 0 {
+            context.read(tensor, &[], &[])?
         } else {
             return Err(unsupported("pointwise-broadcast"));
         };
@@ -592,7 +730,7 @@ fn realize_pointwise(
         &context.apply(scalar, ScalarAttributes::empty(), &values)?,
         "pointwise",
     )?;
-    let output = context.tensor(TensorRole::Output, result.value_type().clone(), shape)?;
+    let output = context.tensor(TensorRole::Output, result.0.clone(), shape)?;
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
 }
@@ -762,6 +900,14 @@ fn realize_serial_sum(
     attribute: AttributeFieldId,
 ) -> Result<(), IndexRealizationLawError> {
     let plan = SumPlan::derive(context.subject, attribute)?;
+    emit_serial_sum(context, &plan)
+}
+
+/// Emits one strict lexicographic left fold from an already-derived plan.
+fn emit_serial_sum(
+    context: &mut LawContext<'_>,
+    plan: &SumPlan,
+) -> Result<(), IndexRealizationLawError> {
     let kept = plan.declare_kept_domain(context)?;
     let kept_coordinates = dimension_expressions(context, &kept)?;
     let input = context.tensor(
@@ -787,6 +933,86 @@ fn realize_serial_sum(
     let write = context.write(output, &kept, &kept_coordinates)?;
     context.output(write, total)
 }
+/// Builds the two-stage fold-then-pointwise realization.
+///
+/// The occurrence is `(operand 0, operand 1) -> result`: stage zero folds operand
+/// zero over the attribute's axes into a value that is no occurrence boundary,
+/// and stage one applies the scalar to operand one and that value.
+///
+/// Stage one declares its input boundaries in the order `(operand 1,
+/// intermediate)`, which is the order its sources report and therefore the order
+/// operand binding walks. The pointwise emitter's own broadcast rule is what
+/// decides whether the fold is legible from stage one: a fold that removed every
+/// axis is rank zero and read once per point, and a fold whose result is exactly
+/// the result shape is read pointwise. Any other reduced shape refuses with
+/// `pointwise-broadcast` rather than being stretched by a rule this law has not
+/// stated.
+fn realize_staged_sum_then_pointwise(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+    axes_attribute: AttributeFieldId,
+    scalar: ScalarOpKey,
+) -> Result<VerifiedIndexRegionSequence, IndexRealizationLawError> {
+    let ([folded, elementwise], [result]) = (subject.inputs(), subject.results()) else {
+        return Err(unsupported("staged-sum-pointwise-arity"));
+    };
+    if subject.operands() != [0, 1] {
+        return Err(unsupported("staged-sum-pointwise-operand-binding"));
+    }
+    let axes = reduction_axes(subject.attributes(), axes_attribute)?;
+    let intermediate_shape = folded.shape().without_axes(&axes);
+    let plan = SumPlan::for_boundaries(
+        folded.value_type(),
+        folded.shape(),
+        &intermediate_shape,
+        &axes,
+    )?;
+
+    let mut fold = IndexRegionBuilder::new(scalars.clone())?;
+    {
+        let mut context = LawContext {
+            builder: &mut fold,
+            subject,
+        };
+        emit_serial_sum(&mut context, &plan)?;
+    }
+    let fold = fold.build().map_err(IndexRealizationLawError::Build)?;
+
+    let mut apply = IndexRegionBuilder::new(scalars.clone())?;
+    {
+        let mut context = LawContext {
+            builder: &mut apply,
+            subject,
+        };
+        emit_pointwise(
+            &mut context,
+            scalar,
+            &[
+                (
+                    elementwise.value_type().clone(),
+                    elementwise.shape().clone(),
+                ),
+                (folded.value_type().clone(), intermediate_shape),
+            ],
+            &[0, 1],
+            &(result.value_type().clone(), result.shape().clone()),
+        )?;
+    }
+    let apply = apply.build().map_err(IndexRealizationLawError::Build)?;
+
+    VerifiedIndexRegionSequence::try_new(
+        vec![fold, apply],
+        vec![
+            vec![StagedInputSource::Occurrence(0)],
+            vec![
+                StagedInputSource::Occurrence(1),
+                StagedInputSource::Intermediate(0),
+            ],
+        ],
+    )
+    .map_err(IndexRealizationLawError::Sequence)
+}
+
 fn realize_reindex(
     context: &mut LawContext<'_>,
     attribute: AttributeFieldId,
@@ -972,9 +1198,22 @@ impl SumPlan {
             return Err(unsupported("sum-operand-binding"));
         }
         let axes = reduction_axes(subject.attributes(), attribute)?;
-        let input_shape = input.shape().clone();
+        Self::for_boundaries(input.value_type(), input.shape(), result.shape(), &axes)
+    }
+
+    /// Derives the fold plan from explicit boundaries rather than the subject.
+    ///
+    /// A staged realization's fold publishes an intermediate, which is no
+    /// occurrence result, so the output shape it must produce is a parameter.
+    fn for_boundaries(
+        value_type: &ResolvedValueType,
+        input_shape: &Shape,
+        output_shape: &Shape,
+        axes: &[Axis],
+    ) -> Result<Self, IndexRealizationLawError> {
+        let input_shape = input_shape.clone();
         let mut reduced = vec![false; input_shape.rank()];
-        for axis in &axes {
+        for axis in axes {
             let index = axis_position(*axis)?;
             let slot = reduced
                 .get_mut(index)
@@ -983,7 +1222,7 @@ impl SumPlan {
                 return Err(unsupported("sum-axis-duplicate"));
             }
         }
-        if &input_shape.without_axes(&axes) != result.shape() {
+        if &input_shape.without_axes(axes) != output_shape {
             return Err(unsupported("sum-result-shape"));
         }
         let reduced_extents = input_shape
@@ -1002,9 +1241,9 @@ impl SumPlan {
                 .ok_or_else(|| unsupported("sum-reduced-extent-overflow"))?;
         }
         Ok(Self {
-            value_type: input.value_type().clone(),
+            value_type: value_type.clone(),
             input_shape,
-            output_shape: result.shape().clone(),
+            output_shape: output_shape.clone(),
             reduced,
             reduced_strides,
             reduced_extents,
@@ -1644,6 +1883,70 @@ mod tests {
             assert_ne!(encoded, strict);
             assert!((1..=7).contains(encoded.first().unwrap()));
         }
+    }
+
+    #[test]
+    fn the_staged_law_tag_is_append_only_and_distinct() {
+        let mut staged = Vec::new();
+        IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32().encode(&mut staged);
+        assert_eq!(staged.first(), Some(&9));
+        // The staged form names an attribute like tag 4 and a scalar like tag 2.
+        // Neither prefix can be mistaken for it, because the discriminating byte
+        // comes first and no earlier tag writes both payloads.
+        for old in [
+            IndexRealizationLaw::constant_f32(),
+            IndexRealizationLaw::constant_bf16(),
+            IndexRealizationLaw::multiply_f32(),
+            IndexRealizationLaw::add_f32(),
+            IndexRealizationLaw::multiply_bf16(),
+            IndexRealizationLaw::add_bf16(),
+            IndexRealizationLaw::PreciseSiluF32,
+            IndexRealizationLaw::strict_serial_sum_f32(),
+            IndexRealizationLaw::reindex_f32(),
+            IndexRealizationLaw::broadcast_f32(),
+            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::strict_affine_u4_dequantize(),
+        ] {
+            let mut encoded = Vec::new();
+            old.encode(&mut encoded);
+            assert_ne!(encoded, staged);
+            assert!((1..=8).contains(encoded.first().unwrap()));
+        }
+        // Its own payload separates two staged rows that differ only in the
+        // scalar their pass applies, or only in the attribute their fold reads.
+        let mut other_scalar = Vec::new();
+        IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32 {
+            axes_attribute: REDUCTION_AXES_ATTRIBUTE,
+            scalar: add_f32_scalar_op(),
+        }
+        .encode(&mut other_scalar);
+        assert_ne!(other_scalar, staged);
+        let mut other_attribute = Vec::new();
+        IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32 {
+            axes_attribute: AttributeFieldId::new(REDUCTION_AXES_ATTRIBUTE.get() + 1),
+            scalar: multiply_f32_scalar_op(),
+        }
+        .encode(&mut other_attribute);
+        assert_ne!(other_attribute, staged);
+    }
+
+    /// A staged law cannot answer the single-region realization API.
+    ///
+    /// Answering one of its stages would be a truncated realization wearing the
+    /// shape of a complete one, and the single-region `verify` path — the one
+    /// the compiler drives today — would then compare a candidate against a
+    /// fragment.
+    #[test]
+    fn a_staged_law_refuses_the_single_region_realization() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let subject = subject(StrictAffineU4::resolved_type());
+        assert_eq!(
+            IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32()
+                .realize(&subject, &scalars)
+                .unwrap_err()
+                .rule(),
+            "staged-law-requires-region-sequence"
+        );
     }
 
     #[test]

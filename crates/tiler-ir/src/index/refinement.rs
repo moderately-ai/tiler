@@ -6,12 +6,19 @@
 //! selection, capability attribution, search, and explanation remain compiler
 //! concerns layered above this receipt.
 //!
+//! A realization is an ordered [`VerifiedIndexRegionSequence`], not necessarily
+//! one region: a family whose canonical form is a reduction feeding a pass over
+//! the reduction's result is two regions with a value handed between them.
+//! [`ResolvedIndexRealization::verify`] is the one-region spelling of
+//! [`ResolvedIndexRealization::verify_sequence`], and a one-stage sequence's
+//! identity is its region's identity, so nothing a single-region law ever minted
+//! is changed by the sequence vocabulary's arrival.
+//!
 //! The public surface is a concrete alpha draft pending Tom's review. In
 //! particular, callers cannot construct a receipt or its identity from bytes:
-//! [`ResolvedIndexRealization::verify`] sees the complete semantic occurrence and
-//! the actual [`VerifiedIndexRegion`], and [`ResolvedIndexRealization::complete`]
-//! independently discharges every retained logical-index obligation before it
-//! mints a receipt.
+//! the verifier sees the complete semantic occurrence and the actual regions,
+//! and [`ResolvedIndexRealization::complete`] independently discharges every
+//! retained logical-index obligation before it mints a receipt.
 
 use core::fmt;
 use std::collections::{HashMap, HashSet};
@@ -36,18 +43,21 @@ use crate::semantic::{
 use crate::shape::Shape;
 
 use super::{
-    CanonicalIndexRegionIdentity, CanonicalScalarDefinitionProjection,
-    CanonicalScalarRegistrySnapshotIdentity, FrozenScalarRegistry, IndexDomainPredicate,
-    IndexDomainUnknownReason, IndexExprView, IndexExtentRef, IndexInteger, MAX_BOUNDARY_TENSORS,
-    ScalarAuthorityEvidence, ScalarOpKey, ScalarRegistryError, TensorRole,
-    UnknownIndexDomainPredicate, VerifiedDimensionId, VerifiedIndexExprId,
-    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedScalarValueId, VerifiedTensorAccessId,
-    VerifiedTensorId,
+    CanonicalIndexRegionIdentity, CanonicalIndexRegionSequenceIdentity,
+    CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity,
+    FrozenScalarRegistry, IndexDomainPredicate, IndexDomainUnknownReason, IndexExprView,
+    IndexExtentRef, IndexInteger, MAX_BOUNDARY_TENSORS, ScalarAuthorityEvidence, ScalarOpKey,
+    ScalarRegistryError, StagedInputSource, TensorRole, UnknownIndexDomainPredicate,
+    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedIndexRegion,
+    VerifiedIndexRegionSequence, VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
 
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
+const STAGED_RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-staged-receipt.v1\0";
 const EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
     b"tiler.ir.index-refinement-executable-coverage.v1\0";
+const STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
+    b"tiler.ir.index-refinement-staged-executable-coverage.v1\0";
 const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v2\0";
 #[cfg(test)]
 const LEGACY_SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v1\0";
@@ -69,13 +79,17 @@ pub const MAX_INDEX_REFINEMENT_SIGNATURE_VALUES: usize = 4_096;
 pub const MAX_INDEX_REFINEMENT_OPERAND_BINDINGS: usize = super::MAX_BOUNDARY_TENSORS;
 /// Maximum raw scalar-operation declarations admitted by one authority.
 pub const MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS: usize = 4_096;
-/// Maximum residual obligations one canonical realization may retain.
+/// Maximum residual obligations one canonical realization may retain, summed
+/// over its stages.
 ///
-/// The current closed law vocabulary emits at most three rank-wide accesses,
-/// each with
-/// at most [`super::MAX_TENSOR_RANK`] coordinates and two predicates per
-/// coordinate. Rank-zero component reads retain no coordinate obligations.
-pub const MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS: usize = 3 * super::MAX_TENSOR_RANK * 2;
+/// The closed law vocabulary's widest single-region template emits three
+/// rank-wide accesses, each with at most [`super::MAX_TENSOR_RANK`] coordinates
+/// and two predicates per coordinate; rank-zero component reads retain no
+/// coordinate obligations. Its widest staged template is a two-access fold
+/// followed by a three-access pointwise pass, so six accesses bounds the whole
+/// vocabulary rather than three. The bound is over the realization because that
+/// is what one caller funds one completion budget for.
+pub const MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS: usize = 6 * super::MAX_TENSOR_RANK * 2;
 /// Maximum cells the closed exact-finite residual proof algorithm may evaluate.
 pub const MAX_FINITE_DOMAIN_PROOF_CELLS: u64 = 16 * 1024 * 1024;
 /// Maximum cumulative arbitrary-precision integer bytes the closed residual
@@ -778,6 +792,7 @@ impl ResolvedIndexRealization {
 /// One ordered operand projection bound to its verified region input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OperandBinding {
+    stage: usize,
     operand: usize,
     input: usize,
     input_tensor: VerifiedTensorId,
@@ -785,6 +800,15 @@ pub struct OperandBinding {
 }
 
 impl OperandBinding {
+    /// Returns the ordered realization stage that reads this operand.
+    ///
+    /// A tensor handle is region-local, so this is what says which stage's
+    /// region [`Self::input_tensor`] resolves against. One occurrence input read
+    /// by two stages produces one binding per reading stage.
+    #[must_use]
+    pub const fn stage(&self) -> usize {
+        self.stage
+    }
     /// Returns the ordered operand position.
     #[must_use]
     pub const fn operand(&self) -> usize {
@@ -876,10 +900,10 @@ impl IndexRefinementReceiptIdentity {
 /// This identity deliberately excludes the complete semantic, scalar, and
 /// realization-law registry snapshots retained by [`IndexRefinementReceiptIdentity`].
 /// It retains the selected graph occurrence, numerical contract, realization
-/// law and provider, verified region, reached semantic/scalar/type definition
-/// and admission projections, exact operand/result bindings, and every residual
-/// proof identity. Callers may read these bytes but cannot construct this type
-/// from bytes or independently supplied fields.
+/// law and provider, the realization's regions, reached semantic/scalar/type
+/// definition and admission projections, exact operand/result bindings, and
+/// every residual proof identity. Callers may read these bytes but cannot
+/// construct this type from bytes or independently supplied fields.
 ///
 /// The operation key, ordered signature, host-canonical attributes, and operand
 /// and result boundary shapes are not re-encoded: `tiler.semantic-graph.v2`
@@ -1116,6 +1140,7 @@ impl IndexRefinementDomainProofIdentity {
 /// One IR-sealed residual-domain proof retained by a refinement receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexRefinementDomainProof {
+    stage: usize,
     obligation: UnknownIndexDomainPredicate,
     authority: Arc<IndexDomainProofAuthority>,
     proof: IndexDomainProofEvidence,
@@ -1123,6 +1148,14 @@ pub struct IndexRefinementDomainProof {
 }
 
 impl IndexRefinementDomainProof {
+    /// Returns the ordered realization stage that retained the obligation.
+    ///
+    /// An obligation is region-local, so this is what says which region its
+    /// handles resolve against.
+    #[must_use]
+    pub const fn stage(&self) -> usize {
+        self.stage
+    }
     /// Returns the exact region-owned obligation that was proved.
     #[must_use]
     pub const fn obligation(&self) -> UnknownIndexDomainPredicate {
@@ -1145,12 +1178,27 @@ impl IndexRefinementDomainProof {
     }
 }
 
-/// Opaque checked binding of one semantic occurrence to one verified region.
+/// Opaque checked binding of one semantic occurrence to one verified
+/// realization.
+///
+/// A realization is an *ordered sequence* of verified regions, and every field
+/// below that names a region names all of them. The single-region accessors are
+/// retained beside the sequence ones and answer the final stage, which for the
+/// one-stage realization every registered law produces is the only stage; a
+/// consumer that must see the whole chain reads [`Self::regions`].
 #[derive(Clone, Debug)]
 pub struct IndexRefinementReceipt {
     graph: SemanticGraphIdentity,
     occurrence: SemanticOccurrence,
+    /// Every region identity except the final stage's, in stage order.
+    ///
+    /// Split the way [`VerifiedIndexRegionSequence`] splits its stages, so the
+    /// stage whose writes are the occurrence's results is a field rather than a
+    /// lookup a reader has to establish cannot fail.
+    leading_regions: Vec<CanonicalIndexRegionIdentity>,
     region: CanonicalIndexRegionIdentity,
+    realization: CanonicalIndexRegionSequenceIdentity,
+    leading_scalar_authorities: Vec<ScalarAuthorityEvidence>,
     scalar_authority: ScalarAuthorityEvidence,
     operand_bindings: Vec<OperandBinding>,
     result_bindings: Vec<ResultBinding>,
@@ -1170,15 +1218,38 @@ impl IndexRefinementReceipt {
     pub const fn occurrence(&self) -> SemanticOccurrence {
         self.occurrence
     }
-    /// Returns the exact verified-region identity this receipt binds.
+    /// Returns the final stage's verified-region identity.
+    ///
+    /// The final stage is the one whose writes are the occurrence's results. For
+    /// a one-stage realization it is the only region, and this is the identity
+    /// the receipt has always bound.
     #[must_use]
     pub const fn region(&self) -> &CanonicalIndexRegionIdentity {
         &self.region
     }
-    /// Returns the checked scalar authority bound to the region.
+    /// Returns every verified-region identity in stage order.
+    #[must_use]
+    pub fn regions(&self) -> Vec<CanonicalIndexRegionIdentity> {
+        let mut regions = self.leading_regions.clone();
+        regions.push(self.region.clone());
+        regions
+    }
+    /// Returns the exact canonical identity of the whole ordered realization.
+    #[must_use]
+    pub const fn realization(&self) -> &CanonicalIndexRegionSequenceIdentity {
+        &self.realization
+    }
+    /// Returns the checked scalar authority bound to the final stage.
     #[must_use]
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
         &self.scalar_authority
+    }
+    /// Returns the checked scalar authority of every stage, in stage order.
+    #[must_use]
+    pub fn scalar_authorities(&self) -> Vec<ScalarAuthorityEvidence> {
+        let mut authorities = self.leading_scalar_authorities.clone();
+        authorities.push(self.scalar_authority.clone());
+        authorities
     }
     /// Returns ordered operand-to-input bindings.
     ///
@@ -1230,10 +1301,16 @@ impl IndexRefinementReceipt {
 #[derive(Clone, Debug)]
 pub struct PendingIndexRefinementReceipt {
     resolution: ResolvedIndexRealization,
+    /// Every stage's evidence except the final one's, in stage order.
+    ///
+    /// Split the same way [`VerifiedIndexRegionSequence`] splits its stages: a
+    /// realization always has a final stage, so its evidence is a field rather
+    /// than a lookup that could fail.
+    leading_scalar_authorities: Vec<ScalarAuthorityEvidence>,
     scalar_authority: ScalarAuthorityEvidence,
     operand_bindings: Vec<OperandBinding>,
     result_bindings: Vec<ResultBinding>,
-    region: VerifiedIndexRegion,
+    realization: VerifiedIndexRegionSequence,
 }
 
 impl PendingIndexRefinementReceipt {
@@ -1242,15 +1319,30 @@ impl PendingIndexRefinementReceipt {
     pub const fn subject(&self) -> &IndexRefinementSubject {
         self.resolution.subject()
     }
-    /// Returns the exact retained verified region.
+    /// Returns the exact retained final-stage verified region.
+    ///
+    /// For the one-stage realization every registered law produces this is the
+    /// only region; [`Self::realization`] exposes the whole ordered chain.
     #[must_use]
     pub const fn region(&self) -> &VerifiedIndexRegion {
-        &self.region
+        self.realization.final_stage()
     }
-    /// Returns checked scalar authority evidence.
+    /// Returns the exact retained ordered realization.
+    #[must_use]
+    pub const fn realization(&self) -> &VerifiedIndexRegionSequence {
+        &self.realization
+    }
+    /// Returns the final stage's checked scalar authority evidence.
     #[must_use]
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
         &self.scalar_authority
+    }
+    /// Returns every stage's checked scalar authority evidence, in stage order.
+    #[must_use]
+    pub fn scalar_authorities(&self) -> Vec<ScalarAuthorityEvidence> {
+        let mut authorities = self.leading_scalar_authorities.clone();
+        authorities.push(self.scalar_authority.clone());
+        authorities
     }
     /// Returns ordered operand bindings, expanding encoded components in their
     /// semantic contract order.
@@ -1263,10 +1355,31 @@ impl PendingIndexRefinementReceipt {
     pub fn result_bindings(&self) -> &[ResultBinding] {
         &self.result_bindings
     }
-    /// Returns every exact residual obligation in canonical region order.
+    /// Returns every exact residual obligation, in stage order and within a
+    /// stage in canonical region order.
+    ///
+    /// An obligation is region-local, so a caller reading this flat sequence
+    /// needs [`Self::staged_obligations`] to know which stage each belongs to;
+    /// the flat order is what a completed receipt's proofs are aligned against.
     #[must_use]
     pub fn obligations(&self) -> impl ExactSizeIterator<Item = UnknownIndexDomainPredicate> + '_ {
-        self.region.unknown_index_domain_predicates()
+        self.staged_obligations()
+            .into_iter()
+            .map(|(_, obligation)| obligation)
+    }
+
+    /// Returns every residual obligation paired with the stage that retains it.
+    #[must_use]
+    pub fn staged_obligations(&self) -> Vec<(usize, UnknownIndexDomainPredicate)> {
+        self.realization
+            .stages()
+            .enumerate()
+            .flat_map(|(stage, region)| {
+                region
+                    .unknown_index_domain_predicates()
+                    .map(move |obligation| (stage, obligation))
+            })
+            .collect()
     }
 
     /// Revalidates that a completed receipt was minted from this exact pending
@@ -1285,10 +1398,19 @@ impl PendingIndexRefinementReceipt {
         if receipt.graph != subject.graph || receipt.occurrence != subject.occurrence {
             return Err(IndexRefinementVerificationError::CompletionReceiptMismatch);
         }
-        if &receipt.region != self.region.canonical_identity() {
+        if receipt.realization != *self.realization.identity() {
             return Err(IndexRefinementVerificationError::CompletionReceiptMismatch);
         }
-        if receipt.scalar_authority != self.scalar_authority {
+        let bound_regions = receipt.regions();
+        if bound_regions.len() != self.realization.stage_count()
+            || bound_regions
+                .iter()
+                .zip(self.realization.stages())
+                .any(|(bound, stage)| bound != stage.canonical_identity())
+        {
+            return Err(IndexRefinementVerificationError::CompletionReceiptMismatch);
+        }
+        if receipt.scalar_authorities() != self.scalar_authorities() {
             return Err(IndexRefinementVerificationError::CompletionReceiptMismatch);
         }
         if receipt.operand_bindings != self.operand_bindings {
@@ -1297,21 +1419,21 @@ impl PendingIndexRefinementReceipt {
         if receipt.result_bindings != self.result_bindings {
             return Err(IndexRefinementVerificationError::CompletionReceiptMismatch);
         }
-        let obligations = self.obligations().collect::<Vec<_>>();
+        let obligations = self.staged_obligations();
         if receipt.index_domain_proofs.len() != obligations.len()
-            || receipt
-                .index_domain_proofs
-                .iter()
-                .zip(obligations)
-                .any(|(proof, obligation)| proof.obligation != obligation)
+            || receipt.index_domain_proofs.iter().zip(obligations).any(
+                |(proof, (stage, obligation))| {
+                    proof.obligation != obligation || proof.stage != stage
+                },
+            )
         {
             return Err(IndexRefinementVerificationError::CompletionReceiptMismatch);
         }
         let expected = encode_receipt_identity(
             subject,
             &self.resolution,
-            self.region.canonical_identity(),
-            &self.scalar_authority,
+            &self.realization,
+            &self.scalar_authorities(),
             &receipt.index_domain_proofs,
         );
         if receipt.identity.as_bytes() != expected {
@@ -1324,10 +1446,11 @@ impl PendingIndexRefinementReceipt {
 impl PartialEq for PendingIndexRefinementReceipt {
     fn eq(&self, other: &Self) -> bool {
         self.resolution == other.resolution
+            && self.leading_scalar_authorities == other.leading_scalar_authorities
             && self.scalar_authority == other.scalar_authority
             && self.operand_bindings == other.operand_bindings
             && self.result_bindings == other.result_bindings
-            && self.region.canonical_identity() == other.region.canonical_identity()
+            && self.realization == other.realization
     }
 }
 
@@ -1361,6 +1484,47 @@ impl ResolvedIndexRealization {
         lowering: &IndexRealizationAuthority,
         region: &VerifiedIndexRegion,
     ) -> Result<IndexRefinementVerificationOutcome, IndexRefinementVerificationError> {
+        if self.law.realizes_region_sequence() {
+            // Named before anything else looks at the region. A staged law's
+            // final stage reads a value no occurrence input carries, so the
+            // ordinary interface check would refuse a lone region by naming that
+            // boundary — a true statement that sends a reader to the provider's
+            // tensor list instead of to the arity of what it was asked for.
+            return Err(
+                IndexRefinementVerificationError::SemanticRealizationLawRefused {
+                    operation: Box::new(self.subject.operation().clone()),
+                    rule: "staged-law-requires-region-sequence",
+                },
+            );
+        }
+        self.verify_sequence(
+            lowering,
+            &VerifiedIndexRegionSequence::single(region.clone()),
+        )
+    }
+
+    /// Checks the occurrence against an ordered multi-region realization.
+    ///
+    /// The candidate must be the exact canonical region *sequence* the
+    /// registered law constructs: the stages in order, each stage's own
+    /// canonical region identity, and the source every stage input is bound to.
+    /// A truncated chain, a reordered one, and one whose stages are individually
+    /// correct but wired differently each render a different sequence identity
+    /// and are refused for that reason alone.
+    ///
+    /// [`Self::verify`] is this method over a one-stage sequence, and a one-stage
+    /// sequence's identity is its region's identity, so the two paths agree
+    /// byte for byte on everything single-region verification ever accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed refusal when scalar authority, effect, ordered tensor
+    /// interfaces, or the realized sequence disagree.
+    pub fn verify_sequence(
+        &self,
+        lowering: &IndexRealizationAuthority,
+        realization: &VerifiedIndexRegionSequence,
+    ) -> Result<IndexRefinementVerificationOutcome, IndexRefinementVerificationError> {
         let subject = &self.subject;
         check_lowering_authority(subject, self, lowering)?;
         if subject.effect != OperationEffect::Pure {
@@ -1368,56 +1532,86 @@ impl ResolvedIndexRealization {
                 effect: subject.effect,
             });
         }
-        let scalar_authority =
-            self.registry
+        // Per stage, so the containment check covers the union of everything the
+        // realization reaches. A stage reaching an unadmitted scalar operation
+        // refuses the whole realization: the admission is what the emitted
+        // program is checked against, and a chain is one program.
+        let stage_authority = |stage: &VerifiedIndexRegion| {
+            let evidence = self
+                .registry
                 .0
                 .scalars
-                .revalidate_region(region)
+                .revalidate_region(stage)
                 .map_err(|source| {
                     IndexRefinementVerificationError::ScalarAuthority(Arc::new(source))
                 })?;
-        if scalar_authority.scalar_snapshot() != self.registry.0.scalars.snapshot_identity() {
-            return Err(IndexRefinementVerificationError::ScalarSnapshotMismatch);
+            if evidence.scalar_snapshot() != self.registry.0.scalars.snapshot_identity() {
+                return Err(IndexRefinementVerificationError::ScalarSnapshotMismatch);
+            }
+            if evidence
+                .reached_operations()
+                .iter()
+                .any(|reached| !lowering.emitted_scalar_operations.contains(reached))
+            {
+                return Err(IndexRefinementVerificationError::ScalarAuthorityConformance);
+            }
+            Ok(evidence)
+        };
+        let mut leading_scalar_authorities = Vec::with_capacity(realization.leading_stages().len());
+        for stage in realization.leading_stages() {
+            leading_scalar_authorities.push(stage_authority(stage)?);
         }
-        if scalar_authority
-            .reached_operations()
-            .iter()
-            .any(|reached| !lowering.emitted_scalar_operations.contains(reached))
-        {
-            return Err(IndexRefinementVerificationError::ScalarAuthorityConformance);
-        }
-        let operand_bindings = bind_operands(subject, region)?;
-        let result_bindings = bind_results(subject, region)?;
+        let scalar_authority = stage_authority(realization.final_stage())?;
+        let mut scalar_authorities = leading_scalar_authorities.clone();
+        scalar_authorities.push(scalar_authority.clone());
+        let operand_bindings = bind_operands(subject, realization)?;
+        let result_bindings = bind_results(subject, realization.final_stage())?;
         if !self.law.accepts_numerical_contract(subject) {
             return Err(IndexRefinementVerificationError::NumericalContractNotGoverned);
         }
         let expected = self
             .law
-            .realize(subject, &self.registry.0.scalars)
+            .realize_sequence(subject, &self.registry.0.scalars)
             .map_err(
                 |source| IndexRefinementVerificationError::SemanticRealizationLawRefused {
                     operation: Box::new(subject.operation().clone()),
                     rule: source.rule(),
                 },
             )?;
-        if expected.canonical_identity() != region.canonical_identity() {
+        if expected.identity() != realization.identity() {
+            // A one-stage expectation against a one-stage candidate reports the
+            // region identities the single-region refusal has always reported;
+            // anything else reports the whole chain, because naming one stage of
+            // a mismatched chain would hide which part disagreed.
             return Err(
-                IndexRefinementVerificationError::SemanticRealizationMismatch {
-                    expected: expected.canonical_identity().clone(),
-                    actual: region.canonical_identity().clone(),
+                if expected.is_single_stage() && realization.is_single_stage() {
+                    IndexRefinementVerificationError::SemanticRealizationMismatch {
+                        expected: expected.final_stage().canonical_identity().clone(),
+                        actual: realization.final_stage().canonical_identity().clone(),
+                    }
+                } else {
+                    IndexRefinementVerificationError::SemanticRealizationSequenceMismatch {
+                        expected: expected.identity().clone(),
+                        actual: realization.identity().clone(),
+                    }
                 },
             );
         }
-        let residual_obligations = region.unknown_index_domain_predicates().len();
+        let residual_obligations = realization
+            .stages()
+            .map(|stage| stage.unknown_index_domain_predicates().len())
+            .try_fold(0_usize, usize::checked_add)
+            .unwrap_or(usize::MAX);
         check_residual_obligation_count(residual_obligations)?;
         if residual_obligations != 0 {
             return Ok(IndexRefinementVerificationOutcome::Pending(Box::new(
                 PendingIndexRefinementReceipt {
                     resolution: self.clone(),
+                    leading_scalar_authorities,
                     scalar_authority,
                     operand_bindings,
                     result_bindings,
-                    region: region.clone(),
+                    realization: realization.clone(),
                 },
             )));
         }
@@ -1425,8 +1619,8 @@ impl ResolvedIndexRealization {
             mint_receipt(
                 subject,
                 self,
-                region.canonical_identity(),
-                scalar_authority,
+                realization,
+                scalar_authorities,
                 operand_bindings,
                 result_bindings,
                 Vec::new(),
@@ -1449,17 +1643,25 @@ impl ResolvedIndexRealization {
     ) -> Result<(IndexRefinementReceipt, Vec<IndexDomainProofAssessment>), IndexDomainProofRefusal>
     {
         let authority = Arc::new(IndexDomainProofAuthority::exact_finite());
-        let obligations = pending.obligations().collect::<Vec<_>>();
-        let claims = assess_finite_domains(&pending.region, &obligations, budget);
-        let assessments = obligations
-            .into_iter()
-            .zip(claims)
-            .map(|(obligation, claim)| IndexDomainProofAssessment {
-                obligation,
-                authority: authority.clone(),
-                claim,
-            })
-            .collect::<Vec<_>>();
+        // One ledger for the whole realization: the caller funded one budget,
+        // and a per-stage ledger would silently multiply it by the stage count.
+        let mut ledger = IndexDomainProofLedger::new(budget);
+        // Each retained obligation stays paired with the region its handles
+        // resolve against, so nothing downstream re-derives that association.
+        let mut owners: Vec<(usize, &VerifiedIndexRegion)> = Vec::new();
+        let mut assessments = Vec::new();
+        for (stage, region) in pending.realization.stages().enumerate() {
+            let obligations = region.unknown_index_domain_predicates().collect::<Vec<_>>();
+            let claims = assess_finite_domains_with(region, &obligations, &mut ledger);
+            for (obligation, claim) in obligations.into_iter().zip(claims) {
+                owners.push((stage, region));
+                assessments.push(IndexDomainProofAssessment {
+                    obligation,
+                    authority: authority.clone(),
+                    claim,
+                });
+            }
+        }
         if assessments
             .iter()
             .any(|assessment| matches!(assessment.claim, IndexDomainProofClaim::Disproved(_)))
@@ -1478,18 +1680,19 @@ impl ResolvedIndexRealization {
                 kind: IndexDomainProofRefusalKind::Unknown,
             });
         }
-        let mut proofs = Vec::with_capacity(pending.obligations().len());
-        for assessment in &assessments {
+        let mut proofs = Vec::with_capacity(assessments.len());
+        for (assessment, (stage, region)) in assessments.iter().zip(&owners) {
             let IndexDomainProofClaim::Proved(proof) = &assessment.claim else {
                 unreachable!("the refusal scans removed every non-proof claim")
             };
             proofs.push(IndexRefinementDomainProof {
+                stage: *stage,
                 obligation: assessment.obligation,
                 authority: assessment.authority.clone(),
                 proof: proof.clone(),
                 identity: IndexRefinementDomainProofIdentity(
                     encode_proof_identity(
-                        &pending.region,
+                        region,
                         assessment.obligation,
                         &assessment.authority,
                         proof,
@@ -1502,8 +1705,8 @@ impl ResolvedIndexRealization {
             mint_receipt(
                 pending.resolution.subject(),
                 &pending.resolution,
-                pending.region.canonical_identity(),
-                pending.scalar_authority.clone(),
+                &pending.realization,
+                pending.scalar_authorities(),
                 pending.operand_bindings.clone(),
                 pending.result_bindings.clone(),
                 proofs,
@@ -1648,12 +1851,34 @@ struct IndexDomainGroup {
     obligations: Vec<PlannedDomainObligation>,
 }
 
+/// Assesses one region's obligations against a budget of its own.
+///
+/// The single-region spelling the exact-finite proof tests are written against.
+/// Completion itself always goes through [`assess_finite_domains_with`], because
+/// a realization's stages share one ledger.
+#[cfg(test)]
 fn assess_finite_domains(
     region: &VerifiedIndexRegion,
     obligations: &[UnknownIndexDomainPredicate],
     budget: IndexDomainProofBudget,
 ) -> Vec<IndexDomainProofClaim> {
     let mut ledger = IndexDomainProofLedger::new(budget);
+    assess_finite_domains_with(region, obligations, &mut ledger)
+}
+
+/// Assesses one stage's obligations against a ledger the whole realization
+/// shares.
+///
+/// The ledger is a parameter rather than a fresh budget per stage because a
+/// caller states one bound for the work it is willing to fund. Re-funding it per
+/// stage would let an n-stage realization spend n times the limit its caller
+/// named, which is the same fail-closed bound quietly weakened by the arrival of
+/// a second stage.
+fn assess_finite_domains_with(
+    region: &VerifiedIndexRegion,
+    obligations: &[UnknownIndexDomainPredicate],
+    ledger: &mut IndexDomainProofLedger,
+) -> Vec<IndexDomainProofClaim> {
     let mut claims = vec![None; obligations.len()];
     let mut access_domains = HashMap::<VerifiedTensorAccessId, Option<ResolvedIndexDomain>>::new();
     let mut extents = HashMap::<IndexExtentRef, Option<u64>>::new();
@@ -1673,7 +1898,7 @@ fn assess_finite_domains(
         let domain = if let Some(cached) = access_domains.get(&obligation.subject()) {
             cached.clone()
         } else {
-            let resolved = match resolve_domain(region, obligation.subject(), &mut ledger) {
+            let resolved = match resolve_domain(region, obligation.subject(), &mut *ledger) {
                 Ok(domain) => Some(domain),
                 Err(ProofPlanningFailure::Unsupported) => None,
                 Err(ProofPlanningFailure::Exhausted(_)) => break,
@@ -1742,7 +1967,7 @@ fn assess_finite_domains(
             }
             continue;
         }
-        match assess_domain_group(region, &group, &mut ledger) {
+        match assess_domain_group(region, &group, &mut *ledger) {
             Ok(group_claims) => {
                 for (planned, claim) in group.obligations.iter().zip(group_claims) {
                     claims[planned.slot] = Some(claim);
@@ -2378,6 +2603,19 @@ pub enum IndexRefinementVerificationError {
         /// Canonical region emitted by the selected lowering.
         actual: CanonicalIndexRegionIdentity,
     },
+    /// The candidate's ordered realization differs from the semantic law's
+    /// expected region sequence.
+    ///
+    /// Distinct from [`Self::SemanticRealizationMismatch`], which names two
+    /// regions: a chain can disagree in its stage count, in a stage's own
+    /// region, or only in how a stage's inputs are sourced, and the sequence
+    /// identity is what covers all three.
+    SemanticRealizationSequenceMismatch {
+        /// Canonical realization required by semantic authority.
+        expected: CanonicalIndexRegionSequenceIdentity,
+        /// Canonical realization emitted by the selected lowering.
+        actual: CanonicalIndexRegionSequenceIdentity,
+    },
     /// The region reached scalar operations outside admission.
     ScalarAuthorityConformance,
     /// The occurrence effect is not realizable by this pure index profile.
@@ -2531,6 +2769,12 @@ impl fmt::Display for IndexRefinementVerificationError {
                 actual.as_bytes(),
                 expected.as_bytes()
             ),
+            Self::SemanticRealizationSequenceMismatch { expected, actual } => write!(
+                formatter,
+                "candidate realization {:?} differs from semantic law realization {:?}",
+                actual.as_bytes(),
+                expected.as_bytes()
+            ),
             Self::ScalarAuthorityConformance => {
                 formatter.write_str("region reached scalar authority outside admission")
             }
@@ -2663,74 +2907,153 @@ fn check_lowering_authority(
     Ok(())
 }
 
+/// One expanded semantic input boundary and the type and shape it demands.
+///
+/// An ordinary input expands to one entry; an encoded compound input expands to
+/// one entry per component in its contract order, each carrying that component's
+/// own resolved type and derived shape.
+struct ExpandedInput {
+    input: usize,
+    component_role: Option<EncodedComponentRole>,
+    value_type: ResolvedValueType,
+    shape: Shape,
+}
+
 fn bind_operands(
     occurrence: &IndexRefinementSubject,
-    region: &VerifiedIndexRegion,
+    realization: &VerifiedIndexRegionSequence,
 ) -> Result<Vec<OperandBinding>, IndexRefinementVerificationError> {
-    let inputs = region
-        .tensors()
-        .filter(|tensor| tensor.role() == TensorRole::Input)
-        .collect::<Vec<_>>();
-    let expanded_inputs = count_expanded_inputs(&occurrence.inputs, inputs.len())?;
-    if inputs.len() != expanded_inputs {
-        return Err(IndexRefinementVerificationError::OperandArity {
-            region_inputs: inputs.len(),
-            expanded_inputs,
-        });
-    }
+    let region_inputs = realization
+        .stages()
+        .map(|stage| {
+            stage
+                .tensors()
+                .filter(|tensor| tensor.role() == TensorRole::Input)
+                .count()
+        })
+        .try_fold(0_usize, usize::checked_add)
+        .unwrap_or(usize::MAX);
+    let expanded = expand_inputs(&occurrence.inputs, region_inputs)?;
 
-    let mut physical_by_input = Vec::with_capacity(occurrence.inputs.len());
-    let mut expanded_position = 0;
-    for operand in &occurrence.inputs {
-        if let Some((_, contract)) = operand.value_type.encoded_numeric_parts() {
-            let mut physical = Vec::with_capacity(contract.components().len());
-            for component in contract.components() {
-                let input = inputs[expanded_position];
-                let shape = input
-                    .shape()
-                    .as_static()
-                    .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
-                let expected_shape = component.shape_relation().component_shape(&operand.shape);
-                if input.value_type() != component.resolved_type() || shape != &expected_shape {
-                    return Err(IndexRefinementVerificationError::OperandInterface {
-                        position: expanded_position,
-                    });
-                }
-                physical.push((input.id(), Some(component.role())));
-                expanded_position += 1;
-            }
-            physical_by_input.push(physical);
-        } else {
-            let input = inputs[expanded_position];
+    // Every stage input sourced from the occurrence is checked against the
+    // boundary it claims, and the tensor is recorded against that boundary. One
+    // boundary can be claimed by several stages — a value a fold reads and the
+    // pass consuming the fold reads again is the motivating case — so this is a
+    // list per boundary rather than a single tensor.
+    let mut physical_by_expanded = vec![Vec::new(); expanded.len()];
+    for (stage, region) in realization.stages().enumerate() {
+        let inputs = region
+            .tensors()
+            .filter(|tensor| tensor.role() == TensorRole::Input)
+            .collect::<Vec<_>>();
+        let sources = realization.stage_sources(stage).ok_or(
+            IndexRefinementVerificationError::OperandArity {
+                region_inputs,
+                expanded_inputs: expanded.len(),
+            },
+        )?;
+        for (slot, source) in sources.iter().enumerate() {
+            let StagedInputSource::Occurrence(position) = source else {
+                // An intermediate is the sequence's own value: it binds to no
+                // semantic operand, and the chain check already proved it agrees
+                // with the boundary that produced it.
+                continue;
+            };
+            let boundary =
+                expanded
+                    .get(*position)
+                    .ok_or(IndexRefinementVerificationError::OperandArity {
+                        region_inputs,
+                        expanded_inputs: expanded.len(),
+                    })?;
+            let input = inputs[slot];
             let shape = input
                 .shape()
                 .as_static()
                 .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
-            if input.value_type() != &operand.value_type || shape != &operand.shape {
+            if input.value_type() != &boundary.value_type || shape != &boundary.shape {
                 return Err(IndexRefinementVerificationError::OperandInterface {
-                    position: expanded_position,
+                    position: *position,
                 });
             }
-            physical_by_input.push(vec![(input.id(), None)]);
-            expanded_position += 1;
+            physical_by_expanded[*position].push((stage, input.id()));
         }
     }
-    debug_assert_eq!(expanded_position, expanded_inputs);
-    let component_counts = physical_by_input.iter().map(Vec::len).collect::<Vec<_>>();
+    // A declared boundary no stage reads is an arity disagreement, not a silent
+    // omission: the occurrence states an input the realization never consumes.
+    // Reported as arity rather than interface because nothing disagreed about
+    // the boundary — there was no tensor to disagree with it.
+    if physical_by_expanded.iter().any(Vec::is_empty) {
+        return Err(IndexRefinementVerificationError::OperandArity {
+            region_inputs,
+            expanded_inputs: expanded.len(),
+        });
+    }
+
+    let component_counts = occurrence
+        .inputs
+        .iter()
+        .enumerate()
+        .map(|(input, _)| {
+            expanded
+                .iter()
+                .enumerate()
+                .filter(|(_, boundary)| boundary.input == input)
+                .map(|(position, _)| physical_by_expanded[position].len())
+                .try_fold(0_usize, usize::checked_add)
+                .unwrap_or(usize::MAX)
+        })
+        .collect::<Vec<_>>();
     let binding_count = count_operand_bindings(&occurrence.operands, &component_counts)?;
     let mut bindings = Vec::with_capacity(binding_count);
     for (position, input) in occurrence.operands.iter().copied().enumerate() {
-        for (input_tensor, component_role) in &physical_by_input[input] {
-            bindings.push(OperandBinding {
-                operand: position,
-                input,
-                input_tensor: *input_tensor,
-                component_role: *component_role,
-            });
+        for (expanded_position, boundary) in expanded.iter().enumerate() {
+            if boundary.input != input {
+                continue;
+            }
+            for (stage, input_tensor) in &physical_by_expanded[expanded_position] {
+                bindings.push(OperandBinding {
+                    stage: *stage,
+                    operand: position,
+                    input,
+                    input_tensor: *input_tensor,
+                    component_role: boundary.component_role,
+                });
+            }
         }
     }
     debug_assert_eq!(bindings.len(), binding_count);
     Ok(bindings)
+}
+
+/// Expands semantic inputs to the ordered boundary list a realization sources.
+fn expand_inputs(
+    inputs: &[IndexRefinementBoundary],
+    region_inputs: usize,
+) -> Result<Vec<ExpandedInput>, IndexRefinementVerificationError> {
+    let expanded_inputs = count_expanded_inputs(inputs, region_inputs)?;
+    let mut expanded = Vec::with_capacity(expanded_inputs);
+    for (input, boundary) in inputs.iter().enumerate() {
+        if let Some((_, contract)) = boundary.value_type.encoded_numeric_parts() {
+            for component in contract.components() {
+                expanded.push(ExpandedInput {
+                    input,
+                    component_role: Some(component.role()),
+                    value_type: component.resolved_type().clone(),
+                    shape: component.shape_relation().component_shape(&boundary.shape),
+                });
+            }
+        } else {
+            expanded.push(ExpandedInput {
+                input,
+                component_role: None,
+                value_type: boundary.value_type.clone(),
+                shape: boundary.shape.clone(),
+            });
+        }
+    }
+    debug_assert_eq!(expanded.len(), expanded_inputs);
+    Ok(expanded)
 }
 
 /// Counts component-expanded semantic inputs without deriving component shapes.
@@ -2835,8 +3158,8 @@ fn bind_results(
 fn mint_receipt(
     subject: &IndexRefinementSubject,
     resolution: &ResolvedIndexRealization,
-    region: &CanonicalIndexRegionIdentity,
-    scalar_authority: ScalarAuthorityEvidence,
+    realization: &VerifiedIndexRegionSequence,
+    scalar_authorities: Vec<ScalarAuthorityEvidence>,
     operand_bindings: Vec<OperandBinding>,
     result_bindings: Vec<ResultBinding>,
     index_domain_proofs: Vec<IndexRefinementDomainProof>,
@@ -2844,23 +3167,34 @@ fn mint_receipt(
     let identity = encode_receipt_identity(
         subject,
         resolution,
-        region,
-        &scalar_authority,
+        realization,
+        &scalar_authorities,
         &index_domain_proofs,
     );
     let executable_coverage_identity = encode_executable_coverage_identity(
         subject,
         resolution,
-        region,
-        &scalar_authority,
+        realization,
+        &scalar_authorities,
         &operand_bindings,
         &result_bindings,
         &index_domain_proofs,
     );
+    let mut leading_scalar_authorities = scalar_authorities;
+    let Some(scalar_authority) = leading_scalar_authorities.pop() else {
+        unreachable!("a realization has a final stage and therefore its evidence")
+    };
     IndexRefinementReceipt {
         graph: subject.graph.clone(),
         occurrence: subject.occurrence,
-        region: region.clone(),
+        leading_regions: realization
+            .leading_stages()
+            .iter()
+            .map(|stage| stage.canonical_identity().clone())
+            .collect(),
+        region: realization.final_stage().canonical_identity().clone(),
+        realization: realization.identity().clone(),
+        leading_scalar_authorities,
         scalar_authority,
         operand_bindings,
         result_bindings,
@@ -2872,20 +3206,43 @@ fn mint_receipt(
     }
 }
 
+/// Encodes reached-only executable provenance.
+///
+/// **Why a one-stage realization writes the bytes it always wrote.** A
+/// realization spanning several stages carries more than one region identity,
+/// more than one scalar authority, and a stage ordinal on every binding — none of
+/// which a one-stage realization has anything to say about. Rather than write
+/// empty or constant fields into every receipt ever minted, the one-stage form
+/// keeps its established encoding and the staged form is written under its own
+/// domain tag. The two tags are distinct byte strings in the first position, so
+/// the preimages are disjoint and no staged coverage can spell a single-region
+/// one.
 fn encode_executable_coverage_identity(
     subject: &IndexRefinementSubject,
     resolution: &ResolvedIndexRealization,
-    region: &CanonicalIndexRegionIdentity,
-    scalar_authority: &ScalarAuthorityEvidence,
+    realization: &VerifiedIndexRegionSequence,
+    scalar_authorities: &[ScalarAuthorityEvidence],
     operand_bindings: &[OperandBinding],
     result_bindings: &[ResultBinding],
     proofs: &[IndexRefinementDomainProof],
 ) -> Vec<u8> {
-    let mut bytes = EXECUTABLE_COVERAGE_IDENTITY_TAG.to_vec();
+    let staged = !realization.is_single_stage();
+    let mut bytes = if staged {
+        STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG.to_vec()
+    } else {
+        EXECUTABLE_COVERAGE_IDENTITY_TAG.to_vec()
+    };
     push_slice(&mut bytes, subject.graph.as_bytes());
     bytes.extend_from_slice(&subject.occurrence.get().to_be_bytes());
     push_slice(&mut bytes, subject.numerical_contract.as_bytes());
-    push_slice(&mut bytes, region.as_bytes());
+    if staged {
+        push_slice(&mut bytes, realization.identity().as_bytes());
+    } else {
+        push_slice(
+            &mut bytes,
+            realization.final_stage().canonical_identity().as_bytes(),
+        );
+    }
     push_slice(
         &mut bytes,
         subject.semantic_authority.reached_definitions().as_bytes(),
@@ -2897,12 +3254,20 @@ fn encode_executable_coverage_identity(
     encode_optional_law_row(&mut bytes, subject.realization_law_row.as_deref());
     encode_provider(&mut bytes, resolution.provider());
     bytes.extend_from_slice(&resolution.revision().to_be_bytes());
-    push_slice(&mut bytes, scalar_authority.definitions().as_bytes());
-    push_slice(&mut bytes, scalar_authority.admission().as_bytes());
-    push_slice(&mut bytes, scalar_authority.type_definitions().as_bytes());
-    push_slice(&mut bytes, scalar_authority.type_admission().as_bytes());
+    if staged {
+        push_len(&mut bytes, scalar_authorities.len());
+    }
+    for authority in scalar_authorities {
+        push_slice(&mut bytes, authority.definitions().as_bytes());
+        push_slice(&mut bytes, authority.admission().as_bytes());
+        push_slice(&mut bytes, authority.type_definitions().as_bytes());
+        push_slice(&mut bytes, authority.type_admission().as_bytes());
+    }
     push_len(&mut bytes, operand_bindings.len());
     for binding in operand_bindings {
+        if staged {
+            push_len(&mut bytes, binding.stage);
+        }
         push_len(&mut bytes, binding.operand);
         push_len(&mut bytes, binding.input);
         bytes.extend_from_slice(&binding.input_tensor.index.to_be_bytes());
@@ -2923,28 +3288,59 @@ fn encode_executable_coverage_identity(
     }
     push_len(&mut bytes, proofs.len());
     for proof in proofs {
+        if staged {
+            push_len(&mut bytes, proof.stage);
+        }
         push_slice(&mut bytes, proof.identity().as_bytes());
     }
     bytes
 }
 
+/// Encodes the canonical receipt identity.
+///
+/// Domain-separated the same way [`encode_executable_coverage_identity`] is, and
+/// for the same reason: a one-stage realization keeps
+/// [`RECEIPT_IDENTITY_TAG`] and the exact field order it has always written, so
+/// every receipt a single-region law ever minted is byte-identical; a staged
+/// realization writes its whole ordered chain under
+/// [`STAGED_RECEIPT_IDENTITY_TAG`].
 fn encode_receipt_identity(
     subject: &IndexRefinementSubject,
     resolution: &ResolvedIndexRealization,
-    region: &CanonicalIndexRegionIdentity,
-    scalar_authority: &ScalarAuthorityEvidence,
+    realization: &VerifiedIndexRegionSequence,
+    scalar_authorities: &[ScalarAuthorityEvidence],
     proofs: &[IndexRefinementDomainProof],
 ) -> Vec<u8> {
-    let mut bytes = RECEIPT_IDENTITY_TAG.to_vec();
-    push_slice(&mut bytes, region.as_bytes());
+    let staged = !realization.is_single_stage();
+    let mut bytes = if staged {
+        STAGED_RECEIPT_IDENTITY_TAG.to_vec()
+    } else {
+        RECEIPT_IDENTITY_TAG.to_vec()
+    };
+    if staged {
+        push_slice(&mut bytes, realization.identity().as_bytes());
+    } else {
+        push_slice(
+            &mut bytes,
+            realization.final_stage().canonical_identity().as_bytes(),
+        );
+    }
     push_slice(&mut bytes, &subject.identity);
     push_slice(&mut bytes, &resolution.identity);
-    push_slice(&mut bytes, scalar_authority.definitions().as_bytes());
-    push_slice(&mut bytes, scalar_authority.type_definitions().as_bytes());
-    push_slice(&mut bytes, scalar_authority.semantic_snapshot().as_bytes());
-    push_slice(&mut bytes, scalar_authority.scalar_snapshot().as_bytes());
+    if staged {
+        push_len(&mut bytes, scalar_authorities.len());
+    }
+    for authority in scalar_authorities {
+        push_slice(&mut bytes, authority.definitions().as_bytes());
+        push_slice(&mut bytes, authority.type_definitions().as_bytes());
+        push_slice(&mut bytes, authority.semantic_snapshot().as_bytes());
+        push_slice(&mut bytes, authority.scalar_snapshot().as_bytes());
+    }
     push_len(&mut bytes, proofs.len());
     for proof in proofs {
+        if staged {
+            push_len(&mut bytes, proof.stage);
+        }
         push_slice(&mut bytes, proof.identity().as_bytes());
     }
     bytes
@@ -3401,6 +3797,7 @@ mod tests {
     ) -> (
         IndexRefinementSubject,
         ResolvedIndexRealization,
+        VerifiedIndexRegionSequence,
         IndexRefinementReceipt,
     ) {
         let mut semantic = SemanticRegistryBuilder::standard().unwrap();
@@ -3462,7 +3859,12 @@ mod tests {
         else {
             panic!("the reached fixture retains no residual proof")
         };
-        (subject, resolution, *receipt)
+        (
+            subject,
+            resolution,
+            VerifiedIndexRegionSequence::single(region),
+            *receipt,
+        )
     }
 
     fn constant_receipt_with_unused_authority(
@@ -3559,8 +3961,8 @@ mod tests {
             baseline.executable_coverage_identity(),
             reached_scalar_revision.executable_coverage_identity()
         );
-        let (_, _, reached_semantic) = reached_semantic_fixture(1);
-        let (_, _, reached_semantic_revision) = reached_semantic_fixture(2);
+        let (_, _, _, reached_semantic) = reached_semantic_fixture(1);
+        let (_, _, _, reached_semantic_revision) = reached_semantic_fixture(2);
         assert_eq!(reached_semantic.graph(), reached_semantic_revision.graph());
         assert_eq!(
             reached_semantic.region(),
@@ -3592,18 +3994,18 @@ mod tests {
 
     #[test]
     fn executable_coverage_retains_each_replay_and_substitution_boundary() {
-        let (subject, resolution, receipt) = reached_semantic_fixture(1);
+        let (subject, resolution, realization, receipt) = reached_semantic_fixture(1);
         let encode = |subject: &IndexRefinementSubject,
                       resolution: &ResolvedIndexRealization,
-                      region: &CanonicalIndexRegionIdentity,
+                      realization: &VerifiedIndexRegionSequence,
                       operands: &[OperandBinding],
                       results: &[ResultBinding],
                       proofs: &[IndexRefinementDomainProof]| {
             encode_executable_coverage_identity(
                 subject,
                 resolution,
-                region,
-                receipt.scalar_authority(),
+                realization,
+                &receipt.scalar_authorities(),
                 operands,
                 results,
                 proofs,
@@ -3612,7 +4014,7 @@ mod tests {
         let baseline = encode(
             &subject,
             &resolution,
-            receipt.region(),
+            &realization,
             receipt.operand_bindings(),
             receipt.result_bindings(),
             receipt.index_domain_proofs(),
@@ -3631,7 +4033,7 @@ mod tests {
             encode(
                 &changed,
                 &resolution,
-                receipt.region(),
+                &realization,
                 receipt.operand_bindings(),
                 receipt.result_bindings(),
                 &[]
@@ -3645,7 +4047,7 @@ mod tests {
             encode(
                 &changed,
                 &resolution,
-                receipt.region(),
+                &realization,
                 receipt.operand_bindings(),
                 receipt.result_bindings(),
                 &[]
@@ -3659,20 +4061,20 @@ mod tests {
             encode(
                 &changed,
                 &resolution,
-                receipt.region(),
+                &realization,
                 receipt.operand_bindings(),
                 receipt.result_bindings(),
                 &[]
             )
         );
 
-        let changed_region = residual_region(1, 5, 0);
+        let changed_region = VerifiedIndexRegionSequence::single(residual_region(1, 5, 0));
         assert_ne!(
             baseline,
             encode(
                 &subject,
                 &resolution,
-                changed_region.canonical_identity(),
+                &changed_region,
                 receipt.operand_bindings(),
                 receipt.result_bindings(),
                 &[]
@@ -3692,7 +4094,7 @@ mod tests {
             encode(
                 &changed,
                 &resolution,
-                receipt.region(),
+                &realization,
                 receipt.operand_bindings(),
                 receipt.result_bindings(),
                 &[]
@@ -3707,7 +4109,7 @@ mod tests {
             encode(
                 &subject,
                 &changed_resolution,
-                receipt.region(),
+                &realization,
                 receipt.operand_bindings(),
                 receipt.result_bindings(),
                 &[]
@@ -3721,7 +4123,7 @@ mod tests {
             encode(
                 &subject,
                 &changed_resolution,
-                receipt.region(),
+                &realization,
                 receipt.operand_bindings(),
                 receipt.result_bindings(),
                 &[]
@@ -3735,7 +4137,7 @@ mod tests {
             encode(
                 &subject,
                 &resolution,
-                receipt.region(),
+                &realization,
                 &operands,
                 receipt.result_bindings(),
                 &[]
@@ -3749,7 +4151,7 @@ mod tests {
             encode(
                 &subject,
                 &resolution,
-                receipt.region(),
+                &realization,
                 receipt.operand_bindings(),
                 &results,
                 &[]
@@ -3767,6 +4169,7 @@ mod tests {
             derivation: EXHAUSTIVE_DERIVATION.into(),
         };
         let proof = IndexRefinementDomainProof {
+            stage: 0,
             obligation,
             authority: authority.clone(),
             identity: IndexRefinementDomainProofIdentity(
@@ -3780,7 +4183,7 @@ mod tests {
             encode(
                 &subject,
                 &resolution,
-                receipt.region(),
+                &realization,
                 receipt.operand_bindings(),
                 receipt.result_bindings(),
                 &[proof]
@@ -3827,6 +4230,522 @@ mod tests {
             .register_provider(&RefinementLawProvider(law))
             .unwrap();
         builder.freeze().unwrap()
+    }
+
+    // ---- The staged realization vocabulary -------------------------------
+    //
+    // These exercise a law form no standard operation carries: registering the
+    // normalization that will carry it belongs to that family's own ticket, and
+    // needs a governed reciprocal square root that does not yet exist. What is
+    // tested here is the vocabulary the family will be stated in — the ordered
+    // chain, its identity, the receipt that binds every stage, and the refusals.
+
+    /// Ordered axes attribute for the staged test operation's fold.
+    const STAGED_AXES_ATTRIBUTE: AttributeFieldId = AttributeFieldId::new(1);
+
+    /// Length of the folded axis in every staged fixture.
+    const STAGED_LENGTH: u64 = 4;
+
+    fn staged_test_operation() -> OpKey {
+        OpKey::new("test", "staged-fold-then-pass", 1).unwrap()
+    }
+
+    /// Result type and shape follow the *second* operand, the elementwise one.
+    struct StagedFoldThenPass;
+
+    impl OperationInferencer for StagedFoldThenPass {
+        fn infer(
+            &self,
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            if request.operands().len() == 2 {
+                outputs.try_push(request.operands()[1].clone())
+            } else {
+                Err(OperationInferenceError::new(
+                    ProviderDiagnosticCode::new("test.staged.signature").unwrap(),
+                    "the staged test operation requires two operands",
+                )
+                .unwrap())
+            }
+        }
+    }
+
+    struct StagedLawProvider(Option<super::super::IndexRealizationLaw>);
+
+    impl SemanticRegistryProvider for StagedLawProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "staged-law-provider", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            let operation = staged_test_operation();
+            registrar.register_operation(OperationDefinition::new(
+                operation.clone(),
+                OperationSchema::new(
+                    OperationArity::exact(2),
+                    OperationArity::exact(1),
+                    [crate::semantic::OperationAttributeSchema::required(
+                        STAGED_AXES_ATTRIBUTE,
+                        CanonicalValueKind::Sequence,
+                    )],
+                )
+                .unwrap(),
+                NormativeDefinitionRef::new("test staged-fold-then-pass v1")?,
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(StagedFoldThenPass),
+            ))?;
+            if let Some(law) = &self.0 {
+                registrar.register_index_realization_law(operation, 1, law.clone())?;
+            }
+            Ok(())
+        }
+    }
+
+    fn staged_law() -> super::super::IndexRealizationLaw {
+        super::super::IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32 {
+            axes_attribute: STAGED_AXES_ATTRIBUTE,
+            scalar: super::super::multiply_f32_scalar_op(),
+        }
+    }
+
+    /// Complete authorities and subject for one staged-law occurrence.
+    struct StagedFixture {
+        scalars: FrozenScalarRegistry,
+        subject: IndexRefinementSubject,
+        resolution: ResolvedIndexRealization,
+        authority: IndexRealizationAuthority,
+    }
+
+    /// The two scalar operations the staged vocabulary reaches.
+    ///
+    /// The fold's tail combine is the governed add and the pass applies the
+    /// governed multiply; neither the empty-domain constant nor the
+    /// single-contributor canonicalization is reachable at a folded extent above
+    /// one, so registering them would admit authority nothing here uses.
+    fn staged_scalars(semantic: &FrozenSemanticRegistry) -> FrozenScalarRegistry {
+        let mut scalars = ScalarRegistryBuilder::new(semantic.clone());
+        let provider = ProviderIdentity::new("test", "staged-scalars", 1).unwrap();
+        for (key, normative) in [
+            (
+                super::super::multiply_f32_scalar_op(),
+                "test staged multiply",
+            ),
+            (super::super::add_f32_scalar_op(), "test staged add"),
+        ] {
+            scalars
+                .register(
+                    provider.clone(),
+                    test_binary_scalar_definition(key, normative),
+                )
+                .unwrap();
+        }
+        scalars.freeze()
+    }
+
+    fn staged_fixture(law: super::super::IndexRealizationLaw) -> StagedFixture {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder
+            .register_provider(&StagedLawProvider(Some(law)))
+            .unwrap();
+        let semantic = builder.freeze().unwrap();
+        let scalars = staged_scalars(&semantic);
+
+        let mut program = SemanticProgramBuilder::try_new(semantic.clone()).unwrap();
+        let folded = program
+            .input::<F32>(
+                InputKey::new("folded").unwrap(),
+                Shape::from_dims([STAGED_LENGTH]),
+            )
+            .unwrap();
+        let elementwise = program
+            .input::<F32>(
+                InputKey::new("elementwise").unwrap(),
+                Shape::from_dims([STAGED_LENGTH]),
+            )
+            .unwrap();
+        let axes = CanonicalValue::sequence([CanonicalValue::unsigned_u32(0)]).unwrap();
+        let value = program
+            .apply(
+                staged_test_operation(),
+                OperationAttributes::new([CanonicalField::new(STAGED_AXES_ATTRIBUTE, axes)])
+                    .unwrap(),
+                &[folded.erase(), elementwise.erase()],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+        program
+            .output_resolved(OutputKey::new("scaled").unwrap(), value)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic.clone(), scalars.clone())
+                .unwrap();
+        let resolution = laws.resolve(&subject).unwrap();
+        let authority = IndexRealizationAuthority::admit(
+            &semantic,
+            &scalars,
+            subject.operation().clone(),
+            subject.signature().clone(),
+            &[
+                super::super::multiply_f32_scalar_op(),
+                super::super::add_f32_scalar_op(),
+            ],
+        )
+        .unwrap();
+        StagedFixture {
+            scalars,
+            subject,
+            resolution,
+            authority,
+        }
+    }
+
+    impl StagedFixture {
+        fn realized(&self) -> VerifiedIndexRegionSequence {
+            self.resolution
+                .law
+                .realize_sequence(&self.subject, &self.scalars)
+                .expect("the staged law realizes its occurrence")
+        }
+
+        fn verify(
+            &self,
+            realization: &VerifiedIndexRegionSequence,
+        ) -> Result<IndexRefinementVerificationOutcome, IndexRefinementVerificationError> {
+            self.resolution
+                .verify_sequence(&self.authority, realization)
+        }
+    }
+
+    /// The whole point: an occurrence whose realization is two regions gets a
+    /// receipt that binds both of them.
+    #[test]
+    fn a_staged_occurrence_verifies_and_binds_every_region() {
+        let fixture = staged_fixture(staged_law());
+        let realization = fixture.realized();
+        assert_eq!(realization.stage_count(), 2);
+        assert_eq!(realization.intermediates().len(), 1);
+        // The fold removed the only axis, so what it hands on is rank zero and
+        // the pass reads it once per point.
+        assert_eq!(realization.intermediates()[0].shape().rank(), 0);
+
+        let IndexRefinementVerificationOutcome::Verified(receipt) = fixture
+            .verify(&realization)
+            .expect("the law's own realization verifies")
+        else {
+            panic!("the staged fixture retains no residual obligation")
+        };
+        assert_eq!(receipt.regions().len(), 2);
+        assert_eq!(
+            receipt.regions(),
+            realization
+                .stages()
+                .map(|stage| stage.canonical_identity().clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(receipt.realization(), realization.identity());
+        assert_eq!(
+            receipt.region(),
+            realization.final_stage().canonical_identity()
+        );
+        // Both stages' scalar authorities are retained, and they genuinely
+        // differ: at this folded extent the fold's tail combine reaches the
+        // governed add and nothing else, and the pass reaches the multiply and
+        // nothing else.
+        assert_eq!(receipt.scalar_authorities().len(), 2);
+        assert_ne!(
+            receipt.scalar_authorities()[0],
+            receipt.scalar_authorities()[1]
+        );
+
+        // The folded operand is read by the fold and the elementwise operand by
+        // the pass, so the bindings name two different stages.
+        let stages = receipt
+            .operand_bindings()
+            .iter()
+            .map(|binding| (binding.operand(), binding.stage()))
+            .collect::<Vec<_>>();
+        assert_eq!(stages, vec![(0, 0), (1, 1)]);
+        assert_eq!(receipt.result_bindings().len(), 1);
+
+        // Domain separation, checked rather than only argued: a staged receipt
+        // and its coverage are written under their own tags, so no staged
+        // encoding can spell a single-region one — which is what lets the
+        // one-stage encoding stay exactly the bytes it has always been.
+        assert!(
+            receipt
+                .identity()
+                .as_bytes()
+                .starts_with(STAGED_RECEIPT_IDENTITY_TAG)
+        );
+        assert!(
+            receipt
+                .executable_coverage_identity()
+                .as_bytes()
+                .starts_with(STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG)
+        );
+        let (_, _, _, single_stage) = reached_semantic_fixture(1);
+        assert!(
+            single_stage
+                .identity()
+                .as_bytes()
+                .starts_with(RECEIPT_IDENTITY_TAG)
+        );
+        assert!(
+            single_stage
+                .executable_coverage_identity()
+                .as_bytes()
+                .starts_with(EXECUTABLE_COVERAGE_IDENTITY_TAG)
+        );
+        assert!(!RECEIPT_IDENTITY_TAG.starts_with(STAGED_RECEIPT_IDENTITY_TAG));
+        assert!(!STAGED_RECEIPT_IDENTITY_TAG.starts_with(RECEIPT_IDENTITY_TAG));
+        assert!(
+            !EXECUTABLE_COVERAGE_IDENTITY_TAG.starts_with(STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG)
+        );
+        assert!(
+            !STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG.starts_with(EXECUTABLE_COVERAGE_IDENTITY_TAG)
+        );
+    }
+
+    /// A staged realization's containment check covers every stage.
+    ///
+    /// Admitting only the multiply the *pass* reaches leaves the fold's own
+    /// governed additions unadmitted, and the realization is refused as a whole.
+    #[test]
+    fn an_unadmitted_scalar_in_an_earlier_stage_refuses_the_realization() {
+        let fixture = staged_fixture(staged_law());
+        let realization = fixture.realized();
+        let narrow = IndexRealizationAuthority::admit(
+            &FrozenSemanticRegistry::standard().unwrap(),
+            &fixture.scalars,
+            fixture.subject.operation().clone(),
+            fixture.subject.signature().clone(),
+            &[super::super::multiply_f32_scalar_op()],
+        );
+        // The narrow authority is built over the standard registry, which does
+        // not define the staged test operation at all, so admission itself is
+        // what refuses first; rebuild it over the fixture's own authority.
+        assert!(narrow.is_err());
+
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder
+            .register_provider(&StagedLawProvider(Some(staged_law())))
+            .unwrap();
+        let semantic = builder.freeze().unwrap();
+        let narrow = IndexRealizationAuthority::admit(
+            &semantic,
+            &fixture.scalars,
+            fixture.subject.operation().clone(),
+            fixture.subject.signature().clone(),
+            &[super::super::multiply_f32_scalar_op()],
+        )
+        .unwrap();
+        assert_eq!(
+            fixture
+                .resolution
+                .verify_sequence(&narrow, &realization)
+                .unwrap_err(),
+            IndexRefinementVerificationError::ScalarAuthorityConformance
+        );
+    }
+
+    /// The rubber-stamp perturbation: a well-formed chain that realizes
+    /// something else is refused.
+    ///
+    /// Both candidates below are structurally valid region sequences —
+    /// [`VerifiedIndexRegionSequence::try_new`] accepted them — so nothing about
+    /// their own construction says no. What refuses is the comparison against
+    /// the law's own realization, which is the only thing standing between a
+    /// receipt and a provider that emitted a plausible chain for the wrong
+    /// operation.
+    #[test]
+    fn a_chain_that_does_not_realize_the_occurrence_is_refused() {
+        let fixture = staged_fixture(staged_law());
+        let realization = fixture.realized();
+
+        // Cross-family: the chain built for the *other* scalar. Every stage is
+        // well formed and the wiring is identical; only the pass's arithmetic
+        // differs, and that is enough.
+        let other = staged_fixture(
+            super::super::IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32 {
+                axes_attribute: STAGED_AXES_ATTRIBUTE,
+                scalar: super::super::add_f32_scalar_op(),
+            },
+        );
+        let foreign = other.realized();
+        assert_ne!(realization.identity(), foreign.identity());
+        let refusal = fixture.verify(&foreign).unwrap_err();
+        assert!(
+            matches!(
+                refusal,
+                IndexRefinementVerificationError::SemanticRealizationSequenceMismatch { .. }
+            ),
+            "observed {refusal:?}"
+        );
+
+        // Wrong order: the same two regions, chained the other way round. The
+        // reversal composes — `try_new` accepts it — but running the pass first
+        // means the occurrence's folded operand would have to be read through a
+        // boundary shaped like the fold's *result*, and the ordered interface
+        // check reaches that one statement before the identity comparison does.
+        //
+        // Asserted at the exact position rather than "some refusal": the
+        // boundary that disagrees is the evidence the order was wrong, and a
+        // test satisfied by any refusal would pass for a fixture that had
+        // stopped building chains at all.
+        let stages = realization.stages().cloned().collect::<Vec<_>>();
+        let reversed = VerifiedIndexRegionSequence::try_new(
+            vec![stages[1].clone(), stages[0].clone()],
+            vec![
+                vec![
+                    StagedInputSource::Occurrence(1),
+                    StagedInputSource::Occurrence(0),
+                ],
+                vec![StagedInputSource::Intermediate(0)],
+            ],
+        )
+        .expect("the reversed chain is structurally well formed");
+        assert_ne!(realization.identity(), reversed.identity());
+        assert_eq!(
+            fixture.verify(&reversed).unwrap_err(),
+            IndexRefinementVerificationError::OperandInterface { position: 0 }
+        );
+    }
+
+    /// One region for a two-region occurrence, and two for a one-region one.
+    ///
+    /// The ticket's own perturbation, in both directions: a chain cannot be
+    /// presented for a law that declares one region, and one region cannot
+    /// certify a law whose realization is a chain.
+    ///
+    /// **Where each direction is caught differs, and that is worth recording.**
+    /// A truncated chain drops the fold, so the pass's handed input boundary now
+    /// claims to be an occurrence input and disagrees with it — the ordered
+    /// interface check names that boundary before the realization comparison
+    /// runs. A chain presented for a one-region law binds cleanly and is caught
+    /// by the comparison itself. Both are typed refusals and neither mints a
+    /// receipt; what would be wrong is a candidate that reached one of these
+    /// paths and was approved by the other.
+    #[test]
+    fn region_count_disagreements_refuse_in_both_directions() {
+        let fixture = staged_fixture(staged_law());
+        let realization = fixture.realized();
+        let stages = realization.stages().cloned().collect::<Vec<_>>();
+
+        // A staged law against the pass alone. Its second boundary is the fold's
+        // rank-zero result, which the occurrence's second input is not.
+        let truncated = VerifiedIndexRegionSequence::single(stages[1].clone());
+        assert_eq!(
+            fixture.verify(&truncated).unwrap_err(),
+            IndexRefinementVerificationError::OperandInterface { position: 1 }
+        );
+        // And through the single-region entry point the compiler drives, where
+        // the law refuses before any comparison is reached.
+        let refusal = fixture
+            .resolution
+            .verify(&fixture.authority, &stages[1])
+            .unwrap_err();
+        assert!(
+            matches!(
+                refusal,
+                IndexRefinementVerificationError::SemanticRealizationLawRefused {
+                    rule: "staged-law-requires-region-sequence",
+                    ..
+                }
+            ),
+            "observed {refusal:?}"
+        );
+
+        // A single-region law against a two-region candidate.
+        let semantic =
+            semantic_with_test_law(Some(super::super::IndexRealizationLaw::multiply_f32()));
+        let scalars = staged_scalars(&semantic);
+        let mut program = SemanticProgramBuilder::try_new(semantic.clone()).unwrap();
+        let input = program
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([1]))
+            .unwrap();
+        let value = program
+            .apply(
+                test_law_operation(),
+                OperationAttributes::empty(),
+                &[input.erase(), input.erase()],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+        program
+            .output_resolved(OutputKey::new("output").unwrap(), value)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic.clone(), scalars.clone())
+                .unwrap();
+        let resolution = laws.resolve(&subject).unwrap();
+        let authority = IndexRealizationAuthority::admit(
+            &semantic,
+            &scalars,
+            subject.operation().clone(),
+            subject.signature().clone(),
+            &[super::super::multiply_f32_scalar_op()],
+        )
+        .unwrap();
+        let single = super::super::IndexRealizationLaw::multiply_f32()
+            .realize(&subject, &scalars)
+            .unwrap();
+        // The one-stage candidate the law does expect still verifies, which is
+        // what makes the two-stage refusal below attributable to stage count
+        // rather than to a broken fixture.
+        assert!(matches!(
+            resolution
+                .verify_sequence(
+                    &authority,
+                    &VerifiedIndexRegionSequence::single(single.clone())
+                )
+                .unwrap(),
+            IndexRefinementVerificationOutcome::Verified(_)
+        ));
+        // The operation aliases one input into both operands, so its region has
+        // one input boundary; running the region twice, the second copy reading
+        // the first's result, is a chain whose every interface agrees with the
+        // occurrence. Nothing but the whole-realization comparison can refuse
+        // it, which is exactly what makes it the case worth stating.
+        let doubled = VerifiedIndexRegionSequence::try_new(
+            vec![single.clone(), single],
+            vec![
+                vec![StagedInputSource::Occurrence(0)],
+                vec![StagedInputSource::Intermediate(0)],
+            ],
+        )
+        .expect("squaring twice, the second reading the first, is a well-formed chain");
+        let refusal = resolution
+            .verify_sequence(&authority, &doubled)
+            .unwrap_err();
+        assert!(
+            matches!(
+                refusal,
+                IndexRefinementVerificationError::SemanticRealizationSequenceMismatch { .. }
+            ),
+            "observed {refusal:?}"
+        );
     }
 
     #[test]
@@ -4542,12 +5461,14 @@ mod tests {
             FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars.clone()).unwrap();
         let region = two_domain_residual_region();
         let scalar_authority = scalars.revalidate_region(&region).unwrap();
+        let realization = VerifiedIndexRegionSequence::single(region);
         let pending = |resolution| PendingIndexRefinementReceipt {
             resolution,
+            leading_scalar_authorities: Vec::new(),
             scalar_authority: scalar_authority.clone(),
             operand_bindings: Vec::new(),
             result_bindings: Vec::new(),
-            region: region.clone(),
+            realization: realization.clone(),
         };
         let first = pending(laws.resolve(&first_subject).unwrap());
         let second = pending(laws.resolve(&second_subject).unwrap());
@@ -4555,8 +5476,8 @@ mod tests {
             mint_receipt(
                 pending.subject(),
                 &pending.resolution,
-                pending.region.canonical_identity(),
-                pending.scalar_authority.clone(),
+                &pending.realization,
+                pending.scalar_authorities(),
                 pending.operand_bindings.clone(),
                 pending.result_bindings.clone(),
                 Vec::new(),
@@ -4634,10 +5555,11 @@ mod tests {
         let resolution = laws.resolve(&subject).unwrap();
         let pending = |region: VerifiedIndexRegion| PendingIndexRefinementReceipt {
             resolution: resolution.clone(),
+            leading_scalar_authorities: Vec::new(),
             scalar_authority: scalars.revalidate_region(&region).unwrap(),
             operand_bindings: Vec::new(),
             result_bindings: Vec::new(),
-            region,
+            realization: VerifiedIndexRegionSequence::single(region),
         };
         let budget = IndexDomainProofBudget::try_new(
             MAX_FINITE_DOMAIN_PROOF_CELLS,
@@ -4657,18 +5579,18 @@ mod tests {
         let discharged = mint_receipt(
             unprovable.subject(),
             &unprovable.resolution,
-            unprovable.region.canonical_identity(),
-            unprovable.scalar_authority.clone(),
+            &unprovable.realization,
+            unprovable.scalar_authorities(),
             unprovable.operand_bindings.clone(),
             unprovable.result_bindings.clone(),
-            proofs_for(&unprovable.region),
+            proofs_for(unprovable.region()),
         );
         assert_eq!(discharged.index_domain_proofs().len(), 1);
         let unproved = mint_receipt(
             unprovable.subject(),
             &unprovable.resolution,
-            unprovable.region.canonical_identity(),
-            unprovable.scalar_authority.clone(),
+            &unprovable.realization,
+            unprovable.scalar_authorities(),
             unprovable.operand_bindings.clone(),
             unprovable.result_bindings.clone(),
             Vec::new(),
@@ -4695,6 +5617,7 @@ mod tests {
                     derivation: EXHAUSTIVE_DERIVATION.into(),
                 };
                 IndexRefinementDomainProof {
+                    stage: 0,
                     obligation,
                     authority: authority.clone(),
                     identity: IndexRefinementDomainProofIdentity(
