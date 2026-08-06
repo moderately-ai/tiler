@@ -5,7 +5,7 @@ status: review
 priority: p2
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound, bind-stage-coverage-to-index-refinement-identity, site-the-governed-digest-so-layered-identity-encoders-can-reach-it]
-scopes: [contracts/decisions, implementation/ir, implementation/build, implementation/artifact, contracts/artifacts]
+scopes: [contracts/decisions, implementation/ir, implementation/build, implementation/artifact, contracts/artifacts, contracts/navigation, research/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, decision, program-planning, deferred]

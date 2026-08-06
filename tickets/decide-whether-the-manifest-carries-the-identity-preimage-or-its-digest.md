@@ -5,7 +5,7 @@ status: review
 priority: p2
 dependencies: []
 related: [attribute-the-canonical-manifest-growth-and-decide-whether-the-encoding-owes-a-budget, decide-whether-executable-coverage-evidence-folds-as-a-digest]
-scopes: [contracts/decisions, implementation/artifact, contracts/artifacts]
+scopes: [contracts/decisions, implementation/artifact, contracts/artifacts, contracts/navigation, research/artifacts, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, decision, artifacts, encoding]
