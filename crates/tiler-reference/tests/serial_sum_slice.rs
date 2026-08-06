@@ -66,6 +66,16 @@ fn build_program(insert_dead_value_first: bool) -> SemanticProgram {
     builder.build().unwrap()
 }
 
+/// A program is its built graph, never its construction history.
+///
+/// Semantic identity and reference evaluation are both functions of the graph a
+/// builder produced, so two construction sequences that differ only in work the
+/// build discarded yield one identity and one output set — the property every
+/// cache key and conformance comparison over identities depends on. The worked
+/// instance is a dead constant inserted before an otherwise identical
+/// scale-add-reduce chain: the graph identities compare equal and both programs
+/// evaluate to the same bits through the public path, with the values checked
+/// against hand arithmetic rather than a second run.
 #[test]
 fn public_semantic_program_evaluates_independently_of_construction_history() {
     let first = build_program(false);
