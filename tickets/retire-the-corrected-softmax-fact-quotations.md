@@ -1,7 +1,7 @@
 ---
 id: retire-the-corrected-softmax-fact-quotations
 title: Retire the corrected softmax fact quotations in the numerics records
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [name-the-elementary-identity-rewrite-dimension, correct-the-online-single-pass-softmax-fold-legality-fact]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, documentation]
+claimed_from: todo
+assignee: coordinator-inline
+lease_expires_at: 1786032407
 ---
 ## User-visible outcome
 

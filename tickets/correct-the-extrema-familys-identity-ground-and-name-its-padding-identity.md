@@ -1,7 +1,7 @@
 ---
 id: correct-the-extrema-familys-identity-ground-and-name-its-padding-identity
 title: Correct the extrema family's identity ground and name its padding identity
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [derive-the-multi-round-two-level-reduction-composition]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, numerics, reductions, doc-claim]
+claimed_from: todo
+assignee: agent-extrema-ground
+lease_expires_at: 1786032407
 ---
 ## User-visible outcome
 
