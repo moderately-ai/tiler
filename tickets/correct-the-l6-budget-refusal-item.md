@@ -1,7 +1,7 @@
 ---
 id: correct-the-l6-budget-refusal-item
 title: Correct the L6 refusal list's budget item against check_program_budgets
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [widen-the-deterministic-budgets-to-the-decoder-layer-program, design-model-ingestion-and-complete-execution, assemble-the-decoder-layer-program]
@@ -41,3 +41,7 @@ Do not restate the measured counts from a second source. [`assemble-the-decoder-
 ## Closes when
 
 Item 1 quotes the code that exists, the four-versus-three count is corrected, refusal 1 is marked discharged with its commit, and the ordering paragraph beneath the list agrees with the corrected item.
+
+## Outcome
+
+Executed inline by the coordinator on 2026-08-06 — the corrections were fully enumerated above and a dispatch would have cost more than the change. Item 1 restates both derived actuals with their exact expressions, corrects the count to four resources, and records refusal 1 as discharged by the widening (worker commit `62c63061`) with the recognizer refusal kept load-bearing; the ordering paragraph now reads refusal 1 as discharged; and the W-A table row — the same stale `4.max` derivation one table up, found by the check-the-siblings rule — carries the same dated correction with its conclusion shown to survive the widening (313 > 21). Measured counts are cited from `assemble-the-decoder-layer-program`, not re-derived.
