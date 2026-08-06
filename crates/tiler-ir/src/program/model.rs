@@ -563,9 +563,10 @@ pub struct PartialReduction {
 
 /// One published copy of a value another stage computed.
 ///
-/// **Draft public surface.** It lands labelled a draft and its acceptance is
-/// parked for Tom; nothing outside this crate may treat the exact spelling as
-/// settled.
+/// **Accepted boundary** (Tom, 2026-08-06, at the morning decision review;
+/// the packet lives in the acceptance node). Acceptance is not stabilization:
+/// this is accepted pre-alpha vocabulary, not a published API with
+/// compatibility obligations.
 ///
 /// This is the *program-scope* half of a published-and-consumed value. A program
 /// that both publishes a value and feeds it to a later stage cannot express that

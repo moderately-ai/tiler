@@ -1,7 +1,7 @@
 ---
 id: accept-the-sub-domain-write-domain-surface
 title: Accept the sub-domain write-domain surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [admit-sub-range-write-domains-for-unequal-partitions]
 related: [lower-the-concatenate-occurrence-through-partitioned-writes]
@@ -38,3 +38,7 @@ The deriving ticket's Outcome carries: the construct elimination; the re-derivat
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the surface is in use and labelled a draft at its declaration site.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-06 at the morning decision review in the coordination session, witnessed first-hand by the coordinator, with the evidence packet this node carries. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.

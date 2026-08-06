@@ -90,3 +90,7 @@ The last row is the honest gap and is recorded in `CanonicalEntryOrdinals`' own 
 - **`docs/dtype-support.md` is `contracts/navigation` and was not edited.** The `Runtime semantic validation` cell for BF16 is supported by this work and should move to a tested guarantee bounded to *refusal at the routing boundary*, not to execution. The mechanism is dtype-neutral, so the `f32` cell is equally supported — filed separately as the ticket's own graph-maintenance note requires, rather than claimed here.
 - **A host-earned dispatchability declaration does not exist.** All three out-of-scope literals now restate a producer declaration, which leaves the check tautological on those paths for the same reason the profile classification already was. `declare-host-dtype-dispatchability-at-the-consumer-boundary` carries the work of emitting the declared row into `RouteFacts` and deriving it from a bound device.
 - **No BF16 kernel was dispatched.** Nothing in this branch touches a device.
+
+## Routing surface — accepted
+
+Accepted by Tom on 2026-08-06 at the morning decision review, witnessed first-hand by the coordinator: `ExecutionEnvironment.dtype_dispatch`, `DTypeDispatch`, `DTypeDispatchResolution` with silence refusing, `VariantIneligibility::UndispatchableDType`, and the deliberate non-spelling of `Deferred` at routing. Acceptance is not stabilization.

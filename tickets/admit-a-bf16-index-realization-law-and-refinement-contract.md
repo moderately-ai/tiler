@@ -77,3 +77,7 @@ A pure-BF16 program reaches a verified artifact through the ordinary producer pa
 - `docs/artifact-abi.md`'s producer-wall paragraph is falsified and is `contracts/artifacts`. Filed as `correct-the-artifact-abi-contracts-bf16-producer-wall-paragraph`.
 
 The stale "nine laws" claim in `lower-the-concatenate-occurrence-through-partitioned-writes` was corrected in place under this ticket's shared `project/tickets` scope.
+
+## Refinement-identity surface — accepted
+
+Accepted by Tom on 2026-08-06 at the morning decision review, witnessed first-hand by the coordinator: the private width enum inside `NumericalContractIdentity`, the additive `From<Bf16NumericalContractKey>` route, the no-width-tag identity resting on the domains' mutual closure, and the subject-derived coverage gate. Acceptance is not stabilization.

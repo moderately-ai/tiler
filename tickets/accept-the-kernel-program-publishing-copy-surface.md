@@ -1,7 +1,7 @@
 ---
 id: accept-the-kernel-program-publishing-copy-surface
 title: Accept the kernel-program publishing-copy surface
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [lift-the-four-published-and-consumed-walls-together]
@@ -73,3 +73,7 @@ Verified end to end by `tiler-compiler`'s `pipeline::conformance::a_published_an
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects the surface. Record the acceptance sentence with who, the date, and the venue; on acceptance, remove the draft labels from `PublishingCopy`, `PublishingCopyRef`, and `push_publishing_copy`, and record the surface in `docs/ir.md` beside `CoveredOccurrence`'s own proposal paragraph.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-06 at the morning decision review in the coordination session, witnessed first-hand by the coordinator, with the evidence packet this node carries. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.

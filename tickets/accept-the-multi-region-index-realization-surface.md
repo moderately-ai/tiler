@@ -1,7 +1,7 @@
 ---
 id: accept-the-multi-region-index-realization-surface
 title: Accept the multi-region index realization surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [admit-a-multi-region-index-realization-law]
 related: [lower-a-two-region-occurrence-through-one-index-access-capability, admit-the-rms-normalization-family, admit-the-softmax-family]
@@ -73,3 +73,7 @@ Appended rather than filed as a second node, because it is one small addition to
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects — the compiler-side delta above included, since it is part of the same surface. Nothing releases on this node meanwhile; the surface is in use inside `tiler-ir` and `tiler-compiler` and labelled a draft in both.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-06 at the morning decision review in the coordination session, witnessed first-hand by the coordinator, with the evidence packet this node carries. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.

@@ -1,7 +1,7 @@
 ---
 id: accept-the-structural-region-access-vocabulary
 title: Accept the structural region access vocabulary
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [admit-the-structural-families-into-the-scheduled-region-vocabulary]
 related: [reach-a-verified-kernel-through-the-structural-families]
@@ -39,3 +39,7 @@ The deriving ticket's Outcome section carries the full argument: the per-site in
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the surface is in use and labelled a draft.
+
+## Decided — accepted
+
+Accepted by Tom on 2026-08-06 at the morning decision review in the coordination session, witnessed first-hand by the coordinator, with the evidence packet this node carries. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.
