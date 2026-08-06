@@ -1,7 +1,7 @@
 ---
 id: flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin
 title: Flip the normalization law wall test and rebaseline the request pin
-status: todo
+status: done
 priority: p1
 dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families]
 related: [implement-stage-level-cover-atoms-for-multi-region-occurrences]
@@ -9,6 +9,8 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+assignee: coordinator
+lease_expires_at: 1786040703
 ---
 ## User-visible outcome
 
@@ -57,3 +59,15 @@ Two, and they are the complete set: a full `cargo nextest run --workspace` on th
 ## Closes when
 
 Both sites are updated, the wall test is flipped rather than deleted, the request pin is recomputed on the tree it lands in rather than copied from the widening branch, and `cargo nextest run --workspace` is green.
+
+## Outcome — 2026-08-06, executed by the coordinator on the merged tree
+
+Both sites repaired at the merge of `d88ebdb8`; `cargo nextest run --workspace` green (2847 passed, 7 skipped — the population grew by the widening branch's own tests plus the flipped one).
+
+**The wall test** is flipped and renamed `the_normalization_resolves_its_law_and_is_held_by_what_a_provider_emits`: `laws.resolve(&subject).is_ok()` pins that the refusal is not the law's absence, the refusal is `Emit { stage: 0, source: Occurrence { rule: "fixture-never-reached" } }`, and `driven == 1`. The module doc's stale bullet and closing paragraph were rewritten in place.
+
+**The request pin** was recomputed on the merged tree per this ticket's own instruction: observed `left` = `b88654bff9b673c1`, replacing `ce6f9106c1c5933b`. The transcription's prose transposed the two values ("b886… becomes ce6f…" — ce6f was the base pin, b886 the observed); the operative instruction (take `left`, never copy) resolved it, and b886 appears in no prior ledger entry, so no replay ambiguity. Cause: the law sidecar gained the normalization's tag-10 row and the request subject folds the sidecar; the semantic snapshot identity is computed without it, so no other pin moved.
+
+**Deviation from the transcription, on Tom's live direction:** the pin's ~480-line append-only rebaseline ledger was condensed in place to its invariant (what the subject folds, the recompute-on-merged-tree rule, the version-step boundary). Per-landing causes now belong in the commits that move the value, starting with this one.
+
+Also corrected the one stale "drafted" expect string at `crates/tiler-ir/src/index/scalar.rs:2852` the widening branch's classifier refused.

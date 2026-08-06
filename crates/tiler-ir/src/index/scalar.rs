@@ -2849,7 +2849,7 @@ mod governed_fact_tests {
         let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
         let rsqrt = registry
             .definition(&super::rsqrt_f32_scalar_op())
-            .expect("the drafted reciprocal square root is registered");
+            .expect("the governed reciprocal square root is registered");
         let exp = registry
             .definition(&super::exp_f32_scalar_op())
             .expect("the governed exponential is registered");

@@ -21,23 +21,23 @@
 //!   `IndexAccessSequenceContext`, and `refine_index_region` proves the whole
 //!   chain realizes the occurrence. The provider *is* driven, and the counter
 //!   that used to read zero is what shows it.
-//! - **The normalization is still held, by something else.** The staged law
-//!   exists but no standard operation carries it: the normalization's fold is a
-//!   sum of squares and its second stage applies a reciprocal square root, and
-//!   no governed scalar operation spells either. Registering them is
-//!   [`admit-the-rms-normalization-family`]'s work. So the refusal for
-//!   `tiler::rms-norm-f32@1` is preserved below, retitled to say what it now
-//!   attributes the ceiling to.
+//! - **The normalization's hold moved a second time.**
+//!   [`widen-the-staged-realization-law-to-the-registered-elementary-families`]
+//!   registered `tiler.scalar::rsqrt-f32@1` and gave `tiler::rms-norm-f32@1`
+//!   `IndexRealizationLaw::StagedRootMeanSquareScaleF32`, so the law now
+//!   resolves and the host drives the provider. The refusal for the family is
+//!   preserved below, flipped rather than deleted: what holds it today is what
+//!   a provider emits against the resolved law, not the law's absence.
 //!
 //! Keeping the two together is the assertion. A staged occurrence that refines
-//! and a normalization that does not, in one harness, is what distinguishes "the
-//! lowering vocabulary cannot express a chain" — false since this branch — from
-//! "this family has no law to be checked against", which is still true and is a
-//! different ticket's work.
+//! and a normalization whose law resolves while its provider emits nothing, in
+//! one harness, is what distinguishes "the lowering vocabulary cannot express a
+//! chain" — false since this branch — from "no provider emits this family's
+//! two-stage chain", which is what remains and is a different ticket's work.
 //!
 //! [`lower-a-two-region-occurrence-through-one-index-access-capability`]: ../../../tickets/lower-a-two-region-occurrence-through-one-index-access-capability.md
 //! [`admit-a-multi-region-index-realization-law`]: ../../../tickets/admit-a-multi-region-index-realization-law.md
-//! [`admit-the-rms-normalization-family`]: ../../../tickets/admit-the-rms-normalization-family.md
+//! [`widen-the-staged-realization-law-to-the-registered-elementary-families`]: ../../../tickets/widen-the-staged-realization-law-to-the-registered-elementary-families.md
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -987,22 +987,20 @@ fn the_stage_ceiling_refuses_before_building_past_it() {
     );
 }
 
-// ---- the half that has not moved -----------------------------------------
+// ---- the half that has moved again ---------------------------------------
 
-/// The normalization is still held, and now by exactly one thing.
+/// The normalization's law resolves, and its ceiling is the provider's emission.
 ///
-/// **Retitled rather than deleted.** While the lowering vocabulary was the
-/// suspect, this assertion's job was to acquit it. The vocabulary has since
-/// landed and the staged occurrence above refines through it, so what this now
-/// records is the residue: `tiler::rms-norm-f32@1` registers a lowering
-/// capability and resolves it, and refinement still refuses before the provider
-/// is driven, because the standard registration deliberately registers no
-/// realization law for the family. The law it would carry is the staged form the
-/// tests above exercise; what is missing is a governed scalar operation for its
-/// sum of squares and its reciprocal square root, which is
-/// `admit-the-rms-normalization-family`'s work and not this file's.
+/// `tiler::rms-norm-f32@1` carries `StagedRootMeanSquareScaleF32`, so
+/// resolution succeeds, the host opens a stage, and the provider is driven
+/// exactly once before its own refusal is reported. The explicit `resolve`
+/// assertion is what keeps the refusal honest: without it, a regression that
+/// dropped the family's law row would surface here as a provider-shaped error
+/// wearing the wrong cause. What holds the family below R6 is that no provider
+/// emits its two-stage chain, and the driven counter is the evidence the wall
+/// is the provider's rather than the registry's.
 #[test]
-fn the_normalization_still_refuses_for_an_absent_law_and_not_for_the_vocabulary() {
+fn the_normalization_resolves_its_law_and_is_held_by_what_a_provider_emits() {
     let semantic =
         FrozenSemanticRegistry::standard().expect("the standard semantic registry is coherent");
     let scalars = scalar_registry(&semantic);
@@ -1014,36 +1012,32 @@ fn the_normalization_still_refuses_for_an_absent_law_and_not_for_the_vocabulary(
         &staged_emitted(),
         Arc::new(RecordingProvider(driven.clone())),
     );
-
-    // Registration and resolution succeed and drive nothing: the realization-law
-    // row is recorded as an `Option` and never required, so a reader who saw
-    // only the refusal below might otherwise conclude the registry had rejected
-    // the family outright.
     assert_eq!(resolved.operation(), &rms_norm_f32_op());
-    assert_eq!(driven.load(Ordering::Relaxed), 0);
 
-    let error = refine_index_region(
-        &resolved,
-        &rms_norm_subject(&semantic),
-        &realization_laws(&semantic, &scalars),
-        &scalars,
-    )
-    .expect_err("a family with no realization law cannot be refined");
-
-    let RefinementError::IrVerifier(source) = &error else {
-        panic!("the refusal must come from the IR realization authority; observed {error:?}")
-    };
+    let subject = rms_norm_subject(&semantic);
+    let laws = realization_laws(&semantic, &scalars);
     assert!(
-        matches!(
-            **source,
-            IndexRefinementVerificationError::MissingRealizationLaw
-        ),
-        "the refusal must name the absent law; observed {source:?}"
+        laws.resolve(&subject).is_ok(),
+        "the family's realization law resolves; the ceiling below is not its absence"
+    );
+
+    let error = refine_index_region(&resolved, &subject, &laws, &scalars)
+        .expect_err("a provider emitting nothing realizes nothing");
+    assert_eq!(
+        error,
+        RefinementError::Emit {
+            stage: 0,
+            source: LoweringEmitError::Occurrence {
+                rule: "fixture-never-reached",
+            },
+        },
+        "the refusal is the provider's own stated rule, recorded in the stage \
+         the host opened for it"
     );
     assert_eq!(
         driven.load(Ordering::Relaxed),
-        0,
-        "resolution still precedes emission, so the ceiling this family is held \
-         by remains its missing law rather than anything a provider emits"
+        1,
+        "the law resolved and the host drove the provider exactly once before \
+         reporting its refusal"
     );
 }

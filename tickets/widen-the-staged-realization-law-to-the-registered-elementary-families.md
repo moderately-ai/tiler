@@ -1,7 +1,7 @@
 ---
 id: widen-the-staged-realization-law-to-the-registered-elementary-families
 title: Widen the staged realization law to the registered elementary families
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages, admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, accept-the-root-mean-square-scale-realization-law, admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence, flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-law-widening
-lease_expires_at: 1786036406
 ---
 ## User-visible outcome
 
