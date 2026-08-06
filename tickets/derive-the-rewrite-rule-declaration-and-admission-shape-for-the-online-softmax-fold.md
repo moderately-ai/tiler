@@ -1,7 +1,7 @@
 ---
 id: derive-the-rewrite-rule-declaration-and-admission-shape-for-the-online-softmax-fold
 title: Derive the rewrite-rule declaration and admission shape for the online-softmax fold
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [reassess-the-distributivity-decline-against-the-online-softmax-rescaling-caller, decide-whether-to-admit-an-elementary-identity-permission, expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate, derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound, connect-certified-rounding-error-bounds-to-rewrite-permissions, name-the-elementary-identity-rewrite-dimension, derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, optimizer, rewrites]
+claimed_from: todo
+assignee: agent-rule-object
+lease_expires_at: 1785993439
 ---
 ## User-visible outcome
 
