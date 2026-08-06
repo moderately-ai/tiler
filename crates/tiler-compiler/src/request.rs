@@ -1134,11 +1134,13 @@ impl CompilationRequest<'_> {
 /// recognized coverage must not depend on which spelling the caller authored. A
 /// shared constant simply contributes one member instead of two.
 ///
-/// The prologue set is always nonempty. A reduction whose contributor tensor is
-/// a declared input needs no prologue region, but the schedule IR's
-/// `StrictSerialSum` region requires its contributor access to read
-/// `TensorRole::Intermediate`, so this profile has no region for that shape and
-/// [`recognize_reduction`] refuses it at the boundary instead.
+/// **The prologue set is empty exactly when the fold has no prologue.** A
+/// reduction whose contributor tensor is a declared input — `sum(x)` — claims one
+/// occurrence and needs one region, so its partition has one part and the empty
+/// part is not a member set any cover region may match. That is a fact about the
+/// program rather than a degenerate case: [`NormalizedSerialSum::prologue`] is
+/// `None` for it, and every derivation that would spell a prologue region reads
+/// the option rather than the emptiness.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RecognizedSerialSumMembers {
     pointwise: Vec<SemanticMemberId>,
@@ -1190,6 +1192,10 @@ impl RecognizedSerialSumMembers {
 /// number of declared inputs, and shared reads. `input_keys` and `inputs` are
 /// parallel and in declaration order, which is the order the expression's input
 /// ordinals index and the order the assembled program binds its buffers in.
+///
+/// **And it is optional, because `sum(x)` has none.** A fold whose operand is a
+/// declared input computes nothing before the fold, so there is no expression to
+/// carry and no region to build for one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedSerialSum {
     pub(crate) input_keys: Vec<InputKey>,
@@ -1199,7 +1205,13 @@ pub(crate) struct NormalizedSerialSum {
     pub(crate) output_shape: Shape,
     pub(crate) reduction_axes: Vec<Axis>,
     /// The recognized elementwise prologue the fold's contributors come from.
-    pub(crate) prologue: PointwiseF32Expression,
+    ///
+    /// `None` when the fold's operand is a declared input tensor. That is the
+    /// typed statement of "there is no prologue region here", and it is what every
+    /// prologue-spelling derivation asks: an identity expression standing in for
+    /// the absence would let a cover spell a copy kernel whose materialization —
+    /// and whose rounding boundary — the caller's program never asked for.
+    pub(crate) prologue: Option<PointwiseF32Expression>,
     /// The non-identity access map each prologue input ordinal's read carries.
     pub(crate) prologue_access_maps: Vec<(u32, LogicalAccess)>,
     pub(crate) members: RecognizedSerialSumMembers,
@@ -1208,6 +1220,19 @@ pub(crate) struct NormalizedSerialSum {
     pub(crate) output: ValueId,
     pub(crate) input_elements: u64,
     pub(crate) output_elements: u64,
+}
+
+impl NormalizedSerialSum {
+    /// The occurrences a prologue region would cover, when this fold has one.
+    ///
+    /// `None` rather than an empty slice for a fold over a declared input, so a
+    /// cover region covering no occurrence cannot match the part. The two answers
+    /// are the same bytes and different facts: "the prologue claims nothing" is a
+    /// state no recognized program is in, and treating it as one is how an empty
+    /// member set would acquire a region.
+    pub(crate) fn prologue_members(&self) -> Option<&[SemanticMemberId]> {
+        self.prologue.as_ref().map(|_| self.members.pointwise())
+    }
 }
 
 /// A verified N-input, one-output elementwise `f32` program.
@@ -1392,10 +1417,20 @@ impl NormalizedOutput {
     /// The reduction's *whole* partition is a part in its own right: the fused
     /// spelling realizes the prologue and the fold in one region, which is the
     /// one case where a part is the union of two others.
+    ///
+    /// A prologue-less fold's partition has one part, and the prologue part is
+    /// asked for through [`NormalizedSerialSum::prologue_members`] rather than by
+    /// comparing against an empty set: a region covering no occurrence would
+    /// otherwise resolve to a prologue this program does not have, and every
+    /// derivation downstream would build one. Like the same distinction in
+    /// [`crate::physical::spell_region`], it is defence in depth rather than a
+    /// live gate — no cover this search places carries an empty member set.
     fn owns_region_members(&self, members: &[SemanticMemberId]) -> bool {
         match self {
             Self::SerialSum(normalized) => {
-                members == normalized.members.pointwise()
+                normalized
+                    .prologue_members()
+                    .is_some_and(|prologue| members == prologue)
                     || members == normalized.members.reduction()
                     || members == normalized.members.all()
             }
@@ -1639,7 +1674,7 @@ pub(crate) struct NormalizedSerialSumSubject {
     input_shape: Shape,
     output_shape: Shape,
     reduction_axes: Vec<Axis>,
-    prologue: PointwiseF32Expression,
+    prologue: Option<PointwiseF32Expression>,
     prologue_access_maps: Vec<(u32, LogicalAccess)>,
     members: RecognizedSerialSumMembers,
     input_elements: u64,
@@ -1890,15 +1925,28 @@ impl VerifiedRequestSubject {
         for normalized in &self.normalized.outputs {
             match normalized {
                 NormalizedOutputSubject::SerialSum(normalized) => {
-                    // The sub-tag steps to `v3` because the arm gained the
-                    // prologue's access relations. It is a step rather than an
-                    // append for the reason the vocabulary widening itself was
-                    // not: the run is written at the arm's end, so a `v2` subject
-                    // and a `v3` one carrying no maps would differ only by a
-                    // trailing framed zero — and a reader with the old framing
-                    // would consume the following output's tag as this arm's
-                    // payload. Stepping restores injectivity on the encoder's own
-                    // terms rather than on a claim about what callers hold.
+                    // **The sub-tag holds at `v3` although the arm gained an
+                    // absent prologue, and the forced-not-chosen standard is what
+                    // decides that.** A prologue is written below as its framed
+                    // node run, and
+                    // `tiler_ir::schedule::PointwiseF32ExpressionBuilder::build`
+                    // refuses an expression with no node — so every subject this
+                    // arm could encode before carries a node count of at least
+                    // one at that position. Writing the absent prologue as a
+                    // framed *zero* therefore occupies a byte string no
+                    // previously encodable subject can produce, and the run stays
+                    // self-delimiting: a count of zero ends the prologue and a
+                    // count of `n` is followed by exactly `n` nodes and the root.
+                    // Per-tag injectivity closes, no already-encodable subject's
+                    // bytes move, and a step would restate every pin for a
+                    // separation the encoding already has.
+                    //
+                    // The earlier step to `v3` was forced, and by the shape this
+                    // one is not: the access-relation run is written at the arm's
+                    // *end*, so a `v2` subject and a `v3` one carrying no maps
+                    // would have differed only by a trailing framed zero, and a
+                    // reader with the old framing would have consumed the
+                    // following output's tag as this arm's payload.
                     push_slice(&mut bytes, b"serial-sum-f32.v3");
                     push_len(&mut bytes, normalized.input_keys.len());
                     for key in &normalized.input_keys {
@@ -1911,7 +1959,10 @@ impl VerifiedRequestSubject {
                     for axis in &normalized.reduction_axes {
                         bytes.extend_from_slice(&axis.get().to_be_bytes());
                     }
-                    encode_pointwise_expression(&mut bytes, &normalized.prologue);
+                    match &normalized.prologue {
+                        Some(prologue) => encode_pointwise_expression(&mut bytes, prologue),
+                        None => push_len(&mut bytes, 0),
+                    }
                     for members in [
                         normalized.members.pointwise(),
                         normalized.members.reduction(),
@@ -2084,6 +2135,12 @@ pub(crate) use tiler_ir::numerics::permission_tag;
 /// the reason the relocated tag encoders record: a node added to the
 /// vocabulary must stop
 /// the build here rather than silently encode under a neighbour's tag.
+///
+/// **The leading count is never zero**, because a `PointwiseF32Expression` is
+/// constructible only through a builder that refuses an empty node run. The
+/// serial-sum subject arm relies on that to spell an *absent* prologue as a
+/// framed zero without a sub-tag step, so a vocabulary change admitting a
+/// node-free expression would have to move that arm's tag.
 fn encode_pointwise_expression(bytes: &mut Vec<u8>, expression: &PointwiseF32Expression) {
     push_len(bytes, expression.nodes().len());
     for node in expression.nodes() {
@@ -2198,9 +2255,10 @@ impl NormalizedSerialSumSubject {
     pub(crate) fn reduction_axes(&self) -> &[Axis] {
         &self.reduction_axes
     }
-    /// The recognized elementwise prologue the fold's contributors come from.
-    pub(crate) const fn prologue(&self) -> &PointwiseF32Expression {
-        &self.prologue
+    /// The recognized elementwise prologue the fold's contributors come from, or
+    /// `None` when the fold's operand is a declared input tensor.
+    pub(crate) const fn prologue(&self) -> Option<&PointwiseF32Expression> {
+        self.prologue.as_ref()
     }
     pub(crate) const fn members(&self) -> &RecognizedSerialSumMembers {
         &self.members
@@ -3182,30 +3240,31 @@ fn resolve_numerical_contract(
 ///
 /// # What is still refused, and where the wall actually is
 ///
-/// Recognition may only admit what the physical layer can express, so three
-/// walls below this boundary are refused *at* it, each under its own rule:
+/// Recognition may only admit what the physical layer can express, so the walls
+/// below this boundary are refused *at* it, each under its own rule:
 ///
-/// - **An operation the region vocabulary cannot spell** (`operation-set`).
-///   `tiler::reindex-f32@1` and `tiler::broadcast-f32@1` each have a registered
-///   *lowering* capability, but no [`tiler_ir::schedule::LogicalAccess`] spells
-///   the access relation either denotes: there is no reindex map, and the only
-///   broadcast is `ScalarBroadcast`, a rank-zero operand read once. A region for
-///   one is a `tiler-ir` widening rather than a projection this boundary could
-///   make, and
-///   `admit-the-structural-families-into-the-scheduled-region-vocabulary` owns
-///   it.
+/// - **An operation the region vocabulary cannot spell** (`operation-set`). A
+///   family whose per-point body no [`PointwiseF32Expression`] node composes and
+///   whose access relation no [`tiler_ir::schedule::LogicalAccess`] denotes has
+///   no region to be built into, and a region for it is a `tiler-ir` widening
+///   rather than a projection this boundary could make.
 ///
-///   **`tiler::silu-f32@1` used to be in this list and no longer is, and the
-///   distinction that moved it is worth stating.** No `PointwiseF32Node` spells
-///   a sigmoid-weighted linear unit either — but the family's *per-point body*
-///   is expressible in that vocabulary, so the boundary projects it instead of
-///   refusing. What makes the projection admissible is that it is not written
-///   here: [`crate::elementary::silu_point_body`] is the one statement of the
-///   composition, and the governed index-access lowering drives the same
+///   **Two families used to be named here and no longer are, for two different
+///   reasons, and both distinctions are worth keeping.** `tiler::silu-f32@1` has
+///   no node of its own, but its per-point body is expressible in the node
+///   vocabulary, so the boundary *projects* it — admissibly, because the
+///   projection is not written here:
+///   [`crate::elementary::silu_point_body`] is the one statement of the
+///   composition and the governed index-access lowering drives the same
 ///   function, so occurrence refinement's proof that the emitted region realizes
-///   the occurrence covers the projection the boundary made. A family whose
-///   *access relation* has no spelling has no such projection available, which
-///   is why the two structural families remain refused.
+///   the occurrence covers the projection. `tiler::reindex-f32@1` and
+///   `tiler::broadcast-f32@1` project no body at all; they were refused because
+///   `LogicalAccess` spelled neither access relation, and
+///   `admit-the-structural-families-into-the-scheduled-region-vocabulary` landed
+///   `LogicalAccess::ReindexBijection` and
+///   `LogicalAccess::BroadcastReplication`, so each is now recognized by
+///   [`recognize_structural_read`] as a *mapped read* contributing addressing and
+///   no arithmetic.
 /// - **An elementwise stage reading a materialized intermediate**
 ///   (`operation-set` from the contraction cover, `elementwise-shape` or
 ///   `operation-set` from the elementwise walk). Every elementwise region this
@@ -3239,11 +3298,16 @@ fn resolve_numerical_contract(
 ///   `admit-multi-input-tensors-in-the-scheduled-region-vocabulary` and its own
 ///   dependent already record. Refusing here rather than admitting and failing
 ///   mid-pipeline is unchanged by the correction.
-/// - **A reduction reading a declared input directly** (`reduction-prologue`).
-///   `tiler-ir`'s schedule verifier requires a `StrictSerialSum` region's
-///   contributor access to read `TensorRole::Intermediate`, so this profile has
-///   no region for `sum(x)`; `admit-a-reduction-over-a-declared-input-tensor`
-///   owns it.
+///
+/// **A reduction reading a declared input directly was the third wall here, and
+/// it is gone.** `sum(x)` was refused under `reduction-prologue` because
+/// `verify_access_and_semantics` required a `ScalarProgram::StrictSerialSum`
+/// region's contributor access to read `TensorRole::Intermediate`;
+/// `admit-a-reduction-over-a-declared-input-tensor` widened that arm to the fold's
+/// *declared contributor domain*, which is the first input tensor when the program
+/// folds it directly and an intermediate when a prologue region wrote it.
+/// [`recognize_reduction`] therefore admits the shape with no prologue at all, and
+/// the rule name no longer exists.
 ///
 /// Which refusal a rejected program reports is settled by the occurrence it
 /// actually ends in rather than by enumeration order: a program whose output is
@@ -4088,14 +4152,24 @@ fn recognize_pointwise(
 /// the expression vocabulary rather than by the scale-then-bias shape the
 /// superseded template spelled.
 ///
+/// **A fold whose operand is a declared input has no prologue at all, and that is
+/// recognized rather than refused.** The walk below is run for it too, so the
+/// obligations it states — every declared input read, every read at the
+/// contributor domain — are discharged for this shape by the same authority and
+/// under the same rules. What differs is what the walk returns: a bare input leaf
+/// claiming no occurrence, which is the fold's own contributor read and not an
+/// expression a region computes. Recording `None` is therefore the fact, and it is
+/// what makes the fold's contributor access bind the input tensor directly instead
+/// of an intermediate a synthesized identity prologue would have had to
+/// materialize.
+///
 /// # Errors
 ///
 /// Returns [`RequestError::UnsupportedCapability`] naming the unrecognized
 /// property: `sum-signature`, `sum-output`, `sum-shape`, `sum-axes*`, and
-/// `input-rank` for the reduction itself, `reduction-prologue` when the fold
-/// reads a declared input and this profile has no region for it,
-/// `operation-set` when the recognized occurrences do not cover the program, and
-/// every rule [`recognize_elementwise`] reports for the prologue.
+/// `input-rank` for the reduction itself, `operation-set` when the recognized
+/// occurrences do not cover the program, and every rule
+/// [`recognize_elementwise`] reports for the contributor walk.
 fn recognize_reduction(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
@@ -4127,24 +4201,15 @@ fn recognize_reduction(
         return mismatch("sum-shape");
     }
 
-    // The fold's contributors come from an elementwise prologue this recognizer
-    // materializes.
-    //
-    // A reduction whose operand is a *declared input* — `sum(x)`, the simplest
-    // fold there is — is refused here rather than admitted, and the wall is
-    // below this boundary rather than in this vocabulary: `tiler-ir`'s
-    // `verify_access_and_semantics` requires a `ScalarProgram::StrictSerialSum`
-    // region's contributor access to read `TensorRole::Intermediate`, so a
-    // region reading the input directly is rejected as malformed by the schedule
-    // verifier. Synthesizing an identity prologue to satisfy it is not the
-    // alternative: that would add a materialization, and its observable rounding
-    // boundary, that the caller's program never asked for.
-    // `admit-a-reduction-over-a-declared-input-tensor` owns the widening.
-    if declared.contains(contributor) {
-        return mismatch("reduction-prologue");
-    }
-    let prologue = recognize_elementwise(program, *contributor, &declared, &input_shape)?;
-    let members = RecognizedSerialSumMembers::new(prologue.members, sum_member);
+    let recognized = recognize_elementwise(program, *contributor, &declared, &input_shape)?;
+    // The walk claims an occurrence for every leaf and node it mints except one:
+    // a declared input contributes the leaf that reads it and nothing else. So a
+    // fold straight over a declared input arrives here with an empty member set
+    // and a bare input leaf, and that leaf is the fold's own contributor read
+    // rather than a prologue any region computes — which is why the condition
+    // tested is the operand itself and not the emptiness that follows from it.
+    let prologue = (!declared.contains(contributor)).then_some(recognized.expression);
+    let members = RecognizedSerialSumMembers::new(recognized.members, sum_member);
 
     let input_elements = element_count_u64(&input_shape, "input")?;
     let output_elements = element_count_u64(&output_shape, "output")?;
@@ -4154,8 +4219,8 @@ fn recognize_reduction(
         input_shape,
         output_shape,
         reduction_axes: axes,
-        prologue: prologue.expression,
-        prologue_access_maps: prologue.access_maps,
+        prologue,
+        prologue_access_maps: recognized.access_maps,
         members,
         inputs: declared,
         pointwise_result: *contributor,
@@ -5197,7 +5262,10 @@ mod tests {
         // `input * 2.0 + 1.0` in the physical node vocabulary, and the affine
         // pair the fused region needs is recovered from it rather than stored
         // beside it.
-        let prologue = &normalized.prologue;
+        let prologue = normalized
+            .prologue
+            .as_ref()
+            .expect("a fold over a computed contributor has a prologue");
         assert_eq!(prologue.input_count(), 1);
         assert!(matches!(
             prologue.nodes(),
@@ -5257,7 +5325,11 @@ mod tests {
         assert_eq!(recognized.input_shape, Shape::from_dims([2, 3]));
         assert_eq!(recognized.output_shape, Shape::from_dims([2]));
         assert_eq!(
-            recognized.prologue.input_count(),
+            recognized
+                .prologue
+                .as_ref()
+                .expect("a fold over a computed contributor has a prologue")
+                .input_count(),
             3,
             "one leaf per declared input tensor",
         );
@@ -5278,22 +5350,22 @@ mod tests {
         );
     }
 
-    /// A reduction over a declared input refuses, because no region reads one.
+    /// A reduction over a declared input is recognized with no prologue.
     ///
-    /// `sum(x)` is the simplest fold there is, and this is the one place in this
-    /// change where the wall is genuinely below the boundary: `tiler-ir`'s
-    /// `verify_access_and_semantics` requires a `ScalarProgram::StrictSerialSum`
-    /// region's contributor access to read `TensorRole::Intermediate`, so a
-    /// region reading the input directly is rejected by the schedule verifier as
-    /// malformed compiler output. Admitting it here and failing there is the
-    /// failure mode the precedent declined to ship, so it refuses at the
-    /// boundary under its own rule.
+    /// `sum(x)` is the simplest fold there is, and it used to be the one shape
+    /// this recognizer refused for a wall *below* it: `verify_access_and_semantics`
+    /// required a `ScalarProgram::StrictSerialSum` region's contributor access to
+    /// read `TensorRole::Intermediate`, so a region folding the input directly was
+    /// rejected as malformed. That arm now admits the fold's declared contributor
+    /// domain, and the absence of a prologue is recorded as `None` rather than as
+    /// an identity expression — which is what keeps a cover from spelling the copy
+    /// kernel the refusal existed to avoid.
     ///
-    /// Its accepted neighbour is the same fold over the same input with one
-    /// elementwise occurrence between them, so what the rule reads is the
-    /// missing prologue and not the fold.
+    /// Its neighbour is the same fold with one elementwise occurrence between the
+    /// input and the sum, asserted beside it so the `None` is attributable to the
+    /// missing prologue rather than to the fold.
     #[test]
-    fn a_reduction_over_a_declared_input_refuses_for_its_missing_prologue() {
+    fn a_reduction_over_a_declared_input_is_recognized_with_no_prologue() {
         let fold = |prologue: bool| {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
             let input = builder
@@ -5313,13 +5385,22 @@ mod tests {
         };
         let bare = fold(false);
         assert_eq!(bare.operation_count(), 1);
-        assert_eq!(recognize(&bare).unwrap_err(), "reduction-prologue");
+        let Ok(NormalizedOutput::SerialSum(recognized)) = recognize(&bare) else {
+            panic!("a fold over a declared input is recognized as a serial sum");
+        };
+        assert_eq!(recognized.prologue, None);
+        assert_eq!(recognized.prologue_access_maps, []);
+        // One part, not two: the empty prologue part is not a member set a cover
+        // region may match, which is what `prologue_members` states.
+        assert_eq!(recognized.prologue_members(), None);
+        assert_eq!(recognized.members.reduction().len(), 1);
 
         let neighbour = fold(true);
-        assert!(matches!(
-            recognize(&neighbour),
-            Ok(NormalizedOutput::SerialSum(_))
-        ));
+        let Ok(NormalizedOutput::SerialSum(recognized)) = recognize(&neighbour) else {
+            panic!("a fold over a computed contributor is recognized as a serial sum");
+        };
+        assert!(recognized.prologue.is_some());
+        assert_eq!(recognized.prologue_members().map(<[_]>::len), Some(2));
     }
 
     /// Elementwise recognition follows the graph, not a taught depth or arity.
@@ -6511,7 +6592,7 @@ mod tests {
         // expression, so a forged prologue is a forged expression.
         let mut forged = verified.clone();
         forged.normalized.serial_sum_mut().prologue =
-            affine_expression(3.0_f32.to_bits(), 1.0_f32.to_bits());
+            Some(affine_expression(3.0_f32.to_bits(), 1.0_f32.to_bits()));
         assert_eq!(
             forged.for_target(0),
             Err(RequestError::UnverifiedTargetSelection)
@@ -6552,7 +6633,7 @@ mod tests {
         // construction — which is exactly what makes the subject bind it whole.
         let mut forged = target.clone();
         forged.normalized.serial_sum_mut().prologue =
-            affine_expression(2.0_f32.to_bits(), 1.0_f32.to_bits() ^ 1);
+            Some(affine_expression(2.0_f32.to_bits(), 1.0_f32.to_bits() ^ 1));
         assert!(!forged.reconstructs_its_authority());
 
         let mut forged = target;

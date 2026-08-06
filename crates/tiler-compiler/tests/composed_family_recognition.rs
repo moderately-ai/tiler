@@ -191,13 +191,14 @@ fn homogeneous_control() -> SemanticProgram {
 
 /// `sum(a, axis 1)`: a fold whose contributor tensor is a declared input.
 ///
-/// The simplest reduction there is, and the one program in this file where the
-/// wall is genuinely *below* the request boundary rather than in it: `tiler-ir`'s
-/// schedule verifier requires a `ScalarProgram::StrictSerialSum` region's
-/// contributor access to read `TensorRole::Intermediate`, so no region this
-/// profile can build reads the input directly. Synthesizing an identity prologue
-/// to satisfy it is not the alternative — that would add a materialization, and
-/// its observable rounding boundary, that the caller's program never asked for.
+/// The simplest reduction there is, and the one program in this file whose wall
+/// was genuinely *below* the request boundary rather than in it: `tiler-ir`'s
+/// schedule verifier required a `ScalarProgram::StrictSerialSum` region's
+/// contributor access to read `TensorRole::Intermediate`, so no region this profile
+/// could build read the input directly. Synthesizing an identity prologue to
+/// satisfy it was never the alternative — that would add a materialization, and its
+/// observable rounding boundary, that the caller's program never asked for — so the
+/// widening moved the verifier arm instead, and this program now compiles.
 fn prologue_less_fold() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let input = builder
@@ -467,21 +468,32 @@ fn a_program_composing_two_admitted_families_compiles_through_the_session() {
     }
 }
 
-/// A fold over a declared input refuses under its own rule.
+/// A fold over a declared input compiles, under every contract.
 ///
-/// This is where the ticket's second boundary sits. Recognition generalized over
-/// the expression vocabulary, and it did *not* generalize past what the physical
-/// layer can express: a region that folds a program input directly is rejected by
-/// `tiler-ir`'s schedule verifier as malformed compiler output, so admitting the
-/// program here would produce exactly the mid-pipeline death the precedent
-/// declined to ship. `admit-a-reduction-over-a-declared-input-tensor` owns the
-/// widening, and depends on this.
+/// **The row this file's second boundary occupied, flipped.** Recognition
+/// generalized over the expression vocabulary and stopped where the physical layer
+/// did: `tiler-ir`'s schedule verifier required a `ScalarProgram::StrictSerialSum`
+/// region's contributor access to read `TensorRole::Intermediate`, so `sum(a)` was
+/// refused *at* the boundary under `reduction-prologue` rather than admitted and
+/// failed mid-pipeline. `admit-a-reduction-over-a-declared-input-tensor` widened
+/// that arm to the fold's *declared contributor domain* — the first input tensor
+/// when the program folds it directly, the materialized intermediate when a
+/// prologue region wrote it — and the rule no longer exists.
 ///
-/// Its accepted neighbour is [`homogeneous_control`]: the same fold over the
-/// same declared input with an elementwise prologue between them, so what the
-/// rule reads is the missing prologue and not the fold.
+/// **The pair is kept and its purpose inverts**, exactly as this file's structural
+/// rows did. [`homogeneous_control`] is the same fold over the same declared input
+/// with an elementwise prologue between them, and it travels here so the admission
+/// below reads as a statement about the missing prologue rather than about a
+/// permissive target: the neighbour compiles through a prologue region and the fold
+/// that reads what it staged, and this program compiles through one region binding
+/// the input buffer directly, with no materialization at all.
+///
+/// Every contract, because the outcome is structural — a contract that changed it
+/// would mean the widening landed somewhere this file does not model. Neither body
+/// puts a multiply adjacent to an add, so neither joins the
+/// contraction-permitting decline the mixed bodies above take.
 #[test]
-fn a_reduction_over_a_declared_input_refuses_under_the_prologue_rule() {
+fn a_reduction_over_a_declared_input_compiles_through_the_session() {
     let fold = prologue_less_fold();
     assert_eq!(fold.input_count(), 1);
     assert_eq!(fold.operation_count(), 1);
@@ -490,15 +502,13 @@ fn a_reduction_over_a_declared_input_refuses_under_the_prologue_rule() {
         assert_eq!(
             compile_under(&homogeneous_control(), contract),
             Ok(()),
-            "{contract:?} refused the one-input neighbour, so the refusal below \
-             would not be evidence about the missing prologue",
+            "{contract:?} refused the prologue-carrying neighbour, so the \
+             admission below would not be evidence about the missing prologue",
         );
         assert_eq!(
             compile_under(&fold, contract),
-            Err(CompileFailureClass::UnsupportedCapability {
-                rule: "reduction-prologue"
-            }),
-            "{contract:?} admitted a fold no scheduled region reads",
+            Ok(()),
+            "{contract:?} refused a fold whose contributor tensor is its declared input",
         );
     }
 }

@@ -965,6 +965,69 @@ fn a_reindex_reaches_a_kernel_matching_the_reference_evaluator() {
     assert_eq!(actual, vec![2.0, 1.0, 8.0, 4.0]);
 }
 
+/// `sum(x)` reaches a kernel whose result is the reference evaluator's, bit for
+/// bit.
+///
+/// **This is `admit-a-reduction-over-a-declared-input-tensor`'s user-visible
+/// outcome, end to end through the ordinary path.** One occurrence over one
+/// declared input, so the recognized partition has one part, the cover places one
+/// region, and that region's contributor access binds the input buffer directly —
+/// asserted below beside the result, because the plan having *no materialization
+/// edge* is the half of the outcome a value comparison cannot see. A synthesized
+/// identity prologue would produce the same numbers through a staged temporary
+/// whose rounding boundary the program never asked for.
+///
+/// Bit-compared rather than approximately compared. The contributors are distinct
+/// powers of two and every partial sum of a row is exactly representable, so a
+/// fold that read one contributor twice, skipped one, or crossed the row boundary
+/// lands on a different value rather than coincidentally on the right one — which
+/// a tolerance would hide.
+#[test]
+fn a_reduction_over_a_declared_input_matches_the_reference_evaluator() {
+    // Four contributors, which is the governed baseline profile's declared grid
+    // axis: a wider domain would decline for a launch reason and stop being
+    // evidence about the fold.
+    let shape = Shape::from_dims([2, 2]);
+    let values: Vec<f32> = vec![1.0, 2.0, 4.0, 8.0];
+
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), shape.clone())
+        .unwrap();
+    let sum = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(1)]).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), sum)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+
+    let product = compile(CompilationRequest::governed(&semantic))
+        .expect("a fold over a declared input compiles");
+    let fused = alternative(&product, ProgramAlternativeKind::Fused);
+    // One region, reading the declared input, with nothing materialized between
+    // the program's boundary and its fold.
+    assert_eq!(fused.scheduled_regions.len(), 1);
+    assert_eq!(
+        fused.scheduled_regions[0].region().index.accesses[0].tensor,
+        TensorRole::Input {
+            ordinal: InputOrdinal::FIRST
+        },
+    );
+    assert!(fused.plan.cover().materializations().is_empty());
+    let actual = interpret_fused(&fused.kernels[0], &values);
+
+    let key = InputKey::new("input").unwrap();
+    let tensor = f32_tensor(shape, &values);
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&semantic, &[InputBinding::new(&key, &tensor)])
+        .unwrap();
+    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
+    // Stated independently of the oracle as well, so a reference evaluator that
+    // agreed with a wrong compiler would still be caught: row-major `[2, 2]`
+    // folded on axis 1 is each row summed.
+    assert_eq!(actual, vec![3.0, 12.0]);
+}
+
 /// Compiles one two-input `f32` program and returns its kernel's result beside
 /// the reference evaluator's, both as bits.
 ///
