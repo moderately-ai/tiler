@@ -390,7 +390,7 @@ impl PendingIndexRefinement {
     /// Returns the scalar-authority receipt bound to the final retained stage.
     #[must_use]
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
-        self.receipt.scalar_authority()
+        self.receipt.final_scalar_authority()
     }
 
     /// Returns every stage's scalar-authority receipt, in stage order.
