@@ -1,7 +1,7 @@
 ---
 id: correct-the-records-the-derived-region-shape-budgets-falsify
 title: Correct the records the derived region-shape budgets falsify
-status: in-progress
+status: done
 priority: p2
 dependencies: [rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets]
 related: [derive-the-region-shape-budgets-from-the-declaration]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, contracts/artifacts, contracts/decisions, researc
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, budgets, identity]
-claimed_from: todo
-assignee: w-correct-
-lease_expires_at: 1786140924
 ---
 ## User-visible outcome
 

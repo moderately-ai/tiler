@@ -1,7 +1,7 @@
 ---
 id: admit-a-fusion-role-for-the-sub-tensor-selection-slice
 title: Admit a fusion role for the sub-tensor selection slice
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [scope-the-sub-tensor-selection-fusion-role, admit-a-fusion-role-for-the-sequence-extension-concatenate, admit-a-fusion-role-for-the-tensor-contraction, reach-a-verified-kernel-through-the-structural-families, admit-the-sub-tensor-selection-family, lower-the-sub-tensor-selection-occurrence-through-one-index-access-capability]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, fusion, slice]
-claimed_from: todo
-assignee: w-admit-a-
-lease_expires_at: 1786140923
 ---
 ## User-visible outcome
 
