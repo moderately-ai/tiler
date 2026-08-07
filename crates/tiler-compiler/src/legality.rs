@@ -589,24 +589,32 @@ pub enum RefinementError {
     },
     /// The region produces a different number of outputs than results.
     ResultArity {
-        /// Region output-root count.
+        /// Count of the distinct output tensors the region's roots write.
+        ///
+        /// Tensors rather than roots, because a partitioned output is several
+        /// roots over one tensor answering one semantic result.
         region_outputs: usize,
         /// Occurrence result count.
         results: usize,
     },
     /// A region output boundary disagrees with its result type or shape.
     ResultInterface {
-        /// Ordered result position.
+        /// Ordered result position. The compared boundary is the output tensor
+        /// a partitioned result's roots share, so one such result disagrees at
+        /// one position rather than once per root.
         position: usize,
     },
     /// A region output writes a value of the wrong result type.
     ResultValueType {
-        /// Ordered result position.
+        /// Ordered result position, not a root ordinal: any one of a
+        /// partitioned result's roots writing the wrong type reports the
+        /// position of the result they jointly answer.
         position: usize,
     },
-    /// A region output is not backed by a complete unique write.
+    /// A root writing the result carries no write-ownership evidence.
     IncompleteWrite {
-        /// Ordered result position.
+        /// Ordered result position, not a root ordinal: a partitioned result
+        /// reports this one position whichever of its roots lacked evidence.
         position: usize,
     },
     /// The IR-owned authority refused the semantic subject or emitted region.
