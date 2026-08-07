@@ -7004,6 +7004,36 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
         differing, 2_561,
         "the population separating the two rules moved"
     );
+
+    // The above-cap branch, which the sweep cannot reach: it needs a contributor
+    // count whose smallest divisor above one already exceeds the cap, and the
+    // smallest is 257 * 257 — far past the ladder. The branch is what keeps the
+    // cap a preference rather than a feasibility test, so leaving it to the
+    // unreachable-in-practice argument alone would leave the one piece of this
+    // rule that withholds nothing untested.
+    let above = crate::physical::capped_tree_partition(257 * 257)
+        .expect("a composite count admits a partition however large its smallest factor");
+    assert_eq!(
+        above.partitions, 257,
+        "the above-cap branch did not take the smallest admissible count"
+    );
+    assert_eq!(above.contributors_per_partition, 257);
+    assert!(above.covers(257 * 257));
+    assert!(
+        above.partitions > crate::physical::MEASURED_TREE_PARTICIPANT_CAP,
+        "this case exists to exceed the cap; a count at or below it tests the branch above"
+    );
+    // Still no wider than the balanced rule would have gone, which is what makes
+    // exceeding the cap here safe for every width authority downstream.
+    assert!(
+        above.partitions
+            <= crate::physical::governed_partition(257 * 257)
+                .expect("the domains agree")
+                .partitions,
+        "the above-cap branch chose a wider count than the balanced rule"
+    );
+    // A prime count admits nothing, in this branch as in the other.
+    assert_eq!(crate::physical::capped_tree_partition(65_537), None);
 }
 
 /// Assembles the three verified regions of one request's split program.
