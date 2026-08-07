@@ -1,7 +1,7 @@
 ---
 id: activate-measured-reduction-selection-from-a-target-cost-row
 title: Activate measured reduction selection from a target cost row
-status: in-progress
+status: done
 priority: p1
 dependencies: [calibrate-and-activate-parallel-reduction-selection]
 related: [calibrate-device-cost-models, implement-parallel-reduction-strategies]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/build, contracts/optimizer, res
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [implementation, cost-model, target-profiles, selection]
-claimed_from: todo
-assignee: agent-cost-row
-lease_expires_at: 1786121208
 ---
 ## User-visible outcome
 
@@ -218,3 +215,21 @@ cargo nextest run --workspace                                   exit 0   2,966 p
 cargo test --workspace --doc                                    exit 0
 python3 spikes/.../activated_selector_check.py                  exit 0
 ```
+
+## Integrated 2026-08-07
+
+Merged at `09b0d0b8`; the composed tree gates green with `make full` exit 0 — 2,966 workspace tests and 1,044 release numerical.
+
+**The four identity pins were recomputed by the coordinator on the merged tree**, not carried from the branch. They came out identical to the branch's values, which is itself the evidence that nothing landing between this branch's base and the merge moved them: the realization witness vocabulary and the conformance crate admission both claimed no identity movement, and this confirms it. Descriptor length 1,999 → 2,099; artifact identity `23c46a19…` → `357f0676…`; cache subject `e89c4d82…` → `c626e43b…`; fixed content 64,542 → 65,242.
+
+**The design question the acceptance left open was settled by measurement rather than by argument**, which is the outcome Tom's no-scope-cutting instruction was protecting. The cheap shape — a measured term breaking ties *inside* the non-dominated set — cannot express the retained measurement at all: the serial fold structurally dominates both parallel strategies, so `non_dominated()` holds exactly one plan on this family, and a tie-break inside a singleton decides nothing. `the_parallel_reduction_plans_are_structurally_dominated` asserts that rather than assuming it. The measured term therefore ranges over the retained *valid* plans and can prefer a structurally dominated one; it can never prefer an infeasible one, because none is in the set.
+
+**Both reserved constraints were answered structurally rather than argued around.** No second cost-model key is minted — `PlanStructuralCost`, `dominates`, `aggregate_cost`, the frontier's single-key check and `non_dominated` are untouched, and `measured_cost` has no `dominates` — so Pareto pruning cannot go dark, because nothing new enters the relation. `PlanStructuralCost` was not widened with a latency dimension.
+
+**One test observation, recorded per `AGENTS.md`.** The workspace run reported a single `leaky` verdict, on `tiler-compiler governed::contraction_conformance::the_four_prefill_cells_are_refused_by_the_unstaged_fold_and_reached_by_the_staged_one`. An earlier run today reported one on an unrelated `tiler-macros` test. A leaky verdict that **moves between unrelated tests** is the known macOS pipe-inheritance race rather than a real unreaped child, which is the distinction `AGENTS.md` draws; recurrence in one test would mean the opposite.
+
+**The public surface is parked, not landed as accepted:** [`accept-the-measured-cost-row-public-surface`](accept-the-measured-cost-row-public-surface.md). Tom's acceptance covered the model; the spelling of the `declare_*` pair is a separate boundary under ADR 0075.
+
+**A measurement boundary that must survive this ticket.** The sweep dispatched the tree at the *balanced* split, and `MEASURED_TREE_PARTICIPANT_CAP` landed after it. That moves which parallel plan is preferred, not whether the program parallelizes, so the contour this row turns on is unaffected — recorded in the ledger, the spike README, and the test rather than only here.
+
+**Flagged and deliberately not edited:** `docs/research/embedding/self-contained-embedding.md:67` quotes the old 1,999-byte descriptor inside a dated measurement paragraph. Historically correct at its commit, in an undeclared scope.
