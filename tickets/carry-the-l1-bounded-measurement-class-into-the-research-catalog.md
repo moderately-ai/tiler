@@ -1,7 +1,7 @@
 ---
 id: carry-the-l1-bounded-measurement-class-into-the-research-catalog
 title: Carry the L1 bounded-measurement class into the research catalog
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [audit-the-l1-workload-records-evidence-classes]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: agent-orch-docs
-lease_expires_at: 1786076977
 ---
 ## User-visible outcome
 
@@ -24,3 +21,7 @@ lease_expires_at: 1786076977
 ## Closes when
 
 The catalog line and the record's frontmatter state the same evidence classes.
+
+## Outcome — 2026-08-06
+
+Line 90 now reads `pending; primary-source-synthesis, bounded-measurement`, matching L1's frontmatter and the audit's verbatim replacement; nothing else on the line moved. The rest of the line already agreed with the owed text character for character, so the classes were the whole delta.
