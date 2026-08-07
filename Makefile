@@ -7,10 +7,25 @@
 # Spikes deliberately have no target. A spike is a recorded measurement, and it
 # is re-run from its own directory by whoever is working on it.
 
-.PHONY: check fmt build lint test doc full
+.PHONY: check citations fmt build lint test doc full
 
-# The working loop.
-check: fmt build lint test
+# The working loop. `citations` runs first because it is the cheapest and
+# needs no toolchain, so a stale ticket citation is reported in half a second
+# rather than after a build.
+check: citations fmt build lint test
+
+# Resolve the pinned source citations in open tickets against the working
+# tree. This is in `check` rather than only in `full` on purpose. `tickets/`
+# is not in the delta rule's gated set (see AGENTS.md, "Verify and ship"), so a
+# ticket-only change carries the previous green gate and reruns `tkt lint`
+# alone -- a check reachable only from `full` would never see the edits it
+# exists to catch. Run this target beside `tkt lint` for a ticket-only delta.
+#
+# A green run means the citations point somewhere. It does not mean the
+# tickets are true; the script's own header is explicit about the difference,
+# and AGENTS.md carries the reading obligation that actually governs it.
+citations:
+	./check-citations.sh
 
 # The second and third commands exist because `cargo fmt` reaches cargo targets
 # and the facade's `trybuild` fixtures are not targets: they are source files a
@@ -63,4 +78,4 @@ doc:
 full: check doc
 	cargo nextest run --release --locked -p tiler-reference -p tiler-compiler
 	ticketsplease lint
-	shellcheck --severity style deps.sh
+	shellcheck --severity style deps.sh check-citations.sh
