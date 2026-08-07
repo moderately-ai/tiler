@@ -1,21 +1,25 @@
 //! Measures kernel-program identity growth against `MAX_PROGRAM_IDENTITY_BYTES`.
 //!
 //! `measure-executable-coverage-identity-growth-against-the-program-identity-bound`
-//! owns a structural inference that had exactly one measured point behind it:
+//! owned a structural inference with exactly one measured point behind it:
 //! `CanonicalKernelProgramIdentity` embeds one whole reached-only
 //! executable-coverage identity per covered occurrence, one record per graph
-//! operation, and each of those records embeds the complete
+//! operation, and each of those records embedded the complete
 //! `SemanticGraphIdentity` of the bound graph — so program identity should be
-//! quadratic in graph size against a hard 64 MiB bound that fails closed.
+//! quadratic in graph size against a hard 64 MiB bound that fails closed. The
+//! first sweep measured exactly that. ADR 0104 then folded the per-record graph
+//! identity to a fixed-width digest, which is why the fit this sweep now reports
+//! is linear: the general form fitted here is `a*n^2 + b*n + c`, and `a` is a
+//! measured *outcome* rather than an assumption, so the same harness reads both
+//! encodings and names which one the tree is in.
 //!
-//! This sweep replaces the inference's single point with a curve. It compiles
-//! programs of increasing operation count through the **ordinary** path — the
-//! public `tiler_compiler::session::compile` boundary, whose lowering mints
-//! real index-refinement receipts, derives `CoveredOccurrence` records from
-//! them, and drives `KernelProgramBuilder` — and reads the identity byte length
-//! off the verified program each compilation produced. Nothing here constructs
-//! an identity, a receipt, or a coverage record itself; a synthetic one would
-//! measure this file rather than the compiler.
+//! It compiles programs of increasing operation count through the **ordinary**
+//! path — the public `tiler_compiler::session::compile` boundary, whose lowering
+//! mints real index-refinement receipts, derives `CoveredOccurrence` records
+//! from them, and drives `KernelProgramBuilder` — and reads the identity byte
+//! length off the verified program each compilation produced. Nothing here
+//! constructs an identity, a receipt, or a coverage record itself; a synthetic
+//! one would measure this file rather than the compiler.
 //!
 //! # It refuses rather than measuring garbage
 //!
@@ -26,16 +30,17 @@
 //! because a measurement harness that degrades to a partial row publishes a
 //! number nobody can tell apart from a real one.
 //!
-//! Three `--perturb` modes exist to watch those refusals fire rather than
+//! Four `--perturb` modes exist to watch those refusals fire rather than
 //! trust them; see [`Perturbation`]. Each exits non-zero.
 //!
 //! # Reading the output
 //!
 //! One TSV row per ladder point on stdout, then a summary block of `#` comment
-//! lines carrying the structural decomposition, the exact quadratic fit, and
-//! the extrapolated refusal point solved from it. The run ends by compiling one
-//! program past the governed budget and requiring it to refuse, so the ladder's
-//! claim to be the whole reachable domain is measured rather than asserted.
+//! lines carrying the structural decomposition, the exact fit, and the
+//! extrapolated refusal point solved from it. The run ends by compiling every
+//! program in [`WALLS`] and requiring each to refuse *with the class recorded
+//! beside it*, so the ladder's claim to be the whole reachable domain, and the
+//! attribution of each wall above it, are both measured rather than asserted.
 //!
 //! Run it from this directory:
 //!
@@ -47,34 +52,104 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use tiler_build::BoundMetalCompileDeclaration;
-use tiler_compiler::session::{CompileRequest, NumericalContract, compile};
+use tiler_compiler::session::{
+    CompileFailureClass, CompileRequest, ExplainReport, NumericalContract, compile,
+};
 use tiler_compiler::target::TargetRequest;
 use tiler_ir::program::MAX_PROGRAM_IDENTITY_BYTES;
 use tiler_ir::semantic::{
-    F32, F32Constant, F32Multiply, F32Reindex, InputKey, OutputKey, ReindexForm, SemanticProgram,
-    SemanticProgramBuilder,
+    F32, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::Shape;
 
 /// Operation counts swept, which is the whole reachable domain.
 ///
 /// **This ladder is not a sample; it is every program size the ordinary
-/// compilation path admits.** `DeterministicBudgets::governed` caps
-/// `semantic_operations` at 8, that budget is `pub(crate)`, and
-/// `CompileRequest` binds `InstalledCapabilities::governed`, so no public
-/// caller can state a wider one. A nine-operation program is refused before any
-/// kernel program exists — which [`probe_the_wall`] demonstrates rather than
-/// assumes, because a budget read from a constant and a budget that actually
-/// refuses are different facts.
+/// compilation path admits for this program family.** It is *not* the domain
+/// `DeterministicBudgets::governed`'s `semantic_operations` names. That budget
+/// is 62, and 62 is not reachable: two bounds below it stop this family first,
+/// and [`WALLS`] compiles at each of them and records which one refuses.
+///
+/// The derivation, measured rather than read off constants:
+///
+/// - **2..=10 compiles.** Every point verifies, carries one coverage record per
+///   semantic operation, and retains a selected alternative.
+/// - **11 refuses `InvalidCompilerOutput`.** Region formation still succeeds
+///   there — sixty-six candidates, no budget stop — but the explain authority's
+///   detail ceiling (`MAX_RECORDS`, 4,096 records in
+///   `crates/tiler-compiler/src/explain.rs`) is exhausted by cover enumeration's
+///   per-alternative rejection records, and a trace that would not fit fails the
+///   compilation closed rather than dropping records.
+/// - **12..=62 refuses `NoFeasiblePlan`.** `region_expansions` (10,000) stops
+///   candidate growth before the whole-program region is reached, and every
+///   surviving singleton cover names an unimplemented region, so the portfolio
+///   is empty.
+/// - **63 refuses `BudgetExhausted`**, which is `semantic_operations = 62`
+///   itself — the only one of the three that is about program *size*.
+///
+/// So the domain widened from seven points to nine, and it widened by two rather
+/// than by fifty-four because the budget that moved is not the budget that
+/// binds. Nine consecutive integers is what makes the second-difference fit in
+/// [`exact_quadratic`] a fit rather than an interpolation.
 ///
 /// The generator emits one shared constant and a chain of multiplies, so the
 /// operation count is `1 + multiplies` and every integer in the domain is
-/// reachable. Seven points over 2..=8 is a denser ladder than a doubling one
-/// could have been inside the same wall.
-const OPERATIONS: &[usize] = &[2, 3, 4, 5, 6, 7, 8];
+/// reachable.
+const OPERATIONS: &[usize] = &[2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-/// The first operation count the governed budget refuses.
-const BEYOND_THE_WALL: usize = 9;
+/// One refusal above the ladder, and the class that must raise it.
+struct Wall {
+    /// The operation count probed.
+    operations: usize,
+    /// The class the compiler must refuse with.
+    class: CompileFailureClass,
+    /// What that refusal is, in the terms of the bound that produces it.
+    why: &'static str,
+}
+
+/// The refusals bounding the ladder, each probed rather than read off a source.
+///
+/// The predecessor of this table was a single nine-operation probe asserting
+/// that the governed budget refused. It fired on 2026-08-06 — the budget had
+/// moved from 8 to 62 and the probe compiled instead of refusing — which is the
+/// finding it exists to report and the reason this file was rewritten.
+///
+/// A single point cannot re-anchor the discipline now, because three distinct
+/// bounds refuse between the ladder's top and the governed budget and they are
+/// not interchangeable: two are search bounds whose exhaustion the compiler
+/// reports as a defect or as an infeasible target, and only the third is the
+/// program-size budget. Probing each **with its class** is what makes a wall
+/// that moves *in kind* — an explain ceiling raised, a search budget widened, a
+/// program budget moved — fail loudly rather than pass as "something refused".
+///
+/// 62 is probed explicitly because it is the governed budget's own maximum: the
+/// largest program the profile admits by size is measured to refuse for a reason
+/// that has nothing to do with size.
+const WALLS: &[Wall] = &[
+    Wall {
+        operations: 11,
+        class: CompileFailureClass::InvalidCompilerOutput,
+        why: "the explain authority's detail ceiling, exhausted by cover-enumeration rejections; \
+              the compiler classes its own refusal as a defect",
+    },
+    Wall {
+        operations: 12,
+        class: CompileFailureClass::NoFeasiblePlan,
+        why: "region_expansions (10,000) stops growth before the whole-program candidate, leaving \
+              a portfolio whose every cover names an unimplemented region",
+    },
+    Wall {
+        operations: 62,
+        class: CompileFailureClass::NoFeasiblePlan,
+        why: "the governed semantic_operations maximum, which the same expansion bound refuses \
+              long before its own budget would",
+    },
+    Wall {
+        operations: 63,
+        class: CompileFailureClass::BudgetExhausted,
+        why: "semantic_operations = 62, the one wall here that is about program size",
+    },
+];
 
 /// The tensor extent every program in the sweep is built over.
 ///
@@ -98,20 +173,20 @@ const CONTRACT: NumericalContract = NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_
 /// A deliberate corruption used to watch one of the harness's refusals fire.
 ///
 /// AGENTS.md requires a check to be run against a case that must fail before
-/// its passing verdict means anything. Both arms below end the run non-zero,
-/// and each exercises a different refusal: the compile path and the coverage
-/// completeness assertion.
+/// its passing verdict means anything. Every arm below ends the run non-zero,
+/// and each exercises a different refusal: the compile path, the coverage
+/// completeness assertion, the exact-fit residual check, and the wall table's
+/// class comparison.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Perturbation {
     /// None; the ordinary sweep.
     None,
-    /// Emit a program the compiler cannot lower, and watch the run refuse.
+    /// Emit a program no plan covers, and watch the run refuse.
     ///
-    /// `tiler::reindex-f32@1` is refused for recognition rather than for
-    /// numerics: its access relation is one `LogicalAccess` cannot spell, so no
-    /// projection exists to make and every contract refuses it. That makes it a
-    /// program which genuinely does not reach a verified kernel program, which
-    /// is the failure the sweep must not paper over.
+    /// See [`unplannable_program`] for which program and why it is derived from
+    /// the wall table rather than written down. What it exercises is the arm the
+    /// sweep must never paper over: a compilation that does not reach a verified
+    /// kernel program stops the run instead of leaving a gap in the ladder.
     Program,
     /// Corrupt the expected coverage count, and watch the completeness
     /// assertion refuse.
@@ -129,6 +204,16 @@ enum Perturbation {
     /// fail would turn that into an assertion; moving one row by a single byte
     /// is what proves it can.
     Fit,
+    /// Expect the wrong class at the first wall, and watch the table refuse.
+    ///
+    /// [`WALLS`]'s other arm — a probe that compiles where a refusal was
+    /// expected — has fired for real: it is what the 2026-08-06 run reported
+    /// when `semantic_operations` moved from 8 to 62, and it is why this table
+    /// exists. The class comparison is the arm that has never fired, so it is
+    /// the one that needs watching. Naming the wrong expected class leaves the
+    /// compiler untouched and moves only the harness's expectation, which is
+    /// what makes the refusal attributable to the comparison.
+    Wall,
 }
 
 /// One measured ladder point.
@@ -159,7 +244,9 @@ fn main() -> ExitCode {
     let perturbation = match parse_perturbation() {
         Ok(perturbation) => perturbation,
         Err(argument) => {
-            eprintln!("unknown argument {argument:?}; expected --perturb=program|coverage|fit");
+            eprintln!(
+                "unknown argument {argument:?}; expected --perturb=program|coverage|fit|wall"
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -175,7 +262,7 @@ fn main() -> ExitCode {
     println!(
         "requested\toperations\tcoverage_records\tstages\talternatives\tgraph_bytes\t\
          program_bytes\twidest_alternative_bytes\tcoverage_bytes\tmean_record_bytes\t\
-         bytes_per_op_squared\tcompile_ms"
+         bytes_per_op\tcompile_ms"
     );
 
     let mut rows: Vec<Row> = Vec::new();
@@ -189,7 +276,7 @@ fn main() -> ExitCode {
                 rows.push(row);
             }
             Err(refusal) => {
-                eprintln!("REFUSED at operations={operations}: {refusal}");
+                eprintln!("REFUSED at operations={operations}: {}", refusal.diagnosis);
                 eprintln!(
                     "no row is printed for a refused point, and the sweep stops rather than \
                      continuing past a program that did not verify."
@@ -202,45 +289,78 @@ fn main() -> ExitCode {
     if !summarize(&rows) {
         return ExitCode::FAILURE;
     }
-    if !probe_the_wall(&declaration) {
+    if !probe_the_walls(&declaration, perturbation) {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
 }
 
-/// Compiles one operation past the governed budget, and requires a refusal.
+/// Compiles every program in [`WALLS`], requiring each stated refusal.
 ///
-/// The ladder above claims to be the *whole* reachable domain, and that claim
-/// is only worth something if the first point outside it actually refuses. A
-/// success here does not mean the sweep is wrong; it means the budget moved and
-/// the domain is now wider than this ladder, which is a finding rather than a
-/// pass — so it ends the run non-zero and says what to do.
-fn probe_the_wall(declaration: &BoundMetalCompileDeclaration) -> bool {
+/// The ladder above claims to be the *whole* reachable domain, and that claim is
+/// only worth something if the points outside it actually refuse — and refuse
+/// for the reasons the ladder's own derivation names. Two ways this can fail and
+/// both are findings rather than passes: a probe that **compiles** means the
+/// domain is wider than the ladder, and a probe that refuses with a **different
+/// class** means the bound that binds has changed identity. Either ends the run
+/// non-zero and says what to do; neither is a hardware or timing property, so a
+/// loaded host cannot produce one.
+///
+/// Every wall is probed even after one fails, because "which of the four moved"
+/// is the whole content of the report.
+fn probe_the_walls(declaration: &BoundMetalCompileDeclaration, perturbation: Perturbation) -> bool {
     println!("#");
-    let program = chain_program(BEYOND_THE_WALL);
-    match compile_once(&program, declaration) {
-        Err(refusal) => {
-            println!(
-                "# WALL CONFIRMED at {BEYOND_THE_WALL} operations: {}",
-                refusal.replace(['\n', '\t'], " ")
-            );
-            println!(
-                "# so the ladder above is the entire domain the ordinary compilation path admits, \
-                 measured rather than read off a constant."
-            );
-            true
-        }
-        Ok((compiled, _)) => {
-            eprintln!(
-                "THE WALL MOVED: {BEYOND_THE_WALL} operations compiled to a {}-byte identity, so \
-                 the governed semantic-operations budget is no longer 8 and this ladder is no \
-                 longer the whole reachable domain. Widen OPERATIONS and rerun; the recorded \
-                 result and its verdict are stale.",
-                compiled.identity.len()
-            );
-            false
+    println!(
+        "# THE WALLS ABOVE THE LADDER, each compiled and required to refuse with the class named:"
+    );
+    let mut held = true;
+    for (index, wall) in WALLS.iter().enumerate() {
+        // The perturbation moves only this harness's expectation, so a refusal
+        // it produces is attributable to the comparison and to nothing else.
+        let expected = if perturbation == Perturbation::Wall && index == 0 {
+            CompileFailureClass::BudgetExhausted
+        } else {
+            wall.class
+        };
+        let program = chain_program(wall.operations);
+        match compile_once(&program, declaration) {
+            Err(refusal) if refusal.class == Some(expected) => {
+                println!(
+                    "#   {} operations: CONFIRMED {expected:?} — {} [{}]",
+                    wall.operations, wall.why, refusal.summary
+                );
+            }
+            Err(refusal) => {
+                eprintln!(
+                    "THE WALL CHANGED KIND at {} operations: this table expects {expected:?} and \
+                     the compiler refused with {}. The bound that binds here is no longer the one \
+                     the ladder's derivation names, so the recorded domain and every figure \
+                     derived from it are stale. Re-derive WALLS and rerun.",
+                    wall.operations, refusal.summary
+                );
+                held = false;
+            }
+            Ok((compiled, _)) => {
+                eprintln!(
+                    "THE WALL MOVED: {} operations compiled to a {}-byte identity where \
+                     {expected:?} was required, so this ladder is no longer the whole reachable \
+                     domain. Widen OPERATIONS, re-derive WALLS, and rerun; the recorded result and \
+                     its verdict are stale.",
+                    wall.operations,
+                    compiled.identity.len()
+                );
+                held = false;
+            }
         }
     }
+    if held {
+        println!(
+            "# so the ladder above is the entire domain the ordinary compilation path admits for \
+             this family, and the governed semantic_operations budget of 62 is measured to be \
+             unreachable rather than assumed to bound it."
+        );
+    }
+    held
 }
 
 /// Reads the one optional argument, rejecting anything else.
@@ -251,6 +371,7 @@ fn parse_perturbation() -> Result<Perturbation, String> {
             "--perturb=program" => Perturbation::Program,
             "--perturb=coverage" => Perturbation::Coverage,
             "--perturb=fit" => Perturbation::Fit,
+            "--perturb=wall" => Perturbation::Wall,
             _ => return Err(argument),
         };
     }
@@ -270,9 +391,9 @@ fn measure(
     requested: usize,
     declaration: &BoundMetalCompileDeclaration,
     perturbation: Perturbation,
-) -> Result<Row, String> {
+) -> Result<Row, Refusal> {
     let program = if perturbation == Perturbation::Program {
-        unrecognized_program()
+        unplannable_program()
     } else {
         chain_program(requested)
     };
@@ -281,12 +402,12 @@ fn measure(
     let (first, first_ms) = compile_once(&program, declaration)?;
     let (second, second_ms) = compile_once(&program, declaration)?;
     if first.identity != second.identity {
-        return Err(format!(
+        return Err(Refusal::harness(&format!(
             "two compilations of one program produced different identity bytes ({} then {}); the \
              encoding is not a function of program content and no byte count here means anything",
             first.identity.len(),
             second.identity.len()
-        ));
+        )));
     }
 
     let expected_coverage = match perturbation {
@@ -294,12 +415,12 @@ fn measure(
         _ => operations,
     };
     if first.coverage_records != expected_coverage {
-        return Err(format!(
+        return Err(Refusal::harness(&format!(
             "the selected alternative covers {} semantic occurrences but the graph has {} \
              operations; a coverage set that is not the whole graph is not the subject this \
              measurement is about",
             first.coverage_records, expected_coverage
-        ));
+        )));
     }
 
     Ok(Row {
@@ -327,23 +448,72 @@ struct Compiled {
     widest_alternative_bytes: usize,
 }
 
+/// One compilation that did not produce a verified program.
+///
+/// The class is the compiler's own, read through the public accessor rather than
+/// scraped from a rendered trace — `ExplainReport` documents its text as a
+/// diagnostic and not a parse target, so [`WALLS`] compares the typed value and
+/// nothing else. It is `None` for a refusal this harness raised about a
+/// compilation that *succeeded*, which no compiler class describes.
+///
+/// Two renderings because they have two sinks. A refused ladder point aborts the
+/// sweep and its whole trace belongs on stderr; a confirmed wall is one line in
+/// a retained result, and the eleven-operation wall's trace alone is 3,478
+/// records — a megabyte of TSV comment nobody reads.
+struct Refusal {
+    /// The compiler's classification, absent for a harness-raised refusal.
+    class: Option<CompileFailureClass>,
+    /// One short line: which boundary refused, with what class and trace size.
+    summary: String,
+    /// The summary and, where one exists, the complete rendered explain trace.
+    diagnosis: String,
+}
+
+impl Refusal {
+    /// A refusal this harness raised about an otherwise successful compilation.
+    fn harness(diagnosis: &str) -> Self {
+        Self {
+            class: None,
+            summary: diagnosis.to_owned(),
+            diagnosis: diagnosis.to_owned(),
+        }
+    }
+
+    /// A refusal the compiler raised, with its class and its trace kept apart.
+    fn compiler(
+        class: CompileFailureClass,
+        summary: String,
+        trace: Option<ExplainReport<'_>>,
+    ) -> Self {
+        let rendered = trace
+            .map(|report| format!(" | {}", report.render().replace(['\n', '\t'], " ")))
+            .unwrap_or_default();
+        Self {
+            class: Some(class),
+            diagnosis: format!("{summary}{rendered}"),
+            summary,
+        }
+    }
+}
+
 /// Drives the public compile boundary once and reads the verified program.
 fn compile_once(
     program: &SemanticProgram,
     declaration: &BoundMetalCompileDeclaration,
-) -> Result<(Compiled, u128), String> {
-    let targets = TargetRequest::new([declaration.profile().clone()])
-        .map_err(|error| format!("the singleton target request does not build: {error:?}"))?;
+) -> Result<(Compiled, u128), Refusal> {
+    let targets = TargetRequest::new([declaration.profile().clone()]).map_err(|error| {
+        Refusal::harness(&format!(
+            "the singleton target request does not build: {error:?}"
+        ))
+    })?;
     let request = CompileRequest::new(program, CONTRACT, targets);
 
     let started = Instant::now();
     let batch = compile(request).map_err(|failure| {
-        format!(
-            "the compilation batch refused: {failure:?}{}",
-            failure
-                .explain()
-                .map(|report| format!(" | {}", report.render().replace(['\n', '\t'], " ")))
-                .unwrap_or_default()
+        Refusal::compiler(
+            failure.class(),
+            format!("the compilation batch refused: {failure:?}"),
+            failure.explain(),
         )
     })?;
     let elapsed = started.elapsed().as_millis();
@@ -351,16 +521,14 @@ fn compile_once(
     let outcome = batch
         .into_targets()
         .pop()
-        .ok_or_else(|| "the batch carried no target outcome".to_owned())?
+        .ok_or_else(|| Refusal::harness("the batch carried no target outcome"))?
         .into_parts()
         .1;
     let compilation = outcome.map_err(|refusal| {
-        format!(
-            "the target slot refused: {refusal:?}{}",
-            refusal
-                .explain()
-                .map(|report| format!(" | {}", report.render().replace(['\n', '\t'], " ")))
-                .unwrap_or_default()
+        Refusal::compiler(
+            refusal.class(),
+            format!("the target slot refused: {refusal:?}"),
+            refusal.explain(),
         )
     })?;
 
@@ -376,11 +544,11 @@ fn compile_once(
                 .len()
         })
         .max()
-        .ok_or_else(|| "the portfolio retained no alternative".to_owned())?;
+        .ok_or_else(|| Refusal::harness("the portfolio retained no alternative"))?;
 
     let selected = compilation
         .selected()
-        .ok_or_else(|| "the portfolio named no selected alternative".to_owned())?;
+        .ok_or_else(|| Refusal::harness("the portfolio named no selected alternative"))?;
     let verified = selected.abi().kernel_program();
 
     let mut coverage_records = 0_usize;
@@ -451,34 +619,37 @@ fn chain_program(operations: usize) -> SemanticProgram {
     builder.build().expect("the program verifies")
 }
 
-/// A semantically valid program this build cannot lower.
+/// A semantically valid program this build reaches no verified plan for.
 ///
 /// Used only by `--perturb=program`. It is a *verified* semantic program — the
-/// perturbation is not a malformed graph — whose access relation the scheduled
-/// region vocabulary cannot express, so the compiler refuses it for
-/// recognition under every contract.
-fn unrecognized_program() -> SemanticProgram {
-    let mut builder =
-        SemanticProgramBuilder::try_standard().expect("the semantic profile composes");
-    let input = builder
-        .input::<F32>(
-            InputKey::new("input").expect("the input key is valid"),
-            Shape::from_dims([EXTENT]),
-        )
-        .expect("the input binds");
-    let reversed = F32Reindex::apply(
-        &mut builder,
-        &ReindexForm::reverse_axis(Axis::new(0)).expect("the reversal form is valid"),
-        input,
-    )
-    .expect("the reindex applies");
-    builder
-        .output(
-            OutputKey::new("result").expect("the output key is valid"),
-            reversed,
-        )
-        .expect("the output binds");
-    builder.build().expect("the program verifies")
+/// perturbation is not a malformed graph — that no portfolio covers, so the
+/// compilation refuses and the sweep must abort rather than print a partial
+/// ladder.
+///
+/// # Why it is read out of [`WALLS`] rather than written here
+///
+/// Its predecessor was a reverse-axis `tiler::reindex-f32@1`, justified by an
+/// access relation the scheduled region vocabulary could not spell. That
+/// justification expired: all six `ReindexFormKind` arms are recognized on this
+/// tree, so the perturbed program compiled, the sweep measured nine copies of a
+/// one-operation graph, and the run still exited non-zero — from the fit check
+/// refusing a degenerate ladder rather than from the arm this mode exists to
+/// watch. A perturbation that stops perturbing while its exit code stays 1 is
+/// worse than none.
+///
+/// Taking the point from the wall table removes the standing claim entirely. The
+/// same run that uses this program also compiles it under [`probe_the_walls`]
+/// and requires the refusal, so this mode cannot silently stop testing what it
+/// says it tests: the wall would fail first, loudly, and say which one moved.
+/// The `NoFeasiblePlan` wall is chosen over the earlier `InvalidCompilerOutput`
+/// one because an infeasible target is an ordinary refusal rather than a
+/// compiler defect.
+fn unplannable_program() -> SemanticProgram {
+    let wall = WALLS
+        .iter()
+        .find(|wall| wall.class == CompileFailureClass::NoFeasiblePlan)
+        .expect("the wall table names a point no plan covers");
+    chain_program(wall.operations)
 }
 
 /// Writes one measured row.
@@ -489,9 +660,13 @@ fn print_row(row: &Row) {
     } else {
         row.coverage_bytes as f64 / row.coverage_records as f64
     };
-    let per_square = row.program_bytes as f64 / (row.operations as f64).powi(2);
+    // Bytes per operation rather than per operation squared. The column exists
+    // to be read down: a value that settles is a linear curve, a value that
+    // climbs is a quadratic one, and which of the two the encoding produces is
+    // what ADR 0104 changed.
+    let per_operation = row.program_bytes as f64 / row.operations as f64;
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{mean_record:.1}\t{per_square:.3}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{mean_record:.1}\t{per_operation:.3}\t{}",
         row.requested,
         row.operations,
         row.coverage_records,
@@ -526,9 +701,11 @@ fn summarize(rows: &[Row]) -> bool {
         rows.len()
     );
     println!(
-        "# READ THAT WITH THE FIT BELOW, NOT INSTEAD OF IT. An exponent near 1 does not refute \
-         Theta(n^2) here; it reports that the linear term still dominates everywhere the governed \
-         budget lets a program reach."
+        "# READ THAT WITH THE FIT BELOW, NOT INSTEAD OF IT. An exponent is a summary of where the \
+         domain is and not a statement of what the curve is: over the pre-ADR-0104 quadratic it \
+         read 1.09, because the linear term dominated everywhere a program could reach. Only the \
+         exact fit below distinguishes the two encodings, and it does so by reproducing every \
+         measured point to the byte."
     );
 
     let last = &rows[rows.len() - 1];
@@ -548,36 +725,41 @@ fn summarize(rows: &[Row]) -> bool {
         println!("#");
         println!(
             "# NO EXACT QUADRATIC FITS the measured program-identity curve, so no refusal point \
-             is stated. The structural prediction is Theta(n^2); a curve that is not exactly \
-             quadratic over consecutive operation counts means the encoding carries a term this \
-             sweep did not model, and extrapolating through it would invent a number."
+             is stated. Both encodings this harness has read are inside the fitted form — the \
+             pre-ADR-0104 restatement is quadratic and the folded digest is linear, which is the \
+             same form with a zero leading coefficient — so a curve that is not exactly quadratic \
+             over consecutive operation counts means the encoding carries a term this sweep did \
+             not model, and extrapolating through it would invent a number."
         );
         return false;
     };
     let graph_fit = exact_quadratic(rows, |row| row.graph_bytes);
 
     println!("#");
-    println!(
-        "# EXACT FIT over every measured point: program_bytes(n) = {:.0}n^2 + {:.0}n + {:.0}",
-        program_fit.0, program_fit.1, program_fit.2
-    );
+    if program_fit.0 == 0.0 {
+        println!(
+            "# EXACT FIT over every measured point: program_bytes(n) = {:.0}n + {:.0} — LINEAR, \
+             with a quadratic coefficient of exactly zero rather than a small one.",
+            program_fit.1, program_fit.2
+        );
+    } else {
+        println!(
+            "# EXACT FIT over every measured point: program_bytes(n) = {:.0}n^2 + {:.0}n + {:.0}",
+            program_fit.0, program_fit.1, program_fit.2
+        );
+    }
     if let Some(graph) = graph_fit {
         println!(
             "#   graph_bytes(n) = {:.0}n^2 + {:.0}n + {:.0}",
             graph.0, graph.1, graph.2
         );
-        println!(
-            "#   THE MECHANISM, stated as an equality a reader can check: the program curve's \
-             quadratic coefficient ({:.0}) is the graph curve's per-operation slope ({:.0}). That \
-             is one whole graph identity embedded per coverage record, one record per operation — \
-             not a resemblance to n^2 but the product that makes it one.",
-            program_fit.0, graph.1
-        );
+        print_mechanism(program_fit.0, graph.1);
     }
 
     // Where the quadratic term overtakes the linear one. Below it the curve
     // reads as linear no matter how many points are sampled, which is why the
-    // log-log exponent above is what it is.
+    // log-log exponent above is what it is. A zero quadratic coefficient has no
+    // such crossover, and dividing by it would print one.
     if program_fit.0 > 0.0 {
         println!(
             "#   the quadratic term overtakes the linear term at n = {:.0} operations; every \
@@ -596,37 +778,91 @@ fn summarize(rows: &[Row]) -> bool {
         refusal - 1
     );
     println!(
-        "# THE FIT IS EXACT ON ITS DOMAIN AND THE DOMAIN IS 2..=8 OPERATIONS. Every coefficient \
+        "# THE FIT IS EXACT ON ITS DOMAIN AND THE DOMAIN IS {}..={} OPERATIONS. Every coefficient \
          above is a property of this one program family: graph identity per operation depends on \
          operation-key length, arity, result rank, and attribute width, and the per-record \
          remainder depends on the region, the reached definitions, and the admission provenance. \
          A different family moves all three coefficients, so this number is the order of \
-         magnitude at which the bound becomes binding, not a refusal a caller can rely on."
+         magnitude at which the bound becomes binding, not a refusal a caller can rely on.",
+        rows[0].operations, last.operations
+    );
+    println!(
+        "# IT IS ALSO AN EXTRAPOLATION ACROSS THREE ORDERS OF MAGNITUDE, and the walls below say \
+         why no wider ladder is available: the ordinary compilation path refuses this family at \
+         {} operations for reasons that are not program size, so the widest point any measurement \
+         can reach is {} and the refusal point above is {:.0}x beyond it.",
+        WALLS[0].operations,
+        last.operations,
+        refusal as f64 / last.operations as f64
     );
     true
+}
+
+/// Names which encoding the measured coefficients say the tree carries.
+///
+/// The quadratic coefficient and the graph curve's per-operation slope are the
+/// two numbers whose *relation* is the mechanism. When they are equal, one whole
+/// graph identity is written per coverage record and one record per operation,
+/// so the product is what makes the total quadratic. When the quadratic
+/// coefficient is zero and the graph slope is not, the per-record reference is
+/// bounded-width and the product is gone. Reporting the relation rather than
+/// asserting either state is what lets one harness read both encodings.
+#[allow(clippy::cast_precision_loss, reason = "reported to a few decimals")]
+fn print_mechanism(quadratic: f64, graph_slope: f64) {
+    if quadratic == 0.0 && graph_slope > 0.0 {
+        println!(
+            "#   THE MECHANISM, stated as the relation a reader can check: the program curve's \
+             quadratic coefficient is 0 while the graph curve still grows at {graph_slope:.0} \
+             bytes per operation. The per-record graph reference no longer scales with the graph, \
+             so the product that used to make the total quadratic — one whole graph identity per \
+             coverage record, one record per operation — is gone. That is ADR 0104's fold, read \
+             off the curve rather than off the encoder."
+        );
+    } else if (quadratic - graph_slope).abs() < 0.5 {
+        println!(
+            "#   THE MECHANISM, stated as an equality a reader can check: the program curve's \
+             quadratic coefficient ({quadratic:.0}) is the graph curve's per-operation slope \
+             ({graph_slope:.0}). That is one whole graph identity embedded per coverage record, \
+             one record per operation — not a resemblance to n^2 but the product that makes it \
+             one."
+        );
+    } else {
+        println!(
+            "#   THE MECHANISM IS NEITHER SHAPE THIS HARNESS HAS READ: the program curve's \
+             quadratic coefficient is {quadratic:.0} and the graph curve's per-operation slope is \
+             {graph_slope:.0}. They are neither equal (one graph identity per record) nor is the \
+             first zero (a bounded-width per-record reference), so the encoding carries a term \
+             neither reading explains and the coefficients above are a fit without a mechanism."
+        );
+    }
 }
 
 /// Writes the structural decomposition and the consecutive-growth tables.
 ///
 /// The decomposition is the structural claim checked directly rather than only
-/// through an exponent. Each coverage record embeds one whole
-/// `SemanticGraphIdentity`, so the mean record exceeds the graph identity by a
-/// per-record remainder; and there is one record per operation, so the product
-/// of the two is what makes the total quadratic. Reading the remainder column
-/// is what tells a quadratic mechanism apart from a curve that merely resembles
-/// one over this ladder.
+/// through an exponent, and the three columns are chosen so a reader can tell
+/// the two encodings apart by eye. `graph_bytes` grows with the graph under
+/// both. `mean_record_bytes` tracked it under the restatement and is decoupled
+/// from it under the fold. `coverage_step` — the bytes one added operation adds
+/// to the whole coverage section — is the discriminator: it climbs with `n`
+/// while each record carries a whole graph identity, and settles to a constant
+/// once each record carries a bounded-width reference instead.
 #[allow(clippy::cast_precision_loss, reason = "reported to a few decimals")]
 fn print_growth_tables(rows: &[Row]) {
     println!("#");
     println!("# structural decomposition (the mechanism, not just the exponent):");
-    println!("#   operations\tgraph_bytes\tmean_record_bytes\trecord_minus_graph");
+    println!("#   operations\tgraph_bytes\tmean_record_bytes\tcoverage_step");
+    let mut previous_coverage: Option<usize> = None;
     for row in rows {
         let mean_record = row.coverage_bytes as f64 / row.coverage_records as f64;
+        let step = match previous_coverage {
+            Some(previous) => format!("{}", row.coverage_bytes.saturating_sub(previous)),
+            None => "-".to_owned(),
+        };
+        previous_coverage = Some(row.coverage_bytes);
         println!(
-            "#   {}\t{}\t{mean_record:.1}\t{:.1}",
-            row.operations,
-            row.graph_bytes,
-            mean_record - row.graph_bytes as f64
+            "#   {}\t{}\t{mean_record:.1}\t{step}",
+            row.operations, row.graph_bytes,
         );
     }
 
@@ -730,14 +966,23 @@ fn evaluate(fit: (f64, f64, f64), operations: usize) -> u64 {
 ///
 /// Walked up from the closed-form root rather than trusted from it, so the
 /// reported integer is the one the fitted curve actually crosses at instead of
-/// a rounding of a square root.
+/// a rounding of a root.
+///
+/// The linear case is solved as a line rather than fed through the quadratic
+/// formula. With a zero leading coefficient that formula divides zero by zero,
+/// and the `NaN` it produces would cast to a starting point of zero and reach
+/// the right answer by a route no reader could check.
 #[allow(clippy::cast_precision_loss, reason = "byte counts are small integers")]
 #[allow(clippy::cast_possible_truncation, reason = "an operation count")]
 #[allow(clippy::cast_sign_loss, reason = "the root is positive")]
 fn first_refusing_operation_count(fit: (f64, f64, f64)) -> usize {
     let limit = MAX_PROGRAM_IDENTITY_BYTES as u64;
-    let discriminant = fit.1.mul_add(fit.1, 4.0 * fit.0 * (limit as f64 - fit.2));
-    let root = (-fit.1 + discriminant.sqrt()) / (2.0 * fit.0);
+    let root = if fit.0 == 0.0 {
+        (limit as f64 - fit.2) / fit.1
+    } else {
+        let discriminant = fit.1.mul_add(fit.1, 4.0 * fit.0 * (limit as f64 - fit.2));
+        (-fit.1 + discriminant.sqrt()) / (2.0 * fit.0)
+    };
     let mut operations = (root as usize).saturating_sub(2).max(1);
     while evaluate(fit, operations) <= limit {
         operations += 1;
