@@ -47,3 +47,31 @@ Decide and justify: `tkt lint`-adjacent, a `make` target, or a test. Note that `
 ## Non-goals
 
 Verifying that a citation supports its claim. Rewriting existing citations in bulk — repair them as tickets are dispatched, under the reading obligation. Editing `AGENTS.md`, which already carries the rule.
+
+## Outcome
+
+**Fact — the check exists and the tree passes it.** `check-citations.sh` resolves every pinned citation in an open ticket against the working tree, and `make citations` runs it in 0.46 s. On this branch it reports **265 pinned citations across 236 open ticket and comment files**, out of 1248 files read, 1012 of them skipped as terminal.
+
+**Fact — the boundary is demonstrated, not asserted, and the fixture is live.** The paragraph below is deliberately false and the check passes it, because the citation resolves perfectly:
+
+> **Deliberately false, retained as a fixture — do not "fix" it.** `make check` runs the citation check **last**, after the test target (`Makefile "check: citations fmt build lint test"`).
+
+The anchor is the literal text of that line, so the path resolves, the anchor is found, and the check is silent. The claim is nevertheless wrong: `citations` is the *first* prerequisite, so it runs before `fmt`, not after `test`. That is the whole point — green means the citations point somewhere, never that the ticket is true. Anyone repairing this fixture removes the only standing demonstration of what the check cannot do; the wrong sentence is the evidence.
+
+**Fact — what counts as a citation is narrower than "a path", and deliberately so.** A citation is a code span carrying a path *plus a pin*: `path:LINE`, `path:START-END`, `path "anchor"`, or `path:LINE "anchor"`. A bare path with no pin is not checked, and 383 such mentions were skipped and counted. Two legitimate populations live there: files a ticket asks someone to create, and files whose deletion a ticket is recording — `scripts/check_workspace.py`, deleted at `e197176f` when the Python gate became the Makefile, is still named in ten tickets that are accurately describing history. Demanding those resolve is the unsatisfiable condition this ticket was told to avoid.
+
+**Fact — the retired-citation convention is satisfiable, and was exercised while writing this.** A dated correction quotes a retired line number in prose, or as the bare `:789-810` suffix the house style already uses, rather than pinning it to a path. The first draft of the correction in `audit-dead-code-admissions-after-public-boundary-promotions` re-pinned the dead path and the check failed it; rewriting the line number into prose satisfied the check without weakening it or losing the record.
+
+**Fact — terminal tickets are skipped, and the states are read rather than remembered.** `done` and `closed` come from the `category = "terminal"` entries in `ticketsplease.toml`, not a hardcoded pair. Their citations describe a tree at merge time and rot by design. Comment files carry no status of their own and inherit their parent ticket's, because a comment is part of the ticket a worker is told to read in full.
+
+**Fact — one genuine stale citation was found on the real tree, and it was a live `todo`.** `audit-dead-code-admissions-after-public-boundary-promotions` cited `prototypes/serial-sum-compile/src/target.rs` at line 29 as carrying a file-scope `dead_code` admission. That file was added at `8dbffb93` and deleted at `2d2a7bd7`. Re-reading also refuted two counts in the same paragraph: the ticket claimed twelve production admissions and its own 2026-08-04 log entry claimed eight, while the tree has **seven** — `realization.rs` lost its file-scope admission at `8bfcd432`. All three were repaired in place with a dated correction.
+
+**Measurement — five perturbations of the subject, each run separately, each quoted.** A nonexistent path: `no file in the tree is or ends with crates/tiler-compiler/src/no-such-file.rs`. A past-EOF line: `line 9999 is past end of file: Makefile has 66 lines`. An absent anchor: `anchor occurs nowhere in Makefile`. A code span wrapped across two lines of ticket prose: still parsed and still failed, where `grep` for the same span on one line returns `0`. A citation-free corpus: `parsed ZERO citations` and exit 1, so a matcher that stops reaching its subject cannot look clean.
+
+**Fact — the matcher is multi-line aware on both sides.** Spans are assembled across line breaks as they close, so a citation wrapping in ticket prose is not lost; 67 non-fence lines under `tickets/` currently end mid-span. An anchor that fails a literal match is retried with whitespace collapsed, so it still matches a construct that wraps in the *source* — `crates/tiler-conformance/src/device_buffer.rs "#[allow(unsafe_code,"` resolves although `grep -rn 'allow(unsafe_code' --include='*.rs' crates prototypes` returns exactly one hit, a doc comment, and misses all four real attributes.
+
+**Fact — it runs in the light gate, which is the placement the ticket argued for.** `citations` is the first prerequisite of `check` (`Makefile "check: citations fmt build lint test"`). `tickets/` is not in the delta rule's gated set, so a ticket-only change carries the previous green gate and reruns `tkt lint` alone; a check reachable only from `full` would never see most ticket edits. `make full` also shellchecks the script (`Makefile "shellcheck --severity style deps.sh check-citations.sh"`).
+
+**Known gaps, stated rather than hidden.** Seven pinned citations use a short form whose basename is ambiguous (`lib.rs:34` has 42 candidates) and are counted, not resolved — guessing a path would invent a failure or hide one. Three cite dependency sources pinned by version (`objc2-metal-0.3.2/src/generated/MTLDevice.rs:238`) which no working-tree check can decide. Markdown link targets are not checked at all; AGENTS.md states that documentation links have no automated validator, and changing that is a separate decision.
+
+**Not done, and it needs Tom.** AGENTS.md's delta-rule paragraph tells a ticket-only change to "rerun `tkt lint`" and does not name `make citations`. Editing AGENTS.md is this ticket's explicit non-goal, so the sentence is unchanged and the coupling currently lives only in the `Makefile` comment. That paragraph should name the target.
