@@ -696,10 +696,14 @@ struct SubnormalCounterexample {
     measured: Option<&'static str>,
 }
 
-/// The counterexample population: three sites, each with its sign case.
+/// The counterexample population: seven cases over the three things that differ.
 ///
-/// Named and counted rather than listed inline, so a population that silently
-/// emptied could not still look like a passing check.
+/// A subnormal operand entering the arithmetic and a result landing in the
+/// subnormal range, each with the sign case that separates the two
+/// [`FlushedZeroSign`] resolutions; a result reached only by rounding, exactly and
+/// at a tie; and the additive case whose flushed answer is a *normal* value rather
+/// than a returned zero. Named and counted rather than listed inline, so a
+/// population that silently emptied could not still look like a passing check.
 fn subnormal_counterexamples() -> Vec<SubnormalCounterexample> {
     use Bf16Arithmetic::{Add, Multiply};
     use bits::{HALF, HALF_MIN_NORMAL, MIN_NORMAL, NEAREST_THIRD, NEG_ZERO, POS_ZERO, TWO};
@@ -918,15 +922,11 @@ fn the_reference_answers_the_realization_it_is_told_and_not_another() {
             // The other three readings' answers are the ones this reading must not
             // return when they differ from its own, which is what makes the check
             // above evidence rather than a restatement of the implementation.
-            for (other, other_expected) in [
-                "preserved",
-                "input flushed",
-                "result flushed",
-                "both flushed",
-            ]
-            .into_iter()
-            .zip(expected_answers(&case))
-            .filter(|(_, other_expected)| *other_expected != expected)
+            for (other, other_expected) in realizations()
+                .map(|(name, _)| name)
+                .into_iter()
+                .zip(expected_answers(&case))
+                .filter(|(_, other_expected)| *other_expected != expected)
             {
                 if actual == other_expected {
                     failures.push(format!(
@@ -960,32 +960,40 @@ fn expected_answers(case: &SubnormalCounterexample) -> [u16; 4] {
 #[test]
 fn the_flushed_zero_sign_is_read_on_both_dimensions() {
     let format = format();
-    let sign_preserving = |mode| Bf16SubnormalRealization::new(mode, mode);
-    let preserves = SubnormalMode::FlushToZero {
+    let both = |mode| Bf16SubnormalRealization::new(mode, mode);
+    let preserves_sign = SubnormalMode::FlushToZero {
         zero_sign: FlushedZeroSign::PreservesSign,
     };
-    let positive = SubnormalMode::FlushToZero {
+    let always_positive = SubnormalMode::FlushToZero {
         zero_sign: FlushedZeroSign::AlwaysPositive,
     };
     let cases = subnormal_counterexamples();
-    // The negated input case: the operand's own sign survives the flush, or does not.
-    let input_sign = &cases[1];
+    // Looked up by name rather than by index: reordering the population must not
+    // silently move this check onto a case with no negative value in it.
+    let named = |name: &str| {
+        cases
+            .iter()
+            .find(|case| case.name.starts_with(name))
+            .unwrap_or_else(|| panic!("the {name:?} case is in the population"))
+    };
+    // The negated operand: its own sign survives the flush, or does not.
+    let input_sign = named("the same operand negated");
     assert_eq!(
-        commit_under(&format, input_sign, sign_preserving(preserves)),
+        commit_under(&format, input_sign, both(preserves_sign)),
         bits::NEG_ZERO
     );
     assert_eq!(
-        commit_under(&format, input_sign, sign_preserving(positive)),
+        commit_under(&format, input_sign, both(always_positive)),
         bits::POS_ZERO
     );
-    // The negated result case: likewise at the rounding boundary.
-    let result_sign = &cases[3];
+    // The negated result: likewise at the rounding boundary.
+    let result_sign = named("the same result negated");
     assert_eq!(
-        commit_under(&format, result_sign, sign_preserving(preserves)),
+        commit_under(&format, result_sign, both(preserves_sign)),
         bits::NEG_ZERO
     );
     assert_eq!(
-        commit_under(&format, result_sign, sign_preserving(positive)),
+        commit_under(&format, result_sign, both(always_positive)),
         bits::POS_ZERO
     );
 }
