@@ -130,7 +130,7 @@ impl IndexDomainFactSource {
     /// Returns the governed tag of this source, exhaustively.
     ///
     /// Written by a match rather than read from the discriminant, for the
-    /// reason [`SourcedExtent`](super::SourcedExtent)'s own tag gives: adding a
+    /// reason [`SourcedExtent`](crate::shape::SourcedExtent)'s own tag gives: adding a
     /// source is a build error here instead of a silent re-encoding of every
     /// region identity ever derived (ADR 0074 convention 3).
     pub(super) const fn tag(self) -> u8 {
@@ -519,7 +519,6 @@ mod tests {
     use super::super::handles::{VerifiedDimensionId, VerifiedIndexExprId, VerifiedTensorAccessId};
     use super::super::handles::{VerifiedTensorId, next_builder_id};
     use super::super::model::{TensorData, VerifiedAccessData};
-    use super::super::sourced::SourcedShape;
     use super::{
         DischargedIndexDomainPredicate, IndexDomainEvidence, IndexDomainFactSource,
         IndexDomainPredicate, IndexDomainPredicateContext, IndexDomainSoundProof, IndexExprClass,
@@ -527,7 +526,7 @@ mod tests {
     };
     use crate::index::TensorRole;
     use crate::semantic::{ResolvedValueType, TypeKey};
-    use crate::shape::Shape;
+    use crate::shape::{Shape, SourcedShape};
 
     fn records_fixture() -> (Vec<VerifiedAccessData>, Vec<TensorData>) {
         (

@@ -13,8 +13,8 @@ use tiler_ir::index::{
     MAX_TENSOR_RANK, ProofResource, ScalarArity, ScalarAttributeField, ScalarAttributeSchema,
     ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
     ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError, SourcedExtent,
-    SymbolicExtentError, TensorRole, WriteOwnershipProofView,
+    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError, SymbolicExtentError,
+    TensorRole, WriteOwnershipProofView,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, FrozenSemanticRegistry,
@@ -23,7 +23,7 @@ use tiler_ir::semantic::{
     SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
     TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey,
 };
-use tiler_ir::shape::{Extent, Shape};
+use tiler_ir::shape::{Extent, Shape, SourcedExtent};
 
 fn record() -> CanonicalValue {
     CanonicalValue::record([]).unwrap()

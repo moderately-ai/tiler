@@ -23,14 +23,14 @@ use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
     StrictAffineU4, TypeKey, concatenate_axis, concatenate_result_shape,
 };
-use crate::shape::{Axis, Extent, Shape};
+use crate::shape::{Axis, Extent, Shape, SourcedExtent};
 
 use super::{
     DimensionId, DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
     IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder, IndexRegionSequenceError,
-    ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder, ScalarValueId, SourcedExtent,
-    StagedInputSource, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
-    VerifiedIndexRegion, VerifiedIndexRegionSequence, add_bf16_scalar_op, add_f32_scalar_op,
+    ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder, ScalarValueId, StagedInputSource,
+    SymbolicExtentError, TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
+    VerifiedIndexRegionSequence, add_bf16_scalar_op, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op, constant_f32_scalar_op,
     divide_f32_scalar_op, exp_f32_scalar_op, maximum_f32_scalar_op, multiply_bf16_scalar_op,
     multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,

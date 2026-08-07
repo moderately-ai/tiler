@@ -3,7 +3,7 @@
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexDomainEvidence, IndexDomainFactSource,
     IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef,
-    IndexRegionBuilder, ScalarRegistryBuilder, SourcedExtent, TensorRole, VerifiedIndexHandleError,
+    IndexRegionBuilder, ScalarRegistryBuilder, TensorRole, VerifiedIndexHandleError,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, EncodedNumericContract, F32,
@@ -11,7 +11,7 @@ use tiler_ir::semantic::{
     SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar, TypeArguments,
     TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey,
 };
-use tiler_ir::shape::{Extent, Shape};
+use tiler_ir::shape::{Extent, Shape, SourcedExtent};
 
 struct FutureValueTypes;
 

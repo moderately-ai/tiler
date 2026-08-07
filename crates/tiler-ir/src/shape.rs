@@ -6,8 +6,24 @@ use std::fmt;
 
 pub(crate) mod env;
 mod evidence;
+mod sourced;
 
 pub use evidence::{Rank, ShapeEvidence, ShapeExpectation, StaticShape};
+
+// The sourced-extent vocabulary is re-exported flat here rather than published
+// as a `tiler_ir::shape::sourced` module, matching the re-export precedent this
+// module already sets for `evidence` and `env`. The canonical encoders stay
+// inside it: a caller that could encode an extent could derive an identity under
+// rules the encoder does not establish.
+//
+// It lives at this layer rather than inside a consumer because `SourcedExtent`
+// is `Extent | ShapeSymbol` and both of those are defined here. Siting it in one
+// consumer would make every other consumer either reach across a layer boundary
+// or mint a second constant-or-symbol enum, which is the defect the type's own
+// documentation exists to prevent.
+pub use sourced::{
+    EXTENT_PHASE_CEILING, ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape,
+};
 
 // The `ShapeEnv` authority is re-exported flat here rather than published as a
 // `tiler_ir::shape::env` module, matching the re-export precedent this module

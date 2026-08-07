@@ -58,10 +58,7 @@ use super::scalar::{
     ScalarApplyError, ScalarInferenceCapacity, ScalarInferenceHostFailure, encode_canonical,
     encode_key,
 };
-use super::sourced::{
-    ExtentSourceError, ExtentSources, SourcedExtent, SourcedIndexInteger, SourcedShape,
-    SymbolicExtentError,
-};
+use super::sourced::{SourcedIndexInteger, SymbolicExtentError};
 use super::{
     AccessMode, CanonicalIndexRegionIdentity, DimensionId, DischargedIndexDomainPredicate,
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainFactSource,
@@ -78,7 +75,10 @@ use super::{
     TensorAccessId, TensorId, TensorRole, UnknownIndexDomainPredicate, VerifiedIndexExprId,
     VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
 };
-use crate::shape::{ExtentInterval, ShapeEnv, ShapeSymbol};
+use crate::shape::{
+    ExtentInterval, ExtentSourceError, ExtentSources, ShapeEnv, ShapeSymbol, SourcedExtent,
+    SourcedShape,
+};
 
 /// The domain separator of one verified index region's canonical identity.
 ///
@@ -726,7 +726,9 @@ impl IndexRegionBuilder {
     ///
     /// Every symbolic extent is admitted against this region's one environment
     /// under the same ceiling a domain extent obeys — see
-    /// [`EXTENT_PHASE_CEILING`](super::EXTENT_PHASE_CEILING), where the boundary case is the quoted one.
+    /// [`EXTENT_PHASE_CEILING`](crate::shape::EXTENT_PHASE_CEILING), where a
+    /// boundary inherits the accepted clause directly rather than through the
+    /// inference a domain extent rests on.
     ///
     /// # Errors
     ///
@@ -1175,7 +1177,7 @@ impl IndexRegionBuilder {
     ///
     /// Returns [`SymbolicExtentError::Source`] when a symbolic scalar is not
     /// declared by this region's environment or arrives after
-    /// [`EXTENT_PHASE_CEILING`](super::EXTENT_PHASE_CEILING), and
+    /// [`EXTENT_PHASE_CEILING`](crate::shape::EXTENT_PHASE_CEILING), and
     /// [`SymbolicExtentError::Structural`] for a foreign operand or an exceeded
     /// limit. A refused scalar leaves the draft exactly as it was.
     ///
@@ -1386,7 +1388,7 @@ impl IndexRegionBuilder {
     ///
     /// Returns [`SymbolicExtentError::Source`] when a symbolic divisor is not
     /// declared by this region's environment, arrives after
-    /// [`EXTENT_PHASE_CEILING`](super::EXTENT_PHASE_CEILING), or is not proved to be at least one, and
+    /// [`EXTENT_PHASE_CEILING`](crate::shape::EXTENT_PHASE_CEILING), or is not proved to be at least one, and
     /// [`SymbolicExtentError::Structural`] for a zero literal divisor, a
     /// foreign dividend, or an exceeded limit.
     pub fn floor_div(

@@ -26,7 +26,7 @@ use crate::request::{
 };
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexRealizationLaw, ScalarAttributes, ScalarRegistryBuilder,
-    SourcedExtent, add_f32_scalar_op,
+    add_f32_scalar_op,
 };
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
@@ -38,7 +38,7 @@ use tiler_ir::semantic::{
     SemanticRegistryRegistrar, TypeDefinitionFacts, TypeKey, ValueFact, ValueTypeDefinition,
     ValueTypeDefinitionKey, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
-use tiler_ir::shape::{Axis, Extent, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape, SourcedExtent};
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };

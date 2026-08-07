@@ -3793,10 +3793,10 @@ mod tests {
 
     use super::*;
     use crate::index::{
-        DomainRole, EXTENT_PHASE_CEILING, IndexRegionBuilder, ScalarArity, ScalarAttributeField,
-        ScalarAttributeSchema, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
-        ScalarInferenceRequest, ScalarOperationContract, ScalarOperationDefinition,
-        ScalarOperationInferencer, ScalarRegistryBuilder, SourcedExtent,
+        DomainRole, IndexRegionBuilder, ScalarArity, ScalarAttributeField, ScalarAttributeSchema,
+        ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest,
+        ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
+        ScalarRegistryBuilder,
     };
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
@@ -3810,8 +3810,9 @@ mod tests {
         SemanticRegistryRegistrar, TypeKey,
     };
     use crate::shape::{
-        BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
-        RootBinding, SemanticInputConstraint, ShapeEnvBuilder, ShapeSymbol, SymbolScope,
+        BindingSource, EXTENT_PHASE_CEILING, Extent, ExtentRelation, ExtentTerm, FactProvenance,
+        InterfaceParameterKey, RootBinding, SemanticInputConstraint, ShapeEnvBuilder, ShapeSymbol,
+        SourcedExtent, SymbolScope,
     };
 
     const LENGTH: u64 = 65_535;

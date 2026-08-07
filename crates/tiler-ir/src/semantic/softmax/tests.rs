@@ -497,9 +497,11 @@ fn the_structural_rules_refuse_by_name() {
 ///
 /// Every distinct `S` is therefore a separate compiled artifact *by construction*.
 /// The symbolic vocabulary that does exist —
-/// `tiler_ir::index::SourcedExtent` and `ExtentInterval::states_no_upper_bound` —
-/// lives in the index layer, and carrying it into semantic values is owned by
-/// `carry-a-sourced-shape-on-semantic-values` and
+/// `tiler_ir::shape::SourcedExtent` and `ExtentInterval::states_no_upper_bound` —
+/// now sits beside `Shape` in this very module rather than inside the index
+/// layer, and its reachability is no longer what stops a [`ValueFact`] carrying a
+/// symbol: only [`ValueFact`]'s own static [`Shape`] is. Carrying it into semantic
+/// values is owned by `carry-a-sourced-shape-on-semantic-values` and
 /// `resolve-semantic-shape-inference-over-symbolic-extents`. This test is the
 /// evidence for that claim rather than a comment asserting it.
 #[test]

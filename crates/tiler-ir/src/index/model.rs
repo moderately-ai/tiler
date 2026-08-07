@@ -2,9 +2,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::semantic::ResolvedValueType;
+use crate::shape::{ExtentSources, SourcedExtent, SourcedShape};
 
 use super::handles::VerifiedRegionOwner;
-use super::sourced::{ExtentSources, SourcedExtent, SourcedIndexInteger, SourcedShape};
+use super::sourced::SourcedIndexInteger;
 use super::{
     DischargedIndexDomainPredicate, IndexDomainFactSource, IndexDomainPredicate, IndexEntityKind,
     IndexExtentRef, IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex,
@@ -52,7 +53,7 @@ pub enum ReductionTraversal {
 /// bytes name the symbol, two environments can bind it differently, and a class
 /// that moved with the binding would describe the environment rather than the
 /// expression. A pass that can use the pinned value reads it explicitly through
-/// [`ExtentSources::determined`](super::ExtentSources::determined).
+/// [`ExtentSources::determined`](crate::shape::ExtentSources::determined).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IndexExprClass {
     /// Integer-affine expression.
