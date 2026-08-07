@@ -1,0 +1,209 @@
+requested	operations	coverage_records	stages	alternatives	graph_bytes	program_bytes	widest_alternative_bytes	coverage_bytes	mean_record_bytes	bytes_per_op	compile_ms
+2	2	2	1	1	417	7783	7783	5980	2990.0	3891.500	1
+3	3	3	1	1	551	11313	11313	9281	3093.7	3771.000	1
+4	4	4	1	1	685	14843	14843	12582	3145.5	3710.750	1
+5	5	5	1	1	819	18373	18373	15883	3176.6	3674.600	2
+6	6	6	1	1	953	21903	21903	19184	3197.3	3650.500	2
+7	7	7	1	1	1087	25433	25433	22485	3212.1	3633.286	3
+8	8	8	1	1	1221	28963	28963	25786	3223.2	3620.375	6
+9	9	9	1	1	1355	32493	32493	29087	3231.9	3610.333	11
+10	10	10	1	1	1489	36023	36023	32388	3238.8	3602.300	22
+11	11	11	1	1	1623	39553	39553	35689	3244.5	3595.727	45
+12	12	12	1	1	1757	43083	43083	38990	3249.2	3590.250	6
+13	13	13	1	1	1891	46613	46613	42291	3253.2	3585.615	6
+14	14	14	1	1	2025	50143	50143	45592	3256.6	3581.643	6
+15	15	15	1	1	2159	53673	53673	48893	3259.5	3578.200	7
+16	16	16	1	1	2293	57203	57203	52194	3262.1	3575.188	7
+17	17	17	1	1	2427	60733	60733	55495	3264.4	3572.529	7
+18	18	18	1	1	2561	64263	64263	58796	3266.4	3570.167	7
+19	19	19	1	1	2695	67793	67793	62097	3268.3	3568.053	8
+20	20	20	1	1	2829	71323	71323	65398	3269.9	3566.150	8
+21	21	21	1	1	2963	74853	74853	68699	3271.4	3564.429	8
+22	22	22	1	1	3097	78383	78383	72000	3272.7	3562.864	8
+23	23	23	1	1	3231	81913	81913	75301	3274.0	3561.435	8
+24	24	24	1	1	3365	85443	85443	78602	3275.1	3560.125	9
+25	25	25	1	1	3499	88973	88973	81903	3276.1	3558.920	10
+26	26	26	1	1	3633	92503	92503	85204	3277.1	3557.808	9
+27	27	27	1	1	3767	96033	96033	88505	3278.0	3556.778	9
+28	28	28	1	1	3901	99563	99563	91806	3278.8	3555.821	10
+29	29	29	1	1	4035	103093	103093	95107	3279.6	3554.931	10
+30	30	30	1	1	4169	106623	106623	98408	3280.3	3554.100	10
+31	31	31	1	1	4303	110153	110153	101709	3280.9	3553.323	10
+32	32	32	1	1	4437	113683	113683	105010	3281.6	3552.594	11
+33	33	33	1	1	4571	117213	117213	108311	3282.2	3551.909	11
+34	34	34	1	1	4705	120743	120743	111612	3282.7	3551.265	12
+35	35	35	1	1	4839	124273	124273	114913	3283.2	3550.657	12
+36	36	36	1	1	4973	127803	127803	118214	3283.7	3550.083	12
+37	37	37	1	1	5107	131333	131333	121515	3284.2	3549.541	13
+38	38	38	1	1	5241	134863	134863	124816	3284.6	3549.026	13
+39	39	39	1	1	5375	138393	138393	128117	3285.1	3548.538	13
+40	40	40	1	1	5509	141923	141923	131418	3285.4	3548.075	13
+41	41	41	1	1	5643	145453	145453	134719	3285.8	3547.634	14
+42	42	42	1	1	5777	148983	148983	138020	3286.2	3547.214	14
+43	43	43	1	1	5911	152513	152513	141321	3286.5	3546.814	14
+44	44	44	1	1	6045	156043	156043	144622	3286.9	3546.432	14
+45	45	45	1	1	6179	159573	159573	147923	3287.2	3546.067	15
+46	46	46	1	1	6313	163103	163103	151224	3287.5	3545.717	15
+47	47	47	1	1	6447	166633	166633	154525	3287.8	3545.383	15
+48	48	48	1	1	6581	170163	170163	157826	3288.0	3545.062	15
+49	49	49	1	1	6715	173693	173693	161127	3288.3	3544.755	16
+50	50	50	1	1	6849	177223	177223	164428	3288.6	3544.460	16
+51	51	51	1	1	6983	180753	180753	167729	3288.8	3544.176	17
+52	52	52	1	1	7117	184283	184283	171030	3289.0	3543.904	17
+53	53	53	1	1	7251	187813	187813	174331	3289.3	3543.642	17
+54	54	54	1	1	7385	191343	191343	177632	3289.5	3543.389	18
+55	55	55	1	1	7519	194873	194873	180933	3289.7	3543.145	18
+56	56	56	1	1	7653	198403	198403	184234	3289.9	3542.911	18
+57	57	57	1	1	7787	201933	201933	187535	3290.1	3542.684	19
+58	58	58	1	1	7921	205463	205463	190836	3290.3	3542.466	19
+59	59	59	1	1	8055	208993	208993	194137	3290.5	3542.254	19
+60	60	60	1	1	8189	212523	212523	197438	3290.6	3542.050	19
+61	61	61	1	1	8323	216053	216053	200739	3290.8	3541.852	20
+62	62	62	1	1	8457	219583	219583	204040	3291.0	3541.661	20
+
+# measured points: 61
+#
+# structural decomposition (the mechanism, not just the exponent):
+#   operations	graph_bytes	mean_record_bytes	coverage_step
+#   2	417	2990.0	-
+#   3	551	3093.7	3301
+#   4	685	3145.5	3301
+#   5	819	3176.6	3301
+#   6	953	3197.3	3301
+#   7	1087	3212.1	3301
+#   8	1221	3223.2	3301
+#   9	1355	3231.9	3301
+#   10	1489	3238.8	3301
+#   11	1623	3244.5	3301
+#   12	1757	3249.2	3301
+#   13	1891	3253.2	3301
+#   14	2025	3256.6	3301
+#   15	2159	3259.5	3301
+#   16	2293	3262.1	3301
+#   17	2427	3264.4	3301
+#   18	2561	3266.4	3301
+#   19	2695	3268.3	3301
+#   20	2829	3269.9	3301
+#   21	2963	3271.4	3301
+#   22	3097	3272.7	3301
+#   23	3231	3274.0	3301
+#   24	3365	3275.1	3301
+#   25	3499	3276.1	3301
+#   26	3633	3277.1	3301
+#   27	3767	3278.0	3301
+#   28	3901	3278.8	3301
+#   29	4035	3279.6	3301
+#   30	4169	3280.3	3301
+#   31	4303	3280.9	3301
+#   32	4437	3281.6	3301
+#   33	4571	3282.2	3301
+#   34	4705	3282.7	3301
+#   35	4839	3283.2	3301
+#   36	4973	3283.7	3301
+#   37	5107	3284.2	3301
+#   38	5241	3284.6	3301
+#   39	5375	3285.1	3301
+#   40	5509	3285.4	3301
+#   41	5643	3285.8	3301
+#   42	5777	3286.2	3301
+#   43	5911	3286.5	3301
+#   44	6045	3286.9	3301
+#   45	6179	3287.2	3301
+#   46	6313	3287.5	3301
+#   47	6447	3287.8	3301
+#   48	6581	3288.0	3301
+#   49	6715	3288.3	3301
+#   50	6849	3288.6	3301
+#   51	6983	3288.8	3301
+#   52	7117	3289.0	3301
+#   53	7251	3289.3	3301
+#   54	7385	3289.5	3301
+#   55	7519	3289.7	3301
+#   56	7653	3289.9	3301
+#   57	7787	3290.1	3301
+#   58	7921	3290.3	3301
+#   59	8055	3290.5	3301
+#   60	8189	3290.6	3301
+#   61	8323	3290.8	3301
+#   62	8457	3291.0	3301
+#
+# consecutive growth (each step adds one operation):
+#   ops_from -> ops_to	ops_ratio	program_bytes_ratio	local_exponent
+#   2 -> 3	1.500	1.454	0.9224
+#   3 -> 4	1.333	1.312	0.9440
+#   4 -> 5	1.250	1.238	0.9561
+#   5 -> 6	1.200	1.192	0.9639
+#   6 -> 7	1.167	1.161	0.9693
+#   7 -> 8	1.143	1.139	0.9733
+#   8 -> 9	1.125	1.122	0.9764
+#   9 -> 10	1.111	1.109	0.9789
+#   10 -> 11	1.100	1.098	0.9808
+#   11 -> 12	1.091	1.089	0.9825
+#   12 -> 13	1.083	1.082	0.9839
+#   13 -> 14	1.077	1.076	0.9850
+#   14 -> 15	1.071	1.070	0.9861
+#   15 -> 16	1.067	1.066	0.9869
+#   16 -> 17	1.062	1.062	0.9877
+#   17 -> 18	1.059	1.058	0.9884
+#   18 -> 19	1.056	1.055	0.9890
+#   19 -> 20	1.053	1.052	0.9896
+#   20 -> 21	1.050	1.049	0.9901
+#   21 -> 22	1.048	1.047	0.9906
+#   22 -> 23	1.045	1.045	0.9910
+#   23 -> 24	1.043	1.043	0.9914
+#   24 -> 25	1.042	1.041	0.9917
+#   25 -> 26	1.040	1.040	0.9920
+#   26 -> 27	1.038	1.038	0.9923
+#   27 -> 28	1.037	1.037	0.9926
+#   28 -> 29	1.036	1.035	0.9929
+#   29 -> 30	1.034	1.034	0.9931
+#   30 -> 31	1.033	1.033	0.9933
+#   31 -> 32	1.032	1.032	0.9935
+#   32 -> 33	1.031	1.031	0.9937
+#   33 -> 34	1.030	1.030	0.9939
+#   34 -> 35	1.029	1.029	0.9941
+#   35 -> 36	1.029	1.028	0.9943
+#   36 -> 37	1.028	1.028	0.9944
+#   37 -> 38	1.027	1.027	0.9946
+#   38 -> 39	1.026	1.026	0.9947
+#   39 -> 40	1.026	1.026	0.9948
+#   40 -> 41	1.025	1.025	0.9950
+#   41 -> 42	1.024	1.024	0.9951
+#   42 -> 43	1.024	1.024	0.9952
+#   43 -> 44	1.023	1.023	0.9953
+#   44 -> 45	1.023	1.023	0.9954
+#   45 -> 46	1.022	1.022	0.9955
+#   46 -> 47	1.022	1.022	0.9956
+#   47 -> 48	1.021	1.021	0.9957
+#   48 -> 49	1.021	1.021	0.9958
+#   49 -> 50	1.020	1.020	0.9959
+#   50 -> 51	1.020	1.020	0.9960
+#   51 -> 52	1.020	1.020	0.9960
+#   52 -> 53	1.019	1.019	0.9961
+#   53 -> 54	1.019	1.019	0.9962
+#   54 -> 55	1.019	1.018	0.9963
+#   55 -> 56	1.018	1.018	0.9963
+#   56 -> 57	1.018	1.018	0.9964
+#   57 -> 58	1.018	1.017	0.9965
+#   58 -> 59	1.017	1.017	0.9965
+#   59 -> 60	1.017	1.017	0.9966
+#   60 -> 61	1.017	1.017	0.9966
+#   61 -> 62	1.016	1.016	0.9967
+#
+# log-log least-squares exponent over all 61 points: 0.9824
+# READ THAT WITH THE FIT BELOW, NOT INSTEAD OF IT. An exponent is a summary of where the domain is and not a statement of what the curve is: over the pre-ADR-0104 quadratic it read 1.09, because the linear term dominated everywhere a program could reach. Only the exact fit below distinguishes the two encodings, and it does so by reproducing every measured point to the byte.
+#
+# MAX_PROGRAM_IDENTITY_BYTES = 67108864 (64 MiB)
+# widest measured point: 62 operations at 219583 bytes, 0.32720% of the bound
+#
+# EXACT FIT over every measured point: program_bytes(n) = 3530n + 723 — LINEAR, with a quadratic coefficient of exactly zero rather than a small one.
+#   graph_bytes(n) = 0n^2 + 134n + 149
+#   THE MECHANISM, stated as the relation a reader can check: the program curve's quadratic coefficient is 0 while the graph curve still grows at 134 bytes per operation. The per-record graph reference no longer scales with the graph, so the product that used to make the total quadratic — one whole graph identity per coverage record, one record per operation — is gone. That is ADR 0104's fold, read off the curve rather than off the encoder.
+#
+# EXTRAPOLATED refusal point: the fitted curve first exceeds the bound at n = 19011 operations (67109553 bytes at n = 19011, 67106023 bytes at n = 19010).
+# THE FIT IS EXACT ON ITS DOMAIN AND THE DOMAIN IS 2..=62 OPERATIONS. Every coefficient above is a property of this one program family: graph identity per operation depends on operation-key length, arity, result rank, and attribute width, and the per-record remainder depends on the region, the reached definitions, and the admission provenance. A different family moves all three coefficients, so this number is the order of magnitude at which the bound becomes binding, not a refusal a caller can rely on.
+# IT IS ALSO AN EXTRAPOLATION ACROSS THREE ORDERS OF MAGNITUDE, and the wall below says why no wider ladder is available: the ordinary compilation path refuses this family at 63 operations on semantic_operations, the governed program-size budget itself, so the widest point any measurement can reach is 62 and the refusal point above is 307x beyond it. Widening the ladder further is a budget decision rather than a harness one.
+#
+# THE WALLS ABOVE THE LADDER, each compiled and required to refuse with the class named:
+#   63 operations: CONFIRMED BudgetExhausted before planning — semantic_operations = 62, the one wall here that is about program size and the one that refuses before any target-qualified trace exists [the compilation batch refused: CompileFailure { class: BudgetExhausted, explain: "absent (refused before a target-qualified trace)" }]
+# so the ladder above is the entire domain the ordinary compilation path admits for this family, and the governed semantic_operations budget of 62 is measured to be the bound that ends it rather than assumed to. Every bound that used to refuse below 62 is measured here to admit instead.
