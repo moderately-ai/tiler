@@ -2062,6 +2062,8 @@ fn form_candidate(
     numerical_contract: StrictF32NumericalContract,
     nodes: &[u32],
 ) -> Result<Result<RegionCandidate, RegionRejection>, RegionError> {
+    #[cfg(test)]
+    crate::workcount::REGION_CANDIDATE_FORMATIONS.record();
     // The set is *required* ascending and distinct rather than sorted into that
     // shape here. Every caller already produces it that way — singleton
     // coverage, growth, and re-verification alike — so a set arriving in another
@@ -4425,6 +4427,285 @@ mod tests {
                 .iter()
                 .any(|stop| stop.resource == RegionBudgetResource::LiveValues)
         );
+    }
+
+    /// One shared constant and `operations - 1` multiplies chained through it.
+    ///
+    /// The family `region_members` was measured on
+    /// (`spikes/program-planning/identity-growth`), rebuilt here because this
+    /// module's bounds are the ones that refused it. Its recognized partition
+    /// is the whole program, so the whole-program candidate is the only region
+    /// a plan for it can be spelled from.
+    fn multiply_chain_program(operations: usize) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let mut current = input;
+        for _ in 1..operations {
+            current = F32Multiply::apply(&mut builder, current, constant).unwrap();
+        }
+        builder
+            .output(OutputKey::new("result").unwrap(), current)
+            .unwrap();
+        let program = builder.build().unwrap();
+        assert_eq!(program.operation_count(), operations);
+        program
+    }
+
+    /// `inputs` declared inputs summed left to right, then `extra` self-adds.
+    ///
+    /// The two knobs move a region's live-value count independently: a further
+    /// declared input adds one boundary input *and* one member result, while a
+    /// self-add adds a member result alone. That is what lets a whole-program
+    /// region land on `region_live_values` exactly and one step past it,
+    /// without the member count reaching `region_members` and reporting first.
+    fn live_value_program(inputs: usize, extra: usize) -> SemanticProgram {
+        assert!(inputs >= 2, "the first add needs two operands");
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let declared: Vec<_> = (0..inputs)
+            .map(|ordinal| {
+                builder
+                    .input::<F32>(
+                        InputKey::new(format!("input{ordinal}")).unwrap(),
+                        Shape::from_dims([4]),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let mut current = declared[0];
+        for operand in &declared[1..] {
+            current = F32Add::apply(&mut builder, current, *operand).unwrap();
+        }
+        for _ in 0..extra {
+            current = F32Add::apply(&mut builder, current, current).unwrap();
+        }
+        builder
+            .output(OutputKey::new("result").unwrap(), current)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// Four chained products each read by an operation outside their region.
+    ///
+    /// The one shape that puts four values across one region's boundary while
+    /// leaving every other bound far below its limit: `{t1, t2, t3, t4}` is
+    /// connected through the chain and convex — the two consumers are leaves
+    /// that never re-enter — and each of its four results is read from outside
+    /// it, so the region exports four values and the program declares one.
+    fn four_escaping_results_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let constant = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let first = F32Multiply::apply(&mut builder, input, constant).unwrap();
+        let second = F32Multiply::apply(&mut builder, first, constant).unwrap();
+        let third = F32Multiply::apply(&mut builder, second, constant).unwrap();
+        let fourth = F32Multiply::apply(&mut builder, third, constant).unwrap();
+        let lower = F32Add::apply(&mut builder, first, second).unwrap();
+        let upper = F32Add::apply(&mut builder, third, fourth).unwrap();
+        let root = F32Multiply::apply(&mut builder, lower, upper).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// Each derived shape bound admits the region on it and refuses the next.
+    ///
+    /// **The bound is what these three now are, and a bound that cannot bind is
+    /// not one.** `DeterministicBudgets::governed` derives `region_members`
+    /// from `semantic_operations`, `region_live_values` from `semantic_values`,
+    /// and `region_boundary_outputs` from the declared output count, so each is
+    /// wider than the constant it replaced and each must still say no. Every
+    /// arm is a *pair*: the region sitting exactly on the bound is emitted, and
+    /// the region one step past it is refused with a typed stop naming the
+    /// resource, its limit, and the demand it refused.
+    ///
+    /// The three arms are driven at region formation rather than through
+    /// `verify_request`, and deliberately: two of the three derivations are the
+    /// program-scoped bound itself, so a program large enough to reach them is
+    /// refused by `check_program_budgets` first and the refusal a caller sees
+    /// names `semantic-operations` or `semantic-values`. That shadowing is the
+    /// collapse `DeterministicBudgets::governed` records; what this test has to
+    /// show is that the region bound is still a live gate underneath it.
+    #[test]
+    fn each_derived_region_shape_bound_admits_its_own_size_and_refuses_one_more() {
+        let governed = DeterministicBudgets::governed();
+        let stop = |outcome: &RegionFormationOutcome, resource| {
+            outcome
+                .budget_stops()
+                .iter()
+                .find(|stop| stop.resource == resource)
+                .copied()
+        };
+
+        // `region_members` is 62. A sixty-two-operation chain forms its whole
+        // program as one region; a sixty-three-operation one does not.
+        let admitted = form_with(&multiply_chain_program(62), governed);
+        assert!(
+            admitted.whole_program_candidate().is_some(),
+            "the derived member bound admits a region of exactly its own size",
+        );
+        assert_eq!(stop(&admitted, RegionBudgetResource::Members), None);
+        let refused = form_with(&multiply_chain_program(63), governed);
+        assert!(refused.whole_program_candidate().is_none());
+        assert_eq!(
+            stop(&refused, RegionBudgetResource::Members),
+            Some(RegionBudgetStop {
+                resource: RegionBudgetResource::Members,
+                limit: 62,
+                actual: 63,
+            }),
+        );
+
+        // `region_boundary_outputs` is 3, and it is the one derivation that is
+        // not a program-scoped bound in disguise: the whole-program region of
+        // the fixture exports one value, and the four-member region inside it
+        // exports four. Its three-member prefix exports three and is emitted.
+        let outcome = form_with(&four_escaping_results_program(), governed);
+        let emitted = member_sets(&outcome);
+        assert!(
+            emitted.contains(&vec![1, 2, 3]),
+            "a region exporting exactly the declared output count is emitted",
+        );
+        assert!(
+            !emitted.contains(&vec![1, 2, 3, 4]),
+            "a region exporting one value more than the program declares is refused",
+        );
+        assert_eq!(
+            stop(&outcome, RegionBudgetResource::BoundaryOutputs),
+            Some(RegionBudgetStop {
+                resource: RegionBudgetResource::BoundaryOutputs,
+                limit: 3,
+                actual: 4,
+            }),
+        );
+        assert!(
+            outcome.whole_program_candidate().is_some(),
+            "the bound refuses a grown candidate and never the fused extreme",
+        );
+
+        // `region_live_values` is 80. Forty declared inputs and one self-add
+        // put exactly eighty values across the whole-program region — forty
+        // boundary inputs and forty member results — and a second self-add
+        // puts eighty-one.
+        let admitted = form_with(&live_value_program(40, 1), governed);
+        assert!(admitted.whole_program_candidate().is_some());
+        assert_eq!(stop(&admitted, RegionBudgetResource::LiveValues), None);
+        let refused = form_with(&live_value_program(40, 2), governed);
+        assert!(refused.whole_program_candidate().is_none());
+        assert_eq!(
+            stop(&refused, RegionBudgetResource::LiveValues),
+            Some(RegionBudgetStop {
+                resource: RegionBudgetResource::LiveValues,
+                limit: 80,
+                actual: 81,
+            }),
+        );
+    }
+
+    /// Forms three times and reports the fastest run's cost per checked set.
+    ///
+    /// The fastest of the three rather than the mean: every repetition does
+    /// identical work — region formation is a pure function of the program,
+    /// budgets, and contract — so the spread between them is the host's, and
+    /// the minimum is the estimator a busy host disturbs least.
+    fn formation_cost(
+        program: &SemanticProgram,
+        budgets: DeterministicBudgets,
+    ) -> (RegionFormationOutcome, usize, u128) {
+        let mut best: Option<(RegionFormationOutcome, usize, u128)> = None;
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            let (outcome, checked) = crate::workcount::REGION_CANDIDATE_FORMATIONS
+                .observe(|| form_with(program, budgets));
+            let nanos = started.elapsed().as_nanos() / checked as u128;
+            if best.as_ref().is_none_or(|(_, _, slowest)| nanos < *slowest) {
+                best = Some((outcome, checked, nanos));
+            }
+        }
+        best.expect("three repetitions leave a fastest one")
+    }
+
+    /// The wider admissible region does not raise the cost of one candidate.
+    ///
+    /// **The one risk the deciding ticket named to measure rather than
+    /// assume.** `region_candidates_per_seed` and `region_expansions` bound
+    /// search *work* and neither moved, so what a wider shape bound could cost
+    /// is the price of checking each candidate that is now legal.
+    ///
+    /// The deterministic half is the assertion and the timing half only
+    /// corroborates it, for the reason `crate::workcount` states: a count does
+    /// not move with the host. Below the superseded `region_members` of 32 the
+    /// emitted candidate population is *identical* under both budget sets, and
+    /// `form_candidate` is a pure function of the graph, the budgets, and the
+    /// contract — so an unchanged population over an unchanged code path is
+    /// unchanged per-candidate work, whatever the clock says.
+    ///
+    /// The printed rows carry the newly admitted sizes too, because "the
+    /// previously admitted population pays nothing" is only half the question a
+    /// reader asks. The denominator is
+    /// [`crate::workcount::REGION_CANDIDATE_FORMATIONS`] — the number of node
+    /// sets actually checked — rather than the emitted candidate count, which
+    /// would price every rejected set into the survivors. Each row is the
+    /// fastest of three repetitions, which is the estimator least disturbed by
+    /// a busy host; the host is named in the ticket, not here, because a
+    /// recorded timing is evidence about the host that took it.
+    #[test]
+    fn the_derived_shape_bounds_leave_the_previously_admitted_candidates_untouched() {
+        let governed = DeterministicBudgets::governed();
+        // The constants these three replaced, kept here rather than in the
+        // profile: the comparison is against what the profile *was*, and a
+        // reader must be able to see both sides of it in one place.
+        let superseded = DeterministicBudgets {
+            region_members: 32,
+            region_boundary_outputs: 8,
+            region_live_values: 64,
+            ..governed
+        };
+        for operations in [8, 16, 24, 32] {
+            let program = multiply_chain_program(operations);
+            let (old, old_checked, old_nanos) = formation_cost(&program, superseded);
+            let (new, new_checked, new_nanos) = formation_cost(&program, governed);
+            assert_eq!(
+                member_sets(&old),
+                member_sets(&new),
+                "the derived bounds changed which candidates a {operations}-operation \
+                 chain forms, so the populations are not comparable",
+            );
+            assert_eq!(
+                old_checked, new_checked,
+                "the derived bounds changed how many node sets are checked at \
+                 {operations} operations",
+            );
+            println!(
+                "MEASURE chain n={operations} checked={new_checked} \
+                 emitted={} superseded={old_nanos}ns/check derived={new_nanos}ns/check",
+                new.candidates().len(),
+            );
+        }
+        // The range the derivation admits and the constants refused. No
+        // comparison row exists for these: under the superseded bounds the
+        // whole-program candidate was never formed at all.
+        for operations in [40, 48, 62] {
+            let program = multiply_chain_program(operations);
+            let (outcome, checked, nanos) = formation_cost(&program, governed);
+            assert!(
+                form_with(&program, superseded)
+                    .whole_program_candidate()
+                    .is_none(),
+                "the superseded constant refused this size, which is the point",
+            );
+            assert!(outcome.whole_program_candidate().is_some());
+            println!(
+                "MEASURE chain n={operations} checked={checked} emitted={} \
+                 derived={nanos}ns/check",
+                outcome.candidates().len(),
+            );
+        }
     }
 
     #[test]

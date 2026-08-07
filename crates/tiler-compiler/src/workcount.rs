@@ -86,6 +86,25 @@ pub(crate) static REGION_FORMATIONS: WorkCounter =
     WorkCounter::new("region formation", &REGION_FORMATION);
 
 thread_local! {
+    static REGION_CANDIDATE_FORMATION: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts classifications of one node set into a candidate or a rejection.
+///
+/// **The denominator a per-candidate cost claim needs, and the only honest
+/// one.** `form_candidate` is what a region-shape budget decides against, and
+/// most of the sets it is handed are refused rather than emitted — so dividing
+/// a formation's elapsed time by the *emitted* candidate count prices the
+/// rejected sets into the survivors and reports a number that moves with the
+/// convexity of the program rather than with the cost of a check.
+///
+/// `derive-the-region-shape-budgets-from-the-declaration` is what asked for it:
+/// widening a shape bound admits larger node sets, and whether that raises the
+/// price of one check was the risk the deciding ticket named to measure.
+pub(crate) static REGION_CANDIDATE_FORMATIONS: WorkCounter =
+    WorkCounter::new("region candidate formation", &REGION_CANDIDATE_FORMATION);
+
+thread_local! {
     static REGION_GRAPH_BUILD: Cell<usize> = const { Cell::new(0) };
 }
 

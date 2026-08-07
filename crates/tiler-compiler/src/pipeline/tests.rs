@@ -4499,6 +4499,15 @@ fn a_search_budget_costs_alternatives_and_never_the_only_plan() {
 /// a target's verdict, so it carries `BudgetExhausted` naming the bound to widen
 /// rather than `NoFeasiblePlan`, whose contract is that it "is a hard target
 /// rejection, never an exhausted analysis budget".
+///
+/// **The budget is stated rather than governed, and since
+/// `derive-the-region-shape-budgets-from-the-declaration` that is the only way
+/// this path is reachable at all.** `region_members` is now the same formula
+/// `semantic_operations` is, so a program large enough for the governed bound
+/// to truncate its analysis is refused for its *size* by
+/// `check_program_budgets` first. This test is therefore what keeps the empty
+/// portfolio's `BudgetExhausted` measured; `crate::session`'s reachability
+/// inventory cites it for exactly that.
 #[test]
 fn a_region_shape_budget_below_the_only_implementable_cover_reports_the_budget() {
     let semantic = semantic(false);

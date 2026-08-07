@@ -784,6 +784,12 @@ pub(crate) struct DeterministicBudgets {
     /// long the search runs — a refusal reported as `BudgetExhausted` naming
     /// the bound, because the caller's action is to widen it. The two search
     /// bounds below carry the opposite guarantee.
+    ///
+    /// Because they can refuse, all three are **derivations over the
+    /// declaration** rather than stated numbers: a region is a subset of the
+    /// program it covers, so [`Self::governed`] derives this one from
+    /// `semantic_operations`, `region_live_values` from `semantic_values`, and
+    /// `region_boundary_outputs` from the declared output count.
     pub(crate) region_members: u32,
     /// Retained boundary outputs admitted for one region candidate.
     pub(crate) region_boundary_outputs: u32,
@@ -859,8 +865,37 @@ impl DeterministicBudgets {
     ///   layer under a one-output derivation — and every step, including this
     ///   one, is the same derivation over a wider admitted program.
     ///
-    /// All three derived bounds are tight at exactly eighteen declared inputs
-    /// and three declared outputs, so their thresholds coincide along each axis:
+    /// **The three region-shape bounds are derived from those five rather than
+    /// picked, because a region is a subset of the program it covers.** Its
+    /// members are a subset of the program's occurrences, its live values are
+    /// disjoint subsets of the program's values, and the largest of them — the
+    /// whole-program region — exports exactly what the program declares. So
+    /// each is a formula over the same declaration, on exactly the ground
+    /// `regions` was corrected on below: a quantity that belongs to a *plan* is
+    /// still a function of the declaration the plan covers.
+    ///
+    /// - `region_members` is `62`: `semantic_operations`, because a region's
+    ///   members are a subset of the program's own occurrences and a program
+    ///   admitted at all holds no more than that many. It is the program-scoped
+    ///   bound itself; see the collapse note below for why the field is still
+    ///   encoded.
+    /// - `region_boundary_outputs` is `3`: the declared output count, which is
+    ///   the same count `regions` multiplies by four. The whole-program region
+    ///   exports one value per *named* result and nothing else, because no
+    ///   occurrence outside it consumes anything, so the largest region this
+    ///   profile forms exports exactly the declaration's ordered named outputs.
+    /// - `region_live_values` is `80`: `semantic_values`, because a region's
+    ///   live values are its boundary inputs and its members' results, which
+    ///   are disjoint subsets of the program's own values. It is tight at the
+    ///   whole-program region, whose boundary inputs are the eighteen declared
+    ///   inputs — every other value it reads it also produces — and whose
+    ///   member results are one per occurrence: the same `18 + 62`
+    ///   `semantic_values` is.
+    ///
+    /// The three program bounds derived through [`check_program_budgets`] —
+    /// `regions`, `host_expression_nodes`, and `buffers` — are tight at exactly
+    /// eighteen declared inputs and three declared outputs, so their thresholds
+    /// coincide along each axis:
     /// a nineteen-input program exceeds two of them at once and the earlier
     /// check, `host-expression-nodes`, is the one that reports, while a
     /// four-output program exceeds all three and `regions` reports.
@@ -894,29 +929,54 @@ impl DeterministicBudgets {
     /// stays injective inside `tiler.compiler.request-subject.v5`.
     ///
     /// They move again when the decoder layer becomes plannable, and that is a
-    /// second identity move this one cannot honestly absorb.
+    /// second identity move this one cannot honestly absorb. The three
+    /// region-shape bounds move *with* them and never on their own account,
+    /// which is what the derivation buys: a ceiling somebody has to raise per
+    /// program is replaced by a formula that tracks the declaration.
     ///
-    /// `normalization_rewrites` and every `region_*` bound are unchanged, and
-    /// the ground stated here for that was **half right**. It read that none of
-    /// them admits or refuses a program because each bounds a *search*, and
-    /// exhausting one costs an alternative while the verified input and complete
-    /// coverage survive. That holds of `normalization_rewrites`,
-    /// `region_candidates_per_seed`, and `region_expansions`, whose searches sit
-    /// between two coverage extremes region formation emits unconditionally. It
-    /// is false of `region_members`, `region_boundary_outputs`, and
-    /// `region_live_values`: those three declare the largest region this profile
-    /// forms, and a program whose only implementable cover needs a bigger one is
-    /// refused by them. `region_members` is the binding one for a pointwise
-    /// family, where the recognized partition is the whole program and nothing
-    /// smaller is implementable, so **32 is the widest such program this profile
-    /// can plan** — about half the `semantic_operations` maximum this widening
-    /// set to 62, which is the decode row's own occurrence count. Whether the
-    /// three move with `semantic_operations` is reopened by that and is not
-    /// decided here: it is another identity move, on the same terms as the ones
-    /// above.
+    /// `normalization_rewrites`, `region_candidates_per_seed`, and
+    /// `region_expansions` are unchanged, and the ground for leaving them alone
+    /// survives intact: none of the three admits or refuses a program, because
+    /// each bounds a *search* whose alternatives sit between two coverage
+    /// extremes region formation emits unconditionally, so exhausting one costs
+    /// an alternative while the verified input and complete coverage survive.
     ///
-    /// The widening is a *deliberate* decision and not a test-enabling edit,
-    /// because every one of these numbers is inside the canonical request
+    /// That ground was stated for all six `region_*` bounds and was **half
+    /// right**: the three shape bounds declare the largest region this profile
+    /// forms, so a program whose only implementable cover needs a bigger one is
+    /// refused by them however long the search runs. While `region_members` was
+    /// the bare constant `32`, that refusal was measurable and measured: a
+    /// shared-constant `f32` multiply chain's recognized partition is its whole
+    /// program and nothing smaller is implementable, so 33..=62 occurrences
+    /// refused `BudgetExhausted` on `region_members` although every bound on the
+    /// program's own *size* admitted them. The derivations above dissolve that:
+    /// the stated admission envelope and the actual planning envelope are now
+    /// the same formulas over one declaration rather than two disagreeing
+    /// ceilings.
+    ///
+    /// **Two of the three collapse onto the program-scoped bound they derive
+    /// from, and that is the derivation's answer rather than a defect in it.**
+    /// `region_members` *is* `semantic_operations` and `region_live_values`
+    /// *is* `semantic_values`, so for a program whose occurrences are each
+    /// realized by one region neither can fire: `check_program_budgets` has
+    /// already refused anything with more occurrences or values than the region
+    /// bound would. They are still encoded, for two reasons. The first is that
+    /// region formation's attribution atom is a realization *stage* rather than
+    /// an occurrence and its live values include the intermediates a staged law
+    /// hands between stages — neither is a value the program's own occurrence
+    /// and value counts hold — so both bounds still bind on a program whose
+    /// families realize region sequences. The second is that a budget set is a
+    /// *request* field: these bound one region's shape for any budgets a caller
+    /// states, and the governed profile's coincidence is a property of its
+    /// declaration rather than of the fields. Whether a field that the governed
+    /// profile can no longer fire deserves to keep its slot in the canonical
+    /// request subject is a public-boundary question and is Tom's, not taken
+    /// here. `region_boundary_outputs` does not collapse: it is the declared
+    /// output count rather than any program-scoped bound, and it still refuses
+    /// a grown candidate that would export more values than the program names.
+    ///
+    /// Every value here is a *deliberate* decision and not a test-enabling
+    /// edit, because every one of these numbers is inside the canonical request
     /// subject ([`VerifiedRequestSubject::canonical_explain_subject_bytes`]
     /// writes every budget), which is carried into artifact identity. Every
     /// governed compilation's request subject, and therefore every artifact
@@ -935,9 +995,14 @@ impl DeterministicBudgets {
     /// requires them: [`check_program_budgets`] still refuses a program one step
     /// past each of these, and `verify_host_contract` still refuses a built
     /// program whose expression, value, or stage count exceeds
-    /// `host_expression_nodes`, `buffers`, or `regions`. Nor does clearing the
-    /// budget gate compile a decoder layer — the recognizer's refusal is
-    /// untouched, and what this widening removes is only the refusal that was
+    /// `host_expression_nodes`, `buffers`, or `regions`. The same holds of the
+    /// three derived region bounds one layer down:
+    /// [`crate::region::RegionBudgetResource`] still stops a candidate one step
+    /// past each of `region_members`, `region_boundary_outputs`, and
+    /// `region_live_values`, and the stop is still reported as a typed
+    /// `BudgetStop` naming the resource rather than dropped. Nor does clearing
+    /// the budget gate compile a decoder layer — the recognizer's refusal is
+    /// untouched, and what these values remove is only the refusal that was
     /// about *size*.
     pub(crate) const fn governed() -> Self {
         Self {
@@ -947,9 +1012,9 @@ impl DeterministicBudgets {
             host_expression_nodes: 51,
             buffers: 30,
             normalization_rewrites: 8,
-            region_members: 32,
-            region_boundary_outputs: 8,
-            region_live_values: 64,
+            region_members: 62,
+            region_boundary_outputs: 3,
+            region_live_values: 80,
             region_candidates_per_seed: 32,
             region_expansions: 10_000,
             region_covers: 1_024,

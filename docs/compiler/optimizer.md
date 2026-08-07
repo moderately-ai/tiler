@@ -319,11 +319,15 @@ retain-then-prune-locally strategy the phase-ordering witness watches fail, and
 it fails there for the same reason greedy rewriting does.
 
 Five of the first deterministic safety budgets bound region formation, as the
-`region_*` fields of `DeterministicBudgets`: 32 semantic occurrences per region
-(`region_members`), 8 boundary outputs (`region_boundary_outputs`), 64 live
+`region_*` fields of `DeterministicBudgets`: 62 semantic occurrences per region
+(`region_members`), 3 boundary outputs (`region_boundary_outputs`), 80 live
 boundary/internal values (`region_live_values`), 32 candidates per seed
 (`region_candidates_per_seed`), and 10,000 candidate expansions per compilation
-request (`region_expansions`). Three more bound the stages downstream of it:
+request (`region_expansions`).
+
+**The first three of those are derivations over the declaration rather than stated numbers, and the other two are not.** A region is a subset of the program it covers, so its members are a subset of the program's occurrences, its live values are disjoint subsets of the program's values, and the largest of them — the whole-program region — exports exactly the program's ordered named outputs. `region_members` is therefore `semantic_operations`, `region_live_values` is `semantic_values`, and `region_boundary_outputs` is the declared output count `regions` already multiplies by four. That is the same correction `regions` itself received: a quantity belonging to a *plan* is still a function of the declaration the plan covers, and a constant sized to today's largest known program is a ceiling somebody has to raise — which, because every budget enters the canonical request subject, moves every artifact identity in the workspace each time. Two of the three consequently coincide with the program-scoped bound they derive from, so under the governed profile neither can refuse a program `check_program_budgets` has already admitted; whether a field in that position keeps its slot in the request subject is an open decision rather than a settled one.
+
+Three more bound the stages downstream of it:
 1,024 retained complete covers (`region_covers`), 100,000 partition-search
 expansions (`region_cover_expansions`), and 4,096 complete-plan combinations per
 cover source (`physical_plan_combinations`). Producer duplication is

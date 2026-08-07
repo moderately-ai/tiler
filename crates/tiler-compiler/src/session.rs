@@ -3262,14 +3262,25 @@ mod tests {
     ///   `target_outcomes_preserve_request_order_cardinality_and_profile_identity`
     ///   through a profile that declares no strict-`f32` behaviour.
     /// - `BudgetExhausted` — reached by a program that exceeds a deterministic
-    ///   budget, in either of the two ways one can be exceeded.
-    ///   `RequestError::BudgetExceeded` is still its sole carrier, and it is
-    ///   raised from two places: `check_program_budgets`, for a program whose
-    ///   *size* a bound refuses before any target compiles, and the empty
+    ///   budget. `RequestError::BudgetExceeded` is still its sole carrier, and
+    ///   it is raised from two places: `check_program_budgets`, for a program
+    ///   whose *size* a bound refuses before any target compiles, and the empty
     ///   portfolio, for a target whose *analysis* a bound truncated before it
     ///   reached a plan. `tests/region_search_budget_coverage.rs` reaches the
-    ///   second from this surface with a thirty-three-operation chain, which
-    ///   needs a wider region than `region_members` admits.
+    ///   first from this surface with a sixty-three-operation chain, one past
+    ///   `semantic_operations`.
+    ///
+    ///   **The second is no longer reachable through this surface, and that is
+    ///   a consequence of a decision rather than a gap.**
+    ///   `derive-the-region-shape-budgets-from-the-declaration` made
+    ///   `region_members` and `region_live_values` the same formulas
+    ///   `semantic_operations` and `semantic_values` are, so a program large
+    ///   enough for a region bound to truncate its analysis is refused for its
+    ///   *size* first — which is the envelope disagreement that ticket
+    ///   dissolved. Reaching the empty portfolio now needs a caller-stated
+    ///   budget set, which this surface deliberately does not admit;
+    ///   `crate::pipeline::tests::a_region_shape_budget_below_the_only_implementable_cover_reports_the_budget`
+    ///   drives it one layer down and is what keeps that path measured.
     /// - `InvalidCompilerOutput` — **unreachable by construction from a valid
     ///   call, deliberately.** It reports that Tiler's own verifier refused
     ///   Tiler's own output, so reaching it from the public surface would mean
