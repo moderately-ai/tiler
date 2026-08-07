@@ -16,15 +16,15 @@ use std::sync::{Arc, OnceLock};
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
     AccessMode, CanonicalScalarDefinitionProjection, FrozenScalarRegistry, IndexExprView,
-    MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView, ReductionTraversal,
+    IndexInteger, MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView, ReductionTraversal,
     ScalarAttributeField, ScalarAttributes, ScalarAuthorityEvidence, ScalarOpKey,
     ScalarOperationDefinition, ScalarOperationKindRef, ScalarOperationRef, ScalarReductionRef,
-    ScalarRegistryError, ScalarValueDefinitionView, SourcedExtent, TensorAccessRef, TensorRole,
-    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedIndexRegion,
-    VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
-    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId, add_f32_scalar_op,
-    canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
-    strict_affine_u4_dequantize_scalar_op,
+    ScalarRegistryError, ScalarValueDefinitionView, SourcedExtent, SourcedIndexInteger,
+    TensorAccessRef, TensorRole, VerifiedDimensionId, VerifiedIndexExprId,
+    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedReducerBodyOperationId,
+    VerifiedReducerBodyValueId, VerifiedScalarOperationId, VerifiedScalarValueId,
+    VerifiedTensorAccessId, VerifiedTensorId, add_f32_scalar_op, canonicalize_nan_f32_scalar_op,
+    constant_f32_scalar_op, multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::semantic::{
     CanonicalField, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
@@ -131,6 +131,14 @@ pub enum UnsupportedRegionFeature {
     /// semi-affine maps they cannot analyze", and declining is the only
     /// alternative to returning a coordinate nothing established.
     SymbolicIndexDivisor,
+    /// A linear combination scaled a term by a symbolic extent.
+    ///
+    /// The coefficient sibling of [`Self::SymbolicIndexDivisor`], refused for
+    /// the same reason and named separately because the two say different
+    /// things about the region: one is an expression this oracle cannot divide,
+    /// the other one it cannot scale, and a caller narrowing a fixture acts on
+    /// each differently.
+    SymbolicIndexCoefficient,
     /// The region used a scalar value definition added after this oracle.
     ScalarValueForm,
     /// The region used a reducer-body value definition added after this oracle.
@@ -147,6 +155,7 @@ impl fmt::Display for UnsupportedRegionFeature {
             Self::ScalarOperationKind => "unimplemented scalar operation kind",
             Self::IndexExpressionForm => "unimplemented index-expression form",
             Self::SymbolicIndexDivisor => "symbolic index floor-division or modulo divisor",
+            Self::SymbolicIndexCoefficient => "symbolic index linear-combination coefficient",
             Self::ScalarValueForm => "unimplemented scalar value definition",
             Self::ReducerBodyValueForm => "unimplemented reducer-body value definition",
         })
@@ -1322,6 +1331,20 @@ fn constant_divisor(divisor: &SourcedExtent) -> Result<u64, IndexRegionEvaluatio
         .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicIndexDivisor))
 }
 
+/// Reads a linear-combination coefficient this oracle can actually scale by.
+///
+/// The coefficient half of the same boundary [`constant_divisor`] draws, and it
+/// refuses for the identical reason: resolving the symbol through the region's
+/// shape environment would give this oracle a value derived from a second
+/// authority, which is exactly what a correctness oracle may not do.
+fn constant_coefficient(
+    coefficient: &SourcedIndexInteger,
+) -> Result<&IndexInteger, IndexRegionEvaluationError> {
+    coefficient
+        .as_literal()
+        .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicIndexCoefficient))
+}
+
 /// Host evaluator for verified canonical index regions.
 #[derive(Clone, Debug)]
 pub struct IndexRegionEvaluator {
@@ -2400,8 +2423,9 @@ impl<'a> RegionEvaluation<'a> {
             IndexExprView::LinearCombination { constant, terms } => {
                 let mut total = admit_index(ExactInteger::from_index_integer(constant))?;
                 for term in terms {
-                    let coefficient =
-                        admit_index(ExactInteger::from_index_integer(term.coefficient()))?;
+                    let coefficient = admit_index(ExactInteger::from_index_integer(
+                        constant_coefficient(term.coefficient())?,
+                    ))?;
                     let child = self.expression(frame, term.value())?;
                     let product = coefficient
                         .checked_mul(&child, MAX_EVALUATED_INDEX_BYTES)

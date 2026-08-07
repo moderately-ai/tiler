@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::semantic::ResolvedValueType;
 
 use super::handles::VerifiedRegionOwner;
-use super::sourced::{ExtentSources, SourcedExtent, SourcedShape};
+use super::sourced::{ExtentSources, SourcedExtent, SourcedIndexInteger, SourcedShape};
 use super::{
     DischargedIndexDomainPredicate, IndexDomainPredicate, IndexEntityKind, IndexExtentRef,
     IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex, UnknownIndexDomainPredicate,
@@ -59,13 +59,23 @@ pub enum IndexExprClass {
     Affine,
     /// Affine expression extended with constant floor division or modulo.
     QuasiAffine,
-    /// Affine expression extended with floor division or modulo by a symbol.
+    /// Affine expression extended with a symbolic divisor, coefficient, or
+    /// addend.
     ///
-    /// The divisor is an extent this region names symbolically, so the
-    /// expression is nonlinear in the environment's variables. ADR 0046 permits
-    /// a pass to "conservatively decline semi-affine maps they cannot analyze",
-    /// and declining is what every pass here does: a refusal carries a typed
-    /// reason, where approximating would return a coordinate nobody proved.
+    /// ADR 0046 admits both halves — "symbolic coefficients **or**
+    /// proven-positive symbolic divisors" — and one class covers them because
+    /// each makes the expression nonlinear in the environment's variables for
+    /// the same reason: a value the region names but does not fix participates
+    /// in the arithmetic. The two halves differ only in their admission
+    /// predicate. A divisor must be proved positive, because `x floordiv 0` is
+    /// undefined; a coefficient or addend must not, because it may be any
+    /// magnitude the environment admits, zero included, and every one of those
+    /// denotes a coordinate.
+    ///
+    /// ADR 0046 permits a pass to "conservatively decline semi-affine maps they
+    /// cannot analyze", and declining is what every pass here does: a refusal
+    /// carries a typed reason, where approximating would return a coordinate
+    /// nobody proved.
     SemiAffine,
 }
 
@@ -87,7 +97,7 @@ impl IndexExprClass {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(super) struct LinearTermData {
-    pub coefficient: IndexInteger,
+    pub coefficient: SourcedIndexInteger,
     pub value: u32,
 }
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -774,11 +784,22 @@ pub enum IndexExprView<'a> {
     Constant(&'a IndexInteger),
     /// Reference to a domain dimension.
     Dimension(VerifiedDimensionId),
-    /// Normalized affine sum.
+    /// Normalized affine or semi-affine sum.
     LinearCombination {
-        /// Additive constant.
+        /// Additive constant, always exact.
+        ///
+        /// A caller may *write* a symbolic addend —
+        /// [`IndexRegionBuilder::sourced_linear_combination`](super::IndexRegionBuilder::sourced_linear_combination)
+        /// takes a [`SourcedIndexInteger`] here — but normalization carries it into the
+        /// term list as `symbol * 1` rather than storing it, so this slot keeps
+        /// one meaning. That is what preserves folding: a literal constant
+        /// reached through any operand still accumulates here, so `S + 2*3` and
+        /// `S + 6*1` remain one region, where a slot that could hold either a
+        /// symbol or an integer would have had nowhere to fold them and would
+        /// have given one program two identities.
         constant: &'a IndexInteger,
-        /// Ordered, combined nonzero terms.
+        /// Ordered terms, combined only where exact arithmetic could combine
+        /// them — see [`LinearTermRef::coefficient`].
         terms: LinearTerms<'a>,
     },
     /// Euclidean floor division by a proven-positive extent.
@@ -830,9 +851,29 @@ pub struct LinearTermRef<'a> {
     owner: VerifiedRegionOwner,
 }
 impl<'a> LinearTermRef<'a> {
-    /// Returns the exact coefficient.
+    /// Returns the coefficient, and where its value comes from.
+    ///
+    /// **Draft surface, not yet accepted.** This return type widened from
+    /// `&IndexInteger` to carry a declared symbol; the widening is a concrete
+    /// draft pending Tom's acceptance, and [`SourcedIndexInteger`] carries the
+    /// full label.
+    ///
+    /// # What normalization did and did not combine
+    ///
+    /// A term whose coefficient is [`SourcedIndexInteger::Literal`] was folded
+    /// by exact arithmetic: it is nonzero, it names an operand no other literal
+    /// term names, and no nested sum survives under it.
+    ///
+    /// A term whose coefficient is [`SourcedIndexInteger::Symbol`] was retained
+    /// verbatim — never merged with another term, dropped, distributed over a
+    /// nested sum, or unwrapped — because none of those rewrites is available
+    /// without a value the environment need not pin, and performing them
+    /// *when* it happens to pin one would make canonicalization a function of
+    /// the environment rather than of the program. Two symbolic terms over one
+    /// operand therefore both appear, and `S * x` is a term even when the
+    /// environment fixes `S == 1`.
     #[must_use]
-    pub const fn coefficient(self) -> &'a IndexInteger {
+    pub const fn coefficient(self) -> &'a SourcedIndexInteger {
         &self.data.coefficient
     }
     /// Returns the referenced child expression.

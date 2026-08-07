@@ -71,19 +71,22 @@
 //! own rule rather than left to read as an unrecognized name.
 //!
 //! **A symbolic offset.** This is the boundary the family's ticket requires
-//! stated rather than assumed, and it is the *index vocabulary* that closes it,
-//! not this module. `IndexNode` at `crates/tiler-ir/src/index/model.rs` has five
-//! variants — `Constant`, `Dimension`, a `LinearCombination` whose constant and
-//! per-term coefficients are `IndexInteger`, and `FloorDiv` and `Modulo` whose
-//! `divisor` is a `SourcedExtent`. `SourcedExtent` is the only carrier of a
-//! possibly-symbolic extent and it appears in no other position, so the read
-//! `t + k` is expressible for a literal `k` and is not expressible for a bound
-//! symbol `C`. A second gap sits above it: a semantic occurrence's
-//! [`ValueFact`] carries a static [`Shape`], so a symbolic offset has nothing to
-//! name at this layer either. The literal-offset form is therefore what this
+//! stated rather than assumed. It rested on two independent gaps, and **the
+//! index-vocabulary one has since closed**: `IndexNode` at
+//! `crates/tiler-ir/src/index/model.rs` now has a `LinearCombination` whose
+//! per-term coefficients are `SourcedIndexInteger`, so the read `t + C` for a
+//! bound symbol `C` is expressible, as the term `C * 1`. That is exactly the
+//! reconsideration trigger this module recorded — a symbol reaching a
+//! coordinate position — and it has fired.
+//!
+//! **The refusal stands on the remaining gap alone, which is this layer's
+//! own.** A semantic occurrence's [`ValueFact`] carries a static [`Shape`], so
+//! a symbolic offset has nothing to name here: there is no bound symbol on a
+//! semantic value for a selection to resolve against. The literal-offset form
+//! is therefore still what this
 //! family delivers, [`SLICE_RELATION_SYMBOLIC_WINDOW`] is reserved and refused by
-//! name, and the reconsideration trigger is exact: an `IndexNode` variant that
-//! carries a `SourcedExtent` in a coordinate position. The refusal reserves a
+//! name, and the trigger that remains is symbolic extents reaching a semantic
+//! value's shape. The refusal reserves a
 //! name, not a design — whether a symbolic offset arrives as an attribute symbol
 //! or as an index operand is left open, because F-24 contemplates the operand
 //! spelling for its own dynamic form.

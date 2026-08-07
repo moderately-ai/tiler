@@ -732,13 +732,21 @@ impl IndexRegionBuilder {
         {
             let mut bound = constant.0.abs();
             for term in terms {
+                // Both `expect`s below rest on one invariant, already checked
+                // above: this expression has an interval, and `interval_linear`
+                // states one only when every child had one *and* every
+                // coefficient was literal. A symbolic coefficient therefore
+                // left `data.interval` empty and the early return has fired.
+                let coefficient = term
+                    .coefficient
+                    .as_literal()
+                    .expect("a linear interval requires every coefficient to be literal");
                 let (minimum, maximum) = self.expressions[term.value as usize]
                     .interval
                     .as_ref()
                     .expect("a linear interval requires every child interval");
                 let child_bound = minimum.abs().max(maximum.abs());
-                let Ok(product) = checked_index_product(&term.coefficient.0.abs(), &child_bound)
-                else {
+                let Ok(product) = checked_index_product(&coefficient.0.abs(), &child_bound) else {
                     return u128::MAX;
                 };
                 if checked_index_add_assign(&mut bound, &product).is_err() {
@@ -888,9 +896,17 @@ impl IndexRegionBuilder {
                 IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
                     self.determined(divisor).is_some()
                 }
-                IndexNode::Constant(_)
-                | IndexNode::Dimension(_)
-                | IndexNode::LinearCombination { .. } => true,
+                // A symbolic coefficient is not evaluable, and deliberately not
+                // *even when the environment pins it*. Resolving it would make
+                // an enumeration's result a function of the binding rather than
+                // of the program, which is the same reason normalization and
+                // interval propagation decline on it. A divisor differs because
+                // its value was already required to make the expression defined
+                // at all, so reading it here decides nothing new.
+                IndexNode::LinearCombination { terms, .. } => terms
+                    .iter()
+                    .all(|term| term.coefficient.as_literal().is_some()),
+                IndexNode::Constant(_) | IndexNode::Dimension(_) => true,
             },
         )
     }
@@ -933,7 +949,14 @@ impl IndexRegionBuilder {
                 }
                 IndexNode::LinearCombination { constant, terms } => {
                     terms.iter().fold(constant.0.clone(), |sum, term| {
-                        sum + &term.coefficient.0 * &values[&term.value]
+                        // Total arithmetic: `coordinates_are_evaluable` refused
+                        // a symbolic coefficient before any budget was taken,
+                        // so every term in a planned expression is literal.
+                        let coefficient = term
+                            .coefficient
+                            .as_literal()
+                            .expect("an evaluable plan carries only literal coefficients");
+                        sum + &coefficient.0 * &values[&term.value]
                     })
                 }
                 IndexNode::FloorDiv { dividend, .. } => {
@@ -1001,7 +1024,12 @@ impl IndexRegionBuilder {
                 let [term] = terms.as_slice() else {
                     return None;
                 };
-                if term.coefficient.0 != BigInt::from(1_u8) {
+                // A symbolic coefficient is not the unit this vocabulary
+                // requires and is not known to be anything else, so it declines
+                // here exactly as a scaled dimension does — the joint
+                // enumeration, or an obligation, decides the root instead.
+                if term.coefficient.as_literal().map(|value| &value.0) != Some(&BigInt::from(1_u8))
+                {
                     return None;
                 }
                 let IndexNode::Dimension(dimension) = *self.expressions[term.value as usize].node

@@ -2428,7 +2428,14 @@ fn plan_expression(
                     edge_count,
                     ledger,
                 )?;
-                let coefficient = integer_width(term.coefficient());
+                // A symbolic coefficient has no width to charge and no value to
+                // multiply by, so the fragment is refused by name before any
+                // budget is spent on it rather than planned and then failed.
+                let coefficient = integer_width(
+                    term.coefficient()
+                        .as_literal()
+                        .ok_or(ProofPlanningFailure::Unsupported)?,
+                );
                 let child = *widths
                     .get(&term.value())
                     .ok_or(ProofPlanningFailure::Unsupported)?;
@@ -2551,7 +2558,12 @@ fn evaluate_planned_node(
         IndexExprView::LinearCombination { constant, terms } => {
             let mut total = decode_integer(constant);
             for term in terms {
-                total += decode_integer(term.coefficient()) * values.get(&term.value())?;
+                // Declines on a symbolic coefficient exactly as the arms below
+                // decline on a symbolic divisor: there is no value to multiply
+                // by, and `None` here refuses the evaluation rather than
+                // resolving the symbol through a second authority.
+                total +=
+                    decode_integer(term.coefficient().as_literal()?) * values.get(&term.value())?;
             }
             total
         }

@@ -1337,11 +1337,20 @@ mod tests {
     /// the step lands into, never taken from either side.
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
     /// sibling that depends on this row for exactly that reason. The constants
-    /// below were recomputed on 2026-08-06, on the tree carrying the header
-    /// widening described above over the base that already held the coverage
-    /// fold, the v11 step, the v10 step, the v9 step, the v8 step, and the
-    /// measured grid-axis row.
+    /// below were recomputed on 2026-08-07, on the tree carrying the
+    /// `tiler.index-region.v10` step — `admit-symbolic-index-expression-coefficients`
+    /// made a linear combination's coefficient a tagged `SourcedIndexInteger`
+    /// where `v9` wrote a bare integer — over the base that already held the
+    /// header widening, the coverage fold, the v11 step, the v10 step, the v9
+    /// step, the v8 step, and the measured grid-axis row. The envelope's fixed
+    /// content grew 12 bytes, one per coefficient this fixture's regions spell,
+    /// which is the growth the encoding change predicts and not a layout move.
     /// Superseded values, for a reader reconciling an older record:
+    /// the header widening, which is what these constants held immediately
+    /// before the index-region v10 step,
+    /// `17a16aa4d15b35a0eae7e382b9e96ea3fca7c01a5a1c80495600aace20f2e63d` /
+    /// `a3d44827bf86b5979f3d79eaf7e9392f997255ae88376edfb6f8f304e51cdfe8` /
+    /// 64,710 bytes;
     /// the coverage fold, which is what these constants held immediately before
     /// the header widened,
     /// `2b0162eb461edeaa8069a022e54057572bf7992970205a5a33f1efee2df896ca` /
@@ -1391,10 +1400,10 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "17a16aa4d15b35a0eae7e382b9e96ea3fca7c01a5a1c80495600aace20f2e63d";
+            "65adeb81d7ab30d73ba099403d9214effcfc2de963a51b39872a92fcfe7e4f5e";
         const CACHE_SUBJECT: &str =
-            "a3d44827bf86b5979f3d79eaf7e9392f997255ae88376edfb6f8f304e51cdfe8";
-        const FIXED_CONTENT_BYTES: usize = 64_710;
+            "b34fc5562db3eb1a8a6d280faa26fb5aef7a9b632609c4daf5cad12692ffe8f4";
+        const FIXED_CONTENT_BYTES: usize = 64_722;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

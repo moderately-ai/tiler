@@ -11,8 +11,8 @@ use tiler_ir::index::{
     IndexRegionDiagnostic, ScalarArity, ScalarAttributeField, ScalarAttributeSchema,
     ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
     ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarValueId, SourcedExtent, TensorRole,
-    VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
+    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarValueId, SourcedExtent,
+    SourcedIndexInteger, TensorRole, VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
@@ -1046,6 +1046,102 @@ fn a_semi_affine_divisor_is_declined_rather_than_resolved() {
         gather(&literal, &scalars, &source),
         [0.0, 0.0, 1.0, 1.0, 2.0, 2.0],
         "the same arithmetic with a literal divisor evaluates exactly",
+    );
+}
+
+/// This oracle declines a semi-affine *coefficient* instead of resolving it.
+///
+/// The coefficient sibling of
+/// `a_semi_affine_divisor_is_declined_rather_than_resolved`, built the same way
+/// and refusing for the same reason: the environment below pins `c == 2`, so
+/// the value is derivable and must not be derived, because a correctness oracle
+/// that read a second authority would produce a result the comparison could no
+/// longer distinguish from its subject's own.
+///
+/// The two refusals carry *different* names, and the assertion is on the
+/// coefficient one specifically — one shared "symbolic index scalar" cause
+/// would have passed here while telling a caller nothing about which position
+/// it had to change.
+///
+/// The neighbour is the same region with the coefficient written as a literal,
+/// which evaluates — so the refusal is about the coefficient's *form* and not
+/// about the region failing to verify.
+#[test]
+fn a_semi_affine_coefficient_is_declined_rather_than_resolved() {
+    let scalars = scalar_registry(1);
+    let source = f32_tensor(Shape::from_dims([6]), [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
+
+    let coefficient = ShapeSymbol::new(SymbolScope::new("region/0").unwrap(), "c").unwrap();
+    let mut draft = ShapeEnvBuilder::new();
+    draft.declare(coefficient.clone()).unwrap();
+    draft
+        .bind(
+            &coefficient,
+            RootBinding::new(
+                BindingSource::InterfaceParameter {
+                    key: InterfaceParameterKey::new("c").unwrap(),
+                },
+                AvailabilityPhase::LiveDevicePreflight,
+                FactProvenance::RuntimeValidated,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    draft
+        .require(SemanticInputConstraint::new(
+            ExtentRelation::interval(ExtentTerm::Symbol(coefficient.clone()), 2, 2).unwrap(),
+            FactProvenance::FrontendRequired,
+        ))
+        .unwrap();
+    let environment = Arc::new(draft.build().unwrap());
+
+    let build = |coefficient: SourcedIndexInteger| -> VerifiedIndexRegion {
+        let mut builder = IndexRegionBuilder::new_with_shape_environment(
+            scalars.clone(),
+            Arc::clone(&environment),
+        )
+        .unwrap();
+        // A domain of three against a six-element input, so `2 * i` stays in
+        // bounds and the literal neighbour verifies by interval.
+        let i = builder
+            .dimension(DomainRole::Parallel, Extent::new(3))
+            .unwrap();
+        let input = builder
+            .tensor(TensorRole::Input, f32_type(), Shape::from_dims([6]))
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, f32_type(), Shape::from_dims([3]))
+            .unwrap();
+        let index = builder.dimension_expr(i).unwrap();
+        let scaled = builder
+            .sourced_linear_combination(0_i128.into(), &[(coefficient, index)])
+            .unwrap();
+        let value = builder.read(input, &[i], &[scaled]).unwrap();
+        let write = builder.write(output, &[i], &[index]).unwrap();
+        builder.output(write, value).unwrap();
+        builder.build().unwrap()
+    };
+
+    let symbolic = build(SourcedIndexInteger::Symbol(coefficient));
+    let ids = input_ids(&symbolic);
+    assert_eq!(
+        evaluator(&scalars)
+            .evaluate(
+                &symbolic,
+                IndexRegionAuthority::new(&scalars),
+                &[IndexRegionInput::new(ids[0], &source)],
+            )
+            .unwrap_err(),
+        IndexRegionEvaluationError::Unsupported {
+            feature: UnsupportedRegionFeature::SymbolicIndexCoefficient,
+        },
+    );
+
+    let literal = build(2_i128.into());
+    assert_eq!(
+        gather(&literal, &scalars, &source),
+        [0.0, 2.0, 4.0],
+        "the same arithmetic with a literal coefficient evaluates exactly",
     );
 }
 

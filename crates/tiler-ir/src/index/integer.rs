@@ -113,6 +113,19 @@ impl IndexInteger {
         push_len(output, magnitude.len());
         output.extend_from_slice(&magnitude);
     }
+
+    /// Returns the exact byte length [`Self::encode`] appends.
+    ///
+    /// One definition rather than one per caller: the region encoder asserts
+    /// that its length companion agrees with its writer, so a second copy of
+    /// this arithmetic would be a second place for that pairing to drift.
+    /// Zero encodes an *empty* magnitude, which `bits()` already reports as
+    /// zero bytes — the `max(1)` that [`Self::magnitude_byte_len`] applies is a
+    /// storage bound, not this framing.
+    pub(super) fn encoded_len(&self) -> usize {
+        // One sign byte plus the eight-byte magnitude length prefix.
+        9_usize.saturating_add(usize::try_from(self.0.bits().div_ceil(8)).unwrap_or(usize::MAX))
+    }
 }
 
 impl From<i128> for IndexInteger {

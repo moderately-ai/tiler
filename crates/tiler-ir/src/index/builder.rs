@@ -59,7 +59,8 @@ use super::scalar::{
     encode_key,
 };
 use super::sourced::{
-    ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape, SymbolicExtentError,
+    ExtentSourceError, ExtentSources, SourcedExtent, SourcedIndexInteger, SourcedShape,
+    SymbolicExtentError,
 };
 use super::{
     AccessMode, CanonicalIndexRegionIdentity, DimensionId, DischargedIndexDomainPredicate,
@@ -81,14 +82,16 @@ use crate::shape::{ExtentInterval, ShapeEnv, ShapeSymbol};
 
 /// The domain separator of one verified index region's canonical identity.
 ///
-/// `v9` rather than `v8`: a floor-division or modulo divisor now encodes as a
-/// tagged [`SourcedExtent`] where `v8` wrote eight raw bytes, so the bytes of a
-/// *constant* divisor changed even though its meaning did not. Bumping states
-/// that rather than letting two encodings share one domain. Promoting the
-/// symbolic profile's visibility is not what moved it — a domain that advanced
-/// for a visibility change alone would make two identical subjects carry
-/// different domains.
-const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v9\0";
+/// `v10` rather than `v9`: a linear combination's coefficient now encodes as a
+/// tagged [`SourcedIndexInteger`] where `v9` wrote a bare sign-and-magnitude
+/// integer, so the bytes of an *exact* coefficient changed even though its
+/// meaning did not, and every region carrying a linear combination moves. That
+/// is the same step the divisor took at `v9`, stated rather than left to two
+/// encodings sharing one domain. The additive constant is unchanged and did not
+/// move it — normalization keeps that slot an exact integer — and neither did
+/// admitting the symbolic form, which adds regions rather than re-encoding
+/// existing ones.
+const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v10\0";
 
 /// What interval propagation concluded about one access's coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -1011,44 +1014,203 @@ impl IndexRegionBuilder {
             0,
         )
     }
-    /// Creates a normalized affine linear combination.
+    /// Creates a normalized affine linear combination over exact integers.
+    ///
+    /// The literal entry point, beside
+    /// [`Self::sourced_linear_combination`] exactly as [`Self::tensor`] is
+    /// beside [`Self::sourced_tensor`] and [`Self::dimension`] beside
+    /// [`Self::symbolic_dimension`]. Both author the *same* node and are
+    /// inspected through one total view; only the vocabulary a caller spells
+    /// its scalars in differs, and a caller with no symbols never names the
+    /// sourced type.
     ///
     /// # Errors
     ///
-    /// Returns an error for foreign operands or exceeded expression limits.
+    /// Returns an error for foreign operands or exceeded expression limits. No
+    /// source can be refused here, because none can be named.
     pub fn linear_combination(
         &mut self,
         constant: IndexInteger,
         terms: &[(IndexInteger, IndexExprId)],
+    ) -> Result<IndexExprId, IndexBuildError> {
+        let terms: Vec<(SourcedIndexInteger, IndexExprId)> = terms
+            .iter()
+            .map(|(coefficient, id)| (coefficient.clone().into(), *id))
+            .collect();
+        // Admission is skipped rather than run and discarded: every scalar here
+        // is a literal, and admission is the *only* step that can refuse a
+        // source. Returning `IndexBuildError` is therefore a fact about this
+        // path's inputs rather than a narrowing that could drop a real refusal.
+        self.assemble_linear_combination(constant.into(), &terms)
+    }
+
+    /// Creates a normalized linear combination whose scalars may be sourced.
+    ///
+    /// **Draft surface, not yet accepted.** This constructor, its argument
+    /// vocabulary, and the widened view it produces are a concrete draft
+    /// pending Tom's acceptance; [`SourcedIndexInteger`] carries the full
+    /// label.
+    ///
+    /// A coefficient or constant that names a declared symbol makes the
+    /// expression [`IndexExprClass::SemiAffine`], which is what ADR 0046's
+    /// "symbolic coefficients" half admits. The symbol is one declared
+    /// [`ShapeSymbol`] and deliberately not an expression tree, for the reason
+    /// [`SourcedExtent`] gives about divisors: a composed magnitude such as
+    /// `S - T` is a relation in the environment's constraint set, where it can
+    /// be decided, rather than arithmetic the index layer re-derives. `i + (S -
+    /// T)` is therefore written as `i + U` over a symbol the environment
+    /// relates to `S` and `T`.
+    ///
+    /// # What a symbolic scalar costs
+    ///
+    /// Normalization declines on it — see
+    /// [`LinearTermRef::coefficient`](super::LinearTermRef::coefficient) — and
+    /// so does interval propagation, so an access whose coordinate carries one
+    /// is proved by another argument or retains its bound as an explicit
+    /// obligation under
+    /// [`IndexDomainUnknownReason::InsufficientFacts`](super::IndexDomainUnknownReason::InsufficientFacts).
+    /// That is ADR 0046's permission to "conservatively decline semi-affine
+    /// maps they cannot analyze", taken rather than approximated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymbolicExtentError::Source`] when a symbolic scalar is not
+    /// declared by this region's environment or arrives after
+    /// [`EXTENT_PHASE_CEILING`](super::EXTENT_PHASE_CEILING), and
+    /// [`SymbolicExtentError::Structural`] for a foreign operand or an exceeded
+    /// limit. A refused scalar leaves the draft exactly as it was.
+    ///
+    /// Note which predicate is *not* applied: unlike a divisor, a coefficient
+    /// is never required to be proved positive. `x floordiv 0` is undefined and
+    /// so a divisor's positivity is a condition of the expression having a
+    /// meaning at all, whereas `0 * x` and every other admissible magnitude
+    /// denote a coordinate. Requiring positivity here would refuse programs
+    /// ADR 0046 admits.
+    pub fn sourced_linear_combination(
+        &mut self,
+        constant: SourcedIndexInteger,
+        terms: &[(SourcedIndexInteger, IndexExprId)],
+    ) -> Result<IndexExprId, SymbolicExtentError> {
+        // Every source is admitted before anything is resolved, retained, or
+        // interned, so a refused coefficient leaves the draft exactly as it was
+        // rather than half-applied.
+        self.admit_index_scalar(&constant)?;
+        for (coefficient, _) in terms {
+            self.admit_index_scalar(coefficient)?;
+        }
+        Ok(self.assemble_linear_combination(constant, terms)?)
+    }
+
+    /// Admits one index scalar's source, without deciding its sign.
+    ///
+    /// Reuses [`ExtentSources::admit`] rather than restating the ceiling or the
+    /// declaration check, so a coefficient, a domain extent, a boundary axis,
+    /// and a divisor are all refused by one authority for one set of reasons.
+    /// [`ExtentSources::proves_positive`] is deliberately not consulted: see
+    /// [`Self::sourced_linear_combination`].
+    fn admit_index_scalar(&self, value: &SourcedIndexInteger) -> Result<(), SymbolicExtentError> {
+        let Some(symbol) = value.symbol() else {
+            return Ok(());
+        };
+        let Some(sources) = self.sources.as_ref() else {
+            // No environment can declare the symbol, so it is undeclared here
+            // for exactly the reason the variant names.
+            return Err(ExtentSourceError::UndeclaredSymbol {
+                symbol: symbol.clone(),
+            }
+            .into());
+        };
+        sources.admit(&SourcedExtent::Symbol(symbol.clone()))?;
+        Ok(())
+    }
+
+    /// Normalizes and interns one linear combination whose sources are admitted.
+    ///
+    /// Split from [`Self::sourced_linear_combination`] so that admission is the
+    /// only step able to refuse a source: everything below can fail only under
+    /// the index layer's own structural authority, which is what lets
+    /// [`Self::linear_combination`] return [`IndexBuildError`] without
+    /// discarding a refusal it could have reported.
+    fn assemble_linear_combination(
+        &mut self,
+        constant: SourcedIndexInteger,
+        terms: &[(SourcedIndexInteger, IndexExprId)],
     ) -> Result<IndexExprId, IndexBuildError> {
         limit(
             terms.len(),
             MAX_INDEX_EXPRESSION_OPERANDS,
             IndexLimitKind::IndexExpressionOperands,
         )?;
-        check_integer(&constant.0)?;
-        for (coefficient, _) in terms {
-            check_integer(&coefficient.0)?;
+        if let Some(constant) = constant.as_literal() {
+            check_integer(&constant.0)?;
         }
-        let mut normalized_constant = constant.0;
+        for (coefficient, _) in terms {
+            if let Some(coefficient) = coefficient.as_literal() {
+                check_integer(&coefficient.0)?;
+            }
+        }
+
+        // Two accumulators, because the two coefficient kinds admit different
+        // rewrites.
+        //
+        // A literal term folds by exact arithmetic into `coefficients`, keyed
+        // by the operand it scales: it multiplies into a constant operand,
+        // distributes over a nested sum, merges with another term over the same
+        // operand, and disappears at zero.
+        //
+        // **A symbolic term declines every one of those, deliberately.** None
+        // is available without a value the environment need not pin, and
+        // performing them *when* it happens to pin one would make
+        // canonicalization a function of the environment rather than of the
+        // program — collapsing `graph identity` into `specialized identity`,
+        // which the sourced boundary exists to keep apart. So `S * x` is
+        // retained verbatim even when the environment fixes `S == 0` or `S ==
+        // 1`, two symbolic terms over one operand both survive, and a nested
+        // sum under a symbolic coefficient is not distributed. The cost is
+        // paid in analysis, not in soundness: interval propagation declines on
+        // the same terms, and the bound is retained as an explicit obligation.
+        let mut normalized_constant = BigInt::zero();
         let mut coefficients: BTreeMap<Arc<Vec<u8>>, (u32, BigInt)> = BTreeMap::new();
+        let mut sourced: Vec<LinearTermData> = Vec::new();
+        // A symbolic addend is carried as the term `symbol * 1` rather than
+        // stored in the constant slot. Keeping that slot exact is what lets a
+        // literal constant reached through any operand still fold into it, so
+        // `S + 2*3` and `S + 6*1` stay one region; a slot holding either kind
+        // would have had nowhere to fold them.
+        match constant {
+            SourcedIndexInteger::Literal(value) => normalized_constant = value.0,
+            SourcedIndexInteger::Symbol(symbol) => {
+                let one = self.constant(IndexInteger::from_i128(1))?;
+                sourced.push(LinearTermData {
+                    coefficient: SourcedIndexInteger::Symbol(symbol),
+                    value: one.index,
+                });
+            }
+        }
         for (coefficient, id) in terms {
             self.resolve_expr(*id)?;
-            accumulate_linear_term(
-                &mut normalized_constant,
-                &mut coefficients,
-                &coefficient.0,
-                id.index,
-                &self.expressions,
-            )?;
+            match coefficient {
+                SourcedIndexInteger::Literal(value) => accumulate_linear_term(
+                    &mut normalized_constant,
+                    &mut coefficients,
+                    &value.0,
+                    id.index,
+                    &self.expressions,
+                )?,
+                SourcedIndexInteger::Symbol(_) => sourced.push(LinearTermData {
+                    coefficient: coefficient.clone(),
+                    value: id.index,
+                }),
+            }
         }
         let mut terms: Vec<_> = coefficients
             .into_iter()
             .filter(|(_, (_, coefficient))| !coefficient.is_zero())
             .map(|(_, (value, coefficient))| LinearTermData {
-                coefficient: IndexInteger(coefficient),
+                coefficient: SourcedIndexInteger::Literal(IndexInteger(coefficient)),
                 value,
             })
+            .chain(sourced)
             .collect();
         limit(
             terms.len(),
@@ -1058,10 +1220,22 @@ impl IndexRegionBuilder {
         if terms.is_empty() {
             return self.constant(IndexInteger(normalized_constant));
         }
-        terms.sort_by_key(|term| Arc::clone(&self.expressions[term.value as usize].structural_key));
+        // Ordered by operand *and then* by coefficient. The operand alone was a
+        // total key while every term folded, because folding left one term per
+        // operand; a declined symbolic term breaks that, so two terms can now
+        // scale one operand and the coefficient's own canonical bytes are what
+        // keeps the order total and reproducible.
+        terms.sort_by_cached_key(|term| {
+            let mut key = self.expressions[term.value as usize]
+                .structural_key
+                .as_ref()
+                .clone();
+            term.coefficient.encode(&mut key);
+            key
+        });
         if normalized_constant.is_zero()
             && terms.len() == 1
-            && terms[0].coefficient.0 == BigInt::from(1_u8)
+            && terms[0].coefficient.as_literal().map(|value| &value.0) == Some(&BigInt::from(1_u8))
         {
             return Ok(IndexExprId {
                 owner: self.owner,
@@ -1072,7 +1246,13 @@ impl IndexRegionBuilder {
         let mut class = IndexExprClass::Affine;
         let mut depth = 0;
         for term in &terms {
-            check_integer(&term.coefficient.0)?;
+            match term.coefficient.as_literal() {
+                Some(coefficient) => check_integer(&coefficient.0)?,
+                // A symbol the region names but does not fix participates in
+                // the arithmetic, so the form is semi-affine whatever its
+                // operands are.
+                None => class = class.join(IndexExprClass::SemiAffine),
+            }
             let expression = &self.expressions[term.value as usize];
             dimensions.extend(&expression.dimensions);
             class = class.join(expression.class);
@@ -2262,7 +2442,12 @@ fn check_index_node_integers(node: &IndexNode) -> Result<(), IndexBuildError> {
         IndexNode::LinearCombination { constant, terms } => {
             check_integer(&constant.0)?;
             for term in terms {
-                check_integer(&term.coefficient.0)?;
+                // A symbolic coefficient has no magnitude to bound here; what
+                // bounds it is the environment's own declaration limits, and
+                // its admission already ran.
+                if let Some(coefficient) = term.coefficient.as_literal() {
+                    check_integer(&coefficient.0)?;
+                }
             }
             Ok(())
         }

@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: []
 related: [admit-live-extent-operands-to-payload-indexing, promote-the-symbolic-index-profile-to-a-public-boundary, admit-semi-affine-index-expression-class]
-scopes: [implementation/ir, contracts/foundation]
+scopes: [implementation/ir, contracts/foundation, implementation/reference, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, shapes, public-boundary]
