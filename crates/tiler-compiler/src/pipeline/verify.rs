@@ -93,7 +93,10 @@ pub(super) fn verify_portfolio(
     for alternative in alternatives {
         verify_alternative(semantic, request, formation, alternative, &lowering, cause)?;
     }
-    let recomputed = select_non_dominated(portfolio, alternatives)
+    // The profile comes from the request rather than from an alternative's own
+    // scheduled regions, which each carry a copy: a verifier handed the value the
+    // candidate carries compares that value to itself and can never say no.
+    let recomputed = select_non_dominated(portfolio, alternatives, request.target_profile())
         .map_err(|source| failure_at_source(source, ExplainStage::Selection, cause))?;
     if selected_id != recomputed
         || !alternatives

@@ -8,7 +8,7 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger"]
-entrypoints: ["spikes/program-planning/reduction-dispatch-crossover/src/main.rs", "spikes/program-planning/reduction-dispatch-crossover/src/fit.rs"]
+entrypoints: ["spikes/program-planning/reduction-dispatch-crossover/src/main.rs", "spikes/program-planning/reduction-dispatch-crossover/src/fit.rs", "spikes/program-planning/reduction-dispatch-crossover/activated_selector_check.py"]
 last_verified: "2026-08-07"
 ticket: "calibrate-and-activate-parallel-reduction-selection"
 ---
@@ -152,6 +152,26 @@ Magnitude accuracy is much weaker than decision accuracy: median relative error 
 **Only `parallel_threads` carries selection evidence on this matrix.** Multiplying the per-encoder cost by twenty and dividing the per-step cost by ten leave *every* predicted winner unchanged while wrecking the magnitude fit — the first because the split's extra dispatch never decides a separated cell, the second because scaling every stage by one factor cannot reorder anything. Those two parameters are pinned by magnitude alone and are inert in the decision.
 
 **And the fitted `parallel_threads` is on the low side of what held-out data prefers.** Quadrupling it leaves fit-set agreement where it was and improves the held-out worst penalty from 1.81x to 1.20x. The fit set's regret is flat in that parameter over a wide band and the magnitude tie break is what chose within it, so the contour's position is determined to roughly a factor of four rather than tightly. That is a limit of this measurement and it is the reason the calibration is retained as evidence rather than activated.
+
+## What the compiler activated, and the one thing that had to be measured for it
+
+**Measurement, 2026-08-07 — the activated selector drops two of the three fitted parameters and reproduces this sweep's penalties exactly.** `activate-measured-reduction-selection-from-a-target-cost-row` declares `parallel_threads` on the qualified target profile as a measured cost row and activates
+
+```text
+fold_steps = sum over stages of max( work, depth * P )
+```
+
+which is `P` times the model above at `encoder = 0, step = 1`. Dropping `step` is *provably* order-preserving: it is one positive factor over the whole sum. Dropping `encoder` is not provable that way — it is a per-stage constant, so removing it can in principle reorder — and the argument for it is that `encoder` prices *dispatch count*, which the compiler's structural cost model already carries as one of its four exact dimensions and prunes on, so pricing it here would put one quantity under two authorities.
+
+**Provably order-preserving and measured-inert are different claims, and the second needed measuring.** [`activated_selector_check.py`](activated_selector_check.py) scores the reduced selector on this directory's recorded `threads:work:depth` triples, and its held-out worst measured penalties are **1.81x fitted, 3.04x at a quarter, 1.20x at four times** — the same three numbers [`perturbations.txt`](results/2026-08-07-apple-m4-max-macos27.0-26A5388g/perturbations.txt) reports for the complete three-parameter model. The worst-cell coordinates agree too: 1,024 rows of 128 contributors at the fitted value, which is the cell this record already names.
+
+The agreed/total counts differ from that file's and the difference is a separation rule rather than a disagreement: the script resolves a cell when the fold and the *best parallel* strategy are separated, which is the binary decision the compiler makes, while `fit.rs` additionally reports the three-way winner. It takes no device and can be rerun anywhere:
+
+```sh
+python3 spikes/program-planning/reduction-dispatch-crossover/activated_selector_check.py
+```
+
+**One boundary the consumer inherits.** This sweep dispatched the single-workgroup tree at `governed_partition`'s balanced split, because `MEASURED_TREE_PARTICIPANT_CAP` landed after it. The compiler now emits the capped width, so at some shapes the tree it dispatches is not the tree timed here. That moves *which parallel plan* the selector prefers and not *whether it parallelizes* — the distinction this record already found consequential.
 
 ## Boundary
 

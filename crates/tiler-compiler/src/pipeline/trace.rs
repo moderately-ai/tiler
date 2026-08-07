@@ -1726,14 +1726,20 @@ pub(super) fn record_cost_and_selection(
     alternatives: &[ProgramAlternative],
     selected_alternative_id: &str,
     causes: &[(String, ExplainRecordId)],
+    profile: &crate::request::TargetProfile,
     explain: &mut ExplainWriter,
 ) -> Result<(), TargetFailure> {
+    // Scored once for the whole portfolio rather than per alternative, because a
+    // partial scoring decides nothing: `measured_scores` refuses the comparison
+    // unless every candidate states a work span, and the record below must report
+    // the same set the selector compared.
+    let scores = measured_scores(alternatives, profile);
     for alternative in alternatives {
         let cost = alternative.structural_cost;
         let cause = causes
             .iter()
             .find_map(|(id, cause)| (*id == alternative.stable_id).then_some(*cause));
-        let (subject, cost_record) = explain_step(
+        let (subject, structural_record) = explain_step(
             (|| -> Result<_, CompileError> {
                 let subject =
                     explain.subject(SubjectKind::Alternative, alternative.stable_id.as_str())?;
@@ -1749,10 +1755,10 @@ pub(super) fn record_cost_and_selection(
                         Quantity::Count(cost.materialization_count()),
                     )?,
                 ];
-                let record = explain.push_causal_detail(
+                let record = explain.push_detail(
                     RuleRef::builtin(STRUCTURAL_COST_MODEL_KEY)?,
-                    subject.clone(),
-                    &ExplainEvent::CostAssessment {
+                    vec![subject.clone()],
+                    ExplainEvent::CostAssessment {
                         model: CostModelKey::new(STRUCTURAL_COST_MODEL_KEY)?,
                         basis: EvidenceBasis::CheckedInvariant,
                         terms,
@@ -1767,6 +1773,79 @@ pub(super) fn record_cost_and_selection(
             alternative.stable_id.as_str(),
             cause.map(TerminalCause::from_record),
         )?;
+        // The measured record, when the profile declares the row this selector
+        // reads. **It names the deciding term and both sides of the `max`**, not
+        // merely that the alternative was selected: `work-steps` is the total
+        // fold work, `span-steps` is the critical path already scaled by the
+        // declared row so the two are directly comparable, and `fold-steps` is the
+        // per-stage maximum of the two summed. A reader can see which side
+        // decided, which is the whole content of the model.
+        //
+        // `EvidenceBasis::Assumption` rather than `CheckedInvariant`: the work and
+        // span counts are exact, but the row that combines them is a fitted
+        // quantity determined to about a factor of four, so the total is a
+        // modelled preference. `PredicateAssessment` refuses that basis by
+        // construction, which is why this is a cost record and not a check.
+        let alternative_score = scores.as_deref().and_then(|portfolio_scores| {
+            portfolio_scores
+                .iter()
+                .find(|score| score.alternative.stable_id == alternative.stable_id)
+        });
+        let measured_record = match alternative_score {
+            None => None,
+            Some(score) => {
+                let assessment = score.assessment;
+                let disposition = if alternative.stable_id == selected_alternative_id {
+                    CostDisposition::Retained
+                } else {
+                    CostDisposition::HigherCost
+                };
+                Some(explain_step(
+                    (|| -> Result<_, CompileError> {
+                        let subject = explain
+                            .subject(SubjectKind::Alternative, alternative.stable_id.as_str())?;
+                        Ok(explain.push_detail(
+                            RuleRef::builtin(MEASURED_FOLD_STEP_MODEL_KEY)?,
+                            vec![subject],
+                            ExplainEvent::CostAssessment {
+                                model: CostModelKey::new(MEASURED_FOLD_STEP_MODEL_KEY)?,
+                                basis: EvidenceBasis::Assumption,
+                                terms: vec![
+                                    CostTerm::new(
+                                        "saturated-parallel-fold-steps",
+                                        Quantity::Operations(
+                                            assessment.saturated_parallel_fold_steps,
+                                        ),
+                                    )?,
+                                    CostTerm::new(
+                                        "work-steps",
+                                        Quantity::Operations(assessment.work_steps),
+                                    )?,
+                                    CostTerm::new(
+                                        "span-steps",
+                                        Quantity::Operations(assessment.span_steps),
+                                    )?,
+                                    CostTerm::new(
+                                        "fold-steps",
+                                        Quantity::Operations(assessment.fold_steps),
+                                    )?,
+                                ],
+                                disposition,
+                            },
+                            vec![structural_record],
+                        )?)
+                    })(),
+                    ExplainStage::Costing,
+                    SubjectKind::Alternative,
+                    alternative.stable_id.as_str(),
+                    record_cause(structural_record),
+                )?)
+            }
+        };
+        // The selection row cites the measured record where one exists, so the
+        // reason the winner won is on the causal path from the verdict rather than
+        // beside it.
+        let cost_record = TerminalCause::from_record(measured_record.unwrap_or(structural_record));
         let outcome = if alternative.stable_id == selected_alternative_id {
             SelectionOutcome::Selected
         } else if alternatives

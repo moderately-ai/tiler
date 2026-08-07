@@ -3311,16 +3311,17 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
 /// parallelism the structural model does not measure, which is why this slice
 /// only enumerates.
 ///
-/// **Measurement, 2026-08-07 — that trade is quantified now, and preference is
-/// still unassigned for a stated reason rather than for want of evidence.**
-/// [The retained dispatch sweep] timed all three strategies over 92 shapes on
-/// the qualified Apple9 macOS host: where the row count alone cannot saturate
-/// the device a parallel plan wins by up to 50.7 times, and where it can the
-/// serial fold wins by up to 1.78 times. What the structural model does not
-/// measure is therefore worth a factor rather than a rounding. Acting on it
-/// needs a target profile to declare the machine quantity that contour turns on,
-/// which is a public boundary and an identity move held by
-/// `activate-measured-reduction-selection-from-a-target-cost-row`.
+/// **Measurement, 2026-08-07 — that trade is quantified, and preference is
+/// assigned now.** [The retained dispatch sweep] timed all three strategies over
+/// 92 shapes on the qualified Apple9 macOS host: where the row count alone cannot
+/// saturate the device a parallel plan wins by up to 50.7 times, and where it can
+/// the serial fold wins by up to 1.78 times. What the structural model does not
+/// measure is therefore worth a factor rather than a rounding, and
+/// `activate-measured-reduction-selection-from-a-target-cost-row` landed the
+/// machine quantity that contour turns on as a **measured cost row** on the
+/// qualified profile. [`crate::measured_cost`] consults it; this proposal is
+/// unchanged, which is the point — the strategy still arrives as a generator, a
+/// typed decline, and a structural cost, and contributes no comparison.
 ///
 /// [The retained dispatch sweep]:
 ///     ../../../spikes/program-planning/reduction-dispatch-crossover/README.md
@@ -3397,10 +3398,11 @@ fn propose_split(
 /// the 26 held-out shapes whose verdict is separated from the noise. Its one
 /// decision-bearing parameter is the fold steps the device retires at once: the
 /// tree wins exactly where a stage's critical path dominates its total work
-/// divided by that number. Selection is unchanged all the same, because the
-/// number has to be *declared by a target profile* to be consulted, which is a
-/// public boundary and an identity move held by
-/// `activate-measured-reduction-selection-from-a-target-cost-row`.
+/// divided by that number. That number is now *declared by the qualified target
+/// profile* as a measured cost row and consulted by [`crate::measured_cost`],
+/// under `activate-measured-reduction-selection-from-a-target-cost-row`. This
+/// proposal is unchanged all the same: the strategy contributes a generator, a
+/// typed decline, and a structural cost, and never a comparison.
 ///
 /// [The retained dispatch sweep]:
 ///     ../../../spikes/program-planning/reduction-dispatch-crossover/README.md

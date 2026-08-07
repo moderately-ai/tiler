@@ -1084,7 +1084,7 @@ fn compile_semantic_portfolio_target(
         }));
     }
     alternatives.sort_by(|left, right| left.identity.cmp(&right.identity));
-    let selected = select_global_non_dominated(&alternatives)?
+    let selected = select_global_non_dominated(&alternatives, original.target_profile())?
         .stable_id
         .clone();
     let portfolio = ProgramPortfolio {
@@ -1094,7 +1094,7 @@ fn compile_semantic_portfolio_target(
             selected_alternative_id: selected.clone(),
         },
     };
-    verify_global_portfolio(&portfolio, &expected)?;
+    verify_global_portfolio(&portfolio, &expected, original.target_profile())?;
     let mut selection = ExplainWriter::new(original)?;
     let request_record = record_request_verification(&mut selection)?;
     let mut cause = normalization.record(&mut selection, request_record)?;
@@ -1248,9 +1248,22 @@ fn record_algebraic_exploration(
     Ok(cause)
 }
 
-fn select_global_non_dominated(
-    alternatives: &[ProgramAlternative],
-) -> Result<&ProgramAlternative, CompileError> {
+/// Selects across every semantic candidate's alternatives for one target.
+///
+/// **The second of the two places reduction alternatives are compared, and it has
+/// to consult the same measured row as the first.** The per-target
+/// [`select_non_dominated`] chooses within one semantic candidate's portfolio;
+/// this chooses across the flattened set, and it prunes by the same structural
+/// dominance. Activating the measured term at only one of them would let the
+/// other re-prune the measured winner, because the plan the measurement prefers
+/// is exactly the structurally dominated one.
+///
+/// Without a declared row this is unchanged: the globally non-dominated set with
+/// canonical identity breaking the tie.
+fn select_global_non_dominated<'alternatives>(
+    alternatives: &'alternatives [ProgramAlternative],
+    profile: &crate::request::TargetProfile,
+) -> Result<&'alternatives ProgramAlternative, CompileError> {
     let identities = alternatives
         .iter()
         .map(|alternative| &alternative.identity)
@@ -1267,6 +1280,11 @@ fn select_global_non_dominated(
             rule: "semantic-portfolio-identity",
         }
         .into());
+    }
+    if let Some(scores) = measured_scores(alternatives, profile)
+        && let Some(preferred) = preferred_score(&scores)
+    {
+        return Ok(preferred.alternative);
     }
     alternatives
         .iter()
@@ -1293,6 +1311,7 @@ fn globally_non_dominated(
 fn verify_global_portfolio(
     portfolio: &ProgramPortfolio,
     expected: &[ExpectedCandidateOwner<'_>],
+    profile: &crate::request::TargetProfile,
 ) -> Result<(), CompileError> {
     let expected_identities = expected
         .iter()
@@ -1329,11 +1348,20 @@ fn verify_global_portfolio(
             .into());
         }
     }
-    verify_global_selection(portfolio)
+    verify_global_selection(portfolio, profile)
 }
 
-fn verify_global_selection(portfolio: &ProgramPortfolio) -> Result<(), CompileError> {
-    let selected = select_global_non_dominated(&portfolio.alternatives)?;
+/// Re-derives the semantic-portfolio selection from the request's own profile.
+///
+/// The profile is threaded from the verified request rather than read off an
+/// alternative's own scheduled regions, for the reason this module's verifier
+/// contract gives everywhere else: a verifier handed a value the candidate
+/// carries is comparing that value to itself and can never say no.
+fn verify_global_selection(
+    portfolio: &ProgramPortfolio,
+    profile: &crate::request::TargetProfile,
+) -> Result<(), CompileError> {
+    let selected = select_global_non_dominated(&portfolio.alternatives, profile)?;
     if portfolio.selection.policy_key != SELECTION_POLICY_KEY
         || portfolio.selection.selected_alternative_id != selected.stable_id
     {
@@ -1837,18 +1865,19 @@ fn compile_target_with_explain(
             record_cause(region_root),
         ));
     }
-    let selected_alternative_id = select_non_dominated(&plans.portfolio, &alternatives)
-        .map_err(|source| {
-            target_failure(
-                source,
-                ExplainStage::Selection,
-                "portfolio-selection",
-                SubjectKind::KernelProgram,
-                "portfolio",
-                record_cause(region_root),
-            )
-        })?
-        .to_owned();
+    let selected_alternative_id =
+        select_non_dominated(&plans.portfolio, &alternatives, verified.target_profile())
+            .map_err(|source| {
+                target_failure(
+                    source,
+                    ExplainStage::Selection,
+                    "portfolio-selection",
+                    SubjectKind::KernelProgram,
+                    "portfolio",
+                    record_cause(region_root),
+                )
+            })?
+            .to_owned();
     verify_portfolio(
         semantic,
         verified,
@@ -1862,6 +1891,7 @@ fn compile_target_with_explain(
         &alternatives,
         &selected_alternative_id,
         &alternative_causes,
+        verified.target_profile(),
         explain,
     )?;
     Ok(ProgramPortfolio {
@@ -2241,6 +2271,10 @@ use crate::component_cost::{
     ANALYTICAL_MODEL_KEY, CANONICAL_COMPONENTS, ComponentCost, CostComponent, CostUnit, CostValue,
     analytical_plan_cost,
 };
+use crate::measured_cost::{FoldStepAssessment, MEASURED_FOLD_STEP_MODEL_KEY};
+use crate::request::TargetProfile;
+use crate::target::TargetCostRowResolution;
+use tiler_ir::program::abi::AvailabilityPhase;
 
 mod planning;
 mod trace;
@@ -2249,8 +2283,8 @@ mod verify;
 #[cfg(test)]
 use planning::build_alternative;
 use planning::{
-    build_alternative_for_origin, build_plan_program, enumerate_complete_plans,
-    select_non_dominated,
+    build_alternative_for_origin, build_plan_program, enumerate_complete_plans, measured_scores,
+    preferred_score, select_non_dominated,
 };
 use trace::{
     note_infeasible_cover, record_alternative_explain, record_cost_and_selection,

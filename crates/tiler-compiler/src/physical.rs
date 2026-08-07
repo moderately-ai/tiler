@@ -2494,19 +2494,25 @@ impl WorkgroupTreeUnavailable {
 /// replaces it: the split's optimum moves from 256 partitions at four rows to the
 /// minimum split of 2 at 65,536 rows, so a cap fitted on six of its shapes costs
 /// 2.131x on the seventh. That partition is not separable from the saturation
-/// quantity the strategy contour turns on, which is
-/// `activate-measured-reduction-selection-from-a-target-cost-row`.
+/// quantity the strategy contour turns on, and
+/// `activate-measured-reduction-selection-from-a-target-cost-row` has now landed
+/// that quantity as a declared cost row — **which does not close this, and the
+/// distinction is the reason the ticket above stays open.** The row is consulted
+/// to choose *between* strategies, at whatever width each one already declares;
+/// choosing a width *within* a strategy from the same saturation quantity is a
+/// separate consumer of the same number and belongs to
+/// `calibrate-device-cost-models`.
 ///
 /// **Measurement, 2026-08-07 — the tree is known to be worth having, and
-/// *selection* still does not act on that.** [The retained dispatch sweep] timed
-/// all three strategies over 92 shapes on the same host: the serial fold is up to
-/// 50.7 times slower than the best parallel plan where the row count cannot
-/// saturate the device, and up to 1.78 times faster where it can. So the tree is
-/// not a speculative alternative any more. Which alternative is *chosen* is
-/// unchanged all the same, because acting on that contour needs a target profile
-/// to *declare* the machine quantity it turns on, which is a public boundary and
-/// an identity move — the same ticket above. This function calibrates the tree's
-/// width, not its odds of being picked.
+/// *selection* acts on that now.** [The retained dispatch sweep] timed all three
+/// strategies over 92 shapes on the same host: the serial fold is up to 50.7
+/// times slower than the best parallel plan where the row count cannot saturate
+/// the device, and up to 1.78 times faster where it can. The qualified profile
+/// declares the machine quantity that contour turns on as a measured cost row,
+/// and [`crate::measured_cost`] consults it — the same ticket above. **This
+/// function still calibrates the tree's width and not its odds of being picked**,
+/// and the separation matters: the width is chosen among what a target admits,
+/// and the preference is chosen among complete plans a target already admitted.
 ///
 /// [The retained partition calibration]:
 ///     ../../../spikes/program-planning/reduction-partition-calibration/README.md
@@ -2537,9 +2543,12 @@ pub(crate) fn single_workgroup_tree_region(
     // is threaded anyway because the alternative is *offered* — a region built
     // for a write the cover did not assign is refused at assembly and the
     // alternative disappears silently, which is the failure mode that has no
-    // diagnostic. What would make it observable is a selection that can prefer
-    // the tree, which is
-    // `activate-measured-reduction-selection-from-a-target-cost-row`.
+    // diagnostic. **Selection can prefer the tree now**, under
+    // `activate-measured-reduction-selection-from-a-target-cost-row`, so the
+    // observability this note describes arrives with the first *epilogue* chain
+    // whose fold the measured row prefers a tree for: preference is what was
+    // missing, and a cover assigning the tree a materialized write is what is
+    // still needed to reach the hard-coded role.
     let write_tensor = write.tensor();
     let contributor = contributor_tensor(subject);
     let contributors =

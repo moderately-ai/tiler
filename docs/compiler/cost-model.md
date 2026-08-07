@@ -186,6 +186,46 @@ of the selected plan versus the measured best under the same legal
 implementation set. This distinguishes search loss, model error, and illegal
 enumeration.
 
+### The first calibrated term to reach selection, and the shape it fixes
+
+**Measurement, 2026-08-07.** One term is calibrated and active.
+`spikes/program-planning/reduction-dispatch-crossover` fits a work-span model
+`sum over stages of ( encoder + max(work / P, depth) * step )` to a 92-cell
+reduction sweep on the qualified Apple9 macOS host, and the qualified target
+profile now declares `P` — the fold steps the device retires at once when
+saturated — as a **measured cost row**.
+[`activate-measured-reduction-selection-from-a-target-cost-row`](../../tickets/activate-measured-reduction-selection-from-a-target-cost-row.md)
+is the accepted decision; the
+[authority ledger](../research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)
+carries the row and its boundary, and the exact public spelling of the
+declaration pair is a reviewed draft boundary under ADR 0075.
+
+Five properties of that landing are the shape a later calibrated term is
+expected to take, and each is a constraint rather than a description:
+
+1. **A calibrated term is declared on the profile, never compiled in.** The row
+   travels with the measurement's own `MeasuredEnvironment` validity and cannot
+   widen into a portable claim. A second target declares its own row or declares
+   none.
+2. **Silence means no preference, never no plan.** A cost row is a kind distinct
+   from a `CapabilityAxis` precisely because an axis's silence is an `Unknown`
+   that refuses. A profile declaring no row selects and encodes bit-identically
+   to a build without the family, which is tested rather than intended.
+3. **Only the parameters that move a decision are declared.** The sweep's own
+   perturbation table measures `encoder` and `step` inert in the verdict, and
+   `encoder` prices dispatch count — already one of the structural model's four
+   exact dimensions. Declaring them would price one quantity under two
+   authorities without changing an answer.
+4. **A selector is not a latency estimate.** The retained model's magnitude
+   accuracy is far weaker than its decision accuracy, so the activated term
+   reports fold steps and is only ever compared. Nothing converts it to seconds,
+   and this document's requirement that explain output "must not claim a measured
+   winner" for cost-indistinguishable plans is what that restraint serves.
+5. **A calibrated term prefers; it does not prune and it does not gate.** It
+   never enters structural dominance, never carries a second model key into one,
+   and ranges only over plans hard feasibility has already admitted.
+   [Optimizer](optimizer.md) owns the consequence for what selection *is*.
+
 ## Explain output
 
 Every selected plan should report the dominant estimated terms and rejected

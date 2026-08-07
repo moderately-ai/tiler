@@ -30,6 +30,7 @@ mod hot_path;
 mod index_discharge;
 pub mod legality;
 mod lowering;
+mod measured_cost;
 mod normalize;
 mod physical;
 mod pipeline;

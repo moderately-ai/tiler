@@ -196,6 +196,15 @@ struct LedgerRows {
     /// different fact from one that names a realization nobody asked about, and
     /// the two produce different typed rejections.
     synchronization_support: SynchronizationSupport,
+    /// Fold steps this device retires at once when its launch saturates it.
+    ///
+    /// A **cost row**, and the only one this ledger carries. It is not a
+    /// capability: nothing reads it for feasibility, and a profile omitting it
+    /// states no preference rather than no plan. `Option` for exactly that
+    /// reason — the mutation cases must be able to remove the row and observe a
+    /// profile that still compiles every program it compiled before, selecting
+    /// what it selected before.
+    saturated_parallel_fold_steps: Option<u64>,
     facts: MetalTargetFacts,
     emission: MetalEmissionRealization,
     numerical: NumericalRealization,
@@ -290,6 +299,42 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
         ordering: MemoryOrdering::AcquireRelease,
     },
     synchronization_support: SynchronizationSupport::Realized,
+    // "Saturated parallel fold steps — 1,056, measured".
+    //
+    // **Measurement, 2026-08-07** —
+    // `spikes/program-planning/reduction-dispatch-crossover`, retained at
+    // `results/2026-08-07-apple-m4-max-macos27.0-26A5388g/`, on a host matching
+    // this ledger's offline and execution rows in every field. The sweep timed
+    // all three reduction strategies over a 92-cell matrix, 276 dispatched
+    // alternatives, and fitted a three-parameter work-span model
+    // `sum over stages of ( encoder + max(work / P, depth) * step )` on the
+    // perfect-square contributor counts. `P` fits at `1.056e3` and is the number
+    // declared here: the fold steps the device retires at once when saturated.
+    //
+    // **This is a cost row and deliberately not a capability axis.** Every
+    // `CapabilityAxis` is a hard bound whose silence is an `Unknown` that never
+    // reaches an executable frontier, and
+    // `docs/research/program-planning/flash-class-capability-set.md` already
+    // eliminated that shape for a bandwidth number. Declared as an axis this row
+    // would make silence render a profile unexecutable for a quantity no
+    // feasibility predicate reads — the wrong failure direction. It is declared
+    // through the same `TargetCompileProfileMeasurementSource` the grid-axis,
+    // dispatchability, and numerical rows carry, so its validity stays
+    // `MeasuredEnvironment` and cannot widen into a portable claim.
+    //
+    // **What the measurement establishes, and what it does not.** The model
+    // reproduces the measured verdict on 24 of the 26 held-out cells whose
+    // serial-or-parallel verdict is separated, worst measured penalty 1.81x, and
+    // the sweep's own perturbation table shows that *only* `P` moves a decision:
+    // scaling `encoder` by twenty or `step` by a tenth leaves every predicted
+    // winner unchanged, while scaling `P` by a quarter drops agreement to 20 of
+    // 26 and the worst penalty to 3.04x. **`P` is determined only to about a
+    // factor of four** — quadrupling it leaves fit-set agreement where it was and
+    // *improves* the held-out worst penalty to 1.20x — so this is a contour
+    // position rather than a tight constant, and it is a quantity of this host
+    // row alone. Another Apple family, OS row, dtype, or device declares its own
+    // or declares none.
+    saturated_parallel_fold_steps: Some(1_056),
     // "Metal target facts, and which of them project". The deployment minimum is
     // 26.0 and the standard MSL 4.0 because `probe.fixed_flags -std=metal4.0`
     // and `requested_target air64-apple-macos26.0` are the inputs the retained
@@ -692,6 +737,23 @@ impl BoundMetalCompileDeclaration {
             rows.synchronization_support,
             &normative.msl_barrier,
         )?;
+
+        // ---- the one cost row, measured -------------------------------------
+        // Not a capability, and the section is separate so a reader cannot mistake
+        // it for one: the rows above are hard bounds a feasibility predicate
+        // reads, and this one is a preference physical selection consults. A
+        // profile omitting it states *no preference* and selects exactly as it did
+        // before the row existed, which is why the field is an `Option` and why
+        // the descriptor section it encodes into is written only when it holds a
+        // row.
+        //
+        // The same measured source, not a second one: the dispatch sweep ran on
+        // exactly the offline and execution environments the rows above were taken
+        // on, so a second source would claim a second population that does not
+        // exist.
+        if let Some(steps) = rows.saturated_parallel_fold_steps {
+            builder.declare_measured_saturated_parallel_fold_steps(steps, measured.clone())?;
+        }
 
         // ---- dispatchability, measured and exact ----------------------------
         // The retained run dispatched `f32` compute kernels on the execution
@@ -1172,8 +1234,8 @@ mod tests {
     use tiler_compiler::target::{
         BackendArithmeticLicence, DTypeDispatchability, DTypeDispatchabilityResolution,
         EvaluationOrderResolution, IndexArithmeticSupport, ScalarArithmetic, ScalarSupport,
-        SynchronizationSupport, TargetCompilerRoleReference, TargetFactAuthority,
-        TargetFactProducerIdentity, TargetFactSource, TargetFactValidityScope,
+        SynchronizationSupport, TargetCompilerRoleReference, TargetCostRowResolution,
+        TargetFactAuthority, TargetFactProducerIdentity, TargetFactSource, TargetFactValidityScope,
         TargetNormativeReferenceIdentity, TargetNumericalEvidenceBasis, TargetProfileBuildError,
         TargetProfileBuilder, TargetProfileKey, TargetRequest,
     };
@@ -1977,10 +2039,74 @@ mod tests {
         // identity and normative-reference identity — while the measured source
         // the row joined was already present for the dispatchability and
         // numerical rows and cost nothing to share.
+        //
+        // It grew to **2,099** when the measured saturated-parallel-fold-step
+        // cost row landed, and the delta is encoding-predicted to the byte rather
+        // than observed: the new section writes its length-prefixed 33-byte domain
+        // separator (41), a row count (8), the length-prefixed 34-byte row key
+        // (42), a fixed-width `u64` value (8), and a one-byte compact source
+        // index — 100 bytes exactly. The source table does not grow, because the
+        // row shares the measured source the grid-axis, dispatchability, and
+        // numerical rows already carry. **That the arithmetic closes is the
+        // evidence no layout moved**, not an assertion beside one.
         assert_eq!(
             descriptor.len(),
-            1_999,
+            2_099,
             "the canonical descriptor length moved; update the authority ledger with it",
+        );
+    }
+
+    /// The declared profile states the measured cost row, and states it as a
+    /// cost row rather than as a capability.
+    ///
+    /// **This is what keeps `tiler-compiler`'s own tests honest.** That crate
+    /// cannot depend on this one, so `pipeline::tests`' fixtures restate the
+    /// fitted 1,056 as a constant; this asserts the declaration carries the same
+    /// number, so the two cannot drift apart silently.
+    ///
+    /// The descriptor assertion beside it is the one that separates the two
+    /// kinds: a capability axis encodes into the quantitative section under its
+    /// axis key, and this row encodes into a section of its own behind its own
+    /// domain separator. A reader greps for the separator, and a row that had
+    /// been declared as an axis would not carry one.
+    #[test]
+    fn the_declared_profile_states_the_measured_cost_row() {
+        let declaration = declared();
+        let profile = declaration.profile();
+        assert_eq!(
+            profile.saturated_parallel_fold_steps(AvailabilityPhase::CompileProfile),
+            TargetCostRowResolution::Declared { value: 1_056 },
+            "the declared saturated-fold-step row moved off the retained fit",
+        );
+        let text = String::from_utf8_lossy(profile.canonical_descriptor());
+        assert!(
+            text.contains("tiler.target-profile.cost-row.v1"),
+            "the cost-row family is absent from the descriptor",
+        );
+        assert!(
+            text.contains("cost.saturated-parallel-fold-steps"),
+            "the descriptor does not name the declared row",
+        );
+
+        // Removing the row leaves a profile that resolves it `Unknown` — no
+        // preference, never a refusal — and whose descriptor is exactly the
+        // hundred bytes shorter that the conditional section accounts for. This is
+        // the silence rule at the identity level: a target that says nothing about
+        // cost encodes as though the family did not exist.
+        let mut silent = FIRST_MACOS_APPLE9;
+        silent.saturated_parallel_fold_steps = None;
+        let silent = BoundMetalCompileDeclaration::declare(&silent)
+            .expect("removing a cost row cannot make the declaration invalid");
+        assert_eq!(
+            silent
+                .profile()
+                .saturated_parallel_fold_steps(AvailabilityPhase::CompileProfile),
+            TargetCostRowResolution::Unknown,
+        );
+        assert_eq!(
+            silent.profile().canonical_descriptor().len(),
+            profile.canonical_descriptor().len() - 100,
+            "the cost-row section is not the hundred bytes its encoding predicts",
         );
     }
 
