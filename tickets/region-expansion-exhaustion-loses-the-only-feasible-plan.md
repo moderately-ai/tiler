@@ -1,7 +1,7 @@
 ---
 id: region-expansion-exhaustion-loses-the-only-feasible-plan
 title: Region expansion exhaustion loses the only feasible plan
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [widen-the-identity-growth-ladder-to-the-governed-operation-budget, refuse-nothing-legal-on-the-explain-detail-ceiling]
@@ -63,7 +63,7 @@ Sizing `region_expansions` is not this ticket's to do unilaterally: every budget
 
 ## Outcome — 2026-08-07
 
-**The first reading is right in both its arms, and the second reading's residue is a narrower correction than it looked. All three landed.** Commit `PENDING`.
+**The first reading is right in both its arms, and the second reading's residue is a narrower correction than it looked. All three landed.** Commit `71ec71bc`.
 
 ### The derivation
 
