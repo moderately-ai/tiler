@@ -72,4 +72,8 @@ Both perturbations reverted; the tree was diffed against the pre-perturbation pa
 
 ### Checks
 
-`cargo fmt --check`; `cargo check -p tiler-compiler --all-targets`; `cargo clippy -p tiler-compiler --all-targets -- -D warnings`; `cargo nextest run -p tiler-compiler` **718 passed, 1 skipped**; `cargo nextest run --workspace`; `cargo test --workspace --doc`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-compiler`; `tkt lint`; `git diff --check`; `tkt guard` against `452bc91c`; `make full` on the branch. Results in the worker report.
+`cargo fmt --check`; `cargo check -p tiler-compiler --all-targets`; `cargo clippy -p tiler-compiler --all-targets -- -D warnings`; `cargo nextest run -p tiler-compiler` **718 passed, 1 skipped**; `cargo nextest run --workspace`; `cargo test --workspace --doc`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-compiler`; `tkt lint`; `git diff --check`; `tkt guard` against `452bc91c` — `conflict: false`, `under_declared: []`, the three changed files and no others.
+
+`make full` green on `6097ac77ea04eacfe3efa9ff9cb4513af039b52b`, exit 0: `cargo nextest run --workspace --locked` **2889 passed, 7 skipped**; `cargo test --workspace --doc --locked` green including the ADR 0051 compile-fail evidence; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`; the release suite over `tiler-reference` and `tiler-compiler` **1003 passed, 3 skipped**; `ticketsplease lint`; `shellcheck`. No identity pin, golden, or fixture count moved — the change is a visibility widening and a call, and it computes the same predicate.
+
+This paragraph is the only delta above that gate, and it is `tickets/` alone, so the green carries; `tkt lint` re-run clean on the carrying commit.
