@@ -1,7 +1,7 @@
 ---
 id: accept-the-symbolic-index-coefficient-surface
 title: Accept the symbolic index coefficient surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-symbolic-index-expression-coefficients, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -68,3 +68,27 @@ The producing ticket's Outcome carries the four refusals each watched failing an
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the surface is in use inside `tiler-ir` and labelled a draft at each definition.
+
+## Accepted — 2026-08-07
+
+**Tom accepted this surface on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator, **conditional on the deferred work being captured on the board rather than left in prose.** It is: see the release below, verified `todo` and dispatchable at acceptance rather than asserted.
+
+### What is accepted
+
+The one widening — `LinearTermRef::coefficient` returning `&'a SourcedIndexInteger` — together with `SourcedIndexInteger`, its accessors and conversions, `IndexRegionBuilder::sourced_linear_combination`, and `tiler_reference::UnsupportedRegionFeature::SymbolicIndexCoefficient`.
+
+**The narrower-than-drafted exclusion is accepted as the shape, not tolerated as a gap.** `IndexExprView::LinearCombination { constant }` stays `&'a IndexInteger` and a symbolic addend rides as the term `symbol * 1`. The ground stands: literal constants reached through *any* operand fold into the constant slot, so a slot admitting either kind would have nowhere to fold them, and `S + 2*3` and `S + 6*1` would become two regions for one program.
+
+**The normalization decision is accepted with it.** A symbolic coefficient is never merged with another term, dropped at a pinned zero, distributed over a nested sum, or unwrapped at a pinned one, because performing any of those *when* the environment happens to pin a value would make canonicalization a function of the binding — collapsing graph identity into specialized identity, the distinction the sourced boundary exists to keep. The accepted cost is that two symbolic terms over one operand both appear and `S * x` remains a term where the environment fixes `S == 1`.
+
+`ExtentSources::admit` rather than `proves_positive` remains the admission predicate, since a coefficient may be any sign.
+
+### The identity step is accepted as landed
+
+`tiler.index-region.v9` → `v10`, with five law-chain pins and the standard Metal artifact identity, cache subject and byte count recomputed. Those three were recomputed a second time **on the merged tree** at integration, because a sibling branch moved the same pins the same day and neither branch's values survived — the arithmetic closed exactly at 64,710 + 12 − 180 = 64,542, which is the evidence no layout moved on either side.
+
+### The condition, discharged
+
+[`bound-a-symbolic-index-coefficient-interval-from-its-declared-extent`](bound-a-symbolic-index-coefficient-interval-from-its-declared-extent.md) holds the one capability this surface declined: interval propagation returns `None` for a symbolic coefficient where `ExtentSources::interval` could soundly bound it, and the enumeration fallback could use `determined()` exactly as `plan_divisors` already does for symbolic *divisors*. It was filed at integration, reads `todo`, and is dependency-ready — confirmed against `tkt ready` at acceptance rather than assumed.
+
+That ticket carries the reason the decline is a position rather than an oversight: deriving a bound from the environment makes an expression's cached interval, and therefore *which accesses verify*, a function of the binding — the same line normalization declines to cross. It also carries the asymmetry that makes it worth asking at all, since the divisor path already reaches `determined()`, so the answer should cover divisors and coefficients together rather than only the half that prompted it.
