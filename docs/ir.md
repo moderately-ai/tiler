@@ -1031,15 +1031,9 @@ definition projection separate from provider-attributed admission provenance.
 It is scalar-authority evidence only: it does not authenticate access maps or
 prove semantic lowering equivalence.
 
-Index expressions should be stored in an interned arena/DAG so repeated
-division, modulo, and coordinate arithmetic can be shared and simplified.
-They use exact signed mathematical-integer semantics for canonicalization.
-The bounded initial vocabulary admits addition/negation, multiplication by a
-parameter-only expression, and Euclidean floor division/modulo by a proven-
-positive parameter-only expression. Iteration-by-iteration multiplication and
-tensor-data-derived indices are rejected. Passes classify maps as affine,
-constant-divisor quasi-affine, semi-affine, or data-dependent and may
-conservatively decline classes they cannot analyze.
+Index expressions should be stored in an interned arena/DAG so repeated division, modulo, and coordinate arithmetic can be shared and simplified. They use exact signed mathematical-integer semantics for canonicalization. **This paragraph states an admitted vocabulary, and the implemented one is narrower; the paragraph after it says by how much.** The bounded initial vocabulary admits addition/negation, multiplication by a parameter-only expression, and Euclidean floor division/modulo by a proven-positive parameter-only expression. Iteration-by-iteration multiplication and tensor-data-derived indices are rejected. Passes classify maps as affine, constant-divisor quasi-affine, semi-affine, or data-dependent and may conservatively decline classes they cannot analyze.
+
+**Implemented extent, 2026-08-07 — a symbol reaches an index *expression* at exactly one position, and it is the divisor.** `IndexRegionBuilder::floor_div` and `::modulo` take a `SourcedExtent` divisor, admit it through `ExtentSources::proves_positive` — which reads the environment's semantic input constraints and never its variant guards, because `x floordiv 0` has no meaning under any plan — and classify the result `IndexExprClass::SemiAffine`. Nothing else in an expression carries a symbol: `IndexRegionBuilder::linear_combination` takes an `IndexInteger` constant and `IndexInteger` coefficients, so neither a symbolic addend nor a symbolic coefficient is expressible, and "multiplication by a parameter-only expression" above is implemented only in its exact-integer case. The implemented divisor is also narrower than "parameter-only expression" reads: a `SourcedExtent` is one literal or one declared symbol and deliberately not an expression tree, because a composed extent is a relation in the environment's constraint set — where it can be decided — rather than arithmetic the index layer re-derives. A symbol does reach a region at two further positions, but neither is an expression: a domain dimension's extent and a tensor boundary's axis are `SourcedExtent` too. The divisor half is an accepted public boundary; the coefficient half is unimplemented and tracked by [`admit-symbolic-index-expression-coefficients`](../tickets/admit-symbolic-index-expression-coefficients.md), and the separate question of a live symbolic extent reaching a compiled payload's own address and loop arithmetic is [`admit-live-extent-operands-to-payload-indexing`](../tickets/admit-live-extent-operands-to-payload-indexing.md).
 
 For a contiguous NHWC physical view, address derivation after logical access is:
 
@@ -1117,11 +1111,7 @@ scalar model is complete:
   ownership, raw semantic handles, dead builder history, semantic-region
   identity, proof caches, provider addresses, and target choices.
 
-Static dimensions and tensor boundaries expose optional `static_extent()` and
-`static_shape()` facts rather than unconditional universal extents/shapes.
-They return `Some` throughout this bounded profile. A future symbolic profile
-can return `None` and expose its `ShapeEnv` expression through an additive
-borrowed view instead of changing the meaning of an existing accessor.
+**Superseded 2026-07-31 by what the symbolic work actually landed, and the replacement is stronger than the reservation.** This profile reserved a pair of optional accessors — `static_extent()` and `static_shape()`, `Some` throughout the static profile and `None` under a later symbolic one — so that admitting symbols would not change an existing accessor's meaning. The accepted symbolic boundary replaced the pair rather than widening it: `DomainDimensionRef::extent` returns `&SourcedExtent` and `TensorRef::shape` returns `&SourcedShape`, one total view each. The pair's invariant — exactly one of the two accessors answers `Some` — is unenforceable, because a third source kind makes both `None` for a real dimension and every consumer that had encoded "not static, therefore symbolic" is then silently wrong. A total view makes a new source kind a build error at every exhaustive match instead. A consumer that only handles literals reads `SourcedExtent::as_static` or `SourcedShape::as_static` once and refuses the rest with its own typed reason.
 
 The structural verifier proves structural well-formedness, lexical reduction closure, and ordinary write ownership, and it classifies each logical read-bounds atom as discharged or residual. It does not claim semantic sourceability or operation equivalence. A relation such as `y[i] = x[0]` can be structurally valid and in bounds while being an incorrect lowering of semantic `y[i] = x[i]`; later legality evidence must reject that mismatch.
 
@@ -1152,16 +1142,7 @@ implicit relaxation. The first registered executable scalar capability set is
 strict `f32`; other resolved dtypes reject through missing checked capability,
 not through a closed scalar representation.
 
-Completing this bounded static-extent profile will not complete the symbolic
-contract above. `ShapeEnv`-backed root bindings landed with
-[`implement-shapeenv-index-bindings`](../tickets/implement-shapeenv-index-bindings.md),
-which split the rest. Semi-affine symbolic coefficients and divisors are tracked
-by
-[`admit-semi-affine-index-expression-class`](../tickets/admit-semi-affine-index-expression-class.md);
-typed index-domain predicates and durable solver evidence by
-[`implement-index-domain-predicates`](../tickets/implement-index-domain-predicates.md).
-Unsupported dynamic cases must reject rather than entering an index-local
-symbol or untyped predicate escape hatch.
+Completing this bounded static-extent profile will not complete the symbolic contract above, and most of what it deferred has since landed beyond it. `ShapeEnv`-backed root bindings landed with [`implement-shapeenv-index-bindings`](../tickets/implement-shapeenv-index-bindings.md); symbolic tensor boundaries with [`bind-shapeenv-sources-into-tensor-boundaries-and-coefficients`](../tickets/bind-shapeenv-sources-into-tensor-boundaries-and-coefficients.md); the divisor-positivity query with [`admit-semi-affine-index-expression-class`](../tickets/admit-semi-affine-index-expression-class.md); the proven-positive symbolic divisor, `IndexExprClass::SemiAffine`, and the one public sourced-extent vocabulary with [`promote-the-symbolic-index-profile-to-a-public-boundary`](../tickets/promote-the-symbolic-index-profile-to-a-public-boundary.md), accepted 2026-07-31; typed index-domain predicates and durable solver evidence with [`implement-index-domain-predicates`](../tickets/implement-index-domain-predicates.md). The symbolic **coefficient** is the one part of the semi-affine pair that did not land — the promotion delivered the divisor half, and the split ticket that had carried both was superseded into it — so it is tracked by [`admit-symbolic-index-expression-coefficients`](../tickets/admit-symbolic-index-expression-coefficients.md). Unsupported dynamic cases must reject rather than entering an index-local symbol or untyped predicate escape hatch.
 
 ### Physical view and address verifier
 
