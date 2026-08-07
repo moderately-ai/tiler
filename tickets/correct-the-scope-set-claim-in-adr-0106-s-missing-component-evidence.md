@@ -1,7 +1,7 @@
 ---
 id: correct-the-scope-set-claim-in-adr-0106-s-missing-component-evidence
 title: Correct the scope-set claim in ADR 0106's missing-component evidence
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [survey-what-belongs-in-the-conformance-crate, record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, conformance, correction]
+claimed_from: todo
+assignee: agent-adr-fix
+lease_expires_at: 1786128633
 ---
 ## User-visible outcome
 
