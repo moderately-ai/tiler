@@ -1,7 +1,7 @@
 ---
 id: region-expansion-exhaustion-loses-the-only-feasible-plan
 title: Region expansion exhaustion loses the only feasible plan
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [widen-the-identity-growth-ladder-to-the-governed-operation-budget, refuse-nothing-legal-on-the-explain-detail-ceiling]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, region-search, budgets, compiler]
+claimed_from: todo
+assignee: agent-region-expansion
+lease_expires_at: 1786077467
 ---
 ## User-visible outcome
 
