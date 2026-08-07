@@ -1,7 +1,7 @@
 ---
 id: carry-the-widened-ladders-corrections-into-the-four-records
 title: Carry the widened ladder's corrections into the four records it could not edit
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [widen-the-identity-growth-ladder-to-the-governed-operation-budget]
@@ -9,6 +9,9 @@ scopes: [research/artifacts, contracts/decisions, contracts/artifacts, contracts
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, measurement]
+claimed_from: todo
+assignee: agent-orch-docs
+lease_expires_at: 1786072962
 ---
 ## User-visible outcome
 
