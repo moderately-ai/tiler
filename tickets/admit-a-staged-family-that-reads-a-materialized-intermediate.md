@@ -1,7 +1,7 @@
 ---
 id: admit-a-staged-family-that-reads-a-materialized-intermediate
 title: Admit a staged family that reads a materialized intermediate
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages, admit-a-scheduled-region-for-a-staged-elementary-family]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner]
-claimed_from: todo
-assignee: agent-staged-family
-lease_expires_at: 1786136376
 ---
 ## User-visible outcome
 
@@ -46,3 +43,33 @@ A staged family reading one materialized intermediate is recognized, the operand
 **One further wall is named because the ticket's own headline example runs into it.** `rms_norm(matmul(a, b), w)` spelled with a third declared input for the weight is refused by `normalize_contraction`'s `input_count() != 2` rule under `input-arity` — the *contraction* recognizer's declared-arity wall, untouched here and owned by [`name-the-contraction-operand-arity-wall-and-separate-its-rule`](name-the-contraction-operand-arity-wall-and-separate-its-rule.md). The two-declared-input spelling `rms_norm(matmul(a, b), a)` exercises the same widening and is what the tests use.
 
 **Superseded rather than stale:** "a recognized staged family carries no read list at all" was true at this ticket's base and is what the first resolution above changed.
+
+## Outcome — delivered 2026-08-07 at `13cb0664`
+
+The operand's boundary role is now the **recognizer's**, chosen over deriving it from the cover: an operand supplied by no declared input and no recognizable producer is a property of the *program*, and a stage discovering it later could only report it as a cover it failed to assemble. `EpilogueRead` became `BoundaryRead`, so one vocabulary serves the epilogue's read list and the staged operand run and `tensor()` stays the single statement of the mapping onto `TensorRole`.
+
+**One change the ticket did not anticipate, and it is forced.** `NormalizedStaged` needed a `producer`, because without it the producing occurrence is claimed by no walk and `check_output_cover` refuses under `operation-set` — **watched failing rather than argued**. It ripples through eight accessors, including `producer_shape` becoming `producer_shape_for(members)`, since such an output holds two shapes whose regions a cover places separately.
+
+The staged ownership predicate stays **one authority**: `owns_stage_members` is the single site both the recognizer and the physical speller read, preserving a landed invariant rather than re-splitting it.
+
+The subject stepped `staged-family.v1 → v2`, and the step is forced rather than chosen: an operand entry used to open with its ordinal and now opens with the role tag, so per-tag injectivity does not close. The enclosing `request-subject.v5` domain does not step.
+
+### The finding worth keeping: a green test that had stopped testing its subject
+
+Perturbing the subject encoding to check the separation test could fail produced a **pass** — the producer field alone was separating the two forgeries, so the field under test was never exercised. The worker rewrote it so each forgery moves exactly one field, then observed both perturbations failing. That is "a verdict is only as good as the check's ability to say no" in its most invisible form, and it was found only because every refusal was watched failing rather than assumed.
+
+Seven perturbations in total, each restored, including one that reproduces exactly where the wall moved.
+
+### A conflation in this ticket's own Facts, repaired in four other places too
+
+The ticket treated one refusal as a single guard. It is **two**: `record_leaf` (one staged value read twice) is the ordinal rule and already had an owner; `plan_elementwise`'s guard is a **chain-depth** rule — each region reads one intermediate — and had none. The same conflation had propagated into four in-crate doc comments, all corrected. The ticket's headline spelling also runs into the *contraction* recognizer's declared-arity wall rather than this one, so the tests use the two-declared-input spelling.
+
+### What still refuses, asserted rather than implied
+
+Five shapes, each with its rule named and its owner identified — and the physical boundary is a **checked assertion** with a control asserted beside it, not prose. Two were unowned and are filed: [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md) and [`admit-a-scheduled-region-that-reads-two-materialization-edges`](admit-a-scheduled-region-that-reads-two-materialization-edges.md).
+
+**No pin moved**, verified by running both pin tests rather than inferring from a green suite: no pinned identity encodes a staged subject. **No public surface** — `request` and `physical` are private modules and everything added is `pub(crate)`.
+
+Three things deliberately not done, each with its reason: no `tiler-ir` edit (the full admission needs an ordinal on `TensorRole::Intermediate`, a public boundary and a `tiler.schedule.v5` identity step — filed, not attempted); no widening of the contraction arity rule (a separate wall with an existing owner); and no pointwise producer admitted for a staged operand, which would be a second disagreeing account of what a materialization edge is and would materialize a value the caller never asked for.
+
+`make full` exit 0 on the branch and again on the merged tree — 3,054 workspace, 1,068 release.
