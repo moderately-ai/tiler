@@ -88,3 +88,67 @@ Required Delivery demands "runtime binding, on the same terms every other family
 ### Struck: the Reconsideration trigger
 
 It cites `design-model-ingestion-and-complete-execution` as still owing the product-boundary decision. That ticket is `done` and **made the decision**, under the heading "The input boundary: the gather stays inside" — `complete-model-ingestion-and-execution.md:103`, `:105` ("It is made here."), with IN-A surviving at `:109` and IN-B eliminated at `:110`, confirmed by `docs/roadmap.md:408`. As written the trigger can fire only by superseding an accepted decision. Restate it as settled.
+
+## Worker Fact audit, 2026-08-07, at base `411e09bf`
+
+Every source this ticket names was re-read in full at the base commit before any edit. The audit covers the original body **and** the 2026-08-07 repair block above, because a repair block is a claim like any other. Verdicts below are per-Fact; where a claim is false or imprecise the correction is stated here rather than by rewriting the claim out of existence.
+
+### The original body's Facts
+
+| Claim | Verdict | Evidence |
+| --- | --- | --- |
+| The admitted access language rejects a tensor-data-derived index by construction (`:24`) | **Verified, with one omission** | `docs/ir.md:1036` reads verbatim "Iteration-by-iteration multiplication and tensor-data-derived indices are rejected." See the qualification below. |
+| The corpus tracks it as absent, with no owner (`:26`) | **False** | Already struck above; the strike is itself re-verified below. |
+| The workload evidence — one gather per forward pass, `[T]` into `[151936, 1024]` (`:28`) | **Verified** | `transformer-operation-and-shape-surface.md:52` (`\| Indirect gather \| 1 \| the tied embedding lookup \|`), `:97` and `:111` (`[151936, 1024]`; vocabulary 151,936 static), `:116` (`1 ≤ T ≤ 8192` for B1; `T = 10` then `T = 1` for C1). |
+| The same matrix is also a contraction operand (`:28`) | **Verified** | `first-metal-lm-workload.md:111` (`\| vocab_size \| 151936 \| tie_word_embeddings \| true \|`) and `:143` ("the inventory contains no `lm_head.weight`"). |
+| One gather against 253 contractions (`:30`, Inference) | **Verified** | `transformer-operation-and-shape-surface.md:44` and `:55`. |
+| Non-goals: `docs/ir.md` holds data-dependent output shapes and device-produced launch dimensions unsupported (`:45`) | **Verified** | `docs/ir.md:1085-1086`: "Data-dependent output shapes and device-produced/indirect launch dimensions are initially unsupported." |
+| The Reconsideration trigger (`:49`) | **False** | Already struck above; re-verified below. |
+
+**The omission in the surviving index-vocabulary Fact, which does not overturn it.** `docs/ir.md:1036` now opens the sentence the ticket quotes with a caveat the quotation drops: "**This paragraph states an admitted vocabulary, and the implemented one is narrower; the paragraph after it says by how much.**" The Fact's conclusion is unaffected — a narrower implementation rejects at least as much — but a reader who follows the citation finds a paragraph making a weaker claim than the ticket's framing implies. The *implemented* rejection is stronger and is the load-bearing one; it is stated as its own Fact below.
+
+**Fact — the implemented index layer cannot express the access, and this is a structural fact rather than a vocabulary choice.** Read in full at this base: `crates/tiler-ir/src/index/model.rs:105` declares `IndexNode` with exactly five variants — `Constant`, `Dimension`, `LinearCombination`, `FloorDiv`, `Modulo` — and every operand of every one is a literal, a domain-dimension ordinal, or a `SourcedExtent`/`SourcedIndexInteger`, each of which is `Static`/`Literal` or one declared `ShapeSymbol`. No variant reads tensor data. `IndexExprClass` at `model.rs:58` has three variants — `Affine`, `QuasiAffine`, `SemiAffine` — and **no `DataDependent`**; its `join` at `:83` is an exhaustive match written so that adding a class is a build error. Decisively, `AccessData` at `model.rs:138` carries `tensor: u32` — *one* tensor ordinal — so an access cannot name a second tensor as a coordinate source at all. `LogicalAccess` at `crates/tiler-ir/src/schedule/model.rs:244` carries seven variants and none is data-dependent. The gap is therefore not a missing `IndexNode` variant; it is that the access record has no place to put a second tensor.
+
+### The repair block's own claims
+
+| Claim | Verdict | Evidence |
+| --- | --- | --- |
+| The Q-SHAPE-007 trigger quote exists nowhere but this ticket | **Verified** | `grep -rn "enters an active product profile" docs tickets crates` returns only this ticket's own two lines. `docs/open-questions.md:281` reads "Trigger, for the half that has **not** fired: scatter." |
+| "Gather and scatter stay out until Q-SHAPE-007 triggers" no longer exists in `docs/roadmap.md` | **Verified** | `grep -rn "Gather and scatter stay out" docs` returns no `docs/roadmap.md` hit; the only hits are two tickets recording the correction. `docs/roadmap.md:479` carries the quoted opposite verbatim. |
+| Gather appears at roadmap `:353`, `:408`, `:417`, `:479`, `:481` — five sites | **Verified** | `grep -n -i gather docs/roadmap.md` returns exactly those five. |
+| Two rungs are recorded | **Verified** | `transformer-operation-and-shape-surface.md:67` ("R1; not on the matrix as its own row") and `:87` ("The indirect gather is still R1 and still has no row of its own"); `operation-family-delivery-graph.md:97` carries `\| **O-08** Indirect gather \| F-34 \| owed; live ticket \| owed \| owed \| owed \|`. |
+| `docs/roadmap.md:437` makes the delivery graph the authority for each family's next step | **Verified** | Verbatim at `:437`. |
+| ADR 0046 `:48-49` and `:73-74` | **Verified, and materially incomplete** | See *The ADR obligation is smaller than the repair block states* below. |
+| Runtime binding is not this ticket's | **Verified** | `admit-a-storage-carrier-for-integer-program-inputs` is `todo`, declares `implementation/ir, implementation/artifact, implementation/frontend, contracts/artifacts`, and lists this ticket among its `dependencies`. |
+| `implementation/conformance` deliberately not added; follow the peers | **Verified** | The slice landing `00d36766` put its evidence in `crates/tiler-reference/tests/slice_conformance.rs` and touched no conformance crate. |
+| The struck conformance item, and the 622,329,856-byte figure | **Verified** | `complete-model-ingestion-and-execution.md:68` verbatim, including "(0.5796 GiB)". |
+| The struck Reconsideration trigger | **Verified** | Heading at `:103`, "It is made here." at `:105`, IN-A `Yes` at `:109`, IN-B `No` at `:110`; `design-model-ingestion-and-complete-execution` is `status: done`. |
+
+#### Three claims in the repair block are themselves wrong, and are corrected here
+
+**1. `complete-model-ingestion-and-execution.md:322` is `:324`.** The repair block corrected the original body's `:305` to `:322`; the second link to this ticket in that file is at **`:324`**, inside the delivery-ticket table. `grep -rn "admit-an-indirect-gather-family-for-tied-embedding-lookup" docs` returns `:105` and `:324` for that file and nothing at `:322`. The repair block replaced a two-line drift with a two-line drift in the other direction.
+
+**2. "Six records, not five" double-counts, and contradicts a scope the same repair block added.** `operation-family-delivery-graph.md:308` is the F-34 join row `| F-34 gather and indexed read | O-08 | *(none)* |` — it contains neither this ticket's filename nor a link, so it is not a link site. More importantly, the original body's claim at `:20` is about records *outside this ticket's editable scopes*, and the same repair block added **`research/semantic-graph`** as a scope, which makes `operation-family-delivery-graph.md` editable here. The count of records outside editable scopes is therefore **five, unchanged** — the delivery graph moved *into* scope rather than onto the list. The five are `transformer-operation-and-shape-surface.md:188`, `first-quantized-lm-profile.md:182`, `first-attention-program-vertical.md:164`, `model-level-qualification.md:358`, and `complete-model-ingestion-and-execution.md:105`/`:324`. (`docs/roadmap.md:417`/`:479`/`:481` and `docs/open-questions.md:280` also link by filename and are correctly excluded, being `contracts/navigation`, a declared scope.)
+
+**3. "Four records name this ticket as the owner" counts nothing consistently.** The sites are `open-questions.md:280`, `roadmap.md:417`/`:479`/`:481`, and `operation-family-delivery-graph.md:187` — **three records at five sites**. Neither reading is four. The substance — that the family is owned and tracked rather than unowned — is verified and unaffected.
+
+#### The ADR obligation is smaller than the repair block states, and getting this right changes what must be written
+
+The repair block says "Admitting this access class supersedes or extends an accepted ADR". It cites ADR 0046 `:48-49` (the rejection) and `:73-74` ("Data-dependent gather, scatter, sparse iteration, and data-dependent cardinality **require later explicit IR contracts**"), both verified verbatim. What it does not cite is **ADR 0046's own Consequences section, `:86-87`**: "Indirect operations remain addable without weakening the verifier for the initial direct-access language."
+
+**Inference, and it is the audit's most consequential finding.** ADR 0046 already contemplates this addition and states the condition under which it is not a supersession — that the verifier for the initial direct-access language is not weakened. Read together with `:73-74`, admitting a *semantic* gather family is the "later explicit IR contract" ADR 0046 defers to, **not an amendment to its status**. The obligation is therefore to write a new ADR that supplies that contract and leaves ADR 0046 `accepted` and its index-expression rejection intact — which is a materially different and smaller document from one that reopens an accepted decision. Concretely: the new record must not admit a tensor-read form into `IndexNode`, because doing so *would* weaken the verifier for the direct-access language and would put the two records in conflict.
+
+#### One further imprecision, in the repair block's discharge of the runtime item
+
+"The semantic side needs no work: `tiler::u32@1`, `i32` and `i64` are already registered in `crates/tiler-ir/src/semantic/catalog.rs`" is **verified as to registration** (`catalog.rs:336-339`, `:300-303`, `:306-309`) and **imprecise as to consequence**. Two things do not exist:
+
+- **No Rust `ValueTypeMarker` is bound to any integer identity.** `StandardSemantics::register` binds exactly one marker — `registrar.bind_marker::<F32>(F32::resolved_type())` at `crates/tiler-ir/src/semantic/registry.rs:2267`. So `SemanticProgramBuilder::input::<U32>` does not exist; a `[T]` index operand must be declared through `input_resolved` (`crates/tiler-ir/src/semantic/program.rs:516`), which validates the type against the frozen registry and is sufficient.
+- **No *reference* value type is registered for any integer identity.** `StandardReferenceProvider::register` registers `F32::resolved_type()` alone, so `tiler-reference` cannot hold or validate a `tiler::u32@1` tensor today. That is real work, it sits in `implementation/reference`, and it is this ticket's. The reference tensor representation itself imposes no obstacle: `crates/tiler-reference/src/tensor.rs:36` makes `ReferenceElement` an opaque `Vec<u8>` carried beside a `ResolvedValueType`, so an integer element needs a validator and a decoder rather than a new payload kind.
+
+#### A stale claim in a record this ticket cannot edit
+
+`model-level-qualification.md:358` states that `grep -rhoE '"tiler::[a-z0-9-]+@[0-9]+"' crates/ | sort -u` "lists 24 registered keys and none is a gather". Run at this base the command returns **26**, and the list mixes operation keys with value-type keys (`tiler::f32@1`, `tiler::bf16@1`, `tiler::complex@1`, `tiler::strict-affine@1`), so the count was never a count of operations. **The load-bearing half is verified and unchanged: none of the 26 is a gather.** The file is `research/program-planning` and outside this ticket's scopes, so the count is reported rather than repaired.
+
+### What the audit changes about the work
+
+Nothing in the workload evidence, the bounds obligation, or the non-goals moved. Two things about the *shape* of the delivery did: the ADR is a new subordinate contract rather than an amendment to ADR 0046, and the reference crate owes an integer value-type registration that the repair block's discharge of the runtime item reads past.
