@@ -47,4 +47,17 @@ tags: [documentation, bf16, dtype, correction]
 
 ## Closes when
 
-`grep -rn 'dtype-f32' docs/` is empty, every cited test name exists, and the BF16 row states the reachable extent and its remaining boundary.
+> **This closing condition was unsatisfiable and is replaced. Corrected 2026-08-07 by the coordinator.** It read: "`grep -rn 'dtype-f32' docs/` is empty, …". **That can never be true**, because these documents' own established convention is to **quote the retired text inside a dated correction** — the 2026-08-04, -08-05 and -08-06 corrections in `docs/compiler/optimizer.md` all do it, and three `dtype-f32` mentions now live there legitimately for exactly that reason. A closing condition that demands the repository forget what it corrected is the mirror of the unfireable check: a check that can never say *yes*. Found by the worker on [`correct-the-recognizer-era-sentences-in-the-optimizer-contract`](correct-the-recognizer-era-sentences-in-the-optimizer-contract.md) while doing the work this ticket also covers.
+
+**Closes when** every remaining `dtype-f32` mention in `docs/` is either **inside a dated correction that describes the retired gate as retired**, or gone; no document states the gate as current behaviour; every cited test name exists; and the BF16 row states the reachable extent and its remaining boundary.
+
+The distinction is the whole check, so make it mechanically: for each hit, the enclosing paragraph must be a dated correction or the hit is a live claim. Report the classification per hit rather than a bare count — a count cannot tell the two apart, which is how the original condition went wrong.
+
+## Its own body is partly stale — repair before dispatch
+
+Two things this ticket asserts have been overtaken, both reported by workers rather than found by a scan:
+
+- **"What is true now" says optimizer legality is unreachable** and points at `establish-bf16-optimizer-legality` as its owner. That ticket **landed on 2026-08-07**: a multi-occurrence BF16 region now fuses under a proof at its own width, with every obligation derived, the four reduction obligations discharged vacuously over an empty population, and reassociation explicitly withheld as `Unknown`.
+- **`docs/dtype-support.md`'s three occurrences are still untouched**, but the rest of that file moved on 2026-08-07 under [`move-the-bf16-optimizer-legality-ledger-cell`](move-the-bf16-optimizer-legality-ledger-cell.md) — which also found two cells *understated* rather than overstated and corrected them. Read the file's current state, not this ticket's description of it. That work also flagged that **`Physical carrier`'s qualifier "schedule-assembled regions only" may now understate**, since a single-occurrence BF16 program reaches a selected plan; deciding that is this ticket's, under its "reachable extent" obligation.
+
+`docs/compiler/optimizer.md` is **done** — it was corrected in full on 2026-08-07 and is no longer part of this ticket's population, though its three in-correction mentions are the worked example of the classification rule above.
