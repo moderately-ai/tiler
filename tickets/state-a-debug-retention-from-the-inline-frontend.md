@@ -1,7 +1,7 @@
 ---
 id: state-a-debug-retention-from-the-inline-frontend
 title: State a debug retention from the inline frontend
-status: deferred
+status: todo
 priority: p3
 dependencies: [retain-succeeding-metal-stage-tool-output]
 related: [retain-canonical-msl-under-a-debug-expansion-cache-entry]
@@ -29,3 +29,6 @@ An inline expansion built under a debug configuration can show the diagnostics i
 ## Trigger
 
 `retain-succeeding-metal-stage-tool-output` reaching `done`, which is what first gives the Metal producer something to state. Filed `deferred` rather than `todo` because a frontend that asked for retention today would receive an empty section from every producer, and the board must not offer non-work.
+- 2026-08-07 — **FIRED, and the ticket needs re-scoping before dispatch rather than only re-statusing.** Verified independently by the coordinator, not relayed: `retain-succeeding-metal-stage-tool-output` reads `status: done`, and the work landed rather than the status merely flipping — `grep -n 'ToolOutput::capture' crates/tiler-metal-aot/src/driver.rs` now returns **two** sites, `:304` inside the failure arm and **`:307` on the success path**, which is exactly the inversion the 2026-08-05 entry recorded as unfired. The producer is wired through: `crates/tiler-build/src/metal_cache.rs:403` states `retained: stage_retention(&outputs)`. So a frontend asking for retention today receives a populated section from the Metal producer, and the stated ground for deferral is gone.
+
+  **Two stated Facts are now false and must be repaired before this is briefed.** (1) "Every producer in the workspace states `DebugRetention::none()`" — `metal_cache.rs:403` states a real retention; only the generic default and the `custom_backend` test producer still state none. (2) More consequentially, this ticket opens by naming the *selection* question — "whatever selects retention … is `crates/tiler-macros`' decision to make and its shape is the first question this ticket answers" — and the Metal backend has already answered it the other way: retention is **unconditional and caller-independent**, documented at `metal_cache.rs:435-440` as "**Always stated, never discovered.**" So the live remainder is this ticket's *second*, separable question — whether an inline expansion emits anything from a retention, and as what. `crates/tiler-macros` holds no `DebugRetention` reference at all; its only "retained" vocabulary is the failure-path `compile_error!` diagnostic, which is a different mechanism. **Recommend re-scoping to the read-back question before dispatch.** Recheck: `grep -n 'ToolOutput::capture' crates/tiler-metal-aot/src/driver.rs && grep -n 'retained: stage_retention' crates/tiler-build/src/metal_cache.rs`.

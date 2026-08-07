@@ -1,7 +1,7 @@
 ---
 id: pin-the-admitted-unsafe-sites-in-the-workspace-gate
 title: Decide whether the workspace gate pins admitted unsafe sites
-status: deferred
+status: todo
 priority: p3
 dependencies: []
 related: [record-the-case-by-case-unsafe-boundary, prototype-metal-runtime-execution]
@@ -61,3 +61,8 @@ Reactivate before admitting the first production unsafe site, or when the admitt
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** The admitted population is still exactly two, both in `prototypes/serial-sum-run/src/buffer.rs`, and there is still no admitted unsafe site under `crates/` — so neither "before the first production site" nor "the population grows beyond two" has arrived. [`prototype-metal-runtime-execution`](prototype-metal-runtime-execution.md) is `done` and added none. Recheck: `grep -rn --include='*.rs' -B1 '^    unsafe_code,' crates prototypes` returns exactly two matches.
+- 2026-08-07 — **FIRED, on both clauses.** Verified independently by the coordinator with a multi-line-aware scan, because a single-line `grep` misses these attributes — the named allow sites are spelled across several lines and an earlier single-line check on this same population returned a misleading count. The real population is **four**: `crates/tiler-conformance/src/device_buffer.rs` (2, over `std::ptr::copy_nonoverlapping` on `Buffer::contents()`) and `prototypes/serial-sum-run/src/buffer.rs` (2). A fifth textual match in `crates/tiler-conformance/src/lib.rs` is **inside a doc comment**, not an attribute, and must not be counted.
+
+  So both clauses hold: the population grew past the two prototype functions, **and** the first non-prototype admission has landed. This ticket's load-bearing Fact — "**There is no admitted unsafe site anywhere under `crates/`**" — is now false and must be rewritten before dispatch. Tom decided the rule that admitted them on 2026-08-07 (`decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`): `deny` with named per-site allows, never at the crate, FFI memory management against Metal as the only admitted justification.
+
+  **Carry this in rather than re-deriving it:** a partial counting check already exists but is crate-scoped — `crates/tiler-conformance/src/bf16_vertical/tests.rs`'s `the_unsafe_site_population_is_the_two_named_ones` walks every file under that crate's `src/` and fails if a third appears, with a file-count floor so it cannot pass by scanning a shrunken tree. That is the shape a workspace-wide pin wants, generalized. Recheck, and **use a multi-line-aware matcher**: `python3 -c "import re,glob; print(sum(len(re.findall(r'#\[allow\(\s*unsafe_code', open(f).read())) for f in glob.glob('crates/**/*.rs',recursive=True)+glob.glob('prototypes/**/*.rs',recursive=True)))"` — four attributes plus one doc-comment mention.

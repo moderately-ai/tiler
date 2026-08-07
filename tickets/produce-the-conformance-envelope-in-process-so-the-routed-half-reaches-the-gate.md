@@ -1,7 +1,7 @@
 ---
 id: produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate
 title: Produce the conformance envelope in process so the routed half reaches the gate
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [carry-the-device-executed-value-proof-into-the-conformance-crate]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance, implementation/cargo-lock]
 shared_scopes: [project/tickets]
 paths: []
 tags: [conformance, coverage]
-claimed_from: todo
-assignee: agent-envelope
-lease_expires_at: 1786130511
 ---
 ## The gap
 
@@ -87,3 +84,23 @@ So the gate cost is **about four tenths of a second**, against a 71-second decod
 **Evidence.** `make full` green at the reported commit in **49.06 s** with the release artifacts warm, and green in **1:26.93** on the run before it, which recompiled `tiler-reference` and `tiler-compiler` in release (25.42 s of the difference). `cargo nextest run --workspace` 3,034 passed / 7 skipped; `cargo clippy -p tiler-conformance --all-targets -- -D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-conformance`, `git diff --check`, and `tkt lint` all clean; `tkt guard` reports affected scopes equal to declared scopes, verdict WARN from shared `project/tickets` overlaps and three direct overlaps with `done` tickets, exit 0. The unsafe population is unchanged at **two sites in `device_buffer.rs`** with no crate-level allow (`the_unsafe_site_population_is_the_two_named_ones` passes; the new modules carry none). No identity pin moved: `crates/tiler-build/src/metal_plan.rs` still holds `ARTIFACT_IDENTITY = 7a2bfe51619c05a13fe86cd973e1dfa85c7353da33e4e75af0531068b774357d`, `CACHE_SUBJECT = 8bdcde644d7df6d4ca95736f445a011b2d163efdfb3ba93a5c0a954d139b1aa2`, and `FIXED_CONTENT_BYTES = 65_294`, untouched and passing.
 
 **One thing found and not fixed here.** `cargo clippy -p tiler-conformance --all-targets --target x86_64-unknown-linux-gnu -- -D warnings` fails, and it already failed at this ticket's base: 32 of its 57 dead-code errors name symbols in `envelope.rs` and `serial_sum.rs` this branch did not touch (`SOLE_DELIVERY`, `bind_declared_interface`, every `probe_*`), which are reachable only from the `cfg(target_os = "macos")` modules. The `conform-the-bf16-vertical-end-to-end` claim that the non-Apple branch compiles clean predates the envelope module and is stale. This branch adds ~25 more of the same class in `publication`. The check is not part of `make full`, so nothing regressed in the gate — but the crate's "a non-Apple host runs the device-free half" claim is unverified for everything except the bf16 vertical, and that wants its own ticket.
+
+## Outcome — delivered 2026-08-07 at `082ad4b9`
+
+**The routed half now runs in `make full`.** `crates/tiler-conformance/src/publication.rs` publishes the eight members into a private temp directory a `Drop` guard removes, and the routed runs open them there. The gate now executes 30 serial-sum operand cases across six members, five adversarial contraction cases, the `w_decode_kv` cell whose executed bytes carry the retained realization-probe SHA-256, eight fail-closed loader probes and six injected device-preflight refusals — **all of which previously reported the artifact boundary unavailable on every gate run.**
+
+Publishing goes through `tiler_build::accept_or_publish_metal_plan`, the same public path the prototype producer uses, so members cross real MSL emission, `metal`/`metallib`, neutral artifact assembly and expansion-cache acceptance.
+
+**The ticket's "no new dependency is needed" was wrong, and the worker said so.** `accept_or_publish_metal_plan` takes an `&ExpansionCache`, so `tiler-cache` became a direct edge and `implementation/cargo-lock` was added to the scopes. The alternative — calling `assemble_plan_artifact` directly — would have forced this crate to restate the Metal backend's binding kinds, zero-work dispatch policy and launch preconditions, i.e. publish an envelope the workspace does not ship. That is the right reason to accept the edge rather than route around it.
+
+**The environment variable was retired rather than kept as an override**, on the ground that an override nothing in `make full` sets is a second unexercised path, and the cross-executable agreement it could have carried still lives in the untouched prototype pair. One boundary now, not two.
+
+**The unavailable path is watched both ways with real output** — passing with `PATH` emptied so `xcrun` is absent, failing loudly under `TILER_REQUIRE_METAL_CONFORMANCE=1`. So producing in process did not trade a coverage gap for a broken gate, which was the requirement most at risk.
+
+**Measured added wall-clock: ~0.4 s** on the workspace run, against an 87-second gate carrying a 71-second decoder test. Recorded rather than estimated, with a note that the first `cargo run -p tiler-prototype-compile` on this host took 14.4 s at 4% CPU and the identical command immediately after took 0.68 s — one-time `xcrun` warm-up, not per-member work, so nobody re-derives it.
+
+**Unsafe: still exactly two sites**, both in `device_buffer.rs`, no crate-level allow, and the new modules contain none. **Pins unmoved** — `git diff` against `crates/tiler-build/` is empty. Test count 47 → 52. `make full` green at 49 s.
+
+**Stale prose corrected rather than left**, which producing in process made necessary: five sentences describing "a separate producer", "the two processes", and producer/consumer drift are no longer true. The sharpest is the contraction recognizer's note that "a recognizer that only ever saw the artifact its own producer writes would accept anything" — whose premise is now the actual state, making its negative checks *more* necessary rather than less.
+
+**Filed rather than fixed:** [`restore-the-conformance-crates-non-apple-build-and-lint-claim`](restore-the-conformance-crates-non-apple-build-and-lint-claim.md). Clippy for a non-Apple target fails — **and already failed at this branch's base**, with 32 of 57 dead-code errors naming untouched symbols. The crate's "a non-Apple host runs the device-free half" claim is therefore unverified beyond the bf16 vertical. The check is not in `make full`, so nothing regressed; choosing between per-item `cfg_attr` allows, per-module gates, or gating the whole envelope route (which would *shrink* non-Apple coverage) is a decision that wants its own ticket rather than a reflex.

@@ -1,7 +1,7 @@
 ---
 id: design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature
 title: Design the measured-feedback tuning loop against the autotuning and adaptive-execution literature
-status: deferred
+status: todo
 priority: p2
 dependencies: []
 related: [calibrate-device-cost-models]
@@ -37,3 +37,8 @@ The first analytic cost-model landing in `crates/` (the `bootstrap-cost-model` t
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No cost, estimate, or ranking type exists in `crates/` (the audit's grep stands), and `calibrate-device-cost-models` is `deferred` with its own unfired log. Recheck: `grep -rnE "^(pub )?(struct|enum) [A-Za-z]*(Cost|Estimate|Rank|Score)" crates/ --include='*.rs'` returning more than the shape-rank marker, or `grep -m1 '^status:' tickets/calibrate-device-cost-models.md` printing other than `status: deferred`.
+- 2026-08-07 — **FIRED on the first disjunct.** The trigger is a disjunction — "the first analytic cost-model landing in `crates/` … **or** `calibrate-device-cost-models` firing, whichever arrives first" — and the first has arrived. Verified independently by the coordinator: `crates/tiler-compiler/src/component_cost.rs:76` declares `ANALYTICAL_MODEL_KEY = "tiler.cost.analytical.v1"`, consumed at `frontier.rs` and pinned in `pipeline/tests.rs`, with `CostComponent`, `CostUnit`, `CostValue`, `ComponentCost` and `AnalyticalPlanCost` beside it. On the graph, `cost-model-bootstrap` and `implement-analytical-component-cost-model` both read `status: done`. A **measured** selector has since landed alongside it (`crates/tiler-compiler/src/measured_cost.rs`, key `tiler.cost.measured-fold-steps.v1`), so the cost authority this ticket exists to refine is not merely present but already consuming device measurement — which is this ticket's own subject.
+
+  **This ticket's recheck command is broken and could never have reported the firing.** `grep -rnE "^(pub )?(struct|enum) [A-Za-z]*(Cost|Estimate|Rank|Score)" crates/ --include='*.rs'` returns exactly one line — a shape-rank marker — because **every cost and estimate type is declared `pub(crate)`, which the `^(pub )?` anchor cannot match.** Re-running the documented command today still reads as not-fired. That is a check which cannot say *yes*: the inverse of the failure this repository usually guards against, and it would have kept this ticket parked indefinitely.
+
+  **Its stated Fact was also already false when written**: "The analytic cost model does not exist yet (the 2026-08-05 audit: no cost/estimate/ranking type in `crates/`)" — but `calibrate-device-cost-models` cites `crates/tiler-compiler/src/component_cost.rs` as of 2026-07-28, a week earlier. Both the Fact and the command must be corrected before this is briefed. Working recheck: `grep -n 'ANALYTICAL_MODEL_KEY' crates/tiler-compiler/src/component_cost.rs && grep -m1 '^status:' tickets/cost-model-bootstrap.md`.
