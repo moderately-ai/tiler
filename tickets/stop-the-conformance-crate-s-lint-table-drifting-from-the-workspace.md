@@ -1,7 +1,7 @@
 ---
 id: stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace
 title: Stop the conformance crate's lint table drifting from the workspace
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [carry-the-device-executed-value-proof-into-the-conformance-crate, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [lints, maintainability]
-claimed_from: todo
-assignee: w-lint-table
-lease_expires_at: 1786141741
 ---
 ## The risk this creates
 
@@ -52,3 +49,29 @@ Either a divergence between the two tables fails a check, or the divergence is r
 **The "both ends" requirement is half-met, and the unmet half is out of scope.** The crate end now names the difference and points at the check. The workspace end is the root `Cargo.toml`, which `implementation/conformance` does not cover, so it is carried by `pin-lint-inheritance-across-the-workspace-member-set` along with the two workspace-scoped properties this check does not hold: a *third* member dropping `[lints] workspace = true`, and `prototypes/serial-sum-run`'s identical divergence, which still has no check of any kind.
 
 Test count moved from 54 to 56, so `portability::DEVICE_FREE_TEST_FLOOR` rose from 50 to 52 to keep its stated property — the smallest device-free collapse, two tests, still fails.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`553261c0`** (worker commit `f0b04dc3`). `make full` exit 0; 1,080 release tests.
+
+`crates/tiler-conformance/src/lints.rs` reads `[workspace.lints.*]` from the root manifest and `[lints.*]` from this crate's, and fails unless they differ by exactly `rust.unsafe_code` at `forbid` against `deny`.
+
+**Derived, not restated** — the expectation is one line, the section-qualified name of the permitted lint and its two levels; every other lint name, section and level is read from the two files, so a workspace lint addition needs no edit here. A check listing the expected table would have been a *third* copy drifting alongside the second.
+
+**Population counted and floored** by a second test that prints the census and refuses a floor of 4, plus refuses an empty section set — split from the comparison because a scan that parsed nothing would make the comparison pass over two empty tables. **Multi-line aware**, accumulating physical lines until quotes and braces balance, panicking by file and line on anything unreadable rather than skipping.
+
+**Coordinator-verified deliberate failure:** widening this crate's `deny` to `allow` fails with a diagnostic that not only names the drift but refuses the wrong repair by name — "do not make the tables match by weakening a lint — matching by weakening is the failure this check exists to prevent" — and routes a genuine level change back to Tom's decision.
+
+### The worker refused to fake the part it could not reach, and was right
+
+Three properties are workspace-scoped and unreachable from `crates/tiler-conformance/**`: a **third** member dropping `[lints] workspace = true` still goes unlinted; **`prototypes/serial-sum-run` has no check of any kind**, same divergence shape, and its `deny` may still be widened silently; and the "stated at both ends" requirement is half-met, since the root manifest's `[workspace.lints]` still says nothing about either exception. Filed as `pin-lint-inheritance-across-the-workspace-member-set`, argued to belong in `crates/tiler/tests/`'s neighbourhood rather than here — this crate owns cross-layer executed evidence, and a member-set manifest policy is not that.
+
+### False Fact repaired
+
+The ticket called this crate "the **first** member that cannot inherit". It is the **second** — `prototypes/serial-sum-run` diverged at `43f685f` on 2026-07-25, and ADR 0079 records the correction. The ticket's argument survives unchanged.
+
+### Two perturbations that were informative rather than clean, flagged honestly
+
+`deny`→`forbid` is caught by rustc as `E0453` at the two live `#[allow]` sites before the test runs, and a malformed entry is caught by Cargo's own TOML parse. So the fail-closed asserts guard against *this scan* misreading **valid** TOML, not against invalid TOML — the module says so. The "missing difference" branch was reached instead by relaxing the root manifest, which the worker ran.
+
+`portability.rs`'s `DEVICE_FREE_TEST_FLOOR` rose 50 → 52 with the population moving 54 → 56, preserving its stated property that the smallest device-free collapse still fails.
