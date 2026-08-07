@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-reduction-partition-against-measured-alternatives
 title: Calibrate the reduction partition against measured alternatives
-status: review
+status: done
 priority: p3
 dependencies: [calibrate-and-activate-parallel-reduction-selection]
 related: [activate-measured-reduction-selection-from-a-target-cost-row]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, measurement, scheduling, reductions]
-claimed_from: todo
-assignee: agent-partition-cal
-lease_expires_at: 1786086448
 ---
 ## User-visible outcome
 
