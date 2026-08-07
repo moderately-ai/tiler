@@ -1,7 +1,7 @@
 ---
 id: register-the-softmax-realization-law
 title: Register the softmax realization law
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence, widen-the-staged-realization-law-to-the-registered-elementary-families, admit-the-softmax-family]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, indexing, numerics]
+claimed_from: todo
+assignee: agent-softmax-law2
+lease_expires_at: 1786075734
 ---
 ## User-visible outcome
 

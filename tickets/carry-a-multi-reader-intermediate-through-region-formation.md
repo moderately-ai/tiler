@@ -1,7 +1,7 @@
 ---
 id: carry-a-multi-reader-intermediate-through-region-formation
 title: Carry a multi-reader intermediate through region formation
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence, register-the-softmax-realization-law, accept-the-multi-region-index-realization-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, indexing]
+claimed_from: todo
+assignee: agent-region-multiread
+lease_expires_at: 1786075734
 ---
 ## User-visible outcome
 
