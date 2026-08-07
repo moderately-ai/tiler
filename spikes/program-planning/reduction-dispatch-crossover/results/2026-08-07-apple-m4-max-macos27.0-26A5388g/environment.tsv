@@ -1,0 +1,24 @@
+key	value
+environment.date_utc	2026-08-07T05:15:14Z
+environment.os.product	macOS
+environment.os.version	27.0
+environment.os.build	26A5388g
+environment.architecture	arm64
+environment.device	Apple M4 Max
+environment.cpu.logical_cores	14
+environment.developer_dir	/Applications/Xcode.app/Contents/Developer
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.sdk.macosx.version	26.5
+environment.sdk.macosx.build	25F70
+environment.offline_compiler	Apple metal version 32023.883 (metalfe-32023.883)
+environment.offline_linker	AIR-LLD 32023.883 (metalfe-32023.883)
+environment.default_developer_dir	/Applications/Xcode-beta.app/Contents/Developer
+environment.rustc	rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+environment.toolchain	nightly-2026-07-19
+environment.repository_base	01f140237f3617a5d415dbc0a67182a83ac8d139
+sweep.harness_sha256	d76fcd2fb74ecfe00b492c3042c0d1be58d88a6420f91b5cdb1940555bf9e27b
+fit.harness_sha256	e9ae278a8d227cc6a209384b71303b66126f39cd3c27af9455e84178278a5113
+sweep.sha256	c066e1d19e2d031168e7a175a2a7e428cfaca7636c38e8450502d36db0926331
+host.occupancy	sole occupant; the coordinator drained every other worker lane for this run and dispatched nothing during it
+host.load_before	2.93 3.09 4.46
+host.load_after	2.32 2.92 4.33

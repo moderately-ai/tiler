@@ -1,0 +1,59 @@
+[package]
+name = "reduction-dispatch-crossover"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# The measuring half, which needs a device.
+[[bin]]
+name = "reduction-dispatch-sweep"
+path = "src/main.rs"
+
+# The fitting half, which deliberately does not. It reads a retained TSV and
+# reports the calibration, so the fit can be audited, rerun, and perturbed on a
+# machine that has no Metal device and without re-dispatching anything. Keeping
+# them in one crate rather than two shares the cost model itself: the sweep
+# records the structural quantities the model consumes, and a second crate would
+# have let the two spellings of a stage's launch drift apart.
+[[bin]]
+name = "reduction-cost-fit"
+path = "src/fit.rs"
+
+# Its own workspace root, following `reduction-crossover` beside it: `make`
+# never reaches here and the dependency set is the spike's own. The path
+# dependencies still resolve their `[lints]` through the repository workspace
+# they belong to.
+[workspace]
+
+[dependencies]
+tiler-build = { path = "../../../crates/tiler-build" }
+tiler-compiler = { path = "../../../crates/tiler-compiler" }
+tiler-ir = { path = "../../../crates/tiler-ir" }
+tiler-metal = { path = "../../../crates/tiler-metal" }
+tiler-metal-aot = { path = "../../../crates/tiler-metal-aot" }
+tiler-reference = { path = "../../../crates/tiler-reference" }
+
+# The version every Metal consumer in this repository pins, so the binding this
+# spike submits through is the one the retained prototype runs submit through.
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33.0"
+
+# Mirrors the repository dev profile rather than inheriting it: this is a
+# separate workspace, so the root profile does not reach it.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+# `deny` rather than the workspace's `forbid`: one module here must call an
+# Objective-C buffer API, and it opts in by name with the four things ADR 0079
+# requires. Everything else is a hard error.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

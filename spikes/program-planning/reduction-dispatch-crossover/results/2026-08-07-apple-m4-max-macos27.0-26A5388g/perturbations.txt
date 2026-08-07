@@ -1,0 +1,504 @@
+# fitted on 34 of 60 fit-set cells, the ones whose measured serial-or-parallel verdict is separated from the noise
+# PERTURBED: parallel scaled by 0.25
+## Fitted parameters
+encoder_seconds	1.166147237e-6	1.1661 us per dispatch
+parallel_threads	2.640002e2	fold steps retired at once when saturated
+step_seconds	2.908885244e-8	29.0889 ns per critical-path fold step
+
+## Decision accuracy: the three-way choice
+set	cells	exact	median_regret	p90_regret	worst_regret
+fit	60	42	1.0000	1.1186	4.2724
+held-out	32	25	1.0000	1.7261	3.0388
+
+## The same, on the cells whose winner is separated from its runner-up
+set	cells	exact	median_regret	p90_regret	worst_regret
+fit	16	14	1.0000	1.0361	1.2317
+held-out	9	9	1.0000	1.0000	1.0000
+
+## Decision accuracy: the serial fold against a parallel strategy
+set	cells	agreed	worst_regret_when_wrong
+fit	60	42	4.2724
+held-out	32	26	3.0388
+
+## The same, on the cells whose serial-or-parallel verdict is separated
+set	cells	agreed	worst_regret_when_wrong
+fit	34	29	1.6758
+held-out	26	20	3.0388
+
+## Magnitude accuracy, |predicted/measured - 1| against the median sample
+set	rows	median	p90	max
+fit	180	0.8667	3.4014	10.5164
+held-out	96	1.2676	3.3659	3.6152
+
+## Every cell
+set	rows	contributors	measured	predicted	measured_us	margin	regret	parallel_speedup	separated	parallel_separated	min_sample_winner
+fit	1	4	single-workgroup-tree	serial-fold	4.239	1.009	1.009	1.009	no	no	single-workgroup-tree
+fit	1	16	serial-fold	single-workgroup-tree	1.736	1.054	1.054	0.948	no	no	serial-fold
+fit	1	64	single-workgroup-tree	single-workgroup-tree	1.847	1.469	1.000	1.469	no	no	single-workgroup-tree
+fit	1	256	single-workgroup-tree	single-workgroup-tree	2.492	1.448	1.000	2.006	no	no	single-workgroup-tree
+fit	1	1024	single-workgroup-tree	single-workgroup-tree	6.597	1.323	1.000	2.733	no	yes	single-workgroup-tree
+fit	1	4096	single-workgroup-tree	single-workgroup-tree	5.006	1.302	1.000	8.361	no	yes	single-workgroup-tree
+fit	1	16384	single-workgroup-tree	single-workgroup-tree	23.030	1.043	1.000	19.538	no	yes	single-workgroup-tree
+fit	4	4	serial-fold	serial-fold	3.900	1.137	1.000	0.879	no	no	single-workgroup-tree
+fit	4	16	serial-fold	single-workgroup-tree	1.689	1.035	1.035	0.967	no	no	single-workgroup-tree
+fit	4	64	serial-fold	single-workgroup-tree	0.367	4.272	4.272	0.234	no	no	serial-fold
+fit	4	256	single-workgroup-tree	single-workgroup-tree	2.933	1.317	1.000	1.898	no	yes	single-workgroup-tree
+fit	4	1024	single-workgroup-tree	single-workgroup-tree	5.986	1.281	1.000	2.864	no	yes	single-workgroup-tree
+fit	4	4096	single-workgroup-tree	single-workgroup-tree	3.300	1.487	1.000	13.650	no	yes	multi-pass-split
+fit	4	16384	single-workgroup-tree	single-workgroup-tree	22.564	1.172	1.000	21.496	no	yes	single-workgroup-tree
+fit	16	4	single-workgroup-tree	serial-fold	1.992	1.038	1.038	1.038	no	no	single-workgroup-tree
+fit	16	16	serial-fold	single-workgroup-tree	1.714	1.298	1.298	0.770	no	no	serial-fold
+fit	16	64	single-workgroup-tree	single-workgroup-tree	2.814	1.033	1.000	1.033	no	no	single-workgroup-tree
+fit	16	256	single-workgroup-tree	single-workgroup-tree	2.772	1.375	1.000	2.032	no	yes	single-workgroup-tree
+fit	16	1024	single-workgroup-tree	single-workgroup-tree	7.711	1.307	1.000	2.763	no	yes	single-workgroup-tree
+fit	16	4096	single-workgroup-tree	single-workgroup-tree	9.069	1.018	1.000	6.020	no	yes	single-workgroup-tree
+fit	16	16384	single-workgroup-tree	single-workgroup-tree	34.389	1.175	1.000	14.974	yes	yes	single-workgroup-tree
+fit	64	4	single-workgroup-tree	serial-fold	3.186	1.119	1.119	1.119	no	no	single-workgroup-tree
+fit	64	16	serial-fold	single-workgroup-tree	3.078	1.099	1.099	0.910	no	no	serial-fold
+fit	64	64	serial-fold	single-workgroup-tree	2.836	1.093	1.093	0.915	no	no	single-workgroup-tree
+fit	64	256	single-workgroup-tree	single-workgroup-tree	2.019	2.221	1.000	2.887	no	yes	single-workgroup-tree
+fit	64	1024	single-workgroup-tree	single-workgroup-tree	11.106	1.183	1.000	2.163	no	yes	single-workgroup-tree
+fit	64	4096	single-workgroup-tree	single-workgroup-tree	19.117	1.103	1.000	3.423	no	yes	multi-pass-split
+fit	64	16384	single-workgroup-tree	single-workgroup-tree	66.078	1.084	1.000	9.168	yes	yes	single-workgroup-tree
+fit	256	4	single-workgroup-tree	serial-fold	3.042	1.010	1.010	1.010	no	no	serial-fold
+fit	256	16	serial-fold	serial-fold	3.278	1.408	1.000	0.710	no	no	single-workgroup-tree
+fit	256	64	single-workgroup-tree	serial-fold	2.892	1.111	1.111	1.111	no	no	single-workgroup-tree
+fit	256	256	single-workgroup-tree	serial-fold	5.614	1.331	1.525	1.525	no	no	single-workgroup-tree
+fit	256	1024	single-workgroup-tree	single-workgroup-tree	22.356	1.094	1.000	1.613	no	yes	single-workgroup-tree
+fit	256	4096	single-workgroup-tree	single-workgroup-tree	52.572	1.016	1.000	1.885	no	yes	single-workgroup-tree
+fit	256	16384	single-workgroup-tree	single-workgroup-tree	213.542	1.030	1.000	3.983	yes	yes	single-workgroup-tree
+fit	1024	4	serial-fold	serial-fold	2.442	1.595	1.000	0.627	no	no	serial-fold
+fit	1024	16	serial-fold	serial-fold	3.053	1.456	1.000	0.687	no	no	serial-fold
+fit	1024	64	serial-fold	serial-fold	7.236	1.051	1.000	0.951	no	no	serial-fold
+fit	1024	256	single-workgroup-tree	serial-fold	18.511	1.053	1.090	1.090	no	no	single-workgroup-tree
+fit	1024	1024	single-workgroup-tree	serial-fold	58.300	1.032	1.171	1.171	no	yes	multi-pass-split
+fit	1024	4096	single-workgroup-tree	serial-fold	203.228	1.022	1.232	1.232	yes	yes	single-workgroup-tree
+fit	1024	16384	multi-pass-split	serial-fold	891.014	1.001	1.676	1.676	no	yes	single-workgroup-tree
+fit	4096	4	serial-fold	serial-fold	1.522	1.589	1.000	0.629	no	no	serial-fold
+fit	4096	16	serial-fold	serial-fold	5.080	1.424	1.000	0.702	no	no	serial-fold
+fit	4096	64	serial-fold	serial-fold	18.681	1.118	1.000	0.894	no	no	serial-fold
+fit	4096	256	serial-fold	serial-fold	53.536	1.026	1.000	0.975	no	no	multi-pass-split
+fit	4096	1024	serial-fold	serial-fold	207.367	1.026	1.000	0.974	yes	yes	serial-fold
+fit	4096	4096	single-workgroup-tree	serial-fold	851.689	1.001	1.016	1.016	no	yes	single-workgroup-tree
+fit	16384	4	serial-fold	serial-fold	4.675	1.784	1.000	0.561	yes	yes	serial-fold
+fit	16384	16	serial-fold	serial-fold	16.172	1.237	1.000	0.808	yes	yes	serial-fold
+fit	16384	64	serial-fold	serial-fold	53.697	1.108	1.000	0.903	yes	yes	serial-fold
+fit	16384	256	serial-fold	serial-fold	205.442	1.004	1.000	0.996	no	no	multi-pass-split
+fit	16384	1024	serial-fold	serial-fold	855.003	1.013	1.000	0.987	yes	yes	serial-fold
+fit	65536	4	serial-fold	serial-fold	18.011	1.365	1.000	0.733	yes	yes	serial-fold
+fit	65536	16	serial-fold	serial-fold	52.525	1.267	1.000	0.789	yes	yes	serial-fold
+fit	65536	64	serial-fold	serial-fold	204.631	1.038	1.000	0.964	yes	yes	serial-fold
+fit	65536	256	single-workgroup-tree	serial-fold	830.733	1.007	1.036	1.036	yes	yes	single-workgroup-tree
+fit	262144	4	serial-fold	serial-fold	57.550	1.420	1.000	0.704	yes	yes	serial-fold
+fit	262144	16	serial-fold	serial-fold	202.717	1.136	1.000	0.880	yes	yes	serial-fold
+fit	262144	64	serial-fold	serial-fold	848.658	1.013	1.000	0.987	yes	yes	serial-fold
+held-out	1	32	single-workgroup-tree	single-workgroup-tree	2.228	1.526	1.000	1.951	no	no	single-workgroup-tree
+held-out	1	128	single-workgroup-tree	single-workgroup-tree	1.911	1.664	1.000	5.536	no	yes	single-workgroup-tree
+held-out	1	2048	single-workgroup-tree	single-workgroup-tree	5.681	1.348	1.000	4.223	no	yes	single-workgroup-tree
+held-out	1	8192	single-workgroup-tree	single-workgroup-tree	11.028	1.141	1.000	48.659	no	yes	single-workgroup-tree
+held-out	4	32	single-workgroup-tree	single-workgroup-tree	2.717	1.472	1.000	1.827	no	yes	single-workgroup-tree
+held-out	4	128	single-workgroup-tree	single-workgroup-tree	2.639	1.497	1.000	4.452	no	yes	single-workgroup-tree
+held-out	4	2048	single-workgroup-tree	single-workgroup-tree	7.005	1.107	1.000	3.830	no	yes	single-workgroup-tree
+held-out	4	8192	single-workgroup-tree	single-workgroup-tree	11.345	1.422	1.000	50.714	yes	yes	single-workgroup-tree
+held-out	16	32	single-workgroup-tree	single-workgroup-tree	2.500	1.244	1.000	1.830	no	no	single-workgroup-tree
+held-out	16	128	single-workgroup-tree	single-workgroup-tree	3.125	1.302	1.000	3.651	no	yes	single-workgroup-tree
+held-out	16	2048	single-workgroup-tree	single-workgroup-tree	6.811	1.291	1.000	3.721	no	yes	single-workgroup-tree
+held-out	16	8192	single-workgroup-tree	single-workgroup-tree	17.167	1.203	1.000	34.531	yes	yes	single-workgroup-tree
+held-out	64	32	single-workgroup-tree	single-workgroup-tree	2.428	1.583	1.000	1.927	no	no	single-workgroup-tree
+held-out	64	128	single-workgroup-tree	single-workgroup-tree	3.522	1.382	1.000	4.596	no	yes	single-workgroup-tree
+held-out	64	2048	single-workgroup-tree	single-workgroup-tree	11.267	1.074	1.000	2.800	no	yes	single-workgroup-tree
+held-out	64	8192	single-workgroup-tree	single-workgroup-tree	35.495	1.175	1.000	18.601	yes	yes	single-workgroup-tree
+held-out	256	32	single-workgroup-tree	serial-fold	3.519	1.234	1.726	1.726	no	yes	single-workgroup-tree
+held-out	256	128	single-workgroup-tree	serial-fold	4.150	1.151	3.039	3.039	no	yes	single-workgroup-tree
+held-out	256	2048	multi-pass-split	single-workgroup-tree	33.283	1.001	1.001	1.513	no	yes	single-workgroup-tree
+held-out	256	8192	single-workgroup-tree	single-workgroup-tree	103.092	1.062	1.000	7.453	yes	yes	single-workgroup-tree
+held-out	1024	32	serial-fold	serial-fold	3.672	1.067	1.000	0.937	no	no	multi-pass-split
+held-out	1024	128	single-workgroup-tree	serial-fold	12.333	1.048	1.814	1.814	no	yes	single-workgroup-tree
+held-out	1024	2048	single-workgroup-tree	serial-fold	102.883	1.005	1.186	1.186	no	yes	multi-pass-split
+held-out	1024	8192	single-workgroup-tree	serial-fold	444.042	1.005	2.507	2.507	no	yes	single-workgroup-tree
+held-out	4096	32	serial-fold	serial-fold	10.839	1.020	1.000	0.981	no	no	serial-fold
+held-out	4096	128	multi-pass-split	serial-fold	34.225	1.028	1.198	1.198	no	yes	multi-pass-split
+held-out	4096	2048	serial-fold	serial-fold	421.969	1.045	1.000	0.957	yes	yes	serial-fold
+held-out	16384	32	serial-fold	serial-fold	27.570	1.158	1.000	0.864	yes	yes	serial-fold
+held-out	16384	128	serial-fold	serial-fold	106.445	1.034	1.000	0.967	no	no	serial-fold
+held-out	65536	32	serial-fold	serial-fold	101.258	1.184	1.000	0.845	yes	yes	serial-fold
+held-out	65536	128	serial-fold	serial-fold	426.420	1.019	1.000	0.981	yes	yes	serial-fold
+held-out	262144	32	serial-fold	serial-fold	441.947	1.021	1.000	0.979	yes	yes	serial-fold
+# fitted on 34 of 60 fit-set cells, the ones whose measured serial-or-parallel verdict is separated from the noise
+# PERTURBED: parallel scaled by 4
+## Fitted parameters
+encoder_seconds	1.166147237e-6	1.1661 us per dispatch
+parallel_threads	4.224003e3	fold steps retired at once when saturated
+step_seconds	2.908885244e-8	29.0889 ns per critical-path fold step
+
+## Decision accuracy: the three-way choice
+set	cells	exact	median_regret	p90_regret	worst_regret
+fit	60	44	1.0000	1.0952	4.2724
+held-out	32	28	1.0000	1.0008	1.1981
+
+## The same, on the cells whose winner is separated from its runner-up
+set	cells	exact	median_regret	p90_regret	worst_regret
+fit	16	14	1.0000	1.0338	1.0361
+held-out	9	8	1.0000	1.0453	1.0453
+
+## Decision accuracy: the serial fold against a parallel strategy
+set	cells	agreed	worst_regret_when_wrong
+fit	60	45	4.2724
+held-out	32	29	1.1981
+
+## The same, on the cells whose serial-or-parallel verdict is separated
+set	cells	agreed	worst_regret_when_wrong
+fit	34	32	1.0361
+held-out	26	24	1.1981
+
+## Magnitude accuracy, |predicted/measured - 1| against the median sample
+set	rows	median	p90	max
+fit	180	0.5718	0.7724	10.5164
+held-out	96	0.5165	0.7325	1.5821
+
+## Every cell
+set	rows	contributors	measured	predicted	measured_us	margin	regret	parallel_speedup	separated	parallel_separated	min_sample_winner
+fit	1	4	single-workgroup-tree	serial-fold	4.239	1.009	1.009	1.009	no	no	single-workgroup-tree
+fit	1	16	serial-fold	single-workgroup-tree	1.736	1.054	1.054	0.948	no	no	serial-fold
+fit	1	64	single-workgroup-tree	single-workgroup-tree	1.847	1.469	1.000	1.469	no	no	single-workgroup-tree
+fit	1	256	single-workgroup-tree	single-workgroup-tree	2.492	1.448	1.000	2.006	no	no	single-workgroup-tree
+fit	1	1024	single-workgroup-tree	single-workgroup-tree	6.597	1.323	1.000	2.733	no	yes	single-workgroup-tree
+fit	1	4096	single-workgroup-tree	single-workgroup-tree	5.006	1.302	1.000	8.361	no	yes	single-workgroup-tree
+fit	1	16384	single-workgroup-tree	single-workgroup-tree	23.030	1.043	1.000	19.538	no	yes	single-workgroup-tree
+fit	4	4	serial-fold	serial-fold	3.900	1.137	1.000	0.879	no	no	single-workgroup-tree
+fit	4	16	serial-fold	single-workgroup-tree	1.689	1.035	1.035	0.967	no	no	single-workgroup-tree
+fit	4	64	serial-fold	single-workgroup-tree	0.367	4.272	4.272	0.234	no	no	serial-fold
+fit	4	256	single-workgroup-tree	single-workgroup-tree	2.933	1.317	1.000	1.898	no	yes	single-workgroup-tree
+fit	4	1024	single-workgroup-tree	single-workgroup-tree	5.986	1.281	1.000	2.864	no	yes	single-workgroup-tree
+fit	4	4096	single-workgroup-tree	single-workgroup-tree	3.300	1.487	1.000	13.650	no	yes	multi-pass-split
+fit	4	16384	single-workgroup-tree	single-workgroup-tree	22.564	1.172	1.000	21.496	no	yes	single-workgroup-tree
+fit	16	4	single-workgroup-tree	serial-fold	1.992	1.038	1.038	1.038	no	no	single-workgroup-tree
+fit	16	16	serial-fold	single-workgroup-tree	1.714	1.298	1.298	0.770	no	no	serial-fold
+fit	16	64	single-workgroup-tree	single-workgroup-tree	2.814	1.033	1.000	1.033	no	no	single-workgroup-tree
+fit	16	256	single-workgroup-tree	single-workgroup-tree	2.772	1.375	1.000	2.032	no	yes	single-workgroup-tree
+fit	16	1024	single-workgroup-tree	single-workgroup-tree	7.711	1.307	1.000	2.763	no	yes	single-workgroup-tree
+fit	16	4096	single-workgroup-tree	single-workgroup-tree	9.069	1.018	1.000	6.020	no	yes	single-workgroup-tree
+fit	16	16384	single-workgroup-tree	single-workgroup-tree	34.389	1.175	1.000	14.974	yes	yes	single-workgroup-tree
+fit	64	4	single-workgroup-tree	serial-fold	3.186	1.119	1.119	1.119	no	no	single-workgroup-tree
+fit	64	16	serial-fold	single-workgroup-tree	3.078	1.099	1.099	0.910	no	no	serial-fold
+fit	64	64	serial-fold	single-workgroup-tree	2.836	1.093	1.093	0.915	no	no	single-workgroup-tree
+fit	64	256	single-workgroup-tree	single-workgroup-tree	2.019	2.221	1.000	2.887	no	yes	single-workgroup-tree
+fit	64	1024	single-workgroup-tree	single-workgroup-tree	11.106	1.183	1.000	2.163	no	yes	single-workgroup-tree
+fit	64	4096	single-workgroup-tree	single-workgroup-tree	19.117	1.103	1.000	3.423	no	yes	multi-pass-split
+fit	64	16384	single-workgroup-tree	single-workgroup-tree	66.078	1.084	1.000	9.168	yes	yes	single-workgroup-tree
+fit	256	4	single-workgroup-tree	serial-fold	3.042	1.010	1.010	1.010	no	no	serial-fold
+fit	256	16	serial-fold	single-workgroup-tree	3.278	1.408	1.408	0.710	no	no	single-workgroup-tree
+fit	256	64	single-workgroup-tree	single-workgroup-tree	2.892	1.111	1.000	1.111	no	no	single-workgroup-tree
+fit	256	256	single-workgroup-tree	single-workgroup-tree	5.614	1.331	1.000	1.525	no	no	single-workgroup-tree
+fit	256	1024	single-workgroup-tree	single-workgroup-tree	22.356	1.094	1.000	1.613	no	yes	single-workgroup-tree
+fit	256	4096	single-workgroup-tree	single-workgroup-tree	52.572	1.016	1.000	1.885	no	yes	single-workgroup-tree
+fit	256	16384	single-workgroup-tree	single-workgroup-tree	213.542	1.030	1.000	3.983	yes	yes	single-workgroup-tree
+fit	1024	4	serial-fold	serial-fold	2.442	1.595	1.000	0.627	no	no	serial-fold
+fit	1024	16	serial-fold	single-workgroup-tree	3.053	1.456	1.456	0.687	no	no	serial-fold
+fit	1024	64	serial-fold	single-workgroup-tree	7.236	1.051	1.095	0.951	no	no	serial-fold
+fit	1024	256	single-workgroup-tree	single-workgroup-tree	18.511	1.053	1.000	1.090	no	no	single-workgroup-tree
+fit	1024	1024	single-workgroup-tree	single-workgroup-tree	58.300	1.032	1.000	1.171	no	yes	multi-pass-split
+fit	1024	4096	single-workgroup-tree	single-workgroup-tree	203.228	1.022	1.000	1.232	yes	yes	single-workgroup-tree
+fit	1024	16384	multi-pass-split	single-workgroup-tree	891.014	1.001	1.001	1.676	no	yes	single-workgroup-tree
+fit	4096	4	serial-fold	serial-fold	1.522	1.589	1.000	0.629	no	no	serial-fold
+fit	4096	16	serial-fold	serial-fold	5.080	1.424	1.000	0.702	no	no	serial-fold
+fit	4096	64	serial-fold	serial-fold	18.681	1.118	1.000	0.894	no	no	serial-fold
+fit	4096	256	serial-fold	serial-fold	53.536	1.026	1.000	0.975	no	no	multi-pass-split
+fit	4096	1024	serial-fold	single-workgroup-tree	207.367	1.026	1.034	0.974	yes	yes	serial-fold
+fit	4096	4096	single-workgroup-tree	single-workgroup-tree	851.689	1.001	1.000	1.016	no	yes	single-workgroup-tree
+fit	16384	4	serial-fold	serial-fold	4.675	1.784	1.000	0.561	yes	yes	serial-fold
+fit	16384	16	serial-fold	serial-fold	16.172	1.237	1.000	0.808	yes	yes	serial-fold
+fit	16384	64	serial-fold	serial-fold	53.697	1.108	1.000	0.903	yes	yes	serial-fold
+fit	16384	256	serial-fold	serial-fold	205.442	1.004	1.000	0.996	no	no	multi-pass-split
+fit	16384	1024	serial-fold	serial-fold	855.003	1.013	1.000	0.987	yes	yes	serial-fold
+fit	65536	4	serial-fold	serial-fold	18.011	1.365	1.000	0.733	yes	yes	serial-fold
+fit	65536	16	serial-fold	serial-fold	52.525	1.267	1.000	0.789	yes	yes	serial-fold
+fit	65536	64	serial-fold	serial-fold	204.631	1.038	1.000	0.964	yes	yes	serial-fold
+fit	65536	256	single-workgroup-tree	serial-fold	830.733	1.007	1.036	1.036	yes	yes	single-workgroup-tree
+fit	262144	4	serial-fold	serial-fold	57.550	1.420	1.000	0.704	yes	yes	serial-fold
+fit	262144	16	serial-fold	serial-fold	202.717	1.136	1.000	0.880	yes	yes	serial-fold
+fit	262144	64	serial-fold	serial-fold	848.658	1.013	1.000	0.987	yes	yes	serial-fold
+held-out	1	32	single-workgroup-tree	single-workgroup-tree	2.228	1.526	1.000	1.951	no	no	single-workgroup-tree
+held-out	1	128	single-workgroup-tree	single-workgroup-tree	1.911	1.664	1.000	5.536	no	yes	single-workgroup-tree
+held-out	1	2048	single-workgroup-tree	single-workgroup-tree	5.681	1.348	1.000	4.223	no	yes	single-workgroup-tree
+held-out	1	8192	single-workgroup-tree	single-workgroup-tree	11.028	1.141	1.000	48.659	no	yes	single-workgroup-tree
+held-out	4	32	single-workgroup-tree	single-workgroup-tree	2.717	1.472	1.000	1.827	no	yes	single-workgroup-tree
+held-out	4	128	single-workgroup-tree	single-workgroup-tree	2.639	1.497	1.000	4.452	no	yes	single-workgroup-tree
+held-out	4	2048	single-workgroup-tree	single-workgroup-tree	7.005	1.107	1.000	3.830	no	yes	single-workgroup-tree
+held-out	4	8192	single-workgroup-tree	single-workgroup-tree	11.345	1.422	1.000	50.714	yes	yes	single-workgroup-tree
+held-out	16	32	single-workgroup-tree	single-workgroup-tree	2.500	1.244	1.000	1.830	no	no	single-workgroup-tree
+held-out	16	128	single-workgroup-tree	single-workgroup-tree	3.125	1.302	1.000	3.651	no	yes	single-workgroup-tree
+held-out	16	2048	single-workgroup-tree	single-workgroup-tree	6.811	1.291	1.000	3.721	no	yes	single-workgroup-tree
+held-out	16	8192	single-workgroup-tree	single-workgroup-tree	17.167	1.203	1.000	34.531	yes	yes	single-workgroup-tree
+held-out	64	32	single-workgroup-tree	single-workgroup-tree	2.428	1.583	1.000	1.927	no	no	single-workgroup-tree
+held-out	64	128	single-workgroup-tree	single-workgroup-tree	3.522	1.382	1.000	4.596	no	yes	single-workgroup-tree
+held-out	64	2048	single-workgroup-tree	single-workgroup-tree	11.267	1.074	1.000	2.800	no	yes	single-workgroup-tree
+held-out	64	8192	single-workgroup-tree	single-workgroup-tree	35.495	1.175	1.000	18.601	yes	yes	single-workgroup-tree
+held-out	256	32	single-workgroup-tree	single-workgroup-tree	3.519	1.234	1.000	1.726	no	yes	single-workgroup-tree
+held-out	256	128	single-workgroup-tree	single-workgroup-tree	4.150	1.151	1.000	3.039	no	yes	single-workgroup-tree
+held-out	256	2048	multi-pass-split	single-workgroup-tree	33.283	1.001	1.001	1.513	no	yes	single-workgroup-tree
+held-out	256	8192	single-workgroup-tree	single-workgroup-tree	103.092	1.062	1.000	7.453	yes	yes	single-workgroup-tree
+held-out	1024	32	serial-fold	single-workgroup-tree	3.672	1.067	1.067	0.937	no	no	multi-pass-split
+held-out	1024	128	single-workgroup-tree	single-workgroup-tree	12.333	1.048	1.000	1.814	no	yes	single-workgroup-tree
+held-out	1024	2048	single-workgroup-tree	single-workgroup-tree	102.883	1.005	1.000	1.186	no	yes	multi-pass-split
+held-out	1024	8192	single-workgroup-tree	single-workgroup-tree	444.042	1.005	1.000	2.507	no	yes	single-workgroup-tree
+held-out	4096	32	serial-fold	serial-fold	10.839	1.020	1.000	0.981	no	no	serial-fold
+held-out	4096	128	multi-pass-split	serial-fold	34.225	1.028	1.198	1.198	no	yes	multi-pass-split
+held-out	4096	2048	serial-fold	single-workgroup-tree	421.969	1.045	1.045	0.957	yes	yes	serial-fold
+held-out	16384	32	serial-fold	serial-fold	27.570	1.158	1.000	0.864	yes	yes	serial-fold
+held-out	16384	128	serial-fold	serial-fold	106.445	1.034	1.000	0.967	no	no	serial-fold
+held-out	65536	32	serial-fold	serial-fold	101.258	1.184	1.000	0.845	yes	yes	serial-fold
+held-out	65536	128	serial-fold	serial-fold	426.420	1.019	1.000	0.981	yes	yes	serial-fold
+held-out	262144	32	serial-fold	serial-fold	441.947	1.021	1.000	0.979	yes	yes	serial-fold
+# fitted on 34 of 60 fit-set cells, the ones whose measured serial-or-parallel verdict is separated from the noise
+# PERTURBED: encoder scaled by 20
+## Fitted parameters
+encoder_seconds	2.332294473e-5	23.3229 us per dispatch
+parallel_threads	1.056001e3	fold steps retired at once when saturated
+step_seconds	2.908885244e-8	29.0889 ns per critical-path fold step
+
+## Decision accuracy: the three-way choice
+set	cells	exact	median_regret	p90_regret	worst_regret
+fit	60	45	1.0000	1.0899	4.2724
+held-out	32	29	1.0000	1.0000	1.8144
+
+## The same, on the cells whose winner is separated from its runner-up
+set	cells	exact	median_regret	p90_regret	worst_regret
+fit	16	15	1.0000	1.0000	1.0361
+held-out	9	9	1.0000	1.0000	1.0000
+
+## Decision accuracy: the serial fold against a parallel strategy
+set	cells	agreed	worst_regret_when_wrong
+fit	60	46	4.2724
+held-out	32	30	1.8144
+
+## The same, on the cells whose serial-or-parallel verdict is separated
+set	cells	agreed	worst_regret_when_wrong
+fit	34	32	1.0361
+held-out	26	24	1.8144
+
+## Magnitude accuracy, |predicted/measured - 1| against the median sample
+set	rows	median	p90	max
+fit	180	3.4648	20.0821	131.3607
+held-out	96	3.2262	16.9518	23.7884
+
+## Every cell
+set	rows	contributors	measured	predicted	measured_us	margin	regret	parallel_speedup	separated	parallel_separated	min_sample_winner
+fit	1	4	single-workgroup-tree	serial-fold	4.239	1.009	1.009	1.009	no	no	single-workgroup-tree
+fit	1	16	serial-fold	single-workgroup-tree	1.736	1.054	1.054	0.948	no	no	serial-fold
+fit	1	64	single-workgroup-tree	single-workgroup-tree	1.847	1.469	1.000	1.469	no	no	single-workgroup-tree
+fit	1	256	single-workgroup-tree	single-workgroup-tree	2.492	1.448	1.000	2.006	no	no	single-workgroup-tree
+fit	1	1024	single-workgroup-tree	single-workgroup-tree	6.597	1.323	1.000	2.733	no	yes	single-workgroup-tree
+fit	1	4096	single-workgroup-tree	single-workgroup-tree	5.006	1.302	1.000	8.361	no	yes	single-workgroup-tree
+fit	1	16384	single-workgroup-tree	single-workgroup-tree	23.030	1.043	1.000	19.538	no	yes	single-workgroup-tree
+fit	4	4	serial-fold	serial-fold	3.900	1.137	1.000	0.879	no	no	single-workgroup-tree
+fit	4	16	serial-fold	single-workgroup-tree	1.689	1.035	1.035	0.967	no	no	single-workgroup-tree
+fit	4	64	serial-fold	single-workgroup-tree	0.367	4.272	4.272	0.234	no	no	serial-fold
+fit	4	256	single-workgroup-tree	single-workgroup-tree	2.933	1.317	1.000	1.898	no	yes	single-workgroup-tree
+fit	4	1024	single-workgroup-tree	single-workgroup-tree	5.986	1.281	1.000	2.864	no	yes	single-workgroup-tree
+fit	4	4096	single-workgroup-tree	single-workgroup-tree	3.300	1.487	1.000	13.650	no	yes	multi-pass-split
+fit	4	16384	single-workgroup-tree	single-workgroup-tree	22.564	1.172	1.000	21.496	no	yes	single-workgroup-tree
+fit	16	4	single-workgroup-tree	serial-fold	1.992	1.038	1.038	1.038	no	no	single-workgroup-tree
+fit	16	16	serial-fold	single-workgroup-tree	1.714	1.298	1.298	0.770	no	no	serial-fold
+fit	16	64	single-workgroup-tree	single-workgroup-tree	2.814	1.033	1.000	1.033	no	no	single-workgroup-tree
+fit	16	256	single-workgroup-tree	single-workgroup-tree	2.772	1.375	1.000	2.032	no	yes	single-workgroup-tree
+fit	16	1024	single-workgroup-tree	single-workgroup-tree	7.711	1.307	1.000	2.763	no	yes	single-workgroup-tree
+fit	16	4096	single-workgroup-tree	single-workgroup-tree	9.069	1.018	1.000	6.020	no	yes	single-workgroup-tree
+fit	16	16384	single-workgroup-tree	single-workgroup-tree	34.389	1.175	1.000	14.974	yes	yes	single-workgroup-tree
+fit	64	4	single-workgroup-tree	serial-fold	3.186	1.119	1.119	1.119	no	no	single-workgroup-tree
+fit	64	16	serial-fold	single-workgroup-tree	3.078	1.099	1.099	0.910	no	no	serial-fold
+fit	64	64	serial-fold	single-workgroup-tree	2.836	1.093	1.093	0.915	no	no	single-workgroup-tree
+fit	64	256	single-workgroup-tree	single-workgroup-tree	2.019	2.221	1.000	2.887	no	yes	single-workgroup-tree
+fit	64	1024	single-workgroup-tree	single-workgroup-tree	11.106	1.183	1.000	2.163	no	yes	single-workgroup-tree
+fit	64	4096	single-workgroup-tree	single-workgroup-tree	19.117	1.103	1.000	3.423	no	yes	multi-pass-split
+fit	64	16384	single-workgroup-tree	single-workgroup-tree	66.078	1.084	1.000	9.168	yes	yes	single-workgroup-tree
+fit	256	4	single-workgroup-tree	serial-fold	3.042	1.010	1.010	1.010	no	no	serial-fold
+fit	256	16	serial-fold	single-workgroup-tree	3.278	1.408	1.408	0.710	no	no	single-workgroup-tree
+fit	256	64	single-workgroup-tree	single-workgroup-tree	2.892	1.111	1.000	1.111	no	no	single-workgroup-tree
+fit	256	256	single-workgroup-tree	single-workgroup-tree	5.614	1.331	1.000	1.525	no	no	single-workgroup-tree
+fit	256	1024	single-workgroup-tree	single-workgroup-tree	22.356	1.094	1.000	1.613	no	yes	single-workgroup-tree
+fit	256	4096	single-workgroup-tree	single-workgroup-tree	52.572	1.016	1.000	1.885	no	yes	single-workgroup-tree
+fit	256	16384	single-workgroup-tree	single-workgroup-tree	213.542	1.030	1.000	3.983	yes	yes	single-workgroup-tree
+fit	1024	4	serial-fold	serial-fold	2.442	1.595	1.000	0.627	no	no	serial-fold
+fit	1024	16	serial-fold	serial-fold	3.053	1.456	1.000	0.687	no	no	serial-fold
+fit	1024	64	serial-fold	serial-fold	7.236	1.051	1.000	0.951	no	no	serial-fold
+fit	1024	256	single-workgroup-tree	serial-fold	18.511	1.053	1.090	1.090	no	no	single-workgroup-tree
+fit	1024	1024	single-workgroup-tree	single-workgroup-tree	58.300	1.032	1.000	1.171	no	yes	multi-pass-split
+fit	1024	4096	single-workgroup-tree	single-workgroup-tree	203.228	1.022	1.000	1.232	yes	yes	single-workgroup-tree
+fit	1024	16384	multi-pass-split	single-workgroup-tree	891.014	1.001	1.001	1.676	no	yes	single-workgroup-tree
+fit	4096	4	serial-fold	serial-fold	1.522	1.589	1.000	0.629	no	no	serial-fold
+fit	4096	16	serial-fold	serial-fold	5.080	1.424	1.000	0.702	no	no	serial-fold
+fit	4096	64	serial-fold	serial-fold	18.681	1.118	1.000	0.894	no	no	serial-fold
+fit	4096	256	serial-fold	serial-fold	53.536	1.026	1.000	0.975	no	no	multi-pass-split
+fit	4096	1024	serial-fold	serial-fold	207.367	1.026	1.000	0.974	yes	yes	serial-fold
+fit	4096	4096	single-workgroup-tree	serial-fold	851.689	1.001	1.016	1.016	no	yes	single-workgroup-tree
+fit	16384	4	serial-fold	serial-fold	4.675	1.784	1.000	0.561	yes	yes	serial-fold
+fit	16384	16	serial-fold	serial-fold	16.172	1.237	1.000	0.808	yes	yes	serial-fold
+fit	16384	64	serial-fold	serial-fold	53.697	1.108	1.000	0.903	yes	yes	serial-fold
+fit	16384	256	serial-fold	serial-fold	205.442	1.004	1.000	0.996	no	no	multi-pass-split
+fit	16384	1024	serial-fold	serial-fold	855.003	1.013	1.000	0.987	yes	yes	serial-fold
+fit	65536	4	serial-fold	serial-fold	18.011	1.365	1.000	0.733	yes	yes	serial-fold
+fit	65536	16	serial-fold	serial-fold	52.525	1.267	1.000	0.789	yes	yes	serial-fold
+fit	65536	64	serial-fold	serial-fold	204.631	1.038	1.000	0.964	yes	yes	serial-fold
+fit	65536	256	single-workgroup-tree	serial-fold	830.733	1.007	1.036	1.036	yes	yes	single-workgroup-tree
+fit	262144	4	serial-fold	serial-fold	57.550	1.420	1.000	0.704	yes	yes	serial-fold
+fit	262144	16	serial-fold	serial-fold	202.717	1.136	1.000	0.880	yes	yes	serial-fold
+fit	262144	64	serial-fold	serial-fold	848.658	1.013	1.000	0.987	yes	yes	serial-fold
+held-out	1	32	single-workgroup-tree	single-workgroup-tree	2.228	1.526	1.000	1.951	no	no	single-workgroup-tree
+held-out	1	128	single-workgroup-tree	single-workgroup-tree	1.911	1.664	1.000	5.536	no	yes	single-workgroup-tree
+held-out	1	2048	single-workgroup-tree	single-workgroup-tree	5.681	1.348	1.000	4.223	no	yes	single-workgroup-tree
+held-out	1	8192	single-workgroup-tree	single-workgroup-tree	11.028	1.141	1.000	48.659	no	yes	single-workgroup-tree
+held-out	4	32	single-workgroup-tree	single-workgroup-tree	2.717	1.472	1.000	1.827	no	yes	single-workgroup-tree
+held-out	4	128	single-workgroup-tree	single-workgroup-tree	2.639	1.497	1.000	4.452	no	yes	single-workgroup-tree
+held-out	4	2048	single-workgroup-tree	single-workgroup-tree	7.005	1.107	1.000	3.830	no	yes	single-workgroup-tree
+held-out	4	8192	single-workgroup-tree	single-workgroup-tree	11.345	1.422	1.000	50.714	yes	yes	single-workgroup-tree
+held-out	16	32	single-workgroup-tree	single-workgroup-tree	2.500	1.244	1.000	1.830	no	no	single-workgroup-tree
+held-out	16	128	single-workgroup-tree	single-workgroup-tree	3.125	1.302	1.000	3.651	no	yes	single-workgroup-tree
+held-out	16	2048	single-workgroup-tree	single-workgroup-tree	6.811	1.291	1.000	3.721	no	yes	single-workgroup-tree
+held-out	16	8192	single-workgroup-tree	single-workgroup-tree	17.167	1.203	1.000	34.531	yes	yes	single-workgroup-tree
+held-out	64	32	single-workgroup-tree	single-workgroup-tree	2.428	1.583	1.000	1.927	no	no	single-workgroup-tree
+held-out	64	128	single-workgroup-tree	single-workgroup-tree	3.522	1.382	1.000	4.596	no	yes	single-workgroup-tree
+held-out	64	2048	single-workgroup-tree	single-workgroup-tree	11.267	1.074	1.000	2.800	no	yes	single-workgroup-tree
+held-out	64	8192	single-workgroup-tree	single-workgroup-tree	35.495	1.175	1.000	18.601	yes	yes	single-workgroup-tree
+held-out	256	32	single-workgroup-tree	single-workgroup-tree	3.519	1.234	1.000	1.726	no	yes	single-workgroup-tree
+held-out	256	128	single-workgroup-tree	single-workgroup-tree	4.150	1.151	1.000	3.039	no	yes	single-workgroup-tree
+held-out	256	2048	multi-pass-split	single-workgroup-tree	33.283	1.001	1.001	1.513	no	yes	single-workgroup-tree
+held-out	256	8192	single-workgroup-tree	single-workgroup-tree	103.092	1.062	1.000	7.453	yes	yes	single-workgroup-tree
+held-out	1024	32	serial-fold	serial-fold	3.672	1.067	1.000	0.937	no	no	multi-pass-split
+held-out	1024	128	single-workgroup-tree	serial-fold	12.333	1.048	1.814	1.814	no	yes	single-workgroup-tree
+held-out	1024	2048	single-workgroup-tree	single-workgroup-tree	102.883	1.005	1.000	1.186	no	yes	multi-pass-split
+held-out	1024	8192	single-workgroup-tree	single-workgroup-tree	444.042	1.005	1.000	2.507	no	yes	single-workgroup-tree
+held-out	4096	32	serial-fold	serial-fold	10.839	1.020	1.000	0.981	no	no	serial-fold
+held-out	4096	128	multi-pass-split	serial-fold	34.225	1.028	1.198	1.198	no	yes	multi-pass-split
+held-out	4096	2048	serial-fold	serial-fold	421.969	1.045	1.000	0.957	yes	yes	serial-fold
+held-out	16384	32	serial-fold	serial-fold	27.570	1.158	1.000	0.864	yes	yes	serial-fold
+held-out	16384	128	serial-fold	serial-fold	106.445	1.034	1.000	0.967	no	no	serial-fold
+held-out	65536	32	serial-fold	serial-fold	101.258	1.184	1.000	0.845	yes	yes	serial-fold
+held-out	65536	128	serial-fold	serial-fold	426.420	1.019	1.000	0.981	yes	yes	serial-fold
+held-out	262144	32	serial-fold	serial-fold	441.947	1.021	1.000	0.979	yes	yes	serial-fold
+# fitted on 34 of 60 fit-set cells, the ones whose measured serial-or-parallel verdict is separated from the noise
+# PERTURBED: step scaled by 0.1
+## Fitted parameters
+encoder_seconds	1.166147237e-6	1.1661 us per dispatch
+parallel_threads	1.056001e3	fold steps retired at once when saturated
+step_seconds	2.908885244e-9	2.9089 ns per critical-path fold step
+
+## Decision accuracy: the three-way choice
+set	cells	exact	median_regret	p90_regret	worst_regret
+fit	60	45	1.0000	1.0899	4.2724
+held-out	32	29	1.0000	1.0000	1.8144
+
+## The same, on the cells whose winner is separated from its runner-up
+set	cells	exact	median_regret	p90_regret	worst_regret
+fit	16	15	1.0000	1.0000	1.0361
+held-out	9	9	1.0000	1.0000	1.0000
+
+## Decision accuracy: the serial fold against a parallel strategy
+set	cells	agreed	worst_regret_when_wrong
+fit	60	46	4.2724
+held-out	32	30	1.8144
+
+## The same, on the cells whose serial-or-parallel verdict is separated
+set	cells	agreed	worst_regret_when_wrong
+fit	34	32	1.0361
+held-out	26	24	1.8144
+
+## Magnitude accuracy, |predicted/measured - 1| against the median sample
+set	rows	median	p90	max
+fit	180	0.6992	0.8905	5.8758
+held-out	96	0.7441	0.8899	0.9584
+
+## Every cell
+set	rows	contributors	measured	predicted	measured_us	margin	regret	parallel_speedup	separated	parallel_separated	min_sample_winner
+fit	1	4	single-workgroup-tree	serial-fold	4.239	1.009	1.009	1.009	no	no	single-workgroup-tree
+fit	1	16	serial-fold	single-workgroup-tree	1.736	1.054	1.054	0.948	no	no	serial-fold
+fit	1	64	single-workgroup-tree	single-workgroup-tree	1.847	1.469	1.000	1.469	no	no	single-workgroup-tree
+fit	1	256	single-workgroup-tree	single-workgroup-tree	2.492	1.448	1.000	2.006	no	no	single-workgroup-tree
+fit	1	1024	single-workgroup-tree	single-workgroup-tree	6.597	1.323	1.000	2.733	no	yes	single-workgroup-tree
+fit	1	4096	single-workgroup-tree	single-workgroup-tree	5.006	1.302	1.000	8.361	no	yes	single-workgroup-tree
+fit	1	16384	single-workgroup-tree	single-workgroup-tree	23.030	1.043	1.000	19.538	no	yes	single-workgroup-tree
+fit	4	4	serial-fold	serial-fold	3.900	1.137	1.000	0.879	no	no	single-workgroup-tree
+fit	4	16	serial-fold	single-workgroup-tree	1.689	1.035	1.035	0.967	no	no	single-workgroup-tree
+fit	4	64	serial-fold	single-workgroup-tree	0.367	4.272	4.272	0.234	no	no	serial-fold
+fit	4	256	single-workgroup-tree	single-workgroup-tree	2.933	1.317	1.000	1.898	no	yes	single-workgroup-tree
+fit	4	1024	single-workgroup-tree	single-workgroup-tree	5.986	1.281	1.000	2.864	no	yes	single-workgroup-tree
+fit	4	4096	single-workgroup-tree	single-workgroup-tree	3.300	1.487	1.000	13.650	no	yes	multi-pass-split
+fit	4	16384	single-workgroup-tree	single-workgroup-tree	22.564	1.172	1.000	21.496	no	yes	single-workgroup-tree
+fit	16	4	single-workgroup-tree	serial-fold	1.992	1.038	1.038	1.038	no	no	single-workgroup-tree
+fit	16	16	serial-fold	single-workgroup-tree	1.714	1.298	1.298	0.770	no	no	serial-fold
+fit	16	64	single-workgroup-tree	single-workgroup-tree	2.814	1.033	1.000	1.033	no	no	single-workgroup-tree
+fit	16	256	single-workgroup-tree	single-workgroup-tree	2.772	1.375	1.000	2.032	no	yes	single-workgroup-tree
+fit	16	1024	single-workgroup-tree	single-workgroup-tree	7.711	1.307	1.000	2.763	no	yes	single-workgroup-tree
+fit	16	4096	single-workgroup-tree	single-workgroup-tree	9.069	1.018	1.000	6.020	no	yes	single-workgroup-tree
+fit	16	16384	single-workgroup-tree	single-workgroup-tree	34.389	1.175	1.000	14.974	yes	yes	single-workgroup-tree
+fit	64	4	single-workgroup-tree	serial-fold	3.186	1.119	1.119	1.119	no	no	single-workgroup-tree
+fit	64	16	serial-fold	single-workgroup-tree	3.078	1.099	1.099	0.910	no	no	serial-fold
+fit	64	64	serial-fold	single-workgroup-tree	2.836	1.093	1.093	0.915	no	no	single-workgroup-tree
+fit	64	256	single-workgroup-tree	single-workgroup-tree	2.019	2.221	1.000	2.887	no	yes	single-workgroup-tree
+fit	64	1024	single-workgroup-tree	single-workgroup-tree	11.106	1.183	1.000	2.163	no	yes	single-workgroup-tree
+fit	64	4096	single-workgroup-tree	single-workgroup-tree	19.117	1.103	1.000	3.423	no	yes	multi-pass-split
+fit	64	16384	single-workgroup-tree	single-workgroup-tree	66.078	1.084	1.000	9.168	yes	yes	single-workgroup-tree
+fit	256	4	single-workgroup-tree	serial-fold	3.042	1.010	1.010	1.010	no	no	serial-fold
+fit	256	16	serial-fold	single-workgroup-tree	3.278	1.408	1.408	0.710	no	no	single-workgroup-tree
+fit	256	64	single-workgroup-tree	single-workgroup-tree	2.892	1.111	1.000	1.111	no	no	single-workgroup-tree
+fit	256	256	single-workgroup-tree	single-workgroup-tree	5.614	1.331	1.000	1.525	no	no	single-workgroup-tree
+fit	256	1024	single-workgroup-tree	single-workgroup-tree	22.356	1.094	1.000	1.613	no	yes	single-workgroup-tree
+fit	256	4096	single-workgroup-tree	single-workgroup-tree	52.572	1.016	1.000	1.885	no	yes	single-workgroup-tree
+fit	256	16384	single-workgroup-tree	single-workgroup-tree	213.542	1.030	1.000	3.983	yes	yes	single-workgroup-tree
+fit	1024	4	serial-fold	serial-fold	2.442	1.595	1.000	0.627	no	no	serial-fold
+fit	1024	16	serial-fold	serial-fold	3.053	1.456	1.000	0.687	no	no	serial-fold
+fit	1024	64	serial-fold	serial-fold	7.236	1.051	1.000	0.951	no	no	serial-fold
+fit	1024	256	single-workgroup-tree	serial-fold	18.511	1.053	1.090	1.090	no	no	single-workgroup-tree
+fit	1024	1024	single-workgroup-tree	single-workgroup-tree	58.300	1.032	1.000	1.171	no	yes	multi-pass-split
+fit	1024	4096	single-workgroup-tree	single-workgroup-tree	203.228	1.022	1.000	1.232	yes	yes	single-workgroup-tree
+fit	1024	16384	multi-pass-split	single-workgroup-tree	891.014	1.001	1.001	1.676	no	yes	single-workgroup-tree
+fit	4096	4	serial-fold	serial-fold	1.522	1.589	1.000	0.629	no	no	serial-fold
+fit	4096	16	serial-fold	serial-fold	5.080	1.424	1.000	0.702	no	no	serial-fold
+fit	4096	64	serial-fold	serial-fold	18.681	1.118	1.000	0.894	no	no	serial-fold
+fit	4096	256	serial-fold	serial-fold	53.536	1.026	1.000	0.975	no	no	multi-pass-split
+fit	4096	1024	serial-fold	serial-fold	207.367	1.026	1.000	0.974	yes	yes	serial-fold
+fit	4096	4096	single-workgroup-tree	serial-fold	851.689	1.001	1.016	1.016	no	yes	single-workgroup-tree
+fit	16384	4	serial-fold	serial-fold	4.675	1.784	1.000	0.561	yes	yes	serial-fold
+fit	16384	16	serial-fold	serial-fold	16.172	1.237	1.000	0.808	yes	yes	serial-fold
+fit	16384	64	serial-fold	serial-fold	53.697	1.108	1.000	0.903	yes	yes	serial-fold
+fit	16384	256	serial-fold	serial-fold	205.442	1.004	1.000	0.996	no	no	multi-pass-split
+fit	16384	1024	serial-fold	serial-fold	855.003	1.013	1.000	0.987	yes	yes	serial-fold
+fit	65536	4	serial-fold	serial-fold	18.011	1.365	1.000	0.733	yes	yes	serial-fold
+fit	65536	16	serial-fold	serial-fold	52.525	1.267	1.000	0.789	yes	yes	serial-fold
+fit	65536	64	serial-fold	serial-fold	204.631	1.038	1.000	0.964	yes	yes	serial-fold
+fit	65536	256	single-workgroup-tree	serial-fold	830.733	1.007	1.036	1.036	yes	yes	single-workgroup-tree
+fit	262144	4	serial-fold	serial-fold	57.550	1.420	1.000	0.704	yes	yes	serial-fold
+fit	262144	16	serial-fold	serial-fold	202.717	1.136	1.000	0.880	yes	yes	serial-fold
+fit	262144	64	serial-fold	serial-fold	848.658	1.013	1.000	0.987	yes	yes	serial-fold
+held-out	1	32	single-workgroup-tree	single-workgroup-tree	2.228	1.526	1.000	1.951	no	no	single-workgroup-tree
+held-out	1	128	single-workgroup-tree	single-workgroup-tree	1.911	1.664	1.000	5.536	no	yes	single-workgroup-tree
+held-out	1	2048	single-workgroup-tree	single-workgroup-tree	5.681	1.348	1.000	4.223	no	yes	single-workgroup-tree
+held-out	1	8192	single-workgroup-tree	single-workgroup-tree	11.028	1.141	1.000	48.659	no	yes	single-workgroup-tree
+held-out	4	32	single-workgroup-tree	single-workgroup-tree	2.717	1.472	1.000	1.827	no	yes	single-workgroup-tree
+held-out	4	128	single-workgroup-tree	single-workgroup-tree	2.639	1.497	1.000	4.452	no	yes	single-workgroup-tree
+held-out	4	2048	single-workgroup-tree	single-workgroup-tree	7.005	1.107	1.000	3.830	no	yes	single-workgroup-tree
+held-out	4	8192	single-workgroup-tree	single-workgroup-tree	11.345	1.422	1.000	50.714	yes	yes	single-workgroup-tree
+held-out	16	32	single-workgroup-tree	single-workgroup-tree	2.500	1.244	1.000	1.830	no	no	single-workgroup-tree
+held-out	16	128	single-workgroup-tree	single-workgroup-tree	3.125	1.302	1.000	3.651	no	yes	single-workgroup-tree
+held-out	16	2048	single-workgroup-tree	single-workgroup-tree	6.811	1.291	1.000	3.721	no	yes	single-workgroup-tree
+held-out	16	8192	single-workgroup-tree	single-workgroup-tree	17.167	1.203	1.000	34.531	yes	yes	single-workgroup-tree
+held-out	64	32	single-workgroup-tree	single-workgroup-tree	2.428	1.583	1.000	1.927	no	no	single-workgroup-tree
+held-out	64	128	single-workgroup-tree	single-workgroup-tree	3.522	1.382	1.000	4.596	no	yes	single-workgroup-tree
+held-out	64	2048	single-workgroup-tree	single-workgroup-tree	11.267	1.074	1.000	2.800	no	yes	single-workgroup-tree
+held-out	64	8192	single-workgroup-tree	single-workgroup-tree	35.495	1.175	1.000	18.601	yes	yes	single-workgroup-tree
+held-out	256	32	single-workgroup-tree	single-workgroup-tree	3.519	1.234	1.000	1.726	no	yes	single-workgroup-tree
+held-out	256	128	single-workgroup-tree	single-workgroup-tree	4.150	1.151	1.000	3.039	no	yes	single-workgroup-tree
+held-out	256	2048	multi-pass-split	single-workgroup-tree	33.283	1.001	1.001	1.513	no	yes	single-workgroup-tree
+held-out	256	8192	single-workgroup-tree	single-workgroup-tree	103.092	1.062	1.000	7.453	yes	yes	single-workgroup-tree
+held-out	1024	32	serial-fold	serial-fold	3.672	1.067	1.000	0.937	no	no	multi-pass-split
+held-out	1024	128	single-workgroup-tree	serial-fold	12.333	1.048	1.814	1.814	no	yes	single-workgroup-tree
+held-out	1024	2048	single-workgroup-tree	single-workgroup-tree	102.883	1.005	1.000	1.186	no	yes	multi-pass-split
+held-out	1024	8192	single-workgroup-tree	single-workgroup-tree	444.042	1.005	1.000	2.507	no	yes	single-workgroup-tree
+held-out	4096	32	serial-fold	serial-fold	10.839	1.020	1.000	0.981	no	no	serial-fold
+held-out	4096	128	multi-pass-split	serial-fold	34.225	1.028	1.198	1.198	no	yes	multi-pass-split
+held-out	4096	2048	serial-fold	serial-fold	421.969	1.045	1.000	0.957	yes	yes	serial-fold
+held-out	16384	32	serial-fold	serial-fold	27.570	1.158	1.000	0.864	yes	yes	serial-fold
+held-out	16384	128	serial-fold	serial-fold	106.445	1.034	1.000	0.967	no	no	serial-fold
+held-out	65536	32	serial-fold	serial-fold	101.258	1.184	1.000	0.845	yes	yes	serial-fold
+held-out	65536	128	serial-fold	serial-fold	426.420	1.019	1.000	0.981	yes	yes	serial-fold
+held-out	262144	32	serial-fold	serial-fold	441.947	1.021	1.000	0.979	yes	yes	serial-fold

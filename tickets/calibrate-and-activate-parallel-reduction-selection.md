@@ -1,10 +1,10 @@
 ---
 id: calibrate-and-activate-parallel-reduction-selection
 title: Calibrate and activate parallel reduction selection
-status: in-progress
+status: review
 priority: p1
 dependencies: [realize-parallel-reduction-strategies-on-metal, establish-an-upper-bound-authority-for-the-metal-grid-axis-row]
-related: [implement-parallel-reduction-strategies]
+related: [implement-parallel-reduction-strategies, activate-measured-reduction-selection-from-a-target-cost-row, calibrate-the-reduction-partition-against-measured-alternatives]
 scopes: [implementation/compiler, research/program-planning, contracts/optimizer]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
@@ -94,3 +94,155 @@ One profile (`tiler.metal.macos-apple9.msl4-0.f32.v1`), one contract, one progra
 ### What unblocks this
 
 [`establish-an-upper-bound-authority-for-the-metal-grid-axis-row`](establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md). The blocking row is a **deliberately conservative compile guarantee rather than a hardware maximum** — its own comment records that the SDK contract proves extent four representable and establishes no upper bound at all — so it is an absent authority rather than a limit that measurement would confirm. This ticket's Closes-when is unmet and was not restated to fit what was achievable; the coordinator decides whether it parks behind the new ticket or is superseded by it.
+
+## Outcome — 2026-08-07: the crossover is measured and large; the activation is a public boundary and is parked
+
+**Read this first, because the shape of the close matters.** The 2026-08-02 outcome below closed on *"no crossover was established"* and named a target row as the reason. That row moved, and this run took the measurement it blocked. **A crossover exists, it is a contour rather than a point, and both sides of it are two orders of magnitude apart.** A three-parameter analytical calibration reproduces the measured verdict on held-out shapes within a stated bound, and every check is mutation-proved. What did **not** happen is activation, and the reason is a boundary rather than an evidence gap: consulting the calibration requires a target profile to declare a quantity no profile carries, which is a `pub` surface and an identity move, both reserved for Tom. That surface is designed and filed as [`activate-measured-reduction-selection-from-a-target-cost-row`](activate-measured-reduction-selection-from-a-target-cost-row.md), `awaiting-decision`.
+
+### The environment matched the ledger in every field
+
+Verified rather than assumed, and retained at [`environment.tsv`](../spikes/program-planning/reduction-dispatch-crossover/results/2026-08-07-apple-m4-max-macos27.0-26A5388g/environment.tsv). Offline compilation: `Apple metal version 32023.883 (metalfe-32023.883)`, `AIR-LLD 32023.883`, Xcode 26.6 (17F113), SDK `macosx` 26.5 (25F70). Execution: macOS 27.0 build `26A5388g`, `arm64`, Apple M4 Max. Toolchain `nightly-2026-07-19`, `rustc 1.99.0-nightly (eff8269f7 2026-07-18)`.
+
+**The offline half needed `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` and that is load-bearing, not defensive.** This host's default selection is Xcode 27.0 beta (`27A5228h`) with SDK 27.0 and offline compiler `32023.921` — a different environment from the one the profile was measured under. A run taking the default would have been unqualified and its numbers would not have belonged to this profile.
+
+**Host occupancy, because the metric is wall clock.** The coordinator drained every other worker lane for this run and dispatched nothing during it. Load averages recorded by the harness itself: `2.93 3.09 4.46` before, `2.32 2.92 4.33` after — this machine's idle desktop session with no build running, confirmed by inspecting the running processes.
+
+### The measurable domain, re-derived before measuring
+
+The compile-only sweep was rerun unchanged and **agreed exactly with the 2026-08-05 read**: of its 36 shapes, **24 retain all three strategies and none is refused on the grid axis**. The twelve that retain one are the contributor counts admitting no balanced exact partition. So the domain is wide and the predeclared timing matrix could be chosen freely inside it.
+
+The timing matrix is **92 cells and 276 dispatched alternatives**: contributor counts `{4, 16, 32, 64, 128, 256, 1024, 2048, 4096, 8192, 16384}` against row counts `{1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144}`, keeping every pair of at most `2^24` elements. The element cap is a 64 MiB allocation budget, not a capability edge. **The contributor counts are deliberately not all perfect squares**: on a square count the partition count and contributors-per-partition are equal, so a model fitted only to squares cannot be distinguished from one that memorized the square root. The four non-square counts split into `(8, 4)`, `(16, 8)`, `(64, 32)`, `(128, 64)` and are the held-out set.
+
+### The measurement
+
+[The retained dispatch sweep](../spikes/program-planning/reduction-dispatch-crossover/README.md), raw rows at `spikes/program-planning/reduction-dispatch-crossover/results/2026-08-07-apple-m4-max-macos27.0-26A5388g/sweep.tsv`.
+
+**The metric is wall clock across `commit()` and `wait_until_completed()`, and it is not GPU-busy time.** `metal` 0.33.0 exposes no accessor for `MTLCommandBuffer`'s `GPUStartTime`/`GPUEndTime`; reading them needs an `unsafe` `msg_send!`, which is an ADR 0079 decision rather than a spike's convenience. **The submission round trip costs about 200 microseconds on this host before any kernel runs**, more than most cells' arithmetic put together, so each alternative is measured at two encode counts — the plan once, and the plan sixteen times in one command buffer — and the per-plan cost is `(batched - single) / 15`. The two differ by exactly fifteen extra encodes and nothing else, so the fixed cost divides out. Both the raw and amortized columns are retained; the analysis uses the amortized ones because the round trip is identical for all three strategies and could only bury a crossover, never create one.
+
+Noise controls: every alternative fully emitted, linked, pipelined and allocated before timing; the command queue built once for the sweep rather than per submission; eight untimed warm-ups per alternative at each encode count; thirty **interleaved** rounds with a rotating start so drift lands on all three strategies alike; minimum, median, p90 and standard deviation reported at both encode counts.
+
+Correctness precedes timing at every cell. Operands are all `1.0`, so a row's declared sum is exactly its contributor count, exact in `f32` under **every** grouping — which is what makes one expected value valid for three strategies under a regrouping-permitting contract, and what catches a dropped, double-counted, or unsynchronized contributor. That closed form is checked against `tiler-reference`'s independent evaluation on every cell of at most 4,096 elements. **Regrouped rounding is not observed and is not claimed.**
+
+#### The crossover
+
+Per-plan microseconds, and the ratio of the serial fold to the best parallel plan. Above one, parallelizing pays. Every row below is separated from the noise.
+
+| shape | serial fold | best parallel | ratio |
+| --- | --- | --- | --- |
+| 4 x 8,192 | 575.3 | 11.3 | **50.7x** |
+| 16 x 8,192 | 592.8 | 17.2 | **34.5x** |
+| 64 x 8,192 | 660.3 | 35.5 | **18.6x** |
+| 16 x 16,384 | 515.0 | 34.4 | **15.0x** |
+| 256 x 8,192 | 768.4 | 103.1 | **7.45x** |
+| 256 x 16,384 | 850.6 | 213.5 | **3.98x** |
+| 1,024 x 4,096 | 250.3 | 203.2 | 1.23x |
+| 4,096 x 2,048 | 421.9 | 441.1 | 0.96x |
+| 16,384 x 32 | 27.6 | 31.9 | 0.86x |
+| 65,536 x 16 | 52.5 | 66.6 | 0.79x |
+| 16,384 x 4 | 4.7 | 8.3 | **0.56x** |
+
+The contour runs diagonally. At one row the serial fold's reduction stage launches a **single invocation** and the machine idles; at 262,144 rows it launches more than the device holds and a parallel plan's extra launches and staged partials are pure overhead.
+
+#### Two of the three strategies are a near-tie, and that reshapes the decision
+
+Across all 92 cells the single-workgroup tree and the multi-pass split are separated on a handful. Where they do separate it is at large row counts and the split wins — at 262,144 rows of 4 contributors the split costs 81.7 microseconds against the tree's 458.7. **So the consequential decision on this program family is binary: parallelize or not.** Picking the wrong parallel strategy costs percent; parallelizing on the wrong side of the contour costs a factor. Both accuracies are reported below for that reason.
+
+### The calibration, and its held-out bound
+
+Three parameters, each a quantity of the machine and none of a strategy, under the classical work-span cost
+
+```text
+cost = sum over stages of ( encoder_seconds + max(work / parallel_threads, depth) * step_seconds )
+```
+
+with `work` the stage's fold steps summed over every invocation and `depth` its longest sequential path. **The `max` produces the crossover instead of asserting it**: when the row count saturates the device, `work / parallel_threads` dominates and the cheapest plan is whichever does least total work — the serial fold, which stages nothing; when it does not, `depth` dominates and the fold's path is the whole contributor run against a tree's roughly square root of it.
+
+| parameter | fitted |
+| --- | --- |
+| `encoder_seconds` | 1.166e-6 (1.17 us per dispatch) |
+| `parallel_threads` | 1.056e3 fold steps retired at once |
+| `step_seconds` | 2.909e-8 (29.1 ns per critical-path step) |
+
+Fitted on the perfect-square contributor counts only, minimizing mean squared log **decision regret** — the measured time of the strategy the model names, over the measured time of the fastest — with magnitude error as a tie break that can never outvote a decision. A cell is **separated** when the gap exceeds two combined standard errors of the two medians; the fit is taken over the cells whose serial-or-parallel verdict is separated, because fitting to a cell whose measured ordering is noise means fitting to noise. Every cell is still scored.
+
+| question | set | cells | agreed | worst measured penalty |
+| --- | --- | --- | --- | --- |
+| three-way winner | fit | 60 | 45 | 4.27x |
+| three-way winner | held-out | 32 | 29 | 1.81x |
+| three-way winner, separated only | fit | 16 | 15 | 1.04x |
+| three-way winner, separated only | held-out | 9 | **9** | **1.00x** |
+| serial or parallel | fit | 60 | 46 | 4.27x |
+| serial or parallel | held-out | 32 | 30 | 1.81x |
+| serial or parallel, separated only | fit | 34 | 32 | 1.04x |
+| serial or parallel, separated only | held-out | 26 | **24** | **1.81x** |
+
+**The stated error bound is the last row: on the 26 held-out cells whose verdict is resolvable the calibration agrees on 24, and following it costs at most 1.81x** — at 1,024 rows of 128 contributors, where it says serial and the tree is 81% faster. Median regret is 1.0000 on both sets. Magnitude accuracy is much weaker — median relative error 0.17 fit and 0.16 held out, p90 near 0.76 — so **this is a selector, not a latency estimate**, and it must not be quoted as one.
+
+### The mutation proof, and the negative it produced
+
+[`perturbations.txt`](../spikes/program-planning/reduction-dispatch-crossover/results/2026-08-07-apple-m4-max-macos27.0-26A5388g/perturbations.txt), reproducible with `--perturb <encoder|parallel|step> <factor>`.
+
+| perturbation | held-out separated agreement | held-out worst penalty | magnitude median |
+| --- | --- | --- | --- |
+| none | 24 / 26 | 1.81x | 0.16 |
+| `parallel` x 0.25 | **20 / 26** | **3.04x** | 1.27 |
+| `parallel` x 4 | 24 / 26 | **1.20x** | 0.52 |
+| `encoder` x 20 | 24 / 26 | 1.81x | 3.23 |
+| `step` x 0.1 | 24 / 26 | 1.81x | 0.74 |
+
+**Only `parallel_threads` carries selection evidence.** Multiplying the per-encoder cost by twenty and dividing the per-step cost by ten leave *every* predicted winner unchanged while wrecking the magnitude fit — the first because the split's extra dispatch never decides a separated cell, the second because scaling every stage by one factor cannot reorder anything. The "smallest analytical calibration" the Implementation keys ask for is therefore really **one** number, and that is what the activation surface has to declare.
+
+**And the fitted value is on the low side of what held-out data prefers, which is stated rather than smoothed.** Quadrupling it leaves fit-set agreement where it was and improves the held-out worst penalty from 1.81x to 1.20x: the fit set's regret is flat in that parameter over a wide band and the magnitude tie break chose within it, so the contour's position is determined to roughly a factor of four. That is a limit of this measurement and it is part of why the calibration is retained as evidence rather than pushed into selection unreviewed.
+
+### Why nothing was activated, stated as a boundary rather than as a gap
+
+**The measurement supports activation. The repository's own rules put the surface it needs outside this branch.**
+
+- The term has to be **declared by a target profile** to be consulted at all — declaring it inside `tiler-compiler` for the target-neutral baseline would be the unsourced number the authority ledger exists to refuse, since a macOS Apple9 device measurement is evidence about one target.
+- Declaring it needs a `pub` `TargetProfileBuilder::declare_*` / `declare_measured_*` pair and a new `TargetProfileBuildError` variant. A consequential public boundary is Tom's, and he is offline.
+- Moving the row moves the canonical descriptor, and therefore every pinned artifact identity and cache subject derived from it. That is an identity-domain step, also Tom's.
+- The declaration site is `crates/tiler-build`, whose scope (`implementation/build`) this ticket does not hold.
+- And there is a **real design problem to settle before the row exists**, already recorded elsewhere in the repository and not invented here: [`docs/research/program-planning/flash-class-capability-set.md`](../docs/research/program-planning/flash-class-capability-set.md) eliminated putting a cost number on a target profile because every `CapabilityAxis` variant is a hard bound and silence about one is `Unknown`, so a cost row declared the same way would render a profile **unexecutable for a quantity no feasibility predicate reads**. Beside it, `crates/tiler-compiler/src/component_cost.rs` records that a second cost-model key cannot simply join the first, because `dominates` returns `false` across keys and Pareto pruning would silently go dark.
+
+Encoding the preference some other way was considered and refused on the ticket's own terms: widening `PlanStructuralCost` with a fitted dimension would mix measured and counted quantities in one Pareto relation, and biasing a structural constant until the parallel plan won is exactly *"altering a constant until the desired plan wins"*. **A measured no-activation is the correct close here.** The complete design, including all three problems above, is [`activate-measured-reduction-selection-from-a-target-cost-row`](activate-measured-reduction-selection-from-a-target-cost-row.md).
+
+### Required evidence, clause by clause
+
+| Clause | Status |
+| --- | --- |
+| Retained raw measurements identify stable crossover regions or explicitly report that none was established | **Satisfied on the first branch.** 276 measured alternatives retained; the crossover is a contour with both sides separated from the noise by up to 50.7x and 1.78x. |
+| Calibration predicts held-out rows within a stated error bound | **Satisfied.** Fitted on perfect-square contributor counts, scored on the rest: 24 of 26 separated held-out cells, worst measured penalty **1.81x**, median regret 1.0000. The bound is stated with the population it is over. |
+| Serial remains selected below its measured crossover | **True, and now for a weaker reason than it sounds.** Selection is unchanged and still takes the serial fold everywhere, so it is trivially selected below the crossover — and also above it, which is the finding this ticket hands to its successor. |
+| An unavailable environment makes no performance claim | **Vacuous, and checked rather than waived.** The environment was available and matched the ledger in every field, so the unavailable path was never exercised. Every claim here is scoped to that exact row. |
+| Perturbing the calibrated term or environment identity changes or refuses the selection evidence | **Satisfied, with a negative that is part of the result.** Perturbing `parallel_threads` changes the held-out verdict and the worst penalty in both directions. Perturbing `encoder` or `step` changes **no** predicted winner, which is evidence that those two are inert in the decision rather than evidence of a check that did not run — the magnitude fit moves by an order of magnitude under the same perturbations, so the checks demonstrably ran. |
+| No infeasible plan is represented as expensive | **Satisfied, unchanged.** Nothing in this branch touches feasibility. The compile-only rerun observed no grid-axis refusal at any shape and every refusal that does occur is a typed predicate. |
+| Explain output names why the winning strategy won | **Not satisfied, and not claimed.** Explain still reports `event=selection:tiler.selection.structural-pareto.v1:selected` with structural cost terms. Naming a measured term requires the term to exist, which is the parked surface. |
+
+### What landed
+
+- [`spikes/program-planning/reduction-dispatch-crossover`](../spikes/program-planning/reduction-dispatch-crossover/README.md) — the dispatching sweep, the device-free fit binary sharing one stage model with it, and the retained 2026-08-07 result directory (`sweep.tsv`, `environment.tsv`, `calibration.txt`, `perturbations.txt`). Catalogued in `spikes/README.md` and on the ledger row it supports in `docs/research/README.md`.
+- The sibling compile-only spike's README records the rerun agreeing and points at the timing result it authorized. Its 2026-08-02 inference that `1x4` had no discriminating power is now confirmed by measurement rather than left as reasoning about magnitudes.
+- Four sites in `crates/tiler-compiler` that said the measurement was obtainable and not taken now say what it found and why selection is unchanged anyway; two more that named this ticket as the owner of an unassigned preference now name its successor. `docs/compiler/fusion-and-scheduling.md`, `docs/open-questions.md`, and `docs/research/program-planning/flash-class-capability-set.md` carry the same correction.
+- Two successor tickets: the activation surface above, and [`calibrate-the-reduction-partition-against-measured-alternatives`](calibrate-the-reduction-partition-against-measured-alternatives.md) for the choice this sweep held constant.
+
+**`governed_partition` is unchanged and uncalibrated, and this run is not evidence about it.** Every cell used whatever partition it returned, so the sweep varied the shape and never the split. The four doc sites that named this ticket as the owner of "replacing it with measured evidence" now name that second ticket, because that is the experiment which would.
+
+### Measurement boundary
+
+One profile (`tiler.metal.macos-apple9.msl4-0.f32.v1`), one contract (`FLUSH_AND_REASSOCIATE_F32`), one program family (multiply-add prologue into a trailing-axis sum), `f32` only, one host row. **Wall clock end to end, never GPU-busy time.** The batched encode count amortizes the submission round trip and also leaves the input hotter in cache than a cold first call, so these are not first-call latencies. `parallel_threads` is determined to about a factor of four. No numerical claim: the oracle is exact by construction and cannot observe regrouped rounding. The matrix stops at `2^24` elements for allocation budget, so nothing here is evidence about the profile's widest admissible launch.
+
+### Commands
+
+```sh
+# the compile-phase domain, rerun and unchanged
+cd spikes/program-planning/reduction-crossover && cargo run --release
+
+# the dispatch sweep, on the qualified environment
+cd spikes/program-planning/reduction-dispatch-crossover
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  cargo run --release --bin reduction-dispatch-sweep > results/<date>-<host>/sweep.tsv
+
+# the calibration and its held-out score, no device needed
+cargo run --release --bin reduction-cost-fit -- results/<date>-<host>/sweep.tsv
+cargo run --release --bin reduction-cost-fit -- results/<date>-<host>/sweep.tsv --perturb parallel 0.25
+```
