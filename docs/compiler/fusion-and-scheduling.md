@@ -398,6 +398,8 @@ That single point was forced by arithmetic rather than found by sampling. `gover
 
 **Boundary.** One profile, one contract, one program family, `f32`, one host row, wall-clock rather than GPU-busy time. The fitted parameters are quantities of that machine and the contour's position is determined to about a factor of four in `parallel_threads`. The domain counts above are statements about which plans exist; the timings are statements about one host.
 
+**Measurement, 2026-08-07 — the partition within a strategy is measured too.** [The retained partition calibration](../../spikes/program-planning/reduction-partition-calibration/README.md) swept every admissible partition at seven of the crossover sweep's separated shapes and refuted the balanced exact split as *optimal* for both strategies (beaten on 10 of 14 cells, worth up to 5.05× between best and worst admissible value) while confirming it as a defensible middle (never worse than 1.413×). The tree has a held-out replacement — cap participants at 256, worst held-out regret 1.008 — carried by [`cap-the-tree-reduction-participants-at-the-measured-256`](../../tickets/cap-the-tree-reduction-participants-at-the-measured-256.md); the split has none, because its optimum moves with the same saturation quantity the strategy contour turns on, so its calibration belongs to the target cost row above rather than to a constant.
+
 ## Rearrangement schedules
 
 Alternatives include:
