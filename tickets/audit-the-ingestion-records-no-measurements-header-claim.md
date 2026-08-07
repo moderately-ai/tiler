@@ -1,7 +1,7 @@
 ---
 id: audit-the-ingestion-records-no-measurements-header-claim
 title: Audit the ingestion record's no-measurements header claim
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [widen-the-identity-growth-ladder-to-the-governed-operation-budget]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
+claimed_from: todo
+assignee: agent-ingestion-audit
+lease_expires_at: 1786075846
 ---
 ## User-visible outcome
 
