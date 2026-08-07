@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
     FrozenSemanticRegistry, MAX_OPERATION_OPERANDS, MAX_OPERATION_RESULTS, OpKey,
     OperationAttributes, ProviderIdentity, ResolvedValueType, SemanticCapabilityAuthority,
@@ -176,28 +177,54 @@ impl<'a> ReferenceEvaluationRequest<'a> {
         self.iteration_step_allowance
     }
 
-    /// Returns the numerical contract this evaluation is performed under.
+    /// Returns the numerical contract this evaluation is performed under, when it
+    /// was stated about `arithmetic`.
     ///
-    /// **A capability that performs host binary32 arithmetic must consult this**,
-    /// applying [`ReferenceNumericalConformance::apply_to_operand`] to each value
-    /// entering an arithmetic operation and
-    /// [`ReferenceNumericalConformance::apply_to_result`] to each value one
-    /// produces. The semantic evaluator and the index-region oracle answer the
-    /// same program, so one honouring the contract and the other ignoring it would
-    /// disagree on exactly the values the contract exists to decide — and a
-    /// capability that read nothing here would answer the strict reading whatever
-    /// its caller declared, which is the silent single-value oracle
-    /// [`ReferenceNumericalConformance::from_realization`] refuses to be.
+    /// **A capability that performs arithmetic must consult this**, naming the
+    /// format its own arithmetic is in. The semantic evaluator and the index-region
+    /// oracle answer the same program, so one honouring the contract and the other
+    /// ignoring it would disagree on exactly the values the contract exists to
+    /// decide — and a capability that read nothing here would answer the strict
+    /// reading whatever its caller declared, which is the silent single-value
+    /// oracle [`ReferenceNumericalConformance::from_realization`] refuses to be.
     ///
-    /// A capability that performs no host arithmetic has nothing to read here, and
-    /// says so at its own definition rather than by omission: the two dimensions
-    /// are functions on an arithmetic operand and on a newly produced arithmetic
-    /// result, so a family that only transports, selects, or reproduces a bit
-    /// pattern reaches neither site. That is the boundary this crate's arithmetic
-    /// NaN canonicalization is already drawn at.
-    #[must_use]
-    pub const fn conformance(self) -> ReferenceNumericalConformance {
-        self.conformance
+    /// # Three cases, not two
+    ///
+    /// - A capability performing **host binary32 arithmetic** names
+    ///   [`ArithmeticType::F32`] and applies
+    ///   [`ReferenceNumericalConformance::apply_to_operand`] to each value entering
+    ///   an arithmetic operation and
+    ///   [`ReferenceNumericalConformance::apply_to_result`] to each value one
+    ///   produces. Those two appliers take and return `f32`, so they are that
+    ///   case's realization of the contract and not the contract itself.
+    /// - A capability performing arithmetic in **another format** names that
+    ///   format and realizes the same two declared dimensions over its own value
+    ///   set. The BF16 family is this case: it computes in exact rationals over
+    ///   BF16's values and rounds once, so neither binary32 applier has a site in
+    ///   it, and it builds its own realization from
+    ///   [`ReferenceNumericalConformance::input_subnormals`] and
+    ///   [`ReferenceNumericalConformance::result_subnormals`] instead. Reading the
+    ///   dimensions is the obligation; the appliers are one way of discharging it.
+    /// - A capability performing **no arithmetic** has nothing to read here, and
+    ///   says so at its own definition rather than by omission: the two dimensions
+    ///   are functions on an arithmetic operand and on a newly produced arithmetic
+    ///   result, so a family that only transports, selects, or reproduces a bit
+    ///   pattern reaches neither site. That is the boundary this crate's arithmetic
+    ///   NaN canonicalization is already drawn at.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReferenceOperationError::ConformanceSubject`] when the conformance
+    /// was resolved for a different arithmetic type. A conformance carrying no
+    /// subject is returned to every capability; see [`ConformanceSubject`].
+    ///
+    /// [`ReferenceOperationError::ConformanceSubject`]: crate::ReferenceOperationError::ConformanceSubject
+    /// [`ConformanceSubject`]: crate::ConformanceSubject
+    pub const fn conformance_for(
+        self,
+        arithmetic: ArithmeticType,
+    ) -> Result<ReferenceNumericalConformance, ReferenceOperationError> {
+        self.conformance.checked_for(arithmetic)
     }
 }
 

@@ -34,11 +34,36 @@
 //! single value would assert a bitwise equality the contract does not promise.
 //! It also has no authority that validates an exceptional-value absence
 //! assumption before evaluation. Refusing names each gap instead of hiding it.
+//!
+//! # The subject: which format the dimensions were resolved for
+//!
+//! A [`SubnormalMode`] names no format, and the same resolution means different
+//! things over different value sets: the measured Apple row flushes `f32`
+//! subnormals and preserves `f16` ones under one execution mode, so a conformance
+//! carried without its subject can be applied by a capability computing in a
+//! format the conformance was never stated about. [`ConformanceSubject`] is that
+//! subject, and [`ReferenceEvaluationRequest::conformance_for`] is where a
+//! capability states its own arithmetic and is refused a conformance resolved for
+//! another.
+//!
+//! **Only [`ReferenceNumericalConformance::from_realization`] states one.**
+//! [`ReferenceNumericalConformance::strict`] and
+//! [`ReferenceNumericalConformance::new`] resolve two format-agnostic dimensions
+//! and nothing more, so they produce [`ConformanceSubject::Unstated`] and every
+//! capability accepts them exactly as it did before this subject existed. That is
+//! a real gap and it is named rather than papered over: the agreement check is a
+//! *tested guarantee* for a conformance drawn from a declared realization, and
+//! `Unstated` is the population it cannot speak for.
+//!
+//! [`ReferenceEvaluationRequest::conformance_for`]: crate::ReferenceEvaluationRequest::conformance_for
 
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
-    SubnormalMode, ValueDomainProvenance,
+    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    NumericalRealization, SubnormalMode, ValueDomainProvenance,
 };
+use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, CANONICAL_F32_ARITHMETIC_NAN_BITS};
+
+use super::error::ReferenceOperationError;
 
 use std::error::Error;
 use std::fmt;
@@ -72,6 +97,35 @@ pub enum UnsupportedReferenceContract {
         /// Authority behind the domain assumption.
         provenance: ValueDomainProvenance,
     },
+    /// This reference performs no arithmetic in the stated subject.
+    ///
+    /// [`ArithmeticType`] names four formats and this crate computes in two of
+    /// them. A conformance resolved for either of the other two could reach no
+    /// capability, and no canonical arithmetic NaN payload is declared for either,
+    /// so there is nothing to check the realization's own declaration against.
+    /// Refusing at the bridge is the fail-closed answer; admitting one and
+    /// carrying it would produce a subject no capability could ever agree with.
+    ArithmeticNotEvaluable {
+        /// The stated subject.
+        arithmetic: ArithmeticType,
+    },
+    /// The realization's declared canonical NaN payload is not the subject's.
+    ///
+    /// [`NumericalRealization::canonical_arithmetic_nan_bits`] carries "the pattern
+    /// of the region's own arithmetic type, zero-extended into this field", so a
+    /// `bf16` region declares `0x0000_7fc0` and an `f32` region the whole
+    /// `0x7fc0_0000`. A caller stating a subject the realization's own declaration
+    /// contradicts has drawn the subject from somewhere other than the region that
+    /// declared the realization, and the two readings must not be silently merged
+    /// into one conformance.
+    DeclaredNanPayloadMismatch {
+        /// The stated subject.
+        arithmetic: ArithmeticType,
+        /// The payload the realization declares.
+        declared: u32,
+        /// The payload the stated subject's canonical arithmetic NaN is.
+        expected: u32,
+    },
 }
 
 impl UnsupportedReferenceContract {
@@ -87,6 +141,10 @@ impl UnsupportedReferenceContract {
             }
             Self::NanAbsenceAssumed { .. } => "reference.numerics.nan-absence-assumed",
             Self::InfinityAbsenceAssumed { .. } => "reference.numerics.infinity-absence-assumed",
+            Self::ArithmeticNotEvaluable { .. } => "reference.numerics.arithmetic-not-evaluable",
+            Self::DeclaredNanPayloadMismatch { .. } => {
+                "reference.numerics.declared-nan-payload-mismatch"
+            }
         }
     }
 }
@@ -108,11 +166,74 @@ impl fmt::Display for UnsupportedReferenceContract {
                 "{}: the reference cannot validate the {provenance:?} domain assumption",
                 self.rule()
             ),
+            Self::ArithmeticNotEvaluable { arithmetic } => write!(
+                formatter,
+                "{}: this reference performs no {} arithmetic",
+                self.rule(),
+                arithmetic.canonical_type_key()
+            ),
+            Self::DeclaredNanPayloadMismatch {
+                arithmetic,
+                declared,
+                expected,
+            } => write!(
+                formatter,
+                "{}: the realization declares {declared:#010x} and {} canonicalizes to \
+                 {expected:#010x}",
+                self.rule(),
+                arithmetic.canonical_type_key()
+            ),
         }
     }
 }
 
 impl Error for UnsupportedReferenceContract {}
+
+/// The arithmetic type a conformance's subnormal dimensions were resolved for.
+///
+/// Deliberately a named vocabulary rather than an `Option<ArithmeticType>`: the
+/// absent case is a *statement about the conformance* — that it resolves two
+/// format-agnostic dimensions and identifies no value set — and every consumer
+/// matches it exhaustively, so admitting a third state would be a build error at
+/// each agreement check instead of a case silently classified with one of these
+/// two.
+///
+/// Not `#[non_exhaustive]`, for the reason
+/// [`ArithmeticType`]'s own definition states: widening it must stop the build at
+/// every site that decides whether a capability may apply a conformance.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ConformanceSubject {
+    /// The conformance names no arithmetic type.
+    ///
+    /// What [`ReferenceNumericalConformance::strict`] and
+    /// [`ReferenceNumericalConformance::new`] produce. A capability applies such a
+    /// conformance because there is no disagreement to detect, which is exactly
+    /// the reading every capability performed before the subject existed.
+    Unstated,
+    /// The conformance was resolved for exactly one arithmetic type.
+    ///
+    /// Reachable only through [`ReferenceNumericalConformance::from_realization`],
+    /// so a stated subject is always one a declared realization was bridged under
+    /// rather than one a caller asserted beside an unrelated pair of modes.
+    Arithmetic(ArithmeticType),
+}
+
+/// The canonical arithmetic NaN payload this reference evaluates one format under.
+///
+/// `None` for a format this crate performs no arithmetic in, which is what makes
+/// [`UnsupportedReferenceContract::ArithmeticNotEvaluable`] a refusal rather than
+/// a payload guess. Exhaustive rather than written with a wildcard, so admitting a
+/// third arithmetic type is a build error here instead of a silent refusal.
+const fn evaluable_canonical_nan_bits(arithmetic: ArithmeticType) -> Option<u32> {
+    match arithmetic {
+        ArithmeticType::F32 => Some(CANONICAL_F32_ARITHMETIC_NAN_BITS),
+        // Zero-extended by a cast rather than by `u32::from`, which is not yet
+        // callable in a `const fn`. The widening is exact in either spelling, and
+        // it is the same zero-extension the realization's own field documents.
+        ArithmeticType::Bf16 => Some(CANONICAL_BF16_ARITHMETIC_NAN_BITS as u32),
+        ArithmeticType::F16 | ArithmeticType::F64 => None,
+    }
+}
 
 /// The numerical contract one reference evaluation is performed under.
 ///
@@ -121,6 +242,7 @@ impl Error for UnsupportedReferenceContract {}
 /// out rather than an absence of one.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ReferenceNumericalConformance {
+    subject: ConformanceSubject,
     input_subnormals: SubnormalMode,
     result_subnormals: SubnormalMode,
 }
@@ -133,12 +255,13 @@ impl ReferenceNumericalConformance {
     /// implicit so that a caller comparing against a flushing device can see that
     /// it is comparing against a *different* contract, not against "the
     /// reference".
+    ///
+    /// Its subject is [`ConformanceSubject::Unstated`]: preservation of subnormals
+    /// is the same statement over every value set, so this constructor has no
+    /// format to name and states none.
     #[must_use]
     pub const fn strict() -> Self {
-        Self {
-            input_subnormals: SubnormalMode::Preserve,
-            result_subnormals: SubnormalMode::Preserve,
-        }
+        Self::unsubjected(SubnormalMode::Preserve, SubnormalMode::Preserve)
     }
 
     /// States each subnormal dimension independently.
@@ -147,28 +270,73 @@ impl ReferenceNumericalConformance {
     /// 0019): input flushing treats an existing subnormal operand as zero before
     /// arithmetic, and result flushing replaces a newly produced subnormal
     /// result.
+    ///
+    /// Its subject is [`ConformanceSubject::Unstated`]. A caller holding two loose
+    /// modes has not said which format resolved them, and inventing a subject here
+    /// would let a capability's agreement check pass on an assertion nothing
+    /// declared. [`Self::from_realization`] is the constructor that has a region's
+    /// declaration to draw one from.
     #[must_use]
     pub const fn new(input_subnormals: SubnormalMode, result_subnormals: SubnormalMode) -> Self {
+        Self::unsubjected(input_subnormals, result_subnormals)
+    }
+
+    const fn unsubjected(
+        input_subnormals: SubnormalMode,
+        result_subnormals: SubnormalMode,
+    ) -> Self {
         Self {
+            subject: ConformanceSubject::Unstated,
             input_subnormals,
             result_subnormals,
         }
     }
 
-    /// Derives the conformance from a region's declared numerical realization.
+    /// Derives the conformance from a region's declared numerical realization,
+    /// stated about the region's own arithmetic type.
+    ///
+    /// # The subject is an argument rather than a field of the realization
+    ///
+    /// A region's arithmetic type is a total function of its scalar program, so it
+    /// is the *region* that answers this and not the realization it carries — and
+    /// giving [`NumericalRealization`] a subject field would be an identity-domain
+    /// migration to restate something the schedule layer already derives. The
+    /// caller holding the region therefore states it here, and the realization's
+    /// own [`NumericalRealization::canonical_arithmetic_nan_bits`] is what checks
+    /// the statement: that field carries the canonical arithmetic NaN pattern of
+    /// the region's own type, so a subject the declaration contradicts is refused
+    /// rather than carried.
+    ///
+    /// A caller holding a verified scheduled region reads both arguments off one
+    /// object rather than assembling them from two:
+    /// [`RealizationWitness::of`](tiler_ir::schedule::RealizationWitness::of) gives
+    /// [`realization`](tiler_ir::schedule::RealizationWitness::realization) and
+    /// [`accumulation`](tiler_ir::schedule::RealizationWitness::accumulation) — the
+    /// region's own arithmetic type, which the intrinsic schedule verifier already
+    /// requires a declared accumulation to agree with. Sourcing the two separately
+    /// is what would let them drift.
     ///
     /// # Errors
     ///
-    /// Returns [`UnsupportedReferenceContract`] when the realization permits a
-    /// transform whose result is a set rather than one value. The refusal is the
-    /// point: accepting such a contract and evaluating the strict reading anyway
-    /// would produce an oracle that silently answers a question it was not asked.
+    /// Returns [`UnsupportedReferenceContract::ArithmeticNotEvaluable`] for a
+    /// format this reference performs no arithmetic in, and
+    /// [`UnsupportedReferenceContract::DeclaredNanPayloadMismatch`] when the stated
+    /// subject disagrees with the realization's own declaration. Both are checked
+    /// before the transform permissions, because a realization whose subject is
+    /// unresolved is not an object whose freedoms mean anything yet.
+    ///
+    /// Returns the remaining [`UnsupportedReferenceContract`] variants when the
+    /// realization permits a transform whose result is a set rather than one
+    /// value. The refusal is the point: accepting such a contract and evaluating
+    /// the strict reading anyway would produce an oracle that silently answers a
+    /// question it was not asked.
     pub const fn from_realization(
         realization: &NumericalRealization,
+        arithmetic: ArithmeticType,
     ) -> Result<Self, UnsupportedReferenceContract> {
         let NumericalRealization {
             profile_key: _,
-            canonical_arithmetic_nan_bits: _,
+            canonical_arithmetic_nan_bits,
             input_subnormals,
             result_subnormals,
             contraction,
@@ -178,6 +346,16 @@ impl ReferenceNumericalConformance {
             nan_assumptions,
             infinity_assumptions,
         } = *realization;
+        let Some(expected) = evaluable_canonical_nan_bits(arithmetic) else {
+            return Err(UnsupportedReferenceContract::ArithmeticNotEvaluable { arithmetic });
+        };
+        if canonical_arithmetic_nan_bits != expected {
+            return Err(UnsupportedReferenceContract::DeclaredNanPayloadMismatch {
+                arithmetic,
+                declared: canonical_arithmetic_nan_bits,
+                expected,
+            });
+        }
         match contraction {
             NumericalPermission::Permitted => {
                 return Err(UnsupportedReferenceContract::ContractionPermitted);
@@ -214,7 +392,50 @@ impl ReferenceNumericalConformance {
                 return Err(UnsupportedReferenceContract::InfinityAbsenceAssumed { provenance });
             }
         }
-        Ok(Self::new(input_subnormals, result_subnormals))
+        Ok(Self {
+            subject: ConformanceSubject::Arithmetic(arithmetic),
+            input_subnormals,
+            result_subnormals,
+        })
+    }
+
+    /// The arithmetic type these dimensions were resolved for, if any was stated.
+    #[must_use]
+    pub const fn subject(self) -> ConformanceSubject {
+        self.subject
+    }
+
+    /// Returns this conformance to a capability computing in `arithmetic`.
+    ///
+    /// The one agreement check. A capability's arithmetic type is fixed by its own
+    /// construction — every operand and result it admits is one resolved type — so
+    /// it can state it here, and a conformance resolved for another format is
+    /// refused instead of having its modes applied to values that format's rule was
+    /// never stated about.
+    ///
+    /// An [`ConformanceSubject::Unstated`] conformance is returned to every
+    /// capability. That is not the check passing: it is the check having nothing to
+    /// compare, which the module header names as this guarantee's boundary.
+    pub(crate) const fn checked_for(
+        self,
+        arithmetic: ArithmeticType,
+    ) -> Result<Self, ReferenceOperationError> {
+        match self.subject {
+            ConformanceSubject::Unstated => Ok(self),
+            ConformanceSubject::Arithmetic(stated) => {
+                // Compared by tag rather than `==`, because `PartialEq::eq` is not
+                // a const function; the tags are the identity encoding this
+                // vocabulary already defines as injective.
+                if stated.tag() == arithmetic.tag() {
+                    Ok(self)
+                } else {
+                    Err(ReferenceOperationError::ConformanceSubject {
+                        capability: arithmetic,
+                        stated,
+                    })
+                }
+            }
+        }
     }
 
     /// The declared treatment of subnormal operands.
@@ -278,11 +499,13 @@ fn apply(mode: SubnormalMode, value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ReferenceNumericalConformance, UnsupportedReferenceContract};
+    use super::{ConformanceSubject, ReferenceNumericalConformance, UnsupportedReferenceContract};
+    use crate::ReferenceOperationError;
     use tiler_ir::schedule::{
-        ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
-        SubnormalMode, ValueDomainProvenance,
+        ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+        NumericalRealization, SubnormalMode, ValueDomainProvenance,
     };
+    use tiler_ir::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS;
 
     const fn flush(zero_sign: FlushedZeroSign) -> SubnormalMode {
         SubnormalMode::FlushToZero { zero_sign }
@@ -392,21 +615,27 @@ mod tests {
     #[test]
     fn a_contract_admitting_a_result_set_is_refused_by_name() {
         assert_eq!(
-            ReferenceNumericalConformance::from_realization(&realization(
-                SubnormalMode::Preserve,
-                SubnormalMode::Preserve,
-                NumericalPermission::Permitted,
-                NumericalPermission::Forbidden,
-            )),
+            ReferenceNumericalConformance::from_realization(
+                &realization(
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Permitted,
+                    NumericalPermission::Forbidden,
+                ),
+                ArithmeticType::F32
+            ),
             Err(UnsupportedReferenceContract::ContractionPermitted)
         );
         assert_eq!(
-            ReferenceNumericalConformance::from_realization(&realization(
-                SubnormalMode::Preserve,
-                SubnormalMode::Preserve,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Permitted,
-            )),
+            ReferenceNumericalConformance::from_realization(
+                &realization(
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Permitted,
+                ),
+                ArithmeticType::F32
+            ),
             Err(UnsupportedReferenceContract::ReassociationPermitted)
         );
         assert_eq!(
@@ -423,6 +652,7 @@ mod tests {
     /// Every newly carried freedom is refused independently rather than ignored.
     #[test]
     fn every_new_dimension_is_accounted_for_by_the_reference_boundary() {
+        let mut checked = 0_usize;
         let strict = realization(
             SubnormalMode::Preserve,
             SubnormalMode::Preserve,
@@ -468,10 +698,12 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                ReferenceNumericalConformance::from_realization(&declared),
+                ReferenceNumericalConformance::from_realization(&declared, ArithmeticType::F32),
                 Err(expected),
             );
+            checked += 1;
         }
+        assert_eq!(checked, 4, "every newly carried freedom was exercised");
     }
 
     /// A strict realization carries both subnormal dimensions across unchanged.
@@ -483,12 +715,211 @@ mod tests {
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
         );
-        let conformance = ReferenceNumericalConformance::from_realization(&declared)
-            .expect("a strict realization is evaluable");
+        let conformance =
+            ReferenceNumericalConformance::from_realization(&declared, ArithmeticType::F32)
+                .expect("a strict realization is evaluable");
         assert_eq!(
             conformance.input_subnormals(),
             flush(FlushedZeroSign::PreservesSign)
         );
         assert_eq!(conformance.result_subnormals(), SubnormalMode::Preserve);
+    }
+
+    /// A realization declaring one format's NaN payload is `bf16`'s zero-extended.
+    fn bf16_realization(input: SubnormalMode, result: SubnormalMode) -> NumericalRealization {
+        NumericalRealization {
+            canonical_arithmetic_nan_bits: u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+            ..realization(
+                input,
+                result,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+            )
+        }
+    }
+
+    /// The bridge carries the subject it is told, for each format it evaluates.
+    ///
+    /// Both directions, because a bridge that hard-coded either answer would still
+    /// satisfy one of them: the `f32` realization must produce the `f32` subject and
+    /// the `bf16` realization the `bf16` one.
+    #[test]
+    fn the_bridge_carries_the_subject_it_is_told() {
+        let mut checked = 0_usize;
+        for (declared, arithmetic) in [
+            (
+                realization(
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                ),
+                ArithmeticType::F32,
+            ),
+            (
+                bf16_realization(SubnormalMode::Preserve, SubnormalMode::Preserve),
+                ArithmeticType::Bf16,
+            ),
+        ] {
+            let conformance =
+                ReferenceNumericalConformance::from_realization(&declared, arithmetic)
+                    .expect("a strict realization of an evaluable format bridges");
+            assert_eq!(
+                conformance.subject(),
+                ConformanceSubject::Arithmetic(arithmetic)
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 2, "both evaluable formats bridged");
+        // The two subject-free constructors state no format, which is what keeps
+        // every existing caller's conformance applicable by every capability.
+        assert_eq!(
+            ReferenceNumericalConformance::strict().subject(),
+            ConformanceSubject::Unstated
+        );
+        assert_eq!(
+            ReferenceNumericalConformance::new(
+                flush(FlushedZeroSign::AlwaysPositive),
+                SubnormalMode::Preserve
+            )
+            .subject(),
+            ConformanceSubject::Unstated
+        );
+    }
+
+    /// A subject the realization's own declaration contradicts is refused.
+    ///
+    /// The check that makes the stated subject an *agreement* rather than an
+    /// assertion: the realization carries the canonical arithmetic NaN pattern of
+    /// the region's own type, so the two readings are compared instead of the
+    /// caller's being taken on trust.
+    #[test]
+    fn a_subject_the_declaration_contradicts_is_refused() {
+        assert_eq!(
+            ReferenceNumericalConformance::from_realization(
+                &bf16_realization(SubnormalMode::Preserve, SubnormalMode::Preserve),
+                ArithmeticType::F32
+            ),
+            Err(UnsupportedReferenceContract::DeclaredNanPayloadMismatch {
+                arithmetic: ArithmeticType::F32,
+                declared: u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+                expected: 0x7fc0_0000,
+            })
+        );
+        assert_eq!(
+            ReferenceNumericalConformance::from_realization(
+                &realization(
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                ),
+                ArithmeticType::Bf16
+            ),
+            Err(UnsupportedReferenceContract::DeclaredNanPayloadMismatch {
+                arithmetic: ArithmeticType::Bf16,
+                declared: 0x7fc0_0000,
+                expected: u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+            })
+        );
+    }
+
+    /// A format this reference computes nothing in is refused at the bridge.
+    ///
+    /// The whole vocabulary is walked rather than the two rejected members named,
+    /// so admitting a third arithmetic type moves this population instead of
+    /// leaving a case nothing decided.
+    #[test]
+    fn a_format_this_reference_cannot_evaluate_is_refused_at_the_bridge() {
+        let mut evaluable = 0_usize;
+        let mut refused = 0_usize;
+        for arithmetic in ArithmeticType::ALL {
+            let declared = NumericalRealization {
+                canonical_arithmetic_nan_bits: match arithmetic {
+                    ArithmeticType::Bf16 => u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+                    ArithmeticType::F16 | ArithmeticType::F32 | ArithmeticType::F64 => 0x7fc0_0000,
+                },
+                ..realization(
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                )
+            };
+            match ReferenceNumericalConformance::from_realization(&declared, arithmetic) {
+                Ok(conformance) => {
+                    assert_eq!(
+                        conformance.subject(),
+                        ConformanceSubject::Arithmetic(arithmetic)
+                    );
+                    evaluable += 1;
+                }
+                Err(refusal) => {
+                    assert_eq!(
+                        refusal,
+                        UnsupportedReferenceContract::ArithmeticNotEvaluable { arithmetic },
+                        "{arithmetic:?} was refused for the wrong reason",
+                    );
+                    refused += 1;
+                }
+            }
+        }
+        assert_eq!(evaluable, 2, "this reference evaluates f32 and bf16");
+        assert_eq!(refused, 2, "and refuses the other two by name");
+        assert!(
+            UnsupportedReferenceContract::ArithmeticNotEvaluable {
+                arithmetic: ArithmeticType::F64,
+            }
+            .to_string()
+            .contains("tiler::f64@1")
+        );
+    }
+
+    /// A capability is handed a conformance only when its subject is its own.
+    ///
+    /// Walked over the whole vocabulary in both positions, so the population that
+    /// must agree and the population that must be refused are both counted rather
+    /// than sampled.
+    #[test]
+    fn a_capability_is_refused_a_conformance_resolved_for_another_format() {
+        let mut agreed = 0_usize;
+        let mut refused = 0_usize;
+        for stated in [ArithmeticType::F32, ArithmeticType::Bf16] {
+            let declared = match stated {
+                ArithmeticType::Bf16 => {
+                    bf16_realization(SubnormalMode::Preserve, SubnormalMode::Preserve)
+                }
+                ArithmeticType::F16 | ArithmeticType::F32 | ArithmeticType::F64 => realization(
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                ),
+            };
+            let conformance = ReferenceNumericalConformance::from_realization(&declared, stated)
+                .expect("an evaluable format bridges");
+            for capability in ArithmeticType::ALL {
+                if capability == stated {
+                    assert_eq!(conformance.checked_for(capability), Ok(conformance));
+                    agreed += 1;
+                } else {
+                    assert_eq!(
+                        conformance.checked_for(capability),
+                        Err(ReferenceOperationError::ConformanceSubject { capability, stated })
+                    );
+                    refused += 1;
+                }
+            }
+        }
+        assert_eq!(agreed, 2, "each stated subject agreed with its own format");
+        assert_eq!(refused, 6, "and was refused by the other three");
+        // A conformance carrying no subject reaches every capability, which is the
+        // named boundary of this guarantee rather than the check passing.
+        for capability in ArithmeticType::ALL {
+            assert_eq!(
+                ReferenceNumericalConformance::strict().checked_for(capability),
+                Ok(ReferenceNumericalConformance::strict())
+            );
+        }
     }
 }

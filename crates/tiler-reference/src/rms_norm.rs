@@ -72,6 +72,7 @@
 
 use std::sync::Arc;
 
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::accuracy::ExactRational;
 use tiler_ir::semantic::{
     CanonicalValueView, F32, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, TypeKey,
@@ -119,17 +120,11 @@ impl ReferenceOperation for RmsNormF32Reference {
             return Err(ReferenceOperationError::InvalidApplication);
         }
 
-        let mapped = normalize_dense(
-            shape,
-            axis,
-            eps_payload,
-            &values,
-            &weights,
-            request.conformance(),
-        )?
-        .into_iter()
-        .map(f32_element)
-        .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;
+        let conformance = request.conformance_for(ArithmeticType::F32)?;
+        let mapped = normalize_dense(shape, axis, eps_payload, &values, &weights, conformance)?
+            .into_iter()
+            .map(f32_element)
+            .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;
         let tensor = Tensor::dense(F32::resolved_type(), shape.clone(), mapped)
             .map_err(|source| dense_result_error(&source))?;
         outputs.push(tensor)

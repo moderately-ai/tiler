@@ -9,7 +9,9 @@
 //! # The declared contract reaches every capability, and refusing to carry it
 //!
 //! An evaluator carries one [`ReferenceNumericalConformance`] and hands it to
-//! every capability through [`ReferenceEvaluationRequest::conformance`].
+//! every capability through [`ReferenceEvaluationRequest::conformance_for`],
+//! which refuses a capability whose own arithmetic type is not the one the
+//! conformance was resolved for.
 //! [`ReferenceEvaluator::new`] states the strict reading and
 //! [`ReferenceEvaluator::under`] states another, exactly as
 //! [`crate::IndexRegionEvaluator`] does — the two oracles answer the same program
@@ -78,12 +80,14 @@ impl ReferenceEvaluator {
     /// Creates an evaluator bound to one stated numerical contract.
     ///
     /// Every capability the walk dispatches to receives this through
-    /// [`ReferenceEvaluationRequest::conformance`]. A capability whose family can
-    /// reach a subnormal operand or produce a subnormal result applies it; one
-    /// that performs no host arithmetic documents why it cannot at its own
-    /// definition. Neither answers by omission, which is what makes a comparison
-    /// against this evaluator a comparison against the *declared* contract rather
-    /// than against the host's own subnormal behaviour.
+    /// [`ReferenceEvaluationRequest::conformance_for`], naming its own arithmetic
+    /// type. A capability whose family can reach a subnormal operand or produce a
+    /// subnormal result applies the two dimensions — over binary32 or over its own
+    /// value set, which are two ways of discharging one obligation — and one that
+    /// performs no arithmetic at all documents why it cannot at its own definition.
+    /// Neither answers by omission, which is what makes a comparison against this
+    /// evaluator a comparison against the *declared* contract rather than against
+    /// the host's own subnormal behaviour.
     #[must_use]
     pub const fn under(
         registry: FrozenReferenceRegistry,

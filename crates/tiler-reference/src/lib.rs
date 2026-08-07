@@ -65,7 +65,9 @@ pub use accuracy::{
     UndecidedConformance, decide_contract, decide_predicate, exact_binary32_candidate,
     exp_enclosure, rsqrt_enclosure,
 };
-pub use conformance::{ReferenceNumericalConformance, UnsupportedReferenceContract};
+pub use conformance::{
+    ConformanceSubject, ReferenceNumericalConformance, UnsupportedReferenceContract,
+};
 pub use contraction::StagedStrictTensorContractionF32;
 pub use error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,

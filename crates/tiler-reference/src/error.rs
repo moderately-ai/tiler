@@ -9,6 +9,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
     AttributeFieldId, InputKey, OpKey, ProviderIdentity, RegistryError, ResolvedValueType,
     ValueConformanceRejection,
@@ -506,6 +507,19 @@ pub enum ReferenceOperationError {
         /// count too large to name is still refused.
         actual: usize,
     },
+    /// The conformance was resolved for a format this capability does not compute in.
+    ///
+    /// A [`crate::ReferenceNumericalConformance`]'s two subnormal dimensions name
+    /// no format on their own, and the same resolution is a different behaviour
+    /// over different value sets. A capability that applied a conformance stated
+    /// about another arithmetic type would answer for a contract nothing declared
+    /// about its own values, so it refuses instead.
+    ConformanceSubject {
+        /// The arithmetic type this capability computes in.
+        capability: ArithmeticType,
+        /// The arithmetic type the conformance was resolved for.
+        stated: ArithmeticType,
+    },
 }
 
 impl fmt::Display for ReferenceOperationError {
@@ -542,6 +556,12 @@ impl fmt::Display for ReferenceOperationError {
             Self::IterationStepsExceeded { limit, actual } => write!(
                 formatter,
                 "reference operation iteration space has {actual} steps, exceeding {limit}"
+            ),
+            Self::ConformanceSubject { capability, stated } => write!(
+                formatter,
+                "reference capability computes in {} and was handed a conformance resolved for {}",
+                capability.canonical_type_key(),
+                stated.canonical_type_key()
             ),
         }
     }
