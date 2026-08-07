@@ -17,6 +17,16 @@ Missing context commonly causes bugs, invalid reviews, and wrong design conclusi
 
 Use grep, symbol search, `git log -S`, summaries, and excerpts to **locate** evidence, not replace it. They miss multiline constructs, re-exports, generated relationships, and surrounding assumptions. A failed search does not prove absence. State reproducible checks, read branch-owned state from its branch, and review the full diff against its exact base plus required surrounding context.
 
+### A ticket's stated Facts are stale until re-read at your own base
+
+Tickets are written against a tree that has since moved. Assume every Fact, count, and line number in one is wrong until you have re-read its source in full at the commit you are working from. On 2026-08-07 every ticket audited carried at least one false Fact; one had every line citation stale by 200–400 lines, and several would have led a worker to replace a false claim with a different false claim.
+
+So a worker's **first** deliverable, before any edit, is a per-Fact verdict — verified, false, or imprecise — each with the file read and the evidence. Repair the ticket and report the repair; never work around a false Fact silently, and never restate one in new words. If repairing it changes what the ticket is for, stop and say so.
+
+**Cite by searchable anchor, not by line number.** A line number rots silently and sends a reader into unrelated code; a quoted distinctive phrase or a symbol name fails loudly and can be re-located. Where a line number genuinely helps, pair it with an anchor and treat the anchor as authoritative.
+
+This obligation is not discharged by a mechanical check. A checker that resolves citations can itself stop matching, and none of them reads for meaning — a citation can resolve perfectly and still support a claim the code no longer makes. The reading is the control; a checker only catches the cheapest subset.
+
 For broad design work, start with `docs/README.md`; accepted decisions are indexed in `docs/decisions/README.md`.
 
 ## Project direction and authority
@@ -116,6 +126,17 @@ For overlapping live claims, inspect scope declarations on the owning branch and
 
 A concise brief should name the role, exact base and path, edit permissions, scopes, authorities, outcome, non-goals, checks, stop conditions, public boundaries, and required evidence. Cite brief assertions; wrong context propagates quickly.
 
+**The coordinator reads before briefing, and reads again before merging.** A brief is the highest-leverage place to inject a false claim, because every worker receiving it treats it as settled. Three coordinator-authored claims went wrong on 2026-08-07: a rewritten obligation class that the code discharges differently, an enumeration command that miscounted by matching the false positive it was written to exclude, and pin values already superseded when the brief shipped.
+
+Before briefing:
+
+- Re-read the ticket at the base being dispatched from, not the version you remember or last edited.
+- Assert nothing you have not read in a file **this session, at this base**. A worker's report, an earlier summary, and your own recollection are all secondhand.
+- Give each factual claim a command the worker can rerun, and **run it yourself first** — a supplied command that has never been executed is a claim, not a check.
+- Mark anything you could not verify as unverified, and tell the worker to contradict you with evidence rather than defer. Workers that pushed back were right every time it happened.
+
+Before merging: read the full diff, and re-read the source behind any claim the merge depends on. Give particular attention to sites a worker classified as *already correct* — a wrong "no change needed" leaves no diff to review and is the cheapest place for an error to survive.
+
 ### Worker, review, and integration
 
 Workers should verify base, branch, claim, scopes, and clean status; read the complete ticket and critical files; then run targeted checks, `tkt lint`, `git diff --check`, and `tkt guard` against the true base.
@@ -147,6 +168,14 @@ Refill capacity after landings. Remove only clean, preserved worktrees with `git
 Keep Cargo output worktree-local. Gates can use 7–15 GB, so clear local `target/` data and size concurrency from measured free space.
 
 Make new checks fail deliberately before trusting them. Name and count populations so “nothing ran” cannot look green.
+
+**Perturb the subject, never the assertion, and show the failure text.** Editing an assertion until it fails proves only that the assertion runs. Break the thing the check exists to guard — reuse a tag, drop a field, widen the ledger row, gate a module behind a platform predicate — and quote what the check said. A report that claims a check can fail without showing its message has not demonstrated it. Where a check guards several independent properties, perturb each one separately; a perturbation that reddens everything cannot show which assertion is load-bearing.
+
+**Size enumerations from the type, not by hand.** `core::mem::variant_count` makes a widened vocabulary a build error at the enumeration rather than a population that silently shrinks while still reporting no collision. A hand-written length, a successor chain, and a wildcard-free match can all be satisfied by an enumeration that has stopped covering its domain. Where the population cannot be typed, assert a floor and print the census.
+
+**Verify that a check reaches its subject at all.** Several here could not. `cargo doc` cannot fail for a `#[cfg(test)]` module because rustdoc never compiles it. A grep anchored `^(pub )?` cannot match a `pub(crate)` item. A single-line matcher cannot see an attribute that wraps. A closing condition demanding a grep be empty cannot be met where the convention quotes retired text inside dated corrections. Before trusting a check, state what it would take for it to say *no*, and confirm that case is reachable.
+
+**A mechanical check does not discharge a reading obligation.** It is one more artifact that can quietly stop working, and it never reads for meaning. Use checks to make regressions loud; use reading to decide whether the claim was ever true.
 
 ## Verify and ship
 
