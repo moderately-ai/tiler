@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, dtype, bf16, conformance, testing]
 claimed_from: todo
 assignee: agent-bf16-vertical
-lease_expires_at: 1786121991
+lease_expires_at: 1786122049
 ---
 ## User-visible outcome
 
@@ -100,3 +100,46 @@ Moved `blocked` → `todo` by the coordinator after checking each dependency aga
 **One thing to carry rather than rediscover.** No capability yet checks that the conformance it was handed was stated about its own format — `ReferenceNumericalConformance::from_realization` discards the subject and has no caller, so every conformance in the tree is `strict()`. That window is unreachable today and is owned by [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md). **This ticket must state the realization it compares under explicitly** rather than assuming a route supplies it.
 
 The 2026-08-06 "Blocked" section below is retained as the dated record of what blocked this and how each block was eliminated; read it as history, not as current truth.
+
+## Outcome, 2026-08-07 — the vertical executes on the measured row, and one leg of it is unreachable
+
+**The device half exists.** `crates/tiler-conformance` gained its first content: a pure-BF16 `(x * 1.5) + 0.0` program carried from semantic construction, through the exact-rational oracle, through the schedule and kernel vocabularies, through `bfloat` MSL emission against the authoritative macOS Apple9 declaration, through the real Apple offline toolchain, to a dispatch on this host's GPU and a bit comparison against the oracle under the declared flushing conformance. It passes. This is the first BF16 arithmetic this workspace has executed on a device.
+
+### Measurement boundary, and nothing generalizes past it
+
+Apple M4 Max reporting `MTLGPUFamilyApple9`; macOS 27.0 build `26A5388g`; `arm64`; offline `Apple metal version 32023.921 (metalfe-32023.921)` and `AIR-LLD 32023.921`; macOS SDK 27.0 build `26A5388f`; profile `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1`; AOT target `air64-apple-macos26.0` under `metal4.0`; linked metallib 3,619 bytes. Three operations — `tiler::constant-bf16@1`, `tiler::multiply-bf16@1`, `tiler::add-bf16@1` — one target family, one contract. No iOS family, no other Apple family, no other OS/SDK/compiler row, no contraction, reduction, conversion, or mixed precision.
+
+### The leg that is not crossed, and why it is not a descope
+
+**`compile()` cannot take a BF16 program at this commit.** `select_supported_strategy` (`crates/tiler-compiler/src/request.rs:4206`) refuses every program carrying a non-`f32` value under the rule `dtype-f32` before a subject is normalized, and three files assert that wall on purpose: `crates/tiler-compiler/tests/bf16_numerical_contract.rs`'s `a_flush_accepting_bf16_contract_reaches_the_recognizer_dtype_wall`, the same file's `the_accepted_bf16_contract_schedules_and_lowers_a_region_the_request_cannot_reach`, and `crates/tiler-compiler/src/pipeline/tests.rs`'s BF16 vertical, whose `bf16_scheduled_region` records the identical boundary in the same words. So **the optimizer, the artifact envelope, and the runtime routing commit are not crossed by this run**: nothing can produce the `PlanAlternative` all three consume. The region is assembled through `tiler-ir`'s public builders, which the ticket's own required-evidence sentence ("through compile, artifact, runtime routing") cannot reach from any scope this ticket holds — `crates/tiler-compiler/` is a stop condition on this dispatch and was live-claimed by a parallel worker. Nothing else on the list was trimmed.
+
+### Evidence, item by item
+
+- **The program and the hand-derived bits.** Fifteen corpus elements, each with its operand and *both* expected encodings (preserving and declared) derived by hand from BF16's parameters — sign 1, exponent 8 with bias 127, trailing 7, quantum `2^-133` — and the round-to-nearest-ties-to-even rule, stated in `corpus()` and never read back from any run. `the_hand_derived_corpus_agrees_with_the_oracle_under_both_readings` holds the oracle to them; the device is then compared against the same column.
+- **Corpus coverage**, asserted class by class in `the_corpus_covers_every_class_the_ticket_names`: both zeros with their signs (`0x0000`, `0x8000`); least positive and least negative subnormals (`0x0001`, `0x8001`); greatest subnormal (`0x007f`); least normal (`0x0080`); a tie to even (`0x3f81 -> 0x3fc2`, `193.5` quanta resolving to the even significand 194); an ordinary rounding decided by nearness (`0x3fff -> 0x403f`, `191.25` quanta of `[2, 4)`); an overflow to infinity (`0x7f7f -> 0x7f80`, `382.5 * 2^120` above the `255.5 * 2^120` midpoint); both infinities (`0x7f80`, `0xff80`); and a non-canonical NaN that canonicalizes (`0x7fc1 -> 0x7fc0`). Finding 24's two measured input-flush operands `0x0040` and `0x8040` are in the corpus by their measured encodings.
+- **The declared flush is applied to the reference before comparison, and the moved elements are named.** The oracle runs under `ReferenceEvaluator::under` at the conformance `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16` resolves to. The flush moves **five** elements — indices 2, 3, 4, 5, 6: `0x0001`, `0x8001`, `0x0040`, `0x8040`, `0x007f`, every subnormal operand and no other. The run requires each to return its flushed answer **and not** the preserving one, so bit equality against the preserving reading is a failure rather than a success. The least normal `0x0080` at index 7 is the unmoved neighbour, one quantum above the greatest subnormal.
+- **Execution witnesses on non-subnormal operands.** Multiply: `0x3f80 -> 0x3fc0`. Add: `0x8000 -> 0x0000` — finding 27's measured `+0.0` shape, whose `fadd` survives `safe` because removing it needs `nsz`, so the returned `0x0000` is what separates "the add ran" from "the add was deleted". Both asserted individually and printed.
+- **The composition perturbation, observed failing.** An operand payload strided at the neighbouring `f32` carrier's four bytes while the kernel keeps addressing at `tiler::bf16@1`'s two — one mis-derived site, which is the asymmetry a real typo produces. Watched failing at 8 of 15 elements on the device, and the *symmetric* version is asserted to round-trip the corpus unchanged, which is the statement of why every layer-local test passes this defect.
+- **A host without the environment.** `MeasuredHalf::{Ran, Unavailable, Failed}`; a non-macOS host reports `Unavailable` naming the missing environment, and `TILER_REQUIRE_METAL_CONFORMANCE` turns that into a failure. Both halves watched: with `xcrun` off `PATH` the run reported `MEASUREMENT BOUNDARY UNAVAILABLE — no qualified Apple Metal toolchain resolved: … could not run xcrun` and passed; with the variable set it failed at that assertion. `cargo clippy -p tiler-conformance --all-targets --target x86_64-unknown-linux-gnu -- -D warnings` is clean, so the non-Apple branch compiles rather than being aspirational.
+- **A strict BF16 contract is refused on this row, observed failing.** `a_strict_bf16_region_is_refused_on_the_measured_row` builds the same region under `NumericalContract::STRICT_BF16`, watches `require_declared_realization` return `unrealizable-numerical-obligation`, and then emits the flush-accepting region on the same target to show the refusal is about the contract rather than blanket.
+
+### The unsafe rule, executed
+
+`crates/tiler-conformance/Cargo.toml` no longer inherits `[workspace.lints]`; it states `unsafe_code = "deny"` with the workspace's other lints restated, and the comment above `[lints]` is replaced by Tom's decision rather than the open fork it described. **The population is two sites, both in `src/device_buffer.rs`**: `write_bytes` and `read_bytes`, each with a reasoned `#[allow(unsafe_code)]`, a bounding assertion against the buffer's own reported length, and a `SAFETY` comment naming the invariant and why `metal::Buffer::contents` forces it. **There is no crate-level allow.** The module's interface is `&[u8]`, so every width, stride, and element count stays in safe code — which is what makes the perturbation above expressible at all — and the conformance logic contains no `unsafe`. `the_unsafe_site_population_is_the_two_named_ones` walks every `.rs` file under `src/`, requires exactly two blocks and two allows, requires both to be in `device_buffer.rs`, and refuses to count fewer than five files, so an added site or an added file is a red test rather than an absorbed addition.
+
+### Landed outside `implementation/conformance`
+
+`docs/correctness-and-testing.md` (`contracts/numerics`) gains two paragraphs after the per-dtype-contract-refusal pair: what this run establishes, and what it does not cross with the `dtype-f32` derivation. Nothing else in that document moved; the 2026-08-07 paragraph the wiring ticket left at "Semantic authority" is already correct and was not touched.
+
+### Not done, and not to be read as partially done
+
+- **No pinned identity moved**, and none was expected to: the standard Metal artifact identity `357f0676…`, cache subject `c626e43b…`, fixed content 65,242 bytes, and descriptor length 2,099 are unchanged, confirmed by `cargo nextest run --workspace` passing `tiler-build`'s `the_standard_metal_path_publishes_its_recorded_identities` and `metal_declaration`'s descriptor pin.
+- **`docs/dtype-support.md` was not edited.** It is `contracts/navigation`, which this ticket does not hold. The BF16 `Conformance evidence` cell is supported by this run bounded to *three operations, one target family, one measured row, and a vertical that does not cross the optimizer, the artifact, or the runtime routing commit* — and the `Backend execution` cell is likewise supported at exactly that bound. Both need a `contracts/navigation` holder.
+- **No public item was added.** Every module is private and `#[cfg(test)]`; every item in them is `pub(crate)`. The crate exports nothing, so no ADR 0075 acceptance node is owed.
+- **This run does not separate a sign-preserving flush from an always-positive one.** The trailing `+ 0.0` maps every zero to `+0`, so a flushed subnormal's sign does not survive to the output. That was the deliberate trade for the add's execution witness, is stated in the module header and in the contract document, and stays evidenced by finding 24's measured `8040 -> 8000` row and by `tiler-reference`'s `the_flushed_zero_sign_is_read_on_both_dimensions`.
+- No contraction, reduction, conversion, mixed precision, iOS family, or second target profile.
+
+### Remainder to schedule
+
+- **The compile/artifact/routing leg.** Carrying a BF16 semantic program through `compile()` needs the recognizer's `dtype-f32` rule widened, which is `implementation/compiler` and is not owned by any live ticket — `establish-bf16-optimizer-legality` holds legality keying, not recognition. A ticket for it, and a follow-up conformance run that crosses the artifact envelope and the routing commit once it exists, are both unfiled.
+- **The `contracts/navigation` cells** named above.
