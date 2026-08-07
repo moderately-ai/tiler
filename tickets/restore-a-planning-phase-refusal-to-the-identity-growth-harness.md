@@ -1,7 +1,7 @@
 ---
 id: restore-a-planning-phase-refusal-to-the-identity-growth-harness
 title: Restore a planning-phase refusal to the identity-growth harness
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets, derive-the-region-shape-budgets-from-the-declaration]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, program-planning, evidence]
-claimed_from: todo
-assignee: worker-restore-a-pl
-lease_expires_at: 1786137974
 ---
 ## User-visible outcome
 
@@ -178,3 +175,31 @@ All four now reach the wall table, which none did before under `--perturb=progra
 ### Not done, deliberately
 
 No budget was moved. No `crates/` file was touched. The ticket is left `in-progress` for the coordinator to close.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`dda57de5`** (worker commit `d4ad002b`). Five files, spike and ticket only, so it carries the green gate.
+
+### The ordering defect is fixed and the fix is demonstrated
+
+`main` now accumulates `swept && summarized && walls_held`, with `probe_the_walls` running **unconditionally** before the combined verdict. The demonstration changed exactly one variable — ordering — and killed the perturbation at its source: with the fix, exit 1 **and** a stderr line naming the moved entry **and** a wall section; without it, exit 1 with **empty stderr and no wall section at all**. That second state is precisely the one where the documented verdict is true while the mode tests nothing.
+
+**Coordinator-verified independently by running the spike:** `--perturb=program` exits 1, emits a substantive `REFUSED at operations=2` diagnosis, and stdout now contains the wall section.
+
+### The empty solution set was real, and the worker found a live wall instead of inventing one
+
+`Wall` is generalized to carry a program constructor plus a `control` probe that must *compile*, so a refusal beside it cannot be a boundary refusing everything. `unplannable_program` now selects `find(|w| w.reaches_planning)` and **panics** rather than silently falling back to `WALLS.first()`.
+
+**Both of the coordinator's suggested leads were refuted with evidence, which is the right outcome.** The `region_members`-on-a-staged-family route cannot refuse a *program* — `region.rs:2104` drops the over-budget candidate, and `check_program_budgets` refuses first. The staged `rms_norm(matmul(a,b), a)` does refuse after planning under `TargetProfile::governed()`, but under **this spike's** Apple9 declaration it refuses two phases earlier under `accuracy.elementary.no-installed-realization`, as does its control.
+
+What does refuse after planning is the generator's other free parameter: a 2-operation chain at extent 268,435,457 → `NoFeasiblePlan`, 26-record sealed trace, `rule=target.grid-axis@1 … threads=268435457:268435456`, with a control at 268,435,456 that compiles. **Coordinator-confirmed in the live trace**: the rejection is record 14, raised *after* region formation, fusion legality and frontier enumeration — a genuine `reaches_planning: true`. Unlike its two predecessors it cannot dissolve, being a measured Apple row rather than a re-derivable ceiling.
+
+**Judgement call, and the right one:** the worker did not substitute a written-down program when the lead failed under this profile. It recorded a measured negative and found a bracketable bound instead, on the grounds that a wall this spike cannot probe under its own profile is not one it may record.
+
+### Domain named and counted
+
+**66 programs**, tabulated in the README: chain 2..=63 at extent 4 (62), chain at 5 admitting extents, chain at 3 refusing extents, and the staged pair. 61 run every sweep, 4 more every wall section, 2 recorded once. That replaces the unbounded universal the closing condition previously asserted.
+
+Re-measured against base `cee4fe1a`: all nine structural columns identical at all 61 points, compared column-by-column rather than through the fit, so `3530n + 723` now describes two trees. New figure — the control compiles to 7,793 bytes against the ladder's 7,783 at n=2: ten bytes for an extent nine orders of magnitude larger, which measures the claim that the held-fixed parameter moves the constant and not the slope.
+
+All four perturbation modes now reach the wall table; none did before under `--perturb=program`.

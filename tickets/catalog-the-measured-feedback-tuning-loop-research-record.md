@@ -1,7 +1,7 @@
 ---
 id: catalog-the-measured-feedback-tuning-loop-research-record
 title: Catalog the measured-feedback tuning-loop research record
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, cost-model]
-claimed_from: todo
-assignee: w-catalog-th
-lease_expires_at: 1786140348
 ---
 ## User-visible outcome
 
@@ -36,3 +33,15 @@ Add one row to the **Physical planning and lowering** group of the generated-cat
 The sources record under `docs/research/cost-model/sources/` gets no catalog row of its own. Neither does the region-search or numerics sources record, and adding one here would make this the only source record in the catalog for no reason a reader could infer.
 
 **Clarified 2026-08-07 — "no row of its own" is not "no link", and the sentence above reads as though it were.** Source records already appear in the catalog three times, as the `primary documents:` clause of the row belonging to the record they support: `region-search/sources/README.md` on the rewrite-search formalism row, and `apple-targets/sources/README.md` on both the compile-profile authority ledger and the Apple Metal artifact compatibility rows. The cost-model source record is named the same way on this record's row, per the correction in Scope. The numerics source record is the one with no link, and its situation is not this one: it supports at least four records across two catalog groups, so no single row owns it. Whether it should be reachable is a separate question this ticket does not answer.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`dda57de5`** (worker commit `a42686bc`). One row in `docs/research/README.md`, placed in **Physical planning and lowering** at the group's alphabetical position.
+
+**The worker departed from this ticket's prescribed row, deliberately and correctly.** The ticket specified a tail of `— pending; primary-source-synthesis; informs: …`, omitting the `primary documents:` clause that sits between the evidence classes and `informs:`. No frontmatter field produces that clause, but the neighbouring `rewrite-search-formalism` row carries it for its own dedicated source record — **verified by the coordinator in the merged diff**. Following the ticket literally would have left `docs/research/cost-model/sources/README.md` unreachable from any entry point, which is the very defect this ticket exists to fix.
+
+Every other field is read from the record's own frontmatter, and the row claims only that the record exists and is a pending primary-source synthesis — **not** that Tiler has a measured-feedback loop, which would be false.
+
+All three of this ticket's stated Facts held on inspection — the first ticket assessed today with no false Fact in it.
+
+**One pre-existing defect left alone, deliberately:** `The multi-round two-level reduction composition` sits out of alphabetical order, but immediately before the record it composes, and the same topical clustering appears elsewhere in the catalog. Reordering on an inferred convention, in a file other lanes edit, would be a guess. Worth a narrow ticket only if the ordering rule is meant to be strict.

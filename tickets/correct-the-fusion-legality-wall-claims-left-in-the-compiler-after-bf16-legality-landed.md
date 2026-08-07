@@ -1,7 +1,7 @@
 ---
 id: correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed
 title: Correct the fusion-legality-wall claims left in the compiler after BF16 legality landed
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [establish-bf16-optimizer-legality, correct-the-stale-dtype-f32-recognizer-claims-in-the-conformance-crate]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-correct-the-
-lease_expires_at: 1786137974
 ---
 ## What is false
 
@@ -68,3 +65,26 @@ Each of the three sites is classified as **live false claim** or **already-dated
 > The obligation is discharged **`SoundProof`** when `!has_reduction || reassociation == Forbidden`. A multi-occurrence **pointwise** BF16 region has no reduction, so its `ReductionReassociation` records `SoundProof` **vacuously** — not `Unknown`. The `Unknown { "unproven-reassociation" }` branch requires a reduction **and** a permitting contract, which is precisely the surviving wall `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall` (`crates/tiler-compiler/tests/bf16_numerical_contract.rs:691`).
 >
 > **The substance stands and only the mechanism was wrong:** reassociation is *not proved* for these regions, merely *not required*, because the region carries no reduction order to preserve. Say that, grounded on `BF16_FACT_REASSOCIATION_PERMITTED` being `false` and no BF16 family declaring an algebraic capability. **Writing "the obligation records `Unknown`" would be a new false claim** — the exact defect these tickets exist to remove.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`3f9d7c8a`** (worker commit `83737af7`). 9 files, all under `crates/tiler-compiler/**`; `make full` exit 0 on the merged tree, 1,071 release numerical tests.
+
+### Per-site classification, as the ticket required
+
+- **`session.rs:1729-1736`** — live false claim, repaired. Every clause was false, and the cited test is defined nowhere in `crates/`.
+- **`pipeline/tests.rs:3990-4000`** — live false claim, repaired. The correct first half (`:3981-3988`) was left untouched.
+- **`pipeline/tests.rs:3873`** — **already-dated correction, not rewritten.** Past tense throughout and its assertion matches current behaviour. Classifying rather than reflexively rewriting is what the ticket asked for.
+- **`policy.rs:1104-1105` and `:317-318`** — a **fourth live false claim the ticket did not list**, found by full read and verified present in the base. It said a missing row costs "the *fusion* of a multi-occurrence BF16 region, which is refused rather than assumed", and named `establish-bf16-optimizer-legality` as owning rows it never wrote — it wrote fusion-*capability* rows in `fusion_legality.rs`, a different table. The rowless conclusion survives; only its two grounds were stale.
+
+### The worker corrected the coordinator, and was right
+
+The brief and three ticket bodies said reassociation is "withheld as `Unknown`". **It is not.** `crates/tiler-compiler/src/fusion_legality.rs:1641-1653` discharges `ReductionReassociation` as **`SoundProof`** when `!has_reduction || reassociation == Forbidden`; the `Unknown { "unproven-reassociation" }` branch needs a reduction *and* a permitting contract — which is the surviving contraction wall, not the pointwise region. The worker declined to write the claim and grounded the substance differently instead. Verified by the coordinator and corrected in all three tickets.
+
+### The standing check, which is the durable part
+
+`crates/tiler-compiler/tests/cited_names_resolve.rs`: every four-or-more-word snake_case name on a comment line under `crates/tiler-compiler/` must resolve outside a comment somewhere under `crates/`. Population floors (≥100 citations, ≥300 files) so an empty search cannot look green, and a second test fails if a `DELIBERATELY_ABSENT` allowlist entry starts resolving.
+
+It found **8 unresolved citations among 136**, of which the ticket had named one. Seven were unrelated to BF16, including `named_contracts_are_coherent` at `session.rs:1901` — **a doc comment claiming a check that never existed**; the worker wrote the test rather than retracting the claim.
+
+**Coordinator-verified deliberate failure:** planting a dangling citation in `boundary.rs` fails the check with `1 cited name(s) exist only inside comments … cited at tiler-compiler/src/boundary.rs:101` — precise and actionable.
