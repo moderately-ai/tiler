@@ -6269,7 +6269,8 @@ fn the_frontier_retains_the_split_beside_the_serial_reduction() {
     assert_eq!(split.scheduled_stages().map(<[_]>::len), Some(2));
     assert_eq!(serial.scheduled_stages().map(<[_]>::len), Some(1));
     // The split's cost is worse on every structural dimension, so it can never
-    // win by pruning. Preference is `calibrate-and-activate-parallel-reduction-selection`'s.
+    // win by pruning. Preference is
+    // `activate-measured-reduction-selection-from-a-target-cost-row`'s.
     assert!(split.cost().dispatch_count() > serial.cost().dispatch_count());
     assert!(split.cost().temporary_bytes() > serial.cost().temporary_bytes());
 }
@@ -7263,9 +7264,9 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
 ///
 /// The last clause is the one that matters for the ticket boundary: the split is
 /// *enumerated and retained*, and preference stays with
-/// `calibrate-and-activate-parallel-reduction-selection`, because the structural
-/// cost model prices two dispatches and a staged partial tensor above one
-/// dispatch and no temporary. Nothing here calibrates anything.
+/// `activate-measured-reduction-selection-from-a-target-cost-row`, because the
+/// structural cost model prices two dispatches and a staged partial tensor above
+/// one dispatch and no temporary. Nothing here calibrates anything.
 ///
 /// The strict compilation at the end is the perturbation: the same program under
 /// a contract that forbids reassociation retains no three-stage alternative at

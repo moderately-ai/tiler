@@ -2003,9 +2003,9 @@ pub(crate) fn fused_region(
 /// passes' per-invocation folds as short as one choice can.
 ///
 /// It is deliberately *a* choice and not a calibrated one.
-/// `calibrate-and-activate-parallel-reduction-selection` owns replacing it with
-/// measured evidence, and nothing in this slice makes a split win on
-/// preference.
+/// `calibrate-the-reduction-partition-against-measured-alternatives` owns
+/// replacing it with measured evidence, and nothing in this slice makes a split
+/// win on preference.
 ///
 /// Returns `None` when no exact split with at least two partitions and at least
 /// two contributors per partition exists — every contributor count below four,
@@ -2013,38 +2013,37 @@ pub(crate) fn fused_region(
 /// so offering it would add a dispatch that does no work, and an inexact split
 /// would leave a ragged final partition this profile does not lower.
 ///
-/// # The measured evidence was blocked by a target row, and no longer is
+/// # What the measurements say about this choice, and what they do not
 ///
-/// **Measurement, 2026-08-02** — [the retained sweep] compiled this program
-/// family across 36 shapes against the authoritative Apple profile under
-/// `NumericalContract::FLUSH_AND_REASSOCIATE_F32`, and **exactly one shape
-/// retained all three reduction strategies at once: one row of four
-/// contributors.** There was no crossover to measure and no calibration to
-/// derive: both need at least two shapes on which the alternatives can be
-/// compared, and a fit through one point is not a model.
+/// **Measurement, 2026-08-07 — the crossover between the three *strategies* is
+/// measured, and it says nothing about this *split*.** [The retained dispatch
+/// sweep] timed all three alternatives over 92 shapes on the qualified Apple9
+/// macOS host and found a large contour: parallel plans win by up to 50.7 times
+/// where the row count cannot saturate the device, and lose by up to 1.78 times
+/// where it can. Every cell of it used whatever partition this function
+/// returned, so **the sweep varied the shape and never the split**, and no
+/// value here is confirmed or refuted by it. Calibrating the partition itself
+/// needs a second sweep over partitions at a fixed shape, which is
+/// `calibrate-the-reduction-partition-against-measured-alternatives`.
 ///
-/// That single point was forced by arithmetic rather than found by sampling.
-/// This function withholds both parallel strategies below four contributors,
-/// and the profile's grid-axis row caps the prologue's one-invocation-per-element
-/// launch, so `4 <= contributors <= rows * contributors <= grid_axis_bound`. At
-/// a bound of four that chain closes on a single shape.
-///
-/// **Measurement, 2026-08-04 — the blocking row moved, and the derivation above
-/// is what now opens.** The authoritative profile's grid-axis row was a
-/// conservative compile guarantee whose cited SDK contract proved extent four
-/// *representable* and stated no maximum, so it licensed no number. It is now a
-/// measured 268,435,456, sourced from
-/// [the extent ladder], and the same inequality admits a wide domain.
+/// [The compile-phase domain sweep] is the other half of that record: the
+/// profile's grid-axis row is a measured 268,435,456 rather than the
+/// conservative four it once was, so the inequality `4 <= contributors <=
+/// rows * contributors <= grid_axis_bound` — this function's floor against the
+/// prologue's one-invocation-per-element launch — admits a wide domain instead
+/// of the single shape `(1, 4)` it closed on at a bound of four.
 /// `tiler_build::metal_plan::tests::the_measured_grid_axis_admits_more_than_one_three_strategy_shape`
-/// reports it — in `tiler-build`, because that is the crate that can see the
-/// profile calibration actually measures against.
+/// reports the domain, in `tiler-build` because that is the crate that can see
+/// the profile calibration measures against.
 ///
 /// **This function's own four is unrelated to that row and does not move with
 /// it.** Four is the smallest contributor count admitting two partitions of at
 /// least two, which is a property of splitting rather than of any target.
 ///
-/// [the retained sweep]: ../../../spikes/program-planning/reduction-crossover/README.md
-/// [the extent ladder]: ../../../spikes/target-profiles/metal-grid-axis-extent/README.md
+/// [The retained dispatch sweep]:
+///     ../../../spikes/program-planning/reduction-dispatch-crossover/README.md
+/// [The compile-phase domain sweep]:
+///     ../../../spikes/program-planning/reduction-crossover/README.md
 pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartition> {
     if contributors < 4 {
         return None;
@@ -2346,17 +2345,27 @@ impl WorkgroupTreeUnavailable {
 /// The participant count is [`governed_partition`]'s balanced exact split — the
 /// same *choice*, not a calibrated one, that the multi-pass split makes, and for
 /// the same reason: it keeps both levels' folds as short as one choice can, and
-/// `calibrate-and-activate-parallel-reduction-selection` owns replacing it with
-/// measured evidence. Nothing here makes the tree win.
+/// `calibrate-the-reduction-partition-against-measured-alternatives` owns
+/// replacing it with measured evidence. Nothing here makes the tree win.
 ///
-/// That measured evidence is now obtainable and deliberately not gathered
-/// here: the authoritative profile's grid-axis row is a retained measurement
-/// wide enough that the comparable domain is no longer one shape, and the
-/// crossover sweep over it belongs to the calibration ticket above rather than
-/// to this function. What fixes the participant count today is not a shape:
-/// the tree and the multi-pass split both read one [`governed_partition`], so
-/// the workgroup width is fixed by that function's balanced exact split until
-/// calibration replaces it.
+/// **Measurement, 2026-08-07 — the tree is now known to be worth having, and
+/// nothing here acts on that.** [The retained dispatch sweep] timed all three
+/// strategies over 92 shapes on the qualified Apple9 macOS host: the serial
+/// fold is up to 50.7 times slower than the best parallel plan where the row
+/// count cannot saturate the device, and up to 1.78 times faster where it can.
+/// So the tree is not a speculative alternative any more. Selection is
+/// unchanged all the same, because acting on that measurement needs a target
+/// profile to *declare* the machine quantity the contour turns on, which is a
+/// public boundary and an identity move —
+/// `activate-measured-reduction-selection-from-a-target-cost-row`.
+///
+/// What that measurement does **not** fix is this function's participant count.
+/// It varied the shape, never the split of a given contributor run, so the tree
+/// and the multi-pass split both still read one [`governed_partition`] and the
+/// workgroup width is that function's balanced exact choice.
+///
+/// [The retained dispatch sweep]:
+///     ../../../spikes/program-planning/reduction-dispatch-crossover/README.md
 ///
 /// # Errors
 ///
@@ -2382,8 +2391,9 @@ pub(crate) fn single_workgroup_tree_region(
     // is threaded anyway because the alternative is *offered* — a region built
     // for a write the cover did not assign is refused at assembly and the
     // alternative disappears silently, which is the failure mode that has no
-    // diagnostic. `calibrate-and-activate-parallel-reduction-selection` is what
-    // would make it observable.
+    // diagnostic. What would make it observable is a selection that can prefer
+    // the tree, which is
+    // `activate-measured-reduction-selection-from-a-target-cost-row`.
     let write_tensor = write.tensor();
     let contributor = contributor_tensor(subject);
     let contributors =

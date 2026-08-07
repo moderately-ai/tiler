@@ -3308,15 +3308,22 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
 /// partial pass's launched threads plus the final pass's, and the four bytes per
 /// partial value the split stages. It is deliberately worse than the serial
 /// alternative's on every dimension under this model — a split trades those for
-/// parallelism the structural model does not measure, which is exactly why
-/// `calibrate-and-activate-parallel-reduction-selection` owns preference and
-/// this slice only enumerates.
+/// parallelism the structural model does not measure, which is why this slice
+/// only enumerates.
 ///
-/// That preference is still unassigned, and no longer for want of a domain:
-/// the authoritative profile's grid-axis row is a retained measurement wide
-/// enough that several shapes retain all three strategies, and the crossover
-/// sweep over them is `calibrate-and-activate-parallel-reduction-selection`'s
-/// to run. See [`crate::physical::governed_partition`] for the derivation.
+/// **Measurement, 2026-08-07 — that trade is quantified now, and preference is
+/// still unassigned for a stated reason rather than for want of evidence.**
+/// [The retained dispatch sweep] timed all three strategies over 92 shapes on
+/// the qualified Apple9 macOS host: where the row count alone cannot saturate
+/// the device a parallel plan wins by up to 50.7 times, and where it can the
+/// serial fold wins by up to 1.78 times. What the structural model does not
+/// measure is therefore worth a factor rather than a rounding. Acting on it
+/// needs a target profile to declare the machine quantity that contour turns on,
+/// which is a public boundary and an identity move held by
+/// `activate-measured-reduction-selection-from-a-target-cost-row`.
+///
+/// [The retained dispatch sweep]:
+///     ../../../spikes/program-planning/reduction-dispatch-crossover/README.md
 fn propose_split(
     request: &VerifiedTargetRequest,
     output: &crate::request::NormalizedOutput,
@@ -3380,15 +3387,23 @@ fn propose_split(
 /// Under this model the tree launches strictly more threads than the serial
 /// alternative and shares its dispatch count, so it does not win here and is not
 /// meant to. What it trades those threads for — a shorter critical path per
-/// output — is not something the structural model measures, which is exactly why
-/// `calibrate-and-activate-parallel-reduction-selection` owns preference and
-/// this slice only enumerates.
+/// output — is not something the structural model measures, which is why this
+/// slice only enumerates.
 ///
-/// That preference is still unassigned, and no longer for want of a domain:
-/// the authoritative profile's grid-axis row is a retained measurement wide
-/// enough that several shapes retain all three strategies, and the crossover
-/// sweep over them is `calibrate-and-activate-parallel-reduction-selection`'s
-/// to run. See [`crate::physical::governed_partition`] for the derivation.
+/// **Measurement, 2026-08-07 — the shorter critical path is what decides the
+/// contour, and it is worth up to 50.7 times.** [The retained dispatch sweep]
+/// timed all three strategies over 92 shapes on the qualified Apple9 macOS host,
+/// and a three-parameter work-span model reproduces the measured winner on 24 of
+/// the 26 held-out shapes whose verdict is separated from the noise. Its one
+/// decision-bearing parameter is the fold steps the device retires at once: the
+/// tree wins exactly where a stage's critical path dominates its total work
+/// divided by that number. Selection is unchanged all the same, because the
+/// number has to be *declared by a target profile* to be consulted, which is a
+/// public boundary and an identity move held by
+/// `activate-measured-reduction-selection-from-a-target-cost-row`.
+///
+/// [The retained dispatch sweep]:
+///     ../../../spikes/program-planning/reduction-dispatch-crossover/README.md
 fn propose_workgroup_tree(
     request: &VerifiedTargetRequest,
     output: &crate::request::NormalizedOutput,
