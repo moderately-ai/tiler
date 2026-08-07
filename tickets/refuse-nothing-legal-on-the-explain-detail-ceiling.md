@@ -1,7 +1,7 @@
 ---
 id: refuse-nothing-legal-on-the-explain-detail-ceiling
 title: Refuse nothing legal on the explain detail ceiling
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [widen-the-identity-growth-ladder-to-the-governed-operation-budget, carry-the-exhausted-resource-through-the-budget-refusal]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, explain, compiler, limits]
+claimed_from: todo
+assignee: agent-explain-ceiling
+lease_expires_at: 1786073446
 ---
 ## User-visible outcome
 
