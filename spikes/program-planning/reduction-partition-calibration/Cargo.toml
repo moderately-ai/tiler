@@ -1,0 +1,58 @@
+[package]
+name = "reduction-partition-calibration"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# The measuring half, which needs a device and the qualified offline toolchain.
+[[bin]]
+name = "reduction-partition-sweep"
+path = "src/main.rs"
+
+# The scoring half, which deliberately needs neither. It reads a retained TSV and
+# derives every verdict the README states — including the leave-one-out score
+# that decides whether a replacement rule is evidence or a description of these
+# seven cells — so those numbers can be audited and recomputed on a machine with
+# no Metal device and without re-dispatching anything.
+[[bin]]
+name = "partition-regret"
+path = "src/regret.rs"
+
+# Its own workspace root, following `reduction-dispatch-crossover` beside it:
+# `make` never reaches here and the dependency set is the spike's own. The path
+# dependencies still resolve their `[lints]` through the repository workspace
+# they belong to.
+[workspace]
+
+[dependencies]
+tiler-build = { path = "../../../crates/tiler-build" }
+tiler-compiler = { path = "../../../crates/tiler-compiler" }
+tiler-ir = { path = "../../../crates/tiler-ir" }
+tiler-metal = { path = "../../../crates/tiler-metal" }
+tiler-metal-aot = { path = "../../../crates/tiler-metal-aot" }
+tiler-reference = { path = "../../../crates/tiler-reference" }
+
+# The version every Metal consumer in this repository pins, so the binding this
+# spike submits through is the one the retained prototype runs submit through.
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33.0"
+
+# Mirrors the repository dev profile rather than inheriting it: this is a
+# separate workspace, so the root profile does not reach it.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+# `deny` rather than the workspace's `forbid`: one module here must call an
+# Objective-C buffer API, and it opts in by name with the four things ADR 0079
+# requires. Everything else is a hard error.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
