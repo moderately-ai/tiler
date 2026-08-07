@@ -51,7 +51,9 @@ use std::fmt::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest as _, Sha256};
-use tiler_artifact::program::{DecodedArtifact, VerifiedArtifactProgram, decode_artifact};
+use tiler_artifact::program::{
+    ArtifactProgramBuilder, DecodedArtifact, VerifiedArtifactProgram, decode_artifact,
+};
 
 use envelope::EnvelopeFactory;
 
@@ -220,6 +222,14 @@ fn measure<T>(work: impl FnOnce() -> T) -> (Reading, T) {
     )
 }
 
+/// How many times [`measure_twice`] runs the closure it is given.
+///
+/// One warm-up and two measured repetitions. A phase whose measured call
+/// *consumes* its input has to be handed exactly this many values, prepared
+/// outside every window, so the count is named here rather than written out at
+/// the one call site that has to agree with it.
+const REPETITIONS: usize = 3;
+
 /// Measures `work` twice and proves the two readings identical.
 ///
 /// An allocation count is a property of the program rather than of the host, so
@@ -227,7 +237,7 @@ fn measure<T>(work: impl FnOnce() -> T) -> (Reading, T) {
 /// initialized static caught inside the window, or a counter that leaked across
 /// calls. Reporting the pair rather than one of them is what makes this
 /// checkable instead of assumed; a warm-up call precedes both, so first-call
-/// initialization is charged to neither.
+/// initialization is charged to neither. That is [`REPETITIONS`] calls in all.
 fn measure_twice<T>(mut work: impl FnMut() -> T) -> Reading {
     drop(work());
     let (first, value) = measure(&mut work);
@@ -273,6 +283,11 @@ fn main() {
             verdict: verdict.to_owned(),
         };
 
+        rows.push(row(
+            "build",
+            build_reading(&factory, object_bytes, arena_chain, &bytes),
+            "built",
+        ));
         rows.push(row(
             "encode",
             measure_twice(|| encode_of(&artifact)),
@@ -320,6 +335,60 @@ fn main() {
         std::fs::write(&path, &report).expect("the results directory exists");
         println!("recorded {path}");
     }
+}
+
+/// Measures [`ArtifactProgramBuilder::build`] over drafts assembled beforehand.
+///
+/// `build` consumes its builder, so unlike every other phase here the measured
+/// call cannot be repeated over one value. Exactly [`REPETITIONS`] drafts are
+/// assembled first and each call pops one; popping allocates nothing, so what
+/// the row reports is the verification, projection, and identity derivation
+/// `build` performs and not the payload declaration that precedes it. Assembling
+/// them outside every window is the whole point — a draft holds the carried
+/// object, and charging that to this row would drown the quantity it exists to
+/// show.
+///
+/// Three checks stop the row from reporting a plausible number for the wrong
+/// work. Each build is asserted to *verify*, so a draft that had become
+/// unbuildable would fail the run rather than have its diagnostic path measured
+/// under this name. The draft table is asserted empty afterwards, so a closure
+/// run fewer times than `measure_twice` promises cannot pass unnoticed. And one
+/// further draft is built outside the window and its envelope compared byte for
+/// byte against the bytes every other row of this shape measures, so a `draft`
+/// that had drifted from `artifact` would be caught rather than measured.
+fn build_reading(
+    factory: &EnvelopeFactory,
+    object_bytes: usize,
+    arena_chain: usize,
+    bytes: &[u8],
+) -> Reading {
+    let rebuilt = factory
+        .draft(object_bytes, arena_chain)
+        .build()
+        .expect("the assembled artifact verifies");
+    // Compared with `assert!` rather than `assert_eq!`: the operands are whole
+    // envelopes and a failure must not try to print two 64 MiB byte runs.
+    assert!(
+        rebuilt.encode().expect("the envelope encodes") == bytes,
+        "a draft built for the build row must encode to the envelope this shape's other rows measure",
+    );
+    drop(rebuilt);
+
+    let mut drafts: Vec<ArtifactProgramBuilder> = (0..REPETITIONS)
+        .map(|_| factory.draft(object_bytes, arena_chain))
+        .collect();
+    let reading = measure_twice(|| {
+        drafts
+            .pop()
+            .expect("one draft per repetition")
+            .build()
+            .expect("the assembled artifact verifies")
+    });
+    assert!(
+        drafts.is_empty(),
+        "the build ran fewer than {REPETITIONS} times, so this reading is not the one the row names",
+    );
+    reading
 }
 
 /// Encodes one artifact, discarding the bytes inside the measured window.

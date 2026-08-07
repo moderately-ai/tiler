@@ -10,20 +10,28 @@ evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.artifacts.decoder-allocation-amplification"]
 entrypoints: ["spikes/artifacts/decoder-allocation/harness/src/main.rs", "spikes/artifacts/decoder-allocation/harness/src/envelope.rs"]
 last_verified: "2026-08-06"
-ticket: "stop-copying-the-carried-payload-through-the-envelope-projection"
+ticket: "stop-copying-the-carried-payload-through-the-builder-assemble"
 ---
 
 # What validating one artifact envelope allocates
 
-This harness counts every byte the **public** [`decode_artifact`](../../../crates/tiler-artifact/src/program/codec/decode.rs) allocates while it validates one real artifact envelope, and does the same for the encoder, the identity derivation, the re-encode, and seven malformed inputs.
+This harness counts every byte the **public** [`decode_artifact`](../../../crates/tiler-artifact/src/program/codec/decode.rs) allocates while it validates one real artifact envelope, and does the same for the producer's two steps — [`ArtifactProgramBuilder::build`](../../../crates/tiler-artifact/src/program/builder.rs) and the encoder — the identity derivation, the re-encode, and seven malformed inputs.
 
 ```sh
 cd spikes/artifacts/decoder-allocation
 cargo build --release
-./target/release/artifact-decoder-allocation --record macos-27.0-2026-08-06-projection
+./target/release/artifact-decoder-allocation --record macos-27.0-2026-08-06-build-after
 ```
 
-Nothing runs it automatically; no `make` target reaches `spikes/`. Run it from this directory, which is where `--record` resolves `results/` from. `cargo run --release -- --record <name>` is the same binary and works identically. Without `--record` it prints the table and writes nothing. One run takes about two seconds and now peaks near 135 MB, which is the 64 MiB encode row and no longer the arena; the two earliest retained runs peak near 1.6 GB, which was the finding rather than an accident of the harness.
+Nothing runs it automatically; no `make` target reaches `spikes/`. Run it from this directory, which is where `--record` resolves `results/` from. `cargo run --release -- --record <name>` is the same binary and works identically. Without `--record` it prints the table and writes nothing. One run takes about a second.
+
+Its own maximum resident set is 1,036,697,600 bytes, measured with `/usr/bin/time -l`. That is **the harness's bookkeeping, not a reading**: the `build` rows hold three assembled drafts of the 64 MiB shape at once for the reason the next section gives, and every one of them is outside every measured window. Say it out loud because the two earliest retained runs also peaked near 1.6 GB and that *was* the finding — inside a single measured `decode`, which is the only place a number here means anything.
+
+## Measuring a step that consumes what it measures
+
+`build` takes its builder by value, so unlike every other phase here the measured call cannot be repeated over one value, and assembling a draft inside the window would charge the row for declaring the carried object rather than for verifying it. So exactly as many drafts as `measure_twice` runs — a warm-up and two measured repetitions — are assembled first and each call pops one. Popping allocates nothing, so what the row reports is the whole-artifact verification, the envelope projection, and the identity derivation that `build` performs.
+
+Holding three drafts of the largest shape is what raises the whole process's resident set, and it cannot reach a reading: `measure` records the live total at the call's start and subtracts it.
 
 ## The instrument, and why it is a counting allocator
 
@@ -51,7 +59,9 @@ An envelope grows in two independent ways and they behave completely differently
 
 ## What the retained results say
 
-Four files, each taken at one commit and each answering the row its change moved. [before](results/decoder-allocation-macos-27.0-2026-08-06-before.tsv) and [after](results/decoder-allocation-macos-27.0-2026-08-06-after.tsv) sit on either side of the canonicity-backstop change, which replaced a re-encode into a second buffer with a derivation compared against the bytes run by run. [comparator](results/decoder-allocation-macos-27.0-2026-08-06-comparator.tsv) was taken on the manifest `14.0` tree, where the codec orders and deduplicates the arena through `compare_expr_nodes` and derives no key table at all. [projection](results/decoder-allocation-macos-27.0-2026-08-06-projection.tsv) was taken after `ArtifactEnvelope::project` stopped copying each carried object five times on its way to the encoder.
+Six files, each taken at one commit and each answering the row its change moved. [before](results/decoder-allocation-macos-27.0-2026-08-06-before.tsv) and [after](results/decoder-allocation-macos-27.0-2026-08-06-after.tsv) sit on either side of the canonicity-backstop change, which replaced a re-encode into a second buffer with a derivation compared against the bytes run by run. [comparator](results/decoder-allocation-macos-27.0-2026-08-06-comparator.tsv) was taken on the manifest `14.0` tree, where the codec orders and deduplicates the arena through `compare_expr_nodes` and derives no key table at all. [projection](results/decoder-allocation-macos-27.0-2026-08-06-projection.tsv) was taken after `ArtifactEnvelope::project` stopped copying each carried object five times on its way to the encoder. [build-before](results/decoder-allocation-macos-27.0-2026-08-06-build-before.tsv) and [build-after](results/decoder-allocation-macos-27.0-2026-08-06-build-after.tsv) sit on either side of `ArtifactProgramBuilder::build` lending its draft's tables to the artifact data instead of copying them.
+
+**The last pair is comparable to each other and not to the four above it**, because the envelope itself moved in between: `Declare the manifest's artifact identity by digest, and choose the coverage fold` (`09d1666a`) shrank every envelope this sweep produces by 64,635 bytes at zero arena nodes and more with depth. Every ratio below is against the `envelope_bytes` its own run reports.
 
 The **decode** rows, which the first and third runs moved:
 
@@ -78,6 +88,22 @@ The **encode** rows, which the fourth run moved:
 
 Only the encode rows moved: the fourth run is byte-identical to the third in all 84 other rows, and every row of both reports the **same envelope byte length**, which is the evidence that removing the copies did not move the wire. The object rows fall to the floor the projection has — `project` takes `&ArtifactProgramData` and a `Section` owns its bytes, so one copy plus the encoder's output buffer is 2×. The no-object row does not move because nothing it allocates is a section: its peak is the identity derivation, and what the change removed there shows up only as 56,021 fewer bytes requested and 20 fewer allocator calls. All 93 rows report the **same envelope byte length** across the second, third, and fourth runs, so neither the schema step's permission to move the wire nor the projection change used it on these fixtures. See [the research result](../../../docs/research/artifacts/decoder-allocation-amplification.md).
 
+The **build** rows, which the sixth run moved and which no earlier run has:
+
+| Shape | `build` peak, build-before | build-after | `requested_bytes`, before → after | `calls` |
+| --- | --- | --- | --- | --- |
+| 64 MiB object | 134,422,327 (2.00× envelope) | **67,258,492 (1.00×)** | 134,537,519 → 67,373,684 | 355 → 244 |
+| 16 MiB object | 33,759,031 (2.01×) | 16,926,844 (1.01×) | 33,874,223 → 17,042,036 | 355 → 244 |
+| 1 MiB object | 2,301,751 (2.10×) | 1,198,204 (1.09×) | 2,416,943 → 1,313,396 | 355 → 244 |
+| no object | 204,599 (4.14×) | 149,628 (3.03×) | 319,791 → 264,820 | 353 → 243 |
+| 4,000-node chain | 651,681 (7.28×) | 464,607 (5.19×) | 1,676,650 → 1,489,576 | 40,426 → 40,315 |
+
+`largest_blocks` at 64 MiB read `67108864 67108864 47786 39699` and now reads `67108864 47786 39699 23893`: the object was live twice inside `build` — once as the artifact data's copy and once as the envelope section the identity derivation projects — and is now live once. The remaining copy is the projection's, which [the projection change](../../../tickets/stop-copying-the-carried-payload-through-the-envelope-projection.md) already established as its floor.
+
+The object-free rows fall too, by a constant 54,971 peak bytes and 110 allocator calls at zero arena nodes, because the payload table is not the only thing that stopped being copied — the expression arena, the variant table with its whole kernel program, the payload descriptors and the selected providers are lent and returned with it.
+
+Only the build rows moved: the sixth run differs from the fifth in exactly 9 of its 102 data rows, all of them `build` — one per shape — and every row of both reports the **same envelope byte length**. That is this change's wire evidence, and a producer-memory change has to have exactly that shape: artifact identity must sit where it did.
+
 ## How a pass could have been vacuous, and what prevents it
 
 **Every refusal is proven to be a refusal.** Each malformed input is decoded once before it is measured and the run asserts the decode *failed*; the printed verdict is that failure's own text. A forgery that silently decoded would otherwise be measured and reported as if it were a rejection path.
@@ -86,6 +112,8 @@ Only the encode rows moved: the fourth run is byte-identical to the third in all
 
 **The readings are proven identical rather than assumed.** Two measured repetitions per call, asserted equal, after a warm-up.
 
+**The build row is proven to have run, and to have built the right artifact.** Every build inside the window is asserted to *verify*, so a draft that had become unbuildable would fail the run rather than have its diagnostic path measured under a success's name. The draft table is asserted empty afterwards, so a closure run fewer times than `measure_twice` promises cannot look green. And one further draft is built outside the window and its envelope compared byte for byte against the bytes every other row of that shape measures, so a `draft` that had drifted from `artifact` would be caught rather than measured.
+
 **The block recorder cannot silently drop evidence.** It writes into a fixed array because it runs inside the allocator and must not allocate; requests past the array are **counted** and printed as `(+n unrecorded)` rather than dropped.
 
 ## Measurement boundary
@@ -93,6 +121,10 @@ Only the encode rows moved: the fourth run is byte-identical to the third in all
 **Peak live is an accounting model, not RSS.** `realloc` forwards to the system allocator and is accounted as `new - old`, so a growth the allocator satisfies by moving a block is not charged for holding both copies. Real resident memory can exceed these figures transiently. The direction is stated because it means a reduction reported here is a floor on what a consumer sees, never a ceiling.
 
 **One process, one thread.** The counters are process-wide and this harness spawns no thread. A harness that did would have to make them thread-local before any reading meant anything.
+
+**`retained_bytes` means something different on a build row.** Every other measured call adds to what the program owns; `build` consumes a draft and yields an artifact, so the column reports the *difference* between the two and saturates at zero when the draft was the larger. All four object rows read 45,277 whatever they carry, because the object leaves with the draft and arrives with the artifact either way.
+
+**Lending a vector keeps its spare capacity; copying one drops it.** That is why `retained_bytes` rose 41,963 → 45,277 on the object rows while every other column fell: `Vec::clone` allocates exactly `len`, and the moved tables arrive with whatever capacity the draft's pushes had reserved. It is 3,314 bytes retained against 67,163,835 fewer requested at 64 MiB, and it is stated because it is the one column of this change that moved the wrong way.
 
 **One host, one toolchain, one profile.** Apple M4 Max (`Mac16,6`), 14 logical cores, macOS 27.0 (Darwin 27.0.0, build `26A5388g`), `rustc 1.99.0-nightly (eff8269f7 2026-07-18)` — the `rust-toolchain.toml` pin resolved by directory ancestry with no selector. Release profile. Allocation counts do not vary with host load, but they *do* vary with the optimizer, so a debug build would report a different program's allocations than the one a consumer runs.
 

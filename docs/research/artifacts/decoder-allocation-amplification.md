@@ -16,8 +16,8 @@ ticket: "measure-artifact-decoder-allocation-amplification"
 
 # Artifact decoder allocation amplification
 
-**Status:** measured; all three amplifications removed — the decoder's, the arena's by a schema step, and the encoder's by the projection change in Section 9
-**Ticket:** `measure-artifact-decoder-allocation-amplification`, then `replace-the-codec-arena-content-key-with-the-existing-comparator`, then `stop-copying-the-carried-payload-through-the-envelope-projection`
+**Status:** measured; all four amplifications removed — the decoder's, the arena's by a schema step, the encoder's by the projection change in Section 9, and the builder's by the lend-and-return in Section 10
+**Ticket:** `measure-artifact-decoder-allocation-amplification`, then `replace-the-codec-arena-content-key-with-the-existing-comparator`, then `stop-copying-the-carried-payload-through-the-envelope-projection`, then `stop-copying-the-carried-payload-through-the-builder-assemble`
 
 Everything below comes from [`spikes/artifacts/decoder-allocation/`](../../../spikes/artifacts/decoder-allocation/README.md), which counts allocations through a counting `GlobalAlloc` while driving the **public** [`decode_artifact`](../../../crates/tiler-artifact/src/program/codec/decode.rs) over real envelopes. Allocation counts are properties of the program rather than of the host, and the harness asserts that two measured repetitions of every call agree exactly, so there is no variance to report: every figure below is the reading, not an estimate of one.
 
@@ -32,6 +32,8 @@ Everything below comes from [`spikes/artifacts/decoder-allocation/`](../../../sp
 **Measurement, and it is what closed that.** [`replace-the-codec-arena-content-key-with-the-existing-comparator`](../../../tickets/replace-the-codec-arena-content-key-with-the-existing-comparator.md) took the schema step Section 5 said the artifact layer could not take alone. The same 226,214-byte envelope now peaks at **670,658 bytes**, 2.96× the envelope and 2,340× less than before, and the quadratic term is gone: peak live runs between 2.48× and 3.23× the envelope across the whole 31-fold arena range. Section 5 carries the retained rows beside the new ones and Section 8 records the forger-reach question this note left open, now answered.
 
 **Measurement, and it was the worst amplifier remaining inside one crate's reach.** `VerifiedArtifactProgram::encode` peaked at **4.99×** the envelope for a 64 MiB object, because the projection from artifact data to envelope held four copies of each carried object before the encoder wrote it a fifth. [`stop-copying-the-carried-payload-through-the-envelope-projection`](../../../tickets/stop-copying-the-carried-payload-through-the-envelope-projection.md) took it to **2.00×**, which is the floor the signature admits. Section 9 has the census and the byte-identity evidence.
+
+**Measurement, and it is the copy Section 9 could not see.** `ArtifactProgramBuilder::build` peaked at **2.00×** the envelope, because it copied every carried object into the artifact data it verifies rather than moving it — the price of a contract that returns the intact builder when verification fails. The harness had no `build` phase, so the size of that was a reading of the source. It has one now, and [`stop-copying-the-carried-payload-through-the-builder-assemble`](../../../tickets/stop-copying-the-carried-payload-through-the-builder-assemble.md) took it to **1.00×** without weakening the contract. Section 10 has the shape and the reason the two obvious alternatives were both wrong.
 
 ## 1. Procedure and measurement validity
 
@@ -183,4 +185,29 @@ Allocator calls for the 64 MiB encode fell 237 → 213 with it. The totals are w
 
 **The content-addressed section table is unchanged, and is now asserted rather than assumed.** Two payloads that carry equal objects share one section — that is what makes a section's address its content — and no test covered it. `two_payloads_carrying_equal_objects_share_one_section` builds an artifact delivering two payloads with different compilation subjects and one object, and requires two subject sections, one object section, and a clean round trip. Watched failing: dropping the projection's `dedup` makes it report two object sections.
 
-**What this does not reach.** `ArtifactProgramBuilder::build` copies the same objects once more, into the `ArtifactProgramData` the artifact owns, because `build` promises the intact builder back on failure and therefore cannot move out of it before the diagnostics are known. That copy is outside the harness's measured window — the fixture is built before `measure_twice` opens — so its size here is a reading of the source rather than a measurement. Filed as [`stop-copying-the-carried-payload-through-the-builder-assemble`](../../../tickets/stop-copying-the-carried-payload-through-the-builder-assemble.md), which has to add a `build` phase to the harness before it can claim anything.
+**What this did not reach.** `ArtifactProgramBuilder::build` copies the same objects once more, into the `ArtifactProgramData` the artifact owns, because `build` promises the intact builder back on failure and therefore cannot move out of it before the diagnostics are known. That copy was outside this harness's measured window — the fixture was built before `measure_twice` opened — so its size here was a reading of the source rather than a measurement. Section 10 is that measurement.
+
+## 10. The builder's copy, and the contract that was said to force it
+
+`build(self)` calls `assemble(&self, ...)`, and `assemble` borrowed because the failure path returns the builder inside `ArtifactVerificationError` for the caller to amend and retry. Nothing may be moved out of a value that has to come back whole — so a producer publishing one artifact carrying an `n`-byte object held `n` in the draft and `n` in the artifact data at once, on every build, including the overwhelmingly common one that succeeds.
+
+**Measurement, from a `build` phase the harness did not have.** `build` consumes its builder, so the phase assembles one draft per repetition outside every window and pops one inside; the row is therefore the verification, the projection, and the identity derivation, and not the payload declaration ahead of them. Peak live during `ArtifactProgramBuilder::build`:
+
+| Object bytes | Envelope | Before | ×env | After | ×env | Requested, before → after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 49,448 | 204,599 | 4.14 | 149,628 | 3.03 | 319,791 → 264,820 |
+| 1 MiB | 1,098,024 | 2,301,751 | 2.10 | 1,198,204 | 1.09 | 2,416,943 → 1,313,396 |
+| 16 MiB | 16,826,664 | 33,759,031 | 2.01 | 16,926,844 | 1.01 | 33,874,223 → 17,042,036 |
+| 64 MiB | 67,158,312 | 134,422,327 | 2.00 | 67,258,492 | 1.00 | 134,537,519 → 67,373,684 |
+
+Allocator calls fell 355 → 244 on every object row. `largest_blocks` at 64 MiB read `67108864 67108864 47786 39699` and now reads `67108864 47786 39699 23893`: the object was live twice inside `build` — the data's copy and the envelope section the identity derivation projects — and is live once. The remaining one is Section 9's floor.
+
+The envelope byte lengths differ from Sections 3 to 9 because `09d1666a` shrank every envelope this sweep produces in between. Both runs above are on one tree and report identical `envelope_bytes` in all 102 data rows; exactly the 9 `build` rows moved.
+
+**The three available shapes were not equivalent, and two of them were wrong.** Taking the content with `std::mem::take` and leaving the builder gutted is the cheapest and is a correctness regression stated as a performance win: a caller recovering from a failed build would find its payloads gone. Changing `ArtifactVerificationError` to state that the builder is spent for payloads is a public-boundary decision and was not this ticket's to take. The third is what landed: `build` **lends** the draft's tables to the data and takes them back before boxing the builder, so nothing is reconstructed and nothing is copied. The recovered builder holds the same allocations it handed over.
+
+**What makes the lending sound is that nothing observes the builder in between.** `build` consumes it by value, and no method it calls afterwards reads `self` — verification, projection and identity derivation all read the data. The fields the data never sees, which are the ones the ticket said a reconstruction could not produce — the interning map, expression phases and interface-only flags, the portfolio subject, the delivery-position count — are untouched throughout, which is exactly why restoring the rest is sufficient rather than approximate. Three fields are still copied and each has its own reason: the semantic identity is four digests with no empty value to leave behind, the interface projections belong to a `PortfolioSubject` that carries more than the data holds, and the delivered-realization record is deliberately remapped into canonical entry space inside `build`, so what the data ends with is not what the builder must keep.
+
+**Measurement, and it is what makes this a pure producer-memory change.** Artifact identity did not move: every row of both runs reports the same `envelope_bytes`, the harness itself builds one further draft per shape outside the window and compares its whole envelope byte for byte against the bytes the other rows measure, and the workspace suite's pinned identities are unchanged.
+
+**One column moved the wrong way, and it is worth naming.** `retained_bytes` on the object rows rose 41,963 → 45,277, because `Vec::clone` allocates exactly `len` while a moved vector arrives with whatever capacity the draft's pushes reserved. That is 3,314 bytes retained by the artifact against 67,163,835 fewer bytes requested by its producer.

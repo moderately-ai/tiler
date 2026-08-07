@@ -2345,6 +2345,73 @@ fn a_payload_subject_yields_its_identity_without_its_object() {
     );
 }
 
+/// A refused build hands the draft back whole, carried object and all.
+///
+/// [`ArtifactProgramBuilder::build`] does not copy the draft's tables into the
+/// artifact data it verifies. It **moves** them and returns them on the failure
+/// path, so publishing an artifact that carries an `n`-byte compiled object no
+/// longer costs `n` more for the possibility that the draft is wrong. The
+/// recoverability [`ArtifactVerificationError`] promises therefore rests on that
+/// return leg being complete, and a table left behind would do worse than lose
+/// bytes: the corrected build would package a *different* artifact and say so
+/// with a different identity. Hence the assertion is the whole envelope rather
+/// than the presence of a payload.
+///
+/// Both envelopes descend from one clone of one draft, which is what makes the
+/// comparison mean what it says — the only difference between them is that the
+/// second draft failed a build first.
+///
+/// [`ArtifactVerificationError`]: super::super::ArtifactVerificationError
+#[test]
+fn a_recovered_builder_rebuilds_the_artifact_byte_for_byte() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    // Every declaration but the provider selection, so the refusal below is one
+    // correctable diagnostic and every table `build` takes is already populated
+    // when it is taken.
+    let descriptor = draft
+        .push_carried_payload(
+            BackendKey::new("tiler.metal").unwrap(),
+            RepresentationKey::new("metallib").unwrap(),
+            SchemaVersion::new(1, 0),
+            profile(),
+            ArtifactExecutionPolicy::NativeImage,
+            payload_content(b"kernel void fused() {}", b"\x00metallib\xff"),
+        )
+        .unwrap();
+    let formulas = formulas(&mut draft);
+    draft
+        .push_variant(&program, variant(&formulas, descriptor, b"fused"))
+        .unwrap();
+    declare_realization(&mut draft, &program);
+
+    let complete = |mut draft: ArtifactProgramBuilder| {
+        draft.select_provider(selection(provider.clone())).unwrap();
+        encoded(&draft.build().expect("the amended draft verifies"))
+    };
+    let reference = complete(draft.clone());
+
+    let error = draft.build().expect_err("an unattributed plan is rejected");
+    assert_eq!(
+        error.diagnostics(),
+        [ArtifactDiagnostic::MissingSelectedProvider],
+    );
+    let (recovered, _) = error.into_parts();
+    let rebuilt = complete(recovered);
+    // Compared with `assert!`, because the operands are whole envelopes and a
+    // failure must report their lengths rather than print two byte runs.
+    assert!(
+        rebuilt == reference,
+        "a draft recovered from a failed build must rebuild the artifact it would have \
+         built, byte for byte; rebuilt {} bytes against the reference's {}",
+        rebuilt.len(),
+        reference.len(),
+    );
+}
+
 #[test]
 fn a_carried_payload_round_trips_with_its_object_and_its_subject() {
     let artifact = carried_artifact(b"kernel void fused() {}", b"\x00metallib\xff");

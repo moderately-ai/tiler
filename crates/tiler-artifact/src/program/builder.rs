@@ -842,6 +842,15 @@ impl ArtifactProgramBuilder {
 
     /// Verifies the whole artifact and freezes it, or returns the intact builder.
     ///
+    /// # How the intact builder is kept intact
+    ///
+    /// By **lending** rather than copying. The draft's tables move into the
+    /// artifact data this verifies and move back before the failure path boxes
+    /// the builder, so a producer carrying an `n`-byte compiled object is never
+    /// charged `2n` for the possibility that its draft is wrong. Nothing
+    /// observes the builder in between: this consumes it, and no method it calls
+    /// afterwards reads `self`.
+    ///
     /// # Errors
     ///
     /// Returns an [`ArtifactVerificationError`] carrying every whole-artifact
@@ -850,7 +859,7 @@ impl ArtifactProgramBuilder {
     /// declared no delivered-realization record.
     ///
     /// [`ArtifactDiagnostic::MissingDeliveredRealization`]: super::ArtifactDiagnostic::MissingDeliveredRealization
-    pub fn build(self) -> Result<VerifiedArtifactProgram, ArtifactVerificationError> {
+    pub fn build(mut self) -> Result<VerifiedArtifactProgram, ArtifactVerificationError> {
         let Some(declared) = self.realization.clone() else {
             // Nothing further can be assembled: every downstream stage reads a
             // record, so reporting the absence alone is the whole answer rather
@@ -889,13 +898,31 @@ impl ArtifactProgramBuilder {
                 Err(diagnostic) => diagnostics.push(diagnostic),
             }
         }
+        self.reclaim(data);
         Err(ArtifactVerificationError {
             builder: Box::new(self),
             diagnostics,
         })
     }
 
-    fn assemble(&self, realization: DeliveredRealizationRecord) -> ArtifactProgramData {
+    /// Assembles the artifact data by **taking** the draft's tables.
+    ///
+    /// Every table taken here is given back by [`Self::reclaim`], which is why
+    /// this may move out of a draft [`Self::build`] has promised to return
+    /// intact. The alternative is a copy of every carried backend object on
+    /// every publication, and a compiled `metallib` is the whole reason the
+    /// envelope carries opaque sections at all.
+    ///
+    /// Three fields are copied instead, each for a reason the lending does not
+    /// reach. `semantic` is four identity digests with no empty value to leave
+    /// behind. `inputs` and `outputs` are projections of `self.subject`, which
+    /// also carries the numerical realization and target profile the data does
+    /// not, so returning them would mean rebuilding a [`PortfolioSubject`]
+    /// rather than restoring one. And `realization` is remapped from the
+    /// producer's declared entry space into the canonical one inside `build`,
+    /// so what the data ends up holding is deliberately not what the builder
+    /// must keep.
+    fn assemble(&mut self, realization: DeliveredRealizationRecord) -> ArtifactProgramData {
         let (inputs, outputs) = self.subject.as_ref().map_or_else(
             || (Vec::new(), Vec::new()),
             |subject| (subject.inputs.clone(), subject.outputs.clone()),
@@ -906,14 +933,55 @@ impl ArtifactProgramBuilder {
             routing: self.routing,
             inputs,
             outputs,
-            providers: self.providers.clone(),
-            payloads: self.payloads.clone(),
-            payload_content: self.payload_content.clone(),
-            expressions: self.expressions.clone(),
-            expression_types: self.expression_types.clone(),
-            variants: self.variants.clone(),
+            providers: std::mem::take(&mut self.providers),
+            payloads: std::mem::take(&mut self.payloads),
+            payload_content: std::mem::take(&mut self.payload_content),
+            expressions: std::mem::take(&mut self.expressions),
+            expression_types: std::mem::take(&mut self.expression_types),
+            variants: std::mem::take(&mut self.variants),
             realization,
         }
+    }
+
+    /// Returns everything [`Self::assemble`] took, leaving the draft as it was.
+    ///
+    /// Exact rather than reconstructed: these are the same allocations, so the
+    /// recovered builder is the one the producer handed to `build` and not a
+    /// value resembling it. The fields the builder holds and the data never saw
+    /// — the interning map, expression phases and interface-only flags, the
+    /// portfolio subject, the delivery-position count — are untouched
+    /// throughout, which is what makes restoring the rest sufficient.
+    ///
+    /// The data is destructured exhaustively so a field added to
+    /// [`ArtifactProgramData`] has to be classified here rather than silently
+    /// left behind. That still cannot prove `assemble` and this agree about
+    /// which fields were lent, so the codec suite's
+    /// `a_recovered_builder_rebuilds_the_artifact_byte_for_byte` asserts the
+    /// round trip on a draft carrying an object.
+    fn reclaim(&mut self, data: ArtifactProgramData) {
+        let ArtifactProgramData {
+            // Nothing was lent for these: a constant, a `Copy` policy, the two
+            // subject projections and the identity the builder kept its own of,
+            // and the record `build` remapped out of the declared entry space.
+            schema: _,
+            routing: _,
+            semantic: _,
+            inputs: _,
+            outputs: _,
+            realization: _,
+            providers,
+            payloads,
+            payload_content,
+            expressions,
+            expression_types,
+            variants,
+        } = data;
+        self.providers = providers;
+        self.payloads = payloads;
+        self.payload_content = payload_content;
+        self.expressions = expressions;
+        self.expression_types = expression_types;
+        self.variants = variants;
     }
 
     /// Interns one expression node and returns the arena id that now denotes it.

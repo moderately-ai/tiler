@@ -7,8 +7,9 @@
 //! differences are deliberate. This harness is parameterized by object length
 //! directly rather than by a target envelope length, because the quantity it
 //! sweeps is section bytes and the length solver that spike needs would only add
-//! a failure mode. And it hands back the [`VerifiedArtifactProgram`] rather than
-//! its bytes, because the encoder is one of the paths measured.
+//! a failure mode. And it hands back the [`VerifiedArtifactProgram`] — or, for
+//! the `build` row, the unbuilt [`ArtifactProgramBuilder`] — rather than its
+//! bytes, because the producer's own steps are among the paths measured.
 //!
 //! The carried object is synthetic, and what that does and does not bound is
 //! unchanged: artifact identity folds the payload *metadata* and excludes every
@@ -85,6 +86,22 @@ impl EnvelopeFactory {
     /// Panics when the assembled artifact does not verify, for the reason above.
     #[must_use]
     pub fn artifact(&self, object_bytes: usize, arena_chain: usize) -> VerifiedArtifactProgram {
+        self.draft(object_bytes, arena_chain)
+            .build()
+            .expect("the assembled artifact verifies")
+    }
+
+    /// Assembles the same artifact's draft, stopping short of
+    /// [`ArtifactProgramBuilder::build`].
+    ///
+    /// Separate from [`Self::artifact`] because `build` is itself a measured
+    /// path and it consumes its builder: a row that reports what `build`
+    /// allocates has to be handed a draft that already exists, or it would be
+    /// reporting the declaration of a payload rather than the verification of
+    /// one. `artifact` is this call and that one, so the two cannot describe
+    /// different artifacts.
+    #[must_use]
+    pub fn draft(&self, object_bytes: usize, arena_chain: usize) -> ArtifactProgramBuilder {
         let plan = self
             .compilation
             .selected()
@@ -133,14 +150,14 @@ fn serial_sum_program(rows: u64, columns: u64) -> SemanticProgram {
     builder.build().expect("the program verifies")
 }
 
-/// Packages one plan alternative and a carried payload as an artifact.
+/// Packages one plan alternative and a carried payload as an artifact draft.
 fn assemble(
     semantic: &SemanticProgram,
     compilation: &Compilation,
     plan: PlanAlternative<'_>,
     object_bytes: usize,
     arena_chain: usize,
-) -> VerifiedArtifactProgram {
+) -> ArtifactProgramBuilder {
     let profile = TargetProfileRef {
         key: TargetProfileKey::new(compilation.target_profile_key())
             .expect("the compiler mints a governed profile key"),
@@ -219,7 +236,7 @@ fn assemble(
     builder
         .declare_realization(realization_record(&profile, program))
         .expect("the record agrees with the packaged portfolio");
-    builder.build().expect("the assembled artifact verifies")
+    builder
 }
 
 /// Pushes one carried payload of `object_bytes` synthetic object bytes.
