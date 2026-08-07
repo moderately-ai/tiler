@@ -1,7 +1,7 @@
 ---
 id: audit-the-l1-workload-records-evidence-classes
 title: Audit the L1 workload record's evidence classes against its relayed measurements
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [audit-the-ingestion-records-no-measurements-header-claim]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: []
 paths: []
 tags: [documentation]
+claimed_from: todo
+assignee: agent-l1-audit
+lease_expires_at: 1786076416
 ---
 ## User-visible outcome
 
