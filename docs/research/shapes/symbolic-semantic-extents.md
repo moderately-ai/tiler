@@ -29,7 +29,9 @@ Claims are labelled **Fact** when traced to inspected source at that commit or t
 
 ## What is actually missing
 
-**Fact — the semantic layer has no symbol in it at all.** `crates/tiler-ir/src/shape.rs:1` calls itself "Target-independent **fixed** shape vocabulary", `Extent` wraps a `u64`, `Shape` is a `Vec<Extent>`, and `SemanticProgramBuilder::input` and `input_resolved` both take a `Shape` by value. The exact check is `grep -rn "ShapeSymbol\|SourcedExtent\|SourcedShape\|ShapeEnv" crates/tiler-ir/src/semantic.rs crates/tiler-ir/src/semantic/`, which returns nothing; the positive control is the same pattern over `crates/tiler-ir/src/index/`, which returns six files.
+**Fact — the semantic layer has no symbol in it at all.** `crates/tiler-ir/src/shape.rs:1` calls itself "Target-independent **fixed** shape vocabulary", `Extent` wraps a `u64`, `Shape` is a `Vec<Extent>`, and `SemanticProgramBuilder::input` and `input_resolved` both take a `Shape` by value. The exact check is `grep -rn "ShapeSymbol\|SourcedExtent\|SourcedShape\|ShapeEnv" crates/tiler-ir/src/semantic.rs crates/tiler-ir/src/semantic/`, which returns two doc-comment hits and no code; the positive control is the same pattern over `crates/tiler-ir/src/index/`, which returns ten files.
+
+**Corrected 2026-08-07 — the check above read "returns nothing", and it was already false when this record was written rather than falsified since.** At this record's own base commit `bc39282` the same grep returned `crates/tiler-ir/src/semantic/slice.rs` and `crates/tiler-ir/src/semantic/softmax/tests.rs`, and it still returns exactly those two and nothing else. **The Fact's own claim survives, and only the check offered to establish it was wrong.** Both hits are *prose about the index layer's vocabulary* sited inside a semantic module — the slice family's `SymbolicOffsetUnsupported` doc comment saying a bound extent symbol in a coordinate position is not expressible, and a softmax test's doc comment naming the type a symbolic extent would have — so neither is a symbol reaching a semantic value, and `SemanticProgramBuilder::input` still takes a `Shape`. The narrower check that does return nothing is the same pattern with doc-comment lines excluded, and it is what the *Reproducible checks* section now carries. This repair is independent of the 2026-08-07 relocation and is recorded separately from it for that reason. The positive control's count moved for a third, unrelated reason: six files at `bc39282` and ten at `cd86cac1`, because [`admit-symbolic-index-expression-coefficients`](../../../tickets/admit-symbolic-index-expression-coefficients.md) widened the index layer, not because anything left the semantic one.
 
 **Fact — the environment does exist at expansion time, and only the model is deferred.** `crates/tiler-macros/src/binding.rs:466` constructs a real `ShapeEnvBuilder`, declares each `sym` as a `ShapeSymbol` in the fixed scope `tiler.inline-region.v1`, binds it to `BindingSource::InputDimension { key, axis }` at `AvailabilityPhase::LiveDevicePreflight` with `FactProvenance::RuntimeValidated`, and exposes the result's `ShapeEnvIdentity`. So an expansion already holds a verified `ShapeEnv`; what it does not hold is a *value* for `n`.
 
@@ -66,6 +68,8 @@ Four candidates. The fourth is not in the ticket; it is forced by the one-vocabu
 **Inference — W3 is not eliminated for a frontend that genuinely holds its extents when it builds.** That frontend writes literals, which is the fully-literal subset that already compiles, delivers, and embeds today. W3 fails as a mechanism for the symbolic case, which is the case this ticket exists for.
 
 **W4 survives, and what it costs is stated rather than hidden.** The vocabulary moves module, so `tiler_ir::index`'s accepted re-export paths change or gain aliases; every semantic consumer of `&Shape` migrates to the total view; and the semantic-graph identity domain moves because a static extent's bytes change. Those are real and they are enumerated as decisions A1, A3, and A5 below rather than absorbed.
+
+*Updated 2026-08-07:* the first of those three costs is now paid, and it was paid the harder of the two ways this sentence offered — the five items are `tiler_ir::shape`'s and `tiler_ir::index` gained no alias, so the call sites moved rather than a re-export absorbing them. The two costs the move might have carried with it did not follow: the relocation ticket reports canonical bytes compared against its base over a static and a symbolic region and found byte-identical, and `INDEX_REGION_DOMAIN` is still `tiler.index-region.v11` at `crates/tiler-ir/src/index/builder.rs:100`. A3's and A5's costs are unpaid and remain theirs.
 
 **Proposal — the shape of W4 in one block, using the vocabulary that already exists.**
 
@@ -150,7 +154,11 @@ let d = tiler::tensor! { sym n; in a: f32[n], b: f32[n], c: f32[n]; out (a * b) 
 
 Each is one decision, stated so it can be accepted or refused on its own. None is self-accepted here.
 
-- **A1 — relocation.** Move `SourcedExtent`, `SourcedShape`, `ExtentSources`, `ExtentSourceError`, `SymbolicExtentError`, and `EXTENT_PHASE_CEILING` from `tiler_ir::index` to `tiler_ir::shape`, and decide whether `tiler_ir::index` keeps its current re-export paths. This re-opens a surface accepted on 2026-07-31; the ground for re-opening is the one-vocabulary key that same acceptance rests on.
+- **A1 — relocation.** Move `SourcedExtent`, `SourcedShape`, `ExtentSources`, `ExtentSourceError`, and `EXTENT_PHASE_CEILING` from `tiler_ir::index` to `tiler_ir::shape`, and decide whether `tiler_ir::index` keeps its current re-export paths. This re-opens a surface accepted on 2026-07-31; the ground for re-opening is the one-vocabulary key that same acceptance rests on.
+
+  **Corrected 2026-08-07 — this decision named a six-item set and one of the six does not move.** The argument matters more than the count, because a list without it invites the next reader to "finish" the move. **`SymbolicExtentError` stays in `index`.** It is `Source(ExtentSourceError) | Structural(IndexBuildError) | ShapeVocabulary(ShapeError)`, so siting it at the shape layer would make the crate's *base* vocabulary name `crate::index::IndexBuildError` — inverting the exact layering this decision exists to establish — and it would deliver no sharing anyway, since a second consumer refusing a sourced extent puts *its own* build error in the structural slot and therefore needs its own union. Only `ExtentSourceError` is the shared authority, and it is among the five. **`SourcedIndexInteger` stays for the same reason and this record could not have named it:** it is `IndexInteger | ShapeSymbol`, so relocating it inverts the layering identically, and it did not exist when this record was written — it arrived afterwards with the symbolic coefficient.
+
+  **Landed 2026-08-07 under [`relocate-the-sourced-extent-vocabulary-to-the-shape-module`](../../../tickets/relocate-the-sourced-extent-vocabulary-to-the-shape-module.md).** The five moved and the sub-decision was answered against aliases: `tiler_ir::index` kept **no** compatibility re-export, so the old paths do not resolve and callers name one canonical spelling. **The paths are not accepted.** Under ADR 0075 a changed public path is a public boundary exactly as a changed signature is, and [`accept-the-sourced-extent-vocabulary-at-its-shape-module-paths`](../../../tickets/accept-the-sourced-extent-vocabulary-at-its-shape-module-paths.md) is parked for Tom; the spelling below is current, not settled.
 - **A2 — builder attachment.** `SemanticProgramBuilder::try_standard_with_shape_environment(Arc<ShapeEnv>)` beside `try_standard()`, with no setter, mirroring `IndexRegionBuilder::new_with_shape_environment` and the reason that constructor won: an environment fixed at construction is a property of the type rather than of a doc comment.
 - **A3 — the total view.** `SemanticProgram::shape` returns `&SourcedShape` rather than `&Shape`, with `SourcedShape::as_static` the route to a fixed shape. This is the index promotion's "one total view" key applied at the semantic layer, and it changes every existing caller, including the frontend's inferred-versus-derived check.
 - **A4 — the fifth subject.** `SemanticIdentity` gains a shape-environment subject. Sub-decision: whether it is optional, which makes "no symbols" and "an empty environment" two distinguishable states, or total over an empty-environment identity, which makes them one.
@@ -163,15 +171,21 @@ Each is one decision, stated so it can be accepted or refused on its own. None i
 Each is one command from the repository root, with the positive control that proves it can return something.
 
 ```sh
-# 1. No symbol reaches the semantic layer.
-grep -rn "ShapeSymbol\|SourcedExtent\|SourcedShape\|ShapeEnv" crates/tiler-ir/src/semantic.rs crates/tiler-ir/src/semantic/
-#    Returns nothing. Positive control: the same pattern over
-#    crates/tiler-ir/src/index/ returns six files.
+# 1. No symbol reaches the semantic layer. Corrected 2026-08-07: the bare
+#    pattern returns two doc-comment hits and always did, so the check excludes
+#    comment lines rather than claiming an empty result it never had.
+grep -rn "ShapeSymbol\|SourcedExtent\|SourcedShape\|ShapeEnv" crates/tiler-ir/src/semantic.rs crates/tiler-ir/src/semantic/ | grep -v '///'
+#    Returns nothing. Without the filter it returns semantic/slice.rs and
+#    semantic/softmax/tests.rs, both prose about the index layer's vocabulary.
+#    Positive control: the same unfiltered pattern over crates/tiler-ir/src/index/
+#    returns ten files, six when this record was written.
 
 # 2. The semantic shape encoding is untagged, so it cannot absorb a symbol.
 grep -n 'fn encode_shape' -A 6 crates/tiler-ir/src/semantic/identity.rs
 #    Rank, then eight raw bytes per extent. Positive control: SourcedExtent::encode
-#    at crates/tiler-ir/src/index/sourced.rs:202 pushes self.tag() first.
+#    at crates/tiler-ir/src/shape/sourced.rs:222 pushes self.tag() first. Repointed
+#    2026-08-07: the encoder moved module with its type and its bytes did not
+#    change, so index/sourced.rs:202 is now an unrelated conversion.
 
 # 3. No shape environment reaches the artifact or cache crates.
 grep -rn "ShapeEnv" crates/tiler-artifact/src crates/tiler-cache/src
