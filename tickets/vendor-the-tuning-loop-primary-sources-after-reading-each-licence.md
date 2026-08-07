@@ -1,7 +1,7 @@
 ---
 id: vendor-the-tuning-loop-primary-sources-after-reading-each-licence
 title: Vendor the tuning-loop primary sources after reading each licence
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature]
@@ -9,9 +9,6 @@ scopes: [research/cost-model]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, cost-model, documentation]
-claimed_from: todo
-assignee: w-vendor-t
-lease_expires_at: 1786142810
 ---
 ## User-visible outcome
 
@@ -48,3 +45,21 @@ The ten read verdicts fail for four distinguishable reasons: five modern ACM not
 ## Non-goals
 
 Re-reading the papers or revising any conclusion in the design record. This ticket changes the preservation classification and nothing else. The one remaining awaiting-retrieval row stays out of scope; [`acquire-the-three-unreachable-adaptive-execution-sources`](acquire-the-three-unreachable-adaptive-execution-sources.md) owns it.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`81f07934`**. **Thirteen sources read or attempted; zero vendorable; zero bytes checked in.** +27 KB of text, no binary. Delta is `docs/` and `tickets/` only, so it carries the green gate.
+
+The reading was the deliverable and it inverted the record's own expectation. Its three arXiv rows were classified "plausibly permissive" as an **Inference** — and reading refuted it: all three carry the default arXiv non-exclusive licence, which grants arXiv distribution rights and not ours. Five ACM papers carry the explicit "requires prior specific permission and/or a fee" clause. The AQP survey has **no grant at all**, only a copyright line, which the worker correctly recorded as absence rather than refusal. Cole & Graefe grants copying but only where "not made or distributed for direct commercial advantage" — recorded as a judgement call rather than smuggled through as a verdict.
+
+**Bytes were re-verified before terms were read.** The record retains no bytes, so each document was re-retrieved and its digest compared against the recorded SHA-256 *before* any licence reading. Ten reproduced exactly; none changed.
+
+### The access-control discipline held, including where it cost something
+
+`www.vldb.org` returned HTTP 403 host-wide and `escholarship.org` returned HTTP 202 with an empty body. Each was retried **once, identically** — same URL, same client — to separate a transient failure from a standing refusal, then abandoned. No user-agent change, no headed browser, and **no alternative host sought for the same document even though one exists** (the Halide project serves that article, and a sibling record already uses that copy). That last restraint was deliberate and correct: the verdict was unchanged either way, so fetching would have added nothing but a step toward the line the rule draws.
+
+### Two judgement calls recorded rather than acted on
+
+The `expected-sources.tsv` / `verify-sources.sh` pair was not built, with the disagreement recorded in the ticket instead: a manifest would still assert population count and id uniqueness, which are not vacuous. And the three licence-unread rows **stay in the reachable class** rather than moving to "awaiting retrieval" — their bytes were retrieved and the design record's claims checked against them, so only the licence reading is missing; reclassifying them would falsely imply the design record cites unread documents.
+
+The ticket also missed that **four of its thirteen documents were already preserved under the region-search record**, which reached licence verdicts for them on 2026-08-05; the independent reading agreed with all four.
