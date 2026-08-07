@@ -3880,7 +3880,7 @@ mod tests {
                 //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
                 // and take the `left` value the assertion reports. The cause
                 // belongs in the commit that moves it, not appended here.
-                "tiler-explain-v7 request=0aa252e0bfa16451\n",
+                "tiler-explain-v7 request=e59cb8aa9b38ef70\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

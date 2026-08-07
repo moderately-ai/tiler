@@ -1,9 +1,10 @@
-//! Out-of-crate proof that a region *search* budget costs alternatives only.
+//! Out-of-crate proof of what each class of region budget costs a caller.
 //!
-//! `DeterministicBudgets::governed` states that every `region_*` bound "bounds a
-//! *search*, and exhausting one costs an alternative while the verified input
-//! and complete coverage survive". The two bounds that really are search bounds
-//! — `region_candidates_per_seed` and `region_expansions` — now honour that for
+//! `DeterministicBudgets::governed` once stated that every `region_*` bound
+//! "bounds a *search*, and exhausting one costs an alternative while the
+//! verified input and complete coverage survive", and that was half right. The
+//! two bounds that really are search bounds — `region_candidates_per_seed` and
+//! `region_expansions` — now honour it for
 //! both extremes of the partition lattice rather than for the unfused one
 //! alone, which is what
 //! `region-expansion-exhaustion-loses-the-only-feasible-plan` reported: at
@@ -12,6 +13,13 @@
 //! surviving cover named an unimplemented region, and the compilation refused
 //! `NoFeasiblePlan` — the only implementable plan lost to a bound documented to
 //! cost an alternative.
+//!
+//! The other three — `region_members`, `region_boundary_outputs`, and
+//! `region_live_values` — bound one region's admissible *shape* and can refuse
+//! a program outright, which is why they are now derivations over the
+//! declaration rather than constants. The last two tests here are that
+//! population: the sizes the superseded `region_members` constant refused, and
+//! the first size past the program-scoped bound that still refuses.
 //!
 //! The chain family is the one the measurement was taken on
 //! (`spikes/program-planning/identity-growth`): one `tiler::constant-f32@1` and
@@ -103,20 +111,66 @@ fn the_chain_compiles_on_both_sides_of_the_removed_wall() {
     }
 }
 
-/// Past the largest region this profile admits, the refusal names that bound.
+/// The population a bare `region_members` constant refused now compiles.
 ///
-/// `region_members` is 32, and it bounds one region's admissible *shape* rather
-/// than a search: the whole-program region of a thirty-three-operation chain is
-/// refused by a declared property of the profile, and with no smaller
-/// implementable cover the program has no plan. That is an exhausted
-/// deterministic budget, so it carries `BudgetExhausted` — the class whose
-/// action is to widen a bound — and never `NoFeasiblePlan`, which the public
-/// surface documents as "a hard target rejection, never an exhausted analysis
-/// budget".
+/// **This file used to assert the opposite at its first point, and the change
+/// is admission rather than a wider search.** `region_members` was the constant
+/// `32` while every bound on the program's own *size* admitted sixty-two
+/// occurrences, so 33..=62 refused `BudgetExhausted` on a compiler-internal
+/// ceiling: the recognized partition of this family is its whole program, no
+/// smaller region is implementable, and the whole-program region was the one
+/// candidate the constant refused.
+/// `derive-the-region-shape-budgets-from-the-declaration` made the bound
+/// `semantic_operations`, on the ground that a region's members are a subset of
+/// the program's own occurrences, and the whole range plans.
+///
+/// The assertions are what separate admission from a search that merely ran
+/// longer. A search bound costing alternatives leaves *some* plan behind — that
+/// is what the tests above prove of `region_expansions`. Here the plan is a
+/// single dispatch whose coverage is every one of the program's occurrences,
+/// which is precisely the whole-program region the shape bound refused: a wider
+/// search could not have produced it, because the candidate it is built from
+/// was rejected at formation.
 #[test]
-fn a_chain_wider_than_the_largest_admitted_region_refuses_as_an_exhausted_budget() {
-    let program = chain_program(33);
+fn the_population_the_member_bound_refused_compiles_as_one_whole_program_region() {
+    for operations in 33..=62 {
+        let program = chain_program(operations);
+        let compilation = compile_governed(&program, CONTRACT).unwrap_or_else(|failure| {
+            panic!("{operations} operations plan under the derived member bound: {failure:?}")
+        });
+        let selected = compilation
+            .selected()
+            .expect("the portfolio names a selected alternative");
+        let stages: Vec<usize> = selected
+            .abi()
+            .kernel_program()
+            .stages()
+            .map(|stage| stage.coverage().len())
+            .collect();
+        assert_eq!(
+            stages,
+            vec![operations],
+            "{operations} operations must plan as one region covering the whole program",
+        );
+    }
+}
+
+/// Past the program-size bound, the refusal is still an exhausted budget.
+///
+/// **The wall moved from a region bound to a program bound, and it is still a
+/// wall.** Sixty-three occurrences exceed `semantic_operations`, which
+/// `check_program_budgets` refuses before any target is consulted, so the
+/// refusal carries `BudgetExhausted` — the class whose action is to widen a
+/// bound — and never `NoFeasiblePlan`, which the public surface documents as "a
+/// hard target rejection, never an exhausted analysis budget".
+///
+/// Which resource was exhausted is deliberately not asserted here: the public
+/// failure carries the class alone, and
+/// `carry-the-exhausted-resource-through-the-budget-refusal` owns widening it.
+#[test]
+fn a_chain_past_the_program_size_bound_refuses_as_an_exhausted_budget() {
+    let program = chain_program(63);
     let failure = compile_governed(&program, CONTRACT)
-        .expect_err("no region this profile admits covers a thirty-three-operation chain");
+        .expect_err("sixty-three occurrences exceed the governed operation budget");
     assert_eq!(failure.class(), CompileFailureClass::BudgetExhausted);
 }
