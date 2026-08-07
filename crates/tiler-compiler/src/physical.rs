@@ -865,16 +865,22 @@ fn spell_output(
             }
             spell_output(&chain.producer, position, members, write, partial_fused)
         }
-        // A decision, not a fall-through: the ownership test is the recognized
-        // partition's own, so a region this output owns is one whose atoms are
-        // all stages of this occurrence. Answering `None` would let the scan
+        // A decision, not a fall-through: a member set this output owns is
+        // answered here or not at all. Returning `None` would let the scan
         // continue and report partial coverage, which names the cover instead of
         // the region's own answer.
-        NormalizedOutput::Staged(normalized) => (!members.is_empty()
-            && members
-                .iter()
-                .all(|atom| atom.member() == normalized.member))
-        .then(|| spell_staged(normalized, position, members, write)),
+        //
+        // The ownership test is asked of the recognized partition rather than
+        // restated, so a widening of the staged shape — a third stage, atoms
+        // spanning occurrences — moves this arm with the recognizer instead of
+        // leaving the two to disagree about which regions are the occurrence's.
+        // The arms above compare member lists themselves because each has to
+        // know *which* part matched to name a spelling kind; a staged
+        // occurrence's partition has one part, and *which stage* is
+        // [`spell_staged`]'s question, so ownership is the whole of this arm's.
+        NormalizedOutput::Staged(normalized) => output
+            .owns_region_members(members)
+            .then(|| spell_staged(normalized, position, members, write)),
     }
 }
 
