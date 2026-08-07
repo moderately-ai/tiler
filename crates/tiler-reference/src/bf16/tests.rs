@@ -20,6 +20,7 @@
 //! Neither population is evidence about a device. Nothing here executes anything
 //! on a GPU.
 
+use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
 use tiler_ir::semantic::accuracy::{ExactRational, UlpFormatError};
 use tiler_ir::semantic::{
     AttributeFieldId, Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CanonicalField, CanonicalValue,
@@ -33,8 +34,8 @@ use tiler_ir::shape::Shape;
 
 use super::{
     BF16_CONSTANT_BITS_ATTRIBUTE, BF16_FACT_CANONICAL_NAN_BITS, Bf16Arithmetic,
-    Bf16BinaryReference, Bf16Format, Bf16Value, Bf16ValueValidator, ConstantBf16Reference,
-    sign_mask,
+    Bf16BinaryReference, Bf16Format, Bf16SubnormalRealization, Bf16Value, Bf16ValueValidator,
+    ConstantBf16Reference, sign_mask,
 };
 use crate::evaluate::EvaluationRetention;
 use crate::registry::{ReferenceEvaluationRequest, ReferenceOutputs};
@@ -658,6 +659,429 @@ fn changing_only_the_tie_rule_breaks_the_corpus() {
         ],
         "ties-away-from-zero disagrees exactly where the halfway case is decided"
     );
+}
+
+/// One BF16 subnormal counterexample: a case the two readings answer differently.
+///
+/// Each states all **four** resolutions of the two independent dimensions, which
+/// is the adversarial coverage the [operation conformance
+/// matrix](../../../docs/research/numerics/operation-conformance-matrix.md)
+/// requires and ADR 0076 cites: a case stating only the preserving and the
+/// both-flushing answer cannot distinguish a realization that resolved one
+/// dimension from one that resolved both.
+///
+/// Every answer is derived by hand from BF16's parameters, like the witness corpus
+/// above. Where a row of finding 24 of the [Apple numerical
+/// record](../../../docs/research/apple-targets/numerical-behaviour.md) measures
+/// the same operand-to-result pair on the macOS Apple9 row, `measured` names it;
+/// those rows are why this population exists rather than being a hypothetical.
+struct SubnormalCounterexample {
+    /// What this case is evidence about.
+    name: &'static str,
+    /// The arithmetic applied.
+    arithmetic: Bf16Arithmetic,
+    /// Left operand encoding.
+    left: u16,
+    /// Right operand encoding.
+    right: u16,
+    /// The answer under both dimensions preserved.
+    preserved: u16,
+    /// The answer under the input dimension flushing alone.
+    input_flushed: u16,
+    /// The answer under the result dimension flushing alone.
+    result_flushed: u16,
+    /// The answer under both dimensions flushing.
+    both_flushed: u16,
+    /// The measured finding 24 row this case reproduces, when there is one.
+    measured: Option<&'static str>,
+}
+
+/// The counterexample population: seven cases over the three things that differ.
+///
+/// A subnormal operand entering the arithmetic and a result landing in the
+/// subnormal range, each with the sign case that separates the two
+/// [`FlushedZeroSign`] resolutions; a result reached only by rounding, exactly and
+/// at a tie; and the additive case whose flushed answer is a *normal* value rather
+/// than a returned zero. Named and counted rather than listed inline, so a
+/// population that silently emptied could not still look like a passing check.
+fn subnormal_counterexamples() -> Vec<SubnormalCounterexample> {
+    use Bf16Arithmetic::{Add, Multiply};
+    use bits::{HALF, HALF_MIN_NORMAL, MIN_NORMAL, NEAREST_THIRD, NEG_ZERO, POS_ZERO, TWO};
+    /// `-2^-127`, the negation of [`bits::HALF_MIN_NORMAL`].
+    const NEG_HALF_MIN_NORMAL: u16 = 0x8040;
+    /// `-2^-126`, the negation of [`bits::MIN_NORMAL`].
+    const NEG_MIN_NORMAL: u16 = 0x8080;
+    /// `2^-126 + 2^-133`: the least normal plus one subnormal quantum.
+    const MIN_NORMAL_PLUS_QUANTUM: u16 = 0x0081;
+    /// `43 * 2^-133`, a subnormal reached only by rounding.
+    const FORTY_THREE_QUANTA: u16 = 0x002b;
+    vec![
+        SubnormalCounterexample {
+            // 64 quanta doubled is 128 quanta, which is the least normal; flushing
+            // the operand makes it +0 * 2 = +0. The correct result is normal, so
+            // this case is blind to the result dimension and isolates the input one.
+            name: "a subnormal operand doubled: preserved it is the least normal, flushed it is zero",
+            arithmetic: Multiply,
+            left: HALF_MIN_NORMAL,
+            right: TWO,
+            preserved: MIN_NORMAL,
+            input_flushed: POS_ZERO,
+            result_flushed: MIN_NORMAL,
+            both_flushed: POS_ZERO,
+            measured: Some("input flush, multiply: 0040 -> 0000"),
+        },
+        SubnormalCounterexample {
+            // The same case from the other sign. The flush produces the zero of the
+            // operand's own sign, so the product is -0 rather than +0 — the row the
+            // measurement isolates and the one an unsigned flush would get wrong.
+            name: "the same operand negated: the flush keeps its sign, so the product is negative zero",
+            arithmetic: Multiply,
+            left: NEG_HALF_MIN_NORMAL,
+            right: TWO,
+            preserved: NEG_MIN_NORMAL,
+            input_flushed: NEG_ZERO,
+            result_flushed: NEG_MIN_NORMAL,
+            both_flushed: NEG_ZERO,
+            measured: Some("input flush, sign: 8040 -> 8000"),
+        },
+        SubnormalCounterexample {
+            // 128 quanta halved is 64 quanta. Both operands are normal, so this case
+            // is blind to the input dimension and isolates the result one.
+            name: "a normal operand halved into the subnormal range: preserved it is subnormal, flushed it is zero",
+            arithmetic: Multiply,
+            left: MIN_NORMAL,
+            right: HALF,
+            preserved: HALF_MIN_NORMAL,
+            input_flushed: HALF_MIN_NORMAL,
+            result_flushed: POS_ZERO,
+            both_flushed: POS_ZERO,
+            measured: Some("result flush, multiply: 0080 -> 0000"),
+        },
+        SubnormalCounterexample {
+            // The result dimension's sign, under the same declared `FlushedZeroSign`
+            // the input rows measure. Finding 24's measured BF16 sign row is the
+            // *input* dimension, so this states what the declared mode requires and
+            // is not a second measurement.
+            name: "the same result negated: the result flush keeps the sign of the value it replaces",
+            arithmetic: Multiply,
+            left: NEG_MIN_NORMAL,
+            right: HALF,
+            preserved: NEG_HALF_MIN_NORMAL,
+            input_flushed: NEG_HALF_MIN_NORMAL,
+            result_flushed: NEG_ZERO,
+            both_flushed: NEG_ZERO,
+            measured: None,
+        },
+        SubnormalCounterexample {
+            // 128 * 171 * 2^-9 quanta is 42.75 quanta, which rounds to 43 — a
+            // subnormal no operand holds and only the rounding produces. A result
+            // dimension applied to the exact pre-rounding value rather than to the
+            // rounded encoding would answer this identically and would answer the
+            // boundary case differently, which is why the site is the rounded one.
+            name: "a product that rounds inexactly into the subnormal range is flushed as a result",
+            arithmetic: Multiply,
+            left: MIN_NORMAL,
+            right: NEAREST_THIRD,
+            preserved: FORTY_THREE_QUANTA,
+            input_flushed: FORTY_THREE_QUANTA,
+            result_flushed: POS_ZERO,
+            both_flushed: POS_ZERO,
+            measured: None,
+        },
+        SubnormalCounterexample {
+            // -64 + 128 quanta is 64 quanta; flushing the operand gives -0 + 128
+            // quanta, which is the least *normal*. The flushed answer is therefore
+            // not a zero at all, and the two dimensions give three different
+            // answers on one case.
+            name: "a subnormal addend beside a normal: the flushed answer is normal, not zero",
+            arithmetic: Add,
+            left: NEG_HALF_MIN_NORMAL,
+            right: MIN_NORMAL,
+            preserved: HALF_MIN_NORMAL,
+            input_flushed: MIN_NORMAL,
+            result_flushed: POS_ZERO,
+            both_flushed: MIN_NORMAL,
+            measured: Some("input flush, additive path: 8040 -> 0080"),
+        },
+        SubnormalCounterexample {
+            // The least normal plus one quantum, halved: 64.5 quanta, a tie that
+            // resolves to the even count 64. The tie rule and the result dimension
+            // are separate rules acting at the same site, and this case holds both.
+            name: "a tie that rounds into the subnormal range still meets the result dimension",
+            arithmetic: Multiply,
+            left: MIN_NORMAL_PLUS_QUANTUM,
+            right: HALF,
+            preserved: HALF_MIN_NORMAL,
+            input_flushed: HALF_MIN_NORMAL,
+            result_flushed: POS_ZERO,
+            both_flushed: POS_ZERO,
+            measured: None,
+        },
+    ]
+}
+
+/// The four resolutions of the two dimensions, named.
+fn realizations() -> [(&'static str, Bf16SubnormalRealization); 4] {
+    let flush = SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
+    };
+    [
+        (
+            "preserved",
+            Bf16SubnormalRealization::new(SubnormalMode::Preserve, SubnormalMode::Preserve),
+        ),
+        (
+            "input flushed",
+            Bf16SubnormalRealization::new(flush, SubnormalMode::Preserve),
+        ),
+        (
+            "result flushed",
+            Bf16SubnormalRealization::new(SubnormalMode::Preserve, flush),
+        ),
+        ("both flushed", Bf16SubnormalRealization::new(flush, flush)),
+    ]
+}
+
+/// Evaluates one counterexample through the format's own boundary.
+fn commit_under(
+    format: &Bf16Format,
+    case: &SubnormalCounterexample,
+    realization: Bf16SubnormalRealization,
+) -> u16 {
+    let left = format.decode(format.accept_operand(case.left, realization));
+    let right = format.decode(format.accept_operand(case.right, realization));
+    format.commit(&case.arithmetic.apply(&left, &right), realization)
+}
+
+/// The population is counted, and every case genuinely separates the readings.
+///
+/// A "counterexample" whose four answers coincided would be a case the realization
+/// cannot be observed on, and a population of those would let every check below
+/// pass while measuring nothing. Each dimension is required to be separated by at
+/// least one case on its own, so neither is carried by the other.
+#[test]
+fn every_counterexample_separates_a_reading_and_each_dimension_is_reached_alone() {
+    let cases = subnormal_counterexamples();
+    assert_eq!(
+        cases.len(),
+        7,
+        "the counterexample population is the one that was derived"
+    );
+    assert_eq!(
+        cases.iter().filter(|case| case.measured.is_some()).count(),
+        4,
+        "four cases reproduce a measured finding 24 row"
+    );
+    let mut input_only = 0_usize;
+    let mut result_only = 0_usize;
+    let mut both = 0_usize;
+    for case in &cases {
+        let input_separates = case.input_flushed != case.preserved;
+        let result_separates = case.result_flushed != case.preserved;
+        assert!(
+            input_separates || result_separates,
+            "{}: no dimension separates this case from the preserving reading",
+            case.name
+        );
+        match (input_separates, result_separates) {
+            (true, false) => input_only += 1,
+            (false, true) => result_only += 1,
+            (true, true) => both += 1,
+            (false, false) => unreachable!("the assertion above rejects this"),
+        }
+    }
+    assert_eq!(
+        (input_only, result_only, both),
+        (2_usize, 4, 1),
+        "each dimension is separated by cases of its own, and one case reaches both"
+    );
+}
+
+/// The reference answers each of the four readings, and disagrees with the others.
+///
+/// The watched failure is the point and runs in both directions: told the
+/// preserving realization the reference must produce the preserved answer **and
+/// must not** produce the flushed one, and told a flushing realization the
+/// converse. A reference that ignored what it was told would fail the second half
+/// on every case; one that flushed unconditionally would fail the first.
+#[test]
+fn the_reference_answers_the_realization_it_is_told_and_not_another() {
+    let format = format();
+    let mut failures = Vec::new();
+    for case in subnormal_counterexamples() {
+        for ((reading, realization), expected) in
+            realizations().into_iter().zip(expected_answers(&case))
+        {
+            let actual = commit_under(&format, &case, realization);
+            if actual != expected {
+                failures.push(format!(
+                    "[{reading}] {}: expected {expected:#06x}, produced {actual:#06x}",
+                    case.name
+                ));
+            }
+            // The other three readings' answers are the ones this reading must not
+            // return when they differ from its own, which is what makes the check
+            // above evidence rather than a restatement of the implementation.
+            for (other, other_expected) in realizations()
+                .map(|(name, _)| name)
+                .into_iter()
+                .zip(expected_answers(&case))
+                .filter(|(_, other_expected)| *other_expected != expected)
+            {
+                if actual == other_expected {
+                    failures.push(format!(
+                        "[{reading}] {}: returned the {other} answer {other_expected:#06x}",
+                        case.name
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// The four answers one counterexample states, in the order [`realizations`] names.
+fn expected_answers(case: &SubnormalCounterexample) -> [u16; 4] {
+    [
+        case.preserved,
+        case.input_flushed,
+        case.result_flushed,
+        case.both_flushed,
+    ]
+}
+
+/// The flushed zero's sign is a resolution of the mode, not a property of the flush.
+///
+/// Finding 24 measures the BF16 input flush returning `8000` for `8040`, so the
+/// sign-preserving resolution is the one the measured target needs. The
+/// always-positive resolution is a different behaviour and this shows it is
+/// reachable and distinct, on both dimensions — otherwise `FlushedZeroSign` would
+/// be carried and never read.
+#[test]
+fn the_flushed_zero_sign_is_read_on_both_dimensions() {
+    let format = format();
+    let both = |mode| Bf16SubnormalRealization::new(mode, mode);
+    let preserves_sign = SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
+    };
+    let always_positive = SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::AlwaysPositive,
+    };
+    let cases = subnormal_counterexamples();
+    // Looked up by name rather than by index: reordering the population must not
+    // silently move this check onto a case with no negative value in it.
+    let named = |name: &str| {
+        cases
+            .iter()
+            .find(|case| case.name.starts_with(name))
+            .unwrap_or_else(|| panic!("the {name:?} case is in the population"))
+    };
+    // The negated operand: its own sign survives the flush, or does not.
+    let input_sign = named("the same operand negated");
+    assert_eq!(
+        commit_under(&format, input_sign, both(preserves_sign)),
+        bits::NEG_ZERO
+    );
+    assert_eq!(
+        commit_under(&format, input_sign, both(always_positive)),
+        bits::POS_ZERO
+    );
+    // The negated result: likewise at the rounding boundary.
+    let result_sign = named("the same result negated");
+    assert_eq!(
+        commit_under(&format, result_sign, both(preserves_sign)),
+        bits::NEG_ZERO
+    );
+    assert_eq!(
+        commit_under(&format, result_sign, both(always_positive)),
+        bits::POS_ZERO
+    );
+}
+
+/// The preserving realization changes nothing, over the whole encoding space.
+///
+/// Exhaustive-finite, like the round-trip census: the default this landing ships
+/// under must be the identity on every one of the 65,536 encodings in both
+/// dimensions, or a registered value would have moved. The subnormal population is
+/// counted so a predicate that matched nothing could not produce the same verdict.
+#[test]
+fn the_preserving_realization_is_the_identity_on_every_encoding() {
+    let format = format();
+    let preserving = Bf16SubnormalRealization::preserving();
+    let mut subnormals = 0_usize;
+    let mut failures = Vec::new();
+    for encoding in 0..=u16::MAX {
+        if format.is_subnormal_encoding(encoding) {
+            subnormals += 1;
+        }
+        if format.accept_operand(encoding, preserving) != encoding {
+            failures.push(format!("{encoding:#06x} was not accepted unchanged"));
+        }
+        let value = format.decode(encoding);
+        if format.commit(&value, preserving) != format.round(&value) {
+            failures.push(format!("{encoding:#06x} did not commit to its rounding"));
+        }
+    }
+    assert_eq!(
+        subnormals, 254,
+        "the subnormal encodings are the 2 * (2^7 - 1) the format's fields fix"
+    );
+    assert!(failures.is_empty(), "{failures:?}");
+    // Neither zero is subnormal, so neither is ever replaced by a flush.
+    assert!(!format.is_subnormal_encoding(bits::POS_ZERO));
+    assert!(!format.is_subnormal_encoding(bits::NEG_ZERO));
+    assert!(format.is_subnormal_encoding(bits::MIN_SUBNORMAL));
+    assert!(format.is_subnormal_encoding(bits::MAX_SUBNORMAL));
+    assert!(!format.is_subnormal_encoding(bits::MIN_NORMAL));
+}
+
+/// The capability carries the realization, and its default is the preserving one.
+///
+/// The format-level checks above are about the boundary; this is about the
+/// capability a registry holds. `combine` is what the three registered keys reach,
+/// so its answer is the one a landing must not have moved.
+#[test]
+fn the_capability_evaluates_under_the_realization_it_is_given() {
+    let flush = SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
+    };
+    let mut checked = 0_usize;
+    for case in subnormal_counterexamples() {
+        let reference = Bf16BinaryReference::new(format(), case.arithmetic);
+        let left = bf16_tensor(Shape::new([]), &[case.left]);
+        let right = bf16_tensor(Shape::new([]), &[case.right]);
+        let combine = |realization| {
+            bf16_bits(
+                &reference
+                    .combine_under(&left, &right, realization)
+                    .expect("a scalar bf16 pair combines"),
+            )
+        };
+        assert_eq!(
+            bf16_bits(
+                &reference
+                    .combine(&left, &right)
+                    .expect("a scalar bf16 pair combines")
+            ),
+            vec![case.preserved],
+            "{}: the registered path is the preserving one",
+            case.name
+        );
+        assert_eq!(
+            combine(Bf16SubnormalRealization::preserving()),
+            vec![case.preserved],
+            "{}: told preserve",
+            case.name
+        );
+        assert_eq!(
+            combine(Bf16SubnormalRealization::new(flush, flush)),
+            vec![case.both_flushed],
+            "{}: told flush",
+            case.name
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 7, "every counterexample reached the capability");
 }
 
 /// The three keys evaluate through the standard evaluator to exact bits.
