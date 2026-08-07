@@ -28,9 +28,10 @@ use tiler_ir::schedule::{
 
 use crate::region::SemanticStage;
 use crate::request::{
-    NormalizedContraction, NormalizedEpilogue, NormalizedOutput, NormalizedOutputSubject,
-    NormalizedSerialSum, NormalizedStaged, NumericalPermission, RecognizedPointwise,
-    StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
+    BoundaryRead, NormalizedContraction, NormalizedEpilogue, NormalizedOutput,
+    NormalizedOutputSubject, NormalizedSerialSum, NormalizedStaged, NumericalPermission,
+    RecognizedPointwise, StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject,
+    VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -292,6 +293,18 @@ pub(crate) fn staged_plan(normalized: &NormalizedStaged) -> Option<StagedPlan> {
 /// `tiler_ir::schedule`'s own read-ordering rule refuses as two spellings of one
 /// computation. Declining here loses that program rather than proposing a region
 /// the verifier would reject as invalid compiler output.
+///
+/// **The same refusal covers an operand supplied by a materialization edge**,
+/// which the recognizer now admits (`rms_norm(matmul(a, b), a)`) and this
+/// vocabulary still cannot spell: the consuming pass would read that edge *and*
+/// the value the producing stage handed it, and `TensorRole::Intermediate`
+/// carries no ordinal, so nothing says which of the two each access binds. It is
+/// declined by pattern rather than by a separate test — the destructuring below
+/// admits two [`BoundaryRead::Input`] operands and nothing else — so a widened
+/// staged operand vocabulary is a compile error here rather than a region built
+/// from an ordinal the recognizer did not supply.
+/// [`admit-a-scheduled-region-that-reads-two-materialization-edges`](../../../tickets/admit-a-scheduled-region-that-reads-two-materialization-edges.md)
+/// owns the widening, which is `tiler-ir`'s before it is this layer's.
 fn root_mean_square_scale_plan(
     normalized: &NormalizedStaged,
     axes_attribute: AttributeFieldId,
@@ -300,7 +313,11 @@ fn root_mean_square_scale_plan(
     let [value_shape, weight_shape] = normalized.operand_shapes.as_slice() else {
         return None;
     };
-    let [value_input, weight_input] = normalized.operand_inputs.as_slice() else {
+    let [
+        BoundaryRead::Input(value_input),
+        BoundaryRead::Input(weight_input),
+    ] = normalized.operand_reads.as_slice()
+    else {
         return None;
     };
     if value_shape != &normalized.output_shape
@@ -865,22 +882,34 @@ fn spell_output(
             }
             spell_output(&chain.producer, position, members, write, partial_fused)
         }
-        // A decision, not a fall-through: a member set this output owns is
-        // answered here or not at all. Returning `None` would let the scan
+        // A decision, not a fall-through, for a member set that is one of this
+        // occurrence's own stages: returning `None` there would let the scan
         // continue and report partial coverage, which names the cover instead of
         // the region's own answer.
         //
-        // The ownership test is asked of the recognized partition rather than
+        // The ownership test is asked of the recognized shape rather than
         // restated, so a widening of the staged shape — a third stage, atoms
         // spanning occurrences — moves this arm with the recognizer instead of
         // leaving the two to disagree about which regions are the occurrence's.
         // The arms above compare member lists themselves because each has to
         // know *which* part matched to name a spelling kind; a staged
-        // occurrence's partition has one part, and *which stage* is
+        // occurrence's own partition has one part, and *which stage* is
         // [`spell_staged`]'s question, so ownership is the whole of this arm's.
-        NormalizedOutput::Staged(normalized) => output
-            .owns_region_members(members)
-            .then(|| spell_staged(normalized, position, members, write)),
+        //
+        // A member set the occurrence's stages do not cover falls through to the
+        // producer across its staged operand's materialization edge, exactly as
+        // an epilogue chain falls through to its own. That recursion is what
+        // spells the contraction in `rms_norm(matmul(a, b), a)`, and it is a
+        // fall-through rather than a decision because a member set outside both
+        // is another output's.
+        NormalizedOutput::Staged(normalized) => {
+            if normalized.owns_stage_members(members) {
+                return Some(spell_staged(normalized, position, members, write));
+            }
+            normalized.producer.as_deref().and_then(|producer| {
+                spell_output(producer, position, members, write, partial_fused)
+            })
+        }
     }
 }
 
@@ -3054,7 +3083,7 @@ fn published_shape(normalized: &NormalizedOutputSubject) -> &Shape {
         NormalizedOutputSubject::SerialSum(normalized) => normalized.output_shape(),
         NormalizedOutputSubject::Contraction(normalized) => &normalized.output_shape,
         NormalizedOutputSubject::Epilogue(normalized) => normalized.shape(),
-        NormalizedOutputSubject::Staged(normalized) => &normalized.output_shape,
+        NormalizedOutputSubject::Staged(normalized) => &normalized.occurrence().output_shape,
     }
 }
 
@@ -3134,9 +3163,26 @@ fn verify_region_output_binding(
         // An occurrence with no plan reaches here only from a forged proposal —
         // [`spell_staged`] declines it — and answers `false` through the `else`,
         // which is the fail-closed direction.
+        //
+        // A region claiming neither stage is a region of the producer's
+        // partition across a staged operand's materialization edge, and it is
+        // re-offered to that producer's own subject exactly as a chain's is. A
+        // subject with no producer refuses under this function's own
+        // `request-binding` rule, which is the same fail-closed direction: a
+        // member set that is neither this occurrence's stages nor a producer's
+        // is forged.
         (NormalizedOutputSubject::Staged(normalized), scalar) => {
-            let fold = SemanticStage::first(normalized.member);
-            match (staged_plan(normalized), scalar) {
+            let occurrence = normalized.occurrence();
+            let fold = SemanticStage::first(occurrence.member);
+            if semantic_members != [fold] && semantic_members != [fold.next_stage()] {
+                return match normalized.producer() {
+                    Some(producer) => {
+                        verify_region_output_binding(region, semantic_members, producer, subject)
+                    }
+                    None => intrinsic("request-binding", region.index.id),
+                };
+            }
+            match (staged_plan(occurrence), scalar) {
                 (
                     Some(plan),
                     ScalarProgram::SquaredSerialSumThenEpilogue {
@@ -3162,9 +3208,9 @@ fn verify_region_output_binding(
                 (Some(plan), ScalarProgram::PointwiseF32(expression)) => {
                     semantic_members == [fold.next_stage()]
                         && region.index.id == STAGED_PASS_REGION
-                        && region.index.iteration_shape == normalized.output_shape
-                        && element_count(&normalized.output_shape, region.index.id)?
-                            == normalized.output_elements
+                        && region.index.iteration_shape == occurrence.output_shape
+                        && element_count(&occurrence.output_shape, region.index.id)?
+                            == occurrence.output_elements
                         && expression == &plan.pass_expression
                         && staged_pass_reads_match(&region.index.accesses, &plan)
                 }

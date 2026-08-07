@@ -3085,11 +3085,14 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         // whole-program value that would answer the same for every region.
         let output = request.output_at(spelling.output());
         // Every region except the epilogue itself is built from the *producer's*
-        // recognized shape, which is the output itself for a standalone one and
-        // the staged producer for a chain. Asking for it here is what lets each
-        // builder below stay written against one recognized family rather than
-        // against "the output, unless it is a chain".
-        let producer = output.producer_shape();
+        // recognized shape, which is the output itself for a standalone one, the
+        // staged producer for a chain, and — for a staged family that reads a
+        // materialized intermediate — either the occurrence or the shape across
+        // its operand edge, which is why the region's own members decide. Asking
+        // for it here is what lets each builder below stay written against one
+        // recognized family rather than against "the output, unless it is a
+        // chain".
+        let producer = output.producer_shape_for(members);
         let (region, cost) = match spelling.kind() {
             // One elementwise pass, whichever tensor the cover assigned its
             // write. The two write roles cost differently because the cover

@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, planner]
 claimed_from: todo
 assignee: agent-staged-family
-lease_expires_at: 1786134331
+lease_expires_at: 1786136376
 ---
 ## User-visible outcome
 
@@ -33,3 +33,16 @@ There is also a prior wall in the same direction that this ticket does **not** o
 ## Closes when
 
 A staged family reading one materialized intermediate is recognized, the operand's boundary role is carried by exactly one authority with the derivation recorded, and the deeper-chain wall is either lifted with it or named with its own owner.
+
+## Fact corrections, 2026-08-07 (worker, read against the tree rather than the filing)
+
+**The paragraph above conflates two walls under one mechanism, and the correction changes which tickets own what.** "A walk that already reads one staged value and reaches a second is refused because `TensorRole::Intermediate` carries no ordinal (`plan_elementwise`)" describes two different guards in that function, and only one of them is the unordinalled-role rule:
+
+- `record_leaf` refuses one staged value *read twice by one walk* — `s * reverse(s)` — and that is the unordinalled-role rule. Its owner already exists: [`admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region`](admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region.md), whose "Closes when" names `record_leaf`'s branch by name.
+- `plan_elementwise`'s `leaves.staged.is_none()` guard refuses a walk that reaches a *second, different* folded value. That is a rule about chain depth rather than about ordinals: each region would read one intermediate. It had no owner; it has one now, together with this ticket's own `staged-operand-depth`, in [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md).
+
+**"A contraction feeding a normalization feeding a pass needs that one too" is right about the program and wrong about the wall.** `rms_norm(matmul(a, b), a) * a` is refused by the chain-depth rule above (`staged-operand-depth`), not by anything about `TensorRole::Intermediate` carrying no ordinal; and the plain `rms_norm(matmul(a, b), a)` — which *is* recognized after this ticket — needs a third, separate widening to compile at all, because its consuming stage reads two different materialization edges. That one is [`admit-a-scheduled-region-that-reads-two-materialization-edges`](admit-a-scheduled-region-that-reads-two-materialization-edges.md), and it is `tiler-ir`'s public boundary and identity step before it is this crate's.
+
+**One further wall is named because the ticket's own headline example runs into it.** `rms_norm(matmul(a, b), w)` spelled with a third declared input for the weight is refused by `normalize_contraction`'s `input_count() != 2` rule under `input-arity` — the *contraction* recognizer's declared-arity wall, untouched here and owned by [`name-the-contraction-operand-arity-wall-and-separate-its-rule`](name-the-contraction-operand-arity-wall-and-separate-its-rule.md). The two-declared-input spelling `rms_norm(matmul(a, b), a)` exercises the same widening and is what the tests use.
+
+**Superseded rather than stale:** "a recognized staged family carries no read list at all" was true at this ticket's base and is what the first resolution above changed.
