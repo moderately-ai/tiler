@@ -1,7 +1,7 @@
 ---
 id: stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace
 title: Stop the conformance crate's lint table drifting from the workspace
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [carry-the-device-executed-value-proof-into-the-conformance-crate, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [lints, maintainability]
+claimed_from: todo
+assignee: w-lint-table
+lease_expires_at: 1786141741
 ---
 ## The risk this creates
 
