@@ -1,7 +1,7 @@
 ---
 id: prove-the-exhaustible-encoder-injectivity-claims-natively
 title: Prove the exhaustible encoder-injectivity claims natively
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [spike-kani-bounded-verification-on-one-inexhaustible-encoder]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [verification, identity, injectivity, evidence-upgrade]
-claimed_from: todo
-assignee: w-prove-the-
-lease_expires_at: 1786140348
 ---
 
 ## User-visible outcome
