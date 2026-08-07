@@ -22,7 +22,9 @@ to the root `Makefile`; no implementation is currently in review.
 
 ## Deferred boundary
 
-Keep the current review-only enforcement while the complete admitted population is two sites in one non-published prototype. A mechanical source scanner would add a second parsing authority to the gate before the production population exists, and the obvious grep-shaped implementation demonstrably misses both multi-line attributes.
+> **This deferral's premise expired on 2026-08-07 and the boundary below is struck.** It read: keep review-only enforcement "while the complete admitted population is two sites in one non-published prototype", because "a mechanical source scanner would add a second parsing authority to the gate **before the production population exists**". The production population now exists. See the fired trigger-check entry at the end of this ticket.
+>
+> **One clause of it survives and is now evidence rather than speculation:** "the obvious grep-shaped implementation demonstrably misses both multi-line attributes." That was borne out twice on 2026-08-07 — a single-line `grep` for `allow(unsafe_code` over the current tree returns three hits, **all three of them prose in manifests and doc comments**, and zero of the four real attributes. Any scanner this ticket lands must be multi-line-aware, and the negative test for it is that a single-line matcher fails.
 
 ## The admitted population today (2026-07-28)
 
@@ -35,7 +37,13 @@ Reproduce with `grep -rn --include='*.rs' -B1 '^    unsafe_code,' crates prototy
 | `prototypes/serial-sum-run/src/buffer.rs` | `:35` | `:36` | `:52` | `pub fn write_f32` (`:39`) |
 | `prototypes/serial-sum-run/src/buffer.rs` | `:67` | `:68` | `:85` | `pub fn read_f32` (`:72`) |
 
-**There is no admitted unsafe site anywhere under `crates/`.** Both sites are in the one member permitted to diverge from the workspace `forbid` — `prototypes/serial-sum-run/Cargo.toml:39-41` declares `[lints.rust] unsafe_code = "deny"` with the reason stated in the manifest — and both meet ADR 0079's four conditions: `Buffer::contents` is the only route to `MTLBuffer` storage, each `#[allow]` carries a `reason`, each block is preceded by an `assert!` against the buffer's own `length()`, and each carries a `SAFETY` comment naming the invariant.
+> **Superseded 2026-08-07 — the population is now four, and two of them are under `crates/`.** The table above and the sentence below are the 2026-07-28 state, retained because the options are argued against them and a reader needs to see which population each argument was made for.
+
+**Struck:** "There is no admitted unsafe site anywhere under `crates/`." **`crates/tiler-conformance/src/device_buffer.rs` carries two**, at `write_bytes` and `read_bytes`, both over `std::ptr::copy_nonoverlapping` on `Buffer::contents()`. Tom decided the rule admitting them on 2026-08-07 under [`decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`](decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access.md): `deny` with named per-site allows, **never at the crate**, FFI memory management against Metal as the only admitted justification, and isolation into one module as a design constraint.
+
+**That inverts the strongest argument for review-only enforcement**, which was that the whole population sat in one non-published prototype. It no longer does. It also supplies the shape a mechanical check should take, already built and passing: `crates/tiler-conformance/src/bf16_vertical/tests.rs`'s `the_unsafe_site_population_is_the_two_named_ones` walks every file under that crate's `src/`, requires exactly two blocks and two allows both in `device_buffer.rs`, and **carries a file-count floor so it cannot pass by scanning a shrunken tree** — which is precisely the declare-and-count discipline the paragraph below demands. What is missing is that it is crate-scoped; generalizing it is this ticket's work.
+
+The 2026-07-28 sites remain valid and unchanged: `prototypes/serial-sum-run/Cargo.toml` declares `[lints.rust] unsafe_code = "deny"` with its reason, and both meet ADR 0079's four conditions — `Buffer::contents` the only route to `MTLBuffer` storage, a `reason` on each `#[allow]`, an `assert!` against the buffer's own `length()`, and a `SAFETY` comment naming the invariant. The two new sites meet the same four.
 
 **And here is the fact that bears directly on the mechanical option.** `grep -rn --include='*.rs' 'allow(unsafe_code' crates prototypes | wc -l` returns **0**. Both attributes wrap across lines, so the obvious grep-shaped inventory matches *none of the population* and reports that cleanly — zero hits, exit non-zero, no error. A check written that way would say "no unadmitted sites" and "no sites at all" in exactly the same way it would say "the check did not run".
 

@@ -20,9 +20,23 @@ An inline expansion built under a debug configuration can show the diagnostics i
 
 ## Why this exists
 
-**Fact — the storage and the seam exist, and nothing states a retention.** `retain-canonical-msl-under-a-debug-expansion-cache-entry` landed `tiler_cache::expansion::DebugRetention`, the `BundleSection::DebugRetention` frame, and `tiler_build::CompiledPayloads::retained`. Every producer in the workspace states `DebugRetention::none()`.
+**Fact — the storage and the seam exist.** `retain-canonical-msl-under-a-debug-expansion-cache-entry` landed `tiler_cache::expansion::DebugRetention`, the `BundleSection::DebugRetention` frame, and `tiler_build::CompiledPayloads::retained`.
 
-**Fact — a debug configuration is a caller-stated input, and the caller is the frontend.** `tiler_cache` reads no environment and `tiler_build` reads none either, under the ADR 0089 root policy: names, parsing, and defaults stay with the frontend. So whatever selects retention — an environment variable, an attribute on the invocation, a `cfg` — is `crates/tiler-macros`' decision to make and its shape is the first question this ticket answers.
+> **The clause that followed is struck. Corrected 2026-08-07.** It read: "Every producer in the workspace states `DebugRetention::none()`." **`crates/tiler-build/src/metal_cache.rs:403` now states a real retention** — `retained: stage_retention(&outputs)`, labelling each run `{BACKEND}.{delivery}.{stage.tool()}` with `retaining_with_stated_total`. Only the generic default and the `custom_backend` test producer still state none. So a frontend asking for retention today receives a **populated** section from the Metal producer, which is what fired this ticket's trigger.
+
+**Fact — a debug configuration is a caller-stated input, and the caller is the frontend.** `tiler_cache` reads no environment and `tiler_build` reads none either, under the ADR 0089 root policy: names, parsing, and defaults stay with the frontend.
+
+> **The question this ticket opened with has been answered the other way, and the scope narrows accordingly. Corrected 2026-08-07.** The struck clause read: "whatever selects retention — an environment variable, an attribute on the invocation, a `cfg` — is `crates/tiler-macros`' decision to make and its shape is the first question this ticket answers." **The Metal backend made retention unconditional and caller-independent**, documented at `crates/tiler-build/src/metal_cache.rs:435-440`: "**Always stated, never discovered.** This backend retains its stage output on every publication rather than consulting an environment variable or a build profile, which is the ADR 0089 root policy the retention module restates."
+>
+> That does not contradict the Fact above — the root policy still keeps names and defaults out of the lower crates — but it means **no selector is owed**, because nothing is selected. The two questions this ticket bundled are separable, the first is closed, and what remains is the second.
+
+## What actually remains, after the 2026-08-07 correction
+
+**Read-back, not selection.** A retention now arrives populated; nothing in the frontend does anything with it. `crates/tiler-macros` holds **no `DebugRetention` reference at all` — its only "retained" vocabulary is the failure-path `compile_error!` diagnostic, which is a different mechanism reached on a different path.
+
+So the live question is: **what, if anything, does an inline expansion emit from a populated retention?** A note the caller sees at expansion time; a `compile_error!` under some opt-in; a path printed for reading by hand; or deliberately nothing, with the retention left to be read out of the cache directly. Each is a caller-visible frontend behaviour, so whichever is chosen is a public-boundary question under ADR 0075 and comes back to Tom with the built shape.
+
+**Do not re-open the selection question.** If the answer turns out to need one after all — a per-invocation opt-in, say — that is a new decision against a backend that currently retains unconditionally, and it belongs in its own ticket rather than reinstated here.
 
 **Inference — reading it back is a second, separable question.** Retention puts text into an entry; showing it to a consumer is an emitted diagnostic, and a `compile_error!` is fatal while a note is not. Whether an expansion emits anything at all from a retention, or whether the text is for a developer reading the cache by hand, is worth deciding before any of it is built.
 

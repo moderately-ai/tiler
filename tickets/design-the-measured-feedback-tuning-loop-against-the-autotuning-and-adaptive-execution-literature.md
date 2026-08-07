@@ -16,7 +16,11 @@ The architecture of search-guided-by-measurement — where on-device timing ente
 
 ## Why this exists, and why it is deferred
 
-**Fact.** The analytic cost model does not exist yet (the 2026-08-05 audit: no cost/estimate/ranking type in `crates/`), and `calibrate-device-cost-models` sits deferred. A tuning loop refines a cost authority; designing the refinement before the authority exists would design against a guess. **Inference.** The design questions are nonetheless nameable now, and the literature survey loses nothing by waiting — which is why this files at `deferred` rather than `todo`.
+> **The Fact below was false when written and is struck. Corrected 2026-08-07.** It read: "The analytic cost model does not exist yet (the 2026-08-05 audit: no cost/estimate/ranking type in `crates/`)". That audit rested on a grep anchored `^(pub )?`, which cannot match a `pub(crate)` declaration — and every cost and estimate type in this workspace is `pub(crate)`. `calibrate-device-cost-models` already cited `crates/tiler-compiler/src/component_cost.rs` as of **2026-07-28**, a week before the audit that reported the file's contents absent. The deferral was therefore correct in its *conclusion* — the tuning loop still had nothing settled to refine — and wrong in the reason it gave.
+
+**Fact, 2026-08-07 — the cost authority exists and is already consuming measurement.** `crates/tiler-compiler/src/component_cost.rs:76` declares `ANALYTICAL_MODEL_KEY = "tiler.cost.analytical.v1"`, with `CostComponent`, `CostUnit`, `CostValue`, `ComponentCost` and `AnalyticalPlanCost` beside it; the key is consumed in `frontier.rs` and pinned in `pipeline/tests.rs`. `cost-model-bootstrap` and `implement-analytical-component-cost-model` both read `status: done`. A **measured** selector landed alongside it — `crates/tiler-compiler/src/measured_cost.rs`, key `tiler.cost.measured-fold-steps.v1` — which ranges over retained valid plans and can prefer a structurally dominated one.
+
+**Inference.** So the authority this loop would refine is not merely present but already taking device measurement into selection, which is this ticket's own subject matter. The design questions are now askable against something real rather than against a guess.
 
 ## The literature-survey obligation (when fired)
 
