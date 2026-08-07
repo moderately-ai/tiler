@@ -1,7 +1,7 @@
 ---
 id: stop-copying-the-carried-payload-through-the-builder-assemble
 title: Stop copying the carried payload through the builder's assemble
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [stop-copying-the-carried-payload-through-the-envelope-projection, measure-artifact-decoder-allocation-amplification]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [research/artifacts, project/tickets]
 paths: []
 tags: [artifact, codec, performance]
-claimed_from: todo
-assignee: agent-payload-build
-lease_expires_at: 1786073447
 ---
 `ArtifactProgramBuilder::build` copies every carried object once more, on the
 same publication path
