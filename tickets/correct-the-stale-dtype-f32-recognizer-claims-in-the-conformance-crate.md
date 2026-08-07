@@ -1,7 +1,7 @@
 ---
 id: correct-the-stale-dtype-f32-recognizer-claims-in-the-conformance-crate
 title: Correct the stale dtype-f32 recognizer claims in the conformance crate
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [widen-the-strategy-recognizer-past-the-f32-wall, conform-the-bf16-vertical-end-to-end, correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, bf16, dtype, correction]
-claimed_from: todo
-assignee: worker-correct-the-
-lease_expires_at: 1786137974
 ---
 ## What is false
 
@@ -74,3 +71,40 @@ Also closes on: the "first task" above answered — the true reason the BF16 ver
 ## Out of scope — already filed
 
 `crates/tiler-compiler/src/session.rs:1729-1736` and `crates/tiler-compiler/src/pipeline/tests.rs:3990-4000` carry the same stale fusion wall, and `session.rs` cites the same dangling test name on a **public** constructor's doc comment. They are `implementation/compiler`, which this ticket does not hold. Filed as [`correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed`](correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed.md). **Do not touch them from this branch.**
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`a5138ebd`** (worker commit `4bc010d0`). Four files, all inside `crates/tiler-conformance/src/`; 222 insertions, 35 deletions. `make full` exit 0 on the merged tree.
+
+### The hand-assembly reason was established, not guessed — and it is a different layer than every comment claimed
+
+The worker ran a real `compile()` probe of the vertical's own `semantic_program` under its own `declared_contract()` against `BoundMetalCompileDeclaration::first_macos_apple9().profile()`, rather than reasoning from the ticket's lead:
+
+```
+class=NoFeasiblePlan  refusal=NumericalContract(TargetNumericalContractRefusal {
+  target_profile: "tiler.metal.macos-apple9.msl4-0.f32-bf16.v1",
+  rejections: [ { requirement: Contraction { subject: Bf16/tiler::bf16@1, required: Forbidden },
+                  disposition: Unknown } ] })
+```
+
+**Verified independently by the coordinator** at `crates/tiler-build/src/metal_declaration.rs:781-871`: the ledger declares **seven** complete numerical rows — contraction, reassociation `Forbidden`, reassociation `Permitted`, permutation, signed zero, NaN, infinity — and **all seven are bound to `f32`** (`let f32 = ScalarArithmetic::f32();` at `:791`). BF16 gets only dispatchability and the two subnormal tables (`:782`). So BF16's contraction dimension is `Unknown` and the target profile refuses.
+
+**The recognizer admits the program and fusion legality admits it too — fusion legality is never reached.** The live boundary is numerical resolution against the ledger's undeclared BF16 contraction row. That the refusal names `Contraction` rather than a subnormal dimension is itself the evidence that the flush-accepting contract cleared the measured rows. So the ticket's alternative outcome — "this could now go through `compile()` and should" — is **refuted**: it could not.
+
+### Five stale sites, not four
+
+`bf16_vertical.rs:428` carried a live `dtype-f32` claim the ticket never listed — it spelled the rule without naming it, so it was invisible to any search for the rule's name. Found by full read. Verified present in the base at that line. Six surviving `dtype-f32` mentions after the change, **all inside dated 2026-08-07 corrections** describing the gate as retired, per the crate's own idiom.
+
+### A judgement call worth recording
+
+The cross-file agreement claim at `bf16_vertical.rs:26-27` was **removed rather than restated**. A claim that two files phrase one boundary alike cannot be checked from this branch and re-breaks whenever either side is edited — and the other side was being edited concurrently. What replaces it is test-name citations, which `cargo nextest list` resolves. Correct call.
+
+### The new test, and its perturbation
+
+`the_request_boundary_stops_at_the_ledgers_undeclared_bf16_contraction_row` makes the reason checkable. **`tiler-compiler` cannot host this check** — `FIRST_MACOS_APPLE9` lives in `tiler-build`, which depends on the compiler; this crate depends on both.
+
+**Coordinator-verified deliberate failure, against the real regression rather than the assertion:** adding a BF16 contraction row to the ledger turns it red, and the panic names the *next* undeclared dimension — `Reassociation { subject: Bf16, required: Forbidden }` — which is exactly the right diagnostic. Not a vacuous guard.
+
+53 tests pass, **0 skipped**, so the measured half genuinely ran rather than passing as an unavailable host. All 20 cited test names resolve against `cargo nextest list --workspace`.
+
+`cargo doc` was run and its caveat stated as required: it exercises **only `lib.rs`'s header**, emitting no module pages because every module is `#[cfg(test)]`, so it cannot fail for four of the five corrected sites.
