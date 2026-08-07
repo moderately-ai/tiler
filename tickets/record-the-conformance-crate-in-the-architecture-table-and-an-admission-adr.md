@@ -1,7 +1,7 @@
 ---
 id: record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr
 title: Record the conformance crate in the architecture table and an admission ADR
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-conformance-crate-to-the-workspace]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, contracts/decisions]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [docs, architecture]
-claimed_from: todo
-assignee: agent-crate-record
-lease_expires_at: 1786121747
 ---
 ## What this owes
 
@@ -39,3 +36,27 @@ The architecture table carries the row with its anti-goals and its nothing-depen
 ## Graph maintenance
 
 Filed 2026-08-07 by the coordinator at integration. Not blocking the crate's first content: the member exists and is gated, and holding evidence work behind a documentation sweep would invert the order the admission was scoped for.
+
+## Outcome — delivered 2026-08-07 at `c466cc11`
+
+**ADR 0106** — `docs/decisions/0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md`. The number was verified free across every local branch, not just against `docs/decisions/`, so no in-flight allocation collides.
+
+**The ADR claims no more than the crate holds**, which was the constraint that mattered. Item 5 lists what the admission does *not* decide, each pointing at its owner: no public surface (ADR 0075), no migration and no support-matrix authority (both the survey, named as open with both answers available), no lint relaxation. A Consequences bullet says outright that reading the record as evidence a cross-layer run exists would be reading a boundary as a result.
+
+**One place the worker had to reason rather than transfer, and got it right.** ADR 0056's withheld-crate clause names five crates and `tiler-conformance` is none of them, so unlike ADR 0082/0088 (amend) and ADR 0081 (apply ADR 0077's stated test) it needs **neither move** — the clause is untouched. It explicitly refuses the tempting reading that the crate passes ADR 0077's no-device test: it creates no device object today only because it contains no code, and its whole purpose is a run that executes on one. What keeps it outside the clause afterwards is that it is not *reusable* — nothing may depend on it — so it publishes no runtime boundary. The non-precedent warning is stated twice.
+
+### Five pre-existing stale claims corrected, found by reading in full
+
+None was in the brief; all were found because `docs/architecture.md` was read whole rather than patched at the insertion point. This is the full-read discipline earning its cost.
+
+- `tiler-digest` was missing from the admission-record enumeration whose closing sentence claims to name every unadmitted row, making the enumeration false.
+- The dependency block read `tiler-ir -> []` and `tiler-artifact -> [tiler-ir]`; both were wrong since ADR 0104 — the real edges are `[tiler-digest]` and `[tiler-digest, tiler-ir]`, and `tiler-digest -> []` was absent entirely.
+- The section **contradicted itself**: "Nothing pins the member set or any package's dependency list" sat two paragraphs from its own citation of `workspace_population.rs`, which pins exactly the member set. Corrected to distinguish the two properties.
+- "two rows carry third-party edges it does not show" → several, naming `tiler-digest`'s hash dependency, since a new `-> []` row was added whose closure is not empty.
+- "None of those **five** records" listed six.
+
+Also corrected: `prototypes/serial-sum-run` as "the one member that talks to [a device]" → the one member whose *code* reaches one, since `tiler-conformance` now declares the same macOS-gated binding with nothing behind it — which is why the live-execution grep recorded earlier in the document still returns no file under `crates/`.
+
+**Catalogs verified complete rather than assumed.** `docs/decisions/README.md`'s two generated blocks both updated, with a grep confirming no generator exists outside the README. Every file mentioning ADRs 0105, 0104, or 0088 was checked; outside that README every hit is substantive prose, not a catalog row. `docs/design-map.md`, `docs/README.md`, `docs/status.md` and the root README carry no roster this falsifies.
+
+**Delta rule applied and stated.** The complete file list is `docs/architecture.md`, the new ADR, and `docs/decisions/README.md` — touching none of `crates/`, `prototypes/`, `Cargo.toml`, `Cargo.lock`, `.config/`, `Makefile`, `rust-toolchain.toml`, `rustfmt.toml`, or `deps.sh` — so it carries the latest green gate, with `tkt lint` rerun as the rule requires. Confirmed by the coordinator against the merge's own file list.
