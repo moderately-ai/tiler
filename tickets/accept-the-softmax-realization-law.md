@@ -1,7 +1,7 @@
 ---
 id: accept-the-softmax-realization-law
 title: Accept the softmax realization law
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [register-the-softmax-realization-law, accept-the-root-mean-square-scale-realization-law, accept-the-governed-maximum-scalar-key, accept-the-multi-reader-index-realization-retention]
@@ -59,3 +59,29 @@ The deriving ticket's Outcome carries: the four-stage chain and its sources, the
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the variant is in use inside `tiler-ir` and labelled a draft at its definition.
+
+## Accepted — 2026-08-07
+
+**Tom accepted this law on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator, without exclusion — together with [`accept-the-partitioned-concatenate-realization-law`](accept-the-partitioned-concatenate-realization-law.md) and the principle both nodes raised.
+
+### What is accepted
+
+`IndexRealizationLaw::StagedSoftmaxF32 { axes_attribute }` and its `const` constructor, at appended encoding **tag 11**. No existing variant's shape, payload, or tag moves. The standard semantic provider registers it for `tiler::softmax-f32@1`, so `FrozenIndexRealizationLawRegistry::resolve` stops answering `MissingRealizationLaw` and `family_realizes_region_sequence` answers `true`.
+
+The three general emitters stay **private** to `crates/tiler-ir/src/index/law.rs`. Nothing outside that module builds an expected region, and publishing them would mint a region-construction API separate from the law vocabulary that owns it.
+
+**A new variant rather than a widened staged template** is accepted as the trade, with the measurement that trade asked for now on record: 62% of the two variants' emission is shared machinery, and the scalar chain proper — the part a scalar-program language inside a law would carry as data — is 46 of 697 code lines. **This does not reopen the refusal of a scalar-program language**; the number is recorded so a future reopening argues from it rather than from impression.
+
+The subtraction spelled as an exact sign flip and one rounded add, the refusal of a zero-length reduced axis, and the denominator's fold seeded at the first contributor rather than at `0.0` are accepted with their stated grounds.
+
+### The identity consequence is accepted as the pin working
+
+Registering the law moves the count-prefixed law sidecar, hence `FrozenIndexRealizationLawRegistry`'s identity, hence the compiler's request-digest pin. The **semantic snapshot identity is computed without the sidecar and does not move**, so every artifact and kernel-program identity derived from it is byte-identical. Two requests built against different realization authorities are different requests, which is the pin doing its job rather than collateral damage.
+
+### The principle, ruled on rather than the instance
+
+`softmax-reduced-axis-rank` has no watched perturbation because it is **unreachable from a verified occurrence** — the family's own inferencer refuses an absent, duplicated, or second axis before a subject exists. Both nodes asked whether a reviewer would rather have no unreachable check than an untested one. **Tom ruled: unreachable-but-stated refusals stand, for realization laws.**
+
+**The ground, and its fence.** A law is interpreted against a *subject*, not against the inferencer that produced it, so a hand-built or re-read subject can reach these rules even though no construction path does. That is a **reinterpretation boundary**, and it is what distinguishes these from a construction-path refusal — the mixed-width refusal proposed for the BF16 reference on the same day was **rejected** precisely because no constructible program could ever reach it, making it a maturity claim the evidence could not support. The two are not in tension: state a refusal a re-read subject can reach; do not state one nothing can.
+
+Carried to where law authors will read it by [`state-the-unreachable-refusal-convention-where-law-authors-read-it`](state-the-unreachable-refusal-convention-where-law-authors-read-it.md), because a convention recorded only in two closed acceptance nodes is one the next law will not find.

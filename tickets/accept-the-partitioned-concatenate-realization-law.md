@@ -1,7 +1,7 @@
 ---
 id: accept-the-partitioned-concatenate-realization-law
 title: Accept the partitioned concatenate realization law
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [lower-the-concatenate-occurrence-through-partitioned-writes, accept-the-softmax-realization-law, accept-the-partitioned-write-ownership-proof-boundary, accept-the-sub-domain-write-domain-surface, accept-the-partitioned-result-binding-boundary]
@@ -60,3 +60,29 @@ The deriving ticket's Outcome carries: the iteration-domain decision with its co
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the variant is in use inside `tiler-ir` and labelled a draft at its definition.
+
+## Accepted — 2026-08-07
+
+**Tom accepted this law on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator, without exclusion — together with [`accept-the-softmax-realization-law`](accept-the-softmax-realization-law.md), which carries the shared ruling on unreachable refusals in full.
+
+### What is accepted
+
+`IndexRealizationLaw::PartitionedConcatenate { axis_attribute }` and its `const` constructor, at appended encoding **tag 12**. No existing variant moves. The standard provider registers it for `tiler::concatenate-f32@1`; `family_realizes_region_sequence` answers `false`, since this is a single-region law.
+
+Excluded and staying excluded: the seven registered index-access capabilities are `tiler-compiler`'s and crate-private, reaching no public item — what is externally visible is that a governed registry resolves the family at each admitted arity under seven durable provider identities, which are identity strings rather than a Rust surface. `ConcatenatePlan`, `emit_partitioned_concatenate` and `declare_shared_concatenate_domain` stay private, as the staged emitters do. **No new proof form, diagnostic, or write contract** — this admits a *producer* of vocabulary already landed and separately accepted, not more of it.
+
+### The choices accepted
+
+**The non-concatenated axes share one dimension each** rather than each root carrying a private copy. The family admits an occurrence only when every operand agrees on those axes, so one dimension per axis is the region's own statement of that agreement; private copies would put `n · (rank − 1)` pairwise-equal dimensions into the canonical identity. The honest counter-argument is recorded and accepted with it: the landed contract's phrase is "several iteration domains, one per root", and sharing means the roots' domains *intersect* rather than being disjoint — which is not what that contract decided, since it eliminated the sub-range annotation in favour of a per-access domain that is any subset of the region's parallel set, and two subsets may share members.
+
+**The partition is keyed by operand, not by distinct input**, so `concat(x, x)` is one input boundary and two members at two offsets — following from operand order being semantic, and what makes the offsets a prefix sum over operands.
+
+**Seven provider identities rather than one**, because the registry refuses a second signature under one `(family, operation, provider)` triple as a `ConflatedCapabilityKey`. The alternative is a variadic `LoweringSignature`, which is a resolver redesign and was not proposed.
+
+### Identity
+
+The law sidecar and the lowering registry both move, so the explain request subject moves `7bba54bcb59ec2cc` → `0aa252e0bfa16451`. The **semantic snapshot identity is computed without the sidecar and does not move** — measured as an empty diff over the 36 distinct sixty-four-hex literals in `crates/**/*.rs` against the base — so every artifact and kernel-program identity is byte-identical.
+
+### The unreachable refusals
+
+Three of this law's rules have no watched perturbation and two are unreachable from a verified occurrence, because `IndexRefinementSubject::derive` builds both from the family's own inferencer; the third needs a multi-result subject no registered family has. **Accepted under the same ruling as the softmax law**: a law is interpreted against a subject rather than against the inferencer that produced it, so a re-read subject can reach them. That is a reinterpretation boundary, and it is what separates these from a construction-path refusal nothing could ever reach — the distinction is stated in full on the softmax node and carried to law authors by [`state-the-unreachable-refusal-convention-where-law-authors-read-it`](state-the-unreachable-refusal-convention-where-law-authors-read-it.md).
