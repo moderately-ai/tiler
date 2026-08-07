@@ -1,7 +1,7 @@
 ---
 id: wire-the-bf16-reference-to-the-realization-it-is-told
 title: Wire the BF16 reference to the realization it is told
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [accept-the-bf16-subnormal-resolution-carrier, carry-a-bf16-subnormal-realization-the-reference-can-be-told, conform-the-bf16-vertical-end-to-end]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reference, bf16]
+claimed_from: todo
+assignee: agent-bf16-wire
+lease_expires_at: 1786115582
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: cover-the-newly-reachable-notrequired-disposition-for-an-unconsumed-dimension
 title: Cover the newly reachable NotRequired disposition for an unconsumed dimension
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [derive-per-locus-numerical-obligations, wire-the-delivered-realization-record-into-the-artifact]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, fail-closed, test-coverage]
+claimed_from: todo
+assignee: agent-notrequired
+lease_expires_at: 1786115582
 ---
 ## What changed, and why it needs its own node
 

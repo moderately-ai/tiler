@@ -1,7 +1,7 @@
 ---
 id: implement-the-realization-witness-vocabulary
 title: Implement the realization witness vocabulary
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [accept-the-realization-witness-surface, enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, conformance, numerics, witness]
+claimed_from: todo
+assignee: agent-witness
+lease_expires_at: 1786115582
 ---
 
 ## The accepted surface this implements
