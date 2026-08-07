@@ -14,7 +14,22 @@ tags: [research, cost-model, documentation]
 
 `docs/research/cost-model/sources/` classifies each of its reachable records licence-aware rather than uniformly metadata-only, and vendors the bytes of every document whose own terms permit redistribution, so a claim in [the measured-feedback tuning loop](../docs/research/cost-model/measured-feedback-tuning-loop.md) can be checked against a preserved file rather than against a re-retrieval that may serve different bytes.
 
-**Population update, 2026-08-07.** This ticket was written when the record held eleven reachable rows. [`acquire-the-three-unreachable-adaptive-execution-sources`](acquire-the-three-unreachable-adaptive-execution-sources.md) has since retrieved and recorded two more — `markl-pop-sigmod-2004` and `cole-graefe-sigmod-1994` — under the same metadata-only classification and with no licence verdict reached, so the population is **thirteen**. Read "eleven" below as "thirteen"; nothing else about this ticket's scope changes.
+**Population update, 2026-08-07.** This ticket was written when the record held eleven reachable rows. [`acquire-the-three-unreachable-adaptive-execution-sources`](acquire-the-three-unreachable-adaptive-execution-sources.md) has since retrieved and recorded two more — `markl-pop-sigmod-2004` and `cole-graefe-sigmod-1994` — under the same metadata-only classification and with no licence verdict reached, so the population reached **thirteen**. Read "eleven" below as "thirteen"; nothing else about this ticket's scope changes.
+
+**Second population update, 2026-08-07, superseding the count above.** [`close-the-four-licence-readings-tom-supplied-and-admit-graefe-and-ward`](close-the-four-licence-readings-tom-supplied-and-admit-graefe-and-ward.md) closed the three rows this ticket left unread and admitted a fourth document that had never been retrieved, so **the reachable population is fourteen and every one of the fourteen now has a read licence and a verdict**. The figures in the Outcome sections below are the state at this ticket's close and are **superseded rather than wrong**; the corrected counts are:
+
+| Figure | At this ticket's close | Now |
+| --- | --- | --- |
+| Reachable rows | 13 | **14** |
+| Licences read | 10 | **14** |
+| Unread, host refused | 3 | **0** |
+| Vendorable | 0 | **0** |
+| Bytes checked in | 0 | **0** |
+| Awaiting-retrieval rows | 1 | **0** — class kept, empty |
+
+The four verdicts added were `plan-diagrams-vldb-2005`, `pqo-vldb-1992`, `halide-autoscheduler-2019`, and the newly admitted `graefe-ward-sigmod-1989`. **The failure taxonomy in the Outcome section is superseded too**: "five modern ACM notices" is now **six**, since `halide-autoscheduler-2019` joins them; and Cole and Graefe's 1994 notice is no longer the lone "direct commercial advantage" judgement — it is one of **four**, alongside the two VLDB Endowment notices and Graefe and Ward's 1989 ACM notice. All four are pre-modern notices sharing one operative sentence shape, so they resolve on a single judgement and must move together.
+
+**This ticket's "no manifest" decision was revisited and reversed**, recorded here because this ticket argued the other way and recorded its own mild disagreement with itself. An [`expected-sources.tsv`](../docs/research/cost-model/sources/expected-sources.tsv) and [`verify-sources.sh`](../docs/research/cost-model/sources/verify-sources.sh) now accompany the record. The deciding reason is one neither side had: four documents are now retained as `local-only` under a gitignored `local/`, and a gitignored directory is invisible to `git status`, so it is exactly where a stray licence-restricted PDF would sit unnoticed and unattributed. The check's file-escape sweep descends there because git does not. **Still zero bytes checked in, and all fourteen verdicts still refuse redistribution.**
 
 ## Why this exists
 

@@ -1,0 +1,40 @@
+#	Expected source population behind the measured-feedback tuning-loop design: the tensor-program
+#	autotuning literature, the general-autotuning precedent, the adaptive-execution and parametric-plan
+#	line, and the benchmarking-statistics source. One row per preserved unit.
+#	Columns: id <TAB> classification <TAB> path <TAB> sha256
+#	classification: vendored | local-only | metadata-only | pending-acquisition
+#	  vendored        bytes checked in under this directory and redistributed with the repository.
+#	                  No row here is vendored: all fourteen licences were read and none permits it.
+#	  local-only      bytes retained on one machine at a gitignored path under local/, never
+#	                  redistributed, digest pinned. Present here, absent from every clone.
+#	  metadata-only   no bytes retained anywhere; the row is citation, digest, and verdict only.
+#	  pending-acquisition  never retrieved. Zero rows; the awaiting-retrieval class is empty.
+#	path: path under this directory, or "-" when no bytes are retained here.
+#	sha256: digest over the exact acquired byte stream. Never "-" in this manifest — every one of the
+#	  fourteen documents was acquired and digested, including the ten retaining no bytes.
+#	CAUTION: this column is a PRESERVATION class, not a licence verdict. All fourteen rows are
+#	  non-redistributable and README.md's licence table records "metadata-only" as the verdict for
+#	  every one of them. The four local-only rows carry that same verdict; they differ only in that
+#	  their bytes are re-readable on one machine. Do not read "local-only" as a weaker licence.
+#	Provenance for each id — owner, acquisition URL and date, licence clause, verdict — is in README.md.
+#	`verify-sources.sh` enforces the row count, the per-classification counts, id uniqueness, every
+#	digest of a file actually present, and that no file on disk escapes this manifest.
+autotvm-nips-2018	metadata-only	-	fe270467011c5b68c379f91aa615e59eea7a19a2d54139624afacff169721f1a
+ansor-osdi-2020	metadata-only	-	44a4d77988c6bd03276720d982cc86d620f525cfd3b8cc6a40e79fee9f4093a3
+tvm-osdi-2018	metadata-only	-	6032d5a54db0ec552168a5f5295a954edea6a24d91ae03bed1e0da0d858c9fa9
+opentuner-pact-2014	metadata-only	-	0582e325cf2989123957e21ef9cd4638b03fc5ffaba5edc7fa0181e705311b23
+halide-autoscheduler-2016	metadata-only	-	6b0b0d143d2764073ffada9902d499ad939bab9a425de2d6c8aea21f7452f7f0
+aqp-survey-fntdb-2007	metadata-only	-	9307f20bd31e92583f63279b32ae560f899fc080554551134785d9b0785ed48e
+kabra-dewitt-sigmod-1998	metadata-only	-	1f27c41f30a47da27ea9edfa4ea86460cd411a995fce8d4926c1fa639a8d1e2c
+markl-pop-sigmod-2004	metadata-only	-	cfb85aab11a80e5aafb18ee64261432833468b13f90d686e96ad84e58a3f2116
+cole-graefe-sigmod-1994	metadata-only	-	c8b5b61b5d8131bd02751470e415d8713cb638a1b298e53c2c844b90b0c93a00
+hoefler-belli-sc-2015	metadata-only	-	1b5e6210d83c87f7eae495dd518e78b2be4a17bb2a71f820a59ce6c962a3051e
+#	The four Tom supplied from a normal browser session on 2026-08-07, after this host was refused by
+#	`www.vldb.org` (403 host-wide), `escholarship.org` (202 with an empty body), and `dl.acm.org`
+#	(Cloudflare bot wall). Filenames are the publishers' own, kept unrenamed so the byte stream and its
+#	origin stay legible. The first three reproduced the digests already recorded above them in README.md
+#	before any licence was read; the fourth had never been retrieved and is pinned here for the first time.
+plan-diagrams-vldb-2005	local-only	local/p1228-reddy.pdf	401c6f66e28231e7056bc6ac57f41d7ae130ecdbe3adbc5e42db95e2cd5be7b8
+pqo-vldb-1992	local-only	local/P103.pdf	c8713911209ed030b2d4355e5a967c24dff777753175fea14132d8056b1003da
+halide-autoscheduler-2019	local-only	local/qt5h71f534.pdf	e4dd35a0c36ad631c8dfc6882c3ea72ae128d657128806ffa84ae3513edb79c0
+graefe-ward-sigmod-1989	local-only	local/66926.66960.pdf	c128847cda52926d78c7a176dfafc2a38ec498664701f1b65bcd7ab18a57e32e
