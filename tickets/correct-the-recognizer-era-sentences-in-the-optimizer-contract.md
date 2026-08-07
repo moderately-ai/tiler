@@ -1,7 +1,7 @@
 ---
 id: correct-the-recognizer-era-sentences-in-the-optimizer-contract
 title: Correct the recognizer era sentences in the optimizer contract
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [widen-the-strategy-recognizer-past-the-f32-wall]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, doc-drift]
+claimed_from: todo
+assignee: agent-optimizer-doc
+lease_expires_at: 1786132480
 ---
 ## What is stale
 

@@ -1,7 +1,7 @@
 ---
 id: relocate-the-sourced-extent-vocabulary-to-the-shape-module
 title: Relocate the sourced-extent vocabulary from the index module to the shape module
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [carry-symbolic-extents-into-the-semantic-program, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, api]
+claimed_from: todo
+assignee: agent-relocate
+lease_expires_at: 1786132480
 ---
 ## User-visible outcome
 

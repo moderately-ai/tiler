@@ -1,7 +1,7 @@
 ---
 id: move-the-bf16-optimizer-legality-ledger-cell
 title: Move the BF16 optimizer legality ledger cell
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [establish-bf16-optimizer-legality]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, support-matrix]
+claimed_from: todo
+assignee: agent-ledger
+lease_expires_at: 1786132480
 ---
 ## What this owes
 
