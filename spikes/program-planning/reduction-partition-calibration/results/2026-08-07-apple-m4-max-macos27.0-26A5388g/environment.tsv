@@ -1,0 +1,31 @@
+key	value
+environment.date_utc	2026-08-07T06:39:55Z
+environment.os.product	macOS
+environment.os.version	27.0
+environment.os.build	26A5388g
+environment.architecture	arm64
+environment.device	Apple M4 Max
+environment.cpu.logical_cores	14
+environment.developer_dir	/Applications/Xcode.app/Contents/Developer
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.sdk.macosx.version	26.5
+environment.sdk.macosx.build	25F70
+environment.offline_compiler	Apple metal version 32023.883 (metalfe-32023.883)
+environment.offline_linker	AIR-LLD 32023.883 (metalfe-32023.883)
+environment.default_developer_dir	/Applications/Xcode-beta.app/Contents/Developer
+environment.rustc	rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+environment.toolchain	nightly-2026-07-19
+environment.repository_base	6ed456f4a70d75a3e9ae6c1f78ccee602a4bf3db
+host.occupancy	sole occupant; no other worker lane ran during any of the three runs and nothing was dispatched during them
+sweep.harness_sha256.main.rs	a99a7372bcfa483da5036f9abef4c19a514c57e680bffb61efc48407c9c4c0f3
+sweep.harness_sha256.regions.rs	1a7d4f492fef25d0ea719c8e47bfccac36e9b724e7bf79f0e2873c1b5d61ab96
+sweep.harness_sha256.buffer.rs	a3f8303eb323c147c21b2ef2547d89e8e1cb0b0f205be66bb33b96b9c08b03fe
+sweep.harness_sha256.regret.rs	031b051b5dbc4d4601c540c8c723f59303cb24ce94827d526e5c0aef1b3db432
+sweep.sha256	e02e32020da9a4d0776ef2d2ba6af260fd0f583882457daa35795fed02a41019
+regret.sha256	cd34609c56b5d75860a86266ceb1c87649a5c9a26b67daf77075d8a4b3ec3392
+repeat.sha256	fef957babb531142c76c9d14fe6a1fd730bfb48d66aa1b2335ae6b7bd587cc53
+repeat.harness	the same harness before one behaviour-preserving function extraction; BATCH 64, identical matrix
+pilot.sha256	1d6491e66c8924813432ddcf35399c5bad7df86dd88f4cb28a35d277eba0c650
+pilot.harness	the same harness with BATCH = 16, before the same extraction; identical matrix
+host.load_before	2.88 3.13 3.40
+host.load_after	3.03 3.18 3.40
