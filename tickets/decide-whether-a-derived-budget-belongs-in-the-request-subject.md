@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: []
 related: [derive-the-region-shape-budgets-from-the-declaration, state-the-rule-that-a-deterministic-budget-is-a-derivation]
-scopes: []
+scopes: [research/verification]
 shared_scopes: [project/tickets]
 paths: []
 tags: [budgets, identity, research]
