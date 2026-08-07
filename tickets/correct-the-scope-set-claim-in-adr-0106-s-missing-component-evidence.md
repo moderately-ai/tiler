@@ -1,7 +1,7 @@
 ---
 id: correct-the-scope-set-claim-in-adr-0106-s-missing-component-evidence
 title: Correct the scope-set claim in ADR 0106's missing-component evidence
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [survey-what-belongs-in-the-conformance-crate, record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, conformance, correction]
-claimed_from: todo
-assignee: agent-adr-fix
-lease_expires_at: 1786128633
 ---
 ## User-visible outcome
 
@@ -44,3 +41,23 @@ What is true, and what the surrounding sentences already say, is that the five t
 ## Closes when
 
 The Context's scope-set sentence states what the five tickets' scopes actually are, the three-identical-sets fact is stated rather than contradicted, and the conclusion it supports is preserved with its rationale intact per `AGENTS.md`'s supersession rule.
+
+## Outcome — delivered 2026-08-07 at `68a607b3`
+
+**The brief's numbers did not reproduce, and that is itself the finding.** The population read **289 tickets, 80 non-terminal** rather than the survey's 283/76 — the tree moved seven in a few hours. The three identical scope sets reproduced exactly, byte-identical across the three tickets. The worker wrote the counts into the record **pinned to a commit and with the exact command**, and recorded both the old and the new pair, so the number reads as something that moves rather than as a threshold. It also caught that "five *open*" is now stale, since the BF16 vertical is `done`.
+
+**It corrected a claim the coordinator had repeated.** "Reached only by `cargo run`" is imprecise: `proof.rs` holds 44 `#[test]`s under `#[cfg(test)]` and its `[[bin]]` carries `test = true`, so those **are** in `make full` — ADR 0106's own Context says as much two paragraphs up. What is ungated is the device-reaching `run()` narrative, and the test module's own header states it "reaches no device". Transcribing the compressed claim would have made the record contradict itself.
+
+**Verified versus trusted was separated in the record itself**, which is the discipline this repair existed to restore. Verified by reading: the 8,159 line count; that `proof.rs`'s declared dependency row is **identical** to `tiler-conformance`'s, read from both manifests; the two dispatch paths and the bit-exact reference comparison; and that the whole `Makefile` contains exactly one `prototype-run` mention, two Clippy excludes, and no target invoking the binary. Taken on the survey's word and **labelled as such**: that this run holds the corpus's only device observation of a permitted reassociated answer and its only executed match against a retained device digest — both universal claims over the corpus, not exhaustively checked.
+
+**The repair shape was chosen deliberately.** The false clause is **substituted** rather than dated-beside, because unlike ADR 0077/0088 — which hold what was true at acceptance — this clause was **never true at any commit**. That follows ADR 0079's precedent for a wrong stated reason with a surviving conclusion, and the dated `Correction — 2026-08-07` note quotes the original and says why.
+
+**Catalogs checked and correctly not moved:** both generated blocks in `docs/decisions/README.md` carry only title, status and links, and the diff touches no frontmatter key or heading — confirmed by grepping the diff rather than by inspection. All nine ADR-0106 references in `docs/architecture.md` describe what the record *decides* rather than restating its evidence.
+
+**Delta rule confirmed by the coordinator against the merge's own file list:** exactly one file, `docs/decisions/0106-…md`, touching none of the build-configuration set, so it carries the latest green gate with `tkt lint` rerun.
+
+### Reported, not fixed — and one is larger than this ticket
+
+Three tickets carry the same false scope-set claim, one of them with a *differently* wrong attribution. Left for [`refresh-adr-0106-and-the-architecture-rows-the-conformance-crate-outgrew`](refresh-adr-0106-and-the-architecture-rows-the-conformance-crate-outgrew.md).
+
+**And ADR 0106 is materially stale beyond this ticket**, which the worker found while reading and correctly did not touch. The record describes the empty crate in unpinned present tense — "holds no items at all", "contains no code at all", "inherits the workspace lint table unchanged" with `forbid` standing — and the crate now has 13 source files, device dispatch, two named unsafe sites and `unsafe_code = "deny"`. `docs/architecture.md` carries the same at three lines. **Independently verified by the coordinator** before filing. The repair there is the *opposite* of this one: those statements were true at acceptance, so they are dated rather than substituted.
