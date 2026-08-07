@@ -1,7 +1,7 @@
 ---
 id: route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge
 title: Route the BF16 vertical's declared conformance through the checked bridge
-status: todo
+status: in-progress
 priority: p2
 dependencies: [give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject]
 related: [give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject, accept-the-bf16-subnormal-resolution-carrier, conform-the-bf16-vertical-end-to-end]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reference, bf16, fail-closed]
+claimed_from: todo
+assignee: w-route-bf16
+lease_expires_at: 1786143052
 ---
 ## User-visible outcome
 
