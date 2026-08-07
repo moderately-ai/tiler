@@ -1,13 +1,16 @@
 ---
 id: carry-a-bf16-subnormal-realization-the-reference-can-be-told
 title: Carry a BF16 subnormal realization the reference can be told
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [apply-the-declared-numerical-conformance-on-every-reference-evaluation-path, derive-the-oracle-for-a-permitted-divergence-candidate, conform-the-bf16-vertical-end-to-end, declare-the-bf16-rows-on-the-authoritative-metal-profile, state-and-check-a-bf16-numerical-contract]
 scopes: [implementation/reference, implementation/ir]
 shared_scopes: [project/tickets]
 tags: [numerics, reference, conformance, bf16]
+claimed_from: todo
+assignee: agent-bf16-subnormal
+lease_expires_at: 1786079690
 ---
 ## User-visible outcome
 
