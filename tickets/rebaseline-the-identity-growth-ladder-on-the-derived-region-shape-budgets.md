@@ -1,7 +1,7 @@
 ---
 id: rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets
 title: Rebaseline the identity-growth ladder on the derived region-shape budgets
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [derive-the-region-shape-budgets-from-the-declaration, widen-the-identity-growth-ladder-to-the-governed-operation-budget, measure-executable-coverage-identity-growth-against-the-program-identity-bound]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, program-planning, identity, measurement]
+claimed_from: todo
+assignee: agent-ladder
+lease_expires_at: 1786127614
 ---
 ## User-visible outcome
 
