@@ -6894,6 +6894,148 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
     );
 }
 
+/// The tree's width is the measured cap's choice, and the split's is not.
+///
+/// **What this pins.** `single_workgroup_tree_region` reads
+/// `capped_tree_partition` — the largest admissible participant count not
+/// exceeding the measured 256 — while `split_reduction_regions` keeps
+/// `governed_partition`'s balanced exact split. At 8,192 contributors those are
+/// 256 participants folding 32 each against 128 folding 64, so the assertion
+/// separates the two rules rather than restating one of them. The count is read
+/// from the region's *own* cooperative topology, not from the function under
+/// test, so a call site that reverted to the balanced rule fails here even
+/// though both rules would still return a legal partition.
+///
+/// **Watched failing.** Pointing `single_workgroup_tree_region` back at
+/// `governed_partition(contributors)` fails the first assertion with "the tree
+/// did not take the capped participant count", left 128 against right 256 —
+/// the balanced choice arriving where the capped one belongs.
+///
+/// **The decline set is pinned beside it, because the cap must not narrow the
+/// domain.** A cap that refused where the balanced rule admitted would withhold
+/// a legal alternative on a cost heuristic. The two rules agree about which
+/// extents admit a participant count across every contributor count below
+/// 4,096 — 3,530 of them admit one — and both that population and the number
+/// of counts at which the two *choices* diverge are asserted, so neither a loop
+/// that ran over nothing nor a cap that quietly became the balanced rule again
+/// can look green.
+#[test]
+fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs() {
+    const CONTRIBUTORS: u64 = 8_192;
+    // Not `tree_target()`: staging is one `f32` slot per participant, so the
+    // capped 256 needs 1,024 bytes where that profile declares 256. The wider
+    // width costs more workgroup memory than the balanced one and the profile
+    // is what decides whether that is affordable — the authoritative Apple9
+    // declaration carries 32,768, so the cap is well inside the row the
+    // calibration measured against.
+    let (_, request) = tree_request(
+        Shape::from_dims([1, CONTRIBUTORS]),
+        TargetProfile::workgroup_tree_target_for_test(
+            1_024,
+            1_024,
+            Some(crate::target::SynchronizationSupport::Realized),
+        ),
+    );
+    let (region, members) = crate::physical::single_workgroup_tree_region(
+        &request,
+        request.sole_output(),
+        crate::physical::RegionWrite::ProgramOutput,
+    )
+    .expect("a reassociating request admits the tree at this extent");
+    let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { partition, .. } =
+        &region.schedule.reduction
+    else {
+        panic!("the tree region carries a cooperative topology")
+    };
+    let partition = *partition;
+    assert_eq!(
+        partition.partitions, 256,
+        "the tree did not take the capped participant count"
+    );
+    assert_eq!(partition.contributors_per_partition, 32);
+    assert!(partition.covers(CONTRIBUTORS));
+    assert_eq!(
+        region.schedule.threads_per_workgroup, 256,
+        "the declared width did not follow the participant count"
+    );
+
+    // The multi-pass split is deliberately untouched, so the two strategies now
+    // declare different groupings at this count. Asserting the difference is
+    // what makes the value above the tree's rule rather than a rule they share.
+    let balanced = crate::physical::governed_partition(CONTRIBUTORS)
+        .expect("8,192 contributors admit a balanced exact split");
+    assert_eq!(balanced.partitions, 128);
+    assert_eq!(balanced.contributors_per_partition, 64);
+    assert_ne!(partition.partitions, balanced.partitions);
+
+    // The region still verifies at the wider width: the cap chooses among the
+    // participant counts the schedule admits and does not reach past them.
+    crate::physical::verify_schedule(region, members, &request)
+        .expect("the capped tree region verifies");
+
+    // Same domain, different choice. Counted, and the disagreement counted too,
+    // so neither half can pass by being empty.
+    let mut admitted = 0_u32;
+    let mut differing = 0_u32;
+    for contributors in 0..4_096_u64 {
+        let capped = crate::physical::capped_tree_partition(contributors);
+        let governed = crate::physical::governed_partition(contributors);
+        assert_eq!(
+            capped.is_some(),
+            governed.is_some(),
+            "the cap moved the tree's decline set at {contributors} contributors"
+        );
+        if let Some(capped) = capped {
+            admitted += 1;
+            assert!(capped.covers(contributors));
+            assert!(capped.partitions >= 2);
+            assert!(capped.contributors_per_partition >= 2);
+            assert!(
+                capped.partitions <= crate::physical::MEASURED_TREE_PARTICIPANT_CAP,
+                "{contributors} contributors exceeded the cap with a divisor at or below it"
+            );
+            if capped != governed.expect("the domains agree") {
+                differing += 1;
+            }
+        }
+    }
+    assert_eq!(admitted, 3_530, "the admitting population moved");
+    assert_eq!(
+        differing, 2_561,
+        "the population separating the two rules moved"
+    );
+
+    // The above-cap branch, which the sweep cannot reach: it needs a contributor
+    // count whose smallest divisor above one already exceeds the cap, and the
+    // smallest is 257 * 257 — far past the ladder. The branch is what keeps the
+    // cap a preference rather than a feasibility test, so leaving it to the
+    // unreachable-in-practice argument alone would leave the one piece of this
+    // rule that withholds nothing untested.
+    let above = crate::physical::capped_tree_partition(257 * 257)
+        .expect("a composite count admits a partition however large its smallest factor");
+    assert_eq!(
+        above.partitions, 257,
+        "the above-cap branch did not take the smallest admissible count"
+    );
+    assert_eq!(above.contributors_per_partition, 257);
+    assert!(above.covers(257 * 257));
+    assert!(
+        above.partitions > crate::physical::MEASURED_TREE_PARTICIPANT_CAP,
+        "this case exists to exceed the cap; a count at or below it tests the branch above"
+    );
+    // Still no wider than the balanced rule would have gone, which is what makes
+    // exceeding the cap here safe for every width authority downstream.
+    assert!(
+        above.partitions
+            <= crate::physical::governed_partition(257 * 257)
+                .expect("the domains agree")
+                .partitions,
+        "the above-cap branch chose a wider count than the balanced rule"
+    );
+    // A prime count admits nothing, in this branch as in the other.
+    assert_eq!(crate::physical::capped_tree_partition(65_537), None);
+}
+
 /// Assembles the three verified regions of one request's split program.
 /// The materialized two-stage assembly a two-region cover states: the prologue
 /// writes one value across the boundary, and the region after it publishes the

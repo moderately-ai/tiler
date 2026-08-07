@@ -2002,10 +2002,10 @@ pub(crate) fn fused_region(
 /// split: among splits that cover the sequence exactly once each, it keeps both
 /// passes' per-invocation folds as short as one choice can.
 ///
-/// It is deliberately *a* choice and not a calibrated one.
-/// `calibrate-the-reduction-partition-against-measured-alternatives` owns
-/// replacing it with measured evidence, and nothing in this slice makes a split
-/// win on preference.
+/// **This is the multi-pass split's partition and no longer the tree's.** The
+/// single-workgroup tree reads [`capped_tree_partition`], whose cap the
+/// calibration below selected for it; nothing measured selects a constant for
+/// this one.
 ///
 /// Returns `None` when no exact split with at least two partitions and at least
 /// two contributors per partition exists — every contributor count below four,
@@ -2015,16 +2015,39 @@ pub(crate) fn fused_region(
 ///
 /// # What the measurements say about this choice, and what they do not
 ///
+/// **Measurement, 2026-08-07 — this split *is* measured now, it is beaten, and
+/// no constant replaces it.** [The retained partition calibration] held the
+/// shape fixed and swept every admissible partition over seven separated shapes
+/// of the dispatch sweep's contour, 130 predeclared variants on the qualified
+/// Apple9 macOS host. The balanced choice is outside the
+/// indistinguishable-from-best plateau in **10 of the 14 shape-and-strategy
+/// cells** — six of the seven shapes on this split — costing up to **1.413x**
+/// here. So this value is refuted as the *best available* choice while remaining
+/// a defensible default: nothing measured is worse than it everywhere.
+///
+/// **The reason no constant lands here is structural rather than statistical.**
+/// A cap — take the largest admissible partition not exceeding it — is the rule
+/// that replaced the tree's choice, and it fails on this split: the split's
+/// optimum moves from 256 partitions at four rows to the minimum split of 2 at
+/// 65,536 rows, because once the row count alone saturates the device extra
+/// partitions add total work and stage more partials without buying
+/// parallelism. Leave-one-out therefore selects a cap on six shapes that costs
+/// **2.131x** on the seventh — worse than the choice it would replace — and
+/// which cap it selects is not even stable across two runs of the same matrix.
+/// Improving this partition means *reading the row count against a saturation
+/// threshold*, which is the same machine quantity the strategy contour turns on
+/// and is owned by
+/// `activate-measured-reduction-selection-from-a-target-cost-row`. The split's
+/// partition is not separable from its strategy selection.
+///
 /// **Measurement, 2026-08-07 — the crossover between the three *strategies* is
-/// measured, and it says nothing about this *split*.** [The retained dispatch
-/// sweep] timed all three alternatives over 92 shapes on the qualified Apple9
-/// macOS host and found a large contour: parallel plans win by up to 50.7 times
-/// where the row count cannot saturate the device, and lose by up to 1.78 times
-/// where it can. Every cell of it used whatever partition this function
-/// returned, so **the sweep varied the shape and never the split**, and no
-/// value here is confirmed or refuted by it. Calibrating the partition itself
-/// needs a second sweep over partitions at a fixed shape, which is
-/// `calibrate-the-reduction-partition-against-measured-alternatives`.
+/// measured, and it said nothing about this split.** [The retained dispatch
+/// sweep] timed all three alternatives over 92 shapes on the same host and
+/// found a large contour: parallel plans win by up to 50.7 times where the row
+/// count cannot saturate the device, and lose by up to 1.78 times where it can.
+/// Every cell of it used whatever partition this function returned, so **that
+/// sweep varied the shape and never the split**; it is the calibration above,
+/// not this one, that bears on the value here.
 ///
 /// [The compile-phase domain sweep] is the other half of that record: the
 /// profile's grid-axis row is a measured 268,435,456 rather than the
@@ -2040,6 +2063,8 @@ pub(crate) fn fused_region(
 /// it.** Four is the smallest contributor count admitting two partitions of at
 /// least two, which is a property of splitting rather than of any target.
 ///
+/// [The retained partition calibration]:
+///     ../../../spikes/program-planning/reduction-partition-calibration/README.md
 /// [The retained dispatch sweep]:
 ///     ../../../spikes/program-planning/reduction-dispatch-crossover/README.md
 /// [The compile-phase domain sweep]:
@@ -2060,6 +2085,111 @@ pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartiti
             }
         }
         candidate -= 1;
+    }
+    None
+}
+
+/// The participant count the single-workgroup tree does not exceed by choice.
+///
+/// **Measurement, 2026-08-07, and a property of one host row rather than a
+/// portable constant.** [The retained partition calibration] swept every
+/// admissible partition of seven separated shapes on the qualified Apple9 macOS
+/// host — one profile (`tiler.metal.macos-apple9.msl4-0.f32.v1`), one contract,
+/// one program family, `f32` only, and no contributor count that is not a power
+/// of two. Capping the tree's participants here is selected by leave-one-out on
+/// **all seven folds**, with a held-out worst regret of **1.008** against the
+/// balanced choice's **1.216**, and both 64-encode runs of the matrix agree. It
+/// is not established for another Apple family, OS row, dtype, or device, and a
+/// second target profile should carry its own row rather than inherit this one.
+///
+/// It is also comfortably inside the workgroup width the calibration ran into:
+/// that sweep's eight declined variants are all at 2,048 participants and above,
+/// where the prepared entry admits 1,024 threads per workgroup and
+/// [`tiler_ir::schedule::workgroup_tree_tile`] has no representation past
+/// [`tiler_ir::schedule::MAX_COOPERATIVE_PARTICIPANTS`]. Both bounds remain the
+/// authorities that refuse a width; this constant only expresses a preference
+/// among widths they admit.
+///
+/// [The retained partition calibration]:
+///     ../../../spikes/program-planning/reduction-partition-calibration/README.md
+pub(crate) const MEASURED_TREE_PARTICIPANT_CAP: u64 = 256;
+
+/// Chooses the participant count the single-workgroup tree runs for one extent.
+///
+/// The rule is the calibrated one: **the largest admissible participant count
+/// not exceeding [`MEASURED_TREE_PARTICIPANT_CAP`]**, where a count is
+/// admissible under exactly the condition [`governed_partition`] searches
+/// within — it splits the contributor sequence exactly, into at least two
+/// partitions of at least two contributors each.
+///
+/// **When every admissible count exceeds the cap, the smallest admissible one
+/// is taken instead**, which is the retained calibration's own scoring rule and
+/// is what keeps the cap a *preference* rather than a feasibility test. Only a
+/// contributor count whose smallest prime factor is above the cap can reach that
+/// branch — `257 * 257` is the smallest — and no measured shape does. A cap that
+/// declined there would withhold a legal alternative on a cost heuristic, over
+/// shapes this calibration measured nothing about, and it would narrow the
+/// strategy's domain rather than choose within it.
+///
+/// The domain is therefore exactly [`governed_partition`]'s: this returns `None`
+/// for every contributor count below four and every prime one, and `Some` for
+/// every count either rule admits. The tree's
+/// [`WorkgroupTreeUnavailable::NoAdmissibleParticipantCount`] decline set does
+/// not move with the cap.
+///
+/// **The chosen width exceeds the cap only where the balanced choice was already
+/// wider.** Below the cap the returned count is at most 256; in the fallback
+/// branch it is the smallest prime factor of `contributors`, which is at most the
+/// integer square root and so at most the participant count
+/// [`governed_partition`] would have returned. No width past
+/// [`tiler_ir::schedule::MAX_COOPERATIVE_PARTICIPANTS`] becomes reachable
+/// because of this rule, so no tile
+/// [`tiler_ir::schedule::workgroup_tree_tile`] refuses to enumerate does either.
+///
+/// **It does move one feasibility question, and deliberately does not answer
+/// it.** The rule chooses *within* what a target admits and decides nothing
+/// about legality, but the tree stages one `f32` slot per participant, so a
+/// wider choice asks a profile for more workgroup memory: at 8,192 contributors
+/// the capped 256 participants need 1,024 bytes where the balanced 128 needed
+/// 512. A profile whose `local-memory-bytes` row falls between the two therefore
+/// refuses a tree it would have admitted under the balanced choice. That refusal
+/// belongs to the feasibility authority, typed and named on its axis, and
+/// narrowing the width *because* a target is small is not this function's to do:
+/// it would let a cost preference decide legality, which is the separation
+/// [`WorkgroupTreeUnavailable`] exists to keep. The row the calibration measured
+/// against declares 32,768 bytes — 8,192 participants' worth — so the cap is far
+/// inside it, and no profile in this repository sits in the affected band; the
+/// prototype baseline declares zero and refuses every tree at every width.
+pub(crate) fn capped_tree_partition(contributors: u64) -> Option<ContributorPartition> {
+    if contributors < 4 {
+        return None;
+    }
+    let partition = |participants: u64| ContributorPartition {
+        partitions: participants,
+        contributors_per_partition: contributors / participants,
+    };
+    // At least two contributors per partition, so the widest count worth
+    // considering is half the sequence even when the cap is above it.
+    let ceiling = MEASURED_TREE_PARTICIPANT_CAP.min(contributors / 2);
+    let mut candidate = ceiling;
+    while candidate >= 2 {
+        if contributors.is_multiple_of(candidate) {
+            return Some(partition(candidate));
+        }
+        candidate -= 1;
+    }
+    // Nothing at or below the cap divides the sequence. The smallest admissible
+    // count is then the smallest divisor above it, and that divisor is bounded by
+    // the integer square root: a count with no divisor there is prime and admits
+    // no split at all. Searching past it would walk half the sequence for every
+    // prime extent.
+    let limit = contributors.isqrt();
+    candidate = ceiling + 1;
+    while candidate <= limit {
+        if contributors.is_multiple_of(candidate) {
+            return Some(partition(candidate));
+        }
+        candidate += 1;
     }
     None
 }
@@ -2342,28 +2472,44 @@ impl WorkgroupTreeUnavailable {
 /// | accumulation dtype | the resolved contract's arithmetic type | the topology's `accumulation` |
 /// | contributor order | original-axis lexicographic within a partition, ascending participant across them | the topology's `order` and `arrival` |
 ///
-/// The participant count is [`governed_partition`]'s balanced exact split — the
-/// same *choice*, not a calibrated one, that the multi-pass split makes, and for
-/// the same reason: it keeps both levels' folds as short as one choice can, and
-/// `calibrate-the-reduction-partition-against-measured-alternatives` owns
-/// replacing it with measured evidence. Nothing here makes the tree win.
+/// The participant count is [`capped_tree_partition`]'s and is **calibrated**:
+/// the largest admissible participant count not exceeding
+/// [`MEASURED_TREE_PARTICIPANT_CAP`]. It is deliberately no longer the balanced
+/// exact split [`governed_partition`] returns, and the two now declare
+/// *different* groupings wherever their choices differ — 8,192 contributors give
+/// the tree 256 participants folding 32 each where the split takes 128 of 64.
 ///
-/// **Measurement, 2026-08-07 — the tree is now known to be worth having, and
-/// nothing here acts on that.** [The retained dispatch sweep] timed all three
-/// strategies over 92 shapes on the qualified Apple9 macOS host: the serial
-/// fold is up to 50.7 times slower than the best parallel plan where the row
-/// count cannot saturate the device, and up to 1.78 times faster where it can.
-/// So the tree is not a speculative alternative any more. Selection is
-/// unchanged all the same, because acting on that measurement needs a target
-/// profile to *declare* the machine quantity the contour turns on, which is a
-/// public boundary and an identity move —
+/// **Measurement, 2026-08-07 — the cap is what the sweep over partitions
+/// selected for this strategy.** [The retained partition calibration] held the
+/// shape fixed and swept every admissible partition over seven separated shapes
+/// on the qualified Apple9 macOS host. The balanced choice is beaten on four of
+/// the seven for this strategy, worst **1.216x**; the cap is selected by
+/// leave-one-out on all seven folds with held-out worst regret **1.008**, and one
+/// shape's indistinguishable-from-best plateau is `{256}` alone. The bound on
+/// that claim — one profile, one contract, one program family, `f32`, powers of
+/// two — is carried on the constant rather than restated here.
+///
+/// **The split keeps [`governed_partition`], and not for want of measuring.**
+/// The same sweep refuted the balanced choice for the split too, but no constant
+/// replaces it: the split's optimum moves from 256 partitions at four rows to the
+/// minimum split of 2 at 65,536 rows, so a cap fitted on six of its shapes costs
+/// 2.131x on the seventh. That partition is not separable from the saturation
+/// quantity the strategy contour turns on, which is
 /// `activate-measured-reduction-selection-from-a-target-cost-row`.
 ///
-/// What that measurement does **not** fix is this function's participant count.
-/// It varied the shape, never the split of a given contributor run, so the tree
-/// and the multi-pass split both still read one [`governed_partition`] and the
-/// workgroup width is that function's balanced exact choice.
+/// **Measurement, 2026-08-07 — the tree is known to be worth having, and
+/// *selection* still does not act on that.** [The retained dispatch sweep] timed
+/// all three strategies over 92 shapes on the same host: the serial fold is up to
+/// 50.7 times slower than the best parallel plan where the row count cannot
+/// saturate the device, and up to 1.78 times faster where it can. So the tree is
+/// not a speculative alternative any more. Which alternative is *chosen* is
+/// unchanged all the same, because acting on that contour needs a target profile
+/// to *declare* the machine quantity it turns on, which is a public boundary and
+/// an identity move — the same ticket above. This function calibrates the tree's
+/// width, not its odds of being picked.
 ///
+/// [The retained partition calibration]:
+///     ../../../spikes/program-planning/reduction-partition-calibration/README.md
 /// [The retained dispatch sweep]:
 ///     ../../../spikes/program-planning/reduction-dispatch-crossover/README.md
 ///
@@ -2398,7 +2544,7 @@ pub(crate) fn single_workgroup_tree_region(
     let contributor = contributor_tensor(subject);
     let contributors =
         reduction_contributors(output).ok_or(WorkgroupTreeUnavailable::Unrepresentable)?;
-    let partition = governed_partition(contributors)
+    let partition = capped_tree_partition(contributors)
         .ok_or(WorkgroupTreeUnavailable::NoAdmissibleParticipantCount { contributors })?;
     let participants = partition.partitions;
     let tile = tiler_ir::schedule::workgroup_tree_tile(participants)
