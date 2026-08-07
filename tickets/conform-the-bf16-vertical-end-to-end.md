@@ -3,7 +3,7 @@ id: conform-the-bf16-vertical-end-to-end
 title: Conform the BF16 vertical end to end against the exact reference corpus
 status: blocked
 priority: p2
-dependencies: [validate-bf16-at-the-runtime-routing-boundary, carry-a-bf16-subnormal-realization-the-reference-can-be-told, decide-where-a-device-reaching-conformance-test-may-live, wire-the-bf16-reference-to-the-realization-it-is-told]
+dependencies: [validate-bf16-at-the-runtime-routing-boundary, carry-a-bf16-subnormal-realization-the-reference-can-be-told, decide-where-a-device-reaching-conformance-test-may-live, wire-the-bf16-reference-to-the-realization-it-is-told, admit-the-conformance-crate-to-the-workspace]
 related: [spike-bf16-through-the-second-dtype-seams, evaluate-bf16-reference-semantics, own-the-dtype-support-maturity-matrix, lower-bf16-to-metal, dispatch-a-tiler-region-on-metal-hardware, wire-the-bf16-reference-to-the-realization-it-is-told]
 scopes: [implementation/reference, contracts/numerics, implementation/runtime]
 shared_scopes: [project/tickets]
