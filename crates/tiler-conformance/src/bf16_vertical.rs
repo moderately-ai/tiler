@@ -145,16 +145,45 @@
 //! a corpus that silently stopped containing a subnormal would fail rather than
 //! pass.
 //!
-//! **The conformance is stated at this call site rather than derived from a
-//! route.** `ReferenceNumericalConformance::from_realization` discards the
-//! format its realization was stated about and has no caller, so no capability
-//! yet checks that the conformance it was handed speaks about its own format;
-//! that window is owned by
-//! `give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`.
-//! Both the conformance and the region's realization are read off the same
-//! [`NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16`] accessors, so there is
-//! one source rather than two transcriptions, and
-//! `the_oracle_and_the_region_are_told_one_contract` holds them to it.
+//! **The conformance is derived from the region, through the checked bridge.**
+//!
+//! > **The reason given here was retired and is struck. Corrected 2026-08-07.**
+//! > This paragraph read that the conformance was "stated at this call site
+//! > rather than derived from a route", because
+//! > `ReferenceNumericalConformance::from_realization` "discards the format its
+//! > realization was stated about and has no caller, so no capability yet checks
+//! > that the conformance it was handed speaks about its own format". Every
+//! > clause of that is now false.
+//! > `give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`
+//! > gave `from_realization` a second argument naming the subject, made it read
+//! > the realization's own `canonical_arithmetic_nan_bits` to refuse a subject
+//! > the declaration contradicts, and made
+//! > `ReferenceEvaluationRequest::conformance_for` refuse a capability whose own
+//! > arithmetic type is not the one its conformance was resolved for.
+//!
+//! [`declared_conformance`] reads both of the bridge's arguments off **one**
+//! object: `RealizationWitness::of(&region)` hands back the region's own
+//! declared realization and its own arithmetic type, so the oracle is told the
+//! contract the device half is dispatched under rather than a second reading of
+//! [`NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16`] kept beside it. That
+//! puts the bridge's six transform refusals and its subject-agreement check on
+//! this route:
+//! `tests::a_regrouping_bf16_contract_is_refused_at_the_conformance_bridge`
+//! builds a region under a contract that permits regrouping and watches
+//! `UnsupportedReferenceContract::ReassociationPermitted` fire, where the
+//! transcription would have carried the same contract's two subnormal modes
+//! forward and answered a question it was not asked. The subject the bridge
+//! carries is [`ArithmeticType::Bf16`](tiler_ir::schedule::ArithmeticType::Bf16),
+//! and `Bf16BinaryReference::evaluate`'s own `conformance_for` is what agrees
+//! with it.
+//!
+//! **What the route still does not cover, stated rather than left implied.**
+//! `ReferenceNumericalConformance::strict` and `::new` state no subject, so a
+//! conformance from either reaches every capability with nothing to compare, and
+//! this vertical's own preserving-reading comparisons are evaluated under
+//! `ReferenceNumericalConformance::strict()`. `ConformanceSubject::Unstated` is
+//! the population the agreement check cannot speak for. That boundary is
+//! narrower than the one this paragraph used to record, and it is still real.
 
 use tiler_build::BoundMetalCompileDeclaration;
 use tiler_compiler::session::NumericalContract;
@@ -163,8 +192,8 @@ use tiler_ir::program::StorageScalar;
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExecutionBinding,
     InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology,
-    RegionId, ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, RealizationWitness,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
     VerifiedScheduledRegion,
 };
 use tiler_ir::semantic::{
@@ -176,7 +205,7 @@ use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::record::MetalTranslationUnit;
 use tiler_reference::{
     FloatBitOrder, FrozenReferenceRegistry, InputBinding, ReferenceElement, ReferenceEvaluator,
-    ReferenceNumericalConformance, Tensor, TensorPayloadView,
+    ReferenceNumericalConformance, Tensor, TensorPayloadView, UnsupportedReferenceContract,
 };
 
 /// The scale constant, `1.5` in BF16.
@@ -388,6 +417,16 @@ pub(crate) const fn corpus() -> [Case; 15] {
     ]
 }
 
+/// The corpus length as an element count.
+///
+/// The one number every half of this vertical binds — the region's iteration
+/// shape, the kernel's declared boundary, the dispatch grid, and the oracle's
+/// tensor — read from the corpus rather than restated, so a corpus that grew
+/// moves all of them together.
+pub(crate) fn corpus_elements() -> u64 {
+    u64::try_from(corpus().len()).expect("the corpus length fits a u64")
+}
+
 /// The operand encodings, in corpus order.
 pub(crate) fn operands() -> Vec<u16> {
     corpus().iter().map(|case| case.operand).collect()
@@ -436,10 +475,14 @@ pub(crate) fn declared_realization() -> NumericalRealization {
 
 /// Restates one caller contract as a region's own declared realization.
 ///
-/// Parameterized because the *strict* BF16 contract is the perturbation this
-/// vertical watches emission refuse: the measured macOS row flushes, so a
-/// region declaring preservation must be told no, and asking that requires
-/// building the same region under the other contract rather than describing it.
+/// Parameterized because two of this vertical's refusals are watched by
+/// building the same region under a *different* contract rather than by
+/// describing them. The *strict* BF16 contract is the one emission refuses: the
+/// measured macOS row flushes, so a region declaring preservation must be told
+/// no. A contract permitting **regrouping** is the one [`conformance_of`]
+/// refuses: the reference evaluates one value and that contract admits a set.
+/// The two refusals are made by different layers about different dimensions,
+/// which is why neither stands in for the other.
 pub(crate) fn realization_of(contract: NumericalContract) -> NumericalRealization {
     NumericalRealization::new(
         contract.key(),
@@ -457,12 +500,42 @@ pub(crate) fn realization_of(contract: NumericalContract) -> NumericalRealizatio
 
 /// The numerical conformance the oracle is evaluated under.
 ///
-/// Stated here, from the same contract the region carries. See the module
-/// header for why it is not derived through
-/// `ReferenceNumericalConformance::from_realization`.
+/// Derived from the region the device half is dispatched from, not restated
+/// from [`declared_contract`] beside it: [`conformance_of`] reads the
+/// realization and the subject off one [`RealizationWitness`], so the oracle
+/// cannot be told a contract the region does not carry, nor a subject drawn from
+/// anywhere but the region that declared it.
+///
+/// # Panics
+///
+/// Panics if this vertical's own declared contract is one the reference cannot
+/// evaluate. That is a claim about [`declared_contract`] rather than a runtime
+/// condition — a `bf16` region resolving every transform freedom `Forbidden` is
+/// exactly what the bridge admits — and
+/// `tests::a_regrouping_bf16_contract_is_refused_at_the_conformance_bridge`
+/// is the same route watched refusing a contract that is not.
 pub(crate) fn declared_conformance() -> ReferenceNumericalConformance {
-    let contract = declared_contract();
-    ReferenceNumericalConformance::new(contract.input_subnormals(), contract.result_subnormals())
+    conformance_of(&scheduled_region(corpus_elements()))
+        .expect("the declared flushing bf16 realization bridges to a conformance")
+}
+
+/// Derives the oracle's conformance from one region's own declared realization.
+///
+/// The checked bridge, and the reason both arguments come from
+/// [`RealizationWitness::of`]: the realization and the arithmetic type it was
+/// declared about are two readings that must not be sourced separately, and the
+/// witness is the object that pairs them.
+///
+/// # Errors
+///
+/// Returns [`UnsupportedReferenceContract`] when the region's realization
+/// permits a transform whose result is a set rather than one value, or when its
+/// declared canonical NaN payload contradicts the region's own arithmetic type.
+pub(crate) fn conformance_of(
+    region: &VerifiedScheduledRegion,
+) -> Result<ReferenceNumericalConformance, UnsupportedReferenceContract> {
+    let witness = RealizationWitness::of(region);
+    ReferenceNumericalConformance::from_realization(witness.realization(), witness.accumulation())
 }
 
 /// Builds the semantic `(x * 1.5) + 0.0` program the oracle evaluates.

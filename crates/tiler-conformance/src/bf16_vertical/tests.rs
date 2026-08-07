@@ -11,8 +11,8 @@
 use std::path::Path;
 
 use tiler_compiler::session::{
-    CompileFailureClass, CompileRequest, NumericalContract, TargetCompileRefusal,
-    TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
+    CompileFailureClass, CompileRequest, NumericalContract, NumericalContractBuilder,
+    TargetCompileRefusal, TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
 };
 use tiler_compiler::target::TargetRequest;
 use tiler_ir::kernel::{KernelType, lower_scheduled_region};
@@ -20,13 +20,15 @@ use tiler_ir::program::StorageScalar;
 use tiler_ir::schedule::{ArithmeticType, NumericalPermission};
 use tiler_ir::semantic::{Bf16, InputKey};
 use tiler_metal::emit::emit_translation_unit;
-use tiler_reference::ReferenceNumericalConformance;
+use tiler_reference::{
+    ConformanceSubject, ReferenceNumericalConformance, UnsupportedReferenceContract,
+};
 
 use super::{
-    Case, OperandStride, SCALE_BITS, corpus, declared_conformance, declared_contract,
-    declared_expectations, declared_realization, emit_vertical, flush_moved_indices, operands,
-    pack, preserved_expectations, realization_of, reference_bits, region_under, semantic_program,
-    unpack,
+    Case, OperandStride, SCALE_BITS, conformance_of, corpus, corpus_elements, declared_conformance,
+    declared_contract, declared_expectations, declared_realization, emit_vertical,
+    flush_moved_indices, operands, pack, preserved_expectations, realization_of, reference_bits,
+    region_under, scheduled_region, semantic_program, unpack,
 };
 use crate::measurement::{measured_half, require_or_report};
 use crate::portability::collect_rust_sources;
@@ -190,13 +192,59 @@ fn the_declared_flush_moves_exactly_the_subnormal_operands() {
     );
 }
 
-/// The oracle and the region are told one contract, not two transcriptions.
+/// The oracle's conformance is the region's own, carried with its subject.
+///
+/// **Restated 2026-08-07, because the claim it could make changed.** This test
+/// read the two subnormal dimensions off [`declared_conformance`] and off
+/// [`declared_contract`] and held them equal, which was worth asserting while
+/// the two were independent transcriptions of one contract. They are not any
+/// more: [`declared_conformance`] derives from the region through
+/// [`super::conformance_of`], so that equality is now a property of the
+/// derivation rather than a guard against drift, and asserting it alone would be
+/// a test the single source satisfies by construction.
+///
+/// What the single source cannot satisfy trivially is the **subject**. A
+/// conformance reaches the oracle carrying either the region's own arithmetic
+/// type or nothing at all, and only the first is checked by the capability that
+/// receives it — so this asserts `Bf16` was carried, and that a hand-stated
+/// conformance of the same two dimensions carries nothing. The two are equal on
+/// every accessor the appliers read and are still different objects, which is
+/// the whole content of the routing.
 #[test]
-fn the_oracle_and_the_region_are_told_one_contract() {
+fn the_oracles_conformance_is_the_regions_own_and_carries_its_subject() {
     let contract = declared_contract();
     let realization = declared_realization();
     let conformance = declared_conformance();
 
+    assert_eq!(
+        conformance.subject(),
+        ConformanceSubject::Arithmetic(ArithmeticType::Bf16),
+        "the oracle was handed a conformance naming no format, or another one",
+    );
+    // The transcription this route replaced, constructed here so the difference
+    // is exhibited rather than described: identical on both dimensions the
+    // appliers read, and speaking about no value set at all.
+    let transcribed = ReferenceNumericalConformance::new(
+        contract.input_subnormals(),
+        contract.result_subnormals(),
+    );
+    assert_eq!(transcribed.subject(), ConformanceSubject::Unstated);
+    assert_eq!(
+        transcribed.input_subnormals(),
+        conformance.input_subnormals(),
+    );
+    assert_eq!(
+        transcribed.result_subnormals(),
+        conformance.result_subnormals(),
+    );
+    assert_ne!(
+        transcribed, conformance,
+        "the derived conformance must differ from the hand-stated one, or the subject the \
+         capability checks is not being carried",
+    );
+
+    // The contract still reaches both halves, now along one path each: the
+    // region declares it, and the oracle reads the region.
     assert_eq!(realization.input_subnormals, contract.input_subnormals());
     assert_eq!(realization.result_subnormals, contract.result_subnormals());
     assert_eq!(conformance.input_subnormals(), contract.input_subnormals());
@@ -222,6 +270,59 @@ fn the_oracle_and_the_region_are_told_one_contract() {
         )),
         preserved_expectations(),
         "the strict contract resolves to the preserving reading",
+    );
+}
+
+/// A regrouping BF16 contract is refused at the conformance bridge, watched
+/// firing.
+///
+/// **The perturbation that shows this route is checked rather than merely
+/// called.** [`super::conformance_of`] is the only way this vertical obtains an
+/// oracle contract, so a region whose realization admits a *result set* must not
+/// yield one — and the transcription this replaced would have: it read the two
+/// subnormal dimensions and nothing else, so a regrouping contract reached the
+/// oracle as the flushing reading and the oracle answered a bit-exact question
+/// it had not been asked.
+///
+/// The perturbed subject is the **contract**, not the assertion. It is composed
+/// through the governed builder rather than hand-mutating a realization, so it
+/// is a contract a caller could genuinely state: this vertical's own two
+/// subnormal resolutions, plus regrouping. Reassociation rather than contraction
+/// because it is the *second* dimension the bridge tests — a refusal on the
+/// first would be satisfied by a bridge that stopped at contraction and ignored
+/// everything after it.
+#[test]
+fn a_regrouping_bf16_contract_is_refused_at_the_conformance_bridge() {
+    let declared = declared_contract();
+    let regrouping = NumericalContractBuilder::strict_bf16()
+        .input_subnormals(declared.input_subnormals())
+        .result_subnormals(declared.result_subnormals())
+        .reassociation(NumericalPermission::Permitted)
+        .build()
+        .expect("flushing and regrouping are independent dimensions");
+    assert_ne!(
+        regrouping.reassociation(),
+        declared.reassociation(),
+        "the perturbed contract must differ from the declared one in the dimension this names",
+    );
+    assert_eq!(regrouping.input_subnormals(), declared.input_subnormals());
+    assert_eq!(regrouping.result_subnormals(), declared.result_subnormals());
+
+    // The region verifies under it — the refusal below is the reference's, made
+    // about a realization a region genuinely carries, not a schedule-layer one.
+    let region = region_under(corpus_elements(), realization_of(regrouping));
+    assert!(region.region().index.numerical.permits_reassociation());
+    assert_eq!(
+        conformance_of(&region),
+        Err(UnsupportedReferenceContract::ReassociationPermitted),
+        "a contract admitting a result set produced an oracle conformance",
+    );
+
+    // And the declared contract bridges on the same call, so the refusal is a
+    // decision about the contract rather than a route that never succeeds.
+    assert_eq!(
+        conformance_of(&scheduled_region(corpus_elements())),
+        Ok(declared_conformance()),
     );
 }
 
@@ -257,7 +358,7 @@ fn the_request_boundary_stops_at_the_ledgers_undeclared_bf16_contraction_row() {
     let declaration = tiler_build::BoundMetalCompileDeclaration::first_macos_apple9()
         .expect("the authoritative declaration assembles");
     let key = InputKey::new("operand").expect("the input key is valid");
-    let elements = u64::try_from(corpus().len()).expect("the corpus length fits a u64");
+    let elements = corpus_elements();
     let program = semantic_program(&key, elements);
     let targets = TargetRequest::new([declaration.profile().clone()])
         .expect("one declared profile is a singleton target request");
@@ -318,7 +419,7 @@ fn the_request_boundary_stops_at_the_ledgers_undeclared_bf16_contraction_row() {
 /// The region lowers to a `bfloat` kernel bound to the authoritative row.
 #[test]
 fn the_emitted_unit_is_a_bfloat_kernel_bound_to_the_authoritative_row() {
-    let elements = u64::try_from(corpus().len()).unwrap();
+    let elements = corpus_elements();
     let emitted = emit_vertical(elements).expect("the bf16 vertical emits");
 
     for buffer in emitted.kernel.buffers() {
@@ -373,7 +474,7 @@ fn the_emitted_unit_is_a_bfloat_kernel_bound_to_the_authoritative_row() {
 /// source.
 #[test]
 fn a_strict_bf16_region_is_refused_on_the_measured_row() {
-    let elements = u64::try_from(corpus().len()).unwrap();
+    let elements = corpus_elements();
     let declaration = tiler_build::BoundMetalCompileDeclaration::first_macos_apple9()
         .expect("the authoritative declaration assembles");
 
@@ -460,7 +561,7 @@ fn a_wrongly_derived_operand_width_changes_what_the_kernel_reads() {
 /// than leaving two implementations to agree for unexamined reasons.
 #[test]
 fn the_bf16_vertical_agrees_with_the_oracle_on_the_measured_row() {
-    let elements = u64::try_from(corpus().len()).unwrap();
+    let elements = corpus_elements();
     let emitted = emit_vertical(elements).expect("the bf16 vertical emits");
     let expected = declared_expectations();
     assert_eq!(
@@ -543,7 +644,7 @@ fn the_bf16_vertical_agrees_with_the_oracle_on_the_measured_row() {
 /// passes this defect; the composition does not.
 #[test]
 fn the_composition_perturbation_is_observed_failing_on_the_measured_row() {
-    let elements = u64::try_from(corpus().len()).unwrap();
+    let elements = corpus_elements();
     let emitted = emit_vertical(elements).expect("the bf16 vertical emits");
 
     let Some(observed) = require_or_report(
