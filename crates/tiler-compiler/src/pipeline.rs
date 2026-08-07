@@ -527,6 +527,11 @@ impl From<RequestError> for CompileError {
             // request too, and for the same reason: no target was consulted, so
             // it is not a statement that any plan was infeasible.
             | RequestError::UnrepresentableNumericalDimension { .. }
+            // Stating no contract about this program's arithmetic is a malformed
+            // request for the same reason again: no target was consulted, because
+            // a contract's arithmetic is part of its identity and there was no
+            // applicable question to put to one.
+            | RequestError::NoApplicableNumericalContract { .. }
             | RequestError::UnverifiedTargetSelection => Self::InvalidRequest(value),
         }
     }
@@ -2099,6 +2104,13 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
                 },
             )
         }
+        // The program's own arithmetic is the stable token, not the stated list:
+        // a caller varying which other widths it names must not vary the reason
+        // code for one program that names none of its own.
+        RequestError::NoApplicableNumericalContract { program, .. } => format!(
+            "numerics-contract-inapplicable-{}",
+            program.canonical_type_key().replace("::", "-")
+        ),
         RequestError::DTypeNotDispatchable { disposition, .. } => match disposition {
             crate::request::DTypeDispatchRefusalDisposition::Unsupported => {
                 "dtype-dispatch-unsupported".to_owned()

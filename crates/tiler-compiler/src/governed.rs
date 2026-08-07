@@ -21,23 +21,24 @@ use std::sync::Arc;
 
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
-    ScalarRegistryError, ScalarValueId, SourcedExtent, StagedInputSource, add_f32_scalar_op,
-    canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
-    exp_f32_scalar_op, multiply_f32_scalar_op, rsqrt_f32_scalar_op,
-    strict_affine_u4_dequantize_scalar_op,
+    ScalarRegistryError, ScalarValueId, SourcedExtent, StagedInputSource, add_bf16_scalar_op,
+    add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op,
+    constant_f32_scalar_op, divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op,
+    multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::semantic::{
-    AttributeFieldId, BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
-    CONCATENATE_AXIS_ATTRIBUTE, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField,
-    CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, ContractionIndex,
-    ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS,
-    MIN_CONCATENATE_OPERANDS, OpKey, OperationAttributes, ProviderIdentity,
-    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE,
-    RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType,
-    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
-    StrictAffineU4, TypeKey, add_f32_op, broadcast_f32_op, concatenate_axis, concatenate_f32_op,
-    concatenate_result_shape, constant_f32_op, dequantize_strict_affine_op, multiply_f32_op,
-    reindex_f32_op, rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
+    AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16,
+    BroadcastAxisMapping, BroadcastAxisSource, CONCATENATE_AXIS_ATTRIBUTE,
+    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
+    CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
+    F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS, MIN_CONCATENATE_OPERANDS, OpKey,
+    OperationAttributes, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
+    RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind,
+    ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey, add_bf16_op, add_f32_op,
+    broadcast_f32_op, concatenate_axis, concatenate_f32_op, concatenate_result_shape,
+    constant_bf16_op, constant_f32_op, dequantize_strict_affine_op, multiply_bf16_op,
+    multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
     strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
@@ -233,11 +234,12 @@ impl GovernedIndexAccess {
 
 /// How many index-access capabilities the governed profile ships.
 ///
-/// Ten fixed-signature families plus the concatenation's one registration per
-/// admitted operand arity. Named so a test can count the frozen registry against
-/// a number stated here rather than against whatever the list happens to hold.
+/// Thirteen fixed-signature families plus the concatenation's one registration
+/// per admitted operand arity. Named so a test can count the frozen registry
+/// against a number stated here rather than against whatever the list happens to
+/// hold.
 #[cfg(test)]
-pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 17;
+pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 20;
 
 /// Returns the shipped index-access capabilities in canonical family order.
 ///
@@ -258,22 +260,28 @@ pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 17;
 pub(crate) fn governed_index_access_capabilities()
 -> Result<Vec<GovernedIndexAccess>, GovernedRegistryError> {
     let f32_type = F32::resolved_type();
+    let bf16_type = Bf16::resolved_type();
     let pointwise =
         || LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type.clone()]);
+    let pointwise_bf16 =
+        || LoweringSignature::new([bf16_type.clone(), bf16_type.clone()], [bf16_type.clone()]);
     let mut capabilities = vec![
         GovernedIndexAccess {
             provider: governed_provider("constant-f32"),
             operation: constant_f32_op(),
             signature: LoweringSignature::new([], [f32_type.clone()])?,
             emitted: vec![constant_f32_scalar_op()],
-            implementation: Arc::new(GovernedConstantF32),
+            implementation: Arc::new(GovernedConstant {
+                width: GovernedWidth::F32,
+            }),
         },
         GovernedIndexAccess {
             provider: governed_provider("multiply-f32"),
             operation: multiply_f32_op(),
             signature: pointwise()?,
             emitted: vec![multiply_f32_scalar_op()],
-            implementation: Arc::new(GovernedPointwiseF32 {
+            implementation: Arc::new(GovernedPointwise {
+                width: GovernedWidth::F32,
                 scalar: PointwiseScalar::Multiply,
             }),
         },
@@ -282,7 +290,51 @@ pub(crate) fn governed_index_access_capabilities()
             operation: add_f32_op(),
             signature: pointwise()?,
             emitted: vec![add_f32_scalar_op()],
-            implementation: Arc::new(GovernedPointwiseF32 {
+            implementation: Arc::new(GovernedPointwise {
+                width: GovernedWidth::F32,
+                scalar: PointwiseScalar::Add,
+            }),
+        },
+        // **The three `bf16` families, and exactly the three.** Each is a
+        // registered semantic family whose index-realization law
+        // `admit-a-bf16-index-realization-law-and-refinement-contract` landed, so
+        // an occurrence of one can obtain executable coverage; what was missing
+        // was a *lowering* to obtain it from, which is what a capability is. The
+        // set stops here because it is the set `tiler_ir::index` registers
+        // `bf16` scalars for — there is no `bf16` division, exponential, or NaN
+        // canonicalization — so no reduction, activation, or contraction of this
+        // width has an emitted region to declare.
+        //
+        // Each is its own provider identity for the reason every governed family
+        // is: the registry keys a capability by `(family, operation, provider)`,
+        // and the emitted scalar set is part of what refinement checks the
+        // region against by containment.
+        GovernedIndexAccess {
+            provider: governed_provider("constant-bf16"),
+            operation: constant_bf16_op(),
+            signature: LoweringSignature::new([], [bf16_type.clone()])?,
+            emitted: vec![constant_bf16_scalar_op()],
+            implementation: Arc::new(GovernedConstant {
+                width: GovernedWidth::Bf16,
+            }),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("multiply-bf16"),
+            operation: multiply_bf16_op(),
+            signature: pointwise_bf16()?,
+            emitted: vec![multiply_bf16_scalar_op()],
+            implementation: Arc::new(GovernedPointwise {
+                width: GovernedWidth::Bf16,
+                scalar: PointwiseScalar::Multiply,
+            }),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("add-bf16"),
+            operation: add_bf16_op(),
+            signature: pointwise_bf16()?,
+            emitted: vec![add_bf16_scalar_op()],
+            implementation: Arc::new(GovernedPointwise {
+                width: GovernedWidth::Bf16,
                 scalar: PointwiseScalar::Add,
             }),
         },
@@ -426,10 +478,58 @@ fn governed_provider(family: &str) -> ProviderIdentity {
         .expect("the governed lowering provider identity is valid")
 }
 
-/// Emits the rank-zero region realizing one `tiler.constant-f32` occurrence.
-struct GovernedConstantF32;
+/// Which governed arithmetic width one scalar-family lowering emits into.
+///
+/// **A parameter rather than two copies of each provider, because the index work
+/// is width-independent and only the scalar authority it reaches is not.** The
+/// domain, the reads, the write, and the broadcast rule below are the same
+/// derivation for both widths; what differs is which registered scalar operation
+/// the emitted region applies and which format its constant payload carries.
+/// Writing each provider twice would make one derivation two, free to drift.
+#[derive(Clone, Copy)]
+enum GovernedWidth {
+    F32,
+    Bf16,
+}
 
-impl IndexAccessLoweringProvider for GovernedConstantF32 {
+impl GovernedWidth {
+    /// The type key a constant payload of this width declares its format as.
+    fn format(self) -> TypeKey {
+        match self {
+            Self::F32 => f32_format(),
+            Self::Bf16 => {
+                TypeKey::new("tiler", "bf16", 1).expect("the governed bf16 format key is valid")
+            }
+        }
+    }
+
+    /// The record-local payload field this width's constant family declares.
+    ///
+    /// Read from the family rather than assumed shared: the two happen to spell
+    /// the same ordinal today, and a reader hard-coding either would build the
+    /// other's record correctly only by that coincidence.
+    const fn constant_field(self) -> AttributeFieldId {
+        match self {
+            Self::F32 => F32_CONSTANT_BITS_ATTRIBUTE,
+            Self::Bf16 => BF16_CONSTANT_BITS_ATTRIBUTE,
+        }
+    }
+
+    /// The registered per-point constant scalar of this width.
+    fn constant_scalar(self) -> ScalarOpKey {
+        match self {
+            Self::F32 => constant_f32_scalar_op(),
+            Self::Bf16 => constant_bf16_scalar_op(),
+        }
+    }
+}
+
+/// Emits the rank-zero region realizing one governed constant occurrence.
+struct GovernedConstant {
+    width: GovernedWidth,
+}
+
+impl IndexAccessLoweringProvider for GovernedConstant {
     fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
         let occurrence = context.occurrence();
         if !occurrence.inputs().is_empty() {
@@ -441,11 +541,11 @@ impl IndexAccessLoweringProvider for GovernedConstantF32 {
         if result.shape().rank() != 0 {
             return Err(occurrence_error("constant-result-rank"));
         }
-        let attributes = constant_scalar_attributes(occurrence.attributes())?;
+        let attributes = constant_scalar_attributes(occurrence.attributes(), self.width)?;
         let value_type = result.value_type().clone();
         let shape = result.shape().clone();
         let output = context.output_tensor(value_type, shape)?;
-        let constant = context.apply(constant_f32_scalar_op(), attributes, &[])?;
+        let constant = context.apply(self.width.constant_scalar(), attributes, &[])?;
         let value = single_result(&constant, "constant")?;
         let write = context.write(output, &[], &[])?;
         context.output(write, value)
@@ -460,10 +560,12 @@ enum PointwiseScalar {
 }
 
 impl PointwiseScalar {
-    fn key(self) -> ScalarOpKey {
-        match self {
-            Self::Multiply => multiply_f32_scalar_op(),
-            Self::Add => add_f32_scalar_op(),
+    fn key(self, width: GovernedWidth) -> ScalarOpKey {
+        match (self, width) {
+            (Self::Multiply, GovernedWidth::F32) => multiply_f32_scalar_op(),
+            (Self::Multiply, GovernedWidth::Bf16) => multiply_bf16_scalar_op(),
+            (Self::Add, GovernedWidth::F32) => add_f32_scalar_op(),
+            (Self::Add, GovernedWidth::Bf16) => add_bf16_scalar_op(),
         }
     }
 
@@ -475,17 +577,18 @@ impl PointwiseScalar {
     }
 }
 
-/// Emits the elementwise region realizing one binary pointwise `f32` occurrence.
+/// Emits the elementwise region realizing one binary pointwise occurrence.
 ///
 /// Exactly one broadcast form is supported: a rank-zero operand read once and
 /// applied at every point. Any other rank mismatch is rejected explicitly rather
 /// than approximated by an implicit alignment rule the semantic contract has not
 /// stated.
-struct GovernedPointwiseF32 {
+struct GovernedPointwise {
+    width: GovernedWidth,
     scalar: PointwiseScalar,
 }
 
-impl IndexAccessLoweringProvider for GovernedPointwiseF32 {
+impl IndexAccessLoweringProvider for GovernedPointwise {
     fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
         let occurrence = context.occurrence();
         let [result] = occurrence.results() else {
@@ -518,7 +621,11 @@ impl IndexAccessLoweringProvider for GovernedPointwiseF32 {
             };
             values.push(value);
         }
-        let applied = context.apply(self.scalar.key(), ScalarAttributes::empty(), &values)?;
+        let applied = context.apply(
+            self.scalar.key(self.width),
+            ScalarAttributes::empty(),
+            &values,
+        )?;
         let value = single_result(&applied, self.scalar.rule())?;
         let output = context.output_tensor(result_type, shape)?;
         let write = context.write(output, &dimensions, &coordinates)?;
@@ -1233,7 +1340,7 @@ impl RootMeanSquarePlan {
         let bias = apply_one(
             context,
             constant_f32_scalar_op(),
-            scalar_attributes(self.eps.clone())?,
+            scalar_attributes(self.eps.clone(), GovernedWidth::F32)?,
             &[],
             "rms-scale-eps-constant",
         )?;
@@ -2179,27 +2286,34 @@ fn single_result(
 /// Forwards an occurrence's `f32` constant bits into governed scalar attributes.
 fn constant_scalar_attributes(
     attributes: &OperationAttributes,
+    width: GovernedWidth,
 ) -> Result<ScalarAttributes, LoweringEmitError> {
-    let Some(bits) = attributes.get(F32_CONSTANT_BITS_ATTRIBUTE) else {
+    let Some(bits) = attributes.get(width.constant_field()) else {
         return Err(occurrence_error("constant-bits-missing"));
     };
     let CanonicalValueView::FloatBits(view) = bits.view() else {
         return Err(occurrence_error("constant-bits-kind"));
     };
-    if view.format() != &f32_format() {
+    // The *family's own* format, so an occurrence whose declared width and
+    // declared payload format disagree is refused rather than carried into a
+    // region whose identity claims the family's width.
+    if view.format() != &width.format() {
         return Err(occurrence_error("constant-bits-format"));
     }
-    scalar_attributes(bits.clone())
+    scalar_attributes(bits.clone(), width)
 }
 
 fn f32_constant_attributes(bits: u32) -> Result<ScalarAttributes, LoweringEmitError> {
     let value = CanonicalValue::float_bits(f32_format(), bits.to_be_bytes())
         .map_err(|_| occurrence_error("constant-bits-encoding"))?;
-    scalar_attributes(value)
+    scalar_attributes(value, GovernedWidth::F32)
 }
 
-fn scalar_attributes(bits: CanonicalValue) -> Result<ScalarAttributes, LoweringEmitError> {
-    let record = CanonicalValue::record([CanonicalField::new(F32_CONSTANT_BITS_ATTRIBUTE, bits)])
+fn scalar_attributes(
+    bits: CanonicalValue,
+    width: GovernedWidth,
+) -> Result<ScalarAttributes, LoweringEmitError> {
+    let record = CanonicalValue::record([CanonicalField::new(width.constant_field(), bits)])
         .map_err(|_| occurrence_error("constant-bits-encoding"))?;
     ScalarAttributes::new(record).map_err(|_| occurrence_error("constant-bits-encoding"))
 }
@@ -2249,7 +2363,7 @@ mod contraction_conformance;
 #[cfg(test)]
 mod tests {
     use super::{
-        GovernedPointwiseF32, PointwiseScalar, governed_lowering_capabilities,
+        GovernedPointwise, GovernedWidth, PointwiseScalar, governed_lowering_capabilities,
         governed_realization_laws, governed_scalars,
     };
     use crate::capability::{
@@ -3598,7 +3712,8 @@ mod tests {
                 .unwrap(),
                 &[add_f32_scalar_op()],
                 LoweringCapabilityRevision::new(1).unwrap(),
-                Arc::new(GovernedPointwiseF32 {
+                Arc::new(GovernedPointwise {
+                    width: GovernedWidth::F32,
                     scalar: PointwiseScalar::Add,
                 }),
             )

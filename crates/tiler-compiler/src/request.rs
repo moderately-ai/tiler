@@ -9,16 +9,18 @@ use tiler_ir::index::{
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
-    AxisDecode, InputOrdinal, LogicalAccess, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
-    PointwiseF32Node, PointwiseF32Value, TensorRole,
+    AxisDecode, InputOrdinal, LogicalAccess, PointwiseBf16Expression,
+    PointwiseBf16ExpressionBuilder, PointwiseBf16Value, PointwiseF32Expression,
+    PointwiseF32ExpressionBuilder, PointwiseF32Node, PointwiseF32Value, TensorRole,
 };
 use tiler_ir::semantic::{
-    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
-    CanonicalIntegerWidth, CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
-    F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey, OperationAttributes, OutputKey, ProviderIdentity,
-    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind,
-    ResolvedValueType, SemanticIdentity, SemanticProgram, TypeKey, ValueId, add_f32_op,
-    broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
+    BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16, BroadcastAxisMapping,
+    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalIntegerWidth, CanonicalValueView,
+    ContractionIndex, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
+    OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
+    REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType, SemanticIdentity,
+    SemanticProgram, TypeKey, ValueId, add_bf16_op, add_f32_op, broadcast_f32_op, constant_bf16_op,
+    constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
     strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
@@ -1367,7 +1369,65 @@ impl NormalizedSerialSum {
     }
 }
 
-/// A verified N-input, one-output elementwise `f32` program.
+/// One recognized per-point expression, in the arithmetic its program states.
+///
+/// **The arithmetic is carried rather than assumed, and the two vocabularies are
+/// separate types rather than one width-tagged one.** A per-point body is a
+/// function on a *specific* format — `x * 3.0` rounds differently in binary32 and
+/// in `bf16`, and a `bf16` constant is a sixteen-bit pattern that no
+/// [`PointwiseF32Node::Constant`] payload can hold — so `tiler_ir::schedule`
+/// gives each width its own expression type and its own scheduled-region
+/// spelling. This enum is what lets one recognizer walk produce either.
+///
+/// Every consumer matches it exhaustively rather than projecting it to a tag, so
+/// a third admitted width is a build error at each site instead of an expression
+/// silently spelled as one of these two.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RecognizedPointwise {
+    F32(PointwiseF32Expression),
+    Bf16(PointwiseBf16Expression),
+}
+
+impl RecognizedPointwise {
+    /// The `f32` expression this recognition holds, or a refusal naming the
+    /// width it holds instead.
+    ///
+    /// **Defence in depth rather than a live gate.** The one caller is the fold's
+    /// prologue walk, which is entered only from `tiler::strict-serial-sum-f32@1`
+    /// and therefore states `f32` at the call site; the refusal exists so that a
+    /// fold family admitted at another width fails loudly here instead of the
+    /// prologue silently acquiring a spelling its region cannot carry.
+    fn into_f32(self) -> Result<PointwiseF32Expression, RequestError> {
+        match self {
+            Self::F32(expression) => Ok(expression),
+            Self::Bf16(_) => mismatch("prologue-arithmetic"),
+        }
+    }
+
+    /// The `f32` expression a fixture asserted about, for the crate's own tests.
+    ///
+    /// Panics for the other width, like [`NormalizedOutput::serial_sum`] and its
+    /// siblings: a fixture whose recognized width changed should fail loudly
+    /// here rather than have its assertion quietly skipped.
+    #[cfg(test)]
+    fn f32(&self) -> &PointwiseF32Expression {
+        match self {
+            Self::F32(expression) => expression,
+            Self::Bf16(_) => panic!("the fixture recognizes an f32 expression"),
+        }
+    }
+
+    /// The `bf16` expression a fixture asserted about, for the crate's own tests.
+    #[cfg(test)]
+    fn bf16(&self) -> &PointwiseBf16Expression {
+        match self {
+            Self::Bf16(expression) => expression,
+            Self::F32(_) => panic!("the fixture recognizes a bf16 expression"),
+        }
+    }
+}
+
+/// A verified N-input, one-output elementwise program.
 ///
 /// `input_keys` and `inputs` are parallel and in the program's declaration
 /// order, which is the order the expression's input ordinals index and the order
@@ -1375,15 +1435,17 @@ impl NormalizedSerialSum {
 /// and the output, so a single element count sizes the whole region.
 ///
 /// **`expression` is the recognized program, not a projection of it.** It is the
-/// general [`PointwiseF32Expression`] vocabulary rather than a fixed leaf count
-/// and association, so what the recognizer admits is bounded by what the
-/// physical expression can spell rather than by a shape it was taught.
+/// general per-point expression vocabulary rather than a fixed leaf count and
+/// association, so what the recognizer admits is bounded by what the physical
+/// expression can spell rather than by a shape it was taught. It also carries
+/// the arithmetic the program is stated in, because that is what decides which
+/// scheduled-region scalar program realizes it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedPointwise {
     pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
     pub(crate) shape: Shape,
-    pub(crate) expression: PointwiseF32Expression,
+    pub(crate) expression: RecognizedPointwise,
     pub(crate) members: Vec<SemanticStage>,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) output: ValueId,
@@ -2699,14 +2761,39 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
             // the recognizer now admits. A `v2` pointwise subject can never
             // be read as a `v3` one, and a `v3` one can never be read as a
             // `v4`.
-            push_slice(bytes, b"pointwise-f32.v4");
+            //
+            // **A `bf16` program takes its own sub-tag rather than stepping
+            // this one**, on the contraction, epilogue, and staged arms'
+            // argument: an `f32` pointwise subject still encodes to exactly
+            // the bytes it did, byte for byte, so no pinned request
+            // qualifier moves for a program this vocabulary could already
+            // express, and a reader that reaches `pointwise-bf16.v1` is
+            // reading a subject the earlier vocabulary could not state.
+            // The arithmetic is *in the tag* rather than beside it because
+            // the node run that follows is a different vocabulary — sixteen
+            // bit constants and four node kinds against thirty-two and seven
+            // — so the two runs are not two spellings of one encoding.
+            push_slice(
+                bytes,
+                match &normalized.expression {
+                    RecognizedPointwise::F32(_) => b"pointwise-f32.v4".as_slice(),
+                    RecognizedPointwise::Bf16(_) => b"pointwise-bf16.v1".as_slice(),
+                },
+            );
             push_len(bytes, normalized.input_keys.len());
             for key in &normalized.input_keys {
                 push_slice(bytes, key.as_str().as_bytes());
             }
             push_slice(bytes, normalized.output_key.as_str().as_bytes());
             encode_explain_shape(bytes, &normalized.shape);
-            encode_pointwise_expression(bytes, &normalized.expression);
+            match &normalized.expression {
+                RecognizedPointwise::F32(expression) => {
+                    encode_pointwise_expression(bytes, expression);
+                }
+                RecognizedPointwise::Bf16(expression) => {
+                    encode_pointwise_bf16_expression(bytes, expression);
+                }
+            }
             push_len(bytes, normalized.members.len());
             for atom in &normalized.members {
                 bytes.extend_from_slice(&atom.member().0.to_be_bytes());
@@ -2918,6 +3005,47 @@ fn encode_pointwise_expression(bytes: &mut Vec<u8>, expression: &PointwiseF32Exp
             PointwiseF32Node::Rsqrt { argument } => {
                 bytes.push(0x07);
                 bytes.extend_from_slice(&argument.index().to_be_bytes());
+            }
+        }
+    }
+    bytes.extend_from_slice(&expression.root().index().to_be_bytes());
+}
+
+/// Appends one recognized `bf16` elementwise expression's canonical encoding.
+///
+/// Structurally the same run [`encode_pointwise_expression`] writes and
+/// deliberately not the same function: the node vocabularies are different types
+/// with different payload widths, and a shared encoder would have to erase one of
+/// them to a common shape. The tags overlap by design — the two runs never share
+/// a byte string because the arm's own sub-tag separates them before either is
+/// read — and a `bf16` constant is written as its sixteen bits rather than
+/// widened, so two constants differing only above bit fifteen cannot exist to be
+/// confused.
+///
+/// Written as an exhaustive match for the reason its `f32` sibling is: a node
+/// added to the `bf16` vocabulary must stop the build here rather than encode
+/// under a neighbour's tag.
+fn encode_pointwise_bf16_expression(bytes: &mut Vec<u8>, expression: &PointwiseBf16Expression) {
+    push_len(bytes, expression.nodes().len());
+    for node in expression.nodes() {
+        match node {
+            tiler_ir::schedule::PointwiseBf16Node::Input { ordinal } => {
+                bytes.push(0x01);
+                bytes.extend_from_slice(&ordinal.get().to_be_bytes());
+            }
+            tiler_ir::schedule::PointwiseBf16Node::Constant { bits } => {
+                bytes.push(0x02);
+                bytes.extend_from_slice(&bits.to_be_bytes());
+            }
+            tiler_ir::schedule::PointwiseBf16Node::Add { lhs, rhs } => {
+                bytes.push(0x03);
+                bytes.extend_from_slice(&lhs.index().to_be_bytes());
+                bytes.extend_from_slice(&rhs.index().to_be_bytes());
+            }
+            tiler_ir::schedule::PointwiseBf16Node::Multiply { lhs, rhs } => {
+                bytes.push(0x04);
+                bytes.extend_from_slice(&lhs.index().to_be_bytes());
+                bytes.extend_from_slice(&rhs.index().to_be_bytes());
             }
         }
     }
@@ -3359,6 +3487,13 @@ fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputSubject {
 /// a declared refusal, an absent declaration, and a declaration that has not yet
 /// become available are not the same thing, and reporting the second or third as
 /// a rejection would assert knowledge the profile never supplied.
+///
+/// A stated contract about *another* arithmetic type produces no arm here at
+/// all, and deliberately: it was never asked of the target, because a contract's
+/// arithmetic is part of its identity and a target's rows are keyed by subject,
+/// so there is no declaration of this profile's that could answer for it.
+/// [`RequestError::NoApplicableNumericalContract`] is that refusal, and it is
+/// program-scoped rather than target-local for the same reason.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ContractRejection {
     /// The target declares it cannot honour a required behaviour.
@@ -3490,6 +3625,28 @@ pub(crate) enum RequestError {
         actual: usize,
         max: usize,
     },
+    /// No contract in the caller's stated order is about this program's
+    /// arithmetic type.
+    ///
+    /// **Program-scoped, and checked before any target is consulted**, for the
+    /// reason [`Self::UnrepresentableNumericalDimension`] is: it is a property of
+    /// the request rather than of a profile. A contract's arithmetic is part of
+    /// its identity (ADR 0076 item 6) and a target's honourability rows are keyed
+    /// by subject, so a `bf16` program stated under an `f32` contract is not a
+    /// question any profile can answer — the `f32` rows would answer honestly
+    /// about a width the program does not use, and the program would compile
+    /// under a meaning nobody stated for it.
+    ///
+    /// Distinct from [`Self::NoResolvableNumericalContract`], which reports that
+    /// the target *was* asked and declined. Nothing here proposes a substitute:
+    /// only the caller may state what its program means.
+    NoApplicableNumericalContract {
+        /// The arithmetic every value of the submitted program carries.
+        program: ArithmeticType,
+        /// Each stated contract's key and the arithmetic it resolves, in the
+        /// caller's own order.
+        stated: Vec<(&'static str, ArithmeticType)>,
+    },
     /// No contract in the caller's stated order resolves on this target.
     ///
     /// Every stated entry's first canonical failure is retained, in the caller's
@@ -3577,6 +3734,21 @@ impl fmt::Display for RequestError {
                 formatter,
                 "compile.request.numerics.too-many: {actual} contracts exceeds maximum {max}"
             ),
+            Self::NoApplicableNumericalContract { program, stated } => {
+                write!(
+                    formatter,
+                    "compile.request.numerics.inapplicable: no stated contract resolves {}",
+                    program.canonical_type_key()
+                )?;
+                for (key, arithmetic) in stated {
+                    write!(
+                        formatter,
+                        "; {key} resolves {}",
+                        arithmetic.canonical_type_key()
+                    )?;
+                }
+                Ok(())
+            }
             Self::NoResolvableNumericalContract {
                 target_profile,
                 rejections,
@@ -3705,6 +3877,41 @@ pub(crate) fn verify_request(
     // is deliberately *not* here — see the phase comment below.
     check_program_budgets(request.program, request.budgets)?;
     let dispatch_types = canonical_program_value_types(request.program);
+    // The arithmetic every stated contract is measured against, and `None` for a
+    // program whose value types this build states no contract vocabulary for.
+    //
+    // **`ok()` rather than `?`, and the discarded refusal is deliberate.** The
+    // recognizer reports the same finding under `dtype-recognized` in its own
+    // phase, *after* every target has answered, and hoisting it here would move
+    // a build limitation ahead of the target's own dtype-dispatch and
+    // honourability refusals — the exact ordering the phase split below exists to
+    // prevent. What is hoisted is only the *applicability* narrowing, which needs
+    // an arithmetic to compare against and simply does not apply without one.
+    let program_arithmetic = recognized_program_arithmetic(request.program).ok();
+    // Applicability before targets, for the reason representability is checked
+    // before them: a contract stated for another width is not a question this
+    // profile — or any profile — can answer, because a contract's arithmetic is
+    // part of its identity and a target's honourability rows are keyed by
+    // subject. Only the *complete* absence of an applicable entry refuses here;
+    // a preference naming this program's width alongside another's resolves
+    // against the applicable entries and reports their own causes.
+    if let Some(program) = program_arithmetic
+        && !request
+            .numerical_contracts
+            .stated()
+            .iter()
+            .any(|contract| contract.arithmetic == program)
+    {
+        return Err(RequestError::NoApplicableNumericalContract {
+            program,
+            stated: request
+                .numerical_contracts
+                .stated()
+                .iter()
+                .map(|contract| (contract.key, contract.arithmetic))
+                .collect(),
+        });
+    }
 
     // Resolve every structurally admitted target independently. A profile that
     // honours no stated contract is a target-local outcome, not a reason to
@@ -3718,11 +3925,13 @@ pub(crate) fn verify_request(
     // physical strategy this build happens to be able to spell. Recognition
     // answers a different question — what this build can *plan* — so asking it
     // first attributes a build limitation to a request whose stated meaning the
-    // target already cannot deliver. That is not hypothetical: a pure-`bf16`
-    // program was refused by the recognizer's `dtype-f32` rule before any target
-    // was consulted, so a profile's measured `bf16` subnormal row could never
-    // produce the refusal it exists to produce, and the missing answer read as a
-    // missing target fact rather than as a boundary in the wrong order.
+    // target already cannot deliver. That was not hypothetical: while the
+    // recognizer refused every non-`f32` program under one `dtype-f32` rule, a
+    // profile's measured `bf16` subnormal row could never produce the refusal it
+    // exists to produce, and the missing answer read as a missing target fact
+    // rather than as a boundary in the wrong order. The rule is gone and the
+    // order is what keeps its lesson: a width this build cannot *spell* is still
+    // reported after the target has answered for the width it cannot *dispatch*.
     //
     // Each of the three checks below keeps its former relative order, so nothing
     // about which refusal a rejected target reports has moved.
@@ -3733,7 +3942,11 @@ pub(crate) fn verify_request(
             let structural = require_compile_profile_dispatch(target, &dispatch_types)
                 .and_then(|()| require_elementary_accuracy(request.program, target));
             match structural {
-                Ok(()) => match resolve_numerical_contract(&request.numerical_contracts, target) {
+                Ok(()) => match resolve_numerical_contract(
+                    &request.numerical_contracts,
+                    target,
+                    program_arithmetic,
+                ) {
                     Ok(numerical_contract) => Ok(Ok(numerical_contract)),
                     Err(error @ RequestError::NoResolvableNumericalContract { .. }) => {
                         Ok(Err(error))
@@ -4089,9 +4302,19 @@ fn check_program_budgets(
 fn resolve_numerical_contract(
     preference: &NumericalContractPreference,
     target: &TargetProfile,
+    program_arithmetic: Option<ArithmeticType>,
 ) -> Result<StrictF32NumericalContract, RequestError> {
     let mut rejections = Vec::new();
     for contract in preference.stated() {
+        // A contract about another width is skipped rather than rejected,
+        // because it was never asked: `verify_request` has already refused a
+        // preference in which *every* entry is inapplicable, so reaching here
+        // means some applicable entry exists and this one simply is not it.
+        // Pushing a rejection would report a profile declining a question no
+        // profile was put.
+        if program_arithmetic.is_some_and(|program| contract.arithmetic != program) {
+            continue;
+        }
         let outcome = crate::physical::assess_contract(target, *contract).map_err(|_| {
             RequestError::UnsupportedCapability {
                 phase: "numerics",
@@ -4143,8 +4366,9 @@ fn resolve_numerical_contract(
 /// # What generalized, and what the generalization rests on
 ///
 /// This is **not** a match against whole-program templates. The program-wide
-/// properties every recognized program shares — at least one declared input,
-/// `f32` throughout — are checked once and each names its own rule, and the
+/// properties every recognized program shares — at least one declared input, and
+/// one recognized arithmetic type throughout — are checked once and each names
+/// its own rule, and the
 /// program's shape is then decided per declared output by *the occurrence that
 /// produces it*, walked outward through the occurrences that feed it. A program
 /// whose exact shape nothing here was taught is admitted when every occurrence
@@ -4313,13 +4537,78 @@ fn select_supported_strategy(
     if program.input_count() == 0 {
         return mismatch("input-arity");
     }
-    if program
-        .values()
-        .any(|value| value.resolved_type() != &F32::resolved_type())
-    {
-        return mismatch("dtype-f32");
+    let arithmetic = recognized_program_arithmetic(program)?;
+    recognize_program_outputs(program, laws, arithmetic)
+}
+
+/// The one arithmetic type every value of a recognizable program is stated in.
+///
+/// **This replaced a `dtype-f32` gate, and the two refusals it splits into are
+/// different findings.** The gate refused every program carrying a non-`f32`
+/// value, which conflated "this build states no per-point vocabulary for that
+/// width" with "this program mixes two widths and therefore has no single scalar
+/// program at all". Both still refuse, and each now names the property it found:
+///
+/// - `dtype-recognized` for a value whose resolved type is neither of the two
+///   widths [`RecognizedPointwise`] can spell. Every conversion family is in this
+///   arm, which is correct rather than incidental — a program that converts
+///   between widths has no *one* arithmetic and a region carrying one realization
+///   record cannot realize it.
+/// - `dtype-uniform` for a program whose values are two recognized widths at
+///   once. A scheduled region carries one [`ArithmeticType`] worth of numerical
+///   realization and one scalar-program vocabulary, so a mixed-width program is
+///   refused here rather than compiled under whichever width happened to be
+///   first.
+///
+/// **What it deliberately does not decide is whether the width can be
+/// dispatched or its contract honoured.** Those are the target profile's and the
+/// numerical contract's, they run before this function, and each reports its own
+/// typed refusal: [`require_compile_profile_dispatch`] for a width the profile
+/// names no dispatch fact for, [`resolve_numerical_contract`] for a contract no
+/// stated entry resolves, and
+/// [`RequestError::NoApplicableNumericalContract`] for a preference no entry of
+/// which is about this program's arithmetic at all.
+fn recognized_program_arithmetic(
+    program: &SemanticProgram,
+) -> Result<ArithmeticType, RequestError> {
+    let mut recognized: Option<ArithmeticType> = None;
+    for value in program.values() {
+        let Some(arithmetic) = recognized_arithmetic(value.resolved_type()) else {
+            return mismatch("dtype-recognized");
+        };
+        match recognized {
+            Some(seen) if seen != arithmetic => return mismatch("dtype-uniform"),
+            Some(_) => {}
+            None => recognized = Some(arithmetic),
+        }
     }
-    recognize_program_outputs(program, laws)
+    // Unreachable through the caller, which has already refused a program
+    // declaring no input, and refused by name rather than defaulted: a width
+    // nothing derived is not a width this build may compile under.
+    recognized.ok_or(RequestError::UnsupportedCapability {
+        phase: "strategy",
+        rule: "dtype-recognized",
+    })
+}
+
+/// The arithmetic type one resolved value type names, when this build states a
+/// per-point vocabulary for it.
+///
+/// **The single statement of which widths recognition admits.** Every authority
+/// that needs the set asks this rather than restating it —
+/// [`recognized_program_arithmetic`] derives a program's width from it, and
+/// [`crate::program::verify_semantic_output_type`] checks a declared output
+/// against it — because two lists would be free to disagree about which
+/// programs the compiler claims it can plan, and the disagreement's shape is a
+/// program admitted by one and refused by the other after a plan exists.
+pub(crate) fn recognized_arithmetic(resolved: &ResolvedValueType) -> Option<ArithmeticType> {
+    if resolved == &F32::resolved_type() {
+        Some(ArithmeticType::F32)
+    } else if resolved == &Bf16::resolved_type() {
+        Some(ArithmeticType::Bf16)
+    } else {
+        None
+    }
 }
 
 /// Recognizes every ordered named output of one verified program.
@@ -4347,13 +4636,14 @@ fn select_supported_strategy(
 fn recognize_program_outputs(
     program: &SemanticProgram,
     laws: &FrozenIndexRealizationLawRegistry,
+    arithmetic: ArithmeticType,
 ) -> Result<NormalizedProgram, RequestError> {
     if program.output_count() == 0 {
         return unsupported("strategy", "missing-output");
     }
     let mut outputs = Vec::with_capacity(program.output_count());
     for output in program.outputs() {
-        outputs.push(recognize_output(program, &output, laws)?);
+        outputs.push(recognize_output(program, &output, laws, arithmetic)?);
     }
     check_output_cover(program, &outputs)?;
     Ok(NormalizedProgram { outputs })
@@ -4364,6 +4654,7 @@ fn recognize_output(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
     laws: &FrozenIndexRealizationLawRegistry,
+    arithmetic: ArithmeticType,
 ) -> Result<NormalizedOutput, RequestError> {
     // An output that *is* a declared input computes nothing: it names no
     // operation for any region to realize. The property that was not recognized
@@ -4400,7 +4691,7 @@ fn recognize_output(
         )
         .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
     } else {
-        recognize_elementwise_output(program, output, laws)
+        recognize_elementwise_output(program, output, laws, arithmetic)
     }
 }
 
@@ -4429,6 +4720,7 @@ fn recognize_elementwise_output(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
     laws: &FrozenIndexRealizationLawRegistry,
+    arithmetic: ArithmeticType,
 ) -> Result<NormalizedOutput, RequestError> {
     let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
     let shape = program
@@ -4445,11 +4737,11 @@ fn recognize_elementwise_output(
         declared: &declared,
         staged: None,
     };
-    match plan_elementwise(program, output.value(), &leaves, &shape, laws) {
-        Ok(plan) => recognize_pointwise(program, output, &declared, shape, plan)
+    match plan_elementwise(program, output.value(), &leaves, &shape, laws, arithmetic) {
+        Ok(plan) => recognize_pointwise(program, output, &declared, shape, plan, arithmetic)
             .map(NormalizedOutput::Pointwise),
         Err(ElementwiseRefusal::Folded(staged)) => {
-            recognize_epilogue(program, output, &declared, shape, staged, laws)
+            recognize_epilogue(program, output, &declared, shape, staged, laws, arithmetic)
                 .map(|chain| NormalizedOutput::Epilogue(Box::new(chain)))
         }
         Err(ElementwiseRefusal::Refused(error)) => Err(error),
@@ -4635,7 +4927,7 @@ fn published_and_consumed_overlap(
 
 /// One recognized elementwise expression and the occurrences it covers.
 struct RecognizedElementwise {
-    expression: PointwiseF32Expression,
+    expression: RecognizedPointwise,
     members: Vec<SemanticStage>,
     /// One entry per expression input leaf, in access order.
     ///
@@ -4800,17 +5092,65 @@ impl ElementwiseFamily {
 }
 
 /// Classifies one operation as a recognized elementwise family, or declines.
+///
+/// **Keyed by the program's arithmetic rather than by trying both vocabularies.**
+/// A family's key already names its width, so the two lists are disjoint and a
+/// union would classify the same operations; keying on the arithmetic the caller
+/// derived is what keeps a `bf16` program from ever being offered an `f32`
+/// projection to fail on later. The exhaustive match is what makes a third
+/// admitted width a build error here rather than a program silently declining
+/// every family.
+///
+/// The `bf16` row is deliberately shorter. There is no `tiler::silu-bf16@1`
+/// registered to classify, and [`PointwiseBf16Node`] has no division or
+/// exponential for a projection to land in, so the activation is absent because
+/// the vocabulary cannot state it rather than because this list forgot it.
+///
+/// [`PointwiseBf16Node`]: tiler_ir::schedule::PointwiseBf16Node
 fn elementwise_family(
     operation: &tiler_ir::semantic::OperationRef<'_>,
+    arithmetic: ArithmeticType,
 ) -> Option<ElementwiseFamily> {
-    if operation.key() == &add_f32_op() {
-        Some(ElementwiseFamily::Add)
-    } else if operation.key() == &multiply_f32_op() {
-        Some(ElementwiseFamily::Multiply)
-    } else if operation.key() == &silu_f32_op() {
-        Some(ElementwiseFamily::Silu)
-    } else {
-        None
+    match arithmetic {
+        ArithmeticType::F32 => {
+            if operation.key() == &add_f32_op() {
+                Some(ElementwiseFamily::Add)
+            } else if operation.key() == &multiply_f32_op() {
+                Some(ElementwiseFamily::Multiply)
+            } else if operation.key() == &silu_f32_op() {
+                Some(ElementwiseFamily::Silu)
+            } else {
+                None
+            }
+        }
+        ArithmeticType::Bf16 => {
+            if operation.key() == &add_bf16_op() {
+                Some(ElementwiseFamily::Add)
+            } else if operation.key() == &multiply_bf16_op() {
+                Some(ElementwiseFamily::Multiply)
+            } else {
+                None
+            }
+        }
+        // No program of either width reaches this function:
+        // [`recognized_program_arithmetic`] refuses every value type that is not
+        // one of the two above under `dtype-recognized`. Declining is the
+        // fail-closed answer rather than a wildcard that would silently offer one
+        // width's families to another.
+        ArithmeticType::F16 | ArithmeticType::F64 => None,
+    }
+}
+
+/// The nullary constant family of one recognized arithmetic type.
+///
+/// `None` for a width this recognizer states no constant family for, which is
+/// the same fail-closed answer [`elementwise_family`] gives and for the same
+/// reason.
+fn constant_family(arithmetic: ArithmeticType) -> Option<OpKey> {
+    match arithmetic {
+        ArithmeticType::F32 => Some(constant_f32_op()),
+        ArithmeticType::Bf16 => Some(constant_bf16_op()),
+        ArithmeticType::F16 | ArithmeticType::F64 => None,
     }
 }
 
@@ -4852,6 +5192,7 @@ fn recognize_elementwise(
     declared: &[ValueId],
     shape: &Shape,
     laws: &FrozenIndexRealizationLawRegistry,
+    arithmetic: ArithmeticType,
 ) -> Result<RecognizedElementwise, RequestError> {
     let plan = plan_elementwise(
         program,
@@ -4862,9 +5203,10 @@ fn recognize_elementwise(
         },
         shape,
         laws,
+        arithmetic,
     )
     .map_err(RequestError::from)?;
-    resolve_elementwise(plan, declared)
+    resolve_elementwise(plan, declared, arithmetic)
 }
 
 /// Resolves one planned whole-program or prologue expression against the
@@ -4889,9 +5231,10 @@ fn recognize_elementwise(
 fn resolve_elementwise(
     plan: ElementwisePlan,
     declared: &[ValueId],
+    arithmetic: ArithmeticType,
 ) -> Result<RecognizedElementwise, RequestError> {
     let order = canonical_input_reads(&plan.leaves, declared)?;
-    let expression = mint_elementwise(&plan, &order)?;
+    let expression = mint_elementwise(&plan, &order, arithmetic)?;
     let reads = order
         .iter()
         .map(|leaf| Ok((declared_ordinal(declared, leaf.value)?, leaf.map.clone())))
@@ -5035,6 +5378,7 @@ fn plan_elementwise(
     leaves: &ElementwiseLeaves<'_>,
     shape: &Shape,
     laws: &FrozenIndexRealizationLawRegistry,
+    arithmetic: ArithmeticType,
 ) -> Result<ElementwisePlan, ElementwiseRefusal> {
     let mut steps: Vec<(ValueId, ElementwiseMint)> = Vec::new();
     let mut minted: Vec<ValueId> = Vec::new();
@@ -5063,8 +5407,9 @@ fn plan_elementwise(
         if operation.results().collect::<Vec<_>>() != [value] {
             return refused("elementwise-result-arity");
         }
-        if operation.key() == &constant_f32_op() {
-            let (bits, _) = constant_bits(program, value).map_err(ElementwiseRefusal::Refused)?;
+        if constant_family(arithmetic).is_some_and(|constant| operation.key() == &constant) {
+            let (bits, _) =
+                constant_bits(program, value, arithmetic).map_err(ElementwiseRefusal::Refused)?;
             members.push(SemanticStage::first(SemanticMemberId(member)));
             steps.push((value, ElementwiseMint::Constant(bits)));
             minted.push(value);
@@ -5089,7 +5434,7 @@ fn plan_elementwise(
             minted.push(value);
             continue;
         }
-        let Some(family) = elementwise_family(&operation) else {
+        let Some(family) = elementwise_family(&operation, arithmetic) else {
             // A folding family is the *boundary* between two regions rather than
             // an unrecognizable operation: no `PointwiseF32Node` spells a sum
             // over a contributor sequence, and none ever will, because the
@@ -5158,7 +5503,132 @@ fn plan_elementwise(
     })
 }
 
-/// Mints one planned elementwise expression under a stated leaf ordering.
+/// One per-point expression vocabulary a planned walk can be minted into.
+///
+/// **One walk, one mint loop, two vocabularies.** The plan
+/// [`plan_elementwise`] produces is arithmetic-neutral — it is a linearized run
+/// of reads, constants, and classified families — and the only thing that
+/// differs between the two widths is which builder the run is replayed against.
+/// Writing the replay twice would be two accounts of one numbering, free to
+/// disagree about which leaf serves which read, which is the drift a single
+/// authority exists to prevent.
+///
+/// The error is a rule name rather than a unit, because the two vocabularies
+/// refuse for different reasons and a shared `()` would report a node-count bound
+/// for a family the width has no node for at all.
+trait PointwiseMintSink {
+    /// The sink's handle to one minted per-point value.
+    type Value: Clone;
+    /// The verified expression this sink builds.
+    type Expression;
+
+    /// Mints a read of the expression input at one dense leaf ordinal.
+    fn input(&mut self, ordinal: InputOrdinal) -> Result<Self::Value, &'static str>;
+    /// Mints an exact constant leaf from its canonical bit pattern.
+    fn constant(&mut self, bits: u32) -> Result<Self::Value, &'static str>;
+    /// Mints one ordered addition.
+    fn add(&mut self, lhs: Self::Value, rhs: Self::Value) -> Result<Self::Value, &'static str>;
+    /// Mints one ordered multiplication.
+    fn multiply(&mut self, lhs: Self::Value, rhs: Self::Value)
+    -> Result<Self::Value, &'static str>;
+    /// Mints the sigmoid-weighted linear unit's projected body.
+    fn silu(&mut self, argument: &Self::Value) -> Result<Self::Value, &'static str>;
+    /// Builds the verified expression rooted at one minted value.
+    fn build(self, root: Self::Value) -> Result<Self::Expression, &'static str>;
+}
+
+/// The `f32` per-point vocabulary.
+struct F32Mint(PointwiseF32ExpressionBuilder);
+
+impl PointwiseMintSink for F32Mint {
+    type Value = PointwiseF32Value;
+    type Expression = PointwiseF32Expression;
+
+    fn input(&mut self, ordinal: InputOrdinal) -> Result<Self::Value, &'static str> {
+        self.0.input(ordinal).map_err(|_| "elementwise-node-limit")
+    }
+
+    fn constant(&mut self, bits: u32) -> Result<Self::Value, &'static str> {
+        self.0.constant(bits).map_err(|_| "elementwise-node-limit")
+    }
+
+    fn add(&mut self, lhs: Self::Value, rhs: Self::Value) -> Result<Self::Value, &'static str> {
+        self.0.add(lhs, rhs).map_err(|_| "elementwise-node-limit")
+    }
+
+    fn multiply(
+        &mut self,
+        lhs: Self::Value,
+        rhs: Self::Value,
+    ) -> Result<Self::Value, &'static str> {
+        self.0
+            .multiply(lhs, rhs)
+            .map_err(|_| "elementwise-node-limit")
+    }
+
+    // The composition is emitted by the shared authority rather than spelled
+    // here; see [`ElementwiseFamily::Silu`].
+    fn silu(&mut self, argument: &Self::Value) -> Result<Self::Value, &'static str> {
+        let mut sink = PointwiseExpressionSink::new(&mut self.0);
+        silu_point_body(&mut sink, argument).map_err(|_| "elementwise-node-limit")
+    }
+
+    fn build(self, root: Self::Value) -> Result<Self::Expression, &'static str> {
+        self.0.build(root).map_err(|_| "elementwise-expression")
+    }
+}
+
+/// The `bf16` per-point vocabulary.
+struct Bf16Mint(PointwiseBf16ExpressionBuilder);
+
+impl PointwiseMintSink for Bf16Mint {
+    type Value = PointwiseBf16Value;
+    type Expression = PointwiseBf16Expression;
+
+    fn input(&mut self, ordinal: InputOrdinal) -> Result<Self::Value, &'static str> {
+        self.0.input(ordinal).map_err(|_| "elementwise-node-limit")
+    }
+
+    /// The payload is narrowed rather than truncated.
+    ///
+    /// [`constant_bits`] reads a `bf16` constant's exactly two declared payload
+    /// bytes, so every value reaching here fits; a wider one is a mismatch
+    /// between the two and is refused by name instead of silently losing the
+    /// upper half of a pattern that would then be a different number.
+    fn constant(&mut self, bits: u32) -> Result<Self::Value, &'static str> {
+        let bits = u16::try_from(bits).map_err(|_| "constant-bits")?;
+        self.0.constant(bits).map_err(|_| "elementwise-node-limit")
+    }
+
+    fn add(&mut self, lhs: Self::Value, rhs: Self::Value) -> Result<Self::Value, &'static str> {
+        self.0.add(lhs, rhs).map_err(|_| "elementwise-node-limit")
+    }
+
+    fn multiply(
+        &mut self,
+        lhs: Self::Value,
+        rhs: Self::Value,
+    ) -> Result<Self::Value, &'static str> {
+        self.0
+            .multiply(lhs, rhs)
+            .map_err(|_| "elementwise-node-limit")
+    }
+
+    /// Unreachable, and refused by its own name rather than by a bound it did
+    /// not exceed: [`elementwise_family`] classifies no activation for this
+    /// width, because no `bf16` activation family is registered and the `bf16`
+    /// node vocabulary has neither the division nor the exponential its body
+    /// composes.
+    fn silu(&mut self, _argument: &Self::Value) -> Result<Self::Value, &'static str> {
+        Err("elementwise-family-arithmetic")
+    }
+
+    fn build(self, root: Self::Value) -> Result<Self::Expression, &'static str> {
+        self.0.build(root).map_err(|_| "elementwise-expression")
+    }
+}
+
+/// Replays one planned walk into one per-point vocabulary.
 ///
 /// `order` is the read list the region will bind, in access order: leaf `i` of
 /// the built expression is served by read `i`, which is the correspondence
@@ -5172,15 +5642,16 @@ fn plan_elementwise(
 /// a leaf the order does not name, `input-ordinal` for a position no expression
 /// ordinal can hold, `elementwise-operand` for an operand no earlier step of the
 /// plan minted, `elementwise-arity` for a family and operand count this
-/// projection has no node for, `elementwise-node-limit` for an expression
-/// exceeding [`tiler_ir::schedule::MAX_POINTWISE_F32_EXPRESSION_NODES`], and
-/// `elementwise-expression` for an assembled expression no region can bind.
-fn mint_elementwise(
+/// projection has no node for, and every rule the sink itself reports —
+/// `elementwise-node-limit` for an expression exceeding its vocabulary's node
+/// bound, `elementwise-expression` for an assembled expression no region can
+/// bind, and the sink's own refusal for a family its width cannot state.
+fn mint_into<S: PointwiseMintSink>(
     plan: &ElementwisePlan,
     order: &[LeafRead],
-) -> Result<PointwiseF32Expression, RequestError> {
-    let mut builder = PointwiseF32ExpressionBuilder::new();
-    let mut minted: Vec<(ValueId, PointwiseF32Value)> = Vec::new();
+    mut sink: S,
+) -> Result<S::Expression, RequestError> {
+    let mut minted: Vec<(ValueId, S::Value)> = Vec::new();
     for (value, mint) in &plan.steps {
         let node = match mint {
             ElementwiseMint::Read { leaf } => {
@@ -5195,48 +5666,84 @@ fn mint_elementwise(
                         phase: "strategy",
                         rule: "input-ordinal",
                     })?;
-                builder
-                    .input(InputOrdinal::new(ordinal))
-                    .map_err(|_| expression_bound())?
+                sink.input(InputOrdinal::new(ordinal))
             }
-            ElementwiseMint::Constant(bits) => {
-                builder.constant(*bits).map_err(|_| expression_bound())?
-            }
+            ElementwiseMint::Constant(bits) => sink.constant(*bits),
             ElementwiseMint::Node(family, operands) => {
-                let projected: Vec<PointwiseF32Value> = operands
+                let projected: Vec<S::Value> = operands
                     .iter()
                     .map(|operand| minted_value(&minted, *operand))
                     .collect::<Result<_, _>>()?;
                 match (family, projected.as_slice()) {
-                    (ElementwiseFamily::Add, [lhs, rhs]) => {
-                        builder.add(lhs.clone(), rhs.clone()).map_err(|_| ())
-                    }
+                    (ElementwiseFamily::Add, [lhs, rhs]) => sink.add(lhs.clone(), rhs.clone()),
                     (ElementwiseFamily::Multiply, [lhs, rhs]) => {
-                        builder.multiply(lhs.clone(), rhs.clone()).map_err(|_| ())
+                        sink.multiply(lhs.clone(), rhs.clone())
                     }
-                    // The composition is emitted by the shared authority rather
-                    // than spelled here; see [`ElementwiseFamily::Silu`].
-                    (ElementwiseFamily::Silu, [argument]) => {
-                        let mut sink = PointwiseExpressionSink::new(&mut builder);
-                        silu_point_body(&mut sink, argument).map_err(|_| ())
-                    }
+                    (ElementwiseFamily::Silu, [argument]) => sink.silu(argument),
                     // Unreachable through the planner's arity check, and refused
                     // rather than assumed away: an arity this projection has no
                     // case for is a vocabulary gap, not a node to invent.
                     _ => return mismatch("elementwise-arity"),
                 }
-                .map_err(|()| expression_bound())?
             }
-        };
+        }
+        .map_err(mismatch_rule)?;
         minted.push((*value, node));
     }
     let root = minted_value(&minted, plan.root)?;
-    builder
-        .build(root)
-        .map_err(|_| RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "elementwise-expression",
-        })
+    sink.build(root).map_err(mismatch_rule)
+}
+
+/// Mints one planned elementwise expression in the program's own arithmetic.
+///
+/// # Errors
+///
+/// Returns every rule [`mint_into`] reports, and `dtype-recognized` for an
+/// arithmetic type this recognizer states no per-point vocabulary for — the same
+/// rule [`recognized_program_arithmetic`] refuses that width under, because it is
+/// the same finding reached from the other end.
+fn mint_elementwise(
+    plan: &ElementwisePlan,
+    order: &[LeafRead],
+    arithmetic: ArithmeticType,
+) -> Result<RecognizedPointwise, RequestError> {
+    match arithmetic {
+        ArithmeticType::F32 => {
+            mint_into(plan, order, F32Mint(PointwiseF32ExpressionBuilder::new()))
+                .map(RecognizedPointwise::F32)
+        }
+        ArithmeticType::Bf16 => {
+            mint_into(plan, order, Bf16Mint(PointwiseBf16ExpressionBuilder::new()))
+                .map(RecognizedPointwise::Bf16)
+        }
+        ArithmeticType::F16 | ArithmeticType::F64 => mismatch("dtype-recognized"),
+    }
+}
+
+/// Mints one planned expression into the `f32` vocabulary specifically.
+///
+/// The fold's prologue and the elementwise epilogue call this rather than
+/// [`mint_elementwise`], because both shapes are reachable only for an `f32`
+/// program: each is entered from a folding family, and the three families that
+/// discover one — the strict serial sum, the strict tensor contraction, and any
+/// registered family whose realization law spans a region sequence — are `f32`
+/// throughout. Asking for the `f32` vocabulary directly is what keeps
+/// [`NormalizedSerialSum::prologue`] and [`NormalizedEpilogue::expression`] typed
+/// as the one vocabulary they can hold, instead of carrying a width neither
+/// shape can reach.
+fn mint_elementwise_f32(
+    plan: &ElementwisePlan,
+    order: &[LeafRead],
+) -> Result<PointwiseF32Expression, RequestError> {
+    mint_into(plan, order, F32Mint(PointwiseF32ExpressionBuilder::new()))
+}
+
+/// Wraps one sink's rule name in the recognizer's typed refusal.
+const fn mismatch_rule(rule: &'static str) -> RequestError {
+    RequestError::UnsupportedCapability {
+        phase: "strategy",
+        rule,
+    }
 }
 
 /// Recognizes one structural occurrence as a mapped read of a leaf tensor.
@@ -5587,10 +6094,11 @@ fn broadcast_axis_decodes(
 }
 
 /// Returns the expression node already minted for one recognized value.
-fn minted_value(
-    minted: &[(ValueId, PointwiseF32Value)],
-    value: ValueId,
-) -> Result<PointwiseF32Value, RequestError> {
+///
+/// Generic over the sink's handle rather than over one vocabulary's value type,
+/// because the lookup is by planned `ValueId` and says nothing about what the
+/// handle denotes; a second copy per width would be one rule stated twice.
+fn minted_value<V: Clone>(minted: &[(ValueId, V)], value: ValueId) -> Result<V, RequestError> {
     minted
         .iter()
         .find(|(seen, _)| *seen == value)
@@ -5601,20 +6109,7 @@ fn minted_value(
         })
 }
 
-/// The refusal for an expression that exceeds the physical vocabulary's bound.
-///
-/// Distinct from every structural rule above: the program is elementwise and
-/// well formed, and what it exceeds is
-/// [`tiler_ir::schedule::MAX_POINTWISE_F32_EXPRESSION_NODES`]. Reporting it as an
-/// unrecognized operation set would name the wrong property.
-const fn expression_bound() -> RequestError {
-    RequestError::UnsupportedCapability {
-        phase: "strategy",
-        rule: "elementwise-node-limit",
-    }
-}
-
-/// Recognizes a whole-program elementwise `f32` expression.
+/// Recognizes a whole-program elementwise expression.
 ///
 /// # Errors
 ///
@@ -5631,8 +6126,9 @@ fn recognize_pointwise(
     declared: &[ValueId],
     shape: Shape,
     plan: ElementwisePlan,
+    arithmetic: ArithmeticType,
 ) -> Result<NormalizedPointwise, RequestError> {
-    let recognized = resolve_elementwise(plan, declared)?;
+    let recognized = resolve_elementwise(plan, declared, arithmetic)?;
     let elements = element_count_u64(&shape, "input")?;
     Ok(NormalizedPointwise {
         input_keys: program.inputs().map(|input| input.key().clone()).collect(),
@@ -5676,12 +6172,13 @@ fn recognize_epilogue(
     shape: Shape,
     staged: ValueId,
     laws: &FrozenIndexRealizationLawRegistry,
+    arithmetic: ArithmeticType,
 ) -> Result<NormalizedEpilogue, RequestError> {
     let leaves = ElementwiseLeaves {
         declared,
         staged: Some(staged),
     };
-    let plan = plan_elementwise(program, output.value(), &leaves, &shape, laws)
+    let plan = plan_elementwise(program, output.value(), &leaves, &shape, laws, arithmetic)
         .map_err(RequestError::from)?;
     // The staged read, then whichever declared inputs the expression names. The
     // *declared* half is now the same rule `canonical_input_reads` states —
@@ -5708,7 +6205,7 @@ fn recognize_epilogue(
             );
         }
     }
-    let expression = mint_elementwise(&plan, &order)?;
+    let expression = mint_elementwise_f32(&plan, &order)?;
     let reads = order
         .iter()
         .map(|leaf| {
@@ -5942,19 +6439,41 @@ fn recognize_reduction(
         return mismatch("sum-shape");
     }
 
-    let recognized = recognize_elementwise(program, *contributor, &declared, &input_shape, laws)?;
+    // `f32` is the fold family's own, not the enclosing program's: the caller
+    // reached this function by matching `tiler::strict-serial-sum-f32@1`, so the
+    // contributor tensor and every occurrence feeding it are binary32 or the
+    // program is mixed-width and `recognized_program_arithmetic` already refused
+    // it. Stating the width at the call site is what lets
+    // [`NormalizedSerialSum::prologue`] stay typed as the one vocabulary a fold's
+    // prologue region can carry.
+    let RecognizedElementwise {
+        expression: recognized_expression,
+        members: recognized_members,
+        reads: recognized_reads,
+    } = recognize_elementwise(
+        program,
+        *contributor,
+        &declared,
+        &input_shape,
+        laws,
+        ArithmeticType::F32,
+    )?;
     // The walk claims an occurrence for every leaf and node it mints except one:
     // a declared input contributes the leaf that reads it and nothing else. So a
     // fold straight over a declared input arrives here with an empty member set
     // and a bare input leaf, and that leaf is the fold's own contributor read
     // rather than a prologue any region computes — which is why the condition
     // tested is the operand itself and not the emptiness that follows from it.
-    let prologue = (!declared.contains(contributor)).then_some(recognized.expression);
+    let prologue = if declared.contains(contributor) {
+        None
+    } else {
+        Some(recognized_expression.into_f32()?)
+    };
     // The read list belongs to the prologue *region*, so a fold that has no
     // prologue states none. The walk still returns the fold's own contributor
     // read, and recording it here would describe a region no cover places.
     let prologue_reads = if prologue.is_some() {
-        recognized.reads
+        recognized_reads
     } else {
         Vec::new()
     };
@@ -5986,7 +6505,7 @@ fn recognize_reduction(
     if contributor_input.is_some_and(|ordinal| ordinal != 0) {
         return mismatch("sum-contributor-ordinal");
     }
-    let members = RecognizedSerialSumMembers::new(recognized.members, sum_member);
+    let members = RecognizedSerialSumMembers::new(recognized_members, sum_member);
 
     let input_elements = element_count_u64(&input_shape, "input")?;
     let output_elements = element_count_u64(&output_shape, "output")?;
@@ -6255,29 +6774,68 @@ fn producer_for_value(
     Ok((ordinal, operation))
 }
 
-fn constant_bits(program: &SemanticProgram, value: ValueId) -> Result<(u32, u32), RequestError> {
-    let (ordinal, operation) = producer(program, value, &constant_f32_op())?;
+/// Reads one exact constant occurrence's declared payload, in its own width.
+///
+/// **The payload is returned in a `u32` for both widths, and that is a carrier
+/// rather than a widening.** The declared byte run is read at the exact length
+/// the family declares — four for binary32, two for `bf16` — and a run of any
+/// other length is refused rather than zero-extended, so a `bf16` payload that
+/// arrived four bytes wide is a malformed record here instead of a number whose
+/// upper half nobody stated. [`Bf16Mint::constant`] narrows back before minting.
+///
+/// The format key is checked against the *family's own* type key rather than
+/// against binary32's: a record naming one family and carrying another's format
+/// is a disagreement between its two halves, and admitting it would let a
+/// `bf16` occurrence carry a binary32 pattern into a region whose identity
+/// claims `bf16`.
+fn constant_bits(
+    program: &SemanticProgram,
+    value: ValueId,
+    arithmetic: ArithmeticType,
+) -> Result<(u32, u32), RequestError> {
+    let Some(family) = constant_family(arithmetic) else {
+        return mismatch("dtype-recognized");
+    };
+    let (ordinal, operation) = producer(program, value, &family)?;
     if operation.operands().len() != 0 || operation.results().len() != 1 {
         return mismatch("constant-signature");
     }
+    let (attribute, name) = match arithmetic {
+        ArithmeticType::F32 => (F32_CONSTANT_BITS_ATTRIBUTE, "f32"),
+        ArithmeticType::Bf16 => (BF16_CONSTANT_BITS_ATTRIBUTE, "bf16"),
+        // Unreachable through the family lookup above, and refused rather than
+        // defaulted to either row: a payload field guessed for a width this
+        // recognizer states no constant family for would read some other
+        // family's bytes.
+        ArithmeticType::F16 | ArithmeticType::F64 => return mismatch("dtype-recognized"),
+    };
     let Some(CanonicalValueView::FloatBits(bits)) = operation
         .attributes()
-        .get(F32_CONSTANT_BITS_ATTRIBUTE)
+        .get(attribute)
         .map(tiler_ir::semantic::CanonicalValue::view)
     else {
         return mismatch("constant-bits");
     };
-    let governed_f32 =
-        TypeKey::new("tiler", "f32", 1).map_err(|_| RequestError::UnsupportedCapability {
+    let governed =
+        TypeKey::new("tiler", name, 1).map_err(|_| RequestError::UnsupportedCapability {
             phase: "strategy",
-            rule: "governed-f32-key",
+            rule: "governed-constant-key",
         })?;
-    if bits.format() != &governed_f32 {
+    if bits.format() != &governed {
         return mismatch("constant-bits-format");
     }
-    <[u8; 4]>::try_from(bits.bits())
-        .map(|bytes| (u32::from_be_bytes(bytes), ordinal))
-        .map_err(|_| RequestError::UnsupportedCapability {
+    let packed = match arithmetic {
+        ArithmeticType::F32 => <[u8; 4]>::try_from(bits.bits())
+            .map(u32::from_be_bytes)
+            .ok(),
+        ArithmeticType::Bf16 => <[u8; 2]>::try_from(bits.bits())
+            .map(|bytes| u32::from(u16::from_be_bytes(bytes)))
+            .ok(),
+        ArithmeticType::F16 | ArithmeticType::F64 => None,
+    };
+    packed
+        .map(|packed| (packed, ordinal))
+        .ok_or(RequestError::UnsupportedCapability {
             phase: "strategy",
             rule: "constant-bits",
         })
@@ -6350,14 +6908,14 @@ mod tests {
     use super::*;
     use tiler_ir::schedule::FlushedZeroSign;
     use tiler_ir::semantic::{
-        CanonicalValue, CanonicalValueKind, F32Add, F32Constant, F32Multiply,
-        NormativeDefinitionRef, OperationArity, OperationAttributeSchema, OperationAttributes,
-        OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
-        OperationInferenceError, OperationInferencer, OperationSchema, ProviderDiagnosticCode,
-        ProviderIdentity, RegistryError, ResolvedValueType, SemanticProgramBuilder,
-        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
-        StrictSerialF32Sum, TypeDefinitionFacts, ValueFact, ValueTypeDefinition,
-        ValueTypeDefinitionKey,
+        Bf16Add, Bf16Constant, Bf16Multiply, CanonicalValue, CanonicalValueKind, F32Add,
+        F32Constant, F32Multiply, NormativeDefinitionRef, OperationArity, OperationAttributeSchema,
+        OperationAttributes, OperationConformance, OperationDefinition, OperationDefinitionFacts,
+        OperationEffect, OperationInferenceError, OperationInferencer, OperationSchema,
+        ProviderDiagnosticCode, ProviderIdentity, RegistryError, ResolvedValueType,
+        SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
+        SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, ValueFact,
+        ValueTypeDefinition, ValueTypeDefinitionKey,
     };
 
     fn diagnostic_code(value: &str) -> ProviderDiagnosticCode {
@@ -6995,7 +7553,11 @@ mod tests {
                 .all(|value| value.resolved_type() == &F32::resolved_type()),
             "the fixture is f32 throughout",
         );
-        strategy_rule(recognize_program_outputs(program, &laws_of(program)))
+        strategy_rule(recognize_program_outputs(
+            program,
+            &laws_of(program),
+            ArithmeticType::F32,
+        ))
     }
 
     /// Reduces one recognition outcome to the strategy rule it refused under.
@@ -7395,7 +7957,7 @@ mod tests {
                 InputKey::new("c").unwrap(),
             ],
         );
-        assert_eq!(recognized.expression.input_count(), 3);
+        assert_eq!(recognized.expression.f32().input_count(), 3);
         assert_eq!(recognized.members.len(), three.operation_count());
 
         // A four-deep chain: `((a * 2.0) + b) * ((a * 2.0) + b)`, whose shared
@@ -7421,10 +7983,10 @@ mod tests {
         else {
             panic!("an elementwise output recognizes as an elementwise program");
         };
-        assert_eq!(recognized.expression.input_count(), 2);
+        assert_eq!(recognized.expression.f32().input_count(), 2);
         assert_eq!(recognized.members.len(), deep.operation_count());
         assert_eq!(
-            recognized.expression.nodes().len(),
+            recognized.expression.f32().nodes().len(),
             6,
             "the shared `(a * 2.0) + b` is one node, not two",
         );
@@ -7446,8 +8008,150 @@ mod tests {
         else {
             panic!("an elementwise output recognizes as an elementwise program");
         };
-        assert_eq!(recognized.expression.input_count(), 1);
+        assert_eq!(recognized.expression.f32().input_count(), 1);
         assert_eq!(recognized.input_keys.len(), 1);
+    }
+
+    /// The recognizer admits a `bf16` program and mints its own vocabulary.
+    ///
+    /// **The wall this replaces refused every program carrying a non-`f32`
+    /// value under `dtype-f32`, before a subject was normalized**, so no
+    /// `NormalizedProgram` for one could exist and nothing downstream could be
+    /// asked about it. Recognition now derives the program's one arithmetic type
+    /// and walks it with the same authority the `f32` walk uses — the same
+    /// classification, the same shape checks, the same leaf ordering — and only
+    /// the minting differs.
+    ///
+    /// The expression is asserted whole rather than by node count alone: the
+    /// constant leaf carries the *sixteen* declared payload bits, which is the
+    /// one place a widened `f32` reading would show up as a number no `bf16`
+    /// program stated.
+    #[test]
+    fn a_bf16_program_is_recognized_in_its_own_expression_vocabulary() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        // `3.0` in bf16, whose sixteen bits are not the low half of any binary32
+        // pattern this walk could have read instead.
+        let scale = Bf16Constant::apply(&mut builder, 0x4040).unwrap();
+        let scaled = Bf16Multiply::apply(&mut builder, input, scale).unwrap();
+        let bias = Bf16Constant::apply(&mut builder, 0x8000).unwrap();
+        let root = Bf16Add::apply(&mut builder, scaled, bias).unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), root)
+            .unwrap();
+        let program = builder.build().unwrap();
+
+        let NormalizedOutput::Pointwise(recognized) =
+            recognize(&program).expect("a bf16 elementwise program is recognized")
+        else {
+            panic!("an elementwise output recognizes as an elementwise program");
+        };
+        let expression = recognized.expression.bf16();
+        assert_eq!(expression.input_count(), 1);
+        // The population, counted: every occurrence the program declares is
+        // claimed, so an assertion about the expression is an assertion about
+        // the whole program rather than about a prefix of it.
+        assert_eq!(recognized.members.len(), program.operation_count());
+        assert_eq!(
+            expression.nodes().len(),
+            5,
+            "one input leaf, two constants, the multiply, and the add",
+        );
+        let constants: Vec<u16> = expression
+            .nodes()
+            .iter()
+            .filter_map(|node| match node {
+                tiler_ir::schedule::PointwiseBf16Node::Constant { bits } => Some(*bits),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            constants,
+            [0x4040, 0x8000],
+            "the constants are the declared bf16 payloads, not a widened reading",
+        );
+        assert_eq!(
+            recognized.reads,
+            vec![(0, LogicalAccess::LinearIdentity)],
+            "one dense read of the one declared input",
+        );
+    }
+
+    /// The two refusals the `dtype-f32` rule split into name different findings.
+    ///
+    /// **`dtype-recognized` and `dtype-uniform` are not one rule renamed.** The
+    /// first says this build states no per-point vocabulary for a width the
+    /// program uses; the second says the program uses two widths at once, which
+    /// no single scheduled region can carry however well each width is
+    /// supported. Each is exercised by a program that fails only it, and the
+    /// admitted neighbours above are what keep the pair from passing for a
+    /// recognizer that refused everything.
+    #[test]
+    fn a_mixed_width_program_and_an_unspelled_width_refuse_by_different_names() {
+        // Two recognized widths in one program: the quantized carrier is `bf16`
+        // and its declared sibling is `f32`, so no one arithmetic governs it.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let narrow = builder
+            .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let wide = builder
+            .input::<F32>(InputKey::new("y").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let narrow_sum = Bf16Add::apply(&mut builder, narrow, narrow).unwrap();
+        let wide_sum = F32Add::apply(&mut builder, wide, wide).unwrap();
+        builder
+            .output(OutputKey::new("narrow").unwrap(), narrow_sum)
+            .unwrap();
+        builder
+            .output(OutputKey::new("wide").unwrap(), wide_sum)
+            .unwrap();
+        let mixed = builder.build().unwrap();
+        assert_eq!(
+            recognize(&mixed),
+            Err("dtype-uniform"),
+            "a program of two widths has no single scalar program",
+        );
+
+        // One width this build spells no per-point body in: the strict-affine
+        // encoded carrier, a registered value type that names no arithmetic type
+        // at all.
+        let published = |program: &SemanticProgram| recognize(program);
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let codes = builder
+            .input::<tiler_ir::semantic::StrictAffineU4>(
+                InputKey::new("codes").unwrap(),
+                Shape::from_dims([2, 3]),
+            )
+            .unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), codes)
+            .unwrap();
+        let encoded = builder.build().unwrap();
+        assert_eq!(
+            published(&encoded),
+            Err("dtype-recognized"),
+            "a value type this build states no per-point vocabulary for is named as such",
+        );
+
+        // The neighbour that attributes that refusal to the *width* rather than
+        // to the shape: the same program in a recognized width publishes a
+        // declared input, which is refused one rule later under `operation-set`.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let value = builder
+            .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), value)
+            .unwrap();
+        let published_input = builder.build().unwrap();
+        assert_eq!(
+            published(&published_input),
+            Err("operation-set"),
+            "the shape alone refuses under its own rule, so the width is what the U4 program \
+             was refused for",
+        );
     }
 
     /// Every refusal names the exact property that was not recognized.
@@ -7639,7 +8343,7 @@ mod tests {
                 ),
             ],
         );
-        assert_eq!(recognized.expression.input_count(), 2);
+        assert_eq!(recognized.expression.f32().input_count(), 2);
         assert_eq!(
             recognize(&mixed(false)).unwrap_err(),
             "structural-access-conflict",
@@ -7706,8 +8410,8 @@ mod tests {
             recognized.members,
             vec![SemanticStage::first(SemanticMemberId(0))]
         );
-        assert_eq!(recognized.expression.input_count(), 1);
-        assert_eq!(recognized.expression.nodes().len(), 7);
+        assert_eq!(recognized.expression.f32().input_count(), 1);
+        assert_eq!(recognized.expression.f32().nodes().len(), 7);
 
         // A contraction with a reachable elementwise epilogue is a *chain*, not
         // a refusal, and the bare contraction beside it is what makes the
@@ -8132,11 +8836,11 @@ mod tests {
                     (expected, LogicalAccess::LinearIdentity),
                 ],
             );
-            assert_eq!(product.expression.input_count(), 2);
+            assert_eq!(product.expression.f32().input_count(), 2);
             // The other output reads the remaining input at one leaf, twice.
             let other = if outer { 1 } else { 2 };
             assert_eq!(doubled.reads, vec![(other, LogicalAccess::LinearIdentity)]);
-            assert_eq!(doubled.expression.input_count(), 1);
+            assert_eq!(doubled.expression.f32().input_count(), 1);
         }
     }
 
@@ -8942,6 +9646,9 @@ mod tests {
             // A profile that declares nothing at all: every dimension of every
             // entry is undeclared, so nothing may be admitted.
             &TargetProfile::governed_without_numerical_declarations(),
+            // The fixture program is `f32`, which both stated entries resolve,
+            // so applicability narrows nothing and every entry is asked.
+            Some(ArithmeticType::F32),
         )
         .unwrap_err();
         let RequestError::NoResolvableNumericalContract {

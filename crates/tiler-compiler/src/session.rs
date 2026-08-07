@@ -1318,6 +1318,9 @@ const fn rule_of(error: &RequestError) -> &'static str {
         RequestError::UnrepresentableNumericalDimension { .. } => {
             "compile.request.numerics.unrepresentable"
         }
+        RequestError::NoApplicableNumericalContract { .. } => {
+            "compile.request.numerics.inapplicable"
+        }
         RequestError::BudgetExceeded { resource, .. } => resource,
         RequestError::UnsupportedCapability { rule, .. } => rule,
         // The refusing authority's own stable code, so the two findings it
@@ -1714,14 +1717,23 @@ impl NumericalContractBuilder {
     /// require their behaviour of different arithmetic and a target declares the
     /// two independently.
     ///
-    /// **Statable is not planned.** The semantic registry admits
+    /// **Statable, and now planned for one shape.** The semantic registry admits
     /// `tiler::constant-bf16@1`, `tiler::multiply-bf16@1`, and
-    /// `tiler::add-bf16@1`, and a profile can declare measured `bf16`
-    /// honourability, so a `bf16` contract can be stated and assessed against a
-    /// target. Nothing below the request boundary realizes `bf16`: a program in
-    /// it is refused by the recognizer's `dtype-f32` rule after the contract has
-    /// been assessed, which is why a positive answer here reports feasibility
-    /// rather than support.
+    /// `tiler::add-bf16@1`; a profile can declare measured `bf16`
+    /// honourability; and each of the three families now carries a governed
+    /// index-access lowering, so a `bf16` program whose profile dispatches the
+    /// dtype and whose contract that profile honours is recognized, planned, and
+    /// selected. A positive answer here therefore reports feasibility *and*, for
+    /// a program of one occurrence, reachable support.
+    ///
+    /// **It is still not general support.** A `bf16` region covering several
+    /// occurrences meets `fusion_legality`, whose capability table is keyed by
+    /// the `f32` operation set, and every cover placing it is ruled out —
+    /// `crates/tiler-compiler/tests/bf16_numerical_contract.rs`'s
+    /// `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` is
+    /// where that boundary is asserted, and
+    /// [`establish-bf16-optimizer-legality`](../../../tickets/establish-bf16-optimizer-legality.md)
+    /// owns it.
     #[must_use]
     pub const fn strict_bf16() -> Self {
         Self::strict(
@@ -2278,6 +2290,13 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
             | RequestError::DuplicateNumericalContract
             | RequestError::TooManyNumericalContracts { .. }
             | RequestError::UnrepresentableNumericalDimension { .. }
+            // No structured refusal, and for the reason the unrepresentable
+            // dimension has none: no target was consulted, so there is no
+            // target-local answer to carry. It reaches a caller as
+            // [`CompileFailureClass::InvalidRequest`] under
+            // `compile.request.numerics.inapplicable`, and the `Display` names
+            // the program's arithmetic beside every stated contract's.
+            | RequestError::NoApplicableNumericalContract { .. }
             | RequestError::BudgetExceeded { .. }
             | RequestError::UnsupportedCapability { .. }
             // Reaches a caller as [`CompileFailureClass::UnsupportedCapability`]
