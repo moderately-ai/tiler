@@ -535,7 +535,7 @@ fn occurrence_signature(
 /// (`tiler_ir::semantic::types`) admits ASCII *alphanumeric* — uppercase
 /// included — and 255 bytes per component. `tiler_artifact::program`'s governed
 /// keys admit ASCII lowercase within 256 bytes total. So a legal `OpKey` such
-/// as `Acme::MyOp`, registered through the public `register_scalar_lowering`,
+/// as `Acme::MyOp`, registered through the public `register_index_access`,
 /// composes a capability key that `CapabilityKey::new` refuses at packaging
 /// time, and two long components compose one past the byte bound. This function
 /// is infallible and cannot report either, so the refusal lands at the

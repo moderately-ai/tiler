@@ -4,20 +4,23 @@
 //! that ADR 0044 and the operation-extension contract defer past the semantic
 //! authority. It composes the frozen semantic and scalar authorities from
 //! `tiler-ir` and binds one or more *lowering* providers to each semantic
-//! operation occurrence for two capability families:
+//! operation occurrence, for the one capability family the compiler registers
+//! and resolves: [`LoweringFamily::IndexAccess`] providers emit the iteration
+//! domain, tensor accesses, and output roots of one occurrence.
 //!
-//! - [`LoweringFamily::IndexAccess`] providers emit the iteration domain,
-//!   tensor accesses, and output roots of one occurrence; and
-//! - [`LoweringFamily::ScalarLowering`] providers emit the per-point scalar
-//!   computation of one occurrence.
+//! [`LoweringFamily`] stays a `#[non_exhaustive]` enum, and the stored provider
+//! handle stays family-typed, rather than either collapsing to that one family.
+//! The family is a durable component of the governed capability key, so
+//! [`LoweringFamily::key_token`] has to survive, and a second family would want
+//! both shapes back; ADR 0105 decision 4 reserves either collapse to Tom.
 //!
 //! A provider only ever receives a narrow checked context
-//! ([`IndexAccessLoweringContext`] or [`ScalarLoweringContext`]) that delegates
-//! to the canonical `tiler-ir` builders. It cannot construct provider-owned IR,
-//! carry an opaque payload, downcast the host context, or finalize the region;
-//! the host owns verification. This mirrors the reference-capability registry
-//! merged in `tiler-reference` rather than the semantic registry's provider
-//! transaction surface.
+//! ([`IndexAccessLoweringContext`]) that delegates to the canonical `tiler-ir`
+//! builders. It cannot construct provider-owned IR, carry an opaque payload,
+//! downcast the host context, or finalize the region; the host owns
+//! verification. This mirrors the reference-capability registry merged in
+//! `tiler-reference` rather than the semantic registry's provider transaction
+//! surface.
 //!
 //! Scope boundary: this registry *resolves available lowering knowledge* with
 //! deterministic collision, ambiguity, and missing diagnostics plus canonical
@@ -73,8 +76,6 @@ const MAX_LOWERING_REGISTRY_IDENTITY_BYTES: usize = 32 * 1024 * 1024;
 pub enum LoweringFamily {
     /// Emits the iteration domain, tensor accesses, and output roots.
     IndexAccess,
-    /// Emits the per-point scalar computation.
-    ScalarLowering,
 }
 
 impl LoweringFamily {
@@ -88,15 +89,19 @@ impl LoweringFamily {
     pub const fn key_token(self) -> &'static str {
         match self {
             Self::IndexAccess => "index-access",
-            Self::ScalarLowering => "scalar",
         }
     }
 
     /// Returns the stable discriminant shared by ordering and encoding.
+    ///
+    /// `encode_capability_key` writes this byte, so a tag is durable identity
+    /// and is assigned once rather than derived from the current variant list.
+    /// Index access is `1` and stays `1` — that is what made retiring the second
+    /// family identity-preserving — and renumbering it would silently change the
+    /// canonical identity of every frozen registry.
     const fn tag(self) -> u8 {
         match self {
             Self::IndexAccess => 1,
-            Self::ScalarLowering => 2,
         }
     }
 }
@@ -105,7 +110,6 @@ impl fmt::Display for LoweringFamily {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::IndexAccess => "index-access lowering",
-            Self::ScalarLowering => "scalar lowering",
         })
     }
 }
@@ -265,17 +269,21 @@ impl LoweringCapabilityAuthority {
 }
 
 /// One family-typed provider implementation.
+///
+/// Single-variant while the crate has one lowering family. It stays an enum
+/// rather than becoming a bare `Arc<dyn IndexAccessLoweringProvider>` because
+/// the variant is what makes [`Self::family`] a derivation from the stored
+/// handle instead of a constant a registration site could get wrong; ADR 0105
+/// decision 4 reserves the collapse.
 #[derive(Clone)]
 enum LoweringImplementation {
     IndexAccess(Arc<dyn IndexAccessLoweringProvider>),
-    ScalarLowering(Arc<dyn ScalarLoweringProvider>),
 }
 
 impl LoweringImplementation {
     const fn family(&self) -> LoweringFamily {
         match self {
             Self::IndexAccess(_) => LoweringFamily::IndexAccess,
-            Self::ScalarLowering(_) => LoweringFamily::ScalarLowering,
         }
     }
 }
@@ -285,25 +293,6 @@ struct RegisteredLoweringCapability {
     revision: LoweringCapabilityRevision,
     authority: LoweringCapabilityAuthority,
     implementation: LoweringImplementation,
-}
-
-/// A statically linked provider that emits the per-point scalar computation of
-/// one semantic operation occurrence.
-///
-/// The provider is trusted, deterministic, and side-effect-free: it may only
-/// depend on its explicit context. Its sole output channel is the canonical
-/// scalar builder wrapped by [`ScalarLoweringContext`].
-pub trait ScalarLoweringProvider: Send + Sync + 'static {
-    /// Emits ordered scalar result values through the canonical builder.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LoweringEmitError`] when the canonical builder rejects an
-    /// emission or the declared result arity is not satisfied.
-    fn lower(
-        &self,
-        context: &mut ScalarLoweringContext<'_>,
-    ) -> Result<ScalarLoweringResults, LoweringEmitError>;
 }
 
 /// A statically linked provider that emits the iteration domain, tensor
@@ -596,36 +585,6 @@ impl<'a> IndexAccessSequenceContext<'a> {
     }
 }
 
-/// Ordered scalar result values one scalar-lowering provider produced.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScalarLoweringResults(Vec<ScalarValueId>);
-
-impl ScalarLoweringResults {
-    /// Wraps ordered emitted scalar result values.
-    #[must_use]
-    pub fn new(values: Vec<ScalarValueId>) -> Self {
-        Self(values)
-    }
-
-    /// Returns the ordered scalar result values.
-    #[must_use]
-    pub fn values(&self) -> &[ScalarValueId] {
-        &self.0
-    }
-
-    /// Returns the number of emitted results.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns whether no result was emitted.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
 /// A typed emission failure surfaced to a lowering provider.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -688,91 +647,6 @@ impl From<IndexBuildError> for LoweringEmitError {
 impl From<SymbolicExtentError> for LoweringEmitError {
     fn from(source: SymbolicExtentError) -> Self {
         Self::Extent(source)
-    }
-}
-
-/// A narrow checked context for one scalar-lowering provider.
-///
-/// The context delegates to the canonical [`IndexRegionBuilder`] and exposes
-/// only pointwise scalar emission over the occurrence's checked operand values.
-/// It never exposes the raw builder, region finalization, or a way to construct
-/// provider-owned IR.
-pub struct ScalarLoweringContext<'a> {
-    builder: &'a mut IndexRegionBuilder,
-    operands: &'a [ScalarValueId],
-    attributes: &'a ScalarAttributes,
-    signature: &'a LoweringSignature,
-}
-
-impl<'a> ScalarLoweringContext<'a> {
-    /// Binds a host-owned scalar-lowering context over a canonical builder.
-    ///
-    /// The `operands` are the checked scalar values that lower the occurrence's
-    /// semantic operands; `attributes` are its host-canonical attributes.
-    #[must_use]
-    pub fn new(
-        builder: &'a mut IndexRegionBuilder,
-        operands: &'a [ScalarValueId],
-        attributes: &'a ScalarAttributes,
-        signature: &'a LoweringSignature,
-    ) -> Self {
-        Self {
-            builder,
-            operands,
-            attributes,
-            signature,
-        }
-    }
-
-    /// Returns the checked operand scalar values.
-    #[must_use]
-    pub fn operands(&self) -> &[ScalarValueId] {
-        self.operands
-    }
-
-    /// Returns the occurrence's host-canonical attributes.
-    #[must_use]
-    pub fn attributes(&self) -> &ScalarAttributes {
-        self.attributes
-    }
-
-    /// Returns the occurrence's exact resolved signature.
-    #[must_use]
-    pub fn signature(&self) -> &LoweringSignature {
-        self.signature
-    }
-
-    /// Applies one registered scalar operation through the canonical builder.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LoweringEmitError`] when the canonical builder rejects the
-    /// application.
-    pub fn apply(
-        &mut self,
-        key: ScalarOpKey,
-        attributes: ScalarAttributes,
-        operands: &[ScalarValueId],
-    ) -> Result<ScalarResults, LoweringEmitError> {
-        Ok(self.builder.apply(key, attributes, operands)?)
-    }
-
-    /// Applies one scalar operation in an additional evaluation scope.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LoweringEmitError`] when the canonical builder rejects the
-    /// application.
-    pub fn apply_in(
-        &mut self,
-        dimensions: &[DimensionId],
-        key: ScalarOpKey,
-        attributes: ScalarAttributes,
-        operands: &[ScalarValueId],
-    ) -> Result<ScalarResults, LoweringEmitError> {
-        Ok(self
-            .builder
-            .apply_in(dimensions, key, attributes, operands)?)
     }
 }
 
@@ -1092,36 +966,6 @@ impl LoweringCapabilityRegistryBuilder {
         })
     }
 
-    /// Registers one scalar-lowering capability.
-    ///
-    /// `emitted_scalar_operations` declares the scalar operations the provider
-    /// will emit; they become the capability's reached scalar authority and are
-    /// validated against the composed scalar registry.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LoweringRegistryError`] for a duplicate capability, an operation
-    /// or signature type without semantic authority, an emitted scalar operation
-    /// without scalar authority, or an exceeded resource bound.
-    pub fn register_scalar_lowering(
-        &mut self,
-        provider: ProviderIdentity,
-        operation: OpKey,
-        signature: LoweringSignature,
-        emitted_scalar_operations: &[ScalarOpKey],
-        revision: LoweringCapabilityRevision,
-        implementation: Arc<dyn ScalarLoweringProvider>,
-    ) -> Result<(), LoweringRegistryError> {
-        self.register(
-            provider,
-            operation,
-            signature,
-            emitted_scalar_operations,
-            revision,
-            LoweringImplementation::ScalarLowering(implementation),
-        )
-    }
-
     /// Registers one index/access-lowering capability.
     ///
     /// `emitted_scalar_operations` declares the scalar operations the provider
@@ -1362,25 +1206,6 @@ impl FrozenLoweringCapabilityRegistry {
         providers
     }
 
-    /// Resolves the scalar-lowering capability for one exact occurrence.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LoweringResolveError::MissingCapability`] when no capability
-    /// applies, or [`LoweringResolveError::AmbiguousCapability`] when more than
-    /// one provider claims the occurrence.
-    pub fn resolve_scalar_lowering(
-        &self,
-        operation: &OpKey,
-        signature: &LoweringSignature,
-    ) -> Result<ResolvedLoweringCapability, LoweringResolveError> {
-        self.resolve(LoweringSelector {
-            family: LoweringFamily::ScalarLowering,
-            operation,
-            signature,
-        })
-    }
-
     /// Resolves the index/access-lowering capability for one exact occurrence.
     ///
     /// # Errors
@@ -1506,22 +1331,16 @@ impl ResolvedLoweringCapability {
         &self.authority
     }
 
-    /// Returns the scalar-lowering provider, when this is a scalar capability.
-    #[must_use]
-    pub fn scalar_provider(&self) -> Option<&dyn ScalarLoweringProvider> {
-        match &self.implementation {
-            LoweringImplementation::ScalarLowering(provider) => Some(provider.as_ref()),
-            LoweringImplementation::IndexAccess(_) => None,
-        }
-    }
-
     /// Returns the index/access-lowering provider, when this is such a capability.
+    ///
+    /// `Option` while one family exists, because the answer is a *family*
+    /// question rather than a nullability one: the discriminant this destructures
+    /// is what the answer is derived from, and a second family would make `None`
+    /// reachable again without moving this signature.
     #[must_use]
     pub fn index_access_provider(&self) -> Option<&dyn IndexAccessLoweringProvider> {
-        match &self.implementation {
-            LoweringImplementation::IndexAccess(provider) => Some(provider.as_ref()),
-            LoweringImplementation::ScalarLowering(_) => None,
-        }
+        let LoweringImplementation::IndexAccess(provider) = &self.implementation;
+        Some(provider.as_ref())
     }
 }
 
@@ -1919,7 +1738,7 @@ mod tests {
         ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
         ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
         ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-        ScalarRegistryBuilder, ScalarResults, ScalarValueId, TensorRole, VerifiedIndexRegion,
+        ScalarRegistryBuilder, ScalarResults, ScalarValueId, VerifiedIndexRegion,
     };
     use tiler_ir::semantic::{
         AttributeFieldId, CanonicalValue, CanonicalValueKind, F32, FrozenSemanticRegistry,
@@ -1932,7 +1751,6 @@ mod tests {
         FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
         LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
         LoweringFamily, LoweringRegistryError, LoweringResolveError, LoweringSignature,
-        ScalarLoweringContext, ScalarLoweringProvider, ScalarLoweringResults,
     };
 
     const CONSTANT_BITS: AttributeFieldId = AttributeFieldId::new(1);
@@ -2064,20 +1882,6 @@ mod tests {
         LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry()).unwrap()
     }
 
-    /// Emits `mul(a, b)` for the two checked operand values.
-    struct ScalarMultiplyLowering;
-    impl ScalarLoweringProvider for ScalarMultiplyLowering {
-        fn lower(
-            &self,
-            context: &mut ScalarLoweringContext<'_>,
-        ) -> Result<ScalarLoweringResults, LoweringEmitError> {
-            let operands = context.operands().to_vec();
-            let product =
-                context.apply(scalar_key("multiply"), ScalarAttributes::empty(), &operands)?;
-            Ok(ScalarLoweringResults::new(product.iter().collect()))
-        }
-    }
-
     /// Emits `out[i] = mul(in[i], in[i])` over the occurrence's own extent.
     ///
     /// The provider reads the length from the occurrence facts rather than a
@@ -2135,21 +1939,7 @@ mod tests {
             .expect("the multiply contract produces exactly one result")
     }
 
-    fn register_both(
-        builder: &mut LoweringCapabilityRegistryBuilder,
-        scalar_provider: &str,
-        index_provider: &str,
-    ) {
-        builder
-            .register_scalar_lowering(
-                provider(scalar_provider, 1),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(ScalarMultiplyLowering),
-            )
-            .unwrap();
+    fn register_square(builder: &mut LoweringCapabilityRegistryBuilder, index_provider: &str) {
         builder
             .register_index_access(
                 provider(index_provider, 1),
@@ -2163,19 +1953,11 @@ mod tests {
     }
 
     #[test]
-    fn registers_two_families_and_resolves_each_to_its_provider() {
+    fn registers_a_family_and_resolves_it_to_its_provider() {
         let mut builder = empty_builder();
-        register_both(&mut builder, "scalar-lowering", "index-access-lowering");
+        register_square(&mut builder, "index-access-lowering");
         let frozen = builder.freeze();
-        assert_eq!(frozen.capability_count(), 2);
-
-        let scalar = frozen
-            .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
-            .unwrap();
-        assert_eq!(scalar.family(), LoweringFamily::ScalarLowering);
-        assert_eq!(scalar.provider(), &provider("scalar-lowering", 1));
-        assert!(scalar.scalar_provider().is_some());
-        assert!(scalar.index_access_provider().is_none());
+        assert_eq!(frozen.capability_count(), 1);
 
         let index = frozen
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
@@ -2183,83 +1965,42 @@ mod tests {
         assert_eq!(index.family(), LoweringFamily::IndexAccess);
         assert_eq!(index.provider(), &provider("index-access-lowering", 1));
         assert!(index.index_access_provider().is_some());
-        assert!(index.scalar_provider().is_none());
     }
 
+    /// Two capabilities are needed for the order to be observable at all, and
+    /// with one family they are two *providers* of it: the registry is keyed by
+    /// the whole four-tuple, so distinct providers is what makes the two
+    /// registration orders distinct populations rather than one repeated insert.
     #[test]
     fn snapshot_identity_is_independent_of_registration_order() {
         let mut first = empty_builder();
-        first
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(ScalarMultiplyLowering),
-            )
-            .unwrap();
-        first
-            .register_index_access(
-                provider("index-access-lowering", 1),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(PointwiseSquareLowering),
-            )
-            .unwrap();
+        register_square(&mut first, "aardvark");
+        register_square(&mut first, "zebra");
 
         let mut second = empty_builder();
         // Reverse registration order.
-        second
-            .register_index_access(
-                provider("index-access-lowering", 1),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(PointwiseSquareLowering),
-            )
-            .unwrap();
-        second
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(ScalarMultiplyLowering),
-            )
-            .unwrap();
+        register_square(&mut second, "zebra");
+        register_square(&mut second, "aardvark");
 
-        assert_eq!(
-            first.freeze().canonical_identity(),
-            second.freeze().canonical_identity()
-        );
+        let first = first.freeze();
+        let second = second.freeze();
+        assert_eq!(first.capability_count(), 2);
+        assert_eq!(second.capability_count(), 2);
+        assert_eq!(first.canonical_identity(), second.canonical_identity());
     }
 
     #[test]
     fn duplicate_registration_of_one_provider_is_a_collision() {
         let mut builder = empty_builder();
-        builder
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(ScalarMultiplyLowering),
-            )
-            .unwrap();
+        register_square(&mut builder, "index-access-lowering");
         let error = builder
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
+            .register_index_access(
+                provider("index-access-lowering", 1),
                 multiply_f32_op(),
                 binary_signature(),
                 &[scalar_key("multiply")],
                 revision(),
-                Arc::new(ScalarMultiplyLowering),
+                Arc::new(PointwiseSquareLowering),
             )
             .unwrap_err();
         assert!(matches!(
@@ -2288,13 +2029,13 @@ mod tests {
     fn one_operation_admits_more_than_one_registrable_signature() {
         let mut builder = empty_builder();
         builder
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
+            .register_index_access(
+                provider("index-access-lowering", 1),
                 multiply_f32_op(),
                 unary_signature(),
                 &[scalar_key("multiply")],
                 revision(),
-                Arc::new(ScalarMultiplyLowering),
+                Arc::new(PointwiseSquareLowering),
             )
             .expect("a unary signature for a binary operation registers");
     }
@@ -2313,35 +2054,31 @@ mod tests {
     /// recorded provider distinguishes them and ADR 0072 requires a contended
     /// claim to reach a deterministic resolution ambiguity rather than a
     /// registration failure.
+    ///
+    /// The guard's other scoping — that it is per *family*, the family being in
+    /// the key — has no probe here, because a probe would need two families and
+    /// the crate registers one (ADR 0105). The scoping itself survives in
+    /// `register`'s comparison and is what a second family would be checked by.
     #[test]
     fn a_second_signature_for_one_family_and_operation_is_refused() {
         let mut builder = empty_builder();
-        builder
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(ScalarMultiplyLowering),
-            )
-            .unwrap();
+        register_square(&mut builder, "index-access-lowering");
         let error = builder
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
+            .register_index_access(
+                provider("index-access-lowering", 1),
                 multiply_f32_op(),
                 unary_signature(),
                 &[scalar_key("multiply")],
                 revision(),
-                Arc::new(ScalarMultiplyLowering),
+                Arc::new(PointwiseSquareLowering),
             )
             .unwrap_err();
         assert_eq!(
             error,
             LoweringRegistryError::ConflatedCapabilityKey {
-                family: LoweringFamily::ScalarLowering,
+                family: LoweringFamily::IndexAccess,
                 operation: Box::new(multiply_f32_op()),
-                provider: Box::new(provider("scalar-lowering", 1)),
+                provider: Box::new(provider("index-access-lowering", 1)),
                 registered: Box::new(binary_signature()),
                 rejected: Box::new(unary_signature()),
             }
@@ -2350,28 +2087,15 @@ mod tests {
         // A different provider registering the second signature is admitted:
         // the recorded provider is what tells the two keys apart.
         builder
-            .register_scalar_lowering(
-                provider("other-scalar-lowering", 1),
-                multiply_f32_op(),
-                unary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(ScalarMultiplyLowering),
-            )
-            .expect("the guard is per provider, not per operation");
-
-        // So is a second *family* for one operation and provider: the family is
-        // in the key, so those two capabilities are already distinguishable.
-        builder
             .register_index_access(
-                provider("scalar-lowering", 1),
+                provider("other-index-access-lowering", 1),
                 multiply_f32_op(),
                 unary_signature(),
                 &[scalar_key("multiply")],
                 revision(),
                 Arc::new(PointwiseSquareLowering),
             )
-            .expect("the guard is per family, and the family is in the key");
+            .expect("the guard is per provider, not per operation");
     }
 
     #[test]
@@ -2383,20 +2107,11 @@ mod tests {
             for order in [["zebra", "aardvark"], ["aardvark", "zebra"]] {
                 let mut builder = empty_builder();
                 for name in order {
-                    builder
-                        .register_scalar_lowering(
-                            provider(name, 1),
-                            multiply_f32_op(),
-                            binary_signature(),
-                            &[scalar_key("multiply")],
-                            revision(),
-                            Arc::new(ScalarMultiplyLowering),
-                        )
-                        .unwrap();
+                    register_square(&mut builder, name);
                 }
                 let error = builder
                     .freeze()
-                    .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
+                    .resolve_index_access(&multiply_f32_op(), &binary_signature())
                     .unwrap_err();
                 let LoweringResolveError::AmbiguousCapability { candidates, .. } = error else {
                     panic!("expected an ambiguity diagnostic");
@@ -2432,19 +2147,19 @@ mod tests {
             let mut builder = empty_builder();
             for revision_number in order {
                 builder
-                    .register_scalar_lowering(
+                    .register_index_access(
                         provider("aardvark", revision_number),
                         multiply_f32_op(),
                         binary_signature(),
                         &[scalar_key("multiply")],
                         revision(),
-                        Arc::new(ScalarMultiplyLowering),
+                        Arc::new(PointwiseSquareLowering),
                     )
                     .expect("a second revision of one provider is a distinct key, so it inserts");
             }
             let error = builder
                 .freeze()
-                .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
+                .resolve_index_access(&multiply_f32_op(), &binary_signature())
                 .unwrap_err();
             let LoweringResolveError::AmbiguousCapability { candidates, .. } = error else {
                 panic!("expected an ambiguity diagnostic, not a resolution");
@@ -2460,12 +2175,12 @@ mod tests {
     fn a_missing_capability_resolves_to_a_typed_diagnostic() {
         let frozen = empty_builder().freeze();
         let error = frozen
-            .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
+            .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap_err();
         assert!(matches!(
             error,
             LoweringResolveError::MissingCapability {
-                family: LoweringFamily::ScalarLowering,
+                family: LoweringFamily::IndexAccess,
                 ..
             }
         ));
@@ -2521,13 +2236,13 @@ mod tests {
     fn registration_rejects_an_operation_without_semantic_authority() {
         let mut builder = empty_builder();
         let error = builder
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
+            .register_index_access(
+                provider("index-access-lowering", 1),
                 OpKey::new("example", "not-a-semantic-op", 1).unwrap(),
                 binary_signature(),
                 &[scalar_key("multiply")],
                 revision(),
-                Arc::new(ScalarMultiplyLowering),
+                Arc::new(PointwiseSquareLowering),
             )
             .unwrap_err();
         assert!(matches!(
@@ -2541,13 +2256,13 @@ mod tests {
         let mut builder = empty_builder();
         // A declared emitted scalar operation without scalar authority fails.
         let error = builder
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
+            .register_index_access(
+                provider("index-access-lowering", 1),
                 multiply_f32_op(),
                 binary_signature(),
                 &[scalar_key("nonexistent")],
                 revision(),
-                Arc::new(ScalarMultiplyLowering),
+                Arc::new(PointwiseSquareLowering),
             )
             .unwrap_err();
         assert!(matches!(
@@ -2556,21 +2271,12 @@ mod tests {
         ));
         // The rejected registration retained nothing, so the valid one succeeds
         // and is the only capability.
-        builder
-            .register_scalar_lowering(
-                provider("scalar-lowering", 1),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(ScalarMultiplyLowering),
-            )
-            .unwrap();
+        register_square(&mut builder, "index-access-lowering");
         let frozen = builder.freeze();
         assert_eq!(frozen.capability_count(), 1);
         assert!(
             frozen
-                .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
+                .resolve_index_access(&multiply_f32_op(), &binary_signature())
                 .is_ok()
         );
     }
@@ -2580,64 +2286,18 @@ mod tests {
         let identity = |capability_revision: u32| {
             let mut builder = empty_builder();
             builder
-                .register_scalar_lowering(
-                    provider("scalar-lowering", 1),
+                .register_index_access(
+                    provider("index-access-lowering", 1),
                     multiply_f32_op(),
                     binary_signature(),
                     &[scalar_key("multiply")],
                     LoweringCapabilityRevision::new(capability_revision).unwrap(),
-                    Arc::new(ScalarMultiplyLowering),
+                    Arc::new(PointwiseSquareLowering),
                 )
                 .unwrap();
             builder.freeze().canonical_identity().clone()
         };
         assert_ne!(identity(1), identity(2));
-    }
-
-    #[test]
-    fn a_resolved_scalar_provider_emits_through_the_canonical_builder() {
-        let scalars = scalar_registry();
-        let frozen = LoweringCapabilityRegistryBuilder::new(semantic(), scalars.clone())
-            .unwrap()
-            .apply_multiply();
-        let resolved = frozen
-            .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
-            .unwrap();
-
-        // Host wiring: read one input value, hand the provider its checked
-        // operands, then finish and verify the region.
-        let mut builder = IndexRegionBuilder::new(scalars).unwrap();
-        let i = builder
-            .dimension(DomainRole::Parallel, Extent::new(4))
-            .unwrap();
-        let input = builder
-            .tensor(TensorRole::Input, f32_type(), Shape::from_dims([4]))
-            .unwrap();
-        let output = builder
-            .tensor(TensorRole::Output, f32_type(), Shape::from_dims([4]))
-            .unwrap();
-        let row = builder.dimension_expr(i).unwrap();
-        let value = builder.read(input, &[i], &[row]).unwrap();
-        let operands = [value, value];
-        let attributes = ScalarAttributes::empty();
-        let signature = binary_signature();
-
-        let results = {
-            let mut context =
-                ScalarLoweringContext::new(&mut builder, &operands, &attributes, &signature);
-            resolved
-                .scalar_provider()
-                .expect("scalar family")
-                .lower(&mut context)
-                .unwrap()
-        };
-        assert_eq!(results.len(), 1);
-
-        let write = builder.write(output, &[i], &[row]).unwrap();
-        builder.output(write, results.values()[0]).unwrap();
-        let region = builder.build().unwrap();
-        assert_eq!(region.outputs().len(), 1);
-        assert_eq!(region.scalar_operations().count(), 1);
     }
 
     #[test]
@@ -2666,10 +2326,10 @@ mod tests {
         assert_eq!(region.dimensions().count(), 1);
     }
 
-    /// Test-only convenience that registers both demonstration providers.
+    /// Test-only convenience that registers the demonstration provider.
     impl LoweringCapabilityRegistryBuilder {
         fn apply_multiply(mut self) -> FrozenLoweringCapabilityRegistry {
-            register_both(&mut self, "scalar-lowering", "index-access-lowering");
+            register_square(&mut self, "index-access-lowering");
             self.freeze()
         }
     }

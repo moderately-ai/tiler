@@ -42,9 +42,10 @@
 //!
 //! Scope boundary: this authority proves refinement of one occurrence to one
 //! index region. It selects no cover, chooses no physical implementation,
-//! schedules nothing, and costs nothing. It refines only the
-//! [`LoweringFamily::IndexAccess`] family, because only that family emits a
-//! standalone region; a scalar-lowering capability is rejected explicitly.
+//! schedules nothing, and costs nothing. It refines the
+//! [`crate::capability::LoweringFamily::IndexAccess`] family, which is the
+//! crate's only lowering family and the only kind that emits a standalone region
+//! for a refinement to compare against an occurrence.
 //!
 //! Every public item here is a reviewed *draft* boundary. It is not a stable
 //! compiler API and must not be treated as one until Tom accepts the exact
@@ -70,7 +71,7 @@ use tiler_ir::shape::Shape;
 
 use crate::capability::{
     IndexAccessSequenceContext, IndexAccessStageFailure, LoweringCapabilityAuthority,
-    LoweringCapabilityRevision, LoweringEmitError, LoweringFamily, ResolvedLoweringCapability,
+    LoweringCapabilityRevision, LoweringEmitError, ResolvedLoweringCapability,
 };
 
 /// Canonical domain-separation tag for reusable single-region refinement content.
@@ -488,11 +489,6 @@ impl IndexRefinementOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RefinementError {
-    /// The resolved capability is not an index/access-lowering capability.
-    WrongFamily {
-        /// The family that was resolved instead.
-        actual: LoweringFamily,
-    },
     /// The resolved index/access provider handle was absent.
     MissingIndexProvider,
     /// The capability lowers a different operation than the occurrence.
@@ -599,12 +595,6 @@ pub enum RefinementError {
 impl fmt::Display for RefinementError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::WrongFamily { actual } => {
-                write!(
-                    formatter,
-                    "resolved a {actual} capability, not index access"
-                )
-            }
             Self::MissingIndexProvider => {
                 formatter.write_str("resolved index/access capability exposed no provider")
             }
@@ -747,7 +737,7 @@ impl From<VerifiedIndexHandleError> for RefinementError {
 ///
 /// # Errors
 ///
-/// Returns a [`RefinementError`] when the capability is the wrong family or
+/// Returns a [`RefinementError`] when the capability lowers a different
 /// operation, the provider emits or the builder rejects an invalid region, the
 /// scalar or semantic authority disagrees, or the emitted region does not
 /// realize the occurrence's ordered value interface.
@@ -757,11 +747,6 @@ pub fn refine_index_region(
     realizations: &FrozenIndexRealizationLawRegistry,
     scalars: &FrozenScalarRegistry,
 ) -> Result<IndexRefinementOutcome, RefinementError> {
-    if capability.family() != LoweringFamily::IndexAccess {
-        return Err(RefinementError::WrongFamily {
-            actual: capability.family(),
-        });
-    }
     if capability.operation() != subject.operation() {
         return Err(RefinementError::OperationMismatch {
             capability: Box::new(capability.operation().clone()),
@@ -1218,8 +1203,7 @@ mod tests {
     use crate::capability::{
         FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
         LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
-        LoweringFamily, LoweringSignature, ResolvedLoweringCapability, ScalarLoweringContext,
-        ScalarLoweringProvider, ScalarLoweringResults,
+        LoweringSignature, ResolvedLoweringCapability,
     };
     use crate::region::form_region_candidates;
     use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
@@ -1446,20 +1430,6 @@ mod tests {
             let second_write = context.write(second, &[i], &[row])?;
             context.output(second_write, squared)?;
             Ok(())
-        }
-    }
-
-    /// A scalar-lowering provider, used to prove refinement rejects that family.
-    struct ScalarMultiply;
-    impl ScalarLoweringProvider for ScalarMultiply {
-        fn lower(
-            &self,
-            context: &mut ScalarLoweringContext<'_>,
-        ) -> Result<ScalarLoweringResults, LoweringEmitError> {
-            let operands = context.operands().to_vec();
-            let product =
-                context.apply(scalar_key("multiply"), ScalarAttributes::empty(), &operands)?;
-            Ok(ScalarLoweringResults::new(product.iter().collect()))
         }
     }
 
@@ -1853,35 +1823,6 @@ mod tests {
         let error =
             refine_index_region(&resolved, &square_occurrence(b"site"), &scalars).unwrap_err();
         assert!(matches!(error, RefinementError::ScalarAuthorityConformance));
-    }
-
-    #[test]
-    fn a_scalar_lowering_capability_is_not_an_index_refinement() {
-        let scalars = scalar_registry();
-        let mut builder =
-            LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry()).unwrap();
-        builder
-            .register_scalar_lowering(
-                provider("scalar"),
-                multiply_f32_op(),
-                binary_signature(),
-                &[scalar_key("multiply")],
-                revision(),
-                Arc::new(ScalarMultiply),
-            )
-            .unwrap();
-        let resolved = builder
-            .freeze()
-            .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
-            .unwrap();
-        let error =
-            refine_index_region(&resolved, &square_occurrence(b"site"), &scalars).unwrap_err();
-        assert!(matches!(
-            error,
-            RefinementError::WrongFamily {
-                actual: LoweringFamily::ScalarLowering
-            }
-        ));
     }
 
     #[test]
