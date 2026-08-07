@@ -1,7 +1,7 @@
 ---
 id: rename-the-workload-named-eps-constant-out-of-the-core-surface
 title: Rename the workload-named eps constant out of the core surface
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, implementation/metal]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-eps-rename
+lease_expires_at: 1786114012
 ---
 ## User-visible outcome
 
