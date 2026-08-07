@@ -2,23 +2,29 @@
 //!
 //! The softmax family is admitted at R5: registered, reference-evaluated, given a
 //! fusion role and a capability row, and carrying a structured-kernel construct
-//! and a Metal emission. It nevertheless compiles no whole program, and the
-//! reason is *not* anything about the family — it is that
-//! `select_supported_strategy` has no shape for it.
+//! and a Metal emission. It nevertheless compiles no whole program — and *where*
+//! it stops has moved, which is the fact this file exists to keep checked.
 //!
-//! **The ceiling is no longer shared with `tiler::rms-norm-f32@1`, and the
-//! difference is exactly one registry row.** The recognizer's staged arm is
-//! law-derived: an occurrence whose registered `IndexRealizationLaw` realizes a
-//! region *sequence* is recognized as a program stage, with no operation key
-//! named. The normalization carries `StagedRootMeanSquareScaleF32` and is
-//! therefore recognized, reaches its own lowering, has both of its realization
-//! stages spelled by scheduled regions, and now has no ceiling above it at all:
-//! it compiles end to end and its dispatched kernels agree with
-//! `tiler-reference` bit for bit
+//! **The recognizer no longer refuses it, and the difference is exactly one
+//! registry row.** The recognizer's staged arm is law-derived: an occurrence
+//! whose registered `IndexRealizationLaw` realizes a region *sequence* is
+//! recognized as a program stage, with no operation key named. The normalization
+//! carries `StagedRootMeanSquareScaleF32` and is therefore recognized, reaches
+//! its own lowering, has both of its realization stages spelled by scheduled
+//! regions, and has no ceiling above it at all: it compiles end to end and its
+//! dispatched kernels agree with `tiler-reference` bit for bit
 //! (`pipeline::tests::a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit`).
-//! The softmax carries no law at all, so the same arm answers `false` for it and
-//! the refusal below is the recognizer's — which is why the assertions here are
-//! unchanged and are now about *this* family rather than about a class of them.
+//! [`register-the-softmax-realization-law`] registered `StagedSoftmaxF32` for
+//! `tiler::softmax-f32@1`, so the same arm now answers `true` for it too.
+//!
+//! **So the wall moved from the recognizer to the installed lowering
+//! capabilities, and the assertion below names it.** Before that law landed every
+//! contract refused under `UnsupportedCapability { rule: "operation-set" }` —
+//! `select_supported_strategy` had no shape for a softmax at all. It now refuses
+//! under `UnsupportedCapability { rule: "missing-capability" }`: the program is
+//! recognized and no installed provider lowers what its realization needs. Both
+//! are the same *class*, so a bare `is_err` cannot tell the two apart, which is
+//! why the rule is asserted rather than the class alone.
 //!
 //! **This file exists so that the claim is checked rather than asserted in a
 //! roadmap cell.** A ceiling stated only in prose drifts silently in both
@@ -26,20 +32,16 @@
 //! forward onto a family whose ceiling is somewhere else. The control below is
 //! what keeps the refusal from being consistent with a broken session boundary.
 //!
-//! **What the softmax still lacks, in order.** A softmax occurrence realizes as
-//! *three* regions — a maximum fold, an exponential-and-sum pass, and a
-//! normalizing pass. Emitting a chain is no longer the obstacle:
-//! `IndexAccessLoweringProvider::lower_sequence` emits an ordered chain and
-//! `GovernedRootMeanSquareScaleF32` is a shipped provider that does. What is
-//! missing is the law, which needs a governed **maximum** scalar key that
-//! [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`] owns
-//! *and* a handed value with more than one reader, which
-//! [`admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence`]
-//! owns. Once the law is registered this file's refusal moves to the same
-//! vocabulary wall the normalization sits at.
+//! **What the softmax still lacks, in order.** A shipped lowering provider for
+//! its four realization stages, the way `GovernedRootMeanSquareScaleF32` is one
+//! for the normalization's two; and beneath that a physical staged plan, which
+//! `physical::staged_plan` has no arm for and which region formation's
+//! synthetic-intermediate record cannot carry until
+//! [`carry-a-multi-reader-intermediate-through-region-formation`] widens it past
+//! one consumer stage per handed value.
 //!
-//! [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`]: ../../../tickets/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md
-//! [`admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence`]: ../../../tickets/admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence.md
+//! [`register-the-softmax-realization-law`]: ../../../tickets/register-the-softmax-realization-law.md
+//! [`carry-a-multi-reader-intermediate-through-region-formation`]: ../../../tickets/carry-a-multi-reader-intermediate-through-region-formation.md
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
@@ -118,18 +120,22 @@ fn compile_under(
     }
 }
 
-/// A softmax program is refused at the recognizer, under every contract.
+/// A softmax program is refused for want of a lowering, under every contract.
 ///
-/// The refusal is uniform across all four contracts, which is what shows it is
-/// *structural* rather than numerical: no permission a caller can grant admits
-/// the shape, because the shape is not one the recognizer knows at all.
+/// The refusal is uniform across all five contracts, which is what shows it is
+/// *structural* rather than numerical: no permission a caller can grant installs
+/// a capability. The rule is asserted, not just the class, because the class this
+/// program refuses under is the one it refused under at the recognizer too.
 #[test]
-fn a_softmax_program_is_refused_by_the_whole_program_recognizer() {
+fn a_softmax_program_is_refused_for_want_of_an_installed_lowering() {
     let program = softmax_program();
     for contract in CONTRACTS {
-        assert!(
-            compile_under(&program, contract).is_err(),
-            "the recognizer admits no whole-program shape containing a softmax, \
+        assert_eq!(
+            compile_under(&program, contract),
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "missing-capability"
+            }),
+            "the softmax is recognized and nothing installed lowers it, \
              and {contract:?} is not what would change that"
         );
     }
