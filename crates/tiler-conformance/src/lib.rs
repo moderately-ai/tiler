@@ -129,6 +129,7 @@
 //! | `bf16_vertical` | the BF16 corpus, its semantic program, scheduled region, emission, and comparison |
 //! | `serial_sum` | the `f32` reduction vertical: the direct path, the retained portfolio, and the declared-grouping oracle |
 //! | `envelope` | the artifact-delivered route: interface, placement, fail-closed probes, and the retained-digest comparison |
+//! | `publication` | the envelopes and proof records that route reads, published in the same run |
 //! | `applicability` | whether this host may *offer* the profile it routes under, and the observation that is asked from |
 //! | `device_preflight` | every obligation a host discharges before a routing commit, and how each refusal is classified |
 //! | `measurement` | whether this host could measure, and the exact row a measured result is bounded to |
@@ -165,5 +166,7 @@ mod dispatch;
 mod envelope;
 #[cfg(test)]
 mod measurement;
+#[cfg(test)]
+mod publication;
 #[cfg(test)]
 mod serial_sum;

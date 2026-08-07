@@ -16,6 +16,14 @@
 //! back, so a failed dispatch is reported as a dispatch failure rather than
 //! compared as arithmetic.
 //!
+//! # The members are published here too, and only here
+//!
+//! [`crate::publication`] writes them, from the toolchain this module has already
+//! resolved, into a private directory that is removed when the run ends. It runs
+//! after `routing` rather than before it for one reason: an absent toolchain is a
+//! boundary and a refused publication stage is a defect, and resolving the host
+//! first is what keeps the two from wearing each other's shape.
+//!
 //! # One routing authority per case
 //!
 //! `DecodedProgram` is not `Clone` and `preflight` takes `&mut self`, so a
@@ -50,6 +58,7 @@ use crate::dispatch::{
 };
 use crate::measurement::host::{self, Unresolved};
 use crate::measurement::{Measured, MeasurementBoundary};
+use crate::publication::{publish_contraction, publish_serial_sum_matrix};
 use crate::serial_sum::{F32_BYTES, compile_under, declaration, pack_f32, unpack_f32};
 
 /// One route this device has proved it can carry out, with everything it needs.
@@ -806,12 +815,23 @@ fn unresolved<T>(outcome: Measured<()>) -> Measured<T> {
     }
 }
 
-/// Routes every published serial-sum member against every operand case.
-pub(super) fn run_matrix(base: &Path) -> Measured<Vec<RoutedMember>> {
+/// Publishes and routes every serial-sum member against every operand case.
+pub(super) fn run_matrix() -> Measured<Vec<RoutedMember>> {
     let routing = match routing() {
         Ok(routing) => routing,
         Err(outcome) => return unresolved(outcome),
     };
+    // Published with the toolchain `routing` already resolved, so a publication
+    // refusal here is a stage that reached its environment and said no — a defect
+    // — rather than the absent-toolchain boundary, which `routing` reported above.
+    // The guard is held for the whole routed run below and removes the members
+    // when it drops.
+    let published = match publish_serial_sum_matrix(&routing.apple.toolchain, &routing.declaration)
+    {
+        Ok(published) => published,
+        Err(cause) => return Measured::Failed(cause.to_string()),
+    };
+    let base = published.base();
 
     // The deep single-member run first: the fail-closed probes and the injected
     // device refusals, against the member the optimizer normally selects — the
@@ -906,8 +926,8 @@ pub(super) fn run_matrix(base: &Path) -> Measured<Vec<RoutedMember>> {
     }
 }
 
-/// Routes one published contraction member.
-pub(super) fn run_contraction(base: &Path, member: &ContractionMember) -> Measured<RoutedMember> {
+/// Publishes and routes one contraction member.
+pub(super) fn run_contraction(member: &ContractionMember) -> Measured<RoutedMember> {
     let routing = match routing() {
         Ok(routing) => routing,
         Err(outcome) => return unresolved(outcome),
@@ -918,12 +938,17 @@ pub(super) fn run_contraction(base: &Path, member: &ContractionMember) -> Measur
             .any(|known| known.class == member.class),
         "a contraction member this module does not publish was routed",
     );
+    let published =
+        match publish_contraction(&routing.apple.toolchain, &routing.declaration, member) {
+            Ok(published) => published,
+            Err(cause) => return Measured::Failed(cause.to_string()),
+        };
     match prove_contraction(
         &routing.apple.device,
         &routing.facts,
         &routing.declaration,
         &routing.environment,
-        base,
+        published.base(),
         member,
     ) {
         Ok(routed) => {

@@ -6,13 +6,24 @@
 //! and dispatches those in-memory bytes. Nothing is packaged, encoded, decoded,
 //! or validated, and it is evidence about the *compiler and the emitter*.
 //!
-//! This module dispatches from an artifact a separate producer wrote to a file:
+//! This module dispatches from an artifact written to a file and read back:
 //! `tiler-runtime` decodes it, discharges every host obligation, commits a
 //! route, and the device loads the object bytes *the envelope carries*. The
 //! entry symbol, the argument-table index of every buffer, the bytes each must
-//! reach, and the launch geometry all come from the decoded dispatch record.
-//! Nothing this process compiled reaches the device. It is evidence about the
-//! *delivery mechanism*.
+//! reach, and the launch geometry all come from the decoded dispatch record. It
+//! is evidence about the *delivery mechanism*.
+//!
+//! **The file is written by [`crate::publication`], in this run**, and the
+//! distinction that survives is the one that was always load-bearing: the route
+//! takes every fact from the decoded envelope rather than from compiler state
+//! this process is holding. The object the device loads is the one the envelope
+//! carries, and the only thing compiled on the routing side is used to *name* the
+//! packaged program by canonical identity — never to supply a symbol, a slot, a
+//! byte window, or a launch extent. What it no longer establishes is agreement
+//! between two independently maintained halves; that claim lives in the
+//! `prototypes/serial-sum-compile` and `prototypes/serial-sum-run` pair, and
+//! `crate::publication`'s own header states what was traded for putting this
+//! module into the gate.
 //!
 //! Keeping both is what makes a disagreement diagnosable. If the direct runs
 //! match the reference and these do not, the envelope is at fault; if both fail
@@ -40,26 +51,31 @@
 //! after the commit is a failure reported, never a fallback taken. There is no
 //! fallback path here at all.
 //!
-//! # The ambient input this module needs, and what its absence means
+//! # Where the envelope comes from, and the one boundary that remains
 //!
-//! The envelope is a *file another process wrote*, and this crate does not hold
-//! the scope that produces one — `prototypes/serial-sum-compile` is the producer
-//! and it lives under `implementation/metal-aot`. So the published base arrives
-//! as [`ARTIFACT_BASE`], and a run without it reports the artifact half as
-//! **unavailable, naming the producer command that creates one**, exactly as a
-//! host without a device reports the measured half. It never skips silently and
-//! it never claims a route it did not take, and with
-//! `TILER_REQUIRE_METAL_CONFORMANCE` set the absence is a failure.
+//! [`crate::publication`] writes it, in this run, into a private directory it
+//! then removes. The routed runs below therefore have exactly one boundary
+//! rather than two: an envelope needs the same offline Apple toolchain a device
+//! result needs, so a host that cannot measure equally cannot publish, and both
+//! facts arrive as a single [`crate::measurement::Measured::Unavailable`] naming
+//! what was missing. It never skips silently, it never claims a route it did not
+//! take, and with `TILER_REQUIRE_METAL_CONFORMANCE` set the unavailability is a
+//! failure.
 //!
-//! **This is a stated limitation rather than a design.** Producing the envelope
-//! in process would put every run below into the ordinary gate, and it is
-//! reachable — this crate already declares the producer's whole dependency row —
-//! but it is a scope this module must not pre-declare. What runs in the gate
-//! unconditionally is everything decidable without an envelope: the interface
-//! recognizers and every way of missing them, the sidecar payload-length
-//! refusal, the routed dtype rows, the member and class pins, the digest helper
-//! against its published vectors, and the retained comparison's two verdicts
-//! including the perturbation it must refuse.
+//! The ambient input `TILER_CONFORMANCE_ARTIFACT_BASE` used to name a base a
+//! separate executable had published beneath, and it is **retired** rather than
+//! kept as an override: nothing in `make full` set it, so every routed run below
+//! reported its boundary unavailable and only the device-free half ran, and an
+//! override nothing exercises is a second unexercised path rather than a
+//! capability. `prototypes/serial-sum-compile` still publishes for
+//! `prototypes/serial-sum-run` across a file interface no code crosses; it is no
+//! longer this crate's input.
+//!
+//! What still runs on a host that cannot measure is everything decidable without
+//! an envelope: the interface recognizers and every way of missing them, the
+//! sidecar payload-length refusal, the routed dtype rows, the member and class
+//! pins, the digest helper against its published vectors, and the retained
+//! comparison's two verdicts including the perturbation it must refuse.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -89,12 +105,6 @@ use crate::applicability::ProbedGpuFamily;
 use crate::device_preflight::PreflightRefusal;
 use crate::serial_sum::{F32_BYTES, INPUT_KEY, OUTPUT_KEY, compile_under, serial_sum_program};
 
-/// The ambient input naming the base path the producer published beneath.
-pub(crate) const ARTIFACT_BASE: &str = "TILER_CONFORMANCE_ARTIFACT_BASE";
-
-/// The producer command that writes the members this module routes.
-pub(crate) const PRODUCER_COMMAND: &str = "cargo run -p tiler-prototype-compile -- --out <base>";
-
 /// The one delivery position every artifact here is built for.
 ///
 /// A delivery position is the ordered slot a consumer's build target resolves
@@ -111,31 +121,62 @@ pub(crate) const REPRESENTATION_KEY: &str = "metallib";
 
 /// Suffix appended to a member path to name its proof-case sidecar.
 ///
-/// `prototypes/serial-sum-compile` writes this name. Nothing links the two
-/// crates, so each pins it in a test naming the other side: the producer wrote
-/// `.proof` while the previous consumer still opened `.identity` for a whole
-/// commit, and no compilation could see it.
+/// One constant, reached by [`sidecar_path`] from both halves — the publication
+/// that writes the record and [`read_artifact`] that opens it. It used to be a
+/// pinned pair against a separate executable's own spelling, because that
+/// executable wrote `.proof` while the consumer still opened `.identity` for a
+/// whole commit and no compilation could see it. Producing in process replaces
+/// the pair with a shared derivation, which is the stronger arrangement: there is
+/// no longer a second spelling to drift.
 pub(crate) const SIDECAR_SUFFIX: &str = ".proof";
 
-/// The reduction classes the producer publishes, as `(name, reduced extent)`.
+/// Returns the proof-case sidecar path beside one envelope path.
 ///
-/// Mirrors `prototypes/serial-sum-compile`'s own array under the same pinned-pair
-/// idiom [`SIDECAR_SUFFIX`] is under, and for the same reason: a producer that
-/// writes one set of names while a consumer opens another leaves a green gate
-/// over a slice that cannot run.
+/// Derived by appending rather than by replacing an extension, so the two names
+/// cannot collide with each other and the pair stays obviously one unit on disk.
+pub(crate) fn sidecar_path(envelope: &Path) -> PathBuf {
+    let mut name = envelope.as_os_str().to_owned();
+    name.push(SIDECAR_SUFFIX);
+    PathBuf::from(name)
+}
+
+/// The reduction classes published and routed, as `(name, reduced extent)`.
+///
+/// Three programs, not three operand sets. The reduced extent lives in the input
+/// shape, so it changes the semantic graph, the verified kernels, and the
+/// artifact identity; an empty domain and a singleton cannot be reached by
+/// choosing different numbers for a fixed shape.
 ///
 /// The empty domain leads, because it is the boundary the other two cannot speak
 /// for: a reduction over zero contributors reads its input buffer never, and its
-/// result is a reduction's identity element rather than a sum.
+/// result is a reduction's identity element rather than a sum. The singleton is
+/// where a serial reduction reduces in every order and so cannot observe an
+/// ordering defect at all, which is what makes the nontrivial class mean
+/// something.
 pub(crate) const REDUCTION_CLASSES: [(&str, u64); 3] =
     [("empty-domain", 0), ("singleton", 1), ("nontrivial", 3)];
 
-/// The plan roles the producer publishes for each reduction class.
+/// The plan roles published for each reduction class.
+///
+/// `selected` is whatever the portfolio ranks first, which is the fused plan on
+/// this profile; `materialized` is the retained alternative that dispatches two
+/// stages through one intermediate. Publishing both is the point of the matrix:
+/// the two are different programs on the device and must agree bit for bit.
 pub(crate) const PLAN_ROLES: [&str; 2] = ["selected", "materialized"];
 
 /// Class name of the published contraction member.
+///
+/// Its `2 x 2` result has more than one row *and* more than one column, which is
+/// what makes the two operand access relations — `(t, o, d) -> (t, d)` never
+/// mentioning `o`, and `(t, o, d) -> (o, d)` never mentioning `t` — separately
+/// observable. [`L3_CELL_CLASS`] arrives as a second member rather than as a move
+/// of this one for exactly that reason.
 pub(crate) const CONTRACTION_CLASS: &str = "contraction";
 /// Class name of the published L3 correctness cell, `w_decode_kv`.
+///
+/// Named for the retained cell rather than for the profile, because the remaining
+/// five cells follow at no architectural cost and `contraction-l3` would then
+/// name whichever of the six happened to land first.
 pub(crate) const L3_CELL_CLASS: &str = "contraction-w-decode-kv";
 
 /// Interface key of the contraction's first operand, `[M, K]`.
@@ -177,63 +218,13 @@ pub(crate) fn expected_shape(role: &str) -> (usize, usize) {
 
 /// Returns the envelope path for one published member of the proof matrix.
 ///
-/// Derived exactly as the producer derives it, from a base path.
+/// One derivation, reached by the publication that writes the member and by the
+/// route that opens it, so the whole set stays obviously one unit on disk and no
+/// two members can collide.
 pub(crate) fn proof_member(base: &Path, class: &str, role: &str) -> PathBuf {
     let mut name = base.as_os_str().to_owned();
     name.push(format!(".{class}.{role}"));
     PathBuf::from(name)
-}
-
-/// Whether the producer's published base was supplied to this run.
-///
-/// A separate question from whether this host can *measure*, and it is kept
-/// separate deliberately: a machine with a Metal device and an Apple toolchain
-/// still cannot route an envelope nobody handed it, and reporting that as an
-/// absent device would name the wrong repair.
-pub(crate) enum PublishedBase {
-    /// The base the producer published beneath.
-    At(PathBuf),
-    /// No base was supplied, and here is what is missing.
-    Absent(String),
-}
-
-/// Reads the published base from the ambient input, or states its absence.
-pub(crate) fn published_base() -> PublishedBase {
-    match std::env::var_os(ARTIFACT_BASE) {
-        Some(base) if !base.is_empty() => PublishedBase::At(PathBuf::from(base)),
-        _ => PublishedBase::Absent(format!(
-            "{ARTIFACT_BASE} names no published artifact base; create one with \
-             `{PRODUCER_COMMAND}` and set {ARTIFACT_BASE} to that path",
-        )),
-    }
-}
-
-/// Reports the published base's absence, or returns it.
-///
-/// The same rule [`crate::measurement::require_or_report`] applies to a device
-/// row, applied to an ambient file: never a silent skip, never a claimed route,
-/// and stricter under `TILER_REQUIRE_METAL_CONFORMANCE`.
-///
-/// # Panics
-///
-/// Panics when `TILER_REQUIRE_METAL_CONFORMANCE` is set and no base was
-/// supplied.
-pub(crate) fn require_or_report_base(label: &str) -> Option<PathBuf> {
-    match published_base() {
-        PublishedBase::At(base) => Some(base),
-        PublishedBase::Absent(reason) => {
-            assert!(
-                std::env::var_os(crate::measurement::REQUIRE_MEASUREMENT).is_none(),
-                "{} is set and the published artifact is unavailable: {reason}",
-                crate::measurement::REQUIRE_MEASUREMENT,
-            );
-            eprintln!(
-                "{label}: ARTIFACT BOUNDARY UNAVAILABLE — {reason}. The device-free half above \
-                 ran; nothing here claims a routed result.",
-            );
-            None
-        }
-    }
 }
 
 /// Why one envelope run did not complete.
@@ -534,7 +525,8 @@ impl std::fmt::Display for EnvelopeFailure {
                 formatter,
                 "the artifact packages a kernel program whose {packaged}-byte identity matches \
                  none of the {alternatives} alternative(s) this process compiled for the \
-                 artifact's own declared shape; the producer and this consumer have drifted",
+                 artifact's own declared shape; what was published and what this route derives \
+                 from the declaration have drifted",
             ),
             Self::Stage(detail) => formatter.write_str(detail),
         }
@@ -877,12 +869,15 @@ pub(crate) fn case_expected(
     decode_f32_bits("expected", interface.output_elements, payload.bytes())
 }
 
-/// Reads the envelope bytes and the identity the producer recorded beside them.
+/// Reads the envelope bytes and the identity recorded beside them.
 ///
 /// The sidecar is the only thing that makes the loader's identity check mean
 /// anything: an identity re-read from the envelope would be a tautology, so the
 /// expected one has to come from whatever *named* the artifact, and here that is
-/// the producer.
+/// [`crate::publication`], which derives it from the `VerifiedArtifactProgram` it
+/// assembled rather than from the encoding. That still catches a stale envelope,
+/// a mixed-up path, and a torn write between the two files; it resists nothing
+/// that rewrites both, and nothing unsigned could.
 ///
 /// # Errors
 ///
@@ -891,9 +886,7 @@ pub(crate) fn case_expected(
 pub(crate) fn read_artifact(
     path: &Path,
 ) -> Result<(Vec<u8>, DecodedProofSidecar), EnvelopeFailure> {
-    let mut sidecar_path = path.as_os_str().to_owned();
-    sidecar_path.push(SIDECAR_SUFFIX);
-    let sidecar_path = PathBuf::from(sidecar_path);
+    let sidecar_path = sidecar_path(path);
     let bytes = std::fs::read(path)
         .map_err(|cause| EnvelopeFailure::Read(path.display().to_string(), cause))?;
     let sidecar_bytes = std::fs::read(&sidecar_path)
@@ -987,10 +980,18 @@ pub(crate) const fn host_dtype_dispatch(verdict: DTypeDispatchability) -> DTypeD
 
 /// The L3 profile's index structure, `td,od->to`.
 ///
-/// Spelled with the same arbitrary frontend index labels the producer uses, so
-/// the two processes reach the same canonical encoding through the
-/// renaming-invariant rule ADR 0087 requires rather than by both happening to
-/// write the canonical labels.
+/// Spelled with arbitrary frontend index labels rather than with `0, 1, 2`, so
+/// the published artifact reaches its canonical encoding through the
+/// renaming-invariant rule ADR 0087 requires rather than by the labels happening
+/// to be the canonical ones.
+///
+/// **What that no longer establishes here, stated rather than left implied.**
+/// This spelling used to be one of two, reached independently by the publishing
+/// executable and by this consumer, so a renaming-invariance defect showed up as
+/// two identities that would not match. One function serves both halves now, so
+/// what remains is that the *published* member is built from non-canonical labels
+/// — which keeps the rule exercised end to end — and not that two spellings
+/// agree. `prototypes/serial-sum-compile` carries the second spelling.
 pub(crate) fn contraction_structure() -> ContractionIndexStructure {
     ContractionIndexStructure::new(
         [
@@ -1786,8 +1787,17 @@ impl RetainedComparison {
 /// measured over these exact operands.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ContractionMember {
-    /// The class name `prototypes/serial-sum-compile` publishes it under.
+    /// The class name this member is published and opened under.
     pub(crate) class: &'static str,
+    /// The program family and extents [`crate::publication`] publishes it at.
+    ///
+    /// Carried on the member rather than resolved from the class name at
+    /// publication time, so the one table below states what each member *is* and
+    /// the publication has no second mapping that could disagree with it. The
+    /// operand source is part of the family: the adversarial member's five cases
+    /// are numerical classes chosen here, and the cell's single case is the
+    /// realization probe's own workload stream.
+    pub(crate) family: crate::publication::ProofFamily,
     /// The retained `direct` result digest, for a member the L3 realization probe
     /// measured.
     ///
@@ -1799,13 +1809,25 @@ pub(crate) struct ContractionMember {
 }
 
 /// The two contraction members this module routes, in the order it routes them.
+///
+/// The extents are stated here and checked against the operand tables and the
+/// retained measurement written for them by
+/// `crate::publication::proof::tests::the_published_contraction_extents_are_the_ones_this_module_is_written_for`,
+/// so moving one fails in the ordinary gate rather than on the first host that
+/// publishes.
 pub(crate) const CONTRACTION_MEMBERS: [ContractionMember; 2] = [
     ContractionMember {
         class: CONTRACTION_CLASS,
+        family: crate::publication::ProofFamily::Contraction { m: 2, n: 2, k: 3 },
         retained_result_sha256: None,
     },
     ContractionMember {
         class: L3_CELL_CLASS,
+        family: crate::publication::ProofFamily::L3CorrectnessCell {
+            m: 1,
+            n: 1024,
+            k: 1024,
+        },
         retained_result_sha256: Some(L3_CELL_RESULT_SHA256),
     },
 ];
@@ -2026,36 +2048,35 @@ mod apple;
 
 #[cfg(not(target_os = "macos"))]
 mod apple {
-    use std::path::Path;
-
     use super::{ContractionMember, RoutedMember};
     use crate::measurement::{Measured, absent_apple_row};
 
     /// Reports the serial-sum matrix as unavailable.
-    pub(super) fn run_matrix(_base: &Path) -> Measured<Vec<RoutedMember>> {
+    ///
+    /// One outcome covers both halves here, and that is the shape rather than a
+    /// simplification: publishing the members needs the same offline Apple
+    /// toolchain routing them needs, so a host without it has nothing to say
+    /// about either separately.
+    pub(super) fn run_matrix() -> Measured<Vec<RoutedMember>> {
         Measured::Unavailable(absent_apple_row())
     }
 
     /// Reports one contraction member as unavailable.
-    pub(super) fn run_contraction(
-        _base: &Path,
-        _member: &ContractionMember,
-    ) -> Measured<RoutedMember> {
+    pub(super) fn run_contraction(_member: &ContractionMember) -> Measured<RoutedMember> {
         Measured::Unavailable(absent_apple_row())
     }
 }
 
-/// Routes every published serial-sum member, or states why this host cannot.
-pub(crate) fn measured_matrix(base: &Path) -> crate::measurement::Measured<Vec<RoutedMember>> {
-    apple::run_matrix(base)
+/// Publishes and routes every serial-sum member, or states why this host cannot.
+pub(crate) fn measured_matrix() -> crate::measurement::Measured<Vec<RoutedMember>> {
+    apple::run_matrix()
 }
 
-/// Routes one published contraction member, or states why this host cannot.
+/// Publishes and routes one contraction member, or states why this host cannot.
 pub(crate) fn measured_contraction(
-    base: &Path,
     member: &ContractionMember,
 ) -> crate::measurement::Measured<RoutedMember> {
-    apple::run_contraction(base, member)
+    apple::run_contraction(member)
 }
 
 #[cfg(test)]

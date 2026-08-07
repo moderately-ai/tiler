@@ -7,10 +7,11 @@
 //! digest helper against its published vectors and its own domain, and the
 //! retained comparison's two verdicts including the perturbation it must refuse.
 //!
-//! The routed runs need an envelope a *separate producer* wrote, and this crate
-//! does not hold the scope that produces one. They therefore report the artifact
-//! boundary as unavailable — naming the producer command — rather than skipping,
-//! exactly as an unmeasured host reports its device row.
+//! The routed runs publish their own members through [`crate::publication`] and
+//! then route them, so on a host with an offline Apple toolchain and a device
+//! they run under the ordinary gate. A host without either reports the
+//! measurement boundary unavailable — one boundary rather than two, because
+//! publishing and routing need the same environment — and never skips.
 
 use std::path::Path;
 
@@ -19,29 +20,33 @@ use tiler_build::DTypeDispatchability;
 use tiler_runtime::load::{DTypeDispatch, DTypeDispatchResolution};
 
 use super::{
-    ARTIFACT_BASE, CONTRACTION_ACTIVATIONS_KEY, CONTRACTION_CLASS, CONTRACTION_MEMBERS,
-    CONTRACTION_OUTPUT_KEY, CONTRACTION_WEIGHTS_KEY, DeclaredInput, DeclaredInterface,
-    EnvelopeFailure, L3_CELL_CLASS, L3_CELL_RESULT_SHA256, PLAN_ROLES, PRODUCER_COMMAND,
-    REDUCTION_CLASSES, RetainedComparison, SIDECAR_SUFFIX, declared_route_environment,
-    decode_f32_bits, dtype_rows, expected_shape, host_dtype_dispatch, measured_contraction,
-    measured_matrix, proof_member, require_contraction_interface, require_or_report_base,
-    require_serial_sum_interface, result_digest, sha256_hex,
+    CONTRACTION_ACTIVATIONS_KEY, CONTRACTION_CLASS, CONTRACTION_MEMBERS, CONTRACTION_OUTPUT_KEY,
+    CONTRACTION_WEIGHTS_KEY, DeclaredInput, DeclaredInterface, EnvelopeFailure, L3_CELL_CLASS,
+    L3_CELL_RESULT_SHA256, PLAN_ROLES, REDUCTION_CLASSES, RetainedComparison, SIDECAR_SUFFIX,
+    declared_route_environment, decode_f32_bits, dtype_rows, expected_shape, host_dtype_dispatch,
+    measured_contraction, measured_matrix, proof_member, require_contraction_interface,
+    require_serial_sum_interface, result_digest, sha256_hex, sidecar_path,
 };
 use crate::measurement::require_or_report;
 use crate::serial_sum::{COLUMNS, declaration};
 
-/// The published contraction's extents, restated here as the consumer's half of
-/// a pinned pair.
+/// The extents the published contraction member is compiled and routed at.
 ///
-/// `prototypes/serial-sum-compile` states the same three numbers and the same
-/// class name. Nothing links the two crates, so this pair is the only thing
-/// comparing them — the same arrangement [`SIDECAR_SUFFIX`] and the reduction
-/// matrix are under, and for the same reason: a producer that moved the published
-/// contraction while this half kept opening the old shape would leave a green
-/// gate over a member that cannot route.
+/// **A literal rather than a read of [`CONTRACTION_MEMBERS`], and the redundancy
+/// is the point.** These three numbers decide which operand table
+/// `crate::publication::proof` may use, and a test that recomputed them from the
+/// constant it is guarding would agree with any change. What it stops is a
+/// silent move: `2 x 2` is the only published contraction shape whose result has
+/// more than one row *and* more than one column, so repointing this member at a
+/// `1 x N` cell would leave a kernel that confused the two operand access
+/// relations still agreeing.
 const FIXTURE_CONTRACTION: (u64, u64, u64) = (2, 2, 3);
 
-/// The published L3 cell's extents, restated here for the same reason.
+/// The extents the published L3 cell is compiled and routed at.
+///
+/// A literal for the same reason, and one stronger: a `result_sha256` was
+/// retained for `w_decode_kv` at exactly these extents, so a cell published at
+/// any other shape would be compared against a digest that never described it.
 const FIXTURE_L3_CELL: (u64, u64, u64) = (1, 1024, 1024);
 
 /// Builds one declared interface literal, for the family-recognition cases.
@@ -64,15 +69,21 @@ fn interface_of(inputs: &[(&str, &[u64])], output: (&str, u64)) -> DeclaredInter
     }
 }
 
-/// This half of the member filename interface, pinned.
+/// Every member of the matrix has a distinct name, and the derivation is pinned.
 ///
-/// `prototypes/serial-sum-compile` derives the identical names and carries the
-/// identical assertion. The two crates share no code, so this pair of tests is
-/// the only thing that compares their idea of the matrix — both the names and
-/// which classes exist. A producer that adds a class this consumer does not open,
-/// or renames one it does, fails here.
+/// **What this catches is different now that one derivation serves both halves.**
+/// It used to be one side of a pinned pair against a separate executable, which
+/// is how a rename could break the slice while both halves compiled; the
+/// publication and the route reach [`proof_member`] and [`sidecar_path`] now, so
+/// a rename moves both together. What a shared derivation cannot protect is the
+/// derivation *itself* — a base that appended nothing, or a class that collided
+/// with another, would leave members silently overwriting each other and the
+/// matrix routing six names that were four files. The names are asserted as
+/// literals for that, and the reduced extents beside them because the
+/// `nontrivial` class exists to publish the contributor count
+/// `crate::serial_sum` reduces directly.
 #[test]
-fn the_member_names_are_the_ones_the_producer_writes() {
+fn every_member_name_is_distinct_and_derived_the_one_way() {
     let base = Path::new("/tmp/a.tiler");
     let names: Vec<String> = REDUCTION_CLASSES
         .iter()
@@ -94,11 +105,22 @@ fn the_member_names_are_the_ones_the_producer_writes() {
             "/tmp/a.tiler.nontrivial.materialized",
         ],
     );
-    assert_eq!(SIDECAR_SUFFIX, ".proof");
+    let mut distinct = names.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        names.len(),
+        "two members sharing a path would leave one silently overwriting the other",
+    );
 
-    // The reduced extents the producer publishes, and the one this crate's own
-    // direct path uses, agree — which is what makes the `nontrivial` class the
-    // shape `crate::serial_sum` reduces directly.
+    assert_eq!(SIDECAR_SUFFIX, ".proof");
+    assert_eq!(
+        sidecar_path(Path::new(&names[0])).display().to_string(),
+        "/tmp/a.tiler.empty-domain.selected.proof",
+        "the record is named beside its envelope by appending, so the pair stays one unit on disk",
+    );
+
     assert_eq!(
         REDUCTION_CLASSES,
         [
@@ -106,8 +128,7 @@ fn the_member_names_are_the_ones_the_producer_writes() {
             ("singleton", 1),
             ("nontrivial", COLUMNS)
         ],
-        "`prototypes/serial-sum-compile` states this same matrix; a class or reduced extent \
-         changed there must change here too",
+        "the nontrivial class publishes the contributor count `crate::serial_sum` reduces",
     );
 }
 
@@ -126,9 +147,23 @@ fn the_two_roles_mean_different_dispatch_shapes() {
     );
 }
 
-/// This half of the published contraction and L3 cell interfaces, pinned.
+/// The published contraction and L3 cell interfaces, pinned.
+///
+/// The extents are additionally compared against the ones each member declares,
+/// which is what makes the two literals above a check on
+/// [`CONTRACTION_MEMBERS`] rather than a restatement of nothing.
 #[test]
-fn the_published_contraction_members_are_the_ones_the_producer_writes() {
+fn the_published_contraction_members_are_the_ones_this_module_routes() {
+    assert_eq!(
+        CONTRACTION_MEMBERS
+            .iter()
+            .map(|member| member.family.contraction_extents())
+            .collect::<Vec<_>>(),
+        [Some(FIXTURE_CONTRACTION), Some(FIXTURE_L3_CELL)],
+        "a member published at extents this file does not pin would route a shape no assertion \
+         here describes",
+    );
+
     assert_eq!(CONTRACTION_CLASS, "contraction");
     assert_eq!(FIXTURE_CONTRACTION, (2, 2, 3));
     assert_eq!(
@@ -273,8 +308,10 @@ fn a_retained_comparison_separates_the_executed_bytes_from_the_published_record(
 /// The contraction interface is recognized, and every way of not being one is
 /// refused.
 ///
-/// **The negatives are the point.** A recognizer that only ever saw the artifact
-/// its own producer writes would accept anything, and each row below is a way an
+/// **The negatives are the point, and they carry more now than they used to.**
+/// The routed runs only ever see the artifact this crate published, so nothing
+/// they route can exercise a rejection; a recognizer with no negatives beside it
+/// would accept anything and never be caught. Each row below is a way an
 /// interface could be wrong that would otherwise reach the device: a missing
 /// operand binds one buffer for a two-operand kernel, a contracted-extent
 /// disagreement sizes one operand against the other's `K`, swapped keys write each
@@ -465,47 +502,18 @@ fn the_routed_dtype_rows_are_the_declarations_own() {
     );
 }
 
-/// The unavailable path names the producer command rather than skipping.
-///
-/// **The reporting obligation, exercised rather than described.** A run without a
-/// published base must be distinguishable from one that routed, and what makes it
-/// distinguishable is that the reason names the exact command that produces the
-/// missing input. Asserting the sentence is what stops a later edit from
-/// shortening it into "not available".
-#[test]
-fn an_absent_published_base_names_the_producer_command() {
-    let super::PublishedBase::Absent(reason) = super::published_base() else {
-        // A run *with* a base supplied is the other half of the same rule, and
-        // this case states it rather than failing: what must never happen is a
-        // third outcome in which neither is reported.
-        eprintln!("{ARTIFACT_BASE} is supplied; the routed runs below carry the boundary instead");
-        return;
-    };
-    assert!(
-        reason.contains(ARTIFACT_BASE),
-        "the reason must name the ambient input that was missing: {reason}",
-    );
-    assert!(
-        reason.contains(PRODUCER_COMMAND),
-        "the reason must name the producer command that creates one: {reason}",
-    );
-}
-
 /// The published matrix agrees with its own record, member by member and case by
 /// case.
 ///
-/// Each reduction class is routed twice — once as the fused single-dispatch plan
-/// the optimizer selects, once as the materialized plan that computes the same
-/// function through two dispatches and one intermediate — over every operand class
-/// the producer published. Agreement between them is a statement about the
-/// optimizer; agreement with the sidecar's expected bytes is a statement about
-/// both.
+/// Each reduction class is published twice — once as the fused single-dispatch
+/// plan the optimizer selects, once as the materialized plan that computes the
+/// same function through two dispatches and one intermediate — and each is routed
+/// over every operand class its record carries. Agreement between them is a
+/// statement about the optimizer; agreement with the record's expected bytes is a
+/// statement about both.
 #[test]
 fn the_published_matrix_agrees_with_its_record_on_the_routed_row() {
-    let Some(base) = require_or_report_base("envelope matrix") else {
-        return;
-    };
-    let Some(members) = require_or_report("envelope matrix", measured_matrix(&base)) else {
+    let Some(members) = require_or_report("envelope matrix", measured_matrix()) else {
         return;
     };
 
@@ -545,14 +553,11 @@ fn the_published_matrix_agrees_with_its_record_on_the_routed_row() {
 /// evidence.
 #[test]
 fn the_contraction_members_route_and_the_l3_cell_carries_its_retained_digest() {
-    let Some(base) = require_or_report_base("envelope contraction") else {
-        return;
-    };
     let mut compared = 0_usize;
     for member in &CONTRACTION_MEMBERS {
         let Some(routed) = require_or_report(
             &format!("envelope contraction {}", member.class),
-            measured_contraction(&base, member),
+            measured_contraction(member),
         ) else {
             return;
         };
