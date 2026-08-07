@@ -1,7 +1,7 @@
 ---
 id: activate-measured-reduction-selection-from-a-target-cost-row
 title: Activate measured reduction selection from a target cost row
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [calibrate-and-activate-parallel-reduction-selection]
 related: [calibrate-device-cost-models, implement-parallel-reduction-strategies]
@@ -64,3 +64,39 @@ Selection consults the declared term, the qualified profile declares it from ret
 - Keep after `calibrate-and-activate-parallel-reduction-selection`, which supplies the measurement and the model this ticket activates.
 - `calibrate-device-cost-models` remains the owner of general analytical-cost calibration. This ticket is one term for one decision and must not be widened into that.
 - If the design problem above resolves against a profile row, file the alternative carrier and close this rather than reshaping it silently.
+
+## Accepted — 2026-08-07
+
+**Tom approved the direction on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator, on the basis presented: a measured cost row is admitted, **declared as a distinct kind from a capability axis**, with silence about it meaning *no preference* rather than *no plan*.
+
+**The acceptance came with a standing instruction, and it governs how this ticket is executed:** do not cut scope or decisions for short-term gain. Performance, correctness, long-term maintainability, code quality, and compatibility are all to be weighed — a cheaper shape that defers one of them is not a saving. Nothing in the list below may be dropped, narrowed, or split off without saying so explicitly and giving the reason.
+
+### What the acceptance settles
+
+- The **direction**: selection may consult a measured term where the qualified profile declares one.
+- The **carrier kind**: a cost row is *not* a `CapabilityAxis`. Declaring it as one would make silence render a profile unexecutable for a quantity no feasibility predicate reads, which is the wrong failure direction. The flash-class capability record already eliminated that shape for a bandwidth number and the argument transfers unchanged.
+- The **silence rule**, which is testable rather than aspirational: **a profile declaring no cost row must select bit-identically to today, proved by an unchanged golden.**
+
+### What the acceptance does not settle, and must not be quietly assumed
+
+The exact public spelling of the `declare_*` / `declare_measured_*` pair remains a public boundary under ADR 0075 and comes back to Tom with the built surface. Acceptance of the model is not acceptance of its spelling.
+
+### Obligations carried forward in full
+
+Every item below was already in this ticket and is restated because the acceptance instruction forbids trimming them:
+
+1. Declare the term through a `declare_*` / `declare_measured_*` pair whose measured constructor carries the same `TargetCompileProfileMeasurementSource` the grid-axis row uses, so its validity stays `MeasuredEnvironment` and cannot widen into a portable claim.
+2. `BoundMetalCompileDeclaration::first_macos_apple9` declares it from the retained 2026-08-07 measurement, citing that spike.
+3. Thread it to the point where reduction alternatives are compared, and **make the comparison explain itself**: the winning alternative's explain row names the term and both sides of the `max`, not merely `selected`.
+4. Recompute the canonical descriptor length, the standard Metal artifact identity, and its cache subject **on the merged tree**, enumerating each moved pin. Two branches moved these same three pins on 2026-08-07 from different bases and neither's values survived; the current values are artifact identity `23c46a19…`, cache subject `e89c4d82…`, fixed content 64,542 bytes.
+5. Keep hard feasibility untouched: no infeasible plan may become merely an expensive one.
+6. **Do not widen `PlanStructuralCost` with a latency dimension as a shortcut.** Its four dimensions are exact counts a plan carries; a fitted quantity beside them would make a Pareto relation over measured and counted quantities at once, and a profile without the row would then dominate differently from one with it.
+7. Two constraints that are correctness rather than taste, and that the implementation must answer rather than route around: `PlanStructuralCost::dominates` returns `false` across differing model keys, so plans carrying different keys never dominate each other, the non-dominated set silently becomes the whole set, and **Pareto pruning goes dark with nothing reporting it**. And selection today is a Pareto relation over exact structural counts with a canonical-identity tie break, deliberately *not* a scalar latency total order — a measured term that decides between mutually non-dominated plans is a change to what selection **is**, not a new dimension in what it already does.
+
+### Evidence required, unchanged
+
+The selection change is mutation-proved on the term: perturbing the declared value changes the selected alternative on a named shape, or refuses. A profile declaring no term selects bit-identically to today. The explain report names the deciding term. Every moved identity pin is enumerated with before and after. The shapes the new selection prefers are checked against the retained TSV rather than re-argued.
+
+### If the design resolves against a profile row
+
+This ticket's own instruction stands: file the alternative carrier and close this rather than reshaping it silently.
