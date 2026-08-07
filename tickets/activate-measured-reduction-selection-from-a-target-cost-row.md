@@ -1,7 +1,7 @@
 ---
 id: activate-measured-reduction-selection-from-a-target-cost-row
 title: Activate measured reduction selection from a target cost row
-status: todo
+status: in-progress
 priority: p1
 dependencies: [calibrate-and-activate-parallel-reduction-selection]
 related: [calibrate-device-cost-models, implement-parallel-reduction-strategies]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/build, contracts/optimizer, res
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [implementation, cost-model, target-profiles, selection]
+claimed_from: todo
+assignee: agent-cost-row
+lease_expires_at: 1786118002
 ---
 ## User-visible outcome
 
