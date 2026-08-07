@@ -587,6 +587,62 @@ mod proofs {
         check_numerical::<4>();
     }
 
+    /// Injective over every `NumericalFacts` field *except* the key, held concrete.
+    ///
+    /// **This is a cost-attribution diagnostic, and its own claim is narrow.**
+    /// `push_numerical_injective_key_len_0` exceeded a 900 s cap at the smallest
+    /// symbolic-key bound that exists — an empty key. That result on its own does
+    /// not say whether the obstacle is `push_numerical` or the `String` in its
+    /// input type. This harness answers that: the key is a concrete 30-byte
+    /// literal of the shape the crates actually use, and everything else stays
+    /// symbolic — the `u32` NaN bits and all 2 304 tail combinations, so 2^32 x
+    /// 2 304 values and the square of that in ordered pairs.
+    ///
+    /// **What it proves:** injectivity across the whole tail for two facts that
+    /// share this one key. **What is outside it:** every pair differing in the
+    /// key, which is the part that needs the key symbolic.
+    ///
+    /// A fast verdict here means the encoder is reachable and only the symbolic
+    /// `String` is not, which makes the property recoverable by decomposition —
+    /// prove the key's framing separately over a symbolic byte run. A slow one
+    /// would mean the encoder itself is out of reach.
+    #[kani::proof]
+    #[kani::unwind(51)]
+    fn push_numerical_injective_fixed_key() {
+        let key = "tiler.test.scalar-host-profile";
+        let a = NumericalFacts {
+            profile_key: key.to_owned(),
+            canonical_arithmetic_nan_bits: kani::any(),
+            input_subnormals: kani::any(),
+            result_subnormals: kani::any(),
+            contraction: kani::any(),
+            reassociation: kani::any(),
+            permutation: kani::any(),
+            signed_zero: kani::any(),
+            nan_assumptions: kani::any(),
+            infinity_assumptions: kani::any(),
+        };
+        let b = NumericalFacts {
+            profile_key: key.to_owned(),
+            canonical_arithmetic_nan_bits: kani::any(),
+            input_subnormals: kani::any(),
+            result_subnormals: kani::any(),
+            contraction: kani::any(),
+            reassociation: kani::any(),
+            permutation: kani::any(),
+            signed_zero: kani::any(),
+            nan_assumptions: kani::any(),
+            infinity_assumptions: kani::any(),
+        };
+        let mut encoded_a = Vec::new();
+        let mut encoded_b = Vec::new();
+        push_numerical(&mut encoded_a, &a);
+        push_numerical(&mut encoded_b, &b);
+        if encoded_a == encoded_b {
+            assert!(a == b, "two distinct numerical facts share an encoding");
+        }
+    }
+
     fn check_numerical<const N: usize>() {
         let a = any_facts::<N>();
         let b = any_facts::<N>();

@@ -113,17 +113,32 @@ The ticket permits a shim fallback only if the record states that a shim proof p
 
 **Unsupported cases, established rather than assumed.** Kani's codegen reported `caller_location (1)` and `foreign function (2)` as unsupported constructs, reachable only on panic paths; none was reachable in a violating way in any harness (each run reports its unreachable count). Structurally outside the technique as applied here: unbounded slices and vectors, unbounded strings, structural recursion, and trait objects — which is most of the predecessor's inexhaustible list, not a corner of it.
 
-**Stop conditions.** (a) `tiler-ir` failing to codegen stops the primary path — fired. (b) A harness exceeding 1800 s stops that harness — did not fire. (c) A failing unwinding assertion demotes a harness's claim from complete to bounded-at-N — did not fire on any harness where completeness was claimed.
+**Stop conditions.** (a) `tiler-ir` failing to codegen stops the primary path — **fired**, and it is the spike's headline result. (b) A harness exceeding its wall-clock cap is recorded as capped rather than retried at a larger budget — **fired** on `push_numerical_injective_key_len_0` at 900 s, which then stopped the three larger-bound string harnesses as strictly harder. (c) A failing unwinding assertion demotes a harness's claim from complete to bounded-at-N — did not fire; every harness claiming completeness reports its unwinding assertion as `SUCCESS`.
 
 ## Results
 
-All eight harnesses verify. Wall-clock is the whole `cargo kani --harness` invocation; verification time is CBMC's.
+Wall-clock is the whole `cargo kani --harness` invocation; verification time is CBMC's.
 
 | harness | domain | unwind | wall | CBMC | checks | unwinding assertion |
 | --- | --- | --- | --- | --- | --- | --- |
 | `push_tensor_role_injective` | 2^32 + 2 values, all pairs | 6 | 3 s | 1.44 s | 0 of 427 failed | SUCCESS |
 | `push_component_role_injective` | 2^32 + 1 values, all pairs | 6 | 3 s | 1.00 s | 0 of 410 failed | SUCCESS |
 | `push_resources_injective` | ~2^80.5 values, ~2^161 pairs | 33 | 72 s | 71.63 s | 0 of 628 failed | SUCCESS |
+| `push_resources_prefix_free_tail_4` | above, plus two 4-byte tails | 37 | 184 s | 182.86 s | 0 of 629 failed | SUCCESS |
+| `push_numerical_injective_fixed_key` | 2^32 x 2 304, key concrete | 51 | 3 s | 1.46 s | 0 of 579 failed | none needed |
+| `push_numerical_injective_key_len_0` | above, key symbolic, ≤ 0 bytes | 21 | **>900 s, capped** | — | — | never reached |
+
+### The string encoder is out of reach, and the reason is not the encoder
+
+**Measurement.** `push_numerical_injective_key_len_0` exceeded a 900 s cap. That is the *smallest symbolic-key bound that exists* — an empty key — and it never got past symbolic execution to the SAT solver at all.
+
+**Inference, labelled as such.** The `key_len_1`, `key_len_2`, and `key_len_4` harnesses were written and are checked in, but were not run to completion: each is strictly harder than `key_len_0`, which already exceeded the cap, so the measurement would only confirm a monotone conclusion at 45 minutes' cost. Anyone wanting the confirmation can run them; the commands are in the README.
+
+**Measurement — where the cost actually is.** `push_numerical_injective_fixed_key` holds the key to a concrete 30-byte literal of the shape the crates use and leaves everything else symbolic: the `u32` NaN bits and all 2 304 tail combinations. It discharges in **1.46 s**, 579 checks, a 144 349-variable / 159 980-clause SAT instance.
+
+So the same encoder costs 1.46 s with a concrete key and more than 900 s with an *empty symbolic* one. The symbolic-execution traces say why: with the key symbolic, `core::str::run_utf8_validation` dominates the trace — 840 unwindings of each of its two loop instances against 40 for `memcmp` — because `String::from_utf8` over symbolic bytes drags CBMC through the whole UTF-8 validation automaton. With the key concrete, `run_utf8_validation` does not appear in the trace at all and `memcmp` is the only loop.
+
+**Inference.** `push_numerical` itself is well within reach. What defeats Kani here is `String` in the input type, not the encoding logic. That makes the property recoverable by *decomposition* rather than unreachable: prove the tail with the key fixed (done, above), and prove the key's framing separately as a property of `push_slice` over a symbolic byte run — `push_slice` is one length-prefix primitive shared by every string encoder in the predecessor's list, so one proof about it would carry to all nine. That decomposition is not attempted here and is the obvious next bounded experiment.
 
 ### The bound is on the output, not the input
 
@@ -156,3 +171,5 @@ That distinction is the difference between a bounded model check and a proof, an
 - **Catalog rows.** `docs/research/README.md` and `spikes/README.md` are in the `contracts/navigation` scope, not `research/verification`, so this record and its spike are not yet reachable from the catalogs. Verbatim-landable rows and a carrier ticket: [`catalog-the-kani-verification-research-and-spike`](../../../tickets/catalog-the-kani-verification-research-and-spike.md).
 - **`tiler-artifact` under Kani.** Not probed. It depends on `tiler-ir`, so it fails for the same reasons; a separate probe would add no information.
 - **The exact nightly threshold.** Requires installing intermediate nightlies, which changes the evidence environment.
+- **`push_numerical` at symbolic key bounds 1, 2, and 4.** Harnesses checked in, not run to completion: bound 0 already exceeded a 900 s cap and each larger bound is strictly harder, so the runs would confirm a monotone conclusion at about 45 minutes' cost. The README marks them and gives the command.
+- **Decomposing the string property onto `push_slice`.** The measurement above says the obstacle is `String`, not the encoder, so the framing property of `push_slice` over a symbolic byte run is the experiment that would carry to all nine string encoders at once. It needs its own harness and its own bound argument — a length prefix is prefix-free by construction, but only up to the bound at which the prefix itself is quantified — and that is a separate bounded experiment rather than a loose end of this one.

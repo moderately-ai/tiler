@@ -23,7 +23,13 @@ The full write-up, including the per-Fact audit of the ticket and the evidence-c
 
 ## Verdict in one paragraph
 
-**Fact.** `crates/tiler-ir` does **not** compile under Kani 0.67.0's bundled rustc, so the stop condition in the ticket fired. **Fact.** Kani nonetheless proves the encoders' injectivity over *copies* of them, and for the finite-width encoders it proves it over the entire domain with no residual bound — including all 2^32 ordinals that the exhaustive-finite work could not reach. **Fact.** The cost driver is not the input domain, which CBMC handles symbolically for free; it is the `Vec<u8>` output, whose symbolic length makes the comparison's `memcmp` unwind without bound until an explicit unwind bound is supplied.
+**Fact.** `crates/tiler-ir` does **not** compile under Kani 0.67.0's bundled rustc, so the stop condition in the ticket fired.
+
+**Fact.** Kani nonetheless proves the encoders' injectivity over *copies* of them, and for the finite-width encoders it proves it over the entire domain with no residual bound — including all 2^32 ordinals that the exhaustive-finite work could not reach. `push_resources`, whose domain is about 2^161 ordered pairs, discharges in 72 s.
+
+**Fact.** The cost driver is not the input domain, which CBMC handles symbolically for free. It is the `Vec<u8>` output, whose symbolic length makes the comparison's `memcmp` unwind without bound until an explicit unwind bound is supplied — and that bound is *provably* sufficient, not merely asserted, because each encoder has a known maximum output width and CBMC checks it.
+
+**Fact.** The one encoder carrying a `String` is out of reach, and the reason is the `String` rather than the encoder: the same `push_numerical` costs 1.46 s with a concrete key and more than 900 s with an *empty symbolic* one, because `String::from_utf8` over symbolic bytes drags CBMC through the UTF-8 validation automaton.
 
 ## Reproducing
 
@@ -45,8 +51,25 @@ cargo kani -p tiler-ir --only-codegen
 The harnesses, from this directory:
 
 ```sh
-cargo kani                                              # all eight
 cargo kani --harness push_resources_injective           # one
+```
+
+**Do not start with a bare `cargo kani`.** Three of the nine harnesses —
+`push_numerical_injective_key_len_1`, `_2`, and `_4` — are expected not to
+terminate in any reasonable budget: `_key_len_0` already exceeded a 900 s cap and
+each of the others is strictly harder. They are checked in as the record of what
+was attempted, not as a suite to run. The ones that resolve, and the one capped
+result worth reproducing:
+
+```sh
+for h in push_tensor_role_injective \
+         push_component_role_injective \
+         push_resources_injective \
+         push_resources_prefix_free_tail_4 \
+         push_numerical_injective_fixed_key; do
+    cargo kani --harness "$h"
+done
+timeout 900 cargo kani --harness push_numerical_injective_key_len_0  # expect no verdict
 ```
 
 The staleness guard, from this directory:
