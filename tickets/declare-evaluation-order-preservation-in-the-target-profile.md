@@ -1,7 +1,7 @@
 ---
 id: declare-evaluation-order-preservation-in-the-target-profile
 title: Declare evaluation-order preservation in the target profile
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order, admit-a-refutation-only-derived-bound-conformance-oracle]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, target-profiles, numerics, public-boundary]
+claimed_from: todo
+assignee: agent-eval-order
+lease_expires_at: 1786066716
 ---
 ## User-visible outcome
 
