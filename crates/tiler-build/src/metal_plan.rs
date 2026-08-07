@@ -1380,7 +1380,31 @@ mod tests {
     /// obligation rows at twenty bytes each. A layout move on either side would
     /// not have summed.
     ///
+    /// **The 2026-08-07 cost-row step is what these constants hold now**, and it
+    /// is the first movement here caused by a *profile* row rather than by an
+    /// encoding or a program. `activate-measured-reduction-selection-from-a-target-cost-row`
+    /// declares the measured saturated-parallel-fold-step row on
+    /// `BoundMetalCompileDeclaration::first_macos_apple9`, which lengthens that
+    /// profile's canonical descriptor by exactly 100 bytes — the cost-row
+    /// section's length-prefixed 33-byte domain separator, a row count, the
+    /// length-prefixed 34-byte row key, a fixed-width `u64`, and a one-byte
+    /// compact source index, with no source-table growth because the row shares
+    /// the measured source the grid-axis, dispatchability, and numerical rows
+    /// already carry. The published envelope embeds that descriptor seven times,
+    /// so the fixed content grew by exactly **700**: 64,542 + 700 = 65,242.
+    /// **That the arithmetic closes is the evidence no layout moved**, exactly as
+    /// it was for the two steps below. A profile declaring no cost row encodes
+    /// byte for byte what it encoded before the family existed —
+    /// `complete_descriptor` states the derivation and
+    /// `the_declared_profile_states_the_measured_cost_row` drives both halves —
+    /// so nothing but this one profile's identity moved.
+    ///
     /// Superseded values, for a reader reconciling an older record:
+    /// the per-locus obligation derivation composed with the symbolic-coefficient
+    /// step, which is what these constants held immediately before the cost row,
+    /// `23c46a19f6bc601d35bf4ca653e890372da3079b1bb60526220dc3b3221dcdd0` /
+    /// `e89c4d826149c9d103e2ed8392968c0c519df454e23e7793932bc33bc86b1595` /
+    /// 64,542 bytes;
     /// the symbolic-coefficient step alone, which is what these constants held
     /// on `main` immediately before the locus derivation merged,
     /// `65adeb81d7ab30d73ba099403d9214effcfc2de963a51b39872a92fcfe7e4f5e` /
@@ -1440,10 +1464,10 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "23c46a19f6bc601d35bf4ca653e890372da3079b1bb60526220dc3b3221dcdd0";
+            "357f06767e459ea99fb45a11d6aaffd01f46051a941ec2f1e3eed54ae4290b73";
         const CACHE_SUBJECT: &str =
-            "e89c4d826149c9d103e2ed8392968c0c519df454e23e7793932bc33bc86b1595";
-        const FIXED_CONTENT_BYTES: usize = 64_542;
+            "c626e43b6cfc64ccb828f0394c0a641e0d01d7f54bcb3b506cdc3b8651dac59b";
+        const FIXED_CONTENT_BYTES: usize = 65_242;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

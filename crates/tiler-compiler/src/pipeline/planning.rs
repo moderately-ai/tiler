@@ -986,12 +986,74 @@ pub(super) fn build_plan_program(
         .map_err(CompileError::from)
 }
 
-/// Returns the identity of the first structurally non-dominated alternative.
+/// One retained alternative scored against the profile's measured cost row.
+pub(super) struct MeasuredScore<'alternatives> {
+    /// The alternative the assessment is about.
+    pub(super) alternative: &'alternatives ProgramAlternative,
+    /// Its fold-step total, with both sides of the `max` that produced it.
+    pub(super) assessment: FoldStepAssessment,
+}
+
+/// Scores every retained alternative against the profile's measured cost row.
 ///
-/// Domination is the Pareto relation the selection authority already computed
-/// over exact structural counts; it is never a scalar latency total order. When
-/// several plans are mutually non-dominated the canonical identity order breaks
-/// the tie deterministically, so the choice is reproducible without inventing a
+/// Returns `None` when the profile declares no row — which is every profile but
+/// the qualified Apple9 macOS one — and also when *any* alternative's stages
+/// decline a work-span derivation. **Both refusals are all-or-nothing on
+/// purpose.** A comparison run over a subset would prefer whichever plan this
+/// derivation happened to understand, which is a preference for the compiler's
+/// own coverage rather than for the target's measured behaviour.
+///
+/// The phase is [`AvailabilityPhase::CompileProfile`] because selection happens
+/// there and can act on nothing later; a row a profile defers to a live device
+/// resolves [`TargetCostRowResolution::Deferred`] here and is treated exactly as
+/// silence, because a compile cannot wait for it.
+pub(super) fn measured_scores<'alternatives>(
+    alternatives: &'alternatives [ProgramAlternative],
+    profile: &TargetProfile,
+) -> Option<Vec<MeasuredScore<'alternatives>>> {
+    let TargetCostRowResolution::Declared { value } =
+        profile.saturated_parallel_fold_steps(AvailabilityPhase::CompileProfile)
+    else {
+        return None;
+    };
+    alternatives
+        .iter()
+        .map(|alternative| {
+            crate::measured_cost::assess_fold_steps(&alternative.scheduled_regions, value).map(
+                |assessment| MeasuredScore {
+                    alternative,
+                    assessment,
+                },
+            )
+        })
+        .collect()
+}
+
+/// The lowest-fold-step alternative, canonical identity breaking a tie.
+///
+/// The tie break is the alternative identity rather than the plan identity, which
+/// is the rule the semantic-portfolio layer already uses, so the two selection
+/// points order equal-cost candidates the same way.
+pub(super) fn preferred_score<'a, 'alternatives>(
+    scores: &'a [MeasuredScore<'alternatives>],
+) -> Option<&'a MeasuredScore<'alternatives>> {
+    scores.iter().min_by(|left, right| {
+        left.assessment
+            .fold_steps
+            .cmp(&right.assessment.fold_steps)
+            .then_with(|| left.alternative.identity.cmp(&right.alternative.identity))
+    })
+}
+
+/// Returns the identity of the alternative this target's portfolio selects.
+///
+/// # Without a declared cost row, which is every profile but one
+///
+/// The first structurally non-dominated alternative. Domination is the Pareto
+/// relation the selection authority already computed over exact structural
+/// counts; it is never a scalar latency total order. When several plans are
+/// mutually non-dominated the canonical identity order breaks the tie
+/// deterministically, so the choice is reproducible without inventing a
 /// preference between incomparable trade-offs.
 ///
 /// The match is on the plan identities themselves rather than on their explain
@@ -1001,10 +1063,40 @@ pub(super) fn build_plan_program(
 /// plan to ask it. Comparing the identities directly is both the stronger check
 /// and the one that allocates nothing; the borrowed `stable_id` returned here is
 /// the label the matched alternative already computed once at construction.
+///
+/// **That path is bit-identical to the one that existed before a cost row could
+/// be declared at all**, which is the silence rule the activating ticket's
+/// acceptance made testable: a profile declaring no row selects exactly as it
+/// did, and its canonical descriptor does not move either.
+///
+/// # With one
+///
+/// The lowest measured fold-step total over the **retained valid plans**, with
+/// canonical identity breaking a tie. [`crate::measured_cost`] carries the
+/// derivation and the reason this ranges over the retained plans rather than over
+/// the non-dominated view: on the reduction family that view is a singleton,
+/// because the serial fold structurally dominates both parallel strategies while
+/// the retained 2026-08-07 sweep measured it up to 50.7x slower. A term confined
+/// to the non-dominated set could not express that at all.
+///
+/// **Hard feasibility is untouched.** Every candidate here was admitted by the
+/// frontier and composed by the boundary reconciliation, so a measured preference
+/// can move the choice between valid plans and can never turn an infeasible plan
+/// into an expensive one — there is no infeasible plan in the set to prefer.
+/// Structural dominance is likewise untouched: `PlanStructuralCost` keeps its four
+/// exact dimensions and its single model key, `dominates` is unchanged, and
+/// `SelectedPortfolio::non_dominated` still computes and still reports the same
+/// Pareto view for every alternative.
 pub(super) fn select_non_dominated<'alternatives>(
     portfolio: &SelectedPortfolio,
     alternatives: &'alternatives [ProgramAlternative],
+    profile: &TargetProfile,
 ) -> Result<&'alternatives str, CompileError> {
+    if let Some(scores) = measured_scores(alternatives, profile)
+        && let Some(preferred) = preferred_score(&scores)
+    {
+        return Ok(preferred.alternative.stable_id.as_str());
+    }
     let retained = portfolio.non_dominated();
     let selected = retained.iter().find_map(|plan| {
         alternatives

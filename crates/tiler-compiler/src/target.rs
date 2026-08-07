@@ -30,6 +30,22 @@
 //! [`TargetProfile::evaluation_order_preservation`], and
 //! [`TargetProfileBuildError::DuplicateEvaluationOrderPreservation`].
 //!
+//! The **measured-cost-row** family is a **reviewed draft boundary** (ADR 0074
+//! convention 7, ADR 0075) and carries *no* acceptance of its own:
+//! [`TargetCostRowResolution`],
+//! [`TargetProfileBuilder::declare_saturated_parallel_fold_steps`],
+//! [`TargetProfileBuilder::declare_measured_saturated_parallel_fold_steps`],
+//! [`TargetProfile::saturated_parallel_fold_steps`], and
+//! [`TargetProfileBuildError::DuplicateCostRow`]. Tom accepted the *model* on
+//! 2026-08-07 under
+//! `activate-measured-reduction-selection-from-a-target-cost-row` — that
+//! selection may consult a measured term where a qualified profile declares one,
+//! carried as a kind distinct from a capability axis, with silence meaning *no
+//! preference* rather than *no plan*. That acceptance expressly excluded the
+//! exact spelling of the declaration pair, which comes back to him with the
+//! built surface. This paragraph is what a reader should find rather than an
+//! acceptance that was never given.
+//!
 //! Four exclusions were accepted with it and are deliberate rather than gaps: no
 //! math-mode spelling, because `safe`/`relaxed`/`fast` are one backend driver's
 //! option tokens and the licence is what the measurement attributes the
@@ -219,6 +235,15 @@ const SYNCHRONIZATION_DOMAIN: &[u8] = b"tiler.target-profile.synchronization-rea
 /// **only when the family is non-empty**, and
 /// [`complete_descriptor`] states the derivation that licenses the difference.
 const EVALUATION_ORDER_DOMAIN: &[u8] = b"tiler.target-profile.evaluation-order-preservation.v1\0";
+/// Domain separating the measured cost rows of one declaration.
+///
+/// Its own separator, for the reason the three families above have one, and
+/// written **only when the family is non-empty** for the reason the
+/// evaluation-order family is: silence about a cost row means *no preference*,
+/// which is what a profile that never carried the family already recorded, so
+/// writing a zero count would move every existing profile's bytes to record
+/// nothing new. [`complete_descriptor`] states the derivation.
+const COST_ROW_DOMAIN: &[u8] = b"tiler.target-profile.cost-row.v1\0";
 
 /// Maximum byte length of one target-profile key.
 ///
@@ -1687,6 +1712,90 @@ impl EvaluationOrderFact {
     }
 }
 
+/// One measured machine quantity a target may state a *preference* on.
+///
+/// **Deliberately not a [`CapabilityAxis`], and the distinction is the whole
+/// point of the type.** Every capability axis is a hard bound: silence about one
+/// resolves `Unknown`, and an `Unknown` never reaches an executable frontier.
+/// `docs/research/program-planning/flash-class-capability-set.md` already
+/// eliminated that shape for a bandwidth number and the argument transfers
+/// unchanged — a cost row declared as a capability axis would make silence render
+/// a profile **unexecutable for a quantity no feasibility predicate reads**,
+/// which is the wrong failure direction. Silence about a cost row means *no
+/// preference*, never *no plan*, and [`TargetCostRowResolution`] is where that is
+/// written down.
+///
+/// Private, and the public surface is one `declare_*` / `declare_measured_*` pair
+/// plus one reader per row, exactly as the quantitative axes are spelled. A
+/// second row lands as a variant here plus its own pair, additively.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum CostRow {
+    /// Fold steps the device retires at once when it is saturated.
+    SaturatedParallelFoldSteps,
+}
+
+impl CostRow {
+    /// The stable governed key naming this row.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::SaturatedParallelFoldSteps => "cost.saturated-parallel-fold-steps",
+        }
+    }
+}
+
+/// One declared cost row, its value, and who vouches for it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CostRowFact {
+    row: CostRow,
+    value: u64,
+    source: Arc<FactSourceProvenance>,
+}
+
+impl CostRowFact {
+    fn validate(&self) -> Result<(), TargetProfileBuildError> {
+        if !self.source.is_valid() {
+            return Err(TargetProfileBuildError::InvalidProducerClaim);
+        }
+        Ok(())
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>, source_index: usize) {
+        push_slice(bytes, self.row.key().as_bytes());
+        bytes.extend_from_slice(&self.value.to_le_bytes());
+        encode_compact_index(bytes, source_index);
+    }
+}
+
+/// Result of a cost-row lookup.
+///
+/// **Draft public surface.** The exact spelling of the declaration pair and of
+/// this reader is a public boundary under ADR 0075 and ADR 0074 convention 7, and
+/// it is not accepted: Tom accepted the *model* on 2026-08-07 —
+/// `activate-measured-reduction-selection-from-a-target-cost-row` — expressly
+/// excluding its spelling, which comes back to him with the built surface. This
+/// sentence is what a reader should find rather than an acceptance that was never
+/// given.
+///
+/// [`Self::Unknown`] is the common answer and it means **no preference**, not no
+/// plan. A consumer must treat it, and [`Self::Deferred`], as evidence it does not
+/// have — never as a refusal, and never as a zero. Nothing is inherited from a
+/// neighbouring row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetCostRowResolution {
+    /// An exact declaration states this value.
+    Declared {
+        /// The declared quantity, in the row's own unit.
+        value: u64,
+    },
+    /// An exact declaration exists, but only from this later phase.
+    Deferred {
+        /// Earliest phase at which an exact declaration can resolve.
+        available_at: AvailabilityPhase,
+    },
+    /// No declaration exists, which is a stated absence of preference.
+    Unknown,
+}
+
 /// One immutable, intrinsically checked target declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetProfile {
@@ -1701,6 +1810,7 @@ struct TargetProfileData {
     scalar: Box<[ScalarHonourabilityDeclaration]>,
     dispatchability: Box<[DTypeDispatchabilityFact]>,
     evaluation_order: Box<[EvaluationOrderFact]>,
+    cost_rows: Box<[CostRowFact]>,
     descriptor: Box<[u8]>,
 }
 
@@ -1714,6 +1824,7 @@ pub struct TargetProfileBuilder {
     dispatchability: Vec<DTypeDispatchabilityFact>,
     synchronization: Vec<DeclaredSynchronizationRealization>,
     evaluation_order: Vec<EvaluationOrderFact>,
+    cost_rows: Vec<CostRowFact>,
 }
 
 impl TargetProfileBuilder {
@@ -1730,6 +1841,7 @@ impl TargetProfileBuilder {
             dispatchability: Vec::new(),
             synchronization: Vec::new(),
             evaluation_order: Vec::new(),
+            cost_rows: Vec::new(),
         }
     }
 
@@ -2805,6 +2917,84 @@ impl TargetProfileBuilder {
         self.declare_evaluation_order_with_source(subject, licence, preservation, source.0)
     }
 
+    /// Declares how many fold steps this target retires at once when its launch
+    /// saturates the device.
+    ///
+    /// **Draft public surface**, with [`TargetCostRowResolution`] and the measured
+    /// constructor below; that type's documentation records what was and was not
+    /// accepted.
+    ///
+    /// This is a **cost row, not a capability axis**, and the difference is
+    /// load-bearing rather than presentational. A capability axis is a hard bound
+    /// a feasibility predicate reads, and silence about one is an `Unknown` that
+    /// never reaches an executable frontier. Nothing reads this row for
+    /// feasibility, so declaring it that way would make silence render a profile
+    /// unexecutable for a quantity no predicate consults. Silence here means *no
+    /// preference*: a profile declaring nothing selects exactly as it did before
+    /// this row existed, byte for byte, and its canonical descriptor does not move.
+    ///
+    /// A value of zero is admitted and is a statement rather than an absence — it
+    /// says the target retires no fold step in parallel — but no consumer in this
+    /// build acts on it, because a selector dividing by it would have nothing to
+    /// compare.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate row.
+    pub fn declare_saturated_parallel_fold_steps(
+        &mut self,
+        steps: u64,
+        source: TargetFactSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_cost_row(CostRow::SaturatedParallelFoldSteps, steps, source.0)
+    }
+
+    /// Declares a measured saturated-parallel-fold-step count.
+    ///
+    /// **Draft public surface**, with the constructor above.
+    ///
+    /// The measured spelling is the one a target row is expected to use, and it is
+    /// the *only* one any profile in this repository uses. The quantity is a
+    /// property of one device under one toolchain, fitted from a dispatch sweep;
+    /// no normative document states it, and none could. Taking
+    /// [`TargetCompileProfileMeasurementSource`] rather than the general
+    /// [`TargetFactSource`] is what fixes its validity at
+    /// [`TargetFactValidityScope::MeasuredEnvironment`] and stops it widening into
+    /// a portable claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate row.
+    pub fn declare_measured_saturated_parallel_fold_steps(
+        &mut self,
+        steps: u64,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_cost_row(CostRow::SaturatedParallelFoldSteps, steps, source.0)
+    }
+
+    fn declare_cost_row(
+        &mut self,
+        row: CostRow,
+        value: u64,
+        source: Arc<FactSourceProvenance>,
+    ) -> Result<(), TargetProfileBuildError> {
+        let fact = CostRowFact { row, value, source };
+        fact.validate()?;
+        if self
+            .cost_rows
+            .iter()
+            .any(|existing| existing.row == row && existing.source.phase() == fact.source.phase())
+        {
+            return Err(TargetProfileBuildError::DuplicateCostRow {
+                row: row.key(),
+                phase: fact.source.phase(),
+            });
+        }
+        self.cost_rows.push(fact);
+        Ok(())
+    }
+
     fn declare_evaluation_order_with_source(
         &mut self,
         subject: ScalarArithmetic,
@@ -2971,6 +3161,23 @@ impl TargetProfileBuilder {
                 );
             }
         }
+        for fact in &self.cost_rows {
+            fact.validate()?;
+            if self
+                .cost_rows
+                .iter()
+                .filter(|candidate| {
+                    candidate.row == fact.row && candidate.source.phase() == fact.source.phase()
+                })
+                .count()
+                > 1
+            {
+                return Err(TargetProfileBuildError::DuplicateCostRow {
+                    row: fact.row.key(),
+                    phase: fact.source.phase(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -2994,6 +3201,11 @@ impl TargetProfileBuilder {
         // deterministic rather than dependent on declaration order.
         self.evaluation_order
             .sort_by_cached_key(EvaluationOrderFact::subject_key);
+        // Row, then phase — so one row's declarations are contiguous and
+        // phase-ascending, which is what makes the reader's "latest available
+        // phase wins" scan deterministic rather than declaration-order dependent.
+        self.cost_rows
+            .sort_by_key(|fact| (fact.row, fact.source.phase()));
     }
 
     fn freeze(mut self) -> Result<TargetProfile, TargetProfileBuildError> {
@@ -3044,6 +3256,7 @@ impl TargetProfileBuilder {
             &self.dispatchability,
             &self.synchronization,
             &self.evaluation_order,
+            &self.cost_rows,
         );
         if descriptor.len() > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(TargetProfileBuildError::DescriptorTooLong {
@@ -3059,6 +3272,7 @@ impl TargetProfileBuilder {
             dispatchability,
             synchronization: _,
             evaluation_order,
+            cost_rows,
         } = self;
         Ok(TargetProfile {
             data: Arc::new(TargetProfileData {
@@ -3068,6 +3282,7 @@ impl TargetProfileBuilder {
                 scalar: scalar.into_boxed_slice(),
                 dispatchability: dispatchability.into_boxed_slice(),
                 evaluation_order: evaluation_order.into_boxed_slice(),
+                cost_rows: cost_rows.into_boxed_slice(),
                 descriptor: descriptor.into_boxed_slice(),
             }),
         })
@@ -3250,6 +3465,23 @@ impl SynchronizationSupport {
 /// synchronization was declared" should be a recorded fact rather than an
 /// absence, and paid for the decision by moving every profile's bytes. This
 /// family records silence as absence, and pays nothing.
+///
+/// # The cost-row family takes the same shape, and for a stronger reason
+///
+/// It is written last, behind its own separator, and only when it holds a row,
+/// so it too moves no earlier byte. The reason it *must* is the silence rule the
+/// activating ticket's acceptance made testable rather than aspirational: **a
+/// profile declaring no cost row selects bit-identically to a build without the
+/// family at all.** Selection reads the row, and a profile's canonical descriptor
+/// is folded into every artifact identity and cache subject derived from it — so
+/// an unconditional section would move every existing profile's identity to
+/// record that it still has no preference. Injectivity survives for the reason it
+/// survives above: every earlier section is self-delimiting, and this family's
+/// separator distinguishes its bytes from any continuation of the last one.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one parameter per declared row family, threaded explicitly so the encoder reads as the grammar it writes; grouping them behind a struct would put the canonical byte order under two authorities"
+)]
 fn complete_descriptor(
     key: &TargetProfileKey,
     quantitative: &[QuantitativeCapabilityDeclaration],
@@ -3258,6 +3490,7 @@ fn complete_descriptor(
     dispatchability: &[DTypeDispatchabilityFact],
     synchronization: &[DeclaredSynchronizationRealization],
     evaluation_order: &[EvaluationOrderFact],
+    cost_rows: &[CostRowFact],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, COMPLETE_PROFILE_DESCRIPTOR_DOMAIN);
@@ -3274,6 +3507,7 @@ fn complete_descriptor(
                 .map(DeclaredSynchronizationRealization::source_ref),
         )
         .chain(evaluation_order.iter().map(|fact| fact.source.as_ref()))
+        .chain(cost_rows.iter().map(|fact| fact.source.as_ref()))
         .map(|source| (source.canonical_bytes(), source))
         .collect();
     sources.sort_by(|left, right| left.0.cmp(&right.0));
@@ -3365,7 +3599,7 @@ fn complete_descriptor(
             .expect("every synchronization source was inserted into the source table");
         encode_compact_index(&mut bytes, source_index);
     }
-    // The conditional section. See this function's header for the derivation
+    // The conditional sections. See this function's header for the derivation
     // that keeps `COMPLETE_PROFILE_DESCRIPTOR_DOMAIN` at `v11`.
     if !evaluation_order.is_empty() {
         push_slice(&mut bytes, EVALUATION_ORDER_DOMAIN);
@@ -3375,6 +3609,17 @@ fn complete_descriptor(
             let source_index = sources
                 .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
                 .expect("every evaluation-order source was inserted into the source table");
+            fact.encode(&mut bytes, source_index);
+        }
+    }
+    if !cost_rows.is_empty() {
+        push_slice(&mut bytes, COST_ROW_DOMAIN);
+        push_len(&mut bytes, cost_rows.len());
+        for fact in cost_rows {
+            let source_bytes = fact.source.canonical_bytes();
+            let source_index = sources
+                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
+                .expect("every cost-row source was inserted into the source table");
             fact.encode(&mut bytes, source_index);
         }
     }
@@ -3495,6 +3740,47 @@ impl TargetProfile {
             }
             (None, Some(available_at)) => EvaluationOrderResolution::Deferred { available_at },
             (None, None) => EvaluationOrderResolution::Unknown,
+        }
+    }
+
+    /// Resolves how many fold steps this target retires at once when saturated,
+    /// preferring the latest declaration available through `available_phase`.
+    ///
+    /// **Draft public surface**, with the two declaration constructors;
+    /// [`TargetCostRowResolution`] records what was and was not accepted.
+    ///
+    /// Returns [`TargetCostRowResolution::Unknown`] for a profile that declares
+    /// nothing, which is every profile but the qualified Apple9 macOS one. That
+    /// answer is an absence of preference and never a refusal: a consumer that
+    /// treated it as a bound, a zero, or an infeasibility would invert the failure
+    /// direction this row exists to avoid.
+    #[must_use]
+    pub fn saturated_parallel_fold_steps(
+        &self,
+        available_phase: AvailabilityPhase,
+    ) -> TargetCostRowResolution {
+        self.cost_row(CostRow::SaturatedParallelFoldSteps, available_phase)
+    }
+
+    fn cost_row(
+        &self,
+        row: CostRow,
+        available_phase: AvailabilityPhase,
+    ) -> TargetCostRowResolution {
+        let mut now = None;
+        let mut later = None;
+        for fact in self.data.cost_rows.iter().filter(|fact| fact.row == row) {
+            let phase = fact.source.phase();
+            if phase <= available_phase {
+                now = Some(fact.value);
+            } else if later.is_none() {
+                later = Some(phase);
+            }
+        }
+        match (now, later) {
+            (Some(value), _) => TargetCostRowResolution::Declared { value },
+            (None, Some(available_at)) => TargetCostRowResolution::Deferred { available_at },
+            (None, None) => TargetCostRowResolution::Unknown,
         }
     }
 
@@ -3639,7 +3925,37 @@ impl TargetProfile {
         grid_axis_threads: u64,
         synchronization: Option<SynchronizationSupport>,
     ) -> Self {
+        Self::workgroup_tree_target_with_cost_row_for_test(
+            local_memory_bytes,
+            grid_axis_threads,
+            synchronization,
+            None,
+        )
+    }
+
+    /// The same widened test profile, optionally carrying the measured cost row.
+    ///
+    /// `None` and `Some` are the two halves of the silence rule the activating
+    /// ticket's acceptance made testable: a profile declaring no row must select
+    /// bit-identically to one built before the row existed, and this is the
+    /// constructor that lets one compile drive both sides with nothing else
+    /// varying.
+    #[cfg(test)]
+    pub(crate) fn workgroup_tree_target_with_cost_row_for_test(
+        local_memory_bytes: u64,
+        grid_axis_threads: u64,
+        synchronization: Option<SynchronizationSupport>,
+        saturated_parallel_fold_steps: Option<u64>,
+    ) -> Self {
         let mut builder = TargetProfileBuilder::governed();
+        if let Some(steps) = saturated_parallel_fold_steps {
+            builder
+                .declare_saturated_parallel_fold_steps(
+                    steps,
+                    TargetFactSource(governed_profile_source()),
+                )
+                .expect("the test cost-row declaration is valid");
+        }
         for (axis, bound) in [
             (CapabilityAxis::LocalMemoryBytes, local_memory_bytes),
             (CapabilityAxis::GridAxisThreads, grid_axis_threads),
@@ -3818,6 +4134,18 @@ pub enum TargetProfileBuildError {
     DuplicateEvaluationOrderPreservation {
         /// Stable governed key of the licence both rows claimed.
         licence: &'static str,
+        /// Availability phase at which both rows claimed authority.
+        phase: AvailabilityPhase,
+    },
+    /// The same measured cost row was declared twice at one availability phase.
+    ///
+    /// The value is deliberately not part of that key, for the reason
+    /// [`Self::DuplicateQuantitativeCapability`] excludes its bound: a profile
+    /// stating one machine quantity twice has stated a contradiction, and
+    /// admitting both rows would leave whichever the sort put first deciding.
+    DuplicateCostRow {
+        /// Stable governed key of the row both declarations claimed.
+        row: &'static str,
         /// Availability phase at which both rows claimed authority.
         phase: AvailabilityPhase,
     },
