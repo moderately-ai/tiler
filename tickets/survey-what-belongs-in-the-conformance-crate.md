@@ -1,7 +1,7 @@
 ---
 id: survey-what-belongs-in-the-conformance-crate
 title: Survey what belongs in the conformance crate
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-the-conformance-crate-to-the-workspace, decide-where-a-device-reaching-conformance-test-may-live]
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, conformance, architecture]
+claimed_from: todo
+assignee: agent-survey
+lease_expires_at: 1786123387
 ---
 ## User-visible outcome
 

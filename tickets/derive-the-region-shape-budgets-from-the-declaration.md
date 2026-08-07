@@ -1,7 +1,7 @@
 ---
 id: derive-the-region-shape-budgets-from-the-declaration
 title: Derive the region shape budgets from the declaration
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [size-the-region-shape-budgets-to-the-programs-the-profile-admits]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [budgets, identity]
+claimed_from: todo
+assignee: agent-budgets
+lease_expires_at: 1786123387
 ---
 ## What to do
 
