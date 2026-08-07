@@ -23,13 +23,15 @@ cargo build --release
 ./target/release/artifact-decoder-allocation --record macos-27.0-2026-08-06-build-after
 ```
 
-Nothing runs it automatically; no `make` target reaches `spikes/`. Run it from this directory, which is where `--record` resolves `results/` from. `cargo run --release -- --record <name>` is the same binary and works identically. Without `--record` it prints the table and writes nothing. One run takes about two seconds and now peaks near 350 MB — the `build` rows hold three assembled drafts of the 64 MiB shape at once, for the reason the next section gives — against 135 MB before the build phase existed and 1.6 GB for the two earliest retained runs, which was the finding rather than an accident of the harness.
+Nothing runs it automatically; no `make` target reaches `spikes/`. Run it from this directory, which is where `--record` resolves `results/` from. `cargo run --release -- --record <name>` is the same binary and works identically. Without `--record` it prints the table and writes nothing. One run takes about a second.
+
+Its own maximum resident set is 1,036,697,600 bytes, measured with `/usr/bin/time -l`. That is **the harness's bookkeeping, not a reading**: the `build` rows hold three assembled drafts of the 64 MiB shape at once for the reason the next section gives, and every one of them is outside every measured window. Say it out loud because the two earliest retained runs also peaked near 1.6 GB and that *was* the finding — inside a single measured `decode`, which is the only place a number here means anything.
 
 ## Measuring a step that consumes what it measures
 
 `build` takes its builder by value, so unlike every other phase here the measured call cannot be repeated over one value, and assembling a draft inside the window would charge the row for declaring the carried object rather than for verifying it. So exactly as many drafts as `measure_twice` runs — a warm-up and two measured repetitions — are assembled first and each call pops one. Popping allocates nothing, so what the row reports is the whole-artifact verification, the envelope projection, and the identity derivation that `build` performs.
 
-Holding three drafts of the largest shape is what raises the whole run's peak; it is bookkeeping outside every window and does not enter a reading, because `measure` subtracts the live total at the call's start.
+Holding three drafts of the largest shape is what raises the whole process's resident set, and it cannot reach a reading: `measure` records the live total at the call's start and subtracts it.
 
 ## The instrument, and why it is a counting allocator
 
