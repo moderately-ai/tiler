@@ -23,6 +23,7 @@
 use super::*;
 
 use tiler_ir::program::{AllocationOwnership, DependencyReasonView, ValueRole};
+use tiler_ir::semantic::F32;
 use tiler_ir::semantic::{
     F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
     StrictSerialF32Sum,

@@ -31,7 +31,8 @@ use tiler_ir::program::{
     StageLaunch, StageRef, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
     ViewId,
 };
-use tiler_ir::semantic::{F32, InputKey, OutputKey, SemanticIdentity, SemanticProgram};
+use tiler_ir::schedule::ArithmeticType;
+use tiler_ir::semantic::{InputKey, OutputKey, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
 
 use tiler_ir::program::abi::{
@@ -52,30 +53,66 @@ use crate::selection::SelectedPlan;
 use crate::target::feasibility::DeferredPredicate;
 use crate::target::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 
-/// The physical storage carrier every value this profile materializes has.
+/// The physical storage carrier and kernel element type of one program's values.
 ///
-/// Named once, and every byte width and alignment below derives from it. The two
-/// constants this replaced stated `4` twice with no link to the carrier or to
-/// each other, so a second carrier would have had to be found by reading every
-/// arithmetic site rather than by changing one binding.
-const BOUNDED_CARRIER: StorageScalar = StorageScalar::F32;
-
-/// The byte width of one element of [`BOUNDED_CARRIER`], unpacked.
+/// **It was the constant `StorageScalar::F32`, and it is now derived from the
+/// program's own arithmetic.** Every byte width and alignment below derives from
+/// it, which is what the constant already bought — a second carrier had to be
+/// found by changing one binding rather than by reading every arithmetic site.
+/// What the constant could not express is that the binding is now per *program*:
+/// a `bf16` program's values are two bytes wide, and declaring them four wide
+/// gave `KernelProgramBuilder::build` a stage whose kernel expected `Bf16` and
+/// whose value declared `F32` — the refusal was `StageElementType`, and it is the
+/// downstream `f32` assumption the recognizer's own wall had been hiding.
 ///
-/// `StorageScalar::byte_width` is the authority; this names the profile's choice
-/// of carrier, not a width of its own.
-fn element_bytes() -> u64 {
-    BOUNDED_CARRIER.byte_width()
+/// The two halves travel together because they are one fact: the storage scalar
+/// sizes and aligns the buffer, the kernel type is what a stage's accesses are
+/// checked against, and a carrier paired with the wrong element type is exactly
+/// the disagreement that refusal names.
+#[derive(Clone, Copy)]
+struct BoundedCarrier {
+    storage: StorageScalar,
+    element_type: KernelType,
 }
 
-/// The byte alignment every value and allocation of [`BOUNDED_CARRIER`] requires.
-///
-/// Routed through [`ByteAlignment`] rather than written as an integer so the
-/// artifact layer's alignment is the same derived quantity the boundary contract
-/// states, and so a carrier whose width is not a positive power of two is
-/// refused here too instead of reaching `check_alignment` as a bare number.
-fn element_alignment() -> u32 {
-    ByteAlignment::natural_for(BOUNDED_CARRIER).bytes()
+impl BoundedCarrier {
+    /// The carrier one recognized arithmetic type materializes through.
+    ///
+    /// `None` for a width this profile materializes no carrier for, which is a
+    /// refusal rather than a default: sizing a program's buffers by a width
+    /// nobody stated is how a caller's tensor is read past its end.
+    const fn of(arithmetic: ArithmeticType) -> Option<Self> {
+        match arithmetic {
+            ArithmeticType::F32 => Some(Self {
+                storage: StorageScalar::F32,
+                element_type: KernelType::F32,
+            }),
+            ArithmeticType::Bf16 => Some(Self {
+                storage: StorageScalar::Bf16,
+                element_type: KernelType::Bf16,
+            }),
+            ArithmeticType::F16 | ArithmeticType::F64 => None,
+        }
+    }
+
+    /// The byte width of one element, unpacked.
+    ///
+    /// `StorageScalar::byte_width` is the authority; this names the carrier's
+    /// choice, not a width of its own.
+    fn element_bytes(self) -> u64 {
+        self.storage.byte_width()
+    }
+
+    /// The byte alignment every value and allocation of this carrier requires.
+    ///
+    /// Routed through [`ByteAlignment`] rather than written as an integer so the
+    /// artifact layer's alignment is the same derived quantity the boundary
+    /// contract states, and so a carrier whose width is not a positive power of
+    /// two is refused here too instead of reaching `check_alignment` as a bare
+    /// number.
+    fn element_alignment(self) -> u32 {
+        ByteAlignment::natural_for(self.storage).bytes()
+    }
 }
 
 /// Arena position of one node of the program's ABI expression arena.
@@ -1483,9 +1520,19 @@ fn build_cover_core(
         .map(|value| shape_elements(&value.shape))
         .collect::<Result<Vec<_>, ProgramError>>()?;
 
+    // The program's own carrier, taken from the contract this target compiles
+    // under. The request boundary requires that contract's arithmetic to be the
+    // program's own, so this is the width every declared value carries — and a
+    // width with no carrier is refused here rather than sized as some other.
+    let Some(carrier) = BoundedCarrier::of(request.numerical_contract().arithmetic) else {
+        return Err(ProgramError::Structure {
+            rule: "program-carrier-arithmetic",
+        });
+    };
     let mut builder = open_core_builder(semantic, request)?;
     let abi = declare_host_abi(
         &mut builder,
+        carrier,
         &inputs
             .iter()
             .map(|(_, _, elements)| *elements)
@@ -1497,23 +1544,28 @@ fn build_cover_core(
     let mut internal_storage = Vec::with_capacity(assembly.internals.len());
     for elements in &internal_elements {
         internal_storage.push(builder.push_allocation(storage(
-            byte_count(*elements)?,
+            carrier,
+            byte_count(carrier, *elements)?,
             AllocationOwnership::Program,
         ))?);
     }
     let mut input_views = Vec::with_capacity(inputs.len());
     for (key, shape, elements) in &inputs {
         let external = builder.push_allocation(storage(
-            byte_count(*elements)?,
+            carrier,
+            byte_count(carrier, *elements)?,
             AllocationOwnership::External,
         ))?;
-        let input = builder.push_value(program_input(key.clone(), shape.clone()), external)?;
+        let input =
+            builder.push_value(program_input(carrier, key.clone(), shape.clone()), external)?;
         input_views.push(builder.push_whole_view(input)?);
     }
     let mut internal_values = Vec::with_capacity(assembly.internals.len());
     for (value, allocation) in assembly.internals.iter().zip(&internal_storage) {
-        internal_values
-            .push(builder.push_value(internal(value.role, value.shape.clone()), *allocation)?);
+        internal_values.push(builder.push_value(
+            internal(carrier, value.role, value.shape.clone()),
+            *allocation,
+        )?);
     }
     let mut internal_views = Vec::with_capacity(internal_values.len());
     for value in &internal_values {
@@ -1751,11 +1803,15 @@ impl HostAbi {
 /// use, which is the arena's acyclicity invariant.
 fn declare_host_abi(
     builder: &mut KernelProgramBuilder,
+    carrier: BoundedCarrier,
     input_elements: &[u64],
     internal_elements: &[u64],
 ) -> Result<HostAbi, ProgramError> {
-    // The element byte width every accessible range scales by.
-    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(element_bytes()))?;
+    // The element byte width every accessible range scales by, taken from the
+    // program's own carrier: a `bf16` program's accessible byte counts are half
+    // an `f32` program's, and scaling by the wrong width is a range the runtime
+    // would bind past the end of the caller's buffer.
+    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(carrier.element_bytes()))?;
     let declare = |builder: &mut KernelProgramBuilder,
                    counts: &[u64]|
      -> Result<Vec<AbiExprId>, ProgramError> {
@@ -1900,44 +1956,50 @@ fn covered(
         .collect()
 }
 
-/// Declares an allocation backing values of [`BOUNDED_CARRIER`].
+/// Declares an allocation backing values of one program's carrier.
 ///
 /// The alignment is the carrier's rather than a constant of its own: an
 /// allocation has to be at least as aligned as every value placed in it, and
 /// deriving both from one carrier is what keeps that true without a check.
-fn storage(capacity_bytes: u64, ownership: AllocationOwnership) -> AllocationSpec {
+fn storage(
+    carrier: BoundedCarrier,
+    capacity_bytes: u64,
+    ownership: AllocationOwnership,
+) -> AllocationSpec {
     AllocationSpec {
         capacity_bytes,
-        alignment: element_alignment(),
+        alignment: carrier.element_alignment(),
         memory_space: MemorySpace::Device,
         ownership,
     }
 }
 
-fn program_input(key: tiler_ir::semantic::InputKey, shape: Shape) -> MaterializedValueSpec {
-    let storage_scalar = BOUNDED_CARRIER;
+fn program_input(
+    carrier: BoundedCarrier,
+    key: tiler_ir::semantic::InputKey,
+    shape: Shape,
+) -> MaterializedValueSpec {
     MaterializedValueSpec {
         origin: MaterializedOrigin::ProgramInput { key },
         role: ValueRole::Input,
         shape,
-        storage_scalar,
+        storage_scalar: carrier.storage,
         encoding: StorageEncoding::Unpacked,
-        element_type: KernelType::F32,
-        alignment: ByteAlignment::natural_for(storage_scalar).bytes(),
+        element_type: carrier.element_type,
+        alignment: carrier.element_alignment(),
         memory_space: MemorySpace::Device,
     }
 }
 
-fn internal(role: ValueRole, shape: Shape) -> MaterializedValueSpec {
-    let storage_scalar = BOUNDED_CARRIER;
+fn internal(carrier: BoundedCarrier, role: ValueRole, shape: Shape) -> MaterializedValueSpec {
     MaterializedValueSpec {
         origin: MaterializedOrigin::Internal,
         role,
         shape,
-        storage_scalar,
+        storage_scalar: carrier.storage,
         encoding: StorageEncoding::Unpacked,
-        element_type: KernelType::F32,
-        alignment: ByteAlignment::natural_for(storage_scalar).bytes(),
+        element_type: carrier.element_type,
+        alignment: carrier.element_alignment(),
         memory_space: MemorySpace::Device,
     }
 }
@@ -1958,9 +2020,9 @@ const fn write(view: ViewId, accessible_bytes: AbiExprId) -> StageAccess {
     }
 }
 
-fn byte_count(elements: u64) -> Result<u64, ProgramError> {
+fn byte_count(carrier: BoundedCarrier, elements: u64) -> Result<u64, ProgramError> {
     elements
-        .checked_mul(element_bytes())
+        .checked_mul(carrier.element_bytes())
         .ok_or(ProgramError::Storage {
             rule: "required-byte-overflow",
         })
@@ -2459,12 +2521,27 @@ pub(crate) fn assert_kernels_match_program(
     Ok(())
 }
 
+/// Requires every declared output to carry a width this build can plan.
+///
+/// **It was `f32` exactly, and the admitted set is now the recognizer's own.**
+/// The check states an invariant of the *recognized* program — the compiler is
+/// about to build regions for these outputs, so a width no scalar program spells
+/// is invalid compiler output rather than a caller error — and while recognition
+/// admitted one width the two statements coincided. They no longer do, so the
+/// set is asked of [`crate::request::recognized_arithmetic`], which is the one
+/// place it is stated. Restating `f32` here would refuse, as a compiler defect,
+/// exactly the programs recognition had just admitted; it did, and this is the
+/// downstream `f32` assumption the recognizer's own wall had been hiding.
+///
+/// What it deliberately does *not* check is uniformity across the program. That
+/// is recognition's, which refuses a mixed-width program under `dtype-uniform`
+/// before any output reaches here.
 pub(crate) fn verify_semantic_output_type(program: &SemanticProgram) -> Result<(), ProgramError> {
     if program.output_count() == 0
         || program.outputs().any(|output| {
-            program
-                .value(output.value())
-                .map_or(true, |value| value.resolved_type() != &F32::resolved_type())
+            program.value(output.value()).map_or(true, |value| {
+                crate::request::recognized_arithmetic(value.resolved_type()).is_none()
+            })
         })
     {
         return Err(ProgramError::Structure {

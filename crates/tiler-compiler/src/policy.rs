@@ -299,9 +299,23 @@ impl OperationNumericalCapability {
 /// `tiler::multiply-bf16@1`, and `tiler::add-bf16@1`, and none of the three has
 /// a row here. That is deliberate and is checked by
 /// `every_unplanned_operation_is_registered_and_consumes_no_dimension`: a BF16
-/// operation consumes no numerical freedom, so every rewrite that asks for one
-/// declines, and adding a row would widen `is_consumable`'s union for an
-/// operation no target profile can even state a numerical contract for.
+/// operation consumes no numerical freedom *this build has proved for it*, so
+/// every rewrite that asks for one declines.
+///
+/// **The ground moved and the conclusion did not, which is why it is restated
+/// rather than left standing.** The three were rowless because nothing realized
+/// BF16 at all — no lowering, no recognizer, no plan. Each now carries a
+/// governed index-access lowering and a `bf16` program is recognized and
+/// planned, so "no target profile can even state a contract for it" is false.
+/// What holds is the narrower and older claim: a row here enters each dimension
+/// it lists into `is_consumable`'s union, which decides whether a *contract* may
+/// permit that dimension at all, and reassociation and contraction error are
+/// bounded by the significand — Finding 28 of the Apple numerical behaviour
+/// record measures a target whose contraction behaviour differs between `f16`
+/// and `bf16`. So a row copied from the `f32` set would widen this build's
+/// numerical surface on evidence about another width.
+/// [`establish-bf16-optimizer-legality`](../../../tickets/establish-bf16-optimizer-legality.md)
+/// owns writing the rows on evidence of BF16's own.
 ///
 /// **Inference — and this changed when the activation was admitted.**
 /// `MaterializationRounding` is still unconsumable: it is not the strict-affine
@@ -1068,35 +1082,42 @@ mod tests {
         assert_eq!(unrepresentable_dimension(&contract), None);
     }
 
-    /// Operations the semantic registry admits and this build cannot plan.
+    /// Operations the semantic registry admits and this table declares no
+    /// numerical capability for.
     ///
-    /// A registered operation with no capability row consumes no numerical
-    /// freedom and is declined by every rewrite that asks for one. For BF16 that
-    /// is the correct state rather than a gap to be filled: a row would enter
-    /// each dimension it listed into `is_consumable`'s union, which is what
-    /// decides whether a *contract* may permit that dimension at all, so writing
-    /// one would widen this build's numerical surface on the strength of an
-    /// operation nothing downstream can realize. A BF16 numerical row *is*
-    /// statable on a target profile now that `ScalarArithmetic` derives the
-    /// arithmetic/value-type association from the registered descriptor, and
-    /// that does not change this: a subject a profile can speak about is not an
-    /// operation this build can plan, and none is declared here.
-    /// `tiler::concatenate-f32@1` is here for a different reason than the BF16
-    /// three, and the difference is worth keeping. BF16 is unplanned because no
-    /// arithmetic in this build realizes it. Concatenate is unplanned because
-    /// nothing *physical* realizes it — no kernel construct writes a partitioned
-    /// output and the request boundary refuses the family under `operation-set`
-    /// — and it consumes no numerical freedom for a stronger reason than the
-    /// BF16 rows do: it performs no arithmetic, so there is no dimension a
-    /// capability row could list. A row would be a claim about a target that
-    /// concatenating elements never asks of one. It now holds a
-    /// `CoordinateRelation` fusion role and a registered index-access lowering
-    /// with its realization law, and neither is in tension with its place here:
-    /// a fusion role answers whether fusing an occurrence preserves the
-    /// numerical contract, and a lowering answers what *logical* index work
-    /// realizes it. Both are answerable for a family performing no arithmetic
-    /// without any target being asked anything, which is exactly why neither
-    /// makes the family plannable.
+    /// **The name is historical and the list is now two different claims.** A
+    /// registered operation with no capability row consumes no numerical freedom
+    /// and is declined by every rewrite that asks for one; whether the family can
+    /// be *planned* is a separate question this table does not answer, and for
+    /// the BF16 three the two answers have come apart.
+    ///
+    /// For BF16 a rowless entry is still the correct state rather than a gap to
+    /// be filled: a row would enter each dimension it listed into
+    /// `is_consumable`'s union, which is what decides whether a *contract* may
+    /// permit that dimension at all, and reassociation and contraction error are
+    /// bounded by the significand, so writing one from the `f32` set would widen
+    /// this build's numerical surface on evidence about another width.
+    /// `establish-bf16-optimizer-legality` owns writing them on BF16's own. What
+    /// is no longer true is the ground that used to be given for it — that no
+    /// arithmetic in this build realizes BF16. Each of the three now carries a
+    /// governed index-access lowering and a BF16 program is recognized and
+    /// planned; what a missing row costs today is the *fusion* of a
+    /// multi-occurrence BF16 region, which is refused rather than assumed.
+    ///
+    /// `tiler::concatenate-f32@1` is here for a different reason again, and the
+    /// difference is worth keeping. It is unplanned because nothing *physical*
+    /// realizes it — no kernel construct writes a partitioned output and the
+    /// request boundary refuses the family under `operation-set` — and it
+    /// consumes no numerical freedom for a stronger reason than the BF16 rows
+    /// do: it performs no arithmetic, so there is no dimension a capability row
+    /// could list. A row would be a claim about a target that concatenating
+    /// elements never asks of one. It now holds a `CoordinateRelation` fusion
+    /// role and a registered index-access lowering with its realization law, and
+    /// neither is in tension with its place here: a fusion role answers whether
+    /// fusing an occurrence preserves the numerical contract, and a lowering
+    /// answers what *logical* index work realizes it. Both are answerable for a
+    /// family performing no arithmetic without any target being asked anything,
+    /// which is exactly why neither makes the family plannable.
     const UNPLANNED_OPERATIONS: &[&str] = &[
         "tiler::add-bf16@1",
         "tiler::concatenate-f32@1",

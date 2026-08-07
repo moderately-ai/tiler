@@ -7,11 +7,22 @@
 //! contract, it carries its own canonical identity, and a profile's BF16
 //! declaration — not its `f32` one — is what answers.
 //!
-//! **It is not evidence that BF16 executes.** Nothing below the request
-//! boundary realizes BF16: there is no capability row, no lowering capability,
-//! and no scheduled-region vocabulary for it. Every positive answer here stops
-//! at the recognizer's `dtype-f32` rule, which is asserted rather than avoided
-//! precisely so a reader cannot mistake feasibility for support.
+//! **It is now also evidence that a BF16 program is planned.** Every positive
+//! answer here used to stop at the recognizer's `dtype-f32` rule, which refused
+//! any program carrying a non-`f32` value before a subject was normalized;
+//! `widen-the-strategy-recognizer-past-the-f32-wall` replaced that rule with a
+//! derivation of the program's own arithmetic, and a lowering capability now
+//! exists for each of the three registered BF16 families. So a single-occurrence
+//! BF16 program reaches a selected `PlanAlternative`, which
+//! `a_flush_accepting_bf16_contract_reaches_a_selected_plan` asserts.
+//!
+//! **It is still not evidence that BF16 *executes*.** Nothing here dispatches:
+//! the run belongs to the conformance crate. And a BF16 region covering several
+//! occurrences stops one layer further on, at a fusion-legality authority still
+//! keyed by the `f32` operation set —
+//! `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` asserts
+//! that boundary rather than avoiding it, precisely so a reader cannot mistake
+//! one planned shape for general support.
 //!
 //! # Why the profile is built here rather than imported
 //!
@@ -378,60 +389,168 @@ fn removing_the_bf16_declaration_degrades_the_refusal_to_unknown() {
     );
 }
 
-/// A flush-accepting BF16 request passes numerical feasibility and stops at the
-/// next independently unsupported layer.
+/// The one-occurrence BF16 program `out = x + y`.
 ///
-/// **That layer is the recognizer's `dtype-f32` rule, and naming it is the
-/// point.** The contract resolved, the target admitted it, and the request then
-/// failed for a reason that has nothing to do with numerics: this build's
-/// bounded strategy recognizes `f32` programs only. Reporting anything softer
-/// here would imply BF16 execution that nothing below this boundary provides.
+/// **One occurrence, and the count is the subject rather than an accident.** A
+/// region covering two or more occurrences is put to `derive_fusion_legality`
+/// before any cover is enumerated, and that authority is still keyed by the
+/// `f32` operation set, so a multi-occurrence BF16 region is `Unknown` and every
+/// cover placing it is skipped —
+/// `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` is where
+/// that boundary is asserted. A single-occurrence region is never put to it, so
+/// this is the shape whose plan the widened recognizer can actually reach.
+fn bf16_single_operation_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let left = builder
+        .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let right = builder
+        .input::<Bf16>(InputKey::new("y").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let sum = Bf16Add::apply(&mut builder, left, right).unwrap();
+    builder.output(OutputKey::new("out").unwrap(), sum).unwrap();
+    builder.build().unwrap()
+}
+
+/// A flush-accepting BF16 request is planned, and reaches a selected plan.
+///
+/// **This is the wall's re-foundation, and the assertion inverted.** It used to
+/// assert `dtype-f32`: the contract resolved, the target admitted it, and the
+/// request then failed because the recognizer refused every program carrying a
+/// non-`f32` value before a subject was normalized. That rule is gone. The
+/// recognizer now derives the program's one arithmetic type and admits the two
+/// widths it can spell a per-point body in, so this request is recognized,
+/// covered, planned, and selected — and what the assertion below states is that
+/// a BF16 program reaches a `PlanAlternative`, which is the thing the rule made
+/// structurally unreachable.
+///
+/// **What still refuses, and from whose authority, is asserted by its
+/// neighbours** rather than implied here:
+/// `a_strict_bf16_contract_is_refused_by_the_measured_sign_preserving_flush` for
+/// the profile's declared row,
+/// `an_f32_contract_does_not_answer_for_a_bf16_program` for the contract's own,
+/// and `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` for
+/// the layer this ticket deliberately did not widen.
 #[test]
-fn a_flush_accepting_bf16_contract_reaches_the_recognizer_dtype_wall() {
-    let failure = compile(CompileRequest::new(
-        &bf16_program(),
+fn a_flush_accepting_bf16_contract_reaches_a_selected_plan() {
+    let batch = compile(CompileRequest::new(
+        &bf16_single_operation_program(),
         NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
         TargetRequest::new([profile("test.bf16-flush-accepted.v1", Bf16Rows::Complete)]).unwrap(),
     ))
-    .expect_err("no strategy recognizes a bf16 program");
+    .expect("a planned bf16 request is a batch outcome");
+    let target = batch.targets().next().expect("one requested target");
+    let outcome = target.outcome();
+    let compilation = outcome
+        .as_ref()
+        .expect("the recognizer admits a bf16 program its profile and contract support");
+    assert_eq!(
+        compilation.resolved_numerical_contract_key(),
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16.key(),
+        "the plan is compiled under the bf16 contract the caller stated",
+    );
+    // The population, counted rather than described: an enumeration that lost
+    // its only alternative would leave `selected` answering about nothing.
+    assert_eq!(
+        compilation.alternatives().len(),
+        1,
+        "the bf16 program has exactly one enumerated alternative",
+    );
+    assert!(
+        compilation.selected().is_some(),
+        "a bf16 program reaches a selected plan alternative",
+    );
+}
+
+/// A BF16 region covering several occurrences stops at fusion legality.
+///
+/// **The remaining wall, asserted where it is rather than left to be
+/// discovered.** `FusionNumericalCapabilities::governed` maps the six `f32`
+/// operation keys to fusion roles and nothing else, so
+/// `derive_fusion_legality` resolves no capability for a `bf16` member and
+/// answers `Unknown`; every cover placing that region is then skipped and the
+/// selection has no complete plan. The refusal is `NoFeasiblePlan` rather than
+/// an unsupported capability because a target *was* consulted and every
+/// enumerated cover was ruled out.
+///
+/// Widening it means giving BF16 regions their own legality rather than
+/// inheriting binary32's, which
+/// [`establish-bf16-optimizer-legality`](../../../tickets/establish-bf16-optimizer-legality.md)
+/// owns and this file deliberately does not: reassociation error is bounded by
+/// the significand, and Finding 28 of the Apple numerical behaviour record
+/// measures a target whose contraction behaviour differs between `f16` and
+/// `bf16` — so a capability row copied from the `f32` set would be a legality
+/// claim nothing proved.
+///
+/// The single-occurrence neighbour above is what keeps this about the *fusion*
+/// boundary rather than about BF16 being unplannable.
+#[test]
+fn a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall() {
+    let program = bf16_program();
+    assert_eq!(
+        program.operation_count(),
+        4,
+        "the fixture's region covers several occurrences, which is what puts it to fusion legality",
+    );
+    let batch = compile(CompileRequest::new(
+        &program,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
+        TargetRequest::new([profile("test.bf16-fusion-wall.v1", Bf16Rows::Complete)]).unwrap(),
+    ))
+    .expect("an enumeration that rules every cover out is a target outcome, not a request error");
+    let target = batch.targets().next().expect("one requested target");
+    let outcome = target.outcome();
+    let failure = outcome
+        .as_ref()
+        .expect_err("no cover survives a region whose fusion legality is unknown");
     assert_eq!(
         failure.class(),
-        CompileFailureClass::UnsupportedCapability { rule: "dtype-f32" }
+        CompileFailureClass::NoFeasiblePlan,
+        "the recognizer admitted the program and the enumeration ruled every cover out",
     );
 }
 
 /// The accepted BF16 contract's own dimensions schedule and lower a BF16 region,
-/// while the request wall above stays exactly where it is.
+/// and the request boundary now reaches one too.
 ///
-/// **Two claims, and their asymmetry is what this ticket produced.** The
+/// **The asymmetry this test was written to record is gone, and the assertion
+/// records its removal rather than being deleted.** The
 /// `admit-bf16-into-the-schedule-and-kernel-vocabulary` widening made a BF16
-/// scheduled region and its structured kernel constructible and verifiable; it
-/// did not touch `select_supported_strategy`, whose `dtype-f32` rule refuses
-/// every program carrying a non-`f32` value before a subject is normalized. So
-/// the flush-accepting request still stops in exactly the same place — asserted
-/// in the test above and re-asserted here beside its counterpart — while the
-/// layer beneath it now admits the region the request cannot reach.
+/// scheduled region and its structured kernel constructible and verifiable and
+/// did not touch `select_supported_strategy`, whose `dtype-f32` rule refused
+/// every program carrying a non-`f32` value before a subject was normalized —
+/// so the region vocabulary admitted a region no request could ask for. The
+/// recognizer is widened and the first assertion below is its counterpart: the
+/// request boundary now produces a plan for a BF16 program, so the two layers
+/// meet.
 ///
-/// The realization the region carries is *derived from the accepted contract*
-/// rather than transcribed, so a contract dimension that moved would move this
-/// region with it instead of leaving a stale copy that still passes.
+/// The second half is unchanged and still load-bearing: the realization each
+/// region carries is *derived from the accepted contract* rather than
+/// transcribed, so a contract dimension that moved would move this region with
+/// it instead of leaving a stale copy that still passes.
 #[test]
-fn the_accepted_bf16_contract_schedules_and_lowers_a_region_the_request_cannot_reach() {
-    // Unchanged: the request boundary refuses before any region exists.
-    let failure = compile(CompileRequest::new(
-        &bf16_program(),
+fn the_accepted_bf16_contract_schedules_and_lowers_a_region_the_request_now_reaches() {
+    // Changed: the request boundary reaches a region rather than refusing before
+    // one exists.
+    let batch = compile(CompileRequest::new(
+        &bf16_single_operation_program(),
         NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
         TargetRequest::new([profile("test.bf16-region-wall.v1", Bf16Rows::Complete)]).unwrap(),
     ))
-    .expect_err("no strategy recognizes a bf16 program");
-    assert_eq!(
-        failure.class(),
-        CompileFailureClass::UnsupportedCapability { rule: "dtype-f32" },
-        "admitting the region vocabulary did not move the recognizer's wall",
+    .expect("a planned bf16 request is a batch outcome");
+    assert!(
+        batch
+            .targets()
+            .next()
+            .expect("one requested target")
+            .outcome()
+            .as_ref()
+            .is_ok_and(|compilation| compilation.selected().is_some()),
+        "the recognizer's wall is gone and the request reaches the region vocabulary",
     );
 
-    // Changed: the same contract's dimensions now describe a region that
-    // verifies and a kernel that lowers.
+    // Unchanged: the same contract's dimensions describe a region that verifies
+    // and a kernel that lowers.
     for contract in [
         NumericalContract::STRICT_BF16,
         NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
@@ -602,24 +721,42 @@ fn the_measured_subnormal_rows_alone_leave_the_remaining_dimensions_unknown() {
 
 /// An `f32` contract does not answer for a BF16 program, in either direction.
 ///
-/// The profile below declares a *preserving* `f32` table, so `STRICT_F32`
-/// resolves on it. Stating that contract for a BF16 program therefore reaches
-/// the recognizer rather than being refused numerically — the `f32` answer was
-/// given to the `f32` question — and the BF16 program is still unsupported. The
-/// converse is the test above it: the BF16 contract is refused by the BF16 row
-/// on the very same profile whose `f32` row preserves.
+/// **The claim is unchanged and the refusal that carries it moved, which is what
+/// re-founding this assertion means.** The profile below declares a *preserving*
+/// `f32` table, so `STRICT_F32` resolves on it, and the point has always been
+/// that the `f32` answer was given to the `f32` question and says nothing about
+/// the BF16 program. What used to catch the pairing afterwards was the
+/// recognizer's `dtype-f32` rule — an accident of that rule's breadth rather
+/// than a statement about contracts — and the recognizer now admits the program.
+/// So the refusal is the *contract's* own: a contract's arithmetic is part of
+/// its identity (ADR 0076 item 6) and a target's honourability rows are keyed by
+/// subject, so no profile could be asked whether it honours an `f32` contract
+/// for a `bf16` program, and the request is refused before any profile is
+/// consulted.
+///
+/// Its converse is the test above it — the BF16 contract is refused by the BF16
+/// row on the very same profile whose `f32` row preserves — and its positive
+/// neighbour is `a_flush_accepting_bf16_contract_reaches_a_selected_plan`, which
+/// is what keeps this about the *pairing* rather than about BF16 being
+/// unplannable.
 #[test]
-fn an_f32_contract_is_resolved_against_f32_rows_only() {
+fn an_f32_contract_does_not_answer_for_a_bf16_program() {
     let failure = compile(CompileRequest::new(
         &bf16_program(),
         NumericalContract::STRICT_F32,
         TargetRequest::new([profile("test.bf16-f32-contract.v1", Bf16Rows::Complete)]).unwrap(),
     ))
-    .expect_err("no strategy recognizes a bf16 program");
+    .expect_err("no stated contract resolves the program's arithmetic");
     assert_eq!(
         failure.class(),
-        CompileFailureClass::UnsupportedCapability { rule: "dtype-f32" },
+        CompileFailureClass::InvalidRequest {
+            rule: "compile.request.numerics.inapplicable"
+        },
         "a strict f32 contract is honoured by the f32 rows and never consults the bf16 ones",
+    );
+    assert!(
+        failure.explain().is_none(),
+        "the refusal precedes every target, so no target-qualified trace is sealed",
     );
 }
 

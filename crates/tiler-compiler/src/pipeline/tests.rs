@@ -3787,30 +3787,8 @@ fn a_contraction_of_the_workload_shape_is_refused_by_the_target_not_by_recogniti
     );
 }
 
-/// A pure-BF16 program builds and does not compile.
-///
-/// The gap this guards is the one registration opens: `builder.build()` now
-/// succeeds for BF16, and "the program verifies" is the step most easily
-/// mistaken for "the dtype works". Nothing below the semantic layer realizes
-/// BF16 — there is no capability row, no lowering capability, and no region
-/// vocabulary for it.
-///
-/// **Which boundary answers moved, and the move is the point.** This used to
-/// assert the request-wide `dtype-f32` rule, because the recognizer ran before
-/// any target was consulted and so no profile ever got to answer about BF16.
-/// Target resolution now precedes recognition, and the refusal here is the
-/// governed baseline's own: it declares dispatchability for `tiler::f32@1` and
-/// says nothing about `tiler::bf16@1`, so the dtype is `Unknown` to it and the
-/// program is rejected *per target* rather than for the whole request. That is
-/// a strictly more specific answer — it names the profile that could not take
-/// the program — and it is what lets a profile with measured BF16 rows report a
-/// numerical verdict instead of being unreachable behind the recognizer.
-///
-/// `dtype-f32` has not gone away; it is what a BF16 program reaches on a profile
-/// that *does* declare the dtype, which
-/// `a_dispatchable_bf16_profile_reaches_the_recognizer_dtype_wall` covers.
-#[test]
-fn a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary() {
+/// The `(x * 1.0) + 2.0` program in BF16, as the pipeline's own fixture.
+fn bf16_scale_bias_program() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let input = builder
         .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 2]))
@@ -3823,11 +3801,39 @@ fn a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary() {
     builder
         .output(OutputKey::new("out").unwrap(), shifted)
         .unwrap();
-    let bf16_program = builder.build().unwrap();
+    builder.build().unwrap()
+}
+
+/// The governed baseline refuses a pure-BF16 program by its own dtype row.
+///
+/// The gap this guards is the one registration opens: `builder.build()` now
+/// succeeds for BF16, and "the program verifies" is the step most easily
+/// mistaken for "the dtype works". The governed baseline declares
+/// dispatchability for `tiler::f32@1` and says nothing about `tiler::bf16@1`, so
+/// the dtype is `Unknown` to it and the program is rejected *per target*: the
+/// refusal names the profile that could not take the program rather than a
+/// property of the request.
+///
+/// **The stated contract is BF16's, and that is now load-bearing rather than
+/// incidental.** `CompilationRequest::governed` states the strict `f32`
+/// contract, and while the recognizer refused every non-`f32` program the
+/// pairing never had to be examined. It does now: a contract's arithmetic is
+/// part of its identity, so an `f32` contract stated for a BF16 program is
+/// refused before any target is consulted and this test would have been
+/// asserting *that* refusal instead of the profile's own dtype row.
+/// `an_f32_contract_stated_for_a_bf16_program_is_refused_before_any_target` is
+/// where the pairing is asserted, and stating a BF16 contract here is what keeps
+/// this test about the dtype row it names.
+#[test]
+fn a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary() {
+    let bf16_program = bf16_scale_bias_program();
     assert_eq!(bf16_program.operation_count(), 4);
 
-    let product = compile(CompilationRequest::governed(&bf16_program))
-        .expect("a target-local dtype refusal is a batch outcome, not a request error");
+    let product = compile(CompilationRequest::governed_under(
+        &bf16_program,
+        crate::session::NumericalContract::STRICT_BF16.resolve(),
+    ))
+    .expect("a target-local dtype refusal is a batch outcome, not a request error");
     let [target] = product.targets.as_slice() else {
         panic!("the governed request names exactly one target");
     };
@@ -3860,6 +3866,60 @@ fn a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary() {
     // request path: the same shape of program in f32 compiles.
     compile(CompilationRequest::governed(&semantic(false)))
         .expect("the governed f32 fixture still compiles");
+}
+
+/// An `f32` contract stated for a BF16 program is refused before any target.
+///
+/// **The refusal the recognizer's `dtype-f32` rule used to absorb.** That rule
+/// refused every non-`f32` program, so a caller pairing a program with a
+/// contract about another width was caught incidentally and reported as an
+/// unrecognized dtype. Recognition now admits the program, and the pairing is
+/// refused on its own terms: ADR 0076 item 6 makes a contract's arithmetic part
+/// of its identity and a target's honourability rows are keyed by subject, so
+/// there is no declaration any profile could make that would answer the
+/// question — which is why the refusal precedes every target rather than being
+/// one target's.
+///
+/// The stated list is reported whole, in the caller's order, so a caller that
+/// named two inapplicable contracts can see both rather than only the first.
+#[test]
+fn an_f32_contract_stated_for_a_bf16_program_is_refused_before_any_target() {
+    let program = bf16_scale_bias_program();
+    let error = compile(CompilationRequest::governed(&program))
+        .expect_err("an inapplicable preference is a request error, not a target outcome");
+    let CompileError::InvalidRequest(RequestError::NoApplicableNumericalContract {
+        program: arithmetic,
+        stated,
+    }) = &error
+    else {
+        panic!("expected the contract-applicability refusal, got {error:?}");
+    };
+    assert_eq!(*arithmetic, tiler_ir::schedule::ArithmeticType::Bf16);
+    let [(key, stated_arithmetic)] = stated.as_slice() else {
+        panic!("the governed request states exactly one contract");
+    };
+    assert_eq!(
+        *stated_arithmetic,
+        tiler_ir::schedule::ArithmeticType::F32,
+        "the refusal names the arithmetic the stated contract resolves",
+    );
+    assert_eq!(
+        *key,
+        crate::request::StrictF32NumericalContract::governed().key,
+        "the refusal names the exact contract the caller stated",
+    );
+
+    // The neighbour that keeps this about the *pairing*: the same program under
+    // a contract of its own width is admitted past this check and reaches the
+    // governed profile's dtype row, which the test above asserts.
+    assert!(
+        compile(CompilationRequest::governed_under(
+            &program,
+            crate::session::NumericalContract::STRICT_BF16.resolve(),
+        ))
+        .is_ok(),
+        "an applicable contract passes this check and leaves the answer to the target",
+    );
 }
 
 /// The `bf16` encodings this vertical's witnesses are stated in.
@@ -3919,12 +3979,25 @@ fn bf16_semantic_program(key: &InputKey, elements: u64) -> SemanticProgram {
 /// The same computation as a verified BF16 scheduled region.
 ///
 /// Assembled through `tiler-ir`'s public builders rather than through
-/// `compile()`, and that is the measurement boundary this vertical carries: the
-/// recognizer refuses every non-`f32` program under `dtype-f32` before a subject
-/// is ever normalized, so no BF16 region is reachable from the request boundary
-/// at this commit. What is established here is that the schedule, kernel, and
-/// physical-carrier vocabularies admit and verify one — not that a caller can
-/// ask for it.
+/// `compile()`, and the reason has changed rather than gone away. It used to be
+/// the recognizer's `dtype-f32` rule, which refused every non-`f32` program
+/// before a subject was ever normalized, so no BF16 region was reachable from
+/// the request boundary at all. That rule is gone: a BF16 program is recognized,
+/// planned and selected, which
+/// `crates/tiler-compiler/tests/bf16_numerical_contract.rs`'s
+/// `a_flush_accepting_bf16_contract_reaches_a_selected_plan` asserts.
+///
+/// **What keeps this region hand-assembled is the *shape* it needs, not the
+/// dtype.** This fixture is a `(x * 3.0) + (-0.0)` chain, whose region covers
+/// four occurrences, and a multi-occurrence region is put to
+/// `derive_fusion_legality` before any cover survives — an authority still keyed
+/// by the `f32` operation set, so the region is `Unknown` and every cover
+/// placing it is skipped.
+/// [`establish-bf16-optimizer-legality`](../../../../tickets/establish-bf16-optimizer-legality.md)
+/// owns that widening. Until it lands, a compiled BF16 region is reachable for a
+/// single-occurrence program and this chain is not, so what is established here
+/// stays what it was: that the schedule, kernel, and physical-carrier
+/// vocabularies admit and verify this region.
 fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduledRegion {
     use tiler_ir::schedule::{
         Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,

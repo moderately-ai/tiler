@@ -29,8 +29,8 @@ use tiler_ir::schedule::{
 use crate::region::SemanticStage;
 use crate::request::{
     NormalizedContraction, NormalizedEpilogue, NormalizedOutput, NormalizedOutputSubject,
-    NormalizedSerialSum, NormalizedStaged, NumericalPermission, StrictF32NumericalContract,
-    TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
+    NormalizedSerialSum, NormalizedStaged, NumericalPermission, RecognizedPointwise,
+    StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -1238,10 +1238,15 @@ pub(crate) fn pointwise_region(
             (
                 serial.input_shape.clone(),
                 serial.input_elements,
-                serial
-                    .prologue
-                    .clone()
-                    .expect("a prologue region is spelled only for a fold that has a prologue"),
+                // A fold's prologue is `f32` by the fold family's own key; see
+                // the recognizer's `recognize_reduction`, which states the width
+                // at the walk it drives.
+                RecognizedPointwise::F32(
+                    serial
+                        .prologue
+                        .clone()
+                        .expect("a prologue region is spelled only for a fold that has a prologue"),
+                ),
                 serial.members.pointwise().to_vec(),
                 serial.prologue_reads.clone(),
             )
@@ -1303,7 +1308,7 @@ fn elementwise_region(
     shape: Shape,
     elements: u64,
     reads: &[(TensorRole, LogicalAccess)],
-    expression: PointwiseF32Expression,
+    expression: RecognizedPointwise,
     write: RegionWrite,
 ) -> ScheduledRegion {
     let write_tensor = write.tensor();
@@ -1366,7 +1371,15 @@ fn elementwise_region(
                     output_count: elements,
                 },
             },
-            scalar_program: ScalarProgram::PointwiseF32(expression),
+            // The recognized width decides the scalar program, because the two
+            // per-point vocabularies are different functions rather than two
+            // spellings of one: a `bf16` multiply rounds to eight significand
+            // bits and a binary32 one to twenty-four, and only the matching
+            // variant carries the expression the recognizer proved.
+            scalar_program: match expression {
+                RecognizedPointwise::F32(expression) => ScalarProgram::PointwiseF32(expression),
+                RecognizedPointwise::Bf16(expression) => ScalarProgram::PointwiseBf16(expression),
+            },
             numerical: request.numerical_contract().realization(),
         },
         schedule: linear_schedule(elements, OwnershipWitnessId::new(0)),
@@ -1407,7 +1420,9 @@ pub(crate) fn epilogue_region(
         chain.shape.clone(),
         chain.elements,
         &reads,
-        chain.expression.clone(),
+        // An epilogue chain is `f32` by its producer's family key, for the reason
+        // a fold's prologue is; see `pointwise_region`.
+        RecognizedPointwise::F32(chain.expression.clone()),
         write,
     );
     (region, chain.members.clone())
@@ -1552,7 +1567,10 @@ pub(crate) fn staged_pass_region(
         normalized.output_shape.clone(),
         normalized.output_elements,
         &plan.pass_reads,
-        plan.pass_expression.clone(),
+        // A staged family's realization is `f32` throughout: the recognizer
+        // admits one only from a registered law over an `f32` family, for the
+        // reason `pointwise_region` states about a fold's prologue.
+        RecognizedPointwise::F32(plan.pass_expression.clone()),
         write,
     );
     (
@@ -1618,7 +1636,16 @@ pub(crate) fn publishing_copy_region(
         shape,
         elements,
         &[(TensorRole::Intermediate, LogicalAccess::LinearIdentity)],
-        identity_expression(),
+        // **`f32`, and no non-`f32` program can place one.** A publishing copy
+        // exists only for a value that is both published and consumed, which
+        // `crate::request`'s `published_and_consumed_overlap` admits only when one
+        // output's walk is a whole *part* of another's recognized partition. A
+        // whole-program elementwise partition has exactly one part — its own
+        // complete member set — so a strict subset of it is no part and the
+        // overlap is refused under `output-partition-overlap` before any cover is
+        // formed. Every shape that does have several parts is a fold or a staged
+        // family, and both are `f32` by their family keys.
+        RecognizedPointwise::F32(identity_expression()),
         RegionWrite::ProgramOutput,
     );
     (region, Vec::new())
@@ -3038,19 +3065,31 @@ fn verify_region_output_binding(
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
     let expected = match (normalized, &region.index.scalar_program) {
-        (
-            NormalizedOutputSubject::Pointwise(normalized),
-            ScalarProgram::PointwiseF32(expression),
-        ) => {
-            element_count(&normalized.shape, region.index.id)? == normalized.elements
+        (NormalizedOutputSubject::Pointwise(normalized), scalar) => {
+            // The recognized expression itself, compared whole and *in its own
+            // width*. It binds node topology, ordered operands, constant bits,
+            // shared reads, and the explicit root, so a provider cannot
+            // substitute an algebraically similar but unproved expression for
+            // it — and the pairing binds the width too, so a `bf16` region
+            // cannot claim a binary32 subject whose nodes happen to correspond.
+            // A mismatched pairing answers `false`, which is the fail-closed
+            // direction and the reason this is one arm rather than two with a
+            // fall-through.
+            let carries = match (&normalized.expression, scalar) {
+                (RecognizedPointwise::F32(recognized), ScalarProgram::PointwiseF32(expression)) => {
+                    expression == recognized
+                }
+                (
+                    RecognizedPointwise::Bf16(recognized),
+                    ScalarProgram::PointwiseBf16(expression),
+                ) => expression == recognized,
+                _ => false,
+            };
+            carries
+                && element_count(&normalized.shape, region.index.id)? == normalized.elements
                 && semantic_members == normalized.members
                 && region.index.id == RegionId::new(0)
                 && region.index.iteration_shape == normalized.shape
-                // The recognized expression itself, compared whole. It binds
-                // node topology, ordered operands, constant bits, shared reads,
-                // and the explicit root, so a provider cannot substitute an
-                // algebraically similar but unproved expression for it.
-                && expression == &normalized.expression
                 && elementwise_reads_match(&region.index.accesses, &normalized.reads)
         }
         (
@@ -3132,12 +3171,13 @@ fn verify_region_output_binding(
                 _ => false,
             }
         }
-        // One fail-closed answer for two subjects: either whole-program subject
-        // paired with any other scalar program is a forged pairing, because each
-        // is bound above against the one program its recognizer produces.
-        (NormalizedOutputSubject::Pointwise(_) | NormalizedOutputSubject::Contraction(_), _) => {
-            false
-        }
+        // The fail-closed answer for a contraction subject paired with any other
+        // scalar program: it is bound above against the one program its
+        // recognizer produces, so any other pairing is forged. The pointwise
+        // subject needs no companion arm — it matches every scalar program and
+        // answers `false` for each pairing it does not carry, which is what lets
+        // it bind two widths without either falling through to the other.
+        (NormalizedOutputSubject::Contraction(_), _) => false,
         // A chain binds either its epilogue region or a region of its producer's
         // partition, and the *members* are what separate the two: an epilogue's
         // region and a fold's prologue are both `PointwiseF32` regions, so the
@@ -3301,11 +3341,14 @@ fn verify_region_output_binding(
                 // identity, and the identity-less family has none to compare.
                 //
                 // The BF16 pointwise program is refused here for a further
-                // reason of its own: the recognizer's `dtype-f32` rule rejects
-                // every program carrying a non-`f32` value before any subject is
-                // normalized, so no `NormalizedSerialSumSubject` can name a BF16
-                // prologue at all. Answering `false` states that rather than
-                // leaving a BF16 region able to claim an `f32` subject.
+                // reason of its own, and the reason moved rather than
+                // disappearing when the recognizer's `dtype-f32` rule did: a
+                // fold is recognized only from `tiler::strict-serial-sum-f32@1`,
+                // whose contributor tensor is binary32, so a program reaching
+                // this subject is `f32` throughout and no
+                // `NormalizedSerialSumSubject` can name a BF16 prologue at all.
+                // Answering `false` states that rather than leaving a BF16 region
+                // able to claim an `f32` subject.
                 ScalarProgram::StrictAffineU4Dequantize { .. }
                 | ScalarProgram::PointwiseBf16(_)
                 | ScalarProgram::SquaredSerialSum { .. }
@@ -3825,6 +3868,34 @@ fn region_proposal(
     arithmetic: ArithmeticType,
     work_items: u64,
 ) -> Result<FeasibilityProposal, FeasibilityError> {
+    // **The subject's value identity is derived from the region's own arithmetic,
+    // not written beside it.** A target declares honourability for a
+    // `ScalarArithmetic`, and a requirement matches a declaration only when
+    // *both* halves of the subject agree — so a `bf16` region proposing
+    // `tiler::f32@1` matched no `bf16` row a profile could ever declare, every
+    // dimension resolved `Unknown`, and the region was refused as
+    // `target-assessment-unresolved` on a profile whose measured `bf16` rows
+    // answered it exactly. `crate::policy::dimension_requirements` already
+    // derived its half this way and this one did not; the two halves of one
+    // subject are now built by one constructor.
+    //
+    // `None` only if the arithmetic vocabulary and the governed scalar catalog
+    // have drifted apart, which is a malformed proposal rather than an
+    // infeasible region: a requirement set that quietly emptied itself would be
+    // *vacuously* feasible, proven by every profile.
+    let Some(subject) = crate::policy::arithmetic_subject(arithmetic) else {
+        return Err(FeasibilityError::MalformedProposal {
+            rule: "region-arithmetic-subject",
+        });
+    };
+    let numerical = |dimension, behaviour| {
+        NumericalRequirement::new(
+            dimension,
+            subject.arithmetic(),
+            subject.resolved_type().clone(),
+            behaviour,
+        )
+    };
     FeasibilityProposal::new_with_synchronization(
         REGION_PROPOSAL_CANDIDATE,
         vec![
@@ -3849,28 +3920,20 @@ fn region_proposal(
             ),
         ],
         vec![
-            NumericalRequirement::new(
+            numerical(
                 NumericalDimension::InputSubnormals,
-                arithmetic,
-                F32::resolved_type(),
                 DimensionBehaviour::Subnormals(requirements.input_subnormals),
             ),
-            NumericalRequirement::new(
+            numerical(
                 NumericalDimension::ResultSubnormals,
-                arithmetic,
-                F32::resolved_type(),
                 DimensionBehaviour::Subnormals(requirements.result_subnormals),
             ),
-            NumericalRequirement::new(
+            numerical(
                 NumericalDimension::Contraction,
-                arithmetic,
-                F32::resolved_type(),
                 DimensionBehaviour::Transform(requirements.contraction),
             ),
-            NumericalRequirement::new(
+            numerical(
                 NumericalDimension::Reassociation,
-                arithmetic,
-                F32::resolved_type(),
                 DimensionBehaviour::Transform(requirements.reassociation),
             ),
         ],
