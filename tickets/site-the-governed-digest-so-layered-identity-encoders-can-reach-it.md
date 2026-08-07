@@ -49,7 +49,7 @@ Tom has answered, and the answer is either an accepted boundary with ADR 0104 un
 
 ## Outcome — 2026-08-06
 
-Delivered whole on branch `tkt/site-the-governed-digest-so-layered-identity-encoders-can-reach-it` over base `b54138b1`. `make full` green on the completed branch, `tkt lint` clean, `git diff --check` clean.
+Delivered whole at **`d48a33af`** on branch `tkt/site-the-governed-digest-so-layered-identity-encoders-can-reach-it`, over base `b54138b1`. `make full` green on the completed branch, `tkt lint` clean, `git diff --check` clean, `tkt guard` reporting no scope escape. (This paragraph's own hash is recorded in the follow-up commit that adds it; `d48a33af` is the commit carrying every source, contract, and pin change.)
 
 ### The crate
 
