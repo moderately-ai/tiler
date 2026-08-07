@@ -49,7 +49,7 @@ A realization in which one published value has more than one reader is expressib
 
 ## Outcome — 2026-08-06
 
-The multi-reader arm landed and the fork **resolved rather than parked**: exactly one arm survives the elimination this ticket set. Commit `3a8b6bd5` on `tkt/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`, base `dd9def76`, shared with [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`](admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md).
+The multi-reader arm landed and the fork **resolved rather than parked**: exactly one arm survives the elimination this ticket set. Commit `c02d4f7d` on `tkt/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`, base `dd9def76` — the tree `make full` was run against; the branch tip is one further commit correcting this hash reference and touching no gate-carry path. Shared with [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`](admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md).
 
 ### The fork's resolution
 
@@ -101,4 +101,6 @@ The sequence surface is public and accepted, so this widening lands as a labelle
 
 ### Checks
 
-`cargo fmt --all --check`; `make lint` (workspace clippy less the three prototypes, `-D warnings`); `make doc` (`RUSTDOCFLAGS="-D warnings"`); `cargo nextest run --workspace` — 2899 passed, 7 skipped; `cargo test --workspace --doc`; `make full`; `tkt lint`; `git diff --check`; `tkt guard`.
+`cargo fmt --all --check`; `make lint` (workspace clippy less the three prototypes, `-D warnings`); `make doc` (`RUSTDOCFLAGS="-D warnings"`); `cargo nextest run --workspace` — 2899 passed, 7 skipped; `cargo test --workspace --doc`; `make full` (green end to end: 2899 workspace, 1003 release over `tiler-reference` and `tiler-compiler`, `ticketsplease lint`, `shellcheck`); `tkt lint`; `git diff --check`.
+
+**Scope evidence, and how to read it.** Guard the branch against the *co-resident* ticket: `tkt guard tkt/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold` returns exit 0, `"conflict": false`, `"under_declared": []`, with only non-failing declared-area overlaps against open siblings. Guarding against **this** ticket alone reports an escape, and that is correct rather than a defect: every file this ticket caused is inside its declared `implementation/ir`, and the escape is entirely the co-resident ticket's — `crates/tiler-ir/src/index/scalar.rs`, `crates/tiler-ir/src/index/mod.rs`, and the one `crates/tiler-compiler/src/explain.rs` pin, which that ticket declares `implementation/compiler` for. The two claims are held by one agent on one branch, so the union of their declarations is the branch's declaration.

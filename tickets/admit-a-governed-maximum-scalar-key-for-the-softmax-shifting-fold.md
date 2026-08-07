@@ -40,7 +40,7 @@ A governed `maximum` scalar key is registered with a fact record whose NaN-resul
 
 ## Outcome — 2026-08-06
 
-`tiler.scalar::maximum-f32@1` is registered as the twelfth governed key and labelled a draft, with [`accept-the-governed-maximum-scalar-key`](accept-the-governed-maximum-scalar-key.md) parked for Tom. Commit `3a8b6bd5` on `tkt/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`, base `dd9def76`. **The most useful finding is that this ticket's central premise is false**, and the "Closes when" clause about a new vocabulary value is therefore satisfied by showing the value is not needed rather than by minting one.
+`tiler.scalar::maximum-f32@1` is registered as the twelfth governed key and labelled a draft, with [`accept-the-governed-maximum-scalar-key`](accept-the-governed-maximum-scalar-key.md) parked for Tom. Commit `c02d4f7d` on `tkt/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`, base `dd9def76` — that commit carries all code, tests, and tickets, and is the tree `make full` was run against; the branch tip is one further commit correcting this hash reference and touching no gate-carry path. **The most useful finding is that this ticket's central premise is false**, and the "Closes when" clause about a new vocabulary value is therefore satisfied by showing the value is not needed rather than by minting one.
 
 ### The NaN-result rule — derived, and it is an existing value
 
@@ -86,4 +86,4 @@ Exactly one pinned identity moved, as the rsqrt landing's did: `explain.rs`'s `d
 
 ### Checks
 
-`cargo fmt --all --check`, `make lint` (workspace clippy less the three prototypes, `-D warnings`), `make doc` (`RUSTDOCFLAGS="-D warnings"`), `cargo nextest run --workspace` (2899 passed, 7 skipped), `cargo test --workspace --doc`, `make full`, `tkt lint`, `git diff --check`, and `tkt guard` are recorded on the sibling ticket's Outcome, which shares this commit.
+`cargo fmt --all --check`, `make lint` (workspace clippy less the three prototypes, `-D warnings`), `make doc` (`RUSTDOCFLAGS="-D warnings"`), `cargo nextest run --workspace` (2899 passed, 7 skipped), `cargo test --workspace --doc`, `make full` (green end to end), `tkt lint`, and `git diff --check`. `tkt guard tkt/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold` returns exit 0 with `"conflict": false` and `"under_declared": []` against this ticket's three declared scopes; the sibling ticket's Outcome explains why guarding against *its* narrower declaration alone reports an escape.
