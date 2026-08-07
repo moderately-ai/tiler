@@ -51,14 +51,24 @@
 //!
 //! # Cost, stated because it is charged to every gate run
 //!
-//! Publishing reaches the real offline Apple toolchain once per member — eight
-//! members across the two routed runs — and each pass emits MSL, invokes `metal`
-//! and `metallib`, assembles the neutral artifact, and resolves it through the
-//! expansion cache. The cache is opened inside a private temporary directory that
-//! [`Published`] removes, so every run misses and compiles: a cache shared across
-//! runs would make the gate's cost depend on hidden state and its determinism on
-//! a mutable path. The measured wall-clock this adds is recorded on
+//! Publishing reaches the real offline Apple toolchain once per member, and each
+//! pass emits MSL, invokes `metal` and `metallib`, assembles the neutral
+//! artifact, and resolves it through the expansion cache. The cache is opened
+//! inside a private temporary directory that [`Published`] removes, so every run
+//! misses and compiles: a cache shared across runs would make the gate's cost
+//! depend on hidden state and its determinism on a mutable path. The measured
+//! wall-clock this adds is recorded on
 //! `produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate`.
+//!
+//! **The gate charges eight of the twelve members.** Six serial-sum members and
+//! two contraction members — the adversarial `2x2x3` and the `w_decode_kv` cell —
+//! are published on every run. The other four contraction members are the L3
+//! prefill cells, published only by the `#[ignore]`d run
+//! `crate::envelope::tests::the_prefill_cells_carry_their_retained_digests`,
+//! because their *oracles* are what costs: the reference folds 1,094,713,344
+//! multiply-accumulate steps to state their expected bytes. That run is measured
+//! at 30.8 s and a 323 MB peak resident set on an Apple M4 Max, against the whole
+//! crate's 0.8 s otherwise.
 
 use std::path::{Path, PathBuf};
 
@@ -294,10 +304,11 @@ pub(crate) fn publish_serial_sum_matrix(
 
 /// Publishes one contraction member the routed run opens.
 ///
-/// One member per publication rather than both at once, because the routed run
-/// opens them one at a time and publishing the other would compile a member
-/// nothing in that run reads — which on the L3 cell is a `1024x1024` operand
-/// stream and a four-megabyte record.
+/// One member per publication rather than the whole set at once, because the
+/// routed runs open them one at a time and publishing the rest would compile
+/// members nothing in that run reads — which on the L3 cells means operand
+/// streams up to `3072x1024` and records up to fifteen megabytes, each of which
+/// costs a reference fold to state.
 ///
 /// # Errors
 ///

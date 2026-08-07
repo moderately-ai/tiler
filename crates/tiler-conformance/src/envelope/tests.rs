@@ -4,14 +4,24 @@
 //! is decidable without an envelope and runs on every host in the ordinary gate:
 //! the interface recognizers and every way of missing them, the sidecar
 //! payload-length refusal, the routed dtype rows, the member and class pins, the
-//! digest helper against its published vectors and its own domain, and the
-//! retained comparison's two verdicts including the perturbation it must refuse.
+//! digest helper against its published vectors and its own domain, the retained
+//! comparison's two verdicts including the perturbation it must refuse, the six
+//! correctness cells against the retained record's own `direct` rows, the
+//! derivation of which cells a sidecar can carry, and the gate split.
 //!
 //! The routed runs publish their own members through [`crate::publication`] and
 //! then route them, so on a host with an offline Apple toolchain and a device
 //! they run under the ordinary gate. A host without either reports the
 //! measurement boundary unavailable — one boundary rather than two, because
 //! publishing and routing need the same environment — and never skips.
+//!
+//! **There are two routed contraction runs and the second is `#[ignore]`d.** The
+//! ordinary one routes the adversarial member and `w_decode_kv`; the four L3
+//! prefill cells are in [`the_prefill_cells_carry_their_retained_digests`],
+//! because publishing them costs 1,094,713,344 reference fold steps under a
+//! stated allowance. Which run a member belongs to is derived from the bounds
+//! rather than listed — see
+//! [`the_gate_routes_the_cells_the_default_reference_evaluator_admits`].
 
 use std::path::Path;
 
@@ -21,11 +31,12 @@ use tiler_runtime::load::{DTypeDispatch, DTypeDispatchResolution};
 
 use super::{
     CONTRACTION_ACTIVATIONS_KEY, CONTRACTION_CLASS, CONTRACTION_MEMBERS, CONTRACTION_OUTPUT_KEY,
-    CONTRACTION_WEIGHTS_KEY, DeclaredInput, DeclaredInterface, EnvelopeFailure, L3_CELL_CLASS,
-    L3_CELL_RESULT_SHA256, PLAN_ROLES, REDUCTION_CLASSES, RetainedComparison, SIDECAR_SUFFIX,
-    declared_route_environment, decode_f32_bits, dtype_rows, expected_shape, host_dtype_dispatch,
-    measured_contraction, measured_matrix, proof_member, require_contraction_interface,
-    require_serial_sum_interface, result_digest, sha256_hex, sidecar_path,
+    CONTRACTION_WEIGHTS_KEY, ContractionMember, DeclaredInput, DeclaredInterface, EnvelopeFailure,
+    L3_CORRECTNESS_CELLS, L3CorrectnessCell, PLAN_ROLES, REDUCTION_CLASSES, RetainedComparison,
+    SIDECAR_SUFFIX, declared_route_environment, decode_f32_bits, dtype_rows, expected_shape,
+    host_dtype_dispatch, measured_contraction, measured_matrix, proof_member,
+    require_contraction_interface, require_serial_sum_interface, result_digest, sha256_hex,
+    sidecar_path,
 };
 use crate::measurement::require_or_report;
 use crate::serial_sum::{COLUMNS, declaration};
@@ -42,12 +53,52 @@ use crate::serial_sum::{COLUMNS, declaration};
 /// relations still agreeing.
 const FIXTURE_CONTRACTION: (u64, u64, u64) = (2, 2, 3);
 
-/// The extents the published L3 cell is compiled and routed at.
+/// Every L3 correctness cell, as `(class, extents, retained digest)`.
 ///
-/// A literal for the same reason, and one stronger: a `result_sha256` was
-/// retained for `w_decode_kv` at exactly these extents, so a cell published at
-/// any other shape would be compared against a digest that never described it.
-const FIXTURE_L3_CELL: (u64, u64, u64) = (1, 1024, 1024);
+/// **Literals for the same reason [`FIXTURE_CONTRACTION`] is, and one stronger: a
+/// `result_sha256` was retained for each of these cells at exactly these
+/// extents**, so a cell published at any other shape would be compared against a
+/// digest that never described it, and a class pointing at another cell's digest
+/// would route and disagree in a way that reads as a device defect.
+///
+/// This is a second statement of `super::L3_CORRECTNESS_CELLS` on purpose. It is
+/// the *first* statement that is checked against the retained record's own
+/// `workload.tsv` by
+/// [`the_pinned_cells_are_the_retained_records_own_direct_rows`]; this one is
+/// checked against that, so a table edited in one place fails here and a table
+/// edited in both fails against the record.
+const FIXTURE_L3_CELLS: [(&str, (u64, u64, u64), &str); 6] = [
+    (
+        "contraction-w-decode-kv",
+        (1, 1024, 1024),
+        "79810ce471cbd6cd05e5c0c30ea6023e74b997bd5b349212b71cd4a23fe8701f",
+    ),
+    (
+        "contraction-w-prefill-q",
+        (10, 2048, 1024),
+        "1c54f5cd7265ee288ec79bcd9254243b78a95d57c3c489e5ea90bcc4298073c0",
+    ),
+    (
+        "contraction-w-prefill-mlp-in",
+        (128, 3072, 1024),
+        "eb382840ac9e533f57e51a0ffed2d61608664ecc5869aaa9f93afa3c312696a0",
+    ),
+    (
+        "contraction-w-prefill-mlp-out",
+        (128, 1024, 3072),
+        "124571de47ebff2f152b120afc9944b3465bffe94d8ac283a077677f61feb5f5",
+    ),
+    (
+        "contraction-w-prefill-o",
+        (128, 1024, 2048),
+        "b99eff9042d9e4b25e3844ff0462e5e6303e57b146aa79400622885bffc5f2f6",
+    ),
+    (
+        "contraction-w-vocab-slice",
+        (1, 8192, 1024),
+        "88b01ae776f42bdb2f2d1092ddfd039e20e652d28393a6e2ec19e5cc1d9803c8",
+    ),
+];
 
 /// Builds one declared interface literal, for the family-recognition cases.
 fn interface_of(inputs: &[(&str, &[u64])], output: (&str, u64)) -> DeclaredInterface {
@@ -154,12 +205,19 @@ fn the_two_roles_mean_different_dispatch_shapes() {
 /// [`CONTRACTION_MEMBERS`] rather than a restatement of nothing.
 #[test]
 fn the_published_contraction_members_are_the_ones_this_module_routes() {
+    let mut expected = vec![Some(FIXTURE_CONTRACTION)];
+    expected.extend(
+        FIXTURE_L3_CELLS
+            .iter()
+            .filter(|(class, _, _)| *class != UNPUBLISHABLE_CELL_CLASS)
+            .map(|(_, extents, _)| Some(*extents)),
+    );
     assert_eq!(
         CONTRACTION_MEMBERS
             .iter()
             .map(|member| member.family.contraction_extents())
             .collect::<Vec<_>>(),
-        [Some(FIXTURE_CONTRACTION), Some(FIXTURE_L3_CELL)],
+        expected,
         "a member published at extents this file does not pin would route a shape no assertion \
          here describes",
     );
@@ -181,24 +239,40 @@ fn the_published_contraction_members_are_the_ones_this_module_routes() {
         "/tmp/a.tiler.contraction.selected",
     );
 
-    assert_eq!(L3_CELL_CLASS, "contraction-w-decode-kv");
-    assert_eq!(FIXTURE_L3_CELL, (1, 1024, 1024));
+    // Every cell's class, extents, and digest against this file's own literals,
+    // and the member path each derives — six classes that collided would leave
+    // members silently overwriting each other in one publication directory.
+    assert_eq!(L3_CORRECTNESS_CELLS.len(), FIXTURE_L3_CELLS.len());
+    let mut paths = Vec::new();
+    for (cell, (class, extents, digest)) in L3_CORRECTNESS_CELLS.iter().zip(FIXTURE_L3_CELLS) {
+        assert_eq!(cell.class, class, "{}: its class moved", cell.id);
+        assert_eq!(cell.extents(), extents, "{}: its extents moved", cell.id);
+        assert_eq!(
+            cell.result_sha256, digest,
+            "{}: its retained digest moved; the record is \
+             spikes/scheduling/metal_contraction_vertical/results/\
+             2026-07-31-correctness-apple9-f32-msl4-macos26-m4max-metal32023.883/workload.tsv",
+            cell.id,
+        );
+        paths.push(
+            proof_member(Path::new("/tmp/a.tiler"), cell.class, "selected")
+                .display()
+                .to_string(),
+        );
+    }
+    assert_eq!(paths[0], "/tmp/a.tiler.contraction-w-decode-kv.selected");
+    let mut distinct = paths.clone();
+    distinct.sort();
+    distinct.dedup();
     assert_eq!(
-        proof_member(Path::new("/tmp/a.tiler"), L3_CELL_CLASS, "selected")
-            .display()
-            .to_string(),
-        "/tmp/a.tiler.contraction-w-decode-kv.selected",
-    );
-    assert_eq!(
-        L3_CELL_RESULT_SHA256, "79810ce471cbd6cd05e5c0c30ea6023e74b997bd5b349212b71cd4a23fe8701f",
-        "the retained `w_decode_kv` `direct` digest, from this spike's own record: \
-         spikes/scheduling/metal_contraction_vertical/results/\
-         2026-07-31-correctness-apple9-f32-msl4-macos26-m4max-metal32023.883/workload.tsv",
+        distinct.len(),
+        paths.len(),
+        "two cells sharing a member path would leave one silently overwriting the other",
     );
 }
 
-/// Exactly one routed member carries a retained measurement, and it is the L3
-/// cell.
+/// Every routed member except the adversarial one carries a retained
+/// measurement.
 ///
 /// **The negative half is the load-bearing one.** A `Some(...)` added to the
 /// adversarial member would compare its executed bytes against a digest no device
@@ -207,20 +281,294 @@ fn the_published_contraction_members_are_the_ones_this_module_routes() {
 /// "measured elsewhere" and "not measured at all" cannot be lost by editing a
 /// table.
 #[test]
-fn only_the_l3_cell_is_compared_against_a_retained_measurement() {
+fn every_member_but_the_adversarial_one_is_compared_against_a_retained_measurement() {
     let compared: Vec<&str> = CONTRACTION_MEMBERS
         .iter()
         .filter(|member| member.retained_result_sha256.is_some())
         .map(|member| member.class)
         .collect();
-    assert_eq!(compared, [L3_CELL_CLASS]);
+    assert_eq!(
+        compared,
+        FIXTURE_L3_CELLS
+            .iter()
+            .map(|(class, _, _)| *class)
+            .filter(|class| *class != UNPUBLISHABLE_CELL_CLASS)
+            .collect::<Vec<_>>(),
+    );
     assert_eq!(
         CONTRACTION_MEMBERS.len(),
-        2,
-        "both published contraction members must be routed; a member the producer writes and this \
-         half never opens is a file nobody reads",
+        6,
+        "every publishable contraction member must be routed; a member the producer writes and \
+         this half never opens is a file nobody reads",
     );
     assert_eq!(CONTRACTION_MEMBERS[0].class, CONTRACTION_CLASS);
+    assert!(
+        CONTRACTION_MEMBERS[0].retained_result_sha256.is_none(),
+        "the adversarial member's five operand classes were never measured on a device, so there \
+         is nothing to compare its executed bytes against beyond its published reference",
+    );
+
+    // Each member's digest is its own cell's, matched through the class rather
+    // than through the position: a table reordered without moving the digests
+    // would keep every assertion above green and route the members against
+    // wrong measurements.
+    for (class, _, digest) in FIXTURE_L3_CELLS {
+        if class == UNPUBLISHABLE_CELL_CLASS {
+            continue;
+        }
+        let member = CONTRACTION_MEMBERS
+            .iter()
+            .find(|member| member.class == class)
+            .unwrap_or_else(|| panic!("{class} is routed"));
+        assert_eq!(member.retained_result_sha256, Some(digest));
+    }
+}
+
+/// The one correctness cell no proof sidecar can carry.
+///
+/// Named once here, so the three tests that have to exclude it and the one that
+/// explains why it is excluded all say the same word.
+const UNPUBLISHABLE_CELL_CLASS: &str = "contraction-w-vocab-slice";
+
+/// The routed members are exactly the cells a sidecar can carry.
+///
+/// **`CONTRACTION_MEMBERS` is a `const` and cannot filter, so its exclusion of
+/// `w_vocab_slice` is a hand-written index — and this is what stops that index
+/// from being a place a cell can be dropped quietly.** The expected set is
+/// derived from the predicate rather than listed, so a cell that stopped fitting
+/// must be removed from the array and one that started fitting must be added,
+/// and either omission fails here rather than on the host that publishes.
+#[test]
+fn the_routed_members_are_exactly_the_publishable_cells() {
+    let routed: Vec<&str> = CONTRACTION_MEMBERS
+        .iter()
+        .filter(|member| member.retained_result_sha256.is_some())
+        .map(|member| member.class)
+        .collect();
+    let publishable: Vec<&str> = L3_CORRECTNESS_CELLS
+        .iter()
+        .filter(|cell| cell.fits_one_proof_payload())
+        .map(|cell| cell.class)
+        .collect();
+    assert_eq!(
+        routed, publishable,
+        "the routed members and the cells a sidecar can carry have drifted apart",
+    );
+    assert_eq!(routed.len(), 5);
+    assert_eq!(
+        L3_CORRECTNESS_CELLS
+            .iter()
+            .filter(|cell| !cell.fits_one_proof_payload())
+            .map(|cell| cell.class)
+            .collect::<Vec<_>>(),
+        [UNPUBLISHABLE_CELL_CLASS],
+    );
+}
+
+/// The excluded cell is named against the exact bound that stops it.
+///
+/// **This is the ticket's remaining cell, held to arithmetic instead of to
+/// prose.** `w_vocab_slice`'s `[8192, 1024]` weights operand is 33,554,432 bytes
+/// and `tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES` admits 16,777,216 — a
+/// factor of exactly two, so no rounding or framing overhead is involved and the
+/// exclusion cannot be argued away. Nothing inside
+/// `implementation/conformance` reaches it: the constant is another crate's
+/// public surface, and splitting the operand across cases would publish a
+/// different program rather than the cell the digest describes.
+///
+/// The five routable cells are asserted with margin in the same test, so a bound
+/// that *fell* takes the whole set down rather than silently dropping members.
+#[test]
+fn the_unpublishable_cell_is_named_against_the_bound_that_stops_it() {
+    let limit = u64::try_from(tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES)
+        .expect("the artifact layer's payload bound fits a u64");
+    assert_eq!(limit, 16_777_216);
+
+    let excluded = L3_CORRECTNESS_CELLS
+        .iter()
+        .find(|cell| cell.class == UNPUBLISHABLE_CELL_CLASS)
+        .expect("the record's vocabulary cell is still pinned");
+    assert_eq!(excluded.largest_payload_bytes(), 33_554_432);
+    assert_eq!(
+        excluded.largest_payload_bytes(),
+        limit * 2,
+        "the excluded cell's operand is exactly twice the bound; if that is no longer the \
+         arithmetic, the exclusion needs restating rather than keeping",
+    );
+    assert!(!excluded.fits_one_proof_payload());
+
+    for cell in &L3_CORRECTNESS_CELLS {
+        if cell.class == UNPUBLISHABLE_CELL_CLASS {
+            continue;
+        }
+        assert!(
+            cell.fits_one_proof_payload(),
+            "{}: its largest payload is {} byte(s) against a bound of {limit}",
+            cell.id,
+            cell.largest_payload_bytes(),
+        );
+    }
+    assert_eq!(
+        L3_CORRECTNESS_CELLS
+            .iter()
+            .map(L3CorrectnessCell::largest_payload_bytes)
+            .max(),
+        Some(33_554_432),
+    );
+}
+
+/// The pinned cells are the retained record's own `direct` rows.
+///
+/// **Device-free, and the only check in this crate that reads the measurement's
+/// source rather than a transcription of it.** Six extents and six 64-character
+/// digests are exactly the kind of thing a careful reader transcribes wrongly
+/// once and nobody notices, because every routed comparison then agrees with the
+/// wrong constant on both sides — the published reference is computed from the
+/// same extents the digest is compared at. The record is the independent
+/// statement, and this is where the two meet.
+///
+/// The `direct` realization and no other: the record carries six realizations per
+/// cell and four of them are permitted but differently-grouped answers, so a
+/// member compared against `ksplit_strided`'s digest would report a wrong answer
+/// for a right reason.
+#[test]
+fn the_pinned_cells_are_the_retained_records_own_direct_rows() {
+    let record = crate::retained_record::direct_digests().expect("the retained record reads");
+    assert_eq!(
+        record.len(),
+        L3_CORRECTNESS_CELLS.len(),
+        "the record states {} `direct` row(s) and this crate pins {}",
+        record.len(),
+        L3_CORRECTNESS_CELLS.len(),
+    );
+
+    let mut checked = 0_usize;
+    for cell in &L3_CORRECTNESS_CELLS {
+        let row = record
+            .iter()
+            .find(|row| row.id == cell.id)
+            .unwrap_or_else(|| panic!("the retained record states a `direct` row for {}", cell.id));
+        assert_eq!(
+            (row.m, row.n, row.k),
+            cell.extents(),
+            "{}: this crate publishes it at extents the record did not measure",
+            cell.id,
+        );
+        assert_eq!(
+            row.result_sha256, cell.result_sha256,
+            "{}: the pinned digest is not the record's own",
+            cell.id,
+        );
+        assert_eq!(
+            cell.m * cell.n * cell.k,
+            cell.fold_steps,
+            "{}: the pinned fold is not the product of its extents",
+            cell.id,
+        );
+        checked += 1;
+    }
+    assert_eq!(
+        checked, 6,
+        "the loop must have reached every pinned cell; a lookup that silently matched none would \
+         leave this green over an empty comparison",
+    );
+}
+
+/// The gate routes the cells the *default* reference evaluator admits, and the
+/// `#[ignore]`d run the rest.
+///
+/// **The split the gate is drawn on, stated where a reader looks for it.**
+/// `crate::publication::proof` needs the reference's expected bytes to publish a
+/// cell, and a fold above the evaluator's per-occurrence bound is only reachable
+/// by stating a larger number. So the ordinary gate publishes only cells under
+/// that bound, through exactly the evaluator every other consumer gets, and
+/// authorizes nothing.
+///
+/// **Two cells are under the bound and only one of them is routable at all.**
+/// `w_vocab_slice` folds 8,388,608 steps, comfortably under it, and is stopped
+/// one layer lower by the sidecar payload bound — see
+/// [`the_unpublishable_cell_is_named_against_the_bound_that_stops_it`]. The two
+/// bounds are independent and a cell must clear both, which is why the gate set
+/// is derived from the conjunction rather than from either one.
+#[test]
+fn the_gate_routes_the_cells_the_default_reference_evaluator_admits() {
+    let (under, over): (Vec<&L3CorrectnessCell>, Vec<&L3CorrectnessCell>) = L3_CORRECTNESS_CELLS
+        .iter()
+        .partition(|cell| cell.folds_under_the_default_allowance());
+    assert_eq!(
+        under.iter().map(|cell| cell.id).collect::<Vec<_>>(),
+        ["w_decode_kv", "w_vocab_slice"],
+    );
+    assert_eq!(
+        over.iter().map(|cell| cell.id).collect::<Vec<_>>(),
+        [
+            "w_prefill_q",
+            "w_prefill_mlp_in",
+            "w_prefill_mlp_out",
+            "w_prefill_o",
+        ],
+    );
+    assert_eq!(
+        over.iter().map(|cell| cell.fold_steps).sum::<u64>(),
+        1_094_713_344,
+        "the four cells behind the ignore fold 1,094,713,344 steps between them",
+    );
+
+    assert_eq!(
+        gate_members()
+            .iter()
+            .map(|member| member.class)
+            .collect::<Vec<_>>(),
+        [CONTRACTION_CLASS, "contraction-w-decode-kv"],
+        "the ordinary gate routes the adversarial member and the one cell that is both under the \
+         reference's bound and carryable by a sidecar",
+    );
+    assert_eq!(
+        ignored_members()
+            .iter()
+            .map(|member| member.class)
+            .collect::<Vec<_>>(),
+        [
+            "contraction-w-prefill-q",
+            "contraction-w-prefill-mlp-in",
+            "contraction-w-prefill-mlp-out",
+            "contraction-w-prefill-o",
+        ],
+    );
+    assert_eq!(
+        gate_members().len() + ignored_members().len(),
+        CONTRACTION_MEMBERS.len(),
+        "every routed member belongs to exactly one of the two runs; a member in neither would be \
+         published by nothing and noticed by nobody",
+    );
+}
+
+/// The contraction members the ordinary gate routes.
+///
+/// Derived rather than listed, so a cell that moved across either bound moves
+/// with it instead of being left behind in a hand-written set.
+fn gate_members() -> Vec<&'static ContractionMember> {
+    CONTRACTION_MEMBERS
+        .iter()
+        .filter(|member| {
+            member.retained_result_sha256.is_none()
+                || L3_CORRECTNESS_CELLS.iter().any(|cell| {
+                    cell.class == member.class && cell.folds_under_the_default_allowance()
+                })
+        })
+        .collect()
+}
+
+/// The contraction members only the `#[ignore]`d run routes.
+///
+/// The complement of [`gate_members`] over the same array rather than a second
+/// filter, so the two sets partition the routed members by construction.
+fn ignored_members() -> Vec<&'static ContractionMember> {
+    let gated = gate_members();
+    CONTRACTION_MEMBERS
+        .iter()
+        .filter(|member| !gated.iter().any(|other| other.class == member.class))
+        .collect()
 }
 
 /// The digest helper reproduces the published FIPS 180-4 vectors, and its domain
@@ -268,18 +616,19 @@ fn the_digest_helper_reproduces_the_published_vectors() {
 /// exercise it — which needs hardware and a defect at once.
 #[test]
 fn a_retained_comparison_separates_the_executed_bytes_from_the_published_record() {
+    let retained = L3_CORRECTNESS_CELLS[0].result_sha256;
     let matching = RetainedComparison {
-        executed: L3_CELL_RESULT_SHA256.to_owned(),
-        embedded: L3_CELL_RESULT_SHA256.to_owned(),
-        retained: L3_CELL_RESULT_SHA256,
+        executed: retained.to_owned(),
+        embedded: retained.to_owned(),
+        retained,
     };
     assert!(matching.executed_matches() && matching.embedded_matches());
 
     // The device disagreed with a record that asks the right question.
     let device_wrong = RetainedComparison {
         executed: sha256_hex(b"another result"),
-        embedded: L3_CELL_RESULT_SHA256.to_owned(),
-        retained: L3_CELL_RESULT_SHA256,
+        embedded: retained.to_owned(),
+        retained,
     };
     assert!(!device_wrong.executed_matches() && device_wrong.embedded_matches());
 
@@ -288,7 +637,7 @@ fn a_retained_comparison_separates_the_executed_bytes_from_the_published_record(
     let record_wrong = RetainedComparison {
         executed: sha256_hex(b"another workload"),
         embedded: sha256_hex(b"another workload"),
-        retained: L3_CELL_RESULT_SHA256,
+        retained,
     };
     assert!(!record_wrong.executed_matches() && !record_wrong.embedded_matches());
 
@@ -298,11 +647,21 @@ fn a_retained_comparison_separates_the_executed_bytes_from_the_published_record(
     let one_element_off = RetainedComparison {
         executed: result_digest(&[0x3f80_0000, 0x4000_0000]),
         embedded: result_digest(&[0x3f80_0000, 0x4000_0001]),
-        retained: L3_CELL_RESULT_SHA256,
+        retained,
     };
     assert!(!one_element_off.executed_matches());
     assert!(!one_element_off.embedded_matches());
     assert_ne!(one_element_off.executed, one_element_off.embedded);
+
+    // Another cell's digest is not this one's, which is what makes a per-cell
+    // comparison a per-cell claim rather than six members agreeing with one
+    // number.
+    let wrong_cell = RetainedComparison {
+        executed: retained.to_owned(),
+        embedded: retained.to_owned(),
+        retained: L3_CORRECTNESS_CELLS[1].result_sha256,
+    };
+    assert!(!wrong_cell.executed_matches() && !wrong_cell.embedded_matches());
 }
 
 /// The contraction interface is recognized, and every way of not being one is
@@ -544,26 +903,34 @@ fn the_published_matrix_agrees_with_its_record_on_the_routed_row() {
     );
 }
 
-/// Every published contraction member routes, and the L3 cell's executed bytes
-/// carry the retained realization-probe digest.
+/// Routes a set of contraction members and returns how many were compared
+/// against a retained measurement.
 ///
-/// The only comparison in this crate that reaches outside the workspace's own two
-/// implementations. It is bounded to the host row the measurement was taken on;
-/// a reader who is not on that row must treat it as unmade rather than as
-/// evidence.
-#[test]
-fn the_contraction_members_route_and_the_l3_cell_carries_its_retained_digest() {
-    let mut compared = 0_usize;
-    for member in &CONTRACTION_MEMBERS {
-        let Some(routed) = require_or_report(
+/// **One procedure for both runs below**, so the `#[ignore]`d whole-profile run
+/// cannot drift into asserting less than the gate does. `None` means this host
+/// reported the measurement boundary unavailable, which
+/// [`require_or_report`] has already printed.
+///
+/// A member whose retained comparison was *declined* — this hardware is not the
+/// row the digest was measured on — is counted separately and its reason is
+/// required rather than accepted as an absence. Collapsing the two would make an
+/// unmeasured machine indistinguishable from a compared one, which is the silent
+/// skip the crate header refuses.
+fn route_and_compare(members: &[&ContractionMember]) -> Option<(usize, usize)> {
+    let (mut compared, mut declined) = (0_usize, 0_usize);
+    for member in members {
+        let routed = require_or_report(
             &format!("envelope contraction {}", member.class),
             measured_contraction(member),
-        ) else {
-            return;
-        };
+        )?;
         assert!(routed.proved > 0, "{} routed no operand case", routed.name);
         match (&routed.retained, member.retained_result_sha256) {
             (Some(comparison), Some(retained)) => {
+                assert!(
+                    routed.retained_declined.is_none(),
+                    "{}: a comparison was made and a reason for declining one was reported",
+                    routed.name,
+                );
                 assert!(
                     comparison.executed_matches(),
                     "{}: the executed bytes hash to {} and the retained measurement is {retained}",
@@ -579,15 +946,93 @@ fn the_contraction_members_route_and_the_l3_cell_carries_its_retained_digest() {
                 );
                 compared += 1;
             }
-            (None, None) => {}
+            (None, Some(retained)) => {
+                let reason = routed.retained_declined.as_ref().unwrap_or_else(|| {
+                    panic!(
+                        "{}: the member declares the retained digest {retained} and the run made \
+                         no comparison and gave no reason, which is the silent skip this crate \
+                         refuses",
+                        routed.name,
+                    )
+                });
+                eprintln!("{}: retained comparison declined — {reason}", routed.name);
+                declined += 1;
+            }
+            (None, None) => assert!(
+                routed.retained_declined.is_none(),
+                "{}: a member with nothing to compare reported a reason for not comparing",
+                routed.name,
+            ),
             (carried, declared) => panic!(
                 "{}: the member declares {declared:?} and the run carried {carried:?}",
                 routed.name,
             ),
         }
     }
+    Some((compared, declined))
+}
+
+/// The gate's contraction members route, and each cell's executed bytes carry its
+/// retained realization-probe digest.
+///
+/// The only comparison in this crate that reaches outside the workspace's own two
+/// implementations. It is bounded to the host row the measurement was taken on,
+/// which `crate::retained_record` compares field by field and prints before any
+/// digest is compared; a difference in the *machine* declines the comparison by
+/// name rather than making it anyway.
+///
+/// **Two of the six routed members, and the line is a property rather than a
+/// budget** — see [`the_gate_routes_the_cells_the_default_reference_evaluator_admits`].
+/// The other four are in the `#[ignore]`d run below.
+#[test]
+fn the_contraction_members_route_and_the_gates_cells_carry_their_retained_digests() {
+    let members = gate_members();
+    let Some((compared, declined)) = route_and_compare(&members) else {
+        return;
+    };
     assert_eq!(
-        compared, 1,
-        "exactly one routed member is compared against a retained measurement",
+        compared + declined,
+        1,
+        "the gate routes one cell carrying a retained measurement, and it must either be compared \
+         or have said why it was not",
+    );
+}
+
+/// The four prefill cells' executed bytes carry their retained digests.
+///
+/// `#[ignore]`d for cost, not for doubt, on exactly the terms
+/// `crates/tiler-reference/tests/contraction_profile_cells.rs` uses for the same
+/// cells: publishing them needs the reference oracle to fold 1,094,713,344
+/// multiply-accumulate steps under a stated allowance, and the largest operand
+/// stream is a twelve-megabyte record written and read back per member.
+///
+/// **Measurement — Apple M4 Max, macOS 27.0 `26A5388g`, Apple9, metal
+/// `32023.921`, SDK macosx 27.0 `26A5388f`, test profile (`opt-level` 1 with
+/// debuginfo).** All four reproduce their retained `direct` digests. The
+/// invocation, and the run this was landed with:
+///
+/// ```sh
+/// cargo nextest run -p tiler-conformance --run-ignored only --no-capture \
+///     -E 'test(the_prefill_cells_carry_their_retained_digests)'
+/// ```
+///
+/// The gate keeps more than the `#[ignore]` costs it: the route, the placement,
+/// the fail-closed probes, the interface recognizers, the digest domain, the row
+/// comparison, and `w_decode_kv` all run on every gate run, and every cell shares
+/// one emitted kernel — so an arithmetic change that moved these four would move
+/// the one the gate routes.
+#[test]
+#[ignore = "1.09e9 reference fold steps under a stated allowance, across four published members; run deliberately, see this test's documentation"]
+fn the_prefill_cells_carry_their_retained_digests() {
+    let members = ignored_members();
+    assert_eq!(members.len(), 4, "the four prefill cells are routed here");
+    let Some((compared, declined)) = route_and_compare(&members) else {
+        return;
+    };
+    assert_eq!(
+        compared + declined,
+        4,
+        "all four cells carry a retained measurement, and each must either be compared or have \
+         said why it was not",
     );
 }
