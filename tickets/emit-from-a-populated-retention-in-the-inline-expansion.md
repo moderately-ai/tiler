@@ -1,7 +1,7 @@
 ---
 id: emit-from-a-populated-retention-in-the-inline-expansion
 title: Emit from a populated retention in the inline expansion
-status: in-progress
+status: done
 priority: p3
 dependencies: [retain-succeeding-metal-stage-tool-output]
 related: [retain-canonical-msl-under-a-debug-expansion-cache-entry]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, diagnostics]
-claimed_from: todo
-assignee: worker-retention
-lease_expires_at: 1786137395
 ---
 ## Trigger check log
 
@@ -51,3 +48,15 @@ So the live question is: **what, if anything, does an inline expansion emit from
 - 2026-08-07 — **FIRED, and the ticket needs re-scoping before dispatch rather than only re-statusing.** Verified independently by the coordinator, not relayed: `retain-succeeding-metal-stage-tool-output` reads `status: done`, and the work landed rather than the status merely flipping — `grep -n 'ToolOutput::capture' crates/tiler-metal-aot/src/driver.rs` now returns **two** sites, `:304` inside the failure arm and **`:307` on the success path**, which is exactly the inversion the 2026-08-05 entry recorded as unfired. The producer is wired through: `crates/tiler-build/src/metal_cache.rs:403` states `retained: stage_retention(&outputs)`. So a frontend asking for retention today receives a populated section from the Metal producer, and the stated ground for deferral is gone.
 
   **Two stated Facts are now false and must be repaired before this is briefed.** (1) "Every producer in the workspace states `DebugRetention::none()`" — `metal_cache.rs:403` states a real retention; only the generic default and the `custom_backend` test producer still state none. (2) More consequentially, this ticket opens by naming the *selection* question — "whatever selects retention … is `crates/tiler-macros`' decision to make and its shape is the first question this ticket answers" — and the Metal backend has already answered it the other way: retention is **unconditional and caller-independent**, documented at `metal_cache.rs:435-440` as "**Always stated, never discovered.**" So the live remainder is this ticket's *second*, separable question — whether an inline expansion emits anything from a retention, and as what. `crates/tiler-macros` holds no `DebugRetention` reference at all; its only "retained" vocabulary is the failure-path `compile_error!` diagnostic, which is a different mechanism. **Recommend re-scoping to the read-back question before dispatch.** Recheck: `grep -n 'ToolOutput::capture' crates/tiler-metal-aot/src/driver.rs && grep -n 'retained: stage_retention' crates/tiler-build/src/metal_cache.rs`.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`08714fd7`** (worker commit `1b0d0614`). `crates/tiler-macros/src/retention.rs` plus tests, wired into `aot::deliver`; 509 insertions across 4 files, all inside `implementation/frontend`.
+
+A delivering expansion writes one note to standard error when the resolved entry's retained toolchain output carries bytes — on hits, publications and uncached resolutions alike, never fatal, silent for a quiet compilation. **The predicate is per-run, not `DebugRetention::is_empty`**, because the Metal producer records a silent stage as an *empty run*, so a quiet compilation is a retention of two runs for which `is_empty()` answers `false`; gating on it would print an empty header on every delivering expansion.
+
+A spanned warning **was available and was declined**: `#![feature(proc_macro_diagnostic)]` with `Diagnostic::spanned(…, Level::Warning, …)` was tested on the pinned `nightly-2026-07-19` and works. It was rejected on attribution (no region text reaches the emitted MSL, so pointing at the invocation sends a consumer to edit something not at fault) and on testability (`Diagnostic::emit` writes where no test can read).
+
+**Coordinator verification, independently reproduced:** no new public items; the `aot::deliver` call site matches all three `Resolution` variants with no wildcard; perturbing `spoken()` to `None` fails 9 of 12 tests and the naive `is_empty()` gate fails 4 of 12. One correction to the worker's report — those two perturbations cover **11 of 12**, not all twelve; `a_retention_with_no_runs_writes_nothing` survives both but is **not vacuous**, failing under a third targeted perturbation. `make full` exit 0 on the merged tree.
+
+The caller-visible surface is a **labelled draft** and returns to Tom as [`accept-the-retention-read-back-s-caller-visible-boundary`](accept-the-retention-read-back-s-caller-visible-boundary.md), which carries the included/excluded surface and the one open sub-question (whether the note should be gated under rust-analyzer, where it re-emits per expansion request).

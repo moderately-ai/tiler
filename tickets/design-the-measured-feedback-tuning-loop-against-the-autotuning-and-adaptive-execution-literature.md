@@ -1,7 +1,7 @@
 ---
 id: design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature
 title: Design the measured-feedback tuning loop against the autotuning and adaptive-execution literature
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [calibrate-device-cost-models]
@@ -9,9 +9,6 @@ scopes: [research/cost-model]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-tuning
-lease_expires_at: 1786137395
 ---
 ## User-visible outcome
 
@@ -49,3 +46,15 @@ The trigger was: the first analytic cost-model landing in `crates/` (the `bootst
   **This ticket's recheck command is broken and could never have reported the firing.** `grep -rnE "^(pub )?(struct|enum) [A-Za-z]*(Cost|Estimate|Rank|Score)" crates/ --include='*.rs'` returns exactly one line — a shape-rank marker — because **every cost and estimate type is declared `pub(crate)`, which the `^(pub )?` anchor cannot match.** Re-running the documented command today still reads as not-fired. That is a check which cannot say *yes*: the inverse of the failure this repository usually guards against, and it would have kept this ticket parked indefinitely.
 
   **Its stated Fact was also already false when written**: "The analytic cost model does not exist yet (the 2026-08-05 audit: no cost/estimate/ranking type in `crates/`)" — but `calibrate-device-cost-models` cites `crates/tiler-compiler/src/component_cost.rs` as of 2026-07-28, a week earlier. Both the Fact and the command must be corrected before this is briefed. Working recheck: `grep -n 'ANALYTICAL_MODEL_KEY' crates/tiler-compiler/src/component_cost.rs && grep -m1 '^status:' tickets/cost-model-bootstrap.md`.
+
+## Outcome — done, 2026-08-07
+
+Landed at **`923f7703`**: `docs/research/cost-model/measured-feedback-tuning-loop.md` (245 lines) and `docs/research/cost-model/sources/README.md` (129 lines).
+
+**The finding that reframes the record, verified independently by the coordinator.** No measurement enters compilation at all: `grep -rn 'EstimateProvenance::Measured' crates/ --include='*.rs'` returns **nothing** — the variant has zero producers — and what `measured_cost` consumes is a `u64` read off a target profile that is a **literal**, `saturated_parallel_fold_steps: Some(1_056)` at `crates/tiler-build/src/metal_declaration.rs:337`. So "measured" in the compiler today names the *provenance of a hand-transcribed constant*, not a loop. This ticket's premise was true in letter and misleading in weight; the record accordingly decides whether the transcription path should ever *become* a loop, and concludes it is the right design stated as a rule rather than left an accident.
+
+**Decisions taken:** measurement enters by offline calibration only, with in-loop tuning deferred behind a two-part trigger (Ansor's 1,000 trials per test case would have to run inside a proc-macro under the no-runtime-JIT constraint; and Halide 2016→2019 puts ~75% on the model for only ~1.34x more from hours of autotuning). The tuning store's five cache properties are taken one at a time: complete identity transfers and must widen; validation splits, with semantic validation **inverting** because a cache hit is self-proving and a tuning hit only unrefuted; immutability **inverts one level down** — observations immutable and append-only, verdict derived and replaceable. Transfer across shapes is machine-parameter fitting only, refusing a per-shape winner table on three independent grounds. Fail-closed gives six typed resolutions and **no "last known good" measurement**.
+
+**Honest findings retained rather than smoothed:** the repository's own separation rule fails Hoefler & Belli Rule 6 (no distributional check recorded behind standard errors of medians) — recorded as an inherited weakness affecting the two held-out misses, with the nonparametric repair left to the protocol's owner. Eleven primary sources retrieved, SHA-256'd and read as text, with WebFetch PDF summaries discarded as unverifiable paraphrase after one produced non-existent Ansor "quotes". Three sources unreachable, each with reference, attempt, and the decision it would have informed; no claim rests on them.
+
+Three follow-on tickets filed: the catalog carrier (the record lands uncatalogued because `docs/research/README.md` is `contracts/navigation`), source vendoring pending licence reads, and acquisition of the three unreachable sources.

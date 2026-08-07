@@ -1,7 +1,7 @@
 ---
 id: date-adr-0079-s-one-crate-claims-for-the-second-diverging-member
 title: Date ADR 0079's one-crate claims for the second diverging member
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, doc-drift]
-claimed_from: todo
-assignee: worker-date-adr-007
-lease_expires_at: 1786137974
 ---
 ## User-visible outcome
 
@@ -108,3 +105,16 @@ Two members (`:21`); the walk not covering `prototypes/serial-sum-run` because i
 > ```
 >
 > Correct output is two files at two each: `crates/tiler-conformance/src/device_buffer.rs` and `prototypes/serial-sum-run/src/buffer.rs`. Substituting `r'^\s*unsafe\s*\{'` gives the identical two files at two each, and **that pairing is the evidence that no block escaped its attribute** — a count alone cannot show it. This is the same defect class the ticket exists to prevent, committed in the ticket's own repair text.
+
+## Outcome — done, 2026-08-07
+
+Landed at **`d4863d6d`**. **41 insertions, 0 deletions** — every original line survives byte-for-byte, following the dated-correction convention. `ADR:85` and `ADR:87` were **left standing undated**, which was the trap: the in-crate test enforces none of item 3's four conditions, so both paragraphs remain true.
+
+**The worker found two errors in the coordinator's brief**, both of the class this ticket exists to prevent:
+
+1. **The enumeration command returned 5, not 4** — it matched the `crates/tiler-conformance/src/lib.rs` doc comment, precisely the false positive it was written to exclude. Fixed with a `^\s*` line anchor and per-file output rather than a bare total. Corrected here and in [`pin-the-admitted-unsafe-sites-in-the-workspace-gate`](pin-the-admitted-unsafe-sites-in-the-workspace-gate.md).
+2. **The AGENTS.md inventory clause was removed by `6a2360f9`** (2026-08-06), not `7b1e3a7e` — which rewrote the sentence but kept the clause. `git log -S'inventor' -- AGENTS.md` returns `6a2360f9` and `99bc4c77`, not `7b1e3a7e`.
+
+It also added a nuance the brief missed and the coordinator verified: **`spikes/` is outside the workspace member set**, inherits no lint table, and carries 8 unsafe blocks of its own across 5 files that this ADR does not govern. And it dated `ADR:55`, which the brief's site list had omitted.
+
+Verified independently: zero deletions; no crate-root `#![allow]` in either diverging member; exactly two members drop `[lints] workspace = true`; `Cargo.toml:33` sets `publish = false`. Delta is `docs/` only, so it carries the green gate; `tkt lint` rerun.
