@@ -1,7 +1,7 @@
 ---
 id: refresh-adr-0106-and-the-architecture-rows-the-conformance-crate-outgrew
 title: Refresh ADR 0106 and the architecture rows the conformance crate outgrew
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-the-scope-set-claim-in-adr-0106-s-missing-component-evidence, carry-the-device-executed-value-proof-into-the-conformance-crate]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/foundation]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [docs, doc-drift]
+claimed_from: todo
+assignee: agent-adr-refresh
+lease_expires_at: 1786129907
 ---
 ## What is stale, verified at source
 

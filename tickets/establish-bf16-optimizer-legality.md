@@ -1,7 +1,7 @@
 ---
 id: establish-bf16-optimizer-legality
 title: Establish BF16 optimizer legality rather than inheriting the F32 permissions
-status: todo
+status: in-progress
 priority: p2
 dependencies: [admit-bf16-into-the-schedule-and-kernel-vocabulary]
 related: [spike-bf16-through-the-second-dtype-seams, design-the-bf16-computation-and-accumulator-contract, widen-the-f16-operation-vocabulary-to-contraction-and-reassociation]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, optimizer, fusion, legality]
+claimed_from: todo
+assignee: agent-bf16-legality
+lease_expires_at: 1786129907
 ---
 ## User-visible outcome
 
