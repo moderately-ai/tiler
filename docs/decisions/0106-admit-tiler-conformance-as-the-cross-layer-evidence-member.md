@@ -1,0 +1,121 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0106"
+kind: "decision"
+title: "Admit tiler-conformance as the cross-layer evidence member"
+topics: ["rust", "workspace", "dependencies", "conformance", "testing"]
+catalog_group: "foundation-semantics-extensions"
+decision_status: "accepted"
+implementation_status: "partial"
+applies_to: ["tiler.contract.architecture"]
+evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv"]
+depends_on: ["ADR-0075", "ADR-0076"]
+refines: ["ADR-0077"]
+ticket: "record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr"
+---
+
+# 0106: Admit tiler-conformance as the cross-layer evidence member
+
+**Status:** accepted. Tom decided this on 2026-08-07 in the coordination session, witnessed first-hand by the coordinator, on [`decide-where-a-device-reaching-conformance-test-may-live`](../../tickets/decide-where-a-device-reaching-conformance-test-may-live.md). It admits one workspace member, `crates/tiler-conformance`, and that member is counted apart from the production twelve rather than as a thirteenth layer, because no dependency edge points at it. [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md) puts a new publicly reachable namespace — a new crate — in the always-ask category, which is why this is Tom's acceptance rather than a derivation.
+
+Every other member carries an admission record — [ADR 0077](0077-admit-tiler-metal-aot-as-a-dependency-free-driver.md) for `tiler-metal-aot`, [ADR 0081](0081-admit-tiler-runtime-as-a-device-free-artifact-loader.md) for `tiler-runtime`, [ADR 0082](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) for `tiler-cache`, [ADR 0085](0085-admit-tiler-build-as-the-build-time-orchestrator.md) for `tiler-build`, [ADR 0088](0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) for the frontend pair, and [ADR 0104](0104-fold-the-per-record-graph-identity-as-a-digest.md) for `tiler-digest`. This one carried none, because [`admit-the-conformance-crate-to-the-workspace`](../../tickets/admit-the-conformance-crate-to-the-workspace.md) held `implementation/conformance`, `implementation/frontend`, and `implementation/workspace` and structurally could not write into `docs/`, leaving Tom's acceptance recorded in a ticket rather than in the decisions corpus. This record closes that gap, in the same shape ADR 0088 closed it for the frontend pair.
+
+**This record claims exactly what the member holds, which is a boundary and no content.** The crate holds no items at all — only a module header. Where a question about what belongs inside it is open, this record names the ticket that owns it instead of answering it.
+
+## Context
+
+**Fact — a device-reaching conformance run had no legal home, and the question had blocked work twice before it was filed as a decision node.** [`conform-the-bf16-vertical-end-to-end`](../../tickets/conform-the-bf16-vertical-end-to-end.md) recorded it as a block on 2026-08-06 and could not proceed; the block was carried in prose until 2026-08-07, when it became `decide-where-a-device-reaching-conformance-test-may-live`. The mechanical position at that point was that exactly one workspace member could reach a device and it was not a crate: `prototypes/serial-sum-run` declares the macOS-gated `metal` dependency and its `[[bin]]` carries `test = true`, so a `#[test]` there is reached by `cargo nextest run --workspace` and therefore by `make full`.
+
+**Fact — the declaring half of the target-profile machinery is built and the refuting half has no owner.** Tiler has typed profiles, measured rows, numerical realizations, and feasibility predicates. What refutes them is executed comparison, and the worked example of its absence is the reduction grid-axis bound: it was declared at four contributors, and [the correctness and testing contract](../correctness-and-testing.md) now records the measured `268,435,456` that replaced it — refuted by hand in a spike and transcribed into the declaration manually, with nothing gating it or re-running it.
+
+**Fact — the evidence that a component is missing rather than a file being homeless is that the work does not share a scope set.** [`survey-what-belongs-in-the-conformance-crate`](../../tickets/survey-what-belongs-in-the-conformance-crate.md) counts five open conformance tickets and no two share one: three are `implementation/compiler`, one adds `implementation/reference`, `contracts/numerics`, and `research/scheduling`, and one adds `implementation/runtime`. The oracle plumbing sits inside the compiler because there was nowhere else to put it — `crates/tiler-compiler/src/pipeline/conformance.rs` and `crates/tiler-compiler/src/governed/contraction_conformance.rs` are that machinery in the crate whose output it exists to check.
+
+**Fact — three of the four candidate homes are eliminated by the code rather than by preference.** `crates/tiler` is ruled out by `crates/tiler/tests/dependency_direction.rs`, which forbids the facade an edge to `tiler-metal-aot` under ADR 0077 item 4 and reads `Cargo.lock` precisely because the lockfile merges normal, build, and development edges into one list per package — so even a development edge trips it, and compiling a metallib needs that driver. `crates/tiler-runtime` is ruled out by its own stated boundary: the comment above its `[dev-dependencies]` records that its tests must not reach `tiler-compiler`, because a loader that could rebuild a plan instead of validating the one it was handed is the boundary the crate split exists to enforce, and that stays true of its tests. An end-to-end run must compile. `crates/tiler-build` is mechanically fine and was rejected because it puts the *consume* half of an end-to-end test inside the crate whose job is offline *production*.
+
+**Fact — the fourth is eliminated on the principle that generalizes past this question.** `prototypes/serial-sum-run` was mechanically capable and was rejected because `prototypes/` is by definition throwaway, short-term code, and everything long-term holding must live in a proper `tiler` crate. `AGENTS.md` excludes `prototypes/` from the crates' style gate, so a gating correctness test whose regression is the whole point would have lived in the one tree the repository deliberately holds to a lower standard. That reasoning is why the survey above was asked for in the same answer.
+
+**Fact — what the member is, at `5d31fd03`.** `Cargo.toml`'s `members` carries `crates/tiler-conformance`. Its manifest declares normal dependencies on `tiler-artifact`, `tiler-build`, `tiler-compiler`, `tiler-ir`, `tiler-metal`, `tiler-metal-aot`, `tiler-reference`, and `tiler-runtime`, a `cfg(target_os = "macos")` dependency on `metal`, and `[lints] workspace = true`. `crates/tiler-conformance/src/lib.rs` contains a module header and no items. `crates/tiler/tests/workspace_population.rs` names it in a sixteen-member `EXPECTED_MEMBERS` derived against `cargo metadata`, and was observed failing at fifteen before it was updated. `ticketsplease.toml` maps `implementation/conformance` to the crate's globs and to the package.
+
+## Decision
+
+### 1. `tiler-conformance` owns cross-layer executed evidence, and its three anti-goals are its boundary
+
+**Decided.** A run in this crate builds a program in the shared IR, plans it through the compiler, lowers and compiles it for a real target, packages and validates the artifact, executes it, and compares the result against the independent oracle. Every layer it crosses already tests itself; what nothing tested is the composition, so a regression anywhere in the vertical becomes a red test in `make full` rather than a spike someone remembers to run.
+
+The three anti-goals are load-bearing rather than aspirational, and they are what the crate is for stated negatively:
+
+- **Not a second semantic authority.** `tiler-reference` is the oracle and this crate uses it; it never states what a program should compute. The moment a run here computes an expected value of its own, the comparison stops being evidence, and weakening what an operation means to fit what a target delivers is the authority substitution [ADR 0076](0076-declare-target-honourable-numerical-realizations.md) forbids.
+- **Not a benchmark harness.** Timing needs an idle host, warm-up, repetitions, stated noise controls, and a named baseline, and none of that survives contact with a correctness gate that runs beside every other test in the workspace. Mixing them makes the gate flaky and the numbers untrustworthy in one step.
+- **Not a home for layer-local tests.** A test of one layer's own behaviour stays in that layer's crate, where its failure names the layer that broke. Without this line the crate becomes the place a test goes when nobody wants to decide where it belongs, and its failures stop attributing anything.
+
+One hard requirement travels with the first anti-goal because the first content depends on it: a host without the measured environment runs the deterministic reference and structural half and **reports the measurement boundary as unavailable, naming what was missing** — never a silent skip, never a claimed pass. A silent skip makes an unmeasured host indistinguishable from a green one; a claimed pass manufactures evidence for a device that was never reached. The `cfg(target_os = "macos")` gate on the `metal` edge is what makes that constructible rather than aspirational, because it is what keeps `cargo check --workspace` possible off Apple.
+
+### 2. Its dependencies are normal rather than development, and it is the one member with no reverse dependents by design
+
+**Decided.** This inverts what every other member does and is decided rather than accidental. Nothing depends on this crate and nothing may — it is the top of the workspace graph on the evidence side, as `tiler` is on the consumer side — so its dependency closure reaches no consumer and costs none. A normal edge states what the crate is for; a development edge would record only what its tests happen to reach.
+
+The declared set is the vertical a run crosses, and `tiler-cache` and `tiler-digest` are reached transitively and deliberately not named. That is the same discipline ADR 0081 item 2 applied when it kept `tiler-ir` off the loader's row: recording a transitive reach as a direct edge claims a dependency the source does not have.
+
+The empty reverse-dependent set is what keeps the normal edges from being a cost anyone pays, and it is therefore part of the decision rather than an observation about today's manifests. A crate that acquired a reverse dependent would be exporting a conformance harness as a library, which is a public-boundary decision under ADR 0075 and not something an edge may arrive at by accident.
+
+### 3. The frontend is unreachable from here, and that was verified rather than assumed
+
+**Decided.** Nothing in this crate may depend on `tiler` or `tiler-macros`. `crates/tiler/tests/dependency_direction.rs` holds the frontend at the top of the workspace graph and reads `Cargo.lock`, which merges normal, build, and development edges into one list per package, so there is no spelling of the dependency this crate could take.
+
+The admission worker verified this by perturbation rather than by reading: appending a `[dev-dependencies]` edge on `tiler` to the crate manifest made `no_package_depends_on_the_frontend` report `tiler-conformance -> tiler`, confirming that the *development* spelling trips it exactly as a normal one does. Reverted and re-verified clean.
+
+That is a real limitation rather than a formality, and stating it is the point. A program under conformance is built through `tiler_ir` and handed to the compiler directly, never written as `tiler::tensor!` and expanded, so the inline macro path — expansion, symbol binding, the ahead-of-time embedding workflow — is not covered by anything here and stays covered where it already is, in `crates/tiler/tests/facade/`. A future run that wanted to execute a macro-expanded region needs a home outside this crate, not a relaxation of that test.
+
+### 4. ADR 0056's withheld-crate clause is neither amended nor excepted, and this record is not precedent for the crate it withholds
+
+**Decided.** [ADR 0056](0056-use-four-libraries-and-two-proof-executables.md) withholds a frontend, proc-macro, Candle, generalized cache, or reusable Metal-*runtime* crate, and `tiler-conformance` is none of the five. ADR 0082 and ADR 0088 each had to *amend* the clause because each admitted a crate the clause named; ADR 0081 was admitted by *applying* a test ADR 0077 stated. Neither move is needed here, and saying so precisely matters more than it looks: the clause is untouched and continues to withhold everything it names.
+
+As admitted, the crate also passes ADR 0077's stated test outright — it creates no device object, no `MTLDevice`, and no pipeline state, because it contains no code at all. **That is a fact about today and not the ground this admission stands on**, because item 1 says a run here executes on a device, so the test will stop being passed once the device half exists. What keeps the crate outside the withheld clause then is that it is not *reusable*: nothing may depend on it under item 2, so it publishes no runtime boundary and offers no component a device capability. The clause withholds a library other components would reach for; this is a test host nothing may reach.
+
+A reader must not cite this admission as precedent for admitting the reusable Metal-runtime crate, for the same reason ADR 0077 wrote that warning about its own.
+
+### 5. What this admission does not decide, and each open question keeps its owner
+
+**Decided.** The crate was admitted ahead of its first run deliberately: admitting a member fixes a dependency edge and a verifier-ownership boundary, which is reviewable on its own, and a member admitted with a migration attached would have decided what migrates before the survey that decides it ran.
+
+- **No public surface, and admitting the member accepted none.** A crate's public namespace is a boundary under ADR 0075. Everything stays `pub(crate)` or test-only until an item has a stated consumer and its own acceptance.
+- **No migration.** `survey-what-belongs-in-the-conformance-crate` classifies every candidate and files each move as its own ticket; `conform-the-bf16-vertical-end-to-end` is the first content. In particular, whether the compiler-resident oracle plumbing named in the Context is conformance machinery or compiler machinery is that survey's question, and both answers are still available.
+- **No support-matrix authority.** The accepted decision describes conformance as the refuting half of a declaring/refuting pair, and whether an executed run may *derive* a support-matrix or ledger row rather than have it hand-asserted is also the survey's subject. This record decides that the crate exists and what it owns, not that it may stamp a maturity or evidence class.
+- **No lint relaxation.** The crate inherits the workspace table whole, including `unsafe_code = "forbid"`, and item 6 states what that costs.
+
+### 6. The inherited `unsafe_code = "forbid"` stands, and moving it is Tom's
+
+**Decided.** The crate inherits the workspace lint table unchanged. That is not a neutral inheritance and the constraint is recorded here because it is invisible from the table itself: `MTLBuffer` storage is reachable only through the raw pointer `metal::Buffer::contents` returns, so moving operands into a device buffer and results back out cannot be spelled safely, and `forbid` cannot be relaxed by an inner attribute at any scope. The device-reaching half of item 1 is therefore unwritable as the crate stands.
+
+The admission deliberately did not pre-authorize a weaker level. Admitting a named unsafe site is a decision under [ADR 0079](0079-permit-unsafe-code-case-by-case-at-named-sites.md), and `AGENTS.md` reserves broad unsafe or lint relaxations to Tom. [`decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`](../../tickets/decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access.md) is the open decision and `conform-the-bf16-vertical-end-to-end` depends on it. This record neither pre-empts it nor treats the device half as already available.
+
+## Consequences
+
+- The workspace carries twelve reusable libraries, one conformance member, and three non-published proof/integration executables. As with ADRs 0077, 0081, 0082, 0085, and 0088, that count is an ordinal about the member being admitted rather than a new cap, and [`docs/architecture.md`](../architecture.md) holds the live profile. The row is `tiler-conformance -> [tiler-artifact, tiler-build, tiler-compiler, tiler-ir, tiler-metal, tiler-metal-aot, tiler-reference, tiler-runtime] + macOS [metal]`.
+- The member is counted **apart from** the production twelve rather than folded into them, and `crates/tiler/tests/workspace_population.rs` says so in its own doc comment. Counting it as production would claim a thirteenth layer that no dependency edge points at. The component-ownership table in the architecture contract carries the row for the same reason it carries every other one — a row records which component owns a responsibility — while the packaging block records that its reverse-dependent set is empty and stays empty.
+- `implementation_status` is `partial` and states a real gap rather than rounding up. The member exists, is inside `make full`, and is inside the crates' style gate; it holds no items, and item 6 is why the half that would need them cannot be written yet. Reading this record as evidence that a cross-layer run exists would be reading a boundary as a result.
+- `ticketsplease.toml`'s `implementation/conformance` scope maps to a real package whose reverse-dependent set is empty and stays empty by design, so the crate-graph expansion that mapping enables adds nothing today. It is still the real owner rather than a temporary entry, which is the difference from the Candle case in the same file: this mapping is never moved.
+- The five scattered conformance tickets gain a destination and are not moved by this record. Their scope sets are what the survey reclassifies; until it runs, work continues where it is, because holding evidence work behind a documentation sweep would invert the order the admission was scoped for.
+- The `prototypes/serial-sum-run` device path is unchanged and remains the only member whose code reaches a live device. `tiler-conformance` now declares the same target-gated `metal` edge and holds nothing behind it, so the architecture contract's statement that no stage of live execution lives in `crates/` is still true and is now true for a reason worth naming rather than by absence of a candidate.
+
+## Alternatives considered
+
+**A `#[test]` in `prototypes/serial-sum-run`.** The cheapest option by a wide margin: it delivers the end-to-end run today, inside `make full`, with no dependency change anywhere, and it was the recommendation the decision node carried. Rejected on the principle in the Context — `prototypes/` is throwaway by definition and excluded from the crates' style gate, so a load-bearing conformance test would live in the one tree the repository holds to a lower standard. The counterpoint that it is cheaper to move a test later than to leave a composition untested is real, and it is what makes this a decision rather than an obvious call.
+
+**`crates/tiler`.** Ruled out by `crates/tiler/tests/dependency_direction.rs` rather than by taste, and the elimination is checkable: the test forbids the facade an edge to `tiler-metal-aot`, and it reads `Cargo.lock`, so a development spelling does not evade it. Compiling a metallib needs that driver.
+
+**`crates/tiler-runtime`.** Ruled out by that crate's own stated boundary that its tests must not reach `tiler-compiler`. An end-to-end run must compile, so the exception would have to be granted at exactly the point the crate split exists to hold.
+
+**`crates/tiler-build` with development dependencies.** Mechanically fine and the cheapest of the crate options, since it already reaches the compiler, the emitter, and the driver. Rejected because it puts the consume half of an end-to-end test inside the crate whose job is offline production, which makes the produce crate the authority on whether its own output executes correctly.
+
+**Keep device conformance in `spikes/` and out of the gate.** Costs no workspace change at all. Rejected because it forfeits the whole user-visible outcome: a spike is run by hand, so a regression is not a red test, which is precisely the gap the blocked ticket exists to close.
+
+**Admit the crate together with its first content, or with the migration the survey will recommend.** Attractive because the member would then demonstrably do something and `implementation_status` would not read `partial`. Rejected because it decides the survey's question before the survey runs — a crate admitted with a migration attached has already classified the candidates — and because the member's dependency edges and its boundary are reviewable on their own, which is what makes the small slice worth having.
+
+**Defer this record until the crate holds a run.** Rejected for the reason ADR 0088 gives: the corpus does not stay silent while a record is withheld. The component-ownership table enumerates every crate and would have kept omitting this one, and Tom's acceptance would have stayed in a ticket while every other admission sat in the decisions corpus — the asymmetry that makes an accepted decision unfindable from where decisions are indexed.
+
+## Traceability
+
+The [prototype crate layout research](../research/workspace/prototype-crate-layout-and-msrv.md) is the evidence that the crate set mechanically enforces Tiler's layer separation rather than being a packaging convenience, which is what makes admitting one a decision. [The correctness and testing contract](../correctness-and-testing.md) owns the measured grid-axis bound the Context cites as the worked example of a declared claim refuted by hand, and it is the contract a conformance run's verdicts are read against; this record allocates a component and does not restate its normative content. [The system architecture](../architecture.md) owns the component-ownership table and the packaging profile this record adds a member to. ADR 0075 is why this admission is Tom's acceptance rather than a derivation, ADR 0076 owns the authority substitution the first anti-goal refuses, ADR 0077 owns the withheld-crate clause item 4 leaves untouched and the non-precedent warning it repeats, and ADR 0079 owns the named-site discipline item 6 declines to pre-authorize.
+
+The work records are [`decide-where-a-device-reaching-conformance-test-may-live`](../../tickets/decide-where-a-device-reaching-conformance-test-may-live.md) for the decision and its eliminations, [`admit-the-conformance-crate-to-the-workspace`](../../tickets/admit-the-conformance-crate-to-the-workspace.md) for the member and the perturbation evidence in item 3, [`survey-what-belongs-in-the-conformance-crate`](../../tickets/survey-what-belongs-in-the-conformance-crate.md) for everything item 5 declines to decide, [`decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`](../../tickets/decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access.md) for the lint level item 6 leaves open, [`conform-the-bf16-vertical-end-to-end`](../../tickets/conform-the-bf16-vertical-end-to-end.md) for the first content, and [`record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr`](../../tickets/record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr.md) for this record.

@@ -18,6 +18,7 @@ accepted. Unresolved questions are collected in
 <!-- BEGIN GENERATED ADR TOPICS -->
 ### Foundation, semantics, and extensions
 
+- [0106: Admit tiler-conformance as the cross-layer evidence member](0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md) — accepted; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md)
 - [0077: Admit tiler-metal-aot as a dependency-free offline driver](0077-admit-tiler-metal-aot-as-a-dependency-free-driver.md) — accepted; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Apple Metal artifact compatibility](../research/apple-targets/artifact-compatibility.md)
 - [0062: Bind Rust markers to complete resolved value types](0062-bind-markers-to-resolved-value-types.md) — accepted; contracts: [IR stack and invariants](../ir.md), [Numerical semantics](../numerical-semantics.md), [Operation extension contract](../operation-extensions.md); evidence: [Dtype identity admission policy](../research/numerics/dtype-identity-admission-policy.md), [Quantized value and transformation contract](../research/numerics/quantized-value-and-transform-contract.md), [Mature tensor dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md)
 - [0060: Bind Rust type markers through the explicit registry](0060-bind-rust-type-markers-through-the-registry.md) — accepted; contracts: [IR stack and invariants](../ir.md), [Operation extension contract](../operation-extensions.md), [Numerical semantics](../numerical-semantics.md); evidence: [Operation-extension surface research](../research/extensions/operation-extension-surface.md), [Experimental operation API sketch](../research/extensions/operation-extension-api.md), [Dtype identity admission policy](../research/numerics/dtype-identity-admission-policy.md)
@@ -251,6 +252,7 @@ accepted. Unresolved questions are collected in
 - [0103: Declare the manifest's artifact identity by digest rather than by preimage](0103-declare-the-manifests-artifact-identity-by-digest.md) — accepted
 - [0104: Fold the per-coverage-record graph identity as a digest, and site the governed digest so it can be](0104-fold-the-per-record-graph-identity-as-a-digest.md) — accepted
 - [0105: Retire the scalar-lowering provider seam](0105-retire-the-scalar-lowering-provider-seam.md) — accepted
+- [0106: Admit tiler-conformance as the cross-layer evidence member](0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template
