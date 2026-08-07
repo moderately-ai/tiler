@@ -1,7 +1,7 @@
 ---
 id: share-the-staged-ownership-test-between-the-recognizer-and-the-physical-speller
 title: Share the staged ownership test between the recognizer and the physical speller
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [admit-a-scheduled-region-for-a-staged-elementary-family]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner, maintenance]
+claimed_from: todo
+assignee: agent-ownership-dedup
+lease_expires_at: 1786070081
 ---
 ## User-visible outcome
 
