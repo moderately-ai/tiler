@@ -19,6 +19,18 @@
 //! this sentence is what a reader should find rather than an acceptance that was
 //! never given.
 //!
+//! The **evaluation-order-preservation** family is not covered by that
+//! acceptance either, and for the same reason: [`BackendArithmeticLicence`],
+//! [`EvaluationOrderPreservation`], [`EvaluationOrderResolution`],
+//! [`TargetProfileBuilder::declare_evaluation_order_preservation`],
+//! [`TargetProfileBuilder::declare_measured_evaluation_order_preservation`], and
+//! [`TargetProfile::evaluation_order_preservation`] are a tested concrete draft
+//! of a new declared-fact family awaiting a boundary decision of its own. The
+//! acceptance node parked for Tom is
+//! `accept-the-evaluation-order-preservation-target-fact`; until it closes, the
+//! exact included and excluded surface is a labelled draft under ADR 0075 and
+//! this sentence is what a reader should find.
+//!
 //! ```
 //! use tiler_compiler::target::{
 //!     DTypeDispatchability, DeviceAddressWidth, IndexArithmeticSupport,
@@ -190,6 +202,14 @@ const DISPATCHABILITY_DOMAIN: &[u8] = b"tiler.target-profile.dtype-dispatchabili
 /// grammars are independent, so a reader must not be able to consume one row
 /// family's bytes at the other's offset.
 const SYNCHRONIZATION_DOMAIN: &[u8] = b"tiler.target-profile.synchronization-realization.v1\0";
+/// Domain separating the evaluation-order-preservation rows of one declaration.
+///
+/// Its own separator, for the reason the two families above have one: the
+/// grammars are independent, so no reader may consume one family's bytes at
+/// another's offset. Unlike the synchronization separator this one is written
+/// **only when the family is non-empty**, and
+/// [`complete_descriptor`] states the derivation that licenses the difference.
+const EVALUATION_ORDER_DOMAIN: &[u8] = b"tiler.target-profile.evaluation-order-preservation.v1\0";
 
 /// Maximum byte length of one target-profile key.
 ///
@@ -1504,6 +1524,160 @@ pub enum DTypeDispatchabilityResolution {
     Unknown,
 }
 
+/// The arithmetic-rewriting licence a backend translation is granted.
+///
+/// **Labelled draft (ADR 0075).** The key half of the evaluation-order fact,
+/// awaiting the boundary decision `accept-the-evaluation-order-preservation-target-fact`
+/// parks for Tom.
+///
+/// # Why the key is a licence rather than a backend flag spelling
+///
+/// The measurement this vocabulary exists to carry is indexed by Metal's
+/// `-fmetal-math-mode`, whose three values are `safe`, `relaxed`, and `fast`.
+/// Those are one backend driver's option tokens, and a consumer-agnostic profile
+/// that named them would have learnt a Metal flag. What the measurement actually
+/// attributes the behaviour to is the *licence set the emitted operations carry*:
+/// [finding 34](../../../docs/research/apple-targets/numerical-behaviour.md)
+/// records the reordering firing exactly where the emitted set carries LLVM's
+/// `reassoc`, and names `reassoc` as "the licence that authorizes regrouping".
+/// `safe` withholds it; `relaxed` and `fast` both grant it, differing only in
+/// `nnan`/`ninf`, which no measured cell attributes an order change to.
+///
+/// So the two values below cover all three modes without inheriting between
+/// them, and a row that separated `relaxed` from `fast` would be a third value
+/// here — a build error at every match, never a silent reading of a neighbour's
+/// fact.
+///
+/// This is **not** a caller permission. [`tiler_ir::schedule::NumericalPermission`]
+/// states what a caller's contract allows *Tiler* to do; this states what Tiler's
+/// emission allows the *backend translator* to do, and ADR 0011's rule that one
+/// permission never implies another applies across the two vocabularies too.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum BackendArithmeticLicence {
+    /// The backend translation is granted no licence to rewrite floating-point
+    /// arithmetic.
+    Withheld,
+    /// The backend translation is licensed to rewrite floating-point arithmetic,
+    /// including regrouping a same-operation operand sequence.
+    Granted,
+}
+
+impl BackendArithmeticLicence {
+    /// Returns the stable governed key naming this licence.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Withheld => "arithmetic-rewriting-withheld",
+            Self::Granted => "arithmetic-rewriting-granted",
+        }
+    }
+
+    const fn tag(self) -> u8 {
+        match self {
+            Self::Withheld => 0x01,
+            Self::Granted => 0x02,
+        }
+    }
+}
+
+/// Whether a backend translation preserves the evaluation order the emitted
+/// program pins.
+///
+/// **Labelled draft (ADR 0075)**, with the licence key above.
+///
+/// Two valued, and the negative is *statable*, exactly as
+/// [`SynchronizationSupport`] is: a target measured to re-serialize a written
+/// grouping records that, and a target nobody asked records nothing. Those are
+/// different states — a typed refusal and an `Unknown` — and a vocabulary with
+/// only a positive spelling would collapse them into one silence.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum EvaluationOrderPreservation {
+    /// The backend executes the evaluation order the emitted program names.
+    Preserved,
+    /// The backend may execute some other legal order than the one emitted.
+    NotPreserved,
+}
+
+impl EvaluationOrderPreservation {
+    /// Returns the stable governed key naming this verdict.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Preserved => "evaluation-order-preserved",
+            Self::NotPreserved => "evaluation-order-not-preserved",
+        }
+    }
+
+    const fn tag(self) -> u8 {
+        match self {
+            Self::Preserved => 0x01,
+            Self::NotPreserved => 0x02,
+        }
+    }
+}
+
+/// Result of an evaluation-order-preservation lookup.
+///
+/// **Labelled draft (ADR 0075)**, with the two vocabularies above.
+///
+/// [`Self::Unknown`] is the fail-closed answer and the overwhelmingly common
+/// one: a profile that declares nothing about the property answers it, and a
+/// consumer may not read a neighbouring subject's or a neighbouring licence's
+/// row in its place. The oracle's refusal class 3 is what consumes it — a plan
+/// whose pinned order the backend is permitted to change is refused rather than
+/// qualified — so an `Unknown` never becomes an admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EvaluationOrderResolution {
+    /// An exact declaration states the order is preserved.
+    Preserved,
+    /// An exact declaration states the order may be changed.
+    NotPreserved,
+    /// An exact declaration exists, but only from this later phase.
+    Deferred {
+        /// Earliest phase at which an exact declaration can resolve.
+        available_at: AvailabilityPhase,
+    },
+    /// No exact declaration exists for this subject and licence.
+    Unknown,
+}
+
+/// One target's evaluation-order-preservation row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EvaluationOrderFact {
+    subject: ScalarArithmetic,
+    licence: BackendArithmeticLicence,
+    preservation: EvaluationOrderPreservation,
+    source: Arc<FactSourceProvenance>,
+}
+
+impl EvaluationOrderFact {
+    fn validate(&self) -> Result<(), TargetProfileBuildError> {
+        if !self.source.is_valid() {
+            return Err(TargetProfileBuildError::InvalidProducerClaim);
+        }
+        Ok(())
+    }
+
+    /// The canonical key this row is unique under: the exact scalar subject, the
+    /// licence, and the phase. The verdict is deliberately excluded, for the
+    /// reason [`TargetProfileBuildError::DuplicateSynchronizationRealization`]
+    /// excludes it — a profile stating one subject both preserved and not
+    /// preserved has stated a contradiction, and admitting both rows would leave
+    /// whichever the sort put first deciding.
+    fn subject_key(&self) -> (Vec<u8>, u8, AvailabilityPhase) {
+        let mut subject = Vec::new();
+        self.subject.encode(&mut subject);
+        (subject, self.licence.tag(), self.source.phase())
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>, source_index: usize) {
+        self.subject.encode(bytes);
+        bytes.push(self.licence.tag());
+        bytes.push(self.preservation.tag());
+        encode_compact_index(bytes, source_index);
+    }
+}
+
 /// One immutable, intrinsically checked target declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetProfile {
@@ -1517,6 +1691,7 @@ struct TargetProfileData {
     quantitative: Box<[QuantitativeCapabilityDeclaration]>,
     scalar: Box<[ScalarHonourabilityDeclaration]>,
     dispatchability: Box<[DTypeDispatchabilityFact]>,
+    evaluation_order: Box<[EvaluationOrderFact]>,
     descriptor: Box<[u8]>,
 }
 
@@ -1529,6 +1704,7 @@ pub struct TargetProfileBuilder {
     scalar: Vec<ScalarHonourabilityDeclaration>,
     dispatchability: Vec<DTypeDispatchabilityFact>,
     synchronization: Vec<DeclaredSynchronizationRealization>,
+    evaluation_order: Vec<EvaluationOrderFact>,
 }
 
 impl TargetProfileBuilder {
@@ -1544,6 +1720,7 @@ impl TargetProfileBuilder {
             scalar: Vec::new(),
             dispatchability: Vec::new(),
             synchronization: Vec::new(),
+            evaluation_order: Vec::new(),
         }
     }
 
@@ -2563,6 +2740,93 @@ impl TargetProfileBuilder {
         self.declare_dtype_dispatchability_with_source(resolved_type, verdict, source.0)
     }
 
+    /// Declares whether a backend translation under one arithmetic-rewriting
+    /// licence preserves the evaluation order the emitted program pins.
+    ///
+    /// **Labelled draft (ADR 0075)**, awaiting the boundary decision
+    /// `accept-the-evaluation-order-preservation-target-fact` parks for Tom.
+    ///
+    /// The fact is keyed by the exact scalar subject as well as the licence,
+    /// because nothing establishes that one width's answer is another's — the
+    /// measurement behind the vocabulary is `f32` only, and the two subnormal
+    /// dimensions are already measured *disagreeing* across widths on one Apple
+    /// row. A subject or licence this profile does not speak about resolves
+    /// [`EvaluationOrderResolution::Unknown`] rather than inheriting a
+    /// neighbour's row.
+    ///
+    /// A profile that declares nothing here answers `Unknown` for every subject
+    /// and licence, which is the fail-closed default: the oracle's refusal class
+    /// 3 refuses a plan whose pinned order the backend may change rather than
+    /// qualifying it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate row.
+    pub fn declare_evaluation_order_preservation(
+        &mut self,
+        subject: ScalarArithmetic,
+        licence: BackendArithmeticLicence,
+        preservation: EvaluationOrderPreservation,
+        source: TargetFactSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_evaluation_order_with_source(subject, licence, preservation, source.0)
+    }
+
+    /// Declares a measured evaluation-order-preservation row.
+    ///
+    /// **Labelled draft (ADR 0075)**, with the constructor above.
+    ///
+    /// The measured spelling is the one a target row is expected to use: the
+    /// property is a fact about an exact backend compiler build, which no
+    /// normative document this repository holds states — the vendored MSL 4.0
+    /// and 4.1 specifications contain no occurrence of `evaluation order` at
+    /// all, and the sentence that comes closest is already refuted as a
+    /// universal claim by the same profile's subnormal rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate row.
+    pub fn declare_measured_evaluation_order_preservation(
+        &mut self,
+        subject: ScalarArithmetic,
+        licence: BackendArithmeticLicence,
+        preservation: EvaluationOrderPreservation,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_evaluation_order_with_source(subject, licence, preservation, source.0)
+    }
+
+    fn declare_evaluation_order_with_source(
+        &mut self,
+        subject: ScalarArithmetic,
+        licence: BackendArithmeticLicence,
+        preservation: EvaluationOrderPreservation,
+        source: Arc<FactSourceProvenance>,
+    ) -> Result<(), TargetProfileBuildError> {
+        let fact = EvaluationOrderFact {
+            subject,
+            licence,
+            preservation,
+            source,
+        };
+        fact.validate()?;
+        let key = fact.subject_key();
+        if self
+            .evaluation_order
+            .iter()
+            .any(|existing| existing.subject_key() == key)
+        {
+            return Err(
+                TargetProfileBuildError::DuplicateEvaluationOrderPreservation {
+                    licence: licence.key(),
+                    phase: fact.source.phase(),
+                },
+            );
+        }
+        self.evaluation_order.push(fact);
+        Ok(())
+    }
+
     fn declare_dtype_dispatchability_with_source(
         &mut self,
         resolved_type: ResolvedValueType,
@@ -2680,6 +2944,24 @@ impl TargetProfileBuilder {
                 return Err(TargetProfileBuildError::DuplicateDispatchability);
             }
         }
+        for fact in &self.evaluation_order {
+            fact.validate()?;
+            let key = fact.subject_key();
+            if self
+                .evaluation_order
+                .iter()
+                .filter(|candidate| candidate.subject_key() == key)
+                .count()
+                > 1
+            {
+                return Err(
+                    TargetProfileBuildError::DuplicateEvaluationOrderPreservation {
+                        licence: fact.licence.key(),
+                        phase: fact.source.phase(),
+                    },
+                );
+            }
+        }
         Ok(())
     }
 
@@ -2697,6 +2979,12 @@ impl TargetProfileBuilder {
                 .cmp(&right.resolved_type)
                 .then(left.source.phase().cmp(&right.source.phase()))
         });
+        // Subject, then licence, then phase — so the rows of one (subject,
+        // licence) group are contiguous and phase-ascending, which is what makes
+        // `evaluation_order_preservation`'s "latest available phase wins" scan
+        // deterministic rather than dependent on declaration order.
+        self.evaluation_order
+            .sort_by_cached_key(EvaluationOrderFact::subject_key);
     }
 
     fn freeze(mut self) -> Result<TargetProfile, TargetProfileBuildError> {
@@ -2746,6 +3034,7 @@ impl TargetProfileBuilder {
             &self.scalar,
             &self.dispatchability,
             &self.synchronization,
+            &self.evaluation_order,
         );
         if descriptor.len() > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(TargetProfileBuildError::DescriptorTooLong {
@@ -2760,6 +3049,7 @@ impl TargetProfileBuilder {
             scalar,
             dispatchability,
             synchronization: _,
+            evaluation_order,
         } = self;
         Ok(TargetProfile {
             data: Arc::new(TargetProfileData {
@@ -2768,6 +3058,7 @@ impl TargetProfileBuilder {
                 quantitative: quantitative.into_boxed_slice(),
                 scalar: scalar.into_boxed_slice(),
                 dispatchability: dispatchability.into_boxed_slice(),
+                evaluation_order: evaluation_order.into_boxed_slice(),
                 descriptor: descriptor.into_boxed_slice(),
             }),
         })
@@ -2923,6 +3214,33 @@ impl SynchronizationSupport {
     }
 }
 
+/// Encodes one complete producer declaration.
+///
+/// # Why the evaluation-order family did not step [`COMPLETE_PROFILE_DESCRIPTOR_DOMAIN`]
+///
+/// The rule is a byte rule: the domain steps when previously-encodable bytes
+/// **move**, because a reader of the older domain would then be reading the same
+/// bytes under a different grammar. The evaluation-order family moves none. It
+/// is written last, behind its own separator, and **only when it holds a row**,
+/// so every profile assembled before it existed — the governed baseline, the
+/// bound macOS Metal declaration, every test profile — encodes byte for byte
+/// what it encoded at `v11`. Its sources join the shared source table through an
+/// iterator that is empty for those profiles, so no source index shifts either.
+///
+/// Injectivity survives the conditional section because every earlier section is
+/// self-delimiting: two descriptors agreeing on the `v11` prefix agree on every
+/// earlier row, and the remainder is then either empty or this family's bytes,
+/// which its separator distinguishes from any continuation. An empty family and
+/// an absent family denote the same thing here — `Unknown` for every subject and
+/// licence, which no admission path can act on differently — so nothing a
+/// candidate's admission depends on is lost by not writing a zero count.
+///
+/// The synchronization family one section above frames itself *unconditionally*
+/// and therefore had to step `v10` to `v11`. That was a choice about what
+/// silence should record, not a rule this family breaks: `v11` decided that "no
+/// synchronization was declared" should be a recorded fact rather than an
+/// absence, and paid for the decision by moving every profile's bytes. This
+/// family records silence as absence, and pays nothing.
 fn complete_descriptor(
     key: &TargetProfileKey,
     quantitative: &[QuantitativeCapabilityDeclaration],
@@ -2930,6 +3248,7 @@ fn complete_descriptor(
     scalar: &[ScalarHonourabilityDeclaration],
     dispatchability: &[DTypeDispatchabilityFact],
     synchronization: &[DeclaredSynchronizationRealization],
+    evaluation_order: &[EvaluationOrderFact],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, COMPLETE_PROFILE_DESCRIPTOR_DOMAIN);
@@ -2945,6 +3264,7 @@ fn complete_descriptor(
                 .iter()
                 .map(DeclaredSynchronizationRealization::source_ref),
         )
+        .chain(evaluation_order.iter().map(|fact| fact.source.as_ref()))
         .map(|source| (source.canonical_bytes(), source))
         .collect();
     sources.sort_by(|left, right| left.0.cmp(&right.0));
@@ -3036,6 +3356,19 @@ fn complete_descriptor(
             .expect("every synchronization source was inserted into the source table");
         encode_compact_index(&mut bytes, source_index);
     }
+    // The conditional section. See this function's header for the derivation
+    // that keeps `COMPLETE_PROFILE_DESCRIPTOR_DOMAIN` at `v11`.
+    if !evaluation_order.is_empty() {
+        push_slice(&mut bytes, EVALUATION_ORDER_DOMAIN);
+        push_len(&mut bytes, evaluation_order.len());
+        for fact in evaluation_order {
+            let source_bytes = fact.source.canonical_bytes();
+            let source_index = sources
+                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
+                .expect("every evaluation-order source was inserted into the source table");
+            fact.encode(&mut bytes, source_index);
+        }
+    }
     bytes
 }
 
@@ -3109,6 +3442,50 @@ impl TargetProfile {
             }
             (None, Some(available_at)) => DTypeDispatchabilityResolution::Deferred { available_at },
             (None, None) => DTypeDispatchabilityResolution::Unknown,
+        }
+    }
+
+    /// Resolves whether a backend translation under `licence` preserves the
+    /// emitted evaluation order for exactly `subject`, preferring the latest
+    /// declaration available through `available_phase`.
+    ///
+    /// **Labelled draft (ADR 0075)**, with the declaration constructors.
+    ///
+    /// Returns [`EvaluationOrderResolution::Unknown`] for a subject or licence
+    /// this profile does not speak about, which is every subject and licence of
+    /// a profile that declares none. Nothing is inherited: a neighbouring
+    /// arithmetic type's row and the other licence's row are both silence here.
+    #[must_use]
+    pub fn evaluation_order_preservation(
+        &self,
+        subject: &ScalarArithmetic,
+        licence: BackendArithmeticLicence,
+        available_phase: AvailabilityPhase,
+    ) -> EvaluationOrderResolution {
+        let mut now = None;
+        let mut later = None;
+        for fact in self
+            .data
+            .evaluation_order
+            .iter()
+            .filter(|fact| &fact.subject == subject && fact.licence == licence)
+        {
+            let phase = fact.source.phase();
+            if phase <= available_phase {
+                now = Some(fact.preservation);
+            } else if later.is_none() {
+                later = Some(phase);
+            }
+        }
+        match (now, later) {
+            (Some(EvaluationOrderPreservation::Preserved), _) => {
+                EvaluationOrderResolution::Preserved
+            }
+            (Some(EvaluationOrderPreservation::NotPreserved), _) => {
+                EvaluationOrderResolution::NotPreserved
+            }
+            (None, Some(available_at)) => EvaluationOrderResolution::Deferred { available_at },
+            (None, None) => EvaluationOrderResolution::Unknown,
         }
     }
 
@@ -3421,6 +3798,20 @@ pub enum TargetProfileBuildError {
     /// The same exact resolved type received more than one dispatch verdict at
     /// one availability phase.
     DuplicateDispatchability,
+    /// The same scalar subject and backend licence received two
+    /// evaluation-order verdicts at one availability phase.
+    ///
+    /// The verdict is deliberately not part of that key, for the reason
+    /// [`Self::DuplicateSynchronizationRealization`] excludes it: a profile
+    /// declaring one subject both preserved and not preserved has stated a
+    /// contradiction, and admitting both rows would leave whichever the sort put
+    /// first deciding.
+    DuplicateEvaluationOrderPreservation {
+        /// Stable governed key of the licence both rows claimed.
+        licence: &'static str,
+        /// Availability phase at which both rows claimed authority.
+        phase: AvailabilityPhase,
+    },
     /// The canonical descriptor exceeded the artifact identity bound.
     DescriptorTooLong {
         /// Encoded byte length.
@@ -5229,6 +5620,255 @@ mod tests {
         assert_eq!(
             builder.try_build(),
             Err(TargetProfileBuildError::DuplicateDispatchability)
+        );
+    }
+
+    fn bf16_subject() -> ScalarArithmetic {
+        ScalarArithmetic::new(
+            ArithmeticType::Bf16,
+            registered_arithmetic_value_type(ArithmeticType::Bf16)
+                .expect("the governed catalog registers bf16"),
+        )
+        .expect("the bf16 policy subject is validated")
+    }
+
+    fn device_runtime_source() -> TargetFactSource {
+        let compiler = TargetCompilerBuild::new(
+            TargetCompilerRole::RuntimeCompiler,
+            "test-runtime-compiler".to_owned(),
+            "1.0".to_owned(),
+            None,
+        )
+        .unwrap();
+        let environment = TargetExecutionEnvironment::builder()
+            .platform("test-platform".to_owned())
+            .platform_version("1.0".to_owned())
+            .platform_build("build-1".to_owned())
+            .architecture("test-architecture".to_owned())
+            .hardware("test-hardware".to_owned())
+            .build()
+            .unwrap();
+        TargetFactSource::measured(
+            TargetFactProducerIdentity::new("test.evaluation-order-observer.v1".to_owned(), 1)
+                .unwrap(),
+            MeasuredFactAuthority::DeviceRuntime,
+            [TargetMeasurementContext::new([compiler], environment).unwrap()],
+        )
+        .unwrap()
+    }
+
+    /// The fail-closed half: silence is `Unknown` for every subject and licence,
+    /// and it costs a profile that declares nothing not one descriptor byte.
+    #[test]
+    fn a_profile_declaring_no_evaluation_order_row_resolves_unknown() {
+        for profile in [
+            TargetProfile::governed(),
+            public_builder("acme.silent.v1").try_build().unwrap(),
+        ] {
+            for subject in [ScalarArithmetic::f32(), bf16_subject()] {
+                for licence in [
+                    BackendArithmeticLicence::Withheld,
+                    BackendArithmeticLicence::Granted,
+                ] {
+                    assert_eq!(
+                        profile.evaluation_order_preservation(
+                            &subject,
+                            licence,
+                            AvailabilityPhase::LaunchPreflight,
+                        ),
+                        EvaluationOrderResolution::Unknown,
+                        "an undeclared {} row must not resolve",
+                        licence.key()
+                    );
+                }
+            }
+            assert!(
+                !profile
+                    .canonical_descriptor()
+                    .windows(EVALUATION_ORDER_DOMAIN.len())
+                    .any(|window| window == EVALUATION_ORDER_DOMAIN),
+                "an undeclaring profile writes none of the family's bytes, which is \
+                 why the complete-declaration domain did not step"
+            );
+        }
+    }
+
+    /// The observing half: a declared row resolves per licence, and neither the
+    /// other licence nor a neighbouring arithmetic type inherits it.
+    #[test]
+    fn declared_evaluation_order_rows_resolve_per_licence_and_are_not_inherited() {
+        let source = public_external_source(1);
+        let mut builder = TargetProfileBuilder::governed();
+        builder
+            .declare_evaluation_order_preservation(
+                ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Withheld,
+                EvaluationOrderPreservation::Preserved,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_evaluation_order_preservation(
+                ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Granted,
+                EvaluationOrderPreservation::NotPreserved,
+                source,
+            )
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.evaluation_order_preservation(
+                &ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Withheld,
+                AvailabilityPhase::CompileProfile,
+            ),
+            EvaluationOrderResolution::Preserved
+        );
+        assert_eq!(
+            profile.evaluation_order_preservation(
+                &ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Granted,
+                AvailabilityPhase::CompileProfile,
+            ),
+            EvaluationOrderResolution::NotPreserved
+        );
+        for licence in [
+            BackendArithmeticLicence::Withheld,
+            BackendArithmeticLicence::Granted,
+        ] {
+            assert_eq!(
+                profile.evaluation_order_preservation(
+                    &bf16_subject(),
+                    licence,
+                    AvailabilityPhase::CompileProfile,
+                ),
+                EvaluationOrderResolution::Unknown,
+                "an `f32` row is not evidence about `bf16`"
+            );
+        }
+        assert!(
+            profile
+                .canonical_descriptor()
+                .windows(EVALUATION_ORDER_DOMAIN.len())
+                .any(|window| window == EVALUATION_ORDER_DOMAIN)
+        );
+        assert_ne!(
+            profile.canonical_descriptor(),
+            TargetProfile::governed().canonical_descriptor()
+        );
+    }
+
+    #[test]
+    fn a_later_phase_evaluation_order_row_defers_rather_than_resolving() {
+        let mut builder = TargetProfileBuilder::governed();
+        builder
+            .declare_evaluation_order_preservation(
+                ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Granted,
+                EvaluationOrderPreservation::NotPreserved,
+                device_runtime_source(),
+            )
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.evaluation_order_preservation(
+                &ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Granted,
+                AvailabilityPhase::CompileProfile,
+            ),
+            EvaluationOrderResolution::Deferred {
+                available_at: AvailabilityPhase::LiveDevicePreflight,
+            }
+        );
+        assert_eq!(
+            profile.evaluation_order_preservation(
+                &ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Granted,
+                AvailabilityPhase::LiveDevicePreflight,
+            ),
+            EvaluationOrderResolution::NotPreserved
+        );
+    }
+
+    #[test]
+    fn a_second_evaluation_order_verdict_at_one_phase_is_refused_atomically() {
+        let source = public_external_source(1);
+        let mut builder = TargetProfileBuilder::governed();
+        builder
+            .declare_evaluation_order_preservation(
+                ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Withheld,
+                EvaluationOrderPreservation::Preserved,
+                source.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            builder.declare_evaluation_order_preservation(
+                ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Withheld,
+                EvaluationOrderPreservation::NotPreserved,
+                source,
+            ),
+            Err(
+                TargetProfileBuildError::DuplicateEvaluationOrderPreservation {
+                    licence: BackendArithmeticLicence::Withheld.key(),
+                    phase: AvailabilityPhase::CompileProfile,
+                }
+            )
+        );
+        // The refusal inserted nothing, so the first verdict still stands.
+        assert_eq!(
+            builder.try_build().unwrap().evaluation_order_preservation(
+                &ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Withheld,
+                AvailabilityPhase::CompileProfile,
+            ),
+            EvaluationOrderResolution::Preserved
+        );
+    }
+
+    #[test]
+    fn evaluation_order_subject_licence_and_verdict_participate_in_complete_identity() {
+        let descriptor = |subject: ScalarArithmetic, licence, preservation| {
+            let mut builder = TargetProfileBuilder::governed();
+            builder
+                .declare_evaluation_order_preservation(
+                    subject,
+                    licence,
+                    preservation,
+                    public_external_source(1),
+                )
+                .unwrap();
+            builder.try_build().unwrap().canonical_descriptor().to_vec()
+        };
+        let baseline = descriptor(
+            ScalarArithmetic::f32(),
+            BackendArithmeticLicence::Withheld,
+            EvaluationOrderPreservation::Preserved,
+        );
+        assert_ne!(
+            baseline,
+            descriptor(
+                ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Withheld,
+                EvaluationOrderPreservation::NotPreserved,
+            )
+        );
+        assert_ne!(
+            baseline,
+            descriptor(
+                ScalarArithmetic::f32(),
+                BackendArithmeticLicence::Granted,
+                EvaluationOrderPreservation::Preserved,
+            )
+        );
+        assert_ne!(
+            baseline,
+            descriptor(
+                bf16_subject(),
+                BackendArithmeticLicence::Withheld,
+                EvaluationOrderPreservation::Preserved,
+            )
         );
     }
 

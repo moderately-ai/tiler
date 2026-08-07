@@ -36,6 +36,25 @@
 //! - **F16** gets no dispatchability and no numerical row. F32 and BF16 each
 //!   carry their own measured dispatchability and subnormal rows; neither is
 //!   inherited by the omitted neighbour.
+//! - **Evaluation-order preservation** — whether the backend compiler executes
+//!   the order the emitted program pins — has a vocabulary
+//!   ([`TargetProfileBuilder::declare_measured_evaluation_order_preservation`])
+//!   and **no row here**, so this profile resolves it `Unknown` for every
+//!   subject and licence. It is measured: [the Apple record's finding
+//!   34](../../../docs/research/apple-targets/numerical-behaviour.md) records a
+//!   written two-by-two split re-serialized under `relaxed` and `fast` on both
+//!   compilation paths and preserved under `safe` in every measured cell. It is
+//!   measured on a **different toolchain row**: Xcode 27.0 build `27A5228h`,
+//!   macOS SDK 27.0, and an offline `metalfe-32023.921`, where every row this
+//!   declaration carries is Xcode 26.6 build `17F113`, SDK 26.5, and an offline
+//!   `metalfe-32023.883`. The property is a property *of the backend compiler
+//!   build*, and finding 8 records that build moving independently of everything
+//!   else, so declaring build `.921`'s behaviour on a profile whose plans build
+//!   `.883` compiles would be the inheritance this ledger refuses everywhere
+//!   else — a guess wearing a measurement's provenance. The ledger's
+//!   "Evaluation-order preservation" row records the deferral and its two
+//!   closing measurements, each of which needs a toolchain move this repository
+//!   reserves to Tom.
 //!
 //! # Which authority class each row carries
 //!
@@ -1151,9 +1170,10 @@ mod tests {
         TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
     };
     use tiler_compiler::target::{
-        DTypeDispatchability, DTypeDispatchabilityResolution, IndexArithmeticSupport,
-        ScalarArithmetic, ScalarSupport, SynchronizationSupport, TargetCompilerRoleReference,
-        TargetFactAuthority, TargetFactProducerIdentity, TargetFactSource, TargetFactValidityScope,
+        BackendArithmeticLicence, DTypeDispatchability, DTypeDispatchabilityResolution,
+        EvaluationOrderResolution, IndexArithmeticSupport, ScalarArithmetic, ScalarSupport,
+        SynchronizationSupport, TargetCompilerRoleReference, TargetFactAuthority,
+        TargetFactProducerIdentity, TargetFactSource, TargetFactValidityScope,
         TargetNormativeReferenceIdentity, TargetNumericalEvidenceBasis, TargetProfileBuildError,
         TargetProfileBuilder, TargetProfileKey, TargetRequest,
     };
@@ -1961,6 +1981,52 @@ mod tests {
             descriptor.len(),
             1_999,
             "the canonical descriptor length moved; update the authority ledger with it",
+        );
+    }
+
+    /// The declared profile says nothing about evaluation-order preservation,
+    /// and saying nothing is the honest answer rather than an oversight.
+    ///
+    /// Finding 34 measured the property on a **neighbouring toolchain row** —
+    /// offline `metalfe-32023.921` under Xcode 27.0 — where every row this
+    /// declaration carries was taken under `metalfe-32023.883` and Xcode 26.6.
+    /// The property is a property of that compiler build, so the measurement
+    /// cannot be attributed to a profile whose plans a different build compiles.
+    /// The row therefore resolves `Unknown`, at every phase, for both licences
+    /// and for both dtypes this profile does measure — and `Unknown` is what the
+    /// oracle's refusal class 3 acts on.
+    ///
+    /// The negative is asserted at `LaunchPreflight`, the latest phase there is,
+    /// so a row declared at *any* phase would break this test rather than only a
+    /// compile-profile one.
+    #[test]
+    fn the_declared_profile_answers_unknown_on_evaluation_order_preservation() {
+        let declaration = declared();
+        let bf16 = ScalarArithmetic::new(ArithmeticType::Bf16, Bf16::resolved_type())
+            .expect("the bf16 policy subject is validated");
+        for subject in [ScalarArithmetic::f32(), bf16] {
+            for licence in [
+                BackendArithmeticLicence::Withheld,
+                BackendArithmeticLicence::Granted,
+            ] {
+                assert_eq!(
+                    declaration.profile().evaluation_order_preservation(
+                        &subject,
+                        licence,
+                        AvailabilityPhase::LaunchPreflight,
+                    ),
+                    EvaluationOrderResolution::Unknown,
+                    "this profile declares no {} evaluation-order row; finding 34 is on \
+                     another toolchain row",
+                    licence.key(),
+                );
+            }
+        }
+        assert!(
+            !String::from_utf8_lossy(declaration.profile().canonical_descriptor())
+                .contains("tiler.target-profile.evaluation-order-preservation.v1"),
+            "an undeclared row family writes no bytes, which is why this descriptor \
+             length did not move",
         );
     }
 
