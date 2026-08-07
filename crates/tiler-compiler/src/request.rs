@@ -1790,7 +1790,16 @@ impl NormalizedOutput {
     /// derivation downstream would build one. Like the same distinction in
     /// [`crate::physical::spell_region`], it is defence in depth rather than a
     /// live gate — no cover this search places carries an empty member set.
-    fn owns_region_members(&self, members: &[SemanticStage]) -> bool {
+    ///
+    /// **Crate-visible because the region vocabulary asks it rather than
+    /// restating it.** *Which* region spells a member set is
+    /// [`crate::physical::spell_region`]'s question, decided against the region
+    /// vocabulary; whether the member set is this output's at all is this one,
+    /// decided against the recognized partition. A physical arm answering the
+    /// second for itself would be a second account of the partition, free to
+    /// disagree with the account [`NormalizedProgram::output_for_region`] and
+    /// [`check_output_cover`] read.
+    pub(crate) fn owns_region_members(&self, members: &[SemanticStage]) -> bool {
         match self {
             Self::SerialSum(normalized) => {
                 normalized
