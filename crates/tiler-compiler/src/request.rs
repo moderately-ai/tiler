@@ -777,8 +777,8 @@ pub(crate) struct DeterministicBudgets {
     pub(crate) normalization_rewrites: u32,
     /// Semantic occurrences admitted in one region candidate.
     ///
-    /// **This and the two below bound a region's admissible *shape*, not a
-    /// search, and either reading can refuse a program.** They declare the
+    /// **This and the two below bound a region's admissible *shape* rather
+    /// than a search, and each of them can refuse a program.** They declare the
     /// largest region this profile will form at all, so a program whose only
     /// implementable cover needs a bigger one has no plan under them however
     /// long the search runs — a refusal reported as `BudgetExhausted` naming
@@ -909,10 +909,11 @@ impl DeterministicBudgets {
     /// refused by them. `region_members` is the binding one for a pointwise
     /// family, where the recognized partition is the whole program and nothing
     /// smaller is implementable, so **32 is the widest such program this profile
-    /// can plan** — half the `semantic_operations` maximum this widening set to
-    /// 62 and a third of the decoder layer's decode row. Whether the three move
-    /// with `semantic_operations` is reopened by that and is not decided here:
-    /// it is another identity move, on the same terms as the ones above.
+    /// can plan** — about half the `semantic_operations` maximum this widening
+    /// set to 62, which is the decode row's own occurrence count. Whether the
+    /// three move with `semantic_operations` is reopened by that and is not
+    /// decided here: it is another identity move, on the same terms as the ones
+    /// above.
     ///
     /// The widening is a *deliberate* decision and not a test-enabling edit,
     /// because every one of these numbers is inside the canonical request
