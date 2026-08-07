@@ -1,0 +1,62 @@
+[package]
+name = "tiler-conformance"
+description = "Cross-layer executed conformance evidence for Tiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+test = true
+doctest = true
+doc = true
+
+# Normal dependencies rather than development ones, which inverts what every
+# other member here does and is decided rather than accidental. Nothing depends
+# on this crate and nothing may -- it is the top of the graph on the evidence
+# side, as `tiler` is on the consumer side -- so its closure reaches no consumer
+# and costs none, and a normal edge states what the crate is for where a
+# development edge would only record what its tests happen to reach.
+#
+# The set is the vertical a conformance run crosses: the shared IR a program is
+# built in, the compiler that plans it, the backend that lowers it, the offline
+# driver that compiles the result, the artifact layer that carries it, the
+# build-time orchestration that packages and caches it, the loader that
+# validates it, and the reference oracle it is compared against.
+#
+# `tiler` and `tiler-macros` are absent and must stay absent. The crate header
+# states why, and `crates/tiler/tests/dependency_direction.rs` is what enforces
+# it -- against `Cargo.lock`, which merges normal and development edges into one
+# list, so moving one of these to `[dev-dependencies]` would not evade it.
+[dependencies]
+tiler-artifact.workspace = true
+tiler-build.workspace = true
+tiler-compiler.workspace = true
+tiler-ir.workspace = true
+tiler-metal.workspace = true
+tiler-metal-aot.workspace = true
+tiler-reference.workspace = true
+tiler-runtime.workspace = true
+
+# `metal` binds Apple frameworks and cannot link anywhere else, so an
+# unconditional edge would make `cargo check --workspace` structurally
+# impossible on a non-Apple host. The device-reaching half of a conformance run
+# is selected by the same `cfg`; the deterministic half is not, which is what
+# lets a non-Apple host still run it and report the measurement boundary as
+# unavailable rather than skip.
+[target.'cfg(target_os = "macos")'.dependencies]
+metal.workspace = true
+
+# Inherited in full, including `unsafe_code = "forbid"`. That forbid is reached
+# by the first content rather than by this admission, and it is recorded here
+# because it is not visible from the inherited table: `MTLBuffer` storage is
+# reachable only through the raw pointer `metal::Buffer::contents` returns, so
+# moving operands in and results out cannot be spelled safely, and `forbid`
+# cannot be relaxed by an inner attribute at any scope. Admitting a named unsafe
+# site is a decision under
+# [ADR 0079](../../docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md),
+# so it is left to the ticket that first needs one rather than pre-authorized
+# here by a weaker lint level.
+[lints]
+workspace = true

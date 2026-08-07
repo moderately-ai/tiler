@@ -5,6 +5,7 @@ members = [
     "crates/tiler-build",
     "crates/tiler-cache",
     "crates/tiler-compiler",
+    "crates/tiler-conformance",
     "crates/tiler-digest",
     "crates/tiler-ir",
     "crates/tiler-macros",
@@ -51,6 +52,10 @@ tiler-artifact = { path = "crates/tiler-artifact" }
 tiler-build = { path = "crates/tiler-build" }
 tiler-cache = { path = "crates/tiler-cache" }
 tiler-compiler = { path = "crates/tiler-compiler" }
+# `tiler-conformance` sorts here and is deliberately absent for the same reason
+# `tiler` is: it is the top of the graph on the evidence side, it exists to
+# observe the other members rather than to be composed with them, and an entry
+# here would only make an edge to it easy to add by accident.
 tiler-digest = { path = "crates/tiler-digest" }
 tiler-ir = { path = "crates/tiler-ir" }
 tiler-macros = { path = "crates/tiler-macros" }
