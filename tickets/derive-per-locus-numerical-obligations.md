@@ -1,7 +1,7 @@
 ---
 id: derive-per-locus-numerical-obligations
 title: Derive per-locus numerical obligations in the compiler
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [redesign-the-delivered-realization-record-from-typed-evidence, accept-the-delivered-realization-artifact-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, compiler]
+claimed_from: todo
+assignee: agent-per-locus
+lease_expires_at: 1786112717
 ---
 ## Why
 
