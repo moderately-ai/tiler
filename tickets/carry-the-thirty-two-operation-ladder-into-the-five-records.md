@@ -1,7 +1,7 @@
 ---
 id: carry-the-thirty-two-operation-ladder-into-the-five-records
 title: Carry the thirty-two-operation ladder and its changed wall class into the five records the region-expansion fix could not edit
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [region-expansion-exhaustion-loses-the-only-feasible-plan, carry-the-restored-ladder-point-into-the-four-records, carry-the-widened-ladders-corrections-into-the-four-records, widen-the-identity-growth-ladder-to-the-governed-operation-budget]
@@ -9,6 +9,9 @@ scopes: [research/artifacts, contracts/decisions, contracts/artifacts, contracts
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, measurement]
+claimed_from: todo
+assignee: agent-orch-docs
+lease_expires_at: 1786080145
 ---
 ## User-visible outcome
 
