@@ -1,7 +1,7 @@
 ---
 id: repoint-the-sourced-extent-paths-in-the-four-documents-that-name-them
 title: Repoint the sourced extent paths in the four documents that name them
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [relocate-the-sourced-extent-vocabulary-to-the-shape-module]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, research/shapes, research/numerics]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [docs, doc-drift]
+claimed_from: todo
+assignee: agent-repoint
+lease_expires_at: 1786134331
 ---
 ## What is stale
 

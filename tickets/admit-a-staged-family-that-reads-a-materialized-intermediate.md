@@ -1,7 +1,7 @@
 ---
 id: admit-a-staged-family-that-reads-a-materialized-intermediate
 title: Admit a staged family that reads a materialized intermediate
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages, admit-a-scheduled-region-for-a-staged-elementary-family]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner]
+claimed_from: todo
+assignee: agent-staged-family
+lease_expires_at: 1786134331
 ---
 ## User-visible outcome
 
