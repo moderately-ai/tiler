@@ -1,7 +1,7 @@
 ---
 id: accept-the-evaluation-order-preservation-target-fact
 title: Accept the evaluation-order-preservation target fact
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [declare-evaluation-order-preservation-in-the-target-profile, measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order, admit-a-refutation-only-derived-bound-conformance-oracle]
@@ -38,3 +38,7 @@ Tom accepts or amends the exact public surface `declare-evaluation-order-preserv
 ## What closes this ticket
 
 Either accept the surface as landed, or record the requested amendment here. Amendment costs a rename or a reshape in `crates/tiler-compiler/src/target.rs` and its two consumers' tests; no wire bytes and no artifact identity move either way, because no profile declares a row yet.
+
+## Outcome — accepted
+
+**Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** The licence-keyed family, its four exclusions, and the empty-row restraint on the macOS profile are accepted public surface exactly as landed. The two closing measurements remain unauthorized and stay with the authority ledger's deferral; the in-code draft labels rewrite to the accepted-surface form with the next branch holding `implementation/compiler` and `implementation/build`.
