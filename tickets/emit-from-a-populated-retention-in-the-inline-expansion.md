@@ -1,7 +1,7 @@
 ---
 id: emit-from-a-populated-retention-in-the-inline-expansion
 title: Emit from a populated retention in the inline expansion
-status: todo
+status: in-progress
 priority: p3
 dependencies: [retain-succeeding-metal-stage-tool-output]
 related: [retain-canonical-msl-under-a-debug-expansion-cache-entry]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, diagnostics]
+claimed_from: todo
+assignee: worker-retention
+lease_expires_at: 1786137395
 ---
 ## Trigger check log
 

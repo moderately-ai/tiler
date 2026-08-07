@@ -1,7 +1,7 @@
 ---
 id: design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature
 title: Design the measured-feedback tuning loop against the autotuning and adaptive-execution literature
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [calibrate-device-cost-models]
@@ -9,6 +9,9 @@ scopes: [research/cost-model]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-tuning
+lease_expires_at: 1786137395
 ---
 ## User-visible outcome
 
