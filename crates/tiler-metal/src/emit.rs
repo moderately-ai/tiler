@@ -311,17 +311,14 @@ fn assemble(
         }
     }
     source.push_str("//\n");
-    // All three properties hold at every emitted width, so "f32" here is
-    // narrower than the guarantee and a `bf16` module's header says nothing
-    // about its own immediates. Widening the wording is deliberately *not* done
-    // here: the emitted source is content of the standard Metal artifact, so
-    // the wording is an identity-domain step — it moves the pinned artifact
-    // digest in `crates/tiler-build` and the cache-subject digest beside it,
-    // neither of which this backend owns.
-    // `widen-the-emitted-numerics-prologue-past-one-width` owns that step.
-    source.push_str("// Carried by these operations under every math mode: every f32 immediate\n");
-    source.push_str("// is its exact bit pattern, every arithmetic operation is one statement,\n");
-    source.push_str("// and every NaN test is an integer test over reinterpreted bits.\n");
+    // Stated once for every emitted width rather than once per width, unlike
+    // the subnormal block above: all three properties are width-independent
+    // consequences of how this emitter writes operations, so a per-width line
+    // would repeat one claim rather than distinguish two facts.
+    source.push_str("// Carried by these operations under every math mode: every floating-point\n");
+    source.push_str("// immediate is its exact bit pattern, every arithmetic operation is one\n");
+    source
+        .push_str("// statement, and every NaN test is an integer test over reinterpreted bits.\n");
     source.push_str("//\n");
     if gaps.is_empty() {
         source.push_str("// Declared numerical obligations this profile cannot realize: none.\n");

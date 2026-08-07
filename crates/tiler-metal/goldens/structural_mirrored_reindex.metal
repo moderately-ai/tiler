@@ -10,9 +10,9 @@
 //   f16: preserves-subnormals
 //   bf16: flushes-to-zero-preserving-sign
 //
-// Carried by these operations under every math mode: every f32 immediate
-// is its exact bit pattern, every arithmetic operation is one statement,
-// and every NaN test is an integer test over reinterpreted bits.
+// Carried by these operations under every math mode: every floating-point
+// immediate is its exact bit pattern, every arithmetic operation is one
+// statement, and every NaN test is an integer test over reinterpreted bits.
 //
 // Declared numerical obligations this profile cannot realize: none.
 // Arithmetic types used with no stated subnormal fact: none.

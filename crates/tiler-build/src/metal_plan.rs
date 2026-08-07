@@ -1258,6 +1258,20 @@ mod tests {
     /// one, which changed the coverage record's own grammar here and had to step
     /// with it.
     ///
+    /// **And all three moved again when the emitted provenance header widened
+    /// past one width — the first step in this ledger that moved these values
+    /// while stepping no identity domain and no profile row.** `tiler-metal`'s
+    /// `assemble` used to write `every f32 immediate is its exact bit pattern`;
+    /// it writes `every floating-point immediate` now, because all three
+    /// properties that sentence carries hold at `bf16` exactly as at `f32` and
+    /// the backend emits both widths. The emitted source is artifact content, so
+    /// eleven more bytes of comment reach every value pinned here: no encoding
+    /// changed shape, nothing was renamed, and no version below could have
+    /// absorbed the difference. It is also the cleanest available reading of
+    /// what the third pin measures — the fixed content moved by exactly the
+    /// eleven bytes the sentence grew, which a framing step would not have
+    /// produced.
+    ///
     /// **A third value is pinned below, and it is deliberately not an
     /// identity.** `FIXED_CONTENT_BYTES` is the published envelope's *fixed
     /// content*: its encoded width less the backend object bytes it carries,
@@ -1323,10 +1337,16 @@ mod tests {
     /// the step lands into, never taken from either side.
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
     /// sibling that depends on this row for exactly that reason. The constants
-    /// below were recomputed on 2026-08-06, on the tree carrying the coverage
-    /// fold described above over the base that already held the v11 step, the
-    /// v10 step, the v9 step, the v8 step, and the measured grid-axis row.
+    /// below were recomputed on 2026-08-06, on the tree carrying the header
+    /// widening described above over the base that already held the coverage
+    /// fold, the v11 step, the v10 step, the v9 step, the v8 step, and the
+    /// measured grid-axis row.
     /// Superseded values, for a reader reconciling an older record:
+    /// the coverage fold, which is what these constants held immediately before
+    /// the header widened,
+    /// `2b0162eb461edeaa8069a022e54057572bf7992970205a5a33f1efee2df896ca` /
+    /// `8e48d6fbfca8c490c883a557be2c7c5dfcb8264a751c84e585c574d4cd12f186` /
+    /// 64,699 bytes;
     /// v11-without-the-fold, which is what these constants held immediately
     /// before the coverage fold,
     /// `e57b8852b4a9172057dba08f4758574b96fe140a0f2d974390e890dc7425c59d` /
@@ -1350,8 +1370,9 @@ mod tests {
     /// and pre-both
     /// `124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` /
     /// `94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
-    /// Every superseded entry above is a pair because the byte count did not
-    /// exist yet at any of them; none of them is a triple whose third value went
+    /// The first superseded entry above is a triple and it is the only one:
+    /// every entry after it is a pair because the byte count did not exist yet
+    /// at any of them, so none of those is a triple whose third value went
     /// missing, and each row a later step supersedes carries all three.
     /// Regenerate on the merged tree with:
     ///
@@ -1370,10 +1391,10 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "2b0162eb461edeaa8069a022e54057572bf7992970205a5a33f1efee2df896ca";
+            "17a16aa4d15b35a0eae7e382b9e96ea3fca7c01a5a1c80495600aace20f2e63d";
         const CACHE_SUBJECT: &str =
-            "8e48d6fbfca8c490c883a557be2c7c5dfcb8264a751c84e585c574d4cd12f186";
-        const FIXED_CONTENT_BYTES: usize = 64_699;
+            "a3d44827bf86b5979f3d79eaf7e9392f997255ae88376edfb6f8f304e51cdfe8";
+        const FIXED_CONTENT_BYTES: usize = 64_710;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
