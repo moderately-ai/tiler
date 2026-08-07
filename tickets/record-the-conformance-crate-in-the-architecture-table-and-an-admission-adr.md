@@ -23,11 +23,15 @@ Two records the crate admission could not write from its own scopes, kept togeth
 Do not re-derive any of this; it is on [`decide-where-a-device-reaching-conformance-test-may-live`](decide-where-a-device-reaching-conformance-test-may-live.md) and should be transferred with its provenance:
 
 - The eliminations, each from the code rather than from preference: `prototypes/serial-sum-run` rejected because prototypes are throwaway and long-term holding evidence must not live there; `crates/tiler` ruled out by `dependency_direction.rs`, which forbids the facade a `tiler-metal-aot` edge and reads `Cargo.lock`, so even a dev-dependency trips it; `crates/tiler-runtime` ruled out by its own stated boundary that its tests must not reach `tiler-compiler`; `crates/tiler-build` rejected because it would put the consume half of an end-to-end test inside the produce crate.
-- The missing-component evidence: five open conformance tickets, no two sharing a scope set, with oracle plumbing living inside `tiler-compiler` because there was nowhere else.
+- The missing-component evidence: five conformance tickets spanning six scopes with none common to all, three of them carrying identical sets about one compiler-resident file, with oracle plumbing living inside `tiler-compiler` because there was nowhere else.
 - The three anti-goals, which are the crate's actual boundary.
 - The acceptance provenance: Tom, 2026-08-07, coordination session, witnessed first-hand by the coordinator.
 
+**Correction — 2026-08-07, on the second bullet.** It read *"five open conformance tickets, no two sharing a scope set"*, which the tickets refute: three of the five carry identical scope sets, all about one compiler-resident file. It is **substituted rather than dated beside**, because the clause was never true at any commit — the shape [`correct-the-scope-set-claim-in-adr-0106-s-missing-component-evidence`](correct-the-scope-set-claim-in-adr-0106-s-missing-component-evidence.md) used on the ADR this ticket asked for. Reproduced at `3e0074d5` with `tkt show <id>` on each of the five. The full per-ticket attribution and the pinned population counts are on [`decide-where-a-device-reaching-conformance-test-may-live`](decide-where-a-device-reaching-conformance-test-may-live.md), which carried the claim first; "five" is the slice the decision was taken under and not the population, and "open" is stale since `conform-the-bf16-vertical-end-to-end` is `done`.
+
 **The ADR must not claim more than the crate does.** The crate was admitted as a smallest useful slice and holds no items at all; a record describing an evidence authority that derives support-matrix rows would be describing [`survey-what-belongs-in-the-conformance-crate`](survey-what-belongs-in-the-conformance-crate.md)'s subject as though it were decided. State the admitted scope and cite the survey for the rest.
+
+**Superseded — 2026-08-07, later the same day, on "holds no items at all" and not on the constraint.** The crate gained the BF16 vertical at `b7c01815` and the migrated device-executed value proof at `0f948637`; at `3e0074d5` it holds thirteen source files and dispatches on a device. The sentence is dated rather than substituted because it was true when this brief was written — the opposite treatment from the scope-set clause above, which never was. The constraint it states is unaffected and still binds the record: deriving support-matrix rows remains the survey's subject, and ADR 0106 still decides only that the crate exists and what it owns.
 
 ## Closes when
 
@@ -56,6 +60,8 @@ None was in the brief; all were found because `docs/architecture.md` was read wh
 - "None of those **five** records" listed six.
 
 Also corrected: `prototypes/serial-sum-run` as "the one member that talks to [a device]" → the one member whose *code* reaches one, since `tiler-conformance` now declares the same macOS-gated binding with nothing behind it — which is why the live-execution grep recorded earlier in the document still returns no file under `crates/`.
+
+**Superseded — 2026-08-07, later the same day, on the sentence above.** It was true at `c466cc11`, which this Outcome is pinned to, and stopped being true at `0f948637`: the grep now returns `crates/tiler-conformance/src/dispatch.rs` and `src/device_buffer.rs`, and the prototype is no longer the one member whose code reaches a device. Repaired in the live document by [`refresh-adr-0106-and-the-architecture-rows-the-conformance-crate-outgrew`](refresh-adr-0106-and-the-architecture-rows-the-conformance-crate-outgrew.md), which edited `docs/architecture.md` and dated ADR 0106 rather than editing it.
 
 **Catalogs verified complete rather than assumed.** `docs/decisions/README.md`'s two generated blocks both updated, with a grep confirming no generator exists outside the README. Every file mentioning ADRs 0105, 0104, or 0088 was checked; outside that README every hit is substantive prose, not a catalog row. `docs/design-map.md`, `docs/README.md`, `docs/status.md` and the root README carry no roster this falsifies.
 
