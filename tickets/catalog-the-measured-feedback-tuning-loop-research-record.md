@@ -1,7 +1,7 @@
 ---
 id: catalog-the-measured-feedback-tuning-loop-research-record
 title: Catalog the measured-feedback tuning-loop research record
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, cost-model]
+claimed_from: todo
+assignee: w-catalog-th
+lease_expires_at: 1786140348
 ---
 ## User-visible outcome
 

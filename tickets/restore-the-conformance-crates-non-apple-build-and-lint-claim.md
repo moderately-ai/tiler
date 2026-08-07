@@ -1,7 +1,7 @@
 ---
 id: restore-the-conformance-crates-non-apple-build-and-lint-claim
 title: Restore the conformance crate's non-Apple build and lint claim
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [conform-the-bf16-vertical-end-to-end, produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [conformance, portability]
+claimed_from: todo
+assignee: w-restore-th
+lease_expires_at: 1786140348
 ---
 ## The claim and what falsifies it
 

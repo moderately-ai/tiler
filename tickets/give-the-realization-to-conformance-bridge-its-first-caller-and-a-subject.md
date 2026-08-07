@@ -1,7 +1,7 @@
 ---
 id: give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject
 title: Give the realization-to-conformance bridge its first caller and a subject
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [accept-the-bf16-subnormal-resolution-carrier, wire-the-bf16-reference-to-the-realization-it-is-told, apply-the-declared-numerical-conformance-on-every-reference-evaluation-path]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reference, fail-closed]
+claimed_from: todo
+assignee: w-give-the-r
+lease_expires_at: 1786140348
 ---
 ## The gap
 

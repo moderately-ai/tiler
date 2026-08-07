@@ -1,7 +1,7 @@
 ---
 id: acquire-the-three-unreachable-adaptive-execution-sources
 title: Acquire the three unreachable adaptive-execution sources
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature]
@@ -9,6 +9,9 @@ scopes: [research/cost-model]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, cost-model]
+claimed_from: todo
+assignee: w-acquire-th
+lease_expires_at: 1786140348
 ---
 ## User-visible outcome
 
