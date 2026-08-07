@@ -184,6 +184,8 @@ Three options, compared on correctness, maintainability, and the three consumers
 
 **Correctness.** None. It is a tripwire over a quantity no contract constrains, and it can neither reject an artifact nor change one.
 
+**Implemented 2026-08-06 at `562b02e543e177509575d2f50a9a002e1bd78859`.** `the_standard_metal_path_publishes_its_recorded_identities` pins its published envelope's fixed content — **64,699 bytes**, its 64,707-byte envelope less the eight object bytes the fixture's fake toolchain emits — beside its two identity pins, with the ledger paragraph, Section 7's counterpoint carried at the pin, and the check watched failing under a one-byte lengthening of `MANIFEST_DOMAIN` that left both identity assertions passing. That figure is this test's own fixture and not the ladder's: this note's 57,978 is `spikes/cache/hot-path-efficiency`'s governed serial-sum program, so the two are different programs and are not comparable point to point.
+
 **Maintainability.** One more number in an existing ledger, moved by the landings that already move that ledger. The [make-new-checks-fail discipline](../../../AGENTS.md) is satisfiable directly: introduce the pin with a deliberately wrong constant, watch it fail, then correct it.
 
 **The consumers.** It prices none of them. What it buys is that the number driving all three stops being nobody's: the growth this note attributes ran for two days across 107 landings and was noticed by the cache spike refusing to run, not by anyone watching the encoding.
