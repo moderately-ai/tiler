@@ -1,14 +1,17 @@
 ---
 id: conform-the-bf16-vertical-end-to-end
 title: Conform the BF16 vertical end to end against the exact reference corpus
-status: blocked
+status: in-progress
 priority: p2
 dependencies: [validate-bf16-at-the-runtime-routing-boundary, carry-a-bf16-subnormal-realization-the-reference-can-be-told, decide-where-a-device-reaching-conformance-test-may-live, wire-the-bf16-reference-to-the-realization-it-is-told, admit-the-conformance-crate-to-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
 related: [spike-bf16-through-the-second-dtype-seams, evaluate-bf16-reference-semantics, own-the-dtype-support-maturity-matrix, lower-bf16-to-metal, dispatch-a-tiler-region-on-metal-hardware, wire-the-bf16-reference-to-the-realization-it-is-told]
-scopes: [implementation/reference, contracts/numerics, implementation/runtime]
+scopes: [implementation/reference, contracts/numerics, implementation/runtime, implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, conformance, testing]
+claimed_from: todo
+assignee: agent-bf16-vertical
+lease_expires_at: 1786121991
 ---
 ## User-visible outcome
 
@@ -83,3 +86,17 @@ Both edges are satisfied: `validate-bf16-at-the-runtime-routing-boundary` and [`
 - **The flush half is now closer but not landed.** This ticket's evidence list requires "the declared flush is applied to the reference before comparison". The reference can be *told* a realization, and after Tom's decision the route that tells it is settled — but the wiring itself is [`wire-the-bf16-reference-to-the-realization-it-is-told`](wire-the-bf16-reference-to-the-realization-it-is-told.md) and has not landed. Until it does, applying the flush here would mean stating the realization by hand, which is what the module header describes and not what this ticket asks for.
 
 Add a dependency on the wiring ticket when it is claimed; it is left as a relation for now so this node is not re-pointed at work that may land before Block 1 is answered either way.
+
+## Unblocked 2026-08-07 — every block is discharged, and here is each one
+
+Moved `blocked` → `todo` by the coordinator after checking each dependency against the board rather than inferring from the count. All six read `done`.
+
+**Block 1 — no host for a device-reaching test — is discharged.** Tom decided on 2026-08-07 that such a test lives in a proper crate, not in `prototypes/`; [`admit-the-conformance-crate-to-the-workspace`](admit-the-conformance-crate-to-the-workspace.md) landed `crates/tiler-conformance` as a workspace member with the whole vertical as normal dependencies and `metal` behind `cfg(target_os = "macos")`. **This ticket's device half belongs there**, and `implementation/conformance` is added to its scopes for that reason. The crate holds no items yet — this is its first content.
+
+**The unsafe obstacle the crate admission exposed is discharged, with a rule narrower than the precedent.** See the coordinator comment on this ticket and [`decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`](decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access.md): `deny` with named sites, **never a crate-level allow**, FFI memory management with Metal as the only admitted justification, and unsafe isolated into one narrow module so the conformance logic itself contains none.
+
+**The flush half is discharged.** This ticket's evidence list requires the declared flush applied to the reference before comparison. [`wire-the-bf16-reference-to-the-realization-it-is-told`](wire-the-bf16-reference-to-the-realization-it-is-told.md) landed that: `<Bf16BinaryReference as ReferenceOperation>::evaluate` reads the conformance it is handed and evaluates under it, so a flushing contract now returns the flushing answer through the registered dispatch rather than requiring the realization be stated by hand.
+
+**One thing to carry rather than rediscover.** No capability yet checks that the conformance it was handed was stated about its own format — `ReferenceNumericalConformance::from_realization` discards the subject and has no caller, so every conformance in the tree is `strict()`. That window is unreachable today and is owned by [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md). **This ticket must state the realization it compares under explicitly** rather than assuming a route supplies it.
+
+The 2026-08-06 "Blocked" section below is retained as the dated record of what blocked this and how each block was eliminated; read it as history, not as current truth.
