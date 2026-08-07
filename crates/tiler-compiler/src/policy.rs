@@ -79,9 +79,10 @@
 //! that complete contract; an empty generic-dimension row is not a lowering
 //! capability.
 
+use tiler_ir::numerics::PolicyLocus;
 use tiler_ir::schedule::{
-    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, MaterializationRounding,
-    NumericalPermission, SubnormalMode,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+    MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,
 };
 
 use crate::request::StrictF32NumericalContract;
@@ -158,6 +159,106 @@ impl OperationNumericalCapability {
     /// Whether this operation can consume `dimension`.
     pub(crate) fn can_consume(self, dimension: NumericalDimension) -> bool {
         self.consumes.contains(&dimension)
+    }
+
+    /// Whether this operation's semantics embed an ordered contributor fold.
+    ///
+    /// **Derived from this table rather than restated beside it.**
+    /// [`NumericalDimension::Permutation`] is defined as permission to change
+    /// *logical contributor order*, and a contributor order exists only where
+    /// something folds a sequence: every row above that lists it justifies the
+    /// entry by an embedded fold — the strict serial sum's contributor
+    /// sequence, the tensor contraction's, the normalization's, and the
+    /// softmax's denominator sum — and every row that omits it does so because
+    /// the operation computes each result element independently. A second list
+    /// of "these families reduce" would be that same claim written twice, and a
+    /// copy is a second place for it to be wrong.
+    ///
+    /// The fold-bearing set this yields is pinned by name in
+    /// `the_fold_bearing_families_are_exactly_the_reducing_ones`, so a
+    /// capability row that gained or lost a permutation entry has to change
+    /// that test rather than silently move an obligation's locus.
+    ///
+    /// Spelled as a loop rather than through [`Self::can_consume`] because
+    /// `[T]::contains` is not `const` and [`Self::founded_locus`] is; the
+    /// membership tested is the same one.
+    pub(crate) const fn folds(self) -> bool {
+        let mut index = 0;
+        while index < self.consumes.len() {
+            if matches!(self.consumes[index], NumericalDimension::Permutation) {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    /// The policy position within one occurrence at which `dimension`'s
+    /// requirement is founded for this operation.
+    ///
+    /// **A position this operation's own semantics put the freedom at, never a
+    /// variant chosen because the enum has one.** An obligation naming a locus
+    /// is a claim that a packaged route relies on the target at *that position*,
+    /// so a locus that nothing founds is worse than no row at all: it is an
+    /// unfounded assertion carrying real evidence. `None` therefore means this
+    /// build founds no position, and [`crate::session`]'s producer refuses
+    /// rather than substituting one.
+    ///
+    /// Each mapping is the dimension's own definition read against
+    /// [`PolicyLocus`]'s:
+    ///
+    /// - `InputSubnormals` is "treatment of subnormal operands **before each
+    ///   arithmetic operation**", which is [`PolicyLocus::Input`], "an operand
+    ///   read before the operation applies".
+    /// - `ResultSubnormals` is "treatment of a newly **produced** subnormal
+    ///   arithmetic result", which is [`PolicyLocus::Result`], "the operation's
+    ///   produced value".
+    /// - `Contraction` and `Reassociation` act wherever the operation puts a
+    ///   multiply beside an add and wherever it groups one same-operation
+    ///   operand sequence. For a fold-bearing family that place is the
+    ///   accumulator: this table's own rows found both entries on the
+    ///   per-contributor step — `accumulator + a * b` for the tensor
+    ///   contraction, `accumulator + x_i * x_i` for the normalization. For
+    ///   pointwise arithmetic there is no fold, and the freedom acts on the
+    ///   operation's own arithmetic.
+    /// - `Permutation` is permission to change *contributor* order, which only
+    ///   a fold has; [`Self::folds`] is derived from this dimension for that
+    ///   reason, so the accumulator arm cannot be reached without one.
+    /// - `SignedZero`, `NanAssumptions`, and `InfinityAssumptions` are
+    ///   properties of the arithmetic the operation itself performs.
+    ///
+    /// **Three dimensions are deliberately unfounded here, and none of the
+    /// three is merely unreached.** `MaterializationRounding` names a boundary
+    /// *between* stages rather than a position inside one occurrence, so an
+    /// operation capability is the wrong authority to site it — a schedule that
+    /// stages a partial tensor is what creates the boundary. `ReciprocalTransform`
+    /// and `ApproximateIntrinsics` act on a *subordinate* operation inside a
+    /// composite family — the activation's exponential, the normalization's
+    /// reciprocal square root — whose accuracy is carried by that family's own
+    /// [`tiler_ir::semantic::accuracy::AccuracyContract`] rather than by one of
+    /// this occurrence's four generic positions. All three are also outside
+    /// [`is_consumable`] today, so no contract places one on a target and no
+    /// honoured fact exists to carry; returning `None` is what makes the day one
+    /// becomes consumable a typed refusal rather than a silently relocated row.
+    pub(crate) const fn founded_locus(self, dimension: NumericalDimension) -> Option<PolicyLocus> {
+        match dimension {
+            NumericalDimension::InputSubnormals => Some(PolicyLocus::Input),
+            NumericalDimension::ResultSubnormals => Some(PolicyLocus::Result),
+            NumericalDimension::Contraction | NumericalDimension::Reassociation => {
+                if self.folds() {
+                    Some(PolicyLocus::Accumulator)
+                } else {
+                    Some(PolicyLocus::Computation)
+                }
+            }
+            NumericalDimension::Permutation => Some(PolicyLocus::Accumulator),
+            NumericalDimension::SignedZero
+            | NumericalDimension::NanAssumptions
+            | NumericalDimension::InfinityAssumptions => Some(PolicyLocus::Computation),
+            NumericalDimension::ReciprocalTransform
+            | NumericalDimension::ApproximateIntrinsics
+            | NumericalDimension::MaterializationRounding => None,
+        }
     }
 
     /// The effective resolution of `dimension` for this operation under `ceiling`.
@@ -670,6 +771,186 @@ pub(crate) fn dimension_requirements(
         .collect()
 }
 
+/// Whether `required` demands at least as much of a target as `ceiling` does.
+///
+/// **The rule a locus obligation must satisfy against the dtype-wide ceiling.**
+/// The ceiling and the per-locus obligations are separate statements and neither
+/// is derived from the other, but they are not independent: a position may
+/// demand *more* than the program-wide contract — ADR 0011's per-operation
+/// restrictions are exactly that — and may never demand less. A locus obligation
+/// weaker than the ceiling would be a route relying on a freedom the caller's
+/// contract never granted, and because the obligation carries real target
+/// evidence it would read as a proof of the opposite. `crate::session`'s
+/// producer checks every row against this before it is retained.
+///
+/// **A partial order, and refusing where the vocabulary states no order is the
+/// point.** Each space has one strict resolution — the one
+/// [`strict_contract`] writes — and the widenings away from it are ordered
+/// against it. Two behaviours that are merely *different* are not ordered: a
+/// flush that always yields `+0` is not a stricter or laxer form of one that
+/// preserves the sign, and a compiler-proven absence assumption is not a
+/// stricter form of a caller-declared one — they rest on different evidence for
+/// the same assumption. Inventing an order over those pairs would be the silent
+/// direction, so only equality passes between them and everything else is
+/// refused.
+///
+/// Comparing two spaces is malformed rather than a verdict, exactly as
+/// [`NumericalDimension::admits`] treats the same pairing, and answering `true`
+/// would let a subnormal requirement pass a transform ceiling unchecked.
+pub(crate) const fn is_at_least_as_strict_as(
+    required: DimensionBehaviour,
+    ceiling: DimensionBehaviour,
+) -> bool {
+    match (required, ceiling) {
+        (DimensionBehaviour::Subnormals(required), DimensionBehaviour::Subnormals(ceiling)) => {
+            subnormals_at_least_as_strict(required, ceiling)
+        }
+        (DimensionBehaviour::Transform(required), DimensionBehaviour::Transform(ceiling)) => {
+            transform_at_least_as_strict(required, ceiling)
+        }
+        (
+            DimensionBehaviour::Approximation(required),
+            DimensionBehaviour::Approximation(ceiling),
+        ) => approximation_at_least_as_strict(required, ceiling),
+        (
+            DimensionBehaviour::ExceptionalValue(required),
+            DimensionBehaviour::ExceptionalValue(ceiling),
+        ) => exceptional_value_at_least_as_strict(required, ceiling),
+        (DimensionBehaviour::Rounding(required), DimensionBehaviour::Rounding(ceiling)) => {
+            rounding_at_least_as_strict(required, ceiling)
+        }
+        // Every behaviour variant is named on the left, so a widened
+        // vocabulary fails to compile here rather than falling into a
+        // cross-space arm that answers `false` for a pairing nobody considered.
+        (
+            DimensionBehaviour::Subnormals(_)
+            | DimensionBehaviour::Transform(_)
+            | DimensionBehaviour::Approximation(_)
+            | DimensionBehaviour::ExceptionalValue(_)
+            | DimensionBehaviour::Rounding(_),
+            _,
+        ) => false,
+    }
+}
+
+/// `Preserve` is the strict resolution; flushing is the widening away from it.
+const fn subnormals_at_least_as_strict(required: SubnormalMode, ceiling: SubnormalMode) -> bool {
+    match (required, ceiling) {
+        (SubnormalMode::Preserve, SubnormalMode::Preserve | SubnormalMode::FlushToZero { .. }) => {
+            true
+        }
+        (SubnormalMode::FlushToZero { .. }, SubnormalMode::Preserve) => false,
+        // Two flush modes differ in the sign of the zero they produce, which is
+        // a different observable result rather than a laxer one.
+        (
+            SubnormalMode::FlushToZero {
+                zero_sign: required,
+            },
+            SubnormalMode::FlushToZero { zero_sign: ceiling },
+        ) => match (required, ceiling) {
+            (FlushedZeroSign::PreservesSign, FlushedZeroSign::PreservesSign)
+            | (FlushedZeroSign::AlwaysPositive, FlushedZeroSign::AlwaysPositive) => true,
+            (FlushedZeroSign::PreservesSign, FlushedZeroSign::AlwaysPositive)
+            | (FlushedZeroSign::AlwaysPositive, FlushedZeroSign::PreservesSign) => false,
+        },
+    }
+}
+
+/// `Forbidden` is the strict resolution; permitting is the widening.
+const fn transform_at_least_as_strict(
+    required: NumericalPermission,
+    ceiling: NumericalPermission,
+) -> bool {
+    match (required, ceiling) {
+        (
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden | NumericalPermission::Permitted,
+        )
+        | (NumericalPermission::Permitted, NumericalPermission::Permitted) => true,
+        (NumericalPermission::Permitted, NumericalPermission::Forbidden) => false,
+    }
+}
+
+/// `Forbidden` is the strict resolution; a named envelope is the widening.
+///
+/// Two *different* named envelopes would be incomparable, and there is one
+/// today; the match is written so admitting a second is a build error here
+/// rather than an unexamined `true`.
+const fn approximation_at_least_as_strict(
+    required: ApproximationEnvelope,
+    ceiling: ApproximationEnvelope,
+) -> bool {
+    match (required, ceiling) {
+        (
+            ApproximationEnvelope::Forbidden,
+            ApproximationEnvelope::Forbidden | ApproximationEnvelope::BackendElementary,
+        )
+        | (ApproximationEnvelope::BackendElementary, ApproximationEnvelope::BackendElementary) => {
+            true
+        }
+        (ApproximationEnvelope::BackendElementary, ApproximationEnvelope::Forbidden) => false,
+    }
+}
+
+/// `MakeNoAssumption` is the strict resolution; assuming absence is the widening.
+///
+/// Two assumptions differing only in provenance are not ordered: the provenance
+/// records *how* the absence was established, and a caller-declared absence is
+/// not a laxer form of a compiler-proven one but a differently evidenced claim.
+const fn exceptional_value_at_least_as_strict(
+    required: ExceptionalValueAssumption,
+    ceiling: ExceptionalValueAssumption,
+) -> bool {
+    match (required, ceiling) {
+        (
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption
+            | ExceptionalValueAssumption::AssumeAbsent { .. },
+        ) => true,
+        (
+            ExceptionalValueAssumption::AssumeAbsent { .. },
+            ExceptionalValueAssumption::MakeNoAssumption,
+        ) => false,
+        (
+            ExceptionalValueAssumption::AssumeAbsent {
+                provenance: required,
+            },
+            ExceptionalValueAssumption::AssumeAbsent {
+                provenance: ceiling,
+            },
+        ) => match (required, ceiling) {
+            (ValueDomainProvenance::CompilerProven, ValueDomainProvenance::CompilerProven)
+            | (ValueDomainProvenance::RuntimeValidated, ValueDomainProvenance::RuntimeValidated)
+            | (
+                ValueDomainProvenance::CallerDeclaredUnvalidated,
+                ValueDomainProvenance::CallerDeclaredUnvalidated,
+            ) => true,
+            (
+                ValueDomainProvenance::CompilerProven
+                | ValueDomainProvenance::RuntimeValidated
+                | ValueDomainProvenance::CallerDeclaredUnvalidated,
+                _,
+            ) => false,
+        },
+    }
+}
+
+/// One rounding direction is admitted, so only equality can hold.
+///
+/// Written as a match rather than `==` so admitting a second direction stops
+/// the build here, where someone must decide whether the two are ordered at all.
+const fn rounding_at_least_as_strict(
+    required: MaterializationRounding,
+    ceiling: MaterializationRounding,
+) -> bool {
+    match (required, ceiling) {
+        (
+            MaterializationRounding::NearestTiesToEven,
+            MaterializationRounding::NearestTiesToEven,
+        ) => true,
+    }
+}
+
 /// The validated scalar subject one arithmetic type computes over.
 ///
 /// **The same association a target profile's declaration is built from, reached
@@ -745,7 +1026,7 @@ mod tests {
         CANONICAL_DIMENSIONS, DimensionBehaviour, NumericalDimension,
     };
     use tiler_ir::schedule::{
-        ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance,
+        ExceptionalValueAssumption, NumericalPermission, SubnormalMode, ValueDomainProvenance,
     };
     use tiler_ir::semantic::{
         FrozenSemanticRegistry, OpKey, add_f32_op, constant_f32_op, multiply_f32_op,
@@ -1191,6 +1472,268 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), named.len());
+    }
+
+    /// The fold-bearing families are exactly the ones that reduce.
+    ///
+    /// [`OperationNumericalCapability::folds`] reads the permutation entry
+    /// rather than a second list, so this is what keeps that derivation honest:
+    /// the families are named here one by one, and a capability row that gained
+    /// or lost a permutation entry fails this test instead of silently moving
+    /// an obligation's locus between an accumulator and a computation.
+    #[test]
+    fn the_fold_bearing_families_are_exactly_the_reducing_ones() {
+        const FOLDING: &[&str] = &[
+            "tiler::rms-norm-f32@1",
+            "tiler::softmax-f32@1",
+            "tiler::strict-serial-sum-f32@1",
+            "tiler::strict-tensor-contraction-f32@1",
+        ];
+        let mut observed: Vec<&str> = operation_capabilities()
+            .iter()
+            .filter(|capability| capability.folds())
+            .map(|capability| capability.key())
+            .collect();
+        observed.sort_unstable();
+        assert_eq!(observed, FOLDING);
+        assert!(
+            operation_capabilities().len() > FOLDING.len(),
+            "the non-folding families are a nonempty population, so the filter \
+             above is discriminating rather than vacuous",
+        );
+        // Each folding family embeds an ordered contributor sequence and each
+        // other family computes every result element independently, which is
+        // the claim `folds` reads off the permutation entry.
+        for capability in operation_capabilities() {
+            assert_eq!(
+                capability.folds(),
+                capability.can_consume(NumericalDimension::Permutation),
+                "{} must derive its fold from its own permutation entry",
+                capability.key(),
+            );
+        }
+    }
+
+    /// Every consumable dimension of every admitted family founds a locus.
+    ///
+    /// The producer refuses a consumable dimension with no founded position, so
+    /// this is the check that the refusal is unreachable on today's table
+    /// rather than merely unexercised. It also pins the four loci this build
+    /// emits: nothing here produces a component or a materialization row.
+    #[test]
+    fn every_consumable_dimension_founds_a_locus() {
+        use tiler_ir::numerics::PolicyLocus;
+
+        let mut founded = 0_usize;
+        let mut emitted: Vec<PolicyLocus> = Vec::new();
+        for capability in operation_capabilities() {
+            for dimension in CANONICAL_DIMENSIONS {
+                let locus = capability.founded_locus(dimension);
+                if !capability.can_consume(dimension) {
+                    continue;
+                }
+                let locus = locus.unwrap_or_else(|| {
+                    panic!(
+                        "{} consumes {} and must found a position for it",
+                        capability.key(),
+                        dimension.key(),
+                    )
+                });
+                founded += 1;
+                emitted.push(locus);
+            }
+        }
+        assert_eq!(
+            founded, 50,
+            "the consumable (operation, dimension) pairs are the population under test",
+        );
+        emitted.sort_unstable();
+        emitted.dedup();
+        assert_eq!(
+            emitted,
+            [
+                PolicyLocus::Input,
+                PolicyLocus::Computation,
+                PolicyLocus::Accumulator,
+                PolicyLocus::Result,
+            ],
+            "this build founds four positions; a component obligation needs a \
+             compound value whose conversion contract is its own, and a \
+             materialization obligation needs a boundary an operation \
+             capability cannot site",
+        );
+
+        // The three unfounded dimensions are unfounded for every family, and
+        // none of them is consumable, so no row is ever dropped by the gap.
+        for dimension in [
+            NumericalDimension::ReciprocalTransform,
+            NumericalDimension::ApproximateIntrinsics,
+            NumericalDimension::MaterializationRounding,
+        ] {
+            assert!(!is_consumable(dimension), "{}", dimension.key());
+            for capability in operation_capabilities() {
+                assert_eq!(capability.founded_locus(dimension), None);
+            }
+        }
+    }
+
+    /// A subnormal freedom is founded at an operand read and at a produced value.
+    ///
+    /// The pair that makes two loci of one occurrence differ, checked against
+    /// the table rather than through a compilation, so the mapping is pinned
+    /// where it is written.
+    #[test]
+    fn the_subnormal_dimensions_are_founded_on_opposite_sides_of_the_operation() {
+        use tiler_ir::numerics::PolicyLocus;
+
+        let arithmetic = operation_capability(&add_f32_op()).expect("the add is admitted");
+        assert_eq!(
+            arithmetic.founded_locus(NumericalDimension::InputSubnormals),
+            Some(PolicyLocus::Input),
+        );
+        assert_eq!(
+            arithmetic.founded_locus(NumericalDimension::ResultSubnormals),
+            Some(PolicyLocus::Result),
+        );
+        // The reshaping freedoms move with the operation; the subnormal ones do
+        // not, because an operand read and a produced value exist either way.
+        let fold = operation_capability(
+            &OpKey::new("tiler", "strict-serial-sum-f32", 1).expect("a governed key"),
+        )
+        .expect("the strict serial sum is admitted");
+        assert_eq!(
+            fold.founded_locus(NumericalDimension::InputSubnormals),
+            Some(PolicyLocus::Input),
+        );
+        assert_eq!(
+            fold.founded_locus(NumericalDimension::Reassociation),
+            Some(PolicyLocus::Accumulator),
+        );
+        assert_eq!(
+            arithmetic.founded_locus(NumericalDimension::Reassociation),
+            Some(PolicyLocus::Computation),
+        );
+    }
+
+    /// The strictness order agrees with an independent reading of the rule.
+    ///
+    /// **Exhaustive over the whole behaviour vocabulary, against an oracle
+    /// derived from the strict contract rather than from the function under
+    /// test.** The documented rule is that each space has one strict resolution
+    /// — the one [`strict_contract`] writes — and that a requirement is at
+    /// least as strict as a ceiling exactly when the two are equal or the
+    /// requirement *is* that strict resolution. Restating the implementation's
+    /// own match here would prove nothing; deriving the oracle from the
+    /// contract means a widening that changed the order has to disagree with
+    /// what this build calls strict.
+    #[test]
+    fn the_strictness_order_is_equality_or_the_strict_resolution() {
+        let strict = super::strict_contract(
+            tiler_ir::schedule::ArithmeticType::F32,
+            tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+        );
+        // The strict resolution of each space, read from the contract that
+        // defines "strict" rather than written out again.
+        let strictest: Vec<DimensionBehaviour> = CANONICAL_DIMENSIONS
+            .into_iter()
+            .map(|dimension| strict.behaviour(dimension))
+            .collect();
+        let is_strictest = |behaviour: DimensionBehaviour| strictest.contains(&behaviour);
+
+        let population = behaviour_population();
+        assert_eq!(
+            population.len(),
+            12,
+            "the behaviour vocabulary is the population under test",
+        );
+        let mut compared = 0_usize;
+        for required in &population {
+            for ceiling in &population {
+                let expected = required.space() == ceiling.space()
+                    && (required == ceiling || is_strictest(*required));
+                assert_eq!(
+                    super::is_at_least_as_strict_as(*required, *ceiling),
+                    expected,
+                    "{} against {}",
+                    required.key(),
+                    ceiling.key(),
+                );
+                compared += 1;
+            }
+        }
+        assert_eq!(compared, 144, "every ordered pair was compared");
+    }
+
+    /// The order refuses the pairs a silently wrong producer would need.
+    ///
+    /// Named individually rather than left to the exhaustive sweep above, so
+    /// the specific direction that matters — a locus claiming a freedom the
+    /// caller's contract forbids — is asserted rather than merely covered.
+    #[test]
+    fn a_locus_may_not_be_weaker_than_the_ceiling() {
+        let forbidden = DimensionBehaviour::Transform(NumericalPermission::Forbidden);
+        let permitted = DimensionBehaviour::Transform(NumericalPermission::Permitted);
+        assert!(super::is_at_least_as_strict_as(forbidden, permitted));
+        assert!(
+            !super::is_at_least_as_strict_as(permitted, forbidden),
+            "a locus permitting a transform the contract forbids is the silent \
+             direction and must be refused",
+        );
+
+        let preserve = DimensionBehaviour::Subnormals(SubnormalMode::Preserve);
+        let flush = DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+            zero_sign: tiler_ir::schedule::FlushedZeroSign::PreservesSign,
+        });
+        assert!(super::is_at_least_as_strict_as(preserve, flush));
+        assert!(!super::is_at_least_as_strict_as(flush, preserve));
+
+        // Two flush modes are different, not ordered: neither direction passes.
+        let positive = DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+            zero_sign: tiler_ir::schedule::FlushedZeroSign::AlwaysPositive,
+        });
+        assert!(!super::is_at_least_as_strict_as(flush, positive));
+        assert!(!super::is_at_least_as_strict_as(positive, flush));
+
+        // Two spaces never compare, in either direction.
+        assert!(!super::is_at_least_as_strict_as(preserve, forbidden));
+        assert!(!super::is_at_least_as_strict_as(forbidden, preserve));
+    }
+
+    /// Every behaviour this vocabulary can take, for an exhaustive sweep.
+    fn behaviour_population() -> Vec<DimensionBehaviour> {
+        use tiler_ir::schedule::FlushedZeroSign;
+
+        let mut population = vec![
+            DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+            DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+            DimensionBehaviour::Transform(NumericalPermission::Permitted),
+            DimensionBehaviour::Approximation(tiler_ir::schedule::ApproximationEnvelope::Forbidden),
+            DimensionBehaviour::Approximation(
+                tiler_ir::schedule::ApproximationEnvelope::BackendElementary,
+            ),
+            DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
+            DimensionBehaviour::Rounding(
+                tiler_ir::schedule::MaterializationRounding::NearestTiesToEven,
+            ),
+        ];
+        for zero_sign in [
+            FlushedZeroSign::PreservesSign,
+            FlushedZeroSign::AlwaysPositive,
+        ] {
+            population.push(DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+                zero_sign,
+            }));
+        }
+        for provenance in [
+            ValueDomainProvenance::CompilerProven,
+            ValueDomainProvenance::RuntimeValidated,
+            ValueDomainProvenance::CallerDeclaredUnvalidated,
+        ] {
+            population.push(DimensionBehaviour::ExceptionalValue(
+                ExceptionalValueAssumption::AssumeAbsent { provenance },
+            ));
+        }
+        population
     }
 
     /// Operation capability keys are unique, so a lookup cannot be ambiguous.

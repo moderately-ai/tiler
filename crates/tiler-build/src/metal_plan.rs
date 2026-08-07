@@ -1272,6 +1272,25 @@ mod tests {
     /// eleven bytes the sentence grew, which a framing step would not have
     /// produced.
     ///
+    /// **And all three moved again when the compiler began founding an
+    /// obligation's policy locus on the operation at its occurrence — the first
+    /// step in this ledger that moved these values by changing what the producer
+    /// *says* rather than how anything is framed.** `tiler.artifact-program.v15`
+    /// folds the delivered-realization record's canonical bytes, and that record
+    /// carries one row per `(subject, dimension, occurrence, locus)`. The
+    /// compiler used to emit every honoured dimension at
+    /// `PolicyLocus::Computation` of every covered occurrence; it emits each at
+    /// the position the occurrence's own operation founds, and none at an
+    /// occurrence whose operation cannot consume the dimension. For this
+    /// fixture's program — two constants, a multiply, an add, and a strict
+    /// serial sum — that takes twenty rows to eleven: the two constants consume
+    /// no numerical freedom, and the sum consumes no contraction. The byte count
+    /// fell by exactly 180, nine dropped rows at the twenty bytes an obligation
+    /// row encodes to, which is the reading a relocation alone would not have
+    /// produced. No domain stepped, because the record's grammar did not change:
+    /// the same row layout, the same locus tag space, and every dimension still
+    /// resolving `Required`, so no disposition changed width either.
+    ///
     /// **A third value is pinned below, and it is deliberately not an
     /// identity.** `FIXED_CONTENT_BYTES` is the published envelope's *fixed
     /// content*: its encoded width less the backend object bytes it carries,
@@ -1337,17 +1356,38 @@ mod tests {
     /// the step lands into, never taken from either side.
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
     /// sibling that depends on this row for exactly that reason. The constants
-    /// below were recomputed on 2026-08-07, on the tree carrying the
-    /// `tiler.index-region.v10` step — `admit-symbolic-index-expression-coefficients`
-    /// made a linear combination's coefficient a tagged `SourcedIndexInteger`
-    /// where `v9` wrote a bare integer — over the base that already held the
-    /// header widening, the coverage fold, the v11 step, the v10 step, the v9
-    /// step, the v8 step, and the measured grid-axis row. The envelope's fixed
-    /// content grew 12 bytes, one per coefficient this fixture's regions spell,
-    /// which is the growth the encoding change predicts and not a layout move.
+    /// below were recomputed on 2026-08-07 **on the merged tree carrying two
+    /// steps that landed the same day**, and this paragraph is the worked
+    /// instance of the warning above rather than an exception to it. Each branch
+    /// moved these three pins from its own base and neither branch's values
+    /// survive: `admit-symbolic-index-expression-coefficients` took the
+    /// `tiler.index-region.v10` step, making a linear combination's coefficient
+    /// a tagged `SourcedIndexInteger` where `v9` wrote a bare integer, and
+    /// `derive-per-locus-numerical-obligations` narrowed the delivered
+    /// realization's obligation rows to the occurrences that found them. The
+    /// values below were computed after both were merged, over the base that
+    /// already held the header widening, the coverage fold, the v11 step, the
+    /// v10 step, the v9 step, the v8 step, and the measured grid-axis row.
+    ///
+    /// The envelope moves in two directions that partly cancel, so the net is
+    /// not a single step's growth: the coefficient tagging adds one byte per
+    /// coefficient this fixture's regions spell, and the locus derivation drops
+    /// the obligation rows no occurrence founds at twenty bytes each. Both are
+    /// encoding-predicted, and neither is a layout move — no domain stepped in
+    /// either branch. The arithmetic closes exactly, which is the evidence for
+    /// that claim rather than an assertion of it: **64,710 + 12 − 180 = 64,542**,
+    /// the header-widening base plus the coefficient tags less the nine dropped
+    /// obligation rows at twenty bytes each. A layout move on either side would
+    /// not have summed.
+    ///
     /// Superseded values, for a reader reconciling an older record:
+    /// the symbolic-coefficient step alone, which is what these constants held
+    /// on `main` immediately before the locus derivation merged,
+    /// `65adeb81d7ab30d73ba099403d9214effcfc2de963a51b39872a92fcfe7e4f5e` /
+    /// `b34fc5562db3eb1a8a6d280faa26fb5aef7a9b632609c4daf5cad12692ffe8f4` /
+    /// 64,722 bytes;
     /// the header widening, which is what these constants held immediately
-    /// before the index-region v10 step,
+    /// before either of those two steps,
     /// `17a16aa4d15b35a0eae7e382b9e96ea3fca7c01a5a1c80495600aace20f2e63d` /
     /// `a3d44827bf86b5979f3d79eaf7e9392f997255ae88376edfb6f8f304e51cdfe8` /
     /// 64,710 bytes;
@@ -1379,10 +1419,10 @@ mod tests {
     /// and pre-both
     /// `124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` /
     /// `94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
-    /// The first superseded entry above is a triple and it is the only one:
-    /// every entry after it is a pair because the byte count did not exist yet
-    /// at any of them, so none of those is a triple whose third value went
-    /// missing, and each row a later step supersedes carries all three.
+    /// The first two superseded entries above are triples and they are the only
+    /// ones: every entry after them is a pair because the byte count did not
+    /// exist yet at any of them, so none of those is a triple whose third value
+    /// went missing, and each row a later step supersedes carries all three.
     /// Regenerate on the merged tree with:
     ///
     /// ```text
@@ -1400,10 +1440,10 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "65adeb81d7ab30d73ba099403d9214effcfc2de963a51b39872a92fcfe7e4f5e";
+            "23c46a19f6bc601d35bf4ca653e890372da3079b1bb60526220dc3b3221dcdd0";
         const CACHE_SUBJECT: &str =
-            "b34fc5562db3eb1a8a6d280faa26fb5aef7a9b632609c4daf5cad12692ffe8f4";
-        const FIXED_CONTENT_BYTES: usize = 64_722;
+            "e89c4d826149c9d103e2ed8392968c0c519df454e23e7793932bc33bc86b1595";
+        const FIXED_CONTENT_BYTES: usize = 64_542;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

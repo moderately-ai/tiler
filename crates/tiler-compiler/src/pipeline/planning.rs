@@ -892,15 +892,18 @@ pub(super) fn build_alternative_for_origin(
         },
     };
     // The delivered-realization evidence is materialized here because it needs
-    // both authorities at once: the retained plan's honoured facts and the
-    // packaged program's proof-derived occurrence coverage. A fact naming a
-    // subject or a declaring profile other than the assessed one refuses rather
-    // than being dropped, because a dropped obligation would let the artifact
-    // builder derive that dimension's disposition as unrequired.
+    // three authorities at once: the retained plan's honoured facts, the
+    // packaged program's proof-derived occurrence coverage, and the resolved
+    // lowering that says which semantic operation each covered occurrence
+    // realizes — which is what founds the policy locus an obligation names. A
+    // fact naming a subject or a declaring profile other than the assessed one
+    // refuses rather than being dropped, because a dropped obligation would let
+    // the artifact builder derive that dimension's disposition as unrequired.
     let realization = crate::session::DeliveredRealizationEvidence::materialize(
         &verified.numerical_contract(),
         plan,
         &program,
+        lowering,
         verified.target_profile().profile_key().as_str(),
     )
     .map_err(|error| {
