@@ -1,7 +1,7 @@
 ---
 id: produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate
 title: Produce the conformance envelope in process so the routed half reaches the gate
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [carry-the-device-executed-value-proof-into-the-conformance-crate]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [conformance, coverage]
+claimed_from: todo
+assignee: agent-envelope
+lease_expires_at: 1786128886
 ---
 ## The gap
 
