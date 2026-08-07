@@ -1093,14 +1093,29 @@ pub(super) fn record_plan_selection(
     Ok(cause)
 }
 
-/// Publishes each cover's coverage gap: a region no implementation covered.
+/// Publishes each coverage gap: a region no implementation covered.
 ///
-/// **The only authority that states the gap per cover, and it used to be read by
-/// tests alone.** `select_physical_plans` has always constructed a
+/// **The only authority that states the gap, and it used to be read by tests
+/// alone.** `select_physical_plans` has always constructed a
 /// [`PlanRejection::RegionUnimplemented`] for every cover region with an empty
 /// admitted set, and nothing on the compile path ever emitted one — so a caller
 /// reading the trace saw a cover that produced no plan and no record saying
 /// which of its regions had nothing to implement it.
+///
+/// **One record per unimplemented region, carrying the count of covers it
+/// blocked — not one record per (cover, region) pair.** The distinct rejection
+/// grounds this stage decides are the regions: whether a region has an admitted
+/// implementation follows from that region's own frontier, and `planning.rs`
+/// enumerates and records each frontier exactly once "however many covers place
+/// that same region". A per-cover record set restated one ground under a
+/// different opaque `region-cover:` digest — a subject no other record in the
+/// trace names, so a reader cannot resolve it to a partition — up to
+/// `region_covers` times. `docs/compiler/optimizer.md` requires that explain
+/// output "never collapses these into 'not fused'", and nothing is collapsed
+/// here: every distinct stage, reason code, rule, provider, affected region,
+/// predicate, evidence class, and disposition still has its own record. What
+/// the `blocked-covers` fact replaces is a repetition of one identical tuple,
+/// and it replaces it with the only thing that repetition said.
 ///
 /// Each record is caused by *that region's own frontier record* rather than by
 /// the selection chain, because the frontier enumeration is where the answer
@@ -1110,7 +1125,7 @@ pub(super) fn record_plan_selection(
 /// a portfolio assembled outside the planning loop.
 ///
 /// These are leaves rather than links in the returned chain: a coverage gap
-/// explains a cover that produced nothing, so hanging the retained
+/// explains covers that produced nothing, so hanging the retained
 /// alternatives' attribution off it would say the plans that *were* built
 /// followed from it.
 ///
@@ -1128,24 +1143,24 @@ fn record_coverage_gaps(
     fallback: ExplainRecordId,
 ) -> Result<(), TargetFailure> {
     for rejection in portfolio.rejections() {
-        let crate::selection::PlanRejection::RegionUnimplemented { region, role, .. } = rejection
+        let crate::selection::PlanRejection::RegionUnimplemented {
+            region,
+            role,
+            covers,
+        } = rejection
         else {
             continue;
         };
-        let cover = rejection.cover_label();
         let cause = frontier_records
             .iter()
             .find(|(key, _)| key == region)
             .map_or(fallback, |(_, record)| *record);
         explain_step(
             (|| -> Result<_, CompileError> {
-                let subjects = vec![
-                    explain.subject(SubjectKind::Schedule, region)?,
-                    explain.subject(SubjectKind::Alternative, &cover)?,
-                ];
+                let subject = explain.subject(SubjectKind::Schedule, region)?;
                 Ok(explain.push_detail(
                     RuleRef::builtin("selection.region-coverage.v1")?,
-                    subjects,
+                    vec![subject],
                     ExplainEvent::Check {
                         stage: ExplainStage::CandidateEnumeration,
                         assessment: PredicateAssessment::disproved(
@@ -1156,6 +1171,10 @@ fn record_coverage_gaps(
                         .with_fact(ExplainFact::new(
                             "region-role",
                             FactValue::Identity(crate::explain::SubjectKey::new(*role)?),
+                        )?)?
+                        .with_fact(ExplainFact::new(
+                            "blocked-covers",
+                            FactValue::Count(*covers),
                         )?)?,
                         rejection: RejectionClass::IntrinsicInvalid,
                     },

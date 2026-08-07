@@ -2943,21 +2943,30 @@ fn region_subjects_sharing_a_role_are_distinct_explain_subjects() {
     );
 }
 
-/// **The per-cover coverage gap reaches a production reader.**
+/// **The coverage gap reaches a production reader, once per region and with the
+/// cover multiplicity it replaced.**
 ///
-/// `PlanRejection::RegionUnimplemented` has always been constructed — the
-/// governed program records thirty-eight per compile — and
+/// `PlanRejection::RegionUnimplemented` has always been constructed and
 /// `SelectedPortfolio::rejections()` had no caller outside `selection.rs`'s own
-/// test module, so the one authority that states the gap *per cover* was
-/// compiled away. This drives the reader that now emits it, and checks each
-/// record is caused by the frontier enumeration for its own region rather than
-/// by whatever record happened to be last.
+/// test module, so the one authority that states the gap was compiled away.
+/// This drives the reader that now emits it, and checks each record is caused
+/// by the frontier enumeration for its own region rather than by whatever
+/// record happened to be last.
+///
+/// **The `blocked-covers` sum is the load-bearing assertion.** The rule used to
+/// emit one record per (cover, region) pair — thirty-eight on this fixture, and
+/// about 2,300 on an eleven-operation chain, which exhausted the trace's
+/// canonical-byte ceiling and refused a legal program as
+/// `InvalidCompilerOutput`. Fourteen records whose counts sum to thirty-eight
+/// is the statement that the summary lost the repetition and kept the
+/// population: a per-cover count that silently stopped counting would leave the
+/// record count passing and this sum wrong.
 ///
 /// The check that can say no is the emission: removing the `record_coverage_gaps`
 /// call leaves the rejections constructed and the trace empty of them, and the
 /// count below fails.
 #[test]
-fn the_per_cover_coverage_gap_reaches_the_trace() {
+fn the_coverage_gap_reaches_the_trace_once_per_region() {
     let semantic = semantic(false);
     let product = compile(CompilationRequest::governed(&semantic)).unwrap();
     let trace = &product.targets[0].explain;
@@ -2970,29 +2979,44 @@ fn the_per_cover_coverage_gap_reaches_the_trace() {
         .collect();
     assert_eq!(
         gaps.len(),
-        38,
-        "the governed program's covers report thirty-eight region coverage gaps",
+        14,
+        "the governed program reports one coverage gap per unimplemented region",
     );
+    let mut blocked = 0_u64;
     for gap in &gaps {
-        assert!(matches!(
-            gap.event(),
-            ExplainEvent::Check { assessment, .. }
-                if assessment.predicate().as_str() == "selection.region-implemented"
-                    && assessment
-                        .reason()
-                        .is_some_and(|reason| reason.as_str() == "region-unimplemented")
-        ));
-        // Two subjects: the region that had no implementation and the cover
-        // that placed it. A gap naming only one of them cannot be acted on —
-        // the same region is implementable in no cover, and the same cover
-        // fails for exactly one region.
+        let ExplainEvent::Check { assessment, .. } = gap.event() else {
+            panic!("a coverage gap is a checked predicate");
+        };
+        assert_eq!(
+            assessment.predicate().as_str(),
+            "selection.region-implemented"
+        );
+        assert!(
+            assessment
+                .reason()
+                .is_some_and(|reason| reason.as_str() == "region-unimplemented")
+        );
+        // One subject: the region that had no implementation. The cover no
+        // longer appears, because the answer is the region's own — its
+        // frontier admitted nothing, whichever cover placed it — and the
+        // covers it blocked are a quantity rather than a second subject.
         let subjects: Vec<&str> = gap
             .subjects()
             .iter()
             .map(|subject| subject.key().as_str())
             .collect();
-        assert_eq!(subjects.len(), 2);
-        assert!(subjects[1].starts_with("region-cover:"));
+        assert_eq!(subjects.len(), 1);
+        let covers = assessment
+            .facts()
+            .iter()
+            .find(|fact| fact.key().as_str() == "blocked-covers")
+            .map(crate::explain::ExplainFact::value)
+            .expect("a coverage gap counts the covers it blocked");
+        let crate::explain::FactValue::Count(covers) = covers else {
+            panic!("a blocked-cover tally is a count");
+        };
+        assert!(*covers > 0, "a gap that blocked no cover was not a gap");
+        blocked += *covers;
         let attribution = attributions
             .get(subjects[0])
             .expect("a coverage gap names a region whose frontier was enumerated");
@@ -3003,17 +3027,108 @@ fn the_per_cover_coverage_gap_reaches_the_trace() {
             "the coverage gap is not caused by its own region's frontier enumeration",
         );
     }
-    // Every cover that reported a gap is one that contributed no plan, and the
-    // regions named are exactly the ones nothing implemented.
+    assert_eq!(
+        blocked, 38,
+        "the summarized records account for every (cover, region) pair the per-cover form emitted",
+    );
+    // The regions named are exactly the ones nothing implemented.
     let named: std::collections::BTreeSet<&str> = gaps
         .iter()
         .map(|gap| gap.subjects()[0].key().as_str())
         .collect();
+    assert_eq!(named.len(), gaps.len(), "a region reported its gap twice");
     assert!(
         named
             .iter()
             .all(|key| attributions[*key].declined_baseline.is_some()),
         "a region was reported unimplemented without a decline explaining why",
+    );
+}
+
+/// A chain of `operations` output-reachable occurrences: one input, one hoisted
+/// constant, and `operations - 1` multiplies against it.
+///
+/// The same family `spikes/program-planning/identity-growth` sweeps, so a wall
+/// that moves there and a regression here name the same program. A pure
+/// multiply chain rather than a mixed body because a region holding a multiply
+/// beside an add is refused under the contraction-permitting contract, which
+/// would make admissibility depend on the contract rather than on the width.
+fn multiply_chain(operations: usize) -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().expect("the standard registry binds");
+    let input = builder
+        .input::<F32>(
+            InputKey::new("input").expect("the input key is valid"),
+            Shape::from_dims([4]),
+        )
+        .expect("the input binds");
+    let scale = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the scale applies");
+    let mut current = input;
+    for _ in 1..operations {
+        current = F32Multiply::apply(&mut builder, current, scale).expect("the product applies");
+    }
+    builder
+        .output(
+            OutputKey::new("result").expect("the output key is valid"),
+            current,
+        )
+        .expect("the output binds");
+    builder.build().expect("the chain verifies")
+}
+
+/// **A program inside every governed budget is not refused because explaining
+/// it would not fit.**
+///
+/// Eleven occurrences over twelve values, against `semantic_operations = 62`
+/// and `semantic_values = 80`. Cover enumeration reaches thousands of legal
+/// covers here, and while the coverage-gap rule emitted one record per (cover,
+/// region) pair it produced the 6,143 counted below — past both the explain
+/// writer's `MAX_RECORDS` and its `MAX_CANONICAL_BYTES`, so the writer refused
+/// the trace and the compilation was classed `InvalidCompilerOutput`: a class
+/// the public documentation defines as "always a defect in Tiler rather than in
+/// the caller's program", raised for a program that had nothing wrong with it.
+///
+/// The two numbers are the regression, and the relation between them is what
+/// makes it one: **sixty-five records account for six thousand one hundred and
+/// forty-three pairs**, because the record population is now the count of
+/// regions nothing implemented and not the count of covers that placed one.
+/// A change that reintroduced per-cover records would leave the second number
+/// alone and multiply the first by about ninety-four.
+#[test]
+fn an_eleven_operation_chain_inside_every_budget_compiles() {
+    let program = multiply_chain(11);
+    let product = compile(CompilationRequest::governed(&program))
+        .expect("a program inside every governed budget compiles");
+    let trace = &product.targets[0].explain;
+
+    let gaps: Vec<&crate::explain::ExplainRecord> = trace
+        .records()
+        .iter()
+        .filter(|record| record.rule().key().as_str() == "selection.region-coverage.v1")
+        .collect();
+    let mut blocked = 0_u64;
+    for gap in &gaps {
+        let ExplainEvent::Check { assessment, .. } = gap.event() else {
+            panic!("a coverage gap is a checked predicate");
+        };
+        let count = assessment
+            .facts()
+            .iter()
+            .find(|fact| fact.key().as_str() == "blocked-covers")
+            .map(crate::explain::ExplainFact::value)
+            .expect("a coverage gap counts the covers it blocked");
+        let crate::explain::FactValue::Count(count) = count else {
+            panic!("a blocked-cover tally is a count");
+        };
+        blocked += *count;
+    }
+    assert_eq!(
+        gaps.len(),
+        65,
+        "one coverage gap per region nothing implemented",
+    );
+    assert_eq!(
+        blocked, 6_143,
+        "the (cover, region) pairs those sixty-five records account for",
     );
 }
 
@@ -3064,11 +3179,12 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             // mean one was being considered somewhere it does not apply.
             ("frontier.strategy-decline.v1", 16),
             ("selection.complete-plan.v1", 1),
-            // One per (cover, unimplemented region) pair: the coverage gap that
-            // was constructed and never emitted. Thirty-eight is the count
-            // `select_physical_plans` already recorded internally, now reaching
-            // a reader with the region named rather than the role.
-            ("selection.region-coverage.v1", 38),
+            // One per unimplemented region, each carrying the number of covers
+            // it blocked. Fourteen are the `unrecognized` region subjects this
+            // fixture's schedule vocabulary cannot spell; their counts sum to
+            // the thirty-eight (cover, region) pairs the rule used to emit one
+            // record apiece for.
+            ("selection.region-coverage.v1", 14),
             ("compile.region.verified", 3),
             ("compile.plan.boundary", 2),
             ("schedule.plan-regions", 2),
