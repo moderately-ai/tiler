@@ -2791,7 +2791,7 @@ mod tests {
         VerifiedScalarOperationId, VerifiedScalarValueId, WriteOwnershipProofView,
     };
     use crate::semantic::{
-        F32, InputKey, OperationAttributes, OutputKey, RMS_NORM_F32_QWEN3_EPS_BITS,
+        F32, InputKey, OperationAttributes, OutputKey, RMS_NORM_F32_REFERENCE_EPS_BITS,
         SemanticProgramBuilder, StrictAffineU8, concatenate_f32_axis_attribute, concatenate_f32_op,
         dequantize_strict_affine_op, rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute,
         rms_norm_f32_op, softmax_f32_axis_attribute, softmax_f32_op,
@@ -2888,7 +2888,7 @@ mod tests {
                 "rms-norm-3x4-axis1",
                 IndexRealizationLaw::staged_root_mean_square_scale_f32()
                     .realize_sequence(
-                        &rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS),
+                        &rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_REFERENCE_EPS_BITS),
                         &scalars,
                     )
                     .unwrap(),
@@ -2899,7 +2899,7 @@ mod tests {
                 "rms-norm-rank1-4-axis0",
                 IndexRealizationLaw::staged_root_mean_square_scale_f32()
                     .realize_sequence(
-                        &rms_norm_subject(&[4], 0, RMS_NORM_F32_QWEN3_EPS_BITS),
+                        &rms_norm_subject(&[4], 0, RMS_NORM_F32_REFERENCE_EPS_BITS),
                         &scalars,
                     )
                     .unwrap(),
@@ -2913,7 +2913,7 @@ mod tests {
                     scalar: multiply_f32_scalar_op(),
                 }
                 .realize_sequence(
-                    &rms_norm_subject(&[4], 0, RMS_NORM_F32_QWEN3_EPS_BITS),
+                    &rms_norm_subject(&[4], 0, RMS_NORM_F32_REFERENCE_EPS_BITS),
                     &scalars,
                 )
                 .unwrap(),
@@ -3191,7 +3191,7 @@ mod tests {
     #[test]
     fn the_normalization_law_realizes_the_pinned_reference_step_for_step() {
         let scalars = FrozenScalarRegistry::standard().unwrap();
-        let subject = rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS);
+        let subject = rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_REFERENCE_EPS_BITS);
         let realization = IndexRealizationLaw::staged_root_mean_square_scale_f32()
             .realize_sequence(&subject, &scalars)
             .expect("the normalization's law realizes its own occurrence");
@@ -3250,7 +3250,7 @@ mod tests {
         let bias = by_id(fold, bias.expect("eps enters as a constant"));
         assert_eq!(
             applied_attributes(bias),
-            &f32_bits_record(RMS_NORM_F32_QWEN3_EPS_BITS)
+            &f32_bits_record(RMS_NORM_F32_REFERENCE_EPS_BITS)
         );
         // u = a / N, a division by the extent itself and never by a reciprocal.
         let mean = by_id(fold, mean.expect("u is computed"));
@@ -3340,7 +3340,7 @@ mod tests {
         // Rank one so the plain template's own broadcast rule does not refuse
         // first: the fold removes the only axis, so what it publishes is rank
         // zero and legible to a binary pointwise pass.
-        let subject = rms_norm_subject(&[4], 0, RMS_NORM_F32_QWEN3_EPS_BITS);
+        let subject = rms_norm_subject(&[4], 0, RMS_NORM_F32_REFERENCE_EPS_BITS);
         assert!(
             IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32 {
                 axes_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
@@ -3404,7 +3404,7 @@ mod tests {
         let scalars = FrozenScalarRegistry::standard().unwrap();
         // 2^24 + 1 is odd and above the significand's width, so its nearest
         // binary32 is 2^24 — a divisor that is not the extent.
-        let subject = rms_norm_subject(&[16_777_217], 0, RMS_NORM_F32_QWEN3_EPS_BITS);
+        let subject = rms_norm_subject(&[16_777_217], 0, RMS_NORM_F32_REFERENCE_EPS_BITS);
         assert_eq!(
             IndexRealizationLaw::staged_root_mean_square_scale_f32()
                 .realize_sequence(&subject, &scalars)
@@ -3413,7 +3413,7 @@ mod tests {
             "rms-scale-extent-not-exact"
         );
         // The neighbouring even extent is exactly representable and realizes.
-        let subject = rms_norm_subject(&[16_777_216], 0, RMS_NORM_F32_QWEN3_EPS_BITS);
+        let subject = rms_norm_subject(&[16_777_216], 0, RMS_NORM_F32_REFERENCE_EPS_BITS);
         assert!(
             IndexRealizationLaw::staged_root_mean_square_scale_f32()
                 .realize_sequence(&subject, &scalars)
@@ -3480,7 +3480,7 @@ mod tests {
     #[test]
     fn the_root_mean_square_law_refuses_the_single_region_realization() {
         let scalars = FrozenScalarRegistry::standard().unwrap();
-        let subject = rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS);
+        let subject = rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_REFERENCE_EPS_BITS);
         assert_eq!(
             IndexRealizationLaw::staged_root_mean_square_scale_f32()
                 .realize(&subject, &scalars)
@@ -3508,7 +3508,11 @@ mod tests {
             FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars.clone()).unwrap();
 
         let staged = laws
-            .resolve(&rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS))
+            .resolve(&rms_norm_subject(
+                &[3, 4],
+                1,
+                RMS_NORM_F32_REFERENCE_EPS_BITS,
+            ))
             .unwrap();
         assert!(staged.realizes_region_sequence());
         let sequence = staged.realize_sequence().unwrap();
@@ -3529,7 +3533,7 @@ mod tests {
             .resolve(&rms_norm_subject(
                 &[16_777_217],
                 0,
-                RMS_NORM_F32_QWEN3_EPS_BITS,
+                RMS_NORM_F32_REFERENCE_EPS_BITS,
             ))
             .unwrap();
         assert!(matches!(
@@ -3863,7 +3867,7 @@ mod tests {
         // Two operands: the normalization's occurrence, not this one's.
         assert_eq!(
             law.realize_sequence(
-                &rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS),
+                &rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_REFERENCE_EPS_BITS),
                 &scalars
             )
             .unwrap_err()

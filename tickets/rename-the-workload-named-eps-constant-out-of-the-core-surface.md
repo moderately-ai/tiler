@@ -5,8 +5,8 @@ status: in-progress
 priority: p2
 dependencies: []
 related: []
-scopes: [implementation/ir, implementation/reference, implementation/metal]
-shared_scopes: []
+scopes: [implementation/ir, implementation/reference, implementation/metal, contracts/navigation]
+shared_scopes: [project/tickets]
 paths: []
 tags: []
 claimed_from: todo

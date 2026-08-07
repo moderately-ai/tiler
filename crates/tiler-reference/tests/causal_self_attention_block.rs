@@ -148,7 +148,7 @@ use tiler_ir::semantic::{
     BroadcastAxisSource, BuildError, CanonicalValueView, ContractionIndex,
     ContractionIndexStructure, F32, F32Add, F32Broadcast, F32Constant, F32Multiply, F32Reindex,
     F32RmsNorm, F32Softmax, F32TensorContraction, InputKey, OpKey, OutputKey,
-    RMS_NORM_F32_QWEN3_EPS_BITS, RegistryError, ReindexForm, SemanticProgram,
+    RMS_NORM_F32_REFERENCE_EPS_BITS, RegistryError, ReindexForm, SemanticProgram,
     SemanticProgramBuilder, Value, add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op,
     reindex_f32_op, rms_norm_f32_op, softmax_f32_op, strict_tensor_contraction_f32_op,
 };
@@ -760,7 +760,7 @@ fn normalize(
         value,
         widened,
         reduced,
-        RMS_NORM_F32_QWEN3_EPS_BITS,
+        RMS_NORM_F32_REFERENCE_EPS_BITS,
     )
     .expect("the weight now carries the value's own shape")
 }
@@ -1178,7 +1178,7 @@ fn recompute_block(fixture: &BlockFixture) -> BlockExpectation {
     let normalized = rms_norm_f32(
         &block_shape([t, hidden]),
         axis(1),
-        RMS_NORM_F32_QWEN3_EPS_BITS,
+        RMS_NORM_F32_REFERENCE_EPS_BITS,
         &x,
         &widened,
     )
@@ -1212,7 +1212,7 @@ fn recompute_block(fixture: &BlockFixture) -> BlockExpectation {
         rms_norm_f32(
             &block_shape([t, heads, HEAD_DIM]),
             axis(2),
-            RMS_NORM_F32_QWEN3_EPS_BITS,
+            RMS_NORM_F32_REFERENCE_EPS_BITS,
             values,
             &widened,
         )
@@ -1789,7 +1789,7 @@ fn a_per_head_norm_weight_against_the_hidden_axis_refuses_by_name() {
                 residual,
                 per_head,
                 axis(1),
-                RMS_NORM_F32_QWEN3_EPS_BITS
+                RMS_NORM_F32_REFERENCE_EPS_BITS
             )
             .unwrap_err()
         ),
@@ -1826,7 +1826,7 @@ fn a_per_head_norm_weight_against_the_hidden_axis_refuses_by_name() {
             residual,
             widened,
             axis(1),
-            RMS_NORM_F32_QWEN3_EPS_BITS
+            RMS_NORM_F32_REFERENCE_EPS_BITS
         )
         .is_ok()
     );

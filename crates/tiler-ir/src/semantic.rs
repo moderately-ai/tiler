@@ -173,11 +173,12 @@ pub use rms_norm::{
     RMS_NORM_F32_FACT_NAN_BEHAVIOUR, RMS_NORM_F32_FACT_RECIPROCAL_TRANSFORM_PERMITTED,
     RMS_NORM_F32_FACT_RESULT_TYPE, RMS_NORM_F32_FACT_RSQRT_ACCURACY_CONTRACT,
     RMS_NORM_F32_FACT_SIGNED_ZERO, RMS_NORM_F32_FACT_SQUARING_OVERFLOW,
-    RMS_NORM_F32_FACT_SUBNORMALS, RMS_NORM_F32_QWEN3_EPS_BITS, RMS_NORM_F32_SQUARING_OVERFLOW_BITS,
-    RMS_NORM_REDUCED_AXES_ATTRIBUTE, rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute,
-    rms_norm_f32_facts, rms_norm_f32_op, rms_norm_f32_reference_semantics,
-    rms_norm_f32_rsqrt_accuracy_contract, rms_norm_f32_rsqrt_exceptional_contract,
-    rms_norm_f32_rsqrt_ordinary_domain, rms_norm_f32_rsqrt_reference_semantics,
+    RMS_NORM_F32_FACT_SUBNORMALS, RMS_NORM_F32_REFERENCE_EPS_BITS,
+    RMS_NORM_F32_SQUARING_OVERFLOW_BITS, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+    rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_facts, rms_norm_f32_op,
+    rms_norm_f32_reference_semantics, rms_norm_f32_rsqrt_accuracy_contract,
+    rms_norm_f32_rsqrt_exceptional_contract, rms_norm_f32_rsqrt_ordinary_domain,
+    rms_norm_f32_rsqrt_reference_semantics,
 };
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use silu::{

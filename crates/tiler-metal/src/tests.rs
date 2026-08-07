@@ -36,7 +36,7 @@ use tiler_ir::schedule::{
     SubnormalMode, SyncPointId, TailPolicy, TensorRole, ValueDomainProvenance,
     VerifiedScheduledRegion, element_count, workgroup_tree_tile,
 };
-use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, RMS_NORM_F32_QWEN3_EPS_BITS};
+use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, RMS_NORM_F32_REFERENCE_EPS_BITS};
 use tiler_ir::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
 };
@@ -261,7 +261,7 @@ fn rms_norm_epilogue_expression() -> PointwiseF32Expression {
         .input(InputOrdinal::new(2))
         .expect("the row mean of squares");
     let eps = expression
-        .constant(RMS_NORM_F32_QWEN3_EPS_BITS)
+        .constant(RMS_NORM_F32_REFERENCE_EPS_BITS)
         .expect("the governed eps payload");
     let argument = expression.add(mean, eps).expect("u + eps");
     let scale = expression
@@ -3521,8 +3521,11 @@ fn the_normalization_epilogue_emits_the_precise_reciprocal_square_root() {
     // The governed eps payload reaches the emitted source as its exact bits
     // rather than a decimal literal someone rounded on the way.
     assert!(
-        source.contains(&format!("0x{RMS_NORM_F32_QWEN3_EPS_BITS:08x}"))
-            || source.contains(&format!("{}", f32::from_bits(RMS_NORM_F32_QWEN3_EPS_BITS))),
+        source.contains(&format!("0x{RMS_NORM_F32_REFERENCE_EPS_BITS:08x}"))
+            || source.contains(&format!(
+                "{}",
+                f32::from_bits(RMS_NORM_F32_REFERENCE_EPS_BITS)
+            )),
         "the eps constant is emitted:\n{source}"
     );
 }

@@ -150,11 +150,11 @@ fn the_registered_reference_pins_the_eps_position_the_rsqrt_and_the_weight_order
 /// actually computed at: the canonical attribute record.
 #[test]
 fn two_normalizations_differing_only_in_eps_carry_different_attributes() {
-    let governed = attributes(1, RMS_NORM_F32_QWEN3_EPS_BITS);
+    let governed = attributes(1, RMS_NORM_F32_REFERENCE_EPS_BITS);
     // The binary32 successor of the governed payload — the smallest possible
     // difference, so a comparison that only distinguished coarse differences
     // would pass here and must not.
-    let neighbour = attributes(1, RMS_NORM_F32_QWEN3_EPS_BITS + 1);
+    let neighbour = attributes(1, RMS_NORM_F32_REFERENCE_EPS_BITS + 1);
     assert_ne!(governed.fields(), neighbour.fields());
     let operands = [f32_operand(&[2, 4]), f32_operand(&[2, 4])];
     // Both infer, so the difference is not a validity artefact: it is two legal
@@ -166,10 +166,10 @@ fn two_normalizations_differing_only_in_eps_carry_different_attributes() {
 /// The pinned workload's `eps` payload is the binary32 rounding of `1e-06`.
 #[test]
 fn the_governed_eps_payload_is_the_binary32_rounding_of_one_millionth() {
-    assert_eq!(RMS_NORM_F32_QWEN3_EPS_BITS, 1e-6_f32.to_bits());
+    assert_eq!(RMS_NORM_F32_REFERENCE_EPS_BITS, 1e-6_f32.to_bits());
     // Not exactly representable, which is why the identity carries the payload
     // rather than the literal: the exact value is about 9.999999975e-07.
-    assert!((f64::from(f32::from_bits(RMS_NORM_F32_QWEN3_EPS_BITS)) - 1e-6).abs() > 0.0);
+    assert!((f64::from(f32::from_bits(RMS_NORM_F32_REFERENCE_EPS_BITS)) - 1e-6).abs() > 0.0);
 }
 
 /// The named squaring-overflow threshold is the largest binary32 with a finite square.
@@ -392,8 +392,11 @@ fn the_normalization_preserves_its_operand_shape_at_both_extents() {
         (vec![1, 2], 1),
     ] {
         let operands = [f32_operand(&dims), f32_operand(&dims)];
-        let results = infer(&operands, &attributes(axis, RMS_NORM_F32_QWEN3_EPS_BITS))
-            .expect("a well-formed occurrence infers");
+        let results = infer(
+            &operands,
+            &attributes(axis, RMS_NORM_F32_REFERENCE_EPS_BITS),
+        )
+        .expect("a well-formed occurrence infers");
         let [result] = results.as_slice() else {
             panic!("the normalization has one result");
         };
@@ -409,7 +412,7 @@ fn the_normalization_preserves_its_operand_shape_at_both_extents() {
 #[test]
 fn a_malformed_reduced_axis_refuses_by_the_rule_it_violated() {
     let operands = [f32_operand(&[3, 1024]), f32_operand(&[3, 1024])];
-    let eps = RMS_NORM_F32_QWEN3_EPS_BITS;
+    let eps = RMS_NORM_F32_REFERENCE_EPS_BITS;
     let cases = [
         (axis_sequence(&[]), "rms-norm.f32.axis.absent"),
         (axis_sequence(&[1, 1]), "rms-norm.f32.axis.duplicated"),
@@ -453,7 +456,7 @@ fn an_inadmissible_eps_refuses_at_construction() {
     }
     // The governed payload is the control: the same operands with an admissible
     // eps infer, so the refusals above are about the payload and not the shape.
-    assert!(infer(&operands, &attributes(1, RMS_NORM_F32_QWEN3_EPS_BITS)).is_ok());
+    assert!(infer(&operands, &attributes(1, RMS_NORM_F32_REFERENCE_EPS_BITS)).is_ok());
 }
 
 /// An `eps` attribute naming another float format refuses by its own rule.
@@ -486,7 +489,7 @@ fn a_narrow_weight_is_refused_rather_than_implicitly_broadcast() {
     assert_eq!(
         refusal(
             &[value.clone(), narrow],
-            &attributes(1, RMS_NORM_F32_QWEN3_EPS_BITS)
+            &attributes(1, RMS_NORM_F32_REFERENCE_EPS_BITS)
         ),
         "rms-norm.f32.weight-shape"
     );
@@ -495,7 +498,7 @@ fn a_narrow_weight_is_refused_rather_than_implicitly_broadcast() {
     assert_eq!(
         refusal(
             &[value, f32_operand(&[])],
-            &attributes(1, RMS_NORM_F32_QWEN3_EPS_BITS)
+            &attributes(1, RMS_NORM_F32_REFERENCE_EPS_BITS)
         ),
         "rms-norm.f32.weight-shape"
     );
@@ -510,7 +513,7 @@ fn a_narrow_weight_is_refused_rather_than_implicitly_broadcast() {
 #[test]
 fn the_structural_rules_refuse_by_name() {
     let shaped = f32_operand(&[3, 1024]);
-    let governed = attributes(1, RMS_NORM_F32_QWEN3_EPS_BITS);
+    let governed = attributes(1, RMS_NORM_F32_REFERENCE_EPS_BITS);
     assert_eq!(
         refusal(std::slice::from_ref(&shaped), &governed),
         "tiler.schema.operand-arity"
