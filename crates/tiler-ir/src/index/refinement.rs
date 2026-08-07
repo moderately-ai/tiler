@@ -5791,13 +5791,14 @@ mod tests {
 
     /// The contract-free family query answers off the registered law row.
     ///
-    /// **Three rows and one agreement, and the agreement is the load-bearing
+    /// **Four rows and one agreement, and the agreement is the load-bearing
     /// half.** `tiler::rms-norm-f32@1` carries `StagedRootMeanSquareScaleF32`
-    /// and answers true; `tiler::multiply-f32@1` carries a single-region law and
-    /// answers false; `tiler::softmax-f32@1` is a registered *operation* the
-    /// standard authority carries no law for and answers false rather than
-    /// panicking. The agreement then shows the query is the same fact read from
-    /// the same row rather than a second account of it: for a derived subject,
+    /// and `tiler::softmax-f32@1` carries `StagedSoftmaxF32`, so both answer
+    /// true; `tiler::multiply-f32@1` carries a single-region law and answers
+    /// false; `tiler::slice-f32@1` is a registered *operation* the standard
+    /// authority carries no law for and answers false rather than panicking. The
+    /// agreement then shows the query is the same fact read from the same row
+    /// rather than a second account of it: for a derived subject,
     /// [`ResolvedIndexRealization::realizes_region_sequence`] answers
     /// identically for both families.
     #[test]
@@ -5811,9 +5812,10 @@ mod tests {
             FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars.clone()).unwrap();
 
         assert!(laws.family_realizes_region_sequence(&crate::semantic::rms_norm_f32_op()));
+        assert!(laws.family_realizes_region_sequence(&crate::semantic::softmax_f32_op()));
         assert!(!laws.family_realizes_region_sequence(&crate::semantic::multiply_f32_op()));
         assert!(
-            !laws.family_realizes_region_sequence(&crate::semantic::softmax_f32_op()),
+            !laws.family_realizes_region_sequence(&crate::semantic::slice_f32_op()),
             "a registered operation the authority carries no law for realizes no sequence"
         );
 

@@ -19,8 +19,8 @@ use crate::semantic::{
     ContractionIndexStructure, EncodedComponentRole, F32_CONSTANT_BITS_ATTRIBUTE,
     OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
     RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind,
-    ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
-    STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey,
+    ResolvedValueType, SOFTMAX_REDUCED_AXES_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE,
+    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey,
 };
 use crate::shape::{Axis, Extent, Shape};
 
@@ -31,9 +31,14 @@ use super::{
     StagedInputSource, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
     VerifiedIndexRegion, VerifiedIndexRegionSequence, add_bf16_scalar_op, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op, constant_f32_scalar_op,
-    divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op, multiply_f32_scalar_op,
-    rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    divide_f32_scalar_op, exp_f32_scalar_op, maximum_f32_scalar_op, multiply_bf16_scalar_op,
+    multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
+
+/// Exact binary32 payload of `1.0`, the numerator of the softmax's reciprocal.
+const F32_ONE_BITS: u32 = 0x3f80_0000;
+/// Exact binary32 payload of `-1.0`, the softmax shift's exact sign flip.
+const F32_NEGATIVE_ONE_BITS: u32 = 0xbf80_0000;
 
 /// A bounded semantic template for one canonical logical index realization.
 ///
@@ -146,6 +151,61 @@ pub enum IndexRealizationLaw {
         /// a different operation wearing this one's law.
         eps_attribute: AttributeFieldId,
     },
+    /// The governed softmax: an extrema fold, a shifted exponential, a sum fold,
+    /// and a reciprocal scale, over one reduced axis.
+    ///
+    /// Stage zero folds operand zero with the NaN-propagating maximum family over
+    /// the axis the named attribute carries and publishes the row maximum `m`.
+    /// Stage one reads operand zero at its own coordinates and `m` at the kept
+    /// coordinates and publishes the exponentials `e_i = Exp(s_i - m)`. Stage two
+    /// folds `e` with the governed addition and publishes the denominator `d`.
+    /// Stage three reads `e` **again**, at its own coordinates, and `d` at the
+    /// kept coordinates, and writes `e_i * (1.0 / d)` — one division per folded
+    /// row and one multiplication per point.
+    ///
+    /// **Why four stages and not fewer.** `e` is read by stage two and by stage
+    /// three, and a value with more than one reader is exactly what the region
+    /// sequence's retention contract expresses; folding the denominator inside
+    /// stage three would recompute `e` once per point of its own row, which is a
+    /// different scalar program. Fusing the two folds into one pass is the online
+    /// single-pass form, which
+    /// [`SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM`](crate::semantic::SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM)
+    /// records as consuming distributivity and the exponential's own functional
+    /// equation, neither of which any permission grants.
+    ///
+    /// **Why the chain is fixed and only the axes attribute is law data.** The
+    /// same split [`Self::StagedRootMeanSquareScaleF32`] draws, for the same
+    /// reason: carrying the shift, the exponential, the reciprocal, and the scale
+    /// as *data* would need a scalar-program language inside a law, which this
+    /// module's header refuses. This is the second family whose chain the template
+    /// names rather than carries, and the emission machinery is where the
+    /// generality went — an identity-less fold parameterized by its combiner, and
+    /// a stage that reads a reduced-rank published value at its kept coordinates
+    /// and runs arbitrary scalar work between the read and the write, are stated
+    /// as reusable emitters that this template and the normalization's both
+    /// instantiate.
+    ///
+    /// **The empty reduced axis is refused rather than realized.** The extrema
+    /// fold has no identity and is seeded at the first contributor, which a
+    /// zero-length axis does not have. The operation is shape-preserving, so its
+    /// own semantics evaluate no scalar softmax there
+    /// ([`SOFTMAX_F32_FACT_EMPTY_REDUCED_AXIS`](crate::semantic::SOFTMAX_F32_FACT_EMPTY_REDUCED_AXIS)),
+    /// while this staged shape would still have to commit one row maximum per
+    /// kept coordinate — so the realization refuses by name instead of inventing a
+    /// seed the reference does not have.
+    ///
+    /// **Draft boundary.** This variant, its `const` constructor, its tag-11
+    /// encoding, and the standard registration for `tiler::softmax-f32@1` are a
+    /// labelled draft awaiting Tom's decision at
+    /// [`accept-the-softmax-realization-law`]. It is in use inside `tiler-ir`
+    /// meanwhile, exactly as the normalization's was; the label is what an
+    /// acceptance flips.
+    ///
+    /// [`accept-the-softmax-realization-law`]: ../../../../tickets/accept-the-softmax-realization-law.md
+    StagedSoftmaxF32 {
+        /// Attribute containing the single reduced axis, as a one-element sequence.
+        axes_attribute: AttributeFieldId,
+    },
     /// Per-point decode of one governed compound strict-affine U4 value.
     StrictAffineU4Dequantize {
         /// Ordered logical codes component role.
@@ -187,6 +247,7 @@ impl IndexRealizationLaw {
             | Self::Broadcast { .. }
             | Self::StagedStrictSerialSumThenPointwiseF32 { .. }
             | Self::StagedRootMeanSquareScaleF32 { .. }
+            | Self::StagedSoftmaxF32 { .. }
             | Self::StrictTensorContractionF32 { .. } => governs_result_arithmetic(subject),
         }
     }
@@ -309,6 +370,19 @@ impl IndexRealizationLaw {
         }
     }
 
+    /// Standard softmax law, as `tiler::softmax-f32@1` registers it.
+    ///
+    /// Names that family's own reduced-axes identifier. It is record-local — the
+    /// normalization numbers its own axes field the same way — so this
+    /// constructor is what ties the general template to the one family whose
+    /// record means this field.
+    #[must_use]
+    pub const fn staged_softmax_f32() -> Self {
+        Self::StagedSoftmaxF32 {
+            axes_attribute: SOFTMAX_REDUCED_AXES_ATTRIBUTE,
+        }
+    }
+
     /// Standard strict-affine U4-to-F32 decode law.
     #[must_use]
     pub fn strict_affine_u4_dequantize() -> Self {
@@ -331,6 +405,7 @@ impl IndexRealizationLaw {
             self,
             Self::StagedStrictSerialSumThenPointwiseF32 { .. }
                 | Self::StagedRootMeanSquareScaleF32 { .. }
+                | Self::StagedSoftmaxF32 { .. }
         )
     }
 
@@ -358,6 +433,9 @@ impl IndexRealizationLaw {
                 axes_attribute,
                 eps_attribute,
             } => realize_root_mean_square_scale(subject, scalars, *axes_attribute, *eps_attribute),
+            Self::StagedSoftmaxF32 { axes_attribute } => {
+                realize_softmax(subject, scalars, *axes_attribute)
+            }
             _ => Ok(VerifiedIndexRegionSequence::single(
                 self.realize(subject, scalars)?,
             )),
@@ -413,7 +491,8 @@ impl IndexRealizationLaw {
                     scalar.clone(),
                 )?,
                 Self::StagedStrictSerialSumThenPointwiseF32 { .. }
-                | Self::StagedRootMeanSquareScaleF32 { .. } => {
+                | Self::StagedRootMeanSquareScaleF32 { .. }
+                | Self::StagedSoftmaxF32 { .. } => {
                     return Err(unsupported("staged-law-requires-region-sequence"));
                 }
             }
@@ -510,6 +589,25 @@ impl IndexRealizationLaw {
                 output.push(10);
                 output.extend_from_slice(&axes_attribute.get().to_be_bytes());
                 output.extend_from_slice(&eps_attribute.get().to_be_bytes());
+            }
+            Self::StagedSoftmaxF32 { axes_attribute } => {
+                // Tag 11 is append-only. Tags 1..=10 and their payloads are
+                // unchanged, so every sidecar byte a law registry has ever
+                // encoded is byte-identical under this addition; only the row
+                // this variant newly occupies is added.
+                //
+                // Injectivity at this site. The first byte discriminates, so no
+                // other variant's encoding can be read as this one whatever
+                // follows — which is the whole of the separation from tags 4, 5,
+                // 6, and 7, each of which writes the same shape of payload this
+                // one does: one fixed-width attribute identifier and nothing
+                // else. Within this tag that payload is a single injection on a
+                // fixed offset, so two rows differing in the axes identifier
+                // differ in the four bytes it owns. There is no second field, so
+                // no ordering question arises here of the kind tag 10 has to
+                // answer for its pair.
+                output.push(11);
+                output.extend_from_slice(&axes_attribute.get().to_be_bytes());
             }
         }
     }
@@ -896,10 +994,10 @@ fn realize_silu(context: &mut LawContext<'_>) -> Result<(), IndexRealizationLawE
     let coordinates = dimension_expressions(context, &dimensions)?;
     let tensor = context.tensor(TensorRole::Input, input.value_type().clone(), shape.clone())?;
     let argument = context.read(tensor, &dimensions, &coordinates)?;
-    let negative_one = scalar_constant(context, 0xbf80_0000)?;
+    let negative_one = scalar_constant(context, F32_NEGATIVE_ONE_BITS)?;
     let negated = apply_one(context, multiply_f32_scalar_op(), &[argument, negative_one])?;
     let exponential = apply_one(context, exp_f32_scalar_op(), &[negated])?;
-    let one = scalar_constant(context, 0x3f80_0000)?;
+    let one = scalar_constant(context, F32_ONE_BITS)?;
     let divisor = apply_one(context, add_f32_scalar_op(), &[one, exponential])?;
     let value = apply_one(context, divide_f32_scalar_op(), &[argument, divisor])?;
     let output = context.tensor(TensorRole::Output, result.value_type().clone(), shape)?;
@@ -987,15 +1085,33 @@ fn realize_serial_sum(
     context: &mut LawContext<'_>,
     attribute: AttributeFieldId,
 ) -> Result<(), IndexRealizationLawError> {
-    let plan = SumPlan::derive(context.subject, attribute)?;
-    emit_serial_sum(context, &plan)
+    let plan = FoldPlan::derive(context.subject, attribute)?;
+    emit_fold_region(context, &plan, |_, total| Ok(total))
 }
 
-/// Emits one strict lexicographic left fold from an already-derived plan.
-fn emit_serial_sum(
+/// Emits one whole folding region: the fold, an epilogue, and the write.
+///
+/// **The epilogue is a parameter because a staged realization transforms its
+/// fold inside the producing region.** The normalization divides, biases, and
+/// takes the reciprocal square root of its fold before anything is written; the
+/// softmax's two folds write theirs unchanged. A fold emitter that could only
+/// write its own result would force the normalization's epilogue into the
+/// consuming stage, where it would run once per point instead of once per folded
+/// row — a different scalar program, not a different placement.
+///
+/// The plain fold passes the identity epilogue, which emits nothing, so every
+/// region this emitter produced before the parameter existed is unchanged.
+fn emit_fold_region<F>(
     context: &mut LawContext<'_>,
-    plan: &SumPlan,
-) -> Result<(), IndexRealizationLawError> {
+    plan: &FoldPlan,
+    epilogue: F,
+) -> Result<(), IndexRealizationLawError>
+where
+    F: FnOnce(
+        &mut LawContext<'_>,
+        ScalarValueId,
+    ) -> Result<ScalarValueId, IndexRealizationLawError>,
+{
     let kept = plan.declare_kept_domain(context)?;
     let kept_coordinates = dimension_expressions(context, &kept)?;
     let input = context.tensor(
@@ -1009,8 +1125,111 @@ fn emit_serial_sum(
         plan.output_shape.clone(),
     )?;
     let total = plan.fold(context, input, &kept, &kept_coordinates)?;
+    let published = epilogue(context, total)?;
     let write = context.write(output, &kept, &kept_coordinates)?;
-    context.output(write, total)
+    context.output(write, published)
+}
+
+/// How one input boundary of a [`emit_row_broadcast_stage`] stage is addressed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StageAccess {
+    /// At the stage's own point coordinates. The boundary is the result shape.
+    Point,
+    /// At the kept coordinates alone. The boundary is the result shape without
+    /// the folded axes, so one value serves every point of a folded row.
+    ///
+    /// The rank-zero case — every axis folded — is this one degenerate, and it is
+    /// deliberately not spelled separately: a read at an empty domain with empty
+    /// coordinates is what both mean.
+    FoldedRow,
+}
+
+/// Emits one stage that pairs per-point values with per-folded-row values.
+///
+/// The stage declares a parallel domain over `result`'s shape, reads each input
+/// boundary at either its own point coordinates or the kept coordinates of the
+/// folded axes, hands the read values to `body`, and writes what `body` answers.
+///
+/// **Three capabilities live here that the binary pointwise emitter does not
+/// have.** It admits *any* number of input boundaries rather than exactly two; a
+/// boundary of reduced rank is read at the kept coordinates rather than refused
+/// as an unstated broadcast; and `body` is arbitrary scalar work between the
+/// reads and the write rather than one scalar application. The third is what
+/// makes a *per-row prologue* expressible without a rule of its own: a value
+/// computed from a folded-row read alone carries only the kept dimensions as its
+/// free dimensions, so `1.0 / d` is evaluated once per row and `e_i * c` once per
+/// point, and the region model says so rather than a comment.
+///
+/// `reduced` marks, per axis of the result shape, whether the folded axes cover
+/// it. It is the [`FoldPlan`]'s own mask, so the stage that consumes a fold and
+/// the fold itself cannot disagree about which axes were removed.
+fn emit_row_broadcast_stage<F>(
+    context: &mut LawContext<'_>,
+    reduced: &[bool],
+    inputs: &[(ResolvedValueType, Shape, StageAccess)],
+    result: &(ResolvedValueType, Shape),
+    body: F,
+) -> Result<(), IndexRealizationLawError>
+where
+    F: FnOnce(
+        &mut LawContext<'_>,
+        &[ScalarValueId],
+    ) -> Result<ScalarValueId, IndexRealizationLawError>,
+{
+    let shape = result.1.clone();
+    if reduced.len() != shape.rank() {
+        return Err(unsupported("row-broadcast-reduced-rank"));
+    }
+    let row_shape = Shape::try_new(
+        shape
+            .extents()
+            .iter()
+            .zip(reduced)
+            .filter(|(_, reduced)| !**reduced)
+            .map(|(extent, _)| *extent)
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|_| unsupported("row-broadcast-row-shape"))?;
+    let dimensions = declare_parallel_domain(context, &shape)?;
+    let coordinates = dimension_expressions(context, &dimensions)?;
+    let kept = dimensions
+        .iter()
+        .zip(reduced)
+        .filter(|(_, reduced)| !**reduced)
+        .map(|(dimension, _)| *dimension)
+        .collect::<Vec<_>>();
+    let kept_coordinates = coordinates
+        .iter()
+        .zip(reduced)
+        .filter(|(_, reduced)| !**reduced)
+        .map(|(coordinate, _)| *coordinate)
+        .collect::<Vec<_>>();
+    let mut tensors = Vec::with_capacity(inputs.len());
+    for (value_type, boundary, _) in inputs {
+        tensors.push(context.tensor(TensorRole::Input, value_type.clone(), boundary.clone())?);
+    }
+    let mut values = Vec::with_capacity(inputs.len());
+    for ((_, boundary, access), tensor) in inputs.iter().zip(&tensors) {
+        let value = match access {
+            StageAccess::Point => {
+                if boundary != &shape {
+                    return Err(unsupported("row-broadcast-point-boundary"));
+                }
+                context.read(*tensor, &dimensions, &coordinates)?
+            }
+            StageAccess::FoldedRow => {
+                if boundary != &row_shape {
+                    return Err(unsupported("row-broadcast-row-boundary"));
+                }
+                context.read(*tensor, &kept, &kept_coordinates)?
+            }
+        };
+        values.push(value);
+    }
+    let value = body(context, &values)?;
+    let output = context.tensor(TensorRole::Output, result.0.clone(), shape)?;
+    let write = context.write(output, &dimensions, &coordinates)?;
+    context.output(write, value)
 }
 /// Builds the two-stage fold-then-pointwise realization.
 ///
@@ -1040,7 +1259,7 @@ fn realize_staged_sum_then_pointwise(
     }
     let axes = reduction_axes(subject.attributes(), axes_attribute)?;
     let intermediate_shape = folded.shape().without_axes(&axes);
-    let plan = SumPlan::for_boundaries(
+    let plan = FoldPlan::for_boundaries(
         folded.value_type(),
         folded.shape(),
         &intermediate_shape,
@@ -1053,7 +1272,7 @@ fn realize_staged_sum_then_pointwise(
             builder: &mut fold,
             subject,
         };
-        emit_serial_sum(&mut context, &plan)?;
+        emit_fold_region(&mut context, &plan, |_, total| Ok(total))?;
     }
     let fold = fold.build().map_err(IndexRealizationLawError::Build)?;
 
@@ -1160,7 +1379,7 @@ fn realize_root_mean_square_scale(
     let axes = reduction_axes(subject.attributes(), axes_attribute)?;
 
     let intermediate_shape = value.shape().without_axes(&axes);
-    let plan = SumPlan::for_boundaries(
+    let plan = FoldPlan::for_boundaries(
         value.value_type(),
         value.shape(),
         &intermediate_shape,
@@ -1175,33 +1394,24 @@ fn realize_root_mean_square_scale(
             builder: &mut fold,
             subject,
         };
-        let kept = plan.declare_kept_domain(&mut context)?;
-        let kept_coordinates = dimension_expressions(&mut context, &kept)?;
-        let input = context.tensor(
-            TensorRole::Input,
-            plan.value_type.clone(),
-            plan.input_shape.clone(),
+        emit_fold_region(
+            &mut context,
+            &plan,
+            |context: &mut LawContext<'_>, total: ScalarValueId| {
+                let extent = scalar_constant(context, extent_bits)?;
+                let mean = apply_one(context, divide_f32_scalar_op(), &[total, extent])?;
+                let bias = single_result(
+                    &context.apply(
+                        constant_f32_scalar_op(),
+                        scalar_attributes(F32_CONSTANT_BITS_ATTRIBUTE, eps)?,
+                        &[],
+                    )?,
+                    "rms-scale-eps-constant",
+                )?;
+                let biased = apply_one(context, add_f32_scalar_op(), &[mean, bias])?;
+                apply_one(context, rsqrt_f32_scalar_op(), &[biased])
+            },
         )?;
-        let output = context.tensor(
-            TensorRole::Output,
-            plan.value_type.clone(),
-            plan.output_shape.clone(),
-        )?;
-        let total = plan.fold(&mut context, input, &kept, &kept_coordinates)?;
-        let extent = scalar_constant(&mut context, extent_bits)?;
-        let mean = apply_one(&mut context, divide_f32_scalar_op(), &[total, extent])?;
-        let bias = single_result(
-            &context.apply(
-                constant_f32_scalar_op(),
-                scalar_attributes(F32_CONSTANT_BITS_ATTRIBUTE, eps)?,
-                &[],
-            )?,
-            "rms-scale-eps-constant",
-        )?;
-        let biased = apply_one(&mut context, add_f32_scalar_op(), &[mean, bias])?;
-        let root = apply_one(&mut context, rsqrt_f32_scalar_op(), &[biased])?;
-        let write = context.write(output, &kept, &kept_coordinates)?;
-        context.output(write, root)?;
     }
     let fold = fold.build().map_err(IndexRealizationLawError::Build)?;
 
@@ -1212,41 +1422,32 @@ fn realize_root_mean_square_scale(
             subject,
         };
         let shape = result.shape().clone();
-        let dimensions = declare_parallel_domain(&mut context, &shape)?;
-        let coordinates = dimension_expressions(&mut context, &dimensions)?;
         // The published value is one per folded row, so it is read at the kept
-        // coordinates of this stage's own point domain. That is neither the
-        // rank-zero nor the whole-shape case the binary pointwise emitter admits,
-        // which is the third thing this family needs that the staged template
-        // cannot state.
-        let kept = dimensions
-            .iter()
-            .zip(&plan.reduced)
-            .filter(|(_, reduced)| !**reduced)
-            .map(|(dimension, _)| *dimension)
-            .collect::<Vec<_>>();
-        let kept_coordinates = coordinates
-            .iter()
-            .zip(&plan.reduced)
-            .filter(|(_, reduced)| !**reduced)
-            .map(|(coordinate, _)| *coordinate)
-            .collect::<Vec<_>>();
-        let value_tensor = context.tensor(TensorRole::Input, expected.clone(), shape.clone())?;
-        let weight_tensor = context.tensor(TensorRole::Input, expected.clone(), shape.clone())?;
-        let root_tensor =
-            context.tensor(TensorRole::Input, expected.clone(), intermediate_shape)?;
-        let element = context.read(value_tensor, &dimensions, &coordinates)?;
-        let weight_element = context.read(weight_tensor, &dimensions, &coordinates)?;
-        let root = context.read(root_tensor, &kept, &kept_coordinates)?;
-        let scaled = apply_one(&mut context, multiply_f32_scalar_op(), &[element, root])?;
-        let weighted = apply_one(
+        // coordinates of this stage's own point domain — the `FoldedRow` access
+        // below. That is neither the rank-zero nor the whole-shape case the
+        // binary pointwise emitter admits, which is one of the three things this
+        // family needs that the staged template cannot state.
+        emit_row_broadcast_stage(
             &mut context,
-            multiply_f32_scalar_op(),
-            &[weight_element, scaled],
+            &plan.reduced,
+            &[
+                (expected.clone(), shape.clone(), StageAccess::Point),
+                (expected.clone(), shape.clone(), StageAccess::Point),
+                (expected.clone(), intermediate_shape, StageAccess::FoldedRow),
+            ],
+            &(expected, shape),
+            |context: &mut LawContext<'_>, values: &[ScalarValueId]| {
+                let [element, weight_element, root] = values else {
+                    return Err(unsupported("rms-scale-pass-operands"));
+                };
+                let scaled = apply_one(context, multiply_f32_scalar_op(), &[*element, *root])?;
+                apply_one(
+                    context,
+                    multiply_f32_scalar_op(),
+                    &[*weight_element, scaled],
+                )
+            },
         )?;
-        let output = context.tensor(TensorRole::Output, expected, shape)?;
-        let write = context.write(output, &dimensions, &coordinates)?;
-        context.output(write, weighted)?;
     }
     let scale = scale.build().map_err(IndexRealizationLawError::Build)?;
 
@@ -1258,6 +1459,186 @@ fn realize_root_mean_square_scale(
                 StagedInputSource::Occurrence(0),
                 StagedInputSource::Occurrence(1),
                 StagedInputSource::Intermediate(0),
+            ],
+        ],
+    )
+    .map_err(IndexRealizationLawError::Sequence)
+}
+
+/// Builds the four-stage softmax realization.
+///
+/// The occurrence is `(operand 0 = scores) -> result`, and the realization is
+/// `softmax_f32_reference_semantics` in order: `m` the strict left fold of the
+/// NaN-propagating maximum seeded at the first contributor, `e_i = Exp(s_i - m)`,
+/// `d` the strict left fold sum of `e` seeded at the first contributor,
+/// `c = 1.0 / d` as one division of one by the denominator, and `r_i = e_i * c`
+/// as a multiplication by that reciprocal.
+///
+/// **Where the three splits fall.** `m` is read once per point and computed once
+/// per row, so it is published rather than recomputed. `e` is read by the
+/// denominator's fold *and* by the final pass, which is why it is published as
+/// well and why this chain is four stages: recomputing it in the final pass would
+/// evaluate one exponential per point twice, and a chain that copied it through
+/// the folding stage would put a materialization no part of the operation means
+/// into a region's canonical identity. `c` is computed inside the final stage
+/// from a folded-row read alone, so its free dimensions are the kept ones and it
+/// is evaluated once per row — the reference's single division, not one per
+/// point.
+///
+/// **The subtraction is spelled as an exact sign flip and one rounded add.**
+/// There is no subtraction scalar key, and negating a binary32 value is exact, so
+/// `s_i + (-m)` rounds exactly where `s_i - m` does and is the same function.
+/// `SOFTMAX_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED` names this adjacency as
+/// the operation's only multiply-add pair and withholds contraction over it,
+/// which is a statement about this spelling rather than about a rewrite of it.
+///
+/// **Every declared attribute is consumed by name.** The occurrence's field set
+/// is required to be exactly the one this law names, so the tolerance of
+/// [`reduction_axes`] for a record carrying more fields than it reads cannot let
+/// a payload go unread here.
+fn realize_softmax(
+    subject: &IndexRefinementSubject,
+    scalars: &FrozenScalarRegistry,
+    axes_attribute: AttributeFieldId,
+) -> Result<VerifiedIndexRegionSequence, IndexRealizationLawError> {
+    let ([scores], [result]) = (subject.inputs(), subject.results()) else {
+        return Err(unsupported("softmax-arity"));
+    };
+    if subject.operands() != [0] {
+        return Err(unsupported("softmax-operand-binding"));
+    }
+    let expected = crate::semantic::F32::resolved_type();
+    if scores.value_type() != &expected || result.value_type() != &expected {
+        return Err(unsupported("softmax-value-type"));
+    }
+    // Shape-preserving: the reduced axis is folded over twice and then restored,
+    // so an occurrence whose result dropped it is a reduction wearing this law.
+    if scores.shape() != result.shape() {
+        return Err(unsupported("softmax-shape"));
+    }
+    let [field] = subject.attributes().fields() else {
+        return Err(unsupported("softmax-attributes"));
+    };
+    if field.id() != axes_attribute {
+        return Err(unsupported("softmax-attributes"));
+    }
+    let axes = reduction_axes(subject.attributes(), axes_attribute)?;
+    if axes.len() != 1 {
+        // Unreachable from a verified occurrence: `tiler::softmax-f32@1`'s own
+        // inferencer refuses an absent, duplicated, or second axis before a
+        // subject exists. Stated anyway because a law is interpreted against a
+        // subject rather than against the inferencer that produced it, and the
+        // reference pins the formula over *the single reduced axis* — a two-axis
+        // fold would be a different operation realized under this law's name.
+        return Err(unsupported("softmax-reduced-axis-rank"));
+    }
+    let shape = result.shape().clone();
+    let row_shape = shape.without_axes(&axes);
+
+    // Both folds are seeded at the first contributor, which is what the reference
+    // pins for each of them, so neither carries an empty-domain identity. The
+    // maximum has none to carry; the sum has one and deliberately does not use it
+    // here, because a zero-length reduced axis evaluates no scalar softmax at all
+    // and this shape would still have to commit one value per kept coordinate.
+    let extrema_plan = FoldPlan::for_boundaries(&expected, &shape, &row_shape, &axes)?
+        .combining(maximum_f32_scalar_op(), None);
+    let denominator_plan = FoldPlan::for_boundaries(&expected, &shape, &row_shape, &axes)?
+        .combining(add_f32_scalar_op(), None);
+
+    let mut extrema = IndexRegionBuilder::new(scalars.clone())?;
+    {
+        let mut context = LawContext {
+            builder: &mut extrema,
+            subject,
+        };
+        emit_fold_region(&mut context, &extrema_plan, |_, total| Ok(total))?;
+    }
+    let extrema = extrema.build().map_err(IndexRealizationLawError::Build)?;
+
+    let mut exponentials = IndexRegionBuilder::new(scalars.clone())?;
+    {
+        let mut context = LawContext {
+            builder: &mut exponentials,
+            subject,
+        };
+        emit_row_broadcast_stage(
+            &mut context,
+            &extrema_plan.reduced,
+            &[
+                (expected.clone(), shape.clone(), StageAccess::Point),
+                (expected.clone(), row_shape.clone(), StageAccess::FoldedRow),
+            ],
+            &(expected.clone(), shape.clone()),
+            |context: &mut LawContext<'_>, values: &[ScalarValueId]| {
+                let [score, maximum] = values else {
+                    return Err(unsupported("softmax-exponential-operands"));
+                };
+                let negative_one = scalar_constant(context, F32_NEGATIVE_ONE_BITS)?;
+                let negated =
+                    apply_one(context, multiply_f32_scalar_op(), &[*maximum, negative_one])?;
+                let shifted = apply_one(context, add_f32_scalar_op(), &[*score, negated])?;
+                apply_one(context, exp_f32_scalar_op(), &[shifted])
+            },
+        )?;
+    }
+    let exponentials = exponentials
+        .build()
+        .map_err(IndexRealizationLawError::Build)?;
+
+    let mut denominator = IndexRegionBuilder::new(scalars.clone())?;
+    {
+        let mut context = LawContext {
+            builder: &mut denominator,
+            subject,
+        };
+        emit_fold_region(&mut context, &denominator_plan, |_, total| Ok(total))?;
+    }
+    let denominator = denominator
+        .build()
+        .map_err(IndexRealizationLawError::Build)?;
+
+    let mut normalize = IndexRegionBuilder::new(scalars.clone())?;
+    {
+        let mut context = LawContext {
+            builder: &mut normalize,
+            subject,
+        };
+        emit_row_broadcast_stage(
+            &mut context,
+            &extrema_plan.reduced,
+            &[
+                (expected.clone(), shape.clone(), StageAccess::Point),
+                (expected.clone(), row_shape, StageAccess::FoldedRow),
+            ],
+            &(expected, shape),
+            |context: &mut LawContext<'_>, values: &[ScalarValueId]| {
+                let [exponential, total] = values else {
+                    return Err(unsupported("softmax-normalization-operands"));
+                };
+                let one = scalar_constant(context, F32_ONE_BITS)?;
+                let reciprocal = apply_one(context, divide_f32_scalar_op(), &[one, *total])?;
+                apply_one(
+                    context,
+                    multiply_f32_scalar_op(),
+                    &[*exponential, reciprocal],
+                )
+            },
+        )?;
+    }
+    let normalize = normalize.build().map_err(IndexRealizationLawError::Build)?;
+
+    VerifiedIndexRegionSequence::try_new(
+        vec![extrema, exponentials, denominator, normalize],
+        vec![
+            vec![StagedInputSource::Occurrence(0)],
+            vec![
+                StagedInputSource::Occurrence(0),
+                StagedInputSource::Intermediate(0),
+            ],
+            vec![StagedInputSource::Intermediate(1)],
+            vec![
+                StagedInputSource::Intermediate(1),
+                StagedInputSource::Intermediate(2),
             ],
         ],
     )
@@ -1444,7 +1825,9 @@ fn realize_contraction(
         )?;
         let contributor =
             plan.product(context, &tensors, &output, &output_coordinates, Some(tail))?;
-        let folded = context.reduce(&[tail], &[seed], &[contributor], add_reducer)?;
+        let folded = context.reduce(&[tail], &[seed], &[contributor], |body| {
+            combine_with(body, add_f32_scalar_op())
+        })?;
         single_result(&folded, "contraction")?
     };
     let write = context.write(result, &output, &output_coordinates)?;
@@ -1455,7 +1838,17 @@ fn axis_position(axis: Axis) -> Result<usize, IndexRealizationLawError> {
     usize::try_from(axis.get()).map_err(|_| unsupported("axis-width"))
 }
 
-struct SumPlan {
+/// One strict lexicographic left fold over a rectangular reduced sub-domain.
+///
+/// **Parameterized by its combiner and its seeding rule**, because the two folds
+/// this vocabulary must emit differ in exactly those two things and in nothing
+/// else. The sum combines with the governed addition and has `0.0` to seed an
+/// empty contributor domain with; the softmax's row maximum combines with the
+/// NaN-propagating extrema family, which has *no* identity at all and is
+/// therefore seeded at the first contributor with an empty domain refused rather
+/// than invented. Everything else — the kept domain, the reduced linearization,
+/// the one-contributor case, the tail reduction — is one emitter.
+struct FoldPlan {
     value_type: ResolvedValueType,
     input_shape: Shape,
     output_shape: Shape,
@@ -1472,9 +1865,19 @@ struct SumPlan {
     /// prologue would need a scalar-program language in law data, which this
     /// module deliberately does not have.
     contributor_square: Option<ScalarOpKey>,
+    /// Binary scalar the reducer body combines state and contributor with.
+    combiner: ScalarOpKey,
+    /// Exact binary32 payload seeding an empty contributor domain.
+    ///
+    /// `Some(bits)` is a combiner with an identity, and it is the *only* value a
+    /// fold over no contributors may commit. `None` is a combiner with none, so
+    /// an empty domain has no first contributor to seed at and no identity to
+    /// stand in for one; the fold refuses rather than choosing a seed the
+    /// reference it realizes does not have.
+    empty_identity: Option<u32>,
 }
 
-impl SumPlan {
+impl FoldPlan {
     fn derive(
         subject: &IndexRefinementSubject,
         attribute: AttributeFieldId,
@@ -1537,6 +1940,10 @@ impl SumPlan {
             reduced_extents,
             reduced_points: stride,
             contributor_square: None,
+            // The governed addition and its identity, which is what every fold
+            // this emitter produced before the combiner was a parameter used.
+            combiner: add_f32_scalar_op(),
+            empty_identity: Some(0.0_f32.to_bits()),
         })
     }
 
@@ -1546,15 +1953,25 @@ impl SumPlan {
         self
     }
 
+    /// Combines with `combiner`, seeding an empty domain from `empty_identity`.
+    ///
+    /// Both are set together because they are one decision: an identity is a
+    /// property of the combiner, so a plan carrying one combiner's identity
+    /// beside another's combiner would fold an empty domain to a value that
+    /// operation never produces.
+    fn combining(mut self, combiner: ScalarOpKey, empty_identity: Option<u32>) -> Self {
+        self.combiner = combiner;
+        self.empty_identity = empty_identity;
+        self
+    }
+
     /// Emits the complete fold and returns its value, writing nothing.
     ///
-    /// Separate from [`emit_serial_sum`] because a staged realization transforms
-    /// the fold *inside the producing region* — the normalization divides it,
-    /// biases it, and takes its reciprocal square root before anything is
-    /// written — and a fold that could only write its own result would force
-    /// that epilogue into the consuming stage, where it would run once per point
-    /// instead of once per folded row. That is a different scalar program, not a
-    /// different placement.
+    /// Three cases, and the split is over the *contributor population* rather
+    /// than over the combiner: no contributor needs the identity this plan may
+    /// not have, one contributor needs no combine at all and reaches the
+    /// reduction's result boundary through the canonicalization the numerical
+    /// contract places there, and two or more are the seeded tail fold.
     fn fold(
         &self,
         context: &mut LawContext<'_>,
@@ -1666,6 +2083,9 @@ impl SumPlan {
         kept: &[DimensionId],
         kept_coordinates: &[IndexExprId],
     ) -> Result<ScalarValueId, IndexRealizationLawError> {
+        let Some(identity_bits) = self.empty_identity else {
+            return Err(unsupported("fold-empty-domain-without-identity"));
+        };
         let mut reduced_dimensions = Vec::new();
         let mut coordinates = Vec::with_capacity(self.input_shape.rank());
         let mut kept_position = 0;
@@ -1683,13 +2103,10 @@ impl SumPlan {
         domain.extend(reduced_dimensions.iter().copied());
         let contributor = context.read(input, &domain, &coordinates)?;
         let contributor = self.square(context, contributor)?;
-        let identity = scalar_constant(context, 0.0_f32.to_bits())?;
-        let folded = context.reduce(
-            &reduced_dimensions,
-            &[identity],
-            &[contributor],
-            add_reducer,
-        )?;
+        let identity = scalar_constant(context, identity_bits)?;
+        let folded = context.reduce(&reduced_dimensions, &[identity], &[contributor], |body| {
+            combine_with(body, self.combiner.clone())
+        })?;
         single_result(&folded, "reduction")
     }
 
@@ -1707,22 +2124,29 @@ impl SumPlan {
         )?;
         let contributor =
             self.read_contributor(context, input, kept, kept_coordinates, Some(tail))?;
-        let folded = context.reduce(&[tail], &[seed], &[contributor], add_reducer)?;
+        let folded = context.reduce(&[tail], &[seed], &[contributor], |body| {
+            combine_with(body, self.combiner.clone())
+        })?;
         single_result(&folded, "reduction")
     }
 }
 
-fn add_reducer(body: &mut ScalarReducerBodyBuilder<'_>) -> Result<(), IndexBuildError> {
+/// Fills one reducer body with the single-state combine `state = key(state, v)`.
+///
+/// The combiner is a parameter rather than the governed addition because the
+/// extrema fold this vocabulary now emits is the same body shape with a
+/// different scalar; nothing else about a one-state left fold varies between
+/// them.
+fn combine_with(
+    body: &mut ScalarReducerBodyBuilder<'_>,
+    key: ScalarOpKey,
+) -> Result<(), IndexBuildError> {
     let state = body.state(0).expect("one state");
     let contributor = body.contributor(0).expect("one contributor");
     let accumulated = body
-        .apply(
-            add_f32_scalar_op(),
-            ScalarAttributes::empty(),
-            &[state, contributor],
-        )?
+        .apply(key, ScalarAttributes::empty(), &[state, contributor])?
         .get(0)
-        .expect("governed add has one result");
+        .expect("a governed binary combiner has one result");
     body.yield_values(&[accumulated])
 }
 
@@ -2127,6 +2551,7 @@ mod tests {
         F32, InputKey, OperationAttributes, OutputKey, RMS_NORM_F32_QWEN3_EPS_BITS,
         SemanticProgramBuilder, StrictAffineU8, dequantize_strict_affine_op,
         rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
+        softmax_f32_axis_attribute, softmax_f32_op,
     };
 
     /// Domain separating this file's identity pins from every governed digest.
@@ -2857,6 +3282,522 @@ mod tests {
             IndexRefinementVerificationError::SemanticRealizationLawRefused { rule, .. }
                 if rule == "rms-scale-extent-not-exact"
         ));
+    }
+
+    /// Derives one `tiler::softmax-f32@1` occurrence's refinement subject.
+    fn softmax_subject(dims: &[u64], axis: u32) -> IndexRefinementSubject {
+        let shape = Shape::try_new(dims.iter().copied().map(Extent::new).collect::<Vec<_>>())
+            .expect("the test shape is canonical");
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let scores = program
+            .input_resolved(
+                InputKey::new("scores").unwrap(),
+                shape,
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            SOFTMAX_REDUCED_AXES_ATTRIBUTE,
+            softmax_f32_axis_attribute(Axis::new(axis)),
+        )])
+        .unwrap();
+        let result = program
+            .apply(softmax_f32_op(), attributes, &[scores])
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("weights").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap()
+    }
+
+    /// Names the scalar keys one reduction's body applies, in canonical order.
+    fn reducer_body_steps(operation: ScalarOperationRef<'_>) -> Vec<String> {
+        let ScalarOperationKindRef::Reduce(reduction) = operation.kind() else {
+            panic!("this operation is not a reduction")
+        };
+        reduction
+            .body()
+            .operations()
+            .map(|body| body.key().name().to_owned())
+            .collect()
+    }
+
+    /// The realization is the pinned reference, in the pinned order.
+    ///
+    /// `softmax_f32_reference_semantics` fixes, over the single reduced axis:
+    /// `m` = the strict left fold of the NaN-propagating `Maximum` seeded at the
+    /// first contributor; `e_i = Exp(s_i - m)`; `d` = the strict left fold sum of
+    /// `e` seeded at the first contributor; `c = 1.0 / d` as one division of one
+    /// by the denominator; `r_i = e_i * c` and deliberately not `e_i / d`. This
+    /// walks the four realized stages and pins each of those five steps: the
+    /// combiner each fold applies, what each fold is seeded at, the values every
+    /// application consumes, and — for the two constants, which are the only
+    /// places an exact payload enters — the payload itself.
+    #[test]
+    fn the_softmax_law_realizes_the_pinned_reference_step_for_step() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let subject = softmax_subject(&[3, 4], 1);
+        let realization = IndexRealizationLaw::staged_softmax_f32()
+            .realize_sequence(&subject, &scalars)
+            .expect("the softmax's law realizes its own occurrence");
+
+        assert_eq!(realization.stage_count(), 4);
+        assert_eq!(
+            (0..4)
+                .map(|stage| realization
+                    .stage_sources(stage)
+                    .expect("every stage exists")
+                    .to_vec())
+                .collect::<Vec<_>>(),
+            vec![
+                vec![StagedInputSource::Occurrence(0)],
+                vec![
+                    StagedInputSource::Occurrence(0),
+                    StagedInputSource::Intermediate(0),
+                ],
+                vec![StagedInputSource::Intermediate(1)],
+                vec![
+                    StagedInputSource::Intermediate(1),
+                    StagedInputSource::Intermediate(2),
+                ],
+            ],
+            "the scores are read twice, and the exponentials are read by the \
+             denominator's fold and again by the normalizing pass"
+        );
+        // Four reads of three published values. `e` is the one that stays live
+        // across a stage that publishes something else, which is the whole reason
+        // this chain is four stages rather than three.
+        assert_eq!(
+            realization
+                .intermediates()
+                .iter()
+                .map(|read| (
+                    read.producer(),
+                    read.consumer(),
+                    read.retained_through(),
+                    read.shape().clone()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, 1, 1, Shape::from_dims([3])),
+                (1, 2, 3, Shape::from_dims([3, 4])),
+                (1, 3, 3, Shape::from_dims([3, 4])),
+                (2, 3, 3, Shape::from_dims([3])),
+            ]
+        );
+
+        // m: the strict left fold of Maximum seeded at the first contributor.
+        let extrema = realization.stage(0).expect("the extrema stage");
+        assert_eq!(stage_steps(extrema), ["reduce"]);
+        let maximum = operation_defining(extrema, extrema.outputs().next().unwrap().value());
+        assert_eq!(reducer_body_steps(maximum), ["maximum-f32"]);
+        let ScalarOperationKindRef::Reduce(fold) = maximum.kind() else {
+            panic!("the row maximum is a reduction")
+        };
+        let seed = fold.init().collect::<Vec<_>>();
+        let contributors = fold.contributors().collect::<Vec<_>>();
+        assert_eq!(seed.len(), 1);
+        assert_eq!(contributors.len(), 1);
+        // Seeded at the *first contributor*: a read of the operand, not a
+        // constant identity — which this extrema family does not have.
+        assert_eq!(defined_by(extrema, seed[0]), None);
+        assert_eq!(defined_by(extrema, contributors[0]), None);
+        assert_ne!(seed[0], contributors[0], "the tail reads a later element");
+
+        // e_i = Exp(s_i - m), with the subtraction spelled as an exact sign flip
+        // and one rounded addition.
+        let exponentials = realization.stage(1).expect("the exponential stage");
+        assert_eq!(
+            stage_steps(exponentials),
+            ["constant-f32", "multiply-f32", "add-f32", "exp-f32"]
+        );
+        let boundaries = exponentials
+            .tensors()
+            .filter(|tensor| tensor.role() == TensorRole::Input)
+            .map(super::super::model::TensorRef::id)
+            .collect::<Vec<_>>();
+        let exponential =
+            operation_defining(exponentials, exponentials.outputs().next().unwrap().value());
+        assert_eq!(applied_key(exponential), "exp-f32");
+        let [shifted] = operand_definitions(exponentials, exponential)[..] else {
+            panic!("the exponential takes one argument")
+        };
+        let shifted = by_id(exponentials, shifted.expect("the shift is computed"));
+        assert_eq!(applied_key(shifted), "add-f32");
+        let shift_operands = shifted.operands().collect::<Vec<_>>();
+        assert_eq!(
+            read_boundary(exponentials, shift_operands[0]),
+            Some(boundaries[0]),
+            "the left operand is the score read at its own coordinates"
+        );
+        let negated = operation_defining(exponentials, shift_operands[1]);
+        assert_eq!(applied_key(negated), "multiply-f32");
+        let negation_operands = negated.operands().collect::<Vec<_>>();
+        assert_eq!(
+            read_boundary(exponentials, negation_operands[0]),
+            Some(boundaries[1]),
+            "the negated value is the published row maximum"
+        );
+        assert_eq!(
+            applied_attributes(operation_defining(exponentials, negation_operands[1])),
+            &f32_bits_record(F32_NEGATIVE_ONE_BITS),
+            "the sign flip is exact, so the addition carries the pinned rounding"
+        );
+
+        // d: the strict left fold sum of e, seeded at the first contributor.
+        let denominator = realization.stage(2).expect("the denominator stage");
+        assert_eq!(stage_steps(denominator), ["reduce"]);
+        let total = operation_defining(denominator, denominator.outputs().next().unwrap().value());
+        assert_eq!(reducer_body_steps(total), ["add-f32"]);
+        let ScalarOperationKindRef::Reduce(sum) = total.kind() else {
+            panic!("the denominator is a reduction")
+        };
+        let seed = sum.init().collect::<Vec<_>>();
+        assert_eq!(seed.len(), 1);
+        assert_eq!(
+            defined_by(denominator, seed[0]),
+            None,
+            "the sum is seeded at the first exponential, not at a zero identity"
+        );
+
+        // c = 1.0 / d once per row, then r_i = e_i * c once per point.
+        let normalize = realization.final_stage();
+        assert_eq!(
+            stage_steps(normalize),
+            ["constant-f32", "divide-f32", "multiply-f32"]
+        );
+        let boundaries = normalize
+            .tensors()
+            .filter(|tensor| tensor.role() == TensorRole::Input)
+            .map(super::super::model::TensorRef::id)
+            .collect::<Vec<_>>();
+        let scaled = operation_defining(normalize, normalize.outputs().next().unwrap().value());
+        assert_eq!(applied_key(scaled), "multiply-f32");
+        let scale_operands = scaled.operands().collect::<Vec<_>>();
+        assert_eq!(
+            read_boundary(normalize, scale_operands[0]),
+            Some(boundaries[0]),
+            "the scaled value is the published exponential"
+        );
+        let reciprocal = operation_defining(normalize, scale_operands[1]);
+        assert_eq!(
+            applied_key(reciprocal),
+            "divide-f32",
+            "the normalization multiplies by a reciprocal and never divides e_i by d"
+        );
+        let reciprocal_operands = reciprocal.operands().collect::<Vec<_>>();
+        assert_eq!(
+            applied_attributes(operation_defining(normalize, reciprocal_operands[0])),
+            &f32_bits_record(F32_ONE_BITS),
+            "the numerator is exactly one"
+        );
+        assert_eq!(
+            read_boundary(normalize, reciprocal_operands[1]),
+            Some(boundaries[1]),
+            "the divisor is the published denominator"
+        );
+        // One division per folded row rather than one per point: the reciprocal
+        // is computed from a read at the kept coordinates alone, so the region
+        // model carries only those dimensions as its free dimensions.
+        assert_eq!(
+            normalize
+                .scalar_value(scale_operands[1])
+                .unwrap()
+                .free_dimensions()
+                .count(),
+            1,
+            "the reciprocal varies along the kept axis alone"
+        );
+        assert_eq!(
+            normalize
+                .scalar_value(scale_operands[0])
+                .unwrap()
+                .free_dimensions()
+                .count(),
+            2,
+            "the exponential it scales varies along both"
+        );
+    }
+
+    /// A zero-length reduced axis has no first contributor and no identity.
+    ///
+    /// **Watched in both directions.** The operation is shape-preserving, so its
+    /// own semantics evaluate no scalar softmax over a zero-length axis
+    /// (`SOFTMAX_F32_FACT_EMPTY_REDUCED_AXIS`); this staged shape would still have
+    /// to commit one row maximum per kept coordinate, and the extrema family has
+    /// no identity to commit. The refusal is the general fold emitter's rather
+    /// than this family's, which is why the neighbouring extent-one axis — whose
+    /// fold has exactly one contributor and needs no identity either — realizes.
+    #[test]
+    fn a_zero_length_reduced_axis_is_refused_rather_than_seeded() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        assert_eq!(
+            IndexRealizationLaw::staged_softmax_f32()
+                .realize_sequence(&softmax_subject(&[3, 0], 1), &scalars)
+                .unwrap_err()
+                .rule(),
+            "fold-empty-domain-without-identity"
+        );
+        assert!(
+            IndexRealizationLaw::staged_softmax_f32()
+                .realize_sequence(&softmax_subject(&[3, 1], 1), &scalars)
+                .is_ok(),
+            "the bound is an empty contributor domain, not a short one"
+        );
+        // The sum's identity is still there for the law that uses it: the plain
+        // strict serial sum folds an empty axis to zero rather than refusing, so
+        // the refusal above is the seeding rule this family chose and not a
+        // capability the emitter lost.
+        assert!(
+            IndexRealizationLaw::strict_serial_sum_f32()
+                .realize(&serial_sum_subject(&[3, 0], 1), &scalars)
+                .is_ok(),
+            "the addition has an identity and an empty fold commits it"
+        );
+    }
+
+    /// The seeding rule is the fold emitter's, and it is watched there.
+    ///
+    /// **Separate from the family-level refusal above, because that one is
+    /// satisfied by *either* of the softmax's two folds refusing.** This builds
+    /// two plans over the same empty boundaries and separates them: a combiner
+    /// with an identity folds an empty contributor domain to that identity, and a
+    /// combiner without one refuses. Nothing else about the two plans differs, so
+    /// the seeding rule is the only thing the outcome can be attributed to.
+    #[test]
+    fn an_identity_less_fold_refuses_the_empty_contributor_domain() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let subject = softmax_subject(&[3, 0], 1);
+        let boundaries = || {
+            FoldPlan::for_boundaries(
+                &F32::resolved_type(),
+                &Shape::from_dims([3, 0]),
+                &Shape::from_dims([3]),
+                &[Axis::new(1)],
+            )
+            .expect("the empty-axis boundaries are coherent")
+        };
+        let emit = |plan: &FoldPlan| -> Result<(), IndexRealizationLawError> {
+            let mut builder = IndexRegionBuilder::new(scalars.clone())?;
+            let mut context = LawContext {
+                builder: &mut builder,
+                subject: &subject,
+            };
+            emit_fold_region(&mut context, plan, |_, total| Ok(total))
+        };
+        assert_eq!(boundaries().reduced_points, 0);
+        assert!(
+            emit(&boundaries()).is_ok(),
+            "the governed addition has an identity and an empty fold commits it"
+        );
+        assert_eq!(
+            emit(&boundaries().combining(maximum_f32_scalar_op(), None))
+                .unwrap_err()
+                .rule(),
+            "fold-empty-domain-without-identity"
+        );
+    }
+
+    /// Every occurrence this law does not name is refused, by name.
+    #[test]
+    fn the_softmax_law_refuses_the_occurrences_it_does_not_name() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let law = IndexRealizationLaw::staged_softmax_f32();
+        // Two operands: the normalization's occurrence, not this one's.
+        assert_eq!(
+            law.realize_sequence(
+                &rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS),
+                &scalars
+            )
+            .unwrap_err()
+            .rule(),
+            "softmax-arity"
+        );
+        // One operand of another element type.
+        assert_eq!(
+            law.realize_sequence(&subject(StrictAffineU4::resolved_type()), &scalars)
+                .unwrap_err()
+                .rule(),
+            "softmax-value-type"
+        );
+        // One `f32` operand whose result drops the reduced axis: a reduction.
+        assert_eq!(
+            law.realize_sequence(&serial_sum_subject(&[3, 4], 1), &scalars)
+                .unwrap_err()
+                .rule(),
+            "softmax-shape"
+        );
+        // A law naming a field the occurrence's record does not carry.
+        assert_eq!(
+            IndexRealizationLaw::StagedSoftmaxF32 {
+                axes_attribute: AttributeFieldId::new(SOFTMAX_REDUCED_AXES_ATTRIBUTE.get() + 1),
+            }
+            .realize_sequence(&softmax_subject(&[3, 4], 1), &scalars)
+            .unwrap_err()
+            .rule(),
+            "softmax-attributes"
+        );
+    }
+
+    /// The registered row answers for the family, with the chain it must realize.
+    ///
+    /// This is what the ticket's user-visible outcome names:
+    /// `FrozenIndexRealizationLawRegistry::resolve` stops answering
+    /// `MissingRealizationLaw` for `tiler::softmax-f32@1`, and what it answers
+    /// realizes the four-stage chain rather than merely resolving.
+    #[test]
+    fn the_softmax_family_resolves_to_its_registered_law() {
+        use crate::index::FrozenIndexRealizationLawRegistry;
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let semantic = crate::semantic::FrozenSemanticRegistry::standard().unwrap();
+        let laws =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars.clone()).unwrap();
+        assert_eq!(
+            laws.family_realization_law(&softmax_f32_op()),
+            Some(&IndexRealizationLaw::staged_softmax_f32())
+        );
+        let resolved = laws.resolve(&softmax_subject(&[3, 4], 1)).unwrap();
+        assert!(resolved.realizes_region_sequence());
+        let sequence = resolved.realize_sequence().unwrap();
+        assert_eq!(sequence.stage_count(), 4);
+        assert_eq!(sequence.intermediates().len(), 4);
+    }
+
+    /// The realized chain's identity, pinned over exact bytes.
+    ///
+    /// **A new pin rather than a preservation claim.** The digests below were
+    /// computed on the tree that first registered this law, so what they defend
+    /// is future drift: refinement compares a provider's emitted chain against
+    /// this one byte for byte, so a step, a boundary order, or a source list that
+    /// moved silently would change which emissions verify. The length is pinned
+    /// beside the digest so a chain that moved reports *how* rather than only
+    /// that it did. Recompute both on the tree the change lands in, and put the
+    /// cause in that commit.
+    #[test]
+    fn the_softmax_chain_identity_is_pinned() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        for (name, dims, axis, bytes, digest) in [
+            (
+                "softmax-3x4-axis1",
+                [3, 4].as_slice(),
+                1_u32,
+                5589_usize,
+                "5f091f6d2421d119f661c6cb2af8a8e66495324b49e3d29d362a670af280638a",
+            ),
+            (
+                "softmax-rank1-4-axis0",
+                [4].as_slice(),
+                0,
+                4887,
+                "65f06df9750048397fddbdf751610684a77af203072c7dd1d067695a4a84116b",
+            ),
+        ] {
+            let identity = IndexRealizationLaw::staged_softmax_f32()
+                .realize_sequence(&softmax_subject(dims, axis), &scalars)
+                .unwrap();
+            let identity = identity.identity().as_bytes();
+            assert_eq!(identity.len(), bytes, "{name} changed length");
+            assert_eq!(
+                tiler_digest::DigestAlgorithm::GOVERNED
+                    .digest(SEQUENCE_IDENTITY_PIN_DOMAIN, identity)
+                    .label(),
+                digest,
+                "{name} changed bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn the_softmax_law_tag_is_append_only_and_distinct() {
+        let mut softmax = Vec::new();
+        IndexRealizationLaw::staged_softmax_f32().encode(&mut softmax);
+        assert_eq!(softmax.first(), Some(&11));
+        // Tags 4, 5, 6, and 7 write the same payload shape this one does — one
+        // fixed-width attribute identifier — so the discriminating first byte is
+        // the whole of the separation, and it is asserted rather than argued.
+        for old in [
+            IndexRealizationLaw::constant_f32(),
+            IndexRealizationLaw::constant_bf16(),
+            IndexRealizationLaw::multiply_f32(),
+            IndexRealizationLaw::add_f32(),
+            IndexRealizationLaw::multiply_bf16(),
+            IndexRealizationLaw::add_bf16(),
+            IndexRealizationLaw::PreciseSiluF32,
+            IndexRealizationLaw::strict_serial_sum_f32(),
+            IndexRealizationLaw::reindex_f32(),
+            IndexRealizationLaw::broadcast_f32(),
+            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::strict_affine_u4_dequantize(),
+            IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32(),
+            IndexRealizationLaw::staged_root_mean_square_scale_f32(),
+        ] {
+            let mut encoded = Vec::new();
+            old.encode(&mut encoded);
+            assert_ne!(encoded, softmax);
+            assert!((1..=10).contains(encoded.first().unwrap()));
+        }
+        // Its own payload separates two softmax rows differing in the one field
+        // the template carries.
+        let mut moved_axes = Vec::new();
+        IndexRealizationLaw::StagedSoftmaxF32 {
+            axes_attribute: AttributeFieldId::new(SOFTMAX_REDUCED_AXES_ATTRIBUTE.get() + 1),
+        }
+        .encode(&mut moved_axes);
+        assert_ne!(moved_axes, softmax);
+        // The reduced-axes identifier the normalization's record uses happens to
+        // be a different number, and that coincidence is not what separates the
+        // two rows: the tag is.
+        let mut normalization = Vec::new();
+        IndexRealizationLaw::staged_root_mean_square_scale_f32().encode(&mut normalization);
+        assert_ne!(normalization.first(), softmax.first());
+    }
+
+    /// A staged law cannot answer the single-region realization API.
+    #[test]
+    fn the_softmax_law_refuses_the_single_region_realization() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        assert_eq!(
+            IndexRealizationLaw::staged_softmax_f32()
+                .realize(&softmax_subject(&[3, 4], 1), &scalars)
+                .unwrap_err()
+                .rule(),
+            "staged-law-requires-region-sequence"
+        );
+    }
+
+    /// Derives one `tiler::strict-serial-sum-f32@1` occurrence's subject.
+    ///
+    /// A one-operand `f32` occurrence whose result *drops* the reduced axis,
+    /// which is what makes it the shape-rule counterexample the softmax law must
+    /// refuse — and the family whose fold has an identity to seed an empty
+    /// domain with.
+    fn serial_sum_subject(dims: &[u64], axis: u32) -> IndexRefinementSubject {
+        let shape = Shape::try_new(dims.iter().copied().map(Extent::new).collect::<Vec<_>>())
+            .expect("the test shape is canonical");
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let value = program
+            .input_resolved(InputKey::new("value").unwrap(), shape, F32::resolved_type())
+            .unwrap();
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            REDUCTION_AXES_ATTRIBUTE,
+            CanonicalValue::sequence([CanonicalValue::unsigned_u32(axis)]).unwrap(),
+        )])
+        .unwrap();
+        let result = program
+            .apply(
+                crate::semantic::strict_serial_sum_f32_op(),
+                attributes,
+                &[value],
+            )
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("total").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap()
     }
 
     #[test]

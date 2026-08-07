@@ -2426,6 +2426,15 @@ impl SemanticRegistryProvider for StandardSemantics {
                 super::rms_norm::rms_norm_f32_op(),
                 IndexRealizationLaw::staged_root_mean_square_scale_f32(),
             ),
+            // The second registered row whose realization is a region sequence,
+            // and the first whose chain is four stages and hands a value across
+            // a stage that publishes something else. It moves the sidecar — and
+            // therefore `FrozenIndexRealizationLawRegistry`'s identity — for the
+            // reason the row above states.
+            (
+                super::softmax::softmax_f32_op(),
+                IndexRealizationLaw::staged_softmax_f32(),
+            ),
             // The `bf16` family's three rows. They reuse the constant and
             // pointwise templates rather than introducing law variants, so no
             // encoding tag is added and every existing row's payload is
