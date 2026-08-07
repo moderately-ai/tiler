@@ -970,7 +970,16 @@ impl OperandBinding {
     }
 }
 
-/// One ordered result bound to its verified output root.
+/// One ordered result bound to one verified output root that writes it.
+///
+/// A result whose output is written whole by a single root has exactly one
+/// binding, which is every realization the closed law vocabulary produces. A
+/// result whose output is *partitioned* — several roots, each total over its own
+/// declared partition and the partitions jointly disjoint and covering — has one
+/// binding per member, all carrying the same [`Self::result`] and
+/// [`Self::output_tensor`] and each carrying its own write. So this is one
+/// binding per root and not one per result, the same way an
+/// [`OperandBinding`] is one per reading stage and not one per operand.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResultBinding {
     result: usize,
@@ -981,6 +990,10 @@ pub struct ResultBinding {
 
 impl ResultBinding {
     /// Returns the ordered result position.
+    ///
+    /// Repeated across the bindings of a partitioned result, which is what
+    /// groups its members: two bindings agreeing here name two writes of one
+    /// semantic result.
     #[must_use]
     pub const fn result(&self) -> usize {
         self.result
@@ -990,7 +1003,12 @@ impl ResultBinding {
     pub const fn output_tensor(&self) -> VerifiedTensorId {
         self.output_tensor
     }
-    /// Returns the complete unique write.
+    /// Returns this root's proved write.
+    ///
+    /// It is total over the whole output when the result has one binding, and
+    /// total over this member's declared partition when it has several; the
+    /// region's own [`WriteOwnershipProofView`](super::WriteOwnershipProofView) says
+    /// which, and refinement admits no root carrying neither.
     #[must_use]
     pub const fn write_access(&self) -> VerifiedTensorAccessId {
         self.write_access
@@ -1421,6 +1439,10 @@ impl IndexRefinementReceipt {
         &self.operand_bindings
     }
     /// Returns ordered result-to-output bindings.
+    ///
+    /// A result whose output is partitioned contributes one binding per
+    /// partition member, so this is one entry per output root and a caller that
+    /// needs one answer per result groups by [`ResultBinding::result`].
     #[must_use]
     pub fn result_bindings(&self) -> &[ResultBinding] {
         &self.result_bindings
@@ -1523,7 +1545,10 @@ impl PendingIndexRefinementReceipt {
     pub fn operand_bindings(&self) -> &[OperandBinding] {
         &self.operand_bindings
     }
-    /// Returns ordered result bindings.
+    /// Returns ordered result bindings, one per output root.
+    ///
+    /// A partitioned result contributes one binding per member; see
+    /// [`IndexRefinementReceipt::result_bindings`].
     #[must_use]
     pub fn result_bindings(&self) -> &[ResultBinding] {
         &self.result_bindings
@@ -2833,7 +2858,10 @@ pub enum IndexRefinementVerificationError {
     },
     /// Region output count disagrees with semantic results.
     ResultArity {
-        /// Number of verified output roots.
+        /// Number of distinct verified output tensors the region's roots write.
+        ///
+        /// Distinct *tensors* rather than roots, because a partitioned output is
+        /// several roots over one of them and answers one semantic result.
         region_outputs: usize,
         /// Number of semantic results.
         results: usize,
@@ -3287,49 +3315,97 @@ fn count_operand_bindings(
     Ok(bindings)
 }
 
+/// Binds each ordered semantic result to every output root that writes it.
+///
+/// `region.outputs()` counts *roots*, and the partitioned write-ownership
+/// contract admits several roots over one output tensor, each total over its own
+/// declared partition of it. So the ordered population a result is matched
+/// against is the region's distinct output *tensors*, and the roots writing one
+/// of them are that result's partition members. Comparing root count against
+/// result count instead would refuse a well-formed partitioned region as an
+/// arity mismatch, which is a refusal for the wrong reason: the write-ownership
+/// obligation such a region owes is discharged by
+/// [`WriteOwnershipProofView::PartitionMember`](super::WriteOwnershipProofView),
+/// not by there being one root.
+///
+/// **Every member gets its own binding, and the result position is what
+/// repeats.** This is the shape [`bind_operands`] already gives the same
+/// question on the operand side, where one occurrence input read by two stages
+/// produces one binding per reading stage. The alternative — one binding
+/// carrying a set of accesses — would state the same association while changing
+/// a public type no consumer reads per-root, and picking one member to name
+/// would make the receipt a claim about a write the region does not make alone.
+///
+/// A result owning exactly one root binds to exactly what it bound to before
+/// partitions existed: first-encounter tensor order is root order, each group
+/// has one member, and the binding's four fields are unchanged. That is what
+/// keeps every pinned executable-coverage identity — which encodes these
+/// bindings — byte-identical.
 fn bind_results(
     occurrence: &IndexRefinementSubject,
     region: &VerifiedIndexRegion,
 ) -> Result<Vec<ResultBinding>, IndexRefinementVerificationError> {
     let roots = region.outputs().collect::<Vec<_>>();
-    if roots.len() != occurrence.results.len() {
+    // Distinct output tensors in first-encounter order, each with the ordinals
+    // of the roots writing it. Roots over one tensor need not be authored
+    // adjacently, so membership is resolved by tensor rather than by run.
+    let mut outputs: Vec<VerifiedTensorId> = Vec::new();
+    let mut members: Vec<Vec<usize>> = Vec::new();
+    for (ordinal, root) in roots.iter().enumerate() {
+        let tensor = region.access(root.access())?.tensor();
+        if let Some(position) = outputs.iter().position(|bound| *bound == tensor) {
+            members[position].push(ordinal);
+        } else {
+            outputs.push(tensor);
+            members.push(vec![ordinal]);
+        }
+    }
+    if outputs.len() != occurrence.results.len() {
         return Err(IndexRefinementVerificationError::ResultArity {
-            region_outputs: roots.len(),
+            region_outputs: outputs.len(),
             results: occurrence.results.len(),
         });
     }
-    roots
-        .iter()
-        .zip(&occurrence.results)
-        .enumerate()
-        .map(|(position, (root, result))| {
-            let access = region.access(root.access())?;
+    // Bounded by the region's own `MAX_OUTPUT_ROOTS` ceiling, which is why this
+    // population needs no separate receipt limit the way alias-expanded operand
+    // bindings do.
+    let mut bindings = Vec::with_capacity(roots.len());
+    for (position, (tensor, result)) in outputs.iter().zip(&occurrence.results).enumerate() {
+        // Every member owns its own write before the shared boundary is
+        // compared, so a partition with an unproved member is reported as the
+        // incomplete write it is rather than as a boundary disagreement.
+        for ordinal in &members[position] {
+            let access = region.access(roots[*ordinal].access())?;
             if access.write_ownership_proof().is_none() {
                 return Err(IndexRefinementVerificationError::IncompleteWrite { position });
             }
-            let output = region.tensor(access.tensor())?;
-            let shape = output
-                .shape()
-                .as_static()
-                .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
-            if output.role() != TensorRole::Output
-                || output.value_type() != &result.value_type
-                || shape != &result.shape
-            {
-                return Err(IndexRefinementVerificationError::ResultInterface { position });
-            }
+        }
+        let output = region.tensor(*tensor)?;
+        let shape = output
+            .shape()
+            .as_static()
+            .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
+        if output.role() != TensorRole::Output
+            || output.value_type() != &result.value_type
+            || shape != &result.shape
+        {
+            return Err(IndexRefinementVerificationError::ResultInterface { position });
+        }
+        for ordinal in &members[position] {
+            let root = roots[*ordinal];
             let written = region.scalar_value(root.value())?;
             if written.value_type() != &result.value_type {
                 return Err(IndexRefinementVerificationError::ResultValueType { position });
             }
-            Ok(ResultBinding {
+            bindings.push(ResultBinding {
                 result: position,
                 output_tensor: output.id(),
                 write_access: root.access(),
                 written_value: root.value(),
-            })
-        })
-        .collect()
+            });
+        }
+    }
+    Ok(bindings)
 }
 
 fn mint_receipt(
@@ -3483,6 +3559,11 @@ fn encode_executable_coverage_identity(
             }
         }
     }
+    // One record per output root, so a partitioned result writes one record per
+    // member and its grouping is recoverable from the repeated result ordinal.
+    // The count is the record count rather than the result count, which is what
+    // keeps the run self-delimiting without a second nested length — and what
+    // makes a result owning one root write exactly the bytes it always wrote.
     push_len(&mut bytes, result_bindings.len());
     for binding in result_bindings {
         push_len(&mut bytes, binding.result);
@@ -6462,5 +6543,196 @@ mod tests {
                 limit: MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
             })
         );
+    }
+
+    /// Derives a one-result subject whose result boundary is `[extent]`, so a
+    /// region writing that boundary — whole or in pieces — can be bound against
+    /// a real occurrence rather than a hand-assembled one.
+    fn partitioned_subject(extent: u64) -> IndexRefinementSubject {
+        let mut semantic = SemanticRegistryBuilder::standard().unwrap();
+        semantic
+            .register_provider(&ReachedSemanticProvider(1))
+            .unwrap();
+        let semantic = semantic.freeze().unwrap();
+        let mut program = SemanticProgramBuilder::try_new(semantic).unwrap();
+        let input = program
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([extent]))
+            .unwrap();
+        let result = program
+            .apply(
+                reached_semantic_operation(),
+                OperationAttributes::empty(),
+                &[input.erase(), input.erase()],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+        program
+            .output_resolved(OutputKey::new("output").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            test_contract(),
+        )
+        .unwrap()
+    }
+
+    /// Builds one f32 output of `[boundary]` written by `roots`, each
+    /// `(extent, offset)` iterating its own parallel dimension and writing
+    /// `d + offset` — the contiguous unequal partition the write-ownership
+    /// contract admits. A single root spanning the whole boundary is the
+    /// degenerate case and takes the whole-boundary ownership path.
+    fn partitioned_region(boundary: u64, roots: &[(u64, i128)]) -> VerifiedIndexRegion {
+        let mut builder = IndexRegionBuilder::new(FrozenScalarRegistry::standard().unwrap())
+            .expect("the fixture receives a fresh builder identity");
+        let value_type = f32_type();
+        let shape = Shape::from_dims([boundary]);
+        let input = builder
+            .tensor(TensorRole::Input, value_type.clone(), shape.clone())
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, value_type, shape)
+            .unwrap();
+        for (extent, offset) in roots {
+            let dimension = builder
+                .dimension(DomainRole::Parallel, Extent::new(*extent))
+                .unwrap();
+            let expression = builder.dimension_expr(dimension).unwrap();
+            let coordinate = builder
+                .linear_combination((*offset).into(), &[(1_i128.into(), expression)])
+                .unwrap();
+            let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+            let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+            builder.output(write, value).unwrap();
+        }
+        builder.build().unwrap()
+    }
+
+    fn ownership(
+        region: &VerifiedIndexRegion,
+        binding: &ResultBinding,
+    ) -> Option<super::super::WriteOwnershipProofView> {
+        region
+            .access(binding.write_access())
+            .unwrap()
+            .write_ownership_proof()
+    }
+
+    /// The refusal this ticket exists to remove: three roots into eight is one
+    /// well-formed output, and every member of it is named by the binding rather
+    /// than one of them being chosen.
+    #[test]
+    fn a_partitioned_result_binds_one_binding_per_root() {
+        let subject = partitioned_subject(8);
+        let region = partitioned_region(8, &[(3, 0), (5, 3)]);
+        assert_eq!(region.outputs().len(), 2, "the fixture is partitioned");
+
+        let bindings = bind_results(&subject, &region).expect("a partitioned output binds");
+        assert_eq!(bindings.len(), 2);
+        assert!(
+            bindings.iter().all(|binding| binding.result() == 0),
+            "both members answer the one semantic result: {bindings:?}"
+        );
+        assert_eq!(bindings[0].output_tensor(), bindings[1].output_tensor());
+        assert_ne!(
+            bindings[0].write_access(),
+            bindings[1].write_access(),
+            "each member carries its own write rather than a shared one"
+        );
+
+        // What makes the receipt justified for the whole output: every named
+        // write carries partition-relative totality, and the joint obligation
+        // behind it was discharged by the region verifier.
+        for binding in &bindings {
+            assert!(
+                matches!(
+                    ownership(&region, binding),
+                    Some(super::super::WriteOwnershipProofView::PartitionMember { .. })
+                ),
+                "member {binding:?} owns its partition"
+            );
+        }
+    }
+
+    /// The sole-root binding is what it was before grouping existed: one entry,
+    /// result zero, that root's own write and value. This is the case every
+    /// pinned executable-coverage identity encodes, so it must not move.
+    #[test]
+    fn a_sole_root_binds_exactly_one_result_to_its_whole_output() {
+        let subject = partitioned_subject(8);
+        let region = partitioned_region(8, &[(8, 0)]);
+        let root = region.outputs().next().expect("the region has one root");
+
+        let bindings = bind_results(&subject, &region).expect("a whole-output write binds");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].result(), 0);
+        assert_eq!(bindings[0].write_access(), root.access());
+        assert_eq!(bindings[0].written_value(), root.value());
+        assert!(matches!(
+            ownership(&region, &bindings[0]),
+            Some(super::super::WriteOwnershipProofView::CoordinatePermutation)
+        ));
+    }
+
+    /// Grouping is by output *tensor*, so two roots writing two genuinely
+    /// different outputs remain two outputs and still disagree with one result.
+    #[test]
+    fn two_distinct_output_tensors_still_disagree_with_one_result() {
+        let subject = partitioned_subject(8);
+        let mut builder = IndexRegionBuilder::new(FrozenScalarRegistry::standard().unwrap())
+            .expect("the fixture receives a fresh builder identity");
+        let value_type = f32_type();
+        let shape = Shape::from_dims([8]);
+        let input = builder
+            .tensor(TensorRole::Input, value_type.clone(), shape.clone())
+            .unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(8))
+            .unwrap();
+        let coordinate = builder.dimension_expr(dimension).unwrap();
+        let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+        for _ in 0..2 {
+            let output = builder
+                .tensor(TensorRole::Output, value_type.clone(), shape.clone())
+                .unwrap();
+            let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+            builder.output(write, value).unwrap();
+        }
+        let region = builder.build().unwrap();
+
+        assert_eq!(
+            bind_results(&subject, &region),
+            Err(IndexRefinementVerificationError::ResultArity {
+                region_outputs: 2,
+                results: 1,
+            })
+        );
+    }
+
+    /// Every member reaches executable coverage, so a binding that named only
+    /// one root of a partition would mint different bytes — which is why the
+    /// receipt cannot quietly drop a member.
+    #[test]
+    fn dropping_one_partition_member_changes_executable_coverage() {
+        let (_, resolution, realization, receipt) = reached_semantic_fixture(1);
+        let subject = partitioned_subject(8);
+        let region = partitioned_region(8, &[(3, 0), (5, 3)]);
+        let bindings = bind_results(&subject, &region).expect("a partitioned output binds");
+
+        let encode = |results: &[ResultBinding]| {
+            encode_executable_coverage_identity(
+                &subject,
+                &resolution,
+                &realization,
+                &receipt.scalar_authorities(),
+                receipt.operand_bindings(),
+                results,
+                &[],
+            )
+        };
+        assert_ne!(encode(&bindings), encode(&bindings[..1]));
+        assert_ne!(encode(&bindings), encode(&bindings[1..]));
     }
 }
