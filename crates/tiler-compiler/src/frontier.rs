@@ -4587,6 +4587,261 @@ mod tests {
         );
     }
 
+    /// Two ordered named outputs over disjoint declared inputs of different
+    /// extents.
+    ///
+    /// `doubled = a + a` over `[2, 3]` and `halved = b + b` over `[4]`. Neither
+    /// walk reaches the other's declared input, and the two element counts
+    /// differ, so a resolution that answered from the wrong output — or from
+    /// either output indiscriminately — cannot pass here by coincidence.
+    fn disjoint_two_output_request() -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let first = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let second = builder
+            .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let doubled = F32Add::apply(&mut builder, first, first).unwrap();
+        let halved = F32Add::apply(&mut builder, second, second).unwrap();
+        builder
+            .output(OutputKey::new("doubled").unwrap(), doubled)
+            .unwrap();
+        builder
+            .output(OutputKey::new("halved").unwrap(), halved)
+            .unwrap();
+        let program = builder.build().unwrap();
+        verify_planned_request(CompilationRequest::governed(&program))
+            .unwrap()
+            .for_target(0)
+            .unwrap()
+    }
+
+    /// One output whose epilogue reads a declared input its producer never
+    /// folds.
+    ///
+    /// `scaled = sum(a, axis 1) * b` over `a: [2, 3]` and `b: [2]`. The fold
+    /// iterates the contributor domain of six elements and reads only `a`; the
+    /// epilogue iterates the published domain of two and reads only `b` beside
+    /// the staged value. Ordinal `1` therefore has exactly one reading region,
+    /// and it is inside a single recognized output — so the disagreement a
+    /// volunteering producer half causes is not one the program-scoped fold
+    /// could filter out.
+    fn epilogue_reading_an_unfolded_input_request() -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let folded = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let scale = builder
+            .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2]))
+            .unwrap();
+        let reduced = StrictSerialF32Sum::apply(&mut builder, folded, [Axis::new(1)]).unwrap();
+        let scaled = F32Multiply::apply(&mut builder, reduced, scale).unwrap();
+        builder
+            .output(OutputKey::new("scaled").unwrap(), scaled)
+            .unwrap();
+        let program = builder.build().unwrap();
+        verify_planned_request(CompilationRequest::governed(&program))
+            .unwrap()
+            .for_target(0)
+            .unwrap()
+    }
+
+    /// Two ordered named outputs reading one declared input at two domains.
+    ///
+    /// `doubled = w + w` iterates `[2]` and `scaled = a * broadcast(w)`
+    /// iterates `[2, 2]`, so declared input `0` is read by two regions that
+    /// iterate different domains while declared input `1` is read only by the
+    /// widening one. A binding names the tensor *role*, so nothing on it says
+    /// which of the two regions a call over ordinal `0` means.
+    ///
+    /// The widening read is what makes the two domains differ at all: a dense
+    /// read binds its region's domain to the tensor's own shape, so two outputs
+    /// reading one input densely always agree.
+    ///
+    /// **Measurement boundary.** The disagreement this fixture presents is
+    /// between two *domains*, `2` and `4`, and declared input `0` holds two
+    /// elements in both — the pointwise arm of
+    /// `NormalizedOutput::input_elements_at` answers the reading region's
+    /// domain rather than the tensor's own count for a widening read. That is a
+    /// separate defect, owned by
+    /// `answer-input-element-counts-as-the-declared-tensors-own-count`, and
+    /// settling it will make these two outputs agree — so that ticket has to
+    /// re-found this refusal on a fixture whose disagreement survives, not just
+    /// re-run it.
+    fn shared_input_two_domain_request() -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let weight = builder
+            .input::<F32>(InputKey::new("w").unwrap(), Shape::from_dims([2]))
+            .unwrap();
+        let activations = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let doubled = F32Add::apply(&mut builder, weight, weight).unwrap();
+        let mapping = tiler_ir::semantic::BroadcastAxisMapping::new(
+            [
+                tiler_ir::shape::Extent::new(2),
+                tiler_ir::shape::Extent::new(2),
+            ],
+            [
+                tiler_ir::semantic::BroadcastAxisSource::Replicate,
+                tiler_ir::semantic::BroadcastAxisSource::FromOperand(Axis::new(0)),
+            ],
+        )
+        .expect("one replicated axis over a rank-one operand is an admitted relation");
+        let widened = tiler_ir::semantic::F32Broadcast::apply(&mut builder, &mapping, weight)
+            .expect("the standard registry admits the broadcast family");
+        let scaled = F32Multiply::apply(&mut builder, activations, widened).unwrap();
+        builder
+            .output(OutputKey::new("doubled").unwrap(), doubled)
+            .unwrap();
+        builder
+            .output(OutputKey::new("scaled").unwrap(), scaled)
+            .unwrap();
+        let program = builder.build().unwrap();
+        verify_planned_request(CompilationRequest::governed(&program))
+            .unwrap()
+            .for_target(0)
+            .unwrap()
+    }
+
+    /// A bound ordinal resolves from the output that reads it, not from a
+    /// sibling that never loads it.
+    ///
+    /// **The false negative this closes.** `NormalizedOutput::input_elements_at`
+    /// answered for every ordinal below the *program's* declared arity in its
+    /// serial-sum and pointwise arms, because `input_keys` is the whole
+    /// program's declaration list. An output iterating one domain therefore
+    /// volunteered its own count for an ordinal only its sibling loads, the
+    /// agreement fold saw two unequal counts, and a scaling the reading output
+    /// sizes exactly was refused as `UnknownParameter`.
+    ///
+    /// **Three perturbations: two authorities carry the admission and one
+    /// carries the refusal.** Watched failing once each before the restoration:
+    ///
+    /// - Dropping the `reads_declared_input` gate from the serial-sum and
+    ///   pointwise arms of `NormalizedOutput::input_elements_at`, back to
+    ///   `(ordinal < normalized.input_keys.len()).then_some(…)`, made the
+    ///   epilogue fixture's ordinal `1` report `Err(UnknownParameter)` instead
+    ///   of `Ok(2)`: the fold half volunteered its six-element contributor
+    ///   domain for an input it never reads, and the chain arm read the two
+    ///   halves as a disagreement. The disjoint fixture is deliberately *not*
+    ///   what observes this, and that is the point of having both — the
+    ///   program-scoped filter below already excludes a non-reading output
+    ///   there, so nothing asks the arm.
+    /// - Dropping the `reads_declared_input` filter from
+    ///   `NormalizedProgram::agreed_input_elements_at` made the disjoint
+    ///   fixture's two assertions report `Err(UnknownParameter)` instead of
+    ///   `Ok(6)` and `Ok(4)`: a silent output's `None` is a value the agreement
+    ///   fold compares rather than an abstention.
+    /// - Replacing that fold's agreement with the first reading claimant's
+    ///   answer made the shared fixture's ordinal `0` report `Ok(2)` instead of
+    ///   `Err(UnknownParameter)` — which is the widening overshooting into the
+    ///   confidently-wrong verdict, and the reason the refusing neighbour is
+    ///   here rather than only the two admissions.
+    ///
+    /// The last fixture is the neighbour that must keep refusing, and it pairs
+    /// the two findings on one program: ordinal `0` is read by two regions at
+    /// two domains and has no single count, while ordinal `1` is read by
+    /// exactly one of them and resolves. A fix that answered from the first
+    /// claimant rather than requiring agreement would size a call against a
+    /// domain the other region does not iterate, and this says no to it.
+    #[test]
+    fn a_bound_ordinal_resolves_from_the_output_that_reads_it() {
+        use super::{WorkResolutionError, WorkScaling, resolve_work_items};
+
+        let bindings = [
+            (
+                "x",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            ),
+            (
+                "y",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::new(1),
+                },
+            ),
+            (
+                "z",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::new(2),
+                },
+            ),
+        ];
+        let resolve = |name, request: &VerifiedTargetRequest| {
+            resolve_work_items(
+                WorkScaling::PerElementOf(name),
+                &bindings,
+                &coverless_subject(),
+                request,
+            )
+        };
+
+        let disjoint = disjoint_two_output_request();
+        assert_eq!(
+            disjoint.normalized().outputs().len(),
+            2,
+            "the disjoint fixture must present two recognized outputs to disagree",
+        );
+        assert_eq!(
+            resolve("x", &disjoint),
+            Ok(6),
+            "the only output reading ordinal 0 sizes it",
+        );
+        assert_eq!(
+            resolve("y", &disjoint),
+            Ok(4),
+            "the only output reading ordinal 1 sizes it",
+        );
+        // An ordinal no declared input occupies still refuses, so the widening
+        // is to *read* ordinals rather than to every ordinal.
+        assert_eq!(
+            resolve("z", &disjoint),
+            Err(WorkResolutionError::UnknownParameter("z")),
+            "an ordinal no declared input occupies produced a count",
+        );
+
+        // One recognized output, two regions, and one ordinal each reads. The
+        // producer's own contributor domain is six and the epilogue's published
+        // domain is two, so a producer half answering for an ordinal it never
+        // folds contradicts the half that does read it.
+        let chained = epilogue_reading_an_unfolded_input_request();
+        assert_eq!(
+            chained.normalized().outputs().len(),
+            1,
+            "the epilogue fixture must present one recognized output, so nothing is filtered",
+        );
+        assert_eq!(
+            resolve("x", &chained),
+            Ok(6),
+            "the fold reads ordinal 0 at its contributor domain",
+        );
+        assert_eq!(
+            resolve("y", &chained),
+            Ok(2),
+            "the epilogue reads ordinal 1 at its published domain",
+        );
+
+        let shared = shared_input_two_domain_request();
+        assert_eq!(
+            shared.normalized().outputs().len(),
+            2,
+            "the shared fixture must present two recognized outputs to disagree",
+        );
+        assert_eq!(
+            resolve("x", &shared),
+            Err(WorkResolutionError::UnknownParameter("x")),
+            "one declared input read at two domains has no single count",
+        );
+        assert_eq!(
+            resolve("y", &shared),
+            Ok(4),
+            "the input only the widening output reads still resolves",
+        );
+    }
+
     /// A region subject stated outside any cover, reading no intermediate.
     fn coverless_subject() -> FrontierRegionSubject {
         FrontierRegionSubject::new(

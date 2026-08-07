@@ -1633,43 +1633,73 @@ impl NormalizedOutput {
         }
     }
 
-    /// Returns the element count of one declared input tensor.
+    /// Returns the element count of one declared input tensor this output
+    /// reads.
     ///
     /// Per ordinal rather than one shared count, because a contraction's two
-    /// operands generally have different extents. The two single-shape
-    /// strategies answer the same for every ordinal they declare and `None` for
-    /// one they do not, so a caller that names an ordinal no input occupies gets
-    /// a refusal instead of another tensor's size.
+    /// operands generally have different extents. Every arm answers only for an
+    /// ordinal *this* output reads and `None` for one it does not, so a caller
+    /// that names an ordinal this output never loads gets a refusal instead of
+    /// another tensor's size.
+    ///
+    /// **The arms do not yet agree about what they count, and the divergence is
+    /// recorded here rather than papered over.** `Contraction` and `Staged`
+    /// answer the operand tensor's own count; the two single-shape arms answer
+    /// the region's iteration domain. Those coincide for a dense read, because
+    /// a dense read binds the region's domain to the tensor's shape, and they
+    /// diverge exactly for a widening structural read — `a * broadcast(w)` over
+    /// a `[2]` weight answers `4` for an ordinal holding two elements.
+    /// [`answer-input-element-counts-as-the-declared-tensors-own-count`](../../../tickets/answer-input-element-counts-as-the-declared-tensors-own-count.md)
+    /// owns settling it; this accessor's gate is about *which* ordinals answer
+    /// and deliberately moves no count.
+    ///
+    /// **The two single-shape arms ask [`Self::reads_declared_input`] rather
+    /// than the declared arity, and that is a per-read truth rather than a
+    /// per-program one.** `input_keys` is the whole program's declaration list,
+    /// so a bound on its length says nothing about which of those inputs this
+    /// output's walk reached; the premise that every declared input of a reduced
+    /// program is read at the contributor domain held only while every walk had
+    /// to read every declared input. Since a walk may read a subset, an output
+    /// iterating one domain would otherwise volunteer its own count for an
+    /// ordinal only a sibling loads, and
+    /// [`NormalizedProgram::agreed_input_elements_at`] would read that
+    /// volunteered count as a disagreement and refuse a call the reading output
+    /// sizes exactly. The two siblings on this type,
+    /// [`Self::max_input_elements`] and [`Self::reads_declared_input`], already
+    /// read the recognized read lists; this is the third.
     pub(crate) fn input_elements_at(&self, ordinal: InputOrdinal) -> Option<u64> {
-        let ordinal = usize::try_from(ordinal.get()).ok()?;
+        let ordinal = ordinal.get();
         match self {
-            // Every declared input of a reduced program is read at the
-            // contributor domain, which is the one shape its prologue governs.
-            Self::SerialSum(normalized) => {
-                (ordinal < normalized.input_keys.len()).then_some(normalized.input_elements)
-            }
-            Self::Pointwise(normalized) => {
-                (ordinal < normalized.input_keys.len()).then_some(normalized.elements)
-            }
-            Self::Contraction(normalized) => normalized.input_elements.get(ordinal).copied(),
+            // The contributor domain: the one shape a prologue region governs,
+            // and the domain a prologue-less fold's own contributor read
+            // addresses. Which declared inputs those regions read is the
+            // recognized read lists' answer, which is what the gate asks.
+            Self::SerialSum(normalized) => self
+                .reads_declared_input(ordinal)
+                .then_some(normalized.input_elements),
+            Self::Pointwise(normalized) => self
+                .reads_declared_input(ordinal)
+                .then_some(normalized.elements),
+            // A contraction's region binds one access per declared input
+            // ordinal, so the operand run is both the read list and the count
+            // list and no separate gate is needed.
+            Self::Contraction(normalized) => usize::try_from(ordinal)
+                .ok()
+                .and_then(|ordinal| normalized.input_elements.get(ordinal).copied()),
             // A chain reads a declared input from its producer, from its
             // epilogue, or from both — and the two read it at different domains
             // whenever the producer folds. Agreement or nothing, for the reason
             // [`NormalizedProgram::agreed_input_elements_at`] states: this count
             // scales a call over the tensor bound to the ordinal, and answering
             // with either side would size a call against a domain one of the two
-            // regions does not iterate.
+            // regions does not iterate. Neither half answering is the arm's own
+            // spelling of "this chain does not read that ordinal".
             Self::Epilogue(chain) => {
-                let produced = chain
-                    .producer
-                    .input_elements_at(InputOrdinal::new(u32::try_from(ordinal).ok()?));
+                let produced = chain.producer.input_elements_at(InputOrdinal::new(ordinal));
                 let consumed = chain
                     .reads
                     .iter()
-                    .any(|(read, _)| {
-                        u32::try_from(ordinal)
-                            .is_ok_and(|ordinal| *read == EpilogueRead::Input(ordinal))
-                    })
+                    .any(|(read, _)| *read == EpilogueRead::Input(ordinal))
                     .then_some(chain.elements);
                 match (produced, consumed) {
                     (Some(produced), Some(consumed)) if produced != consumed => None,
@@ -1678,22 +1708,20 @@ impl NormalizedOutput {
                 }
             }
             // Every operand of a staged occurrence is a declared input, so the
-            // count is the operand's own. Agreement or nothing when one declared
-            // input supplies two operands, for the reason
+            // count is the operand's own and the operand run is the read list.
+            // Agreement or nothing when one declared input supplies two
+            // operands, for the reason
             // [`NormalizedProgram::agreed_input_elements_at`] states: two
             // operand positions reading one tensor at different extents give a
             // work-scaling caller no single answer.
-            Self::Staged(normalized) => {
-                let ordinal = u32::try_from(ordinal).ok()?;
-                agreed(
-                    normalized
-                        .operand_inputs
-                        .iter()
-                        .zip(&normalized.operand_elements)
-                        .filter(|(operand, _)| **operand == ordinal)
-                        .map(|(_, elements)| *elements),
-                )
-            }
+            Self::Staged(normalized) => agreed(
+                normalized
+                    .operand_inputs
+                    .iter()
+                    .zip(&normalized.operand_elements)
+                    .filter(|(operand, _)| **operand == ordinal)
+                    .map(|(_, elements)| *elements),
+            ),
         }
     }
 
@@ -1937,7 +1965,7 @@ impl NormalizedProgram {
     }
 
     /// Returns the element count of one declared input tensor, when every
-    /// recognized output agrees on it.
+    /// recognized output that *reads* it agrees on the count.
     ///
     /// **Agreement or nothing, because the caller is sizing work.** The count
     /// scales a call over the tensor bound to that ordinal, and two outputs may
@@ -1948,13 +1976,30 @@ impl NormalizedProgram {
     /// resolution exists to prevent. A disagreement therefore yields `None` and
     /// the caller refuses, exactly as it does for an ordinal no input occupies.
     ///
-    /// The two `None`s are flattened deliberately: "the outputs disagree" and
-    /// "no output declares that ordinal" are different findings, and this
-    /// accessor's caller acts identically on both — it refuses.
+    /// **The fold ranges over the reading outputs, and it has to.** An output
+    /// that never loads the ordinal has nothing to say about it, but [`agreed`]
+    /// compares `Option`s, so a silent output's `None` is a *value* that
+    /// disagrees with every count rather than an abstention — and a program
+    /// whose two outputs iterate disjoint inputs would refuse every ordinal,
+    /// each of which exactly one output sizes. Filtering them out before the
+    /// fold is what makes silence cost nothing.
+    ///
+    /// The filter asks [`NormalizedOutput::reads_declared_input`] rather than
+    /// whether the output produced a count, and the difference is load-bearing:
+    /// an output that *does* read the ordinal and still cannot name one domain
+    /// for it — an epilogue chain whose producer and epilogue read it at two
+    /// domains — answers `None`, and that is a genuine disagreement the fold
+    /// must keep. Filtering on the answer would drop exactly that refusal and
+    /// let a sibling's count stand for a chain that has no single one.
+    ///
+    /// The two `None`s are flattened deliberately: "the reading outputs
+    /// disagree" and "no output reads that ordinal" are different findings, and
+    /// this accessor's caller acts identically on both — it refuses.
     pub(crate) fn agreed_input_elements_at(&self, ordinal: InputOrdinal) -> Option<u64> {
         agreed(
             self.outputs
                 .iter()
+                .filter(|output| output.reads_declared_input(ordinal.get()))
                 .map(|output| output.input_elements_at(ordinal)),
         )
         .flatten()
