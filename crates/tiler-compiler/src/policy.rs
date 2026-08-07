@@ -1144,10 +1144,43 @@ mod tests {
     /// `CoordinateRelation` fusion role in `crate::fusion_legality`, which is no
     /// more in tension with its place here than the concatenate's role is, and
     /// for the identical reason.
+    /// `tiler::gather-f32@1` is here for a reason none of the four above share,
+    /// and it is the informative entry in this list. The BF16 rows are unplanned
+    /// because no target has been asked about their format; the concatenate and
+    /// the selection because they perform no arithmetic, so there is no dimension
+    /// a capability row could list. This family performs no arithmetic either —
+    /// its registered `GATHER_FACT_VALUE_BEHAVIOUR` says so in canonical
+    /// attribute bytes — so that reason applies to it as well. What is different
+    /// is *why nothing physical realizes it*, and the difference is not a gap
+    /// waiting on an emission ticket.
+    ///
+    /// The other four state coordinate relations that are functions of the
+    /// iteration coordinate, so the region vocabulary could spell them and in two
+    /// cases now does. This one's coordinate is an element of a second operand.
+    /// `AccessData` carries one tensor ordinal and `IndexNode` has no variant
+    /// that reads tensor data, so no index region can express the access at all,
+    /// and admitting a form that could would weaken the verifier for the
+    /// direct-access language — which is exactly the condition ADR 0046's
+    /// consequences attach to indirect operations remaining addable. So the entry
+    /// here is not "not yet planned" but "planned by a route that does not exist
+    /// and whose admission is its own decision".
+    ///
+    /// It correspondingly holds **no** fusion role in `crate::fusion_legality`,
+    /// which is where it parts company with the concatenate and the selection.
+    /// Both of those took `CoordinateRelation`, whose contract is that it
+    /// discharges no obligation of its own because the one property it introduces
+    /// — aliasing reads — is the index verifier's, "where the alias contract
+    /// already admits aliasing reads and constrains writes". That sentence is
+    /// false of a gather: the index verifier cannot bound a coordinate it cannot
+    /// see, so classifying one would assert a discharge that nothing performs.
+    /// Left unclassified, `FusionNumericalCapabilities::classify` returns `None`
+    /// and `derive_member` yields no legality at all, which is the fail-closed
+    /// default and the honest one.
     const UNPLANNED_OPERATIONS: &[&str] = &[
         "tiler::add-bf16@1",
         "tiler::concatenate-f32@1",
         "tiler::constant-bf16@1",
+        "tiler::gather-f32@1",
         "tiler::multiply-bf16@1",
         "tiler::slice-f32@1",
     ];

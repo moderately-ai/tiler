@@ -520,6 +520,29 @@ pub enum ReferenceOperationError {
         /// The arithmetic type the conformance was resolved for.
         stated: ArithmeticType,
     },
+    /// A gather's index element named no coordinate of its gathered axis.
+    ///
+    /// A named variant rather than an [`Self::InvalidApplication`], and the
+    /// distinction is the whole of what the gather family's bounds rule is worth.
+    /// Every other refusal in this enum reports that an occurrence was malformed
+    /// — a property of the *graph*, decidable before any element is read. This
+    /// one reports that a well-formed occurrence was handed data outside the
+    /// range its own semantics admit, which is the one obligation the semantic
+    /// layer cannot discharge and which this evaluator is the named enforcement
+    /// boundary for. Collapsing it into `InvalidApplication` would make an
+    /// out-of-range token ID indistinguishable from a mis-declared operand, and
+    /// the caller could not tell which of the two it had.
+    ///
+    /// It reports and never repairs: no coordinate is clamped to the axis and
+    /// none is wrapped modulo its extent.
+    GatherIndexOutOfBounds {
+        /// Position of the offending element in the index operand, row-major.
+        position: usize,
+        /// The value it holds.
+        value: u64,
+        /// The gathered axis's extent, which it must stay below.
+        extent: u64,
+    },
 }
 
 impl fmt::Display for ReferenceOperationError {
@@ -562,6 +585,16 @@ impl fmt::Display for ReferenceOperationError {
                 "reference capability computes in {} and was handed a conformance resolved for {}",
                 capability.canonical_type_key(),
                 stated.canonical_type_key()
+            ),
+            Self::GatherIndexOutOfBounds {
+                position,
+                value,
+                extent,
+            } => write!(
+                formatter,
+                "gather index element {position} holds {value} and the gathered axis has extent \
+                 {extent}, so it names no coordinate; an out-of-range index is refused rather than \
+                 clamped to the axis or wrapped modulo its extent"
             ),
         }
     }

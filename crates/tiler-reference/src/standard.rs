@@ -49,9 +49,9 @@ use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
     CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS,
     MIN_CONCATENATE_OPERANDS, ProviderIdentity, TypeKey, add_f32_op, broadcast_f32_op,
-    concatenate_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_op,
-    silu_f32_op, slice_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
-    strict_tensor_contraction_f32_op,
+    concatenate_f32_op, constant_f32_op, gather_f32_op, gather_index_resolved_type,
+    multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, slice_f32_op, softmax_f32_op,
+    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 use super::bf16::register_standard_bf16;
@@ -68,7 +68,8 @@ use super::rms_norm::rms_norm_reference;
 use super::silu::silu_reference;
 use super::softmax::softmax_reference;
 use super::structural::{
-    BroadcastF32Reference, ConcatenateF32Reference, ReindexF32Reference, SliceF32Reference,
+    BroadcastF32Reference, ConcatenateF32Reference, GatherF32Reference, ReindexF32Reference,
+    SliceF32Reference,
 };
 use super::tensor::{FloatBitOrder, ReferenceElement, Tensor, TensorPayloadView};
 
@@ -205,6 +206,34 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
             revision,
             softmax_reference(),
         )?;
+        // The index operand's identity, and the first non-float value type this
+        // provider registers. It is registered *because* the gather below needs
+        // it and for no wider reason: a reference capability is keyed by an exact
+        // resolved signature, so an evaluator taking a `tiler::u32@1` operand
+        // cannot be registered until this crate can hold and validate one. It
+        // admits no operation of its own — no integer arithmetic is registered
+        // anywhere in this provider — so what it buys is a coordinate carrier
+        // rather than an integer profile.
+        registrar.register_value_type(
+            gather_index_resolved_type(),
+            revision,
+            Arc::new(U32ValueValidator),
+        )?;
+        // The fifth element-moving family. Its signature is the first in this
+        // provider that is not homogeneous: a `tiler::f32@1` source, a
+        // `tiler::u32@1` index operand, and a `tiler::f32@1` result. That
+        // asymmetry is the family's whole subject — the second operand is read
+        // as *coordinates* rather than as values — and stating it in the
+        // signature is what stops an occurrence handing it a float coordinate.
+        registrar.register(
+            gather_f32_op(),
+            ReferenceSignature::new(
+                [F32::resolved_type(), gather_index_resolved_type()],
+                [F32::resolved_type()],
+            )?,
+            revision,
+            Arc::new(GatherF32Reference),
+        )?;
         // The second dtype. Its value contract and its three capabilities are
         // registered together and are parameterized by the registered
         // `tiler::bf16@1` descriptor, so a catalog that stopped describing the
@@ -212,6 +241,31 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         // would answer for a value set nobody declared.
         register_standard_bf16(registrar, revision)?;
         register_standard_quantization(registrar, revision)
+    }
+}
+
+/// The index operand's value contract: dense, four bytes per element.
+///
+/// It validates a *representation* and deliberately not a range. Whether a
+/// coordinate names a row of the source is a question about the occurrence's
+/// gathered axis, which a value validator does not see and which
+/// [`GatherF32Reference`](crate::structural::GatherF32Reference) is the named
+/// enforcement boundary for. A validator that guessed a bound here would refuse
+/// values that are in range for one occurrence and out of range for another.
+struct U32ValueValidator;
+
+impl ReferenceValueValidator for U32ValueValidator {
+    fn validate(&self, tensor: &Tensor) -> Result<(), ReferenceValueError> {
+        if tensor.resolved_type() != &gather_index_resolved_type() {
+            return Err(ReferenceValueError::InvalidRepresentation);
+        }
+        let TensorPayloadView::Dense(elements) = tensor.payload() else {
+            return Err(ReferenceValueError::InvalidRepresentation);
+        };
+        if elements.iter().any(|element| element.as_bytes().len() != 4) {
+            return Err(ReferenceValueError::InvalidRepresentation);
+        }
+        Ok(())
     }
 }
 
