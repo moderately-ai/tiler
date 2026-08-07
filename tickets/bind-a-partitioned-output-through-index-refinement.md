@@ -1,7 +1,7 @@
 ---
 id: bind-a-partitioned-output-through-index-refinement
 title: Bind a partitioned output through index refinement
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-a-partitioned-write-ownership-contract]
 related: [lower-the-concatenate-occurrence-through-partitioned-writes]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, indexing, write-ownership, public-boundary]
+claimed_from: todo
+assignee: agent-partition-bind
+lease_expires_at: 1786078402
 ---
 ## User-visible outcome
 
