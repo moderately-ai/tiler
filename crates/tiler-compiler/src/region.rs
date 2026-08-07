@@ -53,7 +53,7 @@ use std::sync::Arc;
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
     FrozenIndexRealizationLawRegistry, IndexRefinementSubject, NumericalContractIdentity,
-    StagedInputSource,
+    StagedInputSource, VerifiedIndexRegionSequence,
 };
 use tiler_ir::semantic::{
     CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, OpKey,
@@ -765,6 +765,12 @@ struct GraphValue {
     /// takes no part in operation adjacency: `producer` and `consumers` stay
     /// empty, because its producer and consumer are *stage atoms* of one
     /// occurrence and the topology map is their authority.
+    ///
+    /// The index counts the occurrence's *published values*, not the reads of
+    /// them: a value two stages read is one appended value carrying one site,
+    /// which is why the site is a coordinate a reader can compare against the
+    /// occurrence's realization rather than an artefact of how often it was
+    /// read.
     synthetic_site: Option<(u32, u32)>,
 }
 
@@ -787,19 +793,53 @@ struct StageTopology {
     /// One entry per `StagedInputSource::Occurrence` across every stage's
     /// source list; an operand read by two stages appears twice.
     operand_stages: Vec<(u32, u32)>,
-    /// The handed values, in the sequence's own intermediate order.
+    /// The published values, one record each, in first-read order.
     intermediates: Vec<SyntheticIntermediate>,
 }
 
-/// One value a staged realization hands from a producing to a consuming stage.
-#[derive(Clone, Copy, Debug)]
+/// One value a staged realization publishes, with every stage that reads it.
+///
+/// **The record is per published value, where [`StagedIntermediate`] is per
+/// read.** A sequence records one read at a time — a value read by two stages
+/// yields two records agreeing on everything but the consuming boundary — and
+/// the realization it describes still has *one* value. Synthesizing per read
+/// would append two [`GraphValue`]s for it, and then liveness, boundary
+/// derivation, and the identity encodings would each see two independent
+/// intermediates where the occurrence has one with two readers.
+///
+/// The reader list lives on this record rather than in a second per-read
+/// relation because every consumer asks a question about one published value
+/// and its whole reader set: successors of the producing atom are all of them,
+/// the value crosses a region's boundary outward exactly when *any* of them
+/// stays outside, and it crosses inward exactly when a covered stage is one of
+/// them. A per-read side table would answer none of those without joining back
+/// to the value it belongs to, and the join is the very thing whose absence is
+/// this record's defect.
+///
+/// [`StagedIntermediate`]: tiler_ir::index::StagedIntermediate
+#[derive(Clone, Debug)]
 struct SyntheticIntermediate {
     /// Ordinal of the appended [`GraphValue`] carrying its type and shape.
     value: u32,
     /// Stage that publishes it.
     producer_stage: u32,
-    /// Stage that reads it.
-    consumer_stage: u32,
+    /// Every stage that reads it, ascending and distinct.
+    ///
+    /// Distinct rather than one entry per read: two boundaries of one stage
+    /// reading this value are two reads of one value *by one atom*, and the
+    /// topology's atoms are stages.
+    readers: Vec<u32>,
+    /// Last stage across which the value stays live.
+    ///
+    /// Carried from [`StagedIntermediate::retained_through`] — the span the
+    /// sequence derived from its declared readers and checked — rather than
+    /// re-derived here, so the compiler reads one authority's answer instead of
+    /// spelling a second. [`RegionGraph::attach_stage_topology`] refuses a
+    /// realization whose carried span disagrees with the readers it grouped,
+    /// which is what keeps the two from drifting silently.
+    ///
+    /// [`StagedIntermediate::retained_through`]: tiler_ir::index::StagedIntermediate::retained_through
+    retained_through: u32,
 }
 
 /// A dataflow view over a verified semantic program.
@@ -959,10 +999,10 @@ impl RegionGraph {
     ///
     /// The topology is read off the law's own realized sequence rather than
     /// re-derived: `stage_sources` names each stage's occurrence reads and
-    /// handed values, and `intermediates` each handed value's type and shape.
-    /// One synthetic [`GraphValue`] is appended per handed value so boundary
-    /// derivation and identity encoding can name it; it takes no part in
-    /// operation adjacency.
+    /// handed values, and `intermediates` each handed value's type, shape, and
+    /// retention span. One synthetic [`GraphValue`] is appended per *published
+    /// value* so boundary derivation and identity encoding can name it; it takes
+    /// no part in operation adjacency.
     pub(crate) fn with_realizations(
         program: &SemanticProgram,
         laws: &FrozenIndexRealizationLawRegistry,
@@ -991,58 +1031,147 @@ impl RegionGraph {
             let Ok(sequence) = resolved.realize_sequence() else {
                 continue;
             };
-            let stage_count = index(sequence.stage_count())?;
-            if stage_count < 2 {
-                continue;
-            }
-            let mut operand_stages = Vec::new();
-            for stage in 0..sequence.stage_count() {
-                let sources = sequence
-                    .stage_sources(stage)
-                    .ok_or(RegionError::Structure {
-                        rule: "stage-sources",
-                    })?;
-                for source in sources {
-                    if let StagedInputSource::Occurrence(operand) = source {
-                        operand_stages.push((index(*operand)?, index(stage)?));
-                    }
-                }
-            }
-            let mut intermediates = Vec::with_capacity(sequence.intermediates().len());
-            for (position, handed) in sequence.intermediates().iter().enumerate() {
-                let position = index(position)?;
-                let value = index(graph.values.len())?;
-                graph.values.push(GraphValue {
-                    type_encoding: handed
-                        .value_type()
-                        .canonical_encoding()
-                        .as_bytes()
-                        .to_vec()
-                        .into_boxed_slice(),
-                    shape: handed.shape().clone(),
-                    producer: None,
-                    input_position: None,
-                    consumers: Vec::new(),
-                    named_result: false,
-                    synthetic_site: Some((member, position)),
-                });
-                intermediates.push(SyntheticIntermediate {
-                    value,
-                    producer_stage: index(handed.producer())?,
-                    consumer_stage: index(handed.consumer())?,
-                });
-            }
-            graph.stage_topology.insert(
-                member,
-                StageTopology {
-                    stage_count,
-                    operand_stages,
-                    intermediates,
-                },
-            );
+            graph.attach_stage_topology(member, &sequence)?;
         }
         graph.rebuild_node_base()?;
         Ok(graph)
+    }
+
+    /// Derives the dataflow view with one member's realization supplied directly.
+    ///
+    /// The seam [`Self::with_realizations`] reaches through the registered law
+    /// authority; this one takes the verified sequence, so a chain shape no
+    /// registered law spells yet is reachable without a law standing in for it.
+    /// Both build the topology through [`Self::attach_stage_topology`], so what
+    /// a test drives here is the production derivation and not a copy of it.
+    #[cfg(test)]
+    fn with_staged_realization(
+        program: &SemanticProgram,
+        member: u32,
+        sequence: &VerifiedIndexRegionSequence,
+    ) -> Result<Self, RegionError> {
+        let mut graph = Self::from_program(program)?;
+        graph.attach_stage_topology(member, sequence)?;
+        graph.rebuild_node_base()?;
+        Ok(graph)
+    }
+
+    /// Records one member's realized stage topology and appends its handed values.
+    ///
+    /// **The sequence's records are grouped by published value before anything
+    /// is synthesized.** A record names one *read*, and the producing stage
+    /// names the value read: a non-final stage publishes exactly one value, so
+    /// two records agreeing on `producer` are two reads of one thing. Grouping
+    /// on that key is what makes a value with several readers one appended
+    /// [`GraphValue`] with several reader stages rather than several values.
+    ///
+    /// The group order is the order the reads appear in, so the appended values'
+    /// sites are exactly what a per-read walk produced for every chain in which
+    /// each published value has one reader — which is every chain any registered
+    /// law spells today.
+    ///
+    /// A realization of fewer than two stages records nothing, because an absent
+    /// entry is precisely what "this member is single-stage" means here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegionError::Structure`] when a stage's declared sources are
+    /// unreachable, when two records of one published value disagree about the
+    /// value's type, shape, or retention span, or when the carried span is not
+    /// the last stage that reads it. Each is invalid realization state rather
+    /// than a topology to reconcile. A refusal leaves the appended values in
+    /// place, which is safe because both constructors propagate it and drop the
+    /// half-built graph rather than returning one.
+    fn attach_stage_topology(
+        &mut self,
+        member: u32,
+        sequence: &VerifiedIndexRegionSequence,
+    ) -> Result<(), RegionError> {
+        let stage_count = index(sequence.stage_count())?;
+        if stage_count < 2 {
+            return Ok(());
+        }
+        let mut operand_stages = Vec::new();
+        for stage in 0..sequence.stage_count() {
+            let sources = sequence
+                .stage_sources(stage)
+                .ok_or(RegionError::Structure {
+                    rule: "stage-sources",
+                })?;
+            for source in sources {
+                if let StagedInputSource::Occurrence(operand) = source {
+                    operand_stages.push((index(*operand)?, index(stage)?));
+                }
+            }
+        }
+        let mut intermediates: Vec<SyntheticIntermediate> = Vec::new();
+        for handed in sequence.intermediates() {
+            let producer_stage = index(handed.producer())?;
+            let consumer_stage = index(handed.consumer())?;
+            let retained_through = index(handed.retained_through())?;
+            let encoding = handed.value_type().canonical_encoding();
+            let type_encoding = encoding.as_bytes();
+            if let Some(position) = intermediates
+                .iter()
+                .position(|published| published.producer_stage == producer_stage)
+            {
+                let value = self.value(intermediates[position].value)?;
+                // The grouping key is only the value's name if every record
+                // under it describes one value. Checked rather than assumed:
+                // the first record is what the appended value carries, so a
+                // disagreeing later record would otherwise be dropped.
+                if value.type_encoding.as_ref() != type_encoding
+                    || value.shape != *handed.shape()
+                    || intermediates[position].retained_through != retained_through
+                {
+                    return Err(RegionError::Structure {
+                        rule: "intermediate-identity",
+                    });
+                }
+                let readers = &mut intermediates[position].readers;
+                if !readers.contains(&consumer_stage) {
+                    readers.push(consumer_stage);
+                }
+                continue;
+            }
+            let position = index(intermediates.len())?;
+            let value = index(self.values.len())?;
+            self.values.push(GraphValue {
+                type_encoding: type_encoding.to_vec().into_boxed_slice(),
+                shape: handed.shape().clone(),
+                producer: None,
+                input_position: None,
+                consumers: Vec::new(),
+                named_result: false,
+                synthetic_site: Some((member, position)),
+            });
+            intermediates.push(SyntheticIntermediate {
+                value,
+                producer_stage,
+                readers: vec![consumer_stage],
+                retained_through,
+            });
+        }
+        for published in &mut intermediates {
+            // Ordered here rather than inherited from the record walk, so no
+            // reader of this topology depends on the order the sequence
+            // happened to enumerate its reads in.
+            published.readers.sort_unstable();
+            if published.readers.last() != Some(&published.retained_through) {
+                return Err(RegionError::Structure {
+                    rule: "intermediate-retention",
+                });
+            }
+        }
+        self.stage_topology.insert(
+            member,
+            StageTopology {
+                stage_count,
+                operand_stages,
+                intermediates,
+            },
+        );
+        Ok(())
     }
 
     /// Recomputes the member-major node index over the current stage topology.
@@ -1178,8 +1307,9 @@ impl RegionGraph {
     /// it publishes.
     ///
     /// A result-publishing atom's successors are every atom reading one of the
-    /// occurrence's results; any atom's successors additionally include the
-    /// consuming stage of each handed value it publishes. For a single-stage
+    /// occurrence's results; any atom's successors additionally include *every*
+    /// reading stage of each handed value it publishes, which for a value two
+    /// stages read is two edges leaving one producing atom. For a single-stage
     /// program this is exactly the operation's consumer set.
     fn node_successors(&self, node: u32, into: &mut Vec<u32>) -> Result<(), RegionError> {
         let atom = self.node_atom(node)?;
@@ -1194,10 +1324,13 @@ impl RegionGraph {
         }
         if let Some(topology) = self.stage_topology.get(&member) {
             for handed in &topology.intermediates {
-                if handed.producer_stage == stage {
+                if handed.producer_stage != stage {
+                    continue;
+                }
+                for reader in &handed.readers {
                     into.push(self.atom_node(SemanticStage::at(
                         SemanticMemberId(member),
-                        StageOrdinal(handed.consumer_stage),
+                        StageOrdinal(*reader),
                     ))?);
                 }
             }
@@ -1222,7 +1355,9 @@ impl RegionGraph {
         }
         if let Some(topology) = self.stage_topology.get(&member) {
             for handed in &topology.intermediates {
-                if handed.consumer_stage == stage {
+                // One edge back to the producer per *value* this stage reads,
+                // however many of its boundaries read it.
+                if handed.readers.contains(&stage) {
                     into.push(self.atom_node(SemanticStage::at(
                         SemanticMemberId(member),
                         StageOrdinal(handed.producer_stage),
@@ -1286,8 +1421,14 @@ impl RegionGraph {
     /// A produced value is named by its producer's canonical position and result
     /// position; a program input is named by its ordered interface position; a
     /// staged realization's handed value is named by its occurrence's canonical
-    /// position and its intermediate index, under its own tag so no handed
+    /// position and its *published-value* index, under its own tag so no handed
     /// value can collide with a result or an input.
+    ///
+    /// **A value several stages read has one coordinate**, because the index
+    /// counts what the realization published rather than how often it was read.
+    /// The coordinate stays injective for one occurrence: published values are
+    /// numbered densely from zero in one pass, so no two of them share an index
+    /// and no read of one gets an index of its own.
     fn canonical_value(&self, value: u32) -> Result<(u8, u32, u32), RegionError> {
         let value = self.value(value)?;
         if let Some((member, position)) = value.synthetic_site {
@@ -1963,8 +2104,8 @@ fn classify_shape(budgets: DeterministicBudgets, shape: &RegionShape) -> Option<
 /// member ordinal and this derives exactly what it always has. A staged member
 /// contributes per-stage: an operand is read by the atoms its law attributes it
 /// to, results are published by the final stage, and a handed intermediate
-/// crossing the set's stage boundary becomes a boundary input (consumer inside,
-/// producer outside) or a retained output (producer inside, consumer outside)
+/// crossing the set's stage boundary becomes a boundary input (a reader inside,
+/// producer outside) or a retained output (producer inside, some reader outside)
 /// exactly as a real value crossing an occurrence boundary would.
 fn region_shape(graph: &RegionGraph, nodes: &[u32]) -> Result<RegionShape, RegionError> {
     let mut boundary_inputs = Vec::new();
@@ -2011,27 +2152,33 @@ fn region_shape(graph: &RegionGraph, nodes: &[u32]) -> Result<RegionShape, Regio
             }
         }
         // A handed value crossing the set's stage boundary is a real boundary:
-        // the producing atom retains it, the consuming atom reads it.
+        // the producing atom retains it, a reading atom reads it. A value with
+        // several readers crosses each direction once — it is one value, and a
+        // region exports or imports it once however many stages want it.
         if let Some(topology) = graph.stage_topology.get(&member) {
             for (position, handed) in topology.intermediates.iter().enumerate() {
                 let produced_here = handed.producer_stage == stage;
-                let consumed_here = handed.consumer_stage == stage;
+                let consumed_here = handed.readers.contains(&stage);
                 if !produced_here && !consumed_here {
                     continue;
                 }
-                let producer_node = graph.atom_node(SemanticStage::at(
-                    SemanticMemberId(member),
-                    StageOrdinal(handed.producer_stage),
-                ))?;
-                let consumer_node = graph.atom_node(SemanticStage::at(
-                    SemanticMemberId(member),
-                    StageOrdinal(handed.consumer_stage),
-                ))?;
-                let producer_inside = is_member(nodes, producer_node);
-                let consumer_inside = is_member(nodes, consumer_node);
                 if produced_here {
                     member_results = member_results.saturating_add(1);
-                    if !consumer_inside {
+                    let mut escapes = false;
+                    for reader in &handed.readers {
+                        let node = graph.atom_node(SemanticStage::at(
+                            SemanticMemberId(member),
+                            StageOrdinal(*reader),
+                        ))?;
+                        if !is_member(nodes, node) {
+                            escapes = true;
+                            break;
+                        }
+                    }
+                    // Retained when *any* reader stays outside, and retained
+                    // once: the outside readers all read the value this region
+                    // published, not one copy each.
+                    if escapes {
                         retained_outputs.push(RetainedOutput {
                             value: SemanticValueId(handed.value),
                             producer: SemanticMemberId(member),
@@ -2041,8 +2188,15 @@ fn region_shape(graph: &RegionGraph, nodes: &[u32]) -> Result<RegionShape, Regio
                         });
                     }
                 }
-                if consumed_here && !producer_inside && !boundary_inputs.contains(&handed.value) {
-                    boundary_inputs.push(handed.value);
+                if consumed_here {
+                    let producer_node = graph.atom_node(SemanticStage::at(
+                        SemanticMemberId(member),
+                        StageOrdinal(handed.producer_stage),
+                    ))?;
+                    if !is_member(nodes, producer_node) && !boundary_inputs.contains(&handed.value)
+                    {
+                        boundary_inputs.push(handed.value);
+                    }
                 }
             }
         }
@@ -2123,6 +2277,22 @@ fn covers_staged_member(graph: &RegionGraph, members: &[u32]) -> bool {
 /// boundary differs in the site-and-facts list. Appending under a domain
 /// marker rather than stepping either domain string is the appended-construct
 /// shape: no previously encodable candidate's bytes move.
+///
+/// **What both region-formation domains encode for a value several stages
+/// read.** `tiler.compiler.region-content.v1\0` writes it here once, as one
+/// canonical site — its occurrence's canonical position and its published-value
+/// index — followed by its type and shape, and never as one entry per read;
+/// `tiler.compiler.region-occurrence.v1\0` embeds those content bytes
+/// length-framed and lists the same value once more in whichever boundary group
+/// it crossed. Neither domain carries a reader count, and neither needs one:
+/// which stages read a published value follows from the atom list both
+/// encodings already pin, through the graph's stage topology that the atoms are
+/// coordinates in. So a candidate whose covered stages read one published value
+/// twice encodes as one crossing, which is what it is. Neither domain string
+/// steps, because for a chain in which every published value has one reader —
+/// every chain any registered law spells — per-read and per-value synthesis
+/// agree value for value and index for index, so no previously encodable
+/// candidate's bytes move.
 fn append_stage_trailer(
     bytes: &mut Vec<u8>,
     graph: &RegionGraph,
@@ -2941,9 +3111,10 @@ mod tests {
         // One handed value, published by the fold and read by the scale pass,
         // one element per folded row.
         assert_eq!(topology.intermediates.len(), 1);
-        let handed = topology.intermediates[0];
+        let handed = &topology.intermediates[0];
         assert_eq!(handed.producer_stage, 0);
-        assert_eq!(handed.consumer_stage, 1);
+        assert_eq!(handed.readers, vec![1]);
+        assert_eq!(handed.retained_through, 1);
         let synthetic = graph.value(handed.value).unwrap();
         assert_eq!(synthetic.shape, Shape::from_dims([2]));
         assert_eq!(synthetic.synthetic_site, Some((member, 0)));
@@ -3165,6 +3336,467 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// The frozen scalar authority the hand-built stages are emitted under.
+    fn staged_scalars() -> tiler_ir::index::FrozenScalarRegistry {
+        tiler_ir::index::FrozenScalarRegistry::standard().unwrap()
+    }
+
+    /// Returns the governed constant's attribute record for one exact payload.
+    fn exact_f32_attributes(bits: u32) -> tiler_ir::index::ScalarAttributes {
+        use tiler_ir::semantic::{F32_CONSTANT_BITS_ATTRIBUTE, TypeKey};
+        tiler_ir::index::ScalarAttributes::new(
+            CanonicalValue::record([CanonicalField::new(
+                F32_CONSTANT_BITS_ATTRIBUTE,
+                CanonicalValue::float_bits(
+                    TypeKey::new("tiler", "f32", 1).unwrap(),
+                    bits.to_be_bytes(),
+                )
+                .unwrap(),
+            )])
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Emits `out[r] = fold(+, in[r, *])` over `[rows, columns]`.
+    ///
+    /// A real reduction rather than a pointwise stand-in, because a chain built
+    /// from shape-preserving stages alone could not tell a per-row handed value
+    /// from a per-point one, and which is which is what the boundary assertions
+    /// below turn on.
+    fn row_fold_region(rows: u64, columns: u64) -> tiler_ir::index::VerifiedIndexRegion {
+        use tiler_ir::index::{
+            DomainRole, IndexRegionBuilder, ScalarAttributes, TensorRole, add_f32_scalar_op,
+            constant_f32_scalar_op,
+        };
+        use tiler_ir::shape::Extent;
+
+        let mut builder = IndexRegionBuilder::new(staged_scalars()).unwrap();
+        let row = builder
+            .dimension(DomainRole::Parallel, Extent::new(rows))
+            .unwrap();
+        let column = builder
+            .dimension(DomainRole::Reduction, Extent::new(columns))
+            .unwrap();
+        let row_coordinate = builder.dimension_expr(row).unwrap();
+        let column_coordinate = builder.dimension_expr(column).unwrap();
+        let input = builder
+            .tensor(
+                TensorRole::Input,
+                F32::resolved_type(),
+                Shape::from_dims([rows, columns]),
+            )
+            .unwrap();
+        let output = builder
+            .tensor(
+                TensorRole::Output,
+                F32::resolved_type(),
+                Shape::from_dims([rows]),
+            )
+            .unwrap();
+        let contributor = builder
+            .read(input, &[row, column], &[row_coordinate, column_coordinate])
+            .unwrap();
+        let seed = builder
+            .apply(
+                constant_f32_scalar_op(),
+                exact_f32_attributes(0.0_f32.to_bits()),
+                &[],
+            )
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let folded = builder
+            .reduce(&[column], &[seed], &[contributor], |body| {
+                let state = body.state(0).unwrap();
+                let value = body.contributor(0).unwrap();
+                let accumulated = body
+                    .apply(
+                        add_f32_scalar_op(),
+                        ScalarAttributes::empty(),
+                        &[state, value],
+                    )?
+                    .get(0)
+                    .unwrap();
+                body.yield_values(&[accumulated])
+            })
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let write = builder.write(output, &[row], &[row_coordinate]).unwrap();
+        builder.output(write, folded).unwrap();
+        builder.build().unwrap()
+    }
+
+    /// Emits `out[r, c] = mul(full[r, c], per_row[r])` over `[rows, columns]`.
+    ///
+    /// Its input boundary order is `(full, per row)`, which is the order its
+    /// stage's sources are declared in.
+    fn row_pointwise_region(rows: u64, columns: u64) -> tiler_ir::index::VerifiedIndexRegion {
+        use tiler_ir::index::{
+            DomainRole, IndexRegionBuilder, ScalarAttributes, TensorRole, multiply_f32_scalar_op,
+        };
+        use tiler_ir::shape::Extent;
+
+        let mut builder = IndexRegionBuilder::new(staged_scalars()).unwrap();
+        let row = builder
+            .dimension(DomainRole::Parallel, Extent::new(rows))
+            .unwrap();
+        let column = builder
+            .dimension(DomainRole::Parallel, Extent::new(columns))
+            .unwrap();
+        let row_coordinate = builder.dimension_expr(row).unwrap();
+        let column_coordinate = builder.dimension_expr(column).unwrap();
+        let full = builder
+            .tensor(
+                TensorRole::Input,
+                F32::resolved_type(),
+                Shape::from_dims([rows, columns]),
+            )
+            .unwrap();
+        let per_row = builder
+            .tensor(
+                TensorRole::Input,
+                F32::resolved_type(),
+                Shape::from_dims([rows]),
+            )
+            .unwrap();
+        let output = builder
+            .tensor(
+                TensorRole::Output,
+                F32::resolved_type(),
+                Shape::from_dims([rows, columns]),
+            )
+            .unwrap();
+        let element = builder
+            .read(full, &[row, column], &[row_coordinate, column_coordinate])
+            .unwrap();
+        let scale = builder.read(per_row, &[row], &[row_coordinate]).unwrap();
+        let product = builder
+            .apply(
+                multiply_f32_scalar_op(),
+                ScalarAttributes::empty(),
+                &[element, scale],
+            )
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let write = builder
+            .write(output, &[row, column], &[row_coordinate, column_coordinate])
+            .unwrap();
+        builder.output(write, product).unwrap();
+        builder.build().unwrap()
+    }
+
+    /// One `[3, 4]` multiply occurrence, the site the staged chain is attached to.
+    fn multi_reader_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([3, 4]))
+            .unwrap();
+        let product = F32Multiply::apply(&mut builder, input, input).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), product)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// The four-stage chain whose second stage's value has two readers.
+    ///
+    /// This is the softmax's staging: `S0` folds a per-row value from the
+    /// occurrence input; `S1` reads the input and that value and publishes a
+    /// per-point value `e`; `S2` folds `e` into a per-row `d`; and `S3` reads
+    /// `e` **again**, alongside `d`, and writes the occurrence's result. The
+    /// sequence's own records are the four reads `[(0,1), (1,2), (1,3), (2,3)]`,
+    /// over three published values.
+    ///
+    /// Hand built rather than resolved from a registered law, because no
+    /// registered law spells a multi-reader chain yet — the softmax's law is
+    /// separate work — and the topology is exactly what region formation reads.
+    /// The stages stand for the softmax's in their *boundaries*; the arithmetic
+    /// they carry is the fold and the product, which formation never looks at.
+    fn multi_reader_sequence() -> VerifiedIndexRegionSequence {
+        VerifiedIndexRegionSequence::try_new(
+            vec![
+                row_fold_region(3, 4),
+                row_pointwise_region(3, 4),
+                row_fold_region(3, 4),
+                row_pointwise_region(3, 4),
+            ],
+            vec![
+                vec![StagedInputSource::Occurrence(0)],
+                vec![
+                    StagedInputSource::Occurrence(1),
+                    StagedInputSource::Intermediate(0),
+                ],
+                vec![StagedInputSource::Intermediate(1)],
+                vec![
+                    StagedInputSource::Intermediate(1),
+                    StagedInputSource::Intermediate(2),
+                ],
+            ],
+        )
+        .expect("the per-point value survives the fold that consumes it")
+    }
+
+    fn form_hand_staged(
+        program: &SemanticProgram,
+        member: u32,
+        sequence: &VerifiedIndexRegionSequence,
+    ) -> RegionFormationOutcome {
+        form_over_graph(
+            RegionGraph::with_staged_realization(program, member, sequence).unwrap(),
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed(),
+        )
+        .unwrap()
+    }
+
+    /// The atom of one stage of the hand-staged fixture's only member.
+    fn staged_atom(stage: u32) -> SemanticStage {
+        SemanticStage::at(SemanticMemberId(0), StageOrdinal(stage))
+    }
+
+    /// One published value read by two stages is one synthetic value.
+    ///
+    /// **The record the sequence hands over is per read, and the realization it
+    /// describes has one value.** Four reads over three published values here,
+    /// so a per-read synthesis appends four graph values and gives stage one's
+    /// published value two of them — two independent intermediates where the
+    /// occurrence has one with two readers.
+    ///
+    /// Observed failing: synthesizing per record instead of per published value
+    /// makes `intermediates` four records and the appended synthetic values four
+    /// rather than three, with two distinct ordinals produced by stage one.
+    #[test]
+    fn one_published_value_read_by_two_stages_is_one_synthetic_value() {
+        let program = multi_reader_program();
+        let sequence = multi_reader_sequence();
+        // The sequence layer's own granularity, asserted so the grouping below
+        // is proved to be doing something rather than reading an already
+        // grouped list.
+        assert_eq!(
+            sequence
+                .intermediates()
+                .iter()
+                .map(|read| (read.producer(), read.consumer(), read.retained_through()))
+                .collect::<Vec<_>>(),
+            [(0, 1, 1), (1, 2, 3), (1, 3, 3), (2, 3, 3)]
+        );
+
+        let outcome = form_hand_staged(&program, 0, &sequence);
+        let graph = outcome.graph();
+        assert_eq!(graph.operation_count(), 1);
+        assert_eq!(graph.node_count(), 4);
+        let topology = graph.stage_topology.get(&0).unwrap();
+        assert_eq!(topology.intermediates.len(), 3);
+
+        let published: Vec<(u32, Vec<u32>, u32)> = topology
+            .intermediates
+            .iter()
+            .map(|handed| {
+                (
+                    handed.producer_stage,
+                    handed.readers.clone(),
+                    handed.retained_through,
+                )
+            })
+            .collect();
+        assert_eq!(
+            published,
+            [
+                (0, vec![1], 1),
+                // The value that survives a stage producing something else, with
+                // both its readers and the span the sequence checked.
+                (1, vec![2, 3], 3),
+                (2, vec![3], 3),
+            ]
+        );
+
+        // One appended graph value per published value, each at its own site.
+        let synthetic: Vec<(u32, Option<(u32, u32)>)> = graph
+            .values
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| value.synthetic_site.is_some())
+            .map(|(ordinal, value)| (index(ordinal).unwrap(), value.synthetic_site))
+            .collect();
+        assert_eq!(synthetic.len(), 3);
+        assert_eq!(
+            synthetic
+                .iter()
+                .map(|(_, site)| site.unwrap())
+                .collect::<Vec<_>>(),
+            [(0, 0), (0, 1), (0, 2)]
+        );
+        assert_eq!(
+            topology
+                .intermediates
+                .iter()
+                .map(|handed| handed.value)
+                .collect::<Vec<_>>(),
+            synthetic
+                .iter()
+                .map(|(ordinal, _)| *ordinal)
+                .collect::<Vec<_>>()
+        );
+        // Both readers read the per-point shape their producer published.
+        assert_eq!(
+            graph.value(topology.intermediates[1].value).unwrap().shape,
+            Shape::from_dims([3, 4])
+        );
+
+        // Two edges leave the producing atom, one per reading stage, and each
+        // reader has exactly one edge back to it.
+        let mut successors = Vec::new();
+        graph
+            .node_successors(graph.atom_node(staged_atom(1)).unwrap(), &mut successors)
+            .unwrap();
+        assert_eq!(
+            successors,
+            vec![
+                graph.atom_node(staged_atom(2)).unwrap(),
+                graph.atom_node(staged_atom(3)).unwrap()
+            ]
+        );
+        let mut predecessors = Vec::new();
+        graph
+            .node_predecessors(graph.atom_node(staged_atom(3)).unwrap(), &mut predecessors)
+            .unwrap();
+        assert_eq!(
+            predecessors,
+            vec![
+                graph.atom_node(staged_atom(1)).unwrap(),
+                graph.atom_node(staged_atom(2)).unwrap()
+            ]
+        );
+    }
+
+    /// A two-reader intermediate crosses each region boundary once.
+    ///
+    /// **This is what the per-read synthesis misdescribes.** A region covering
+    /// the producer and one reader would retain a *different* synthetic value
+    /// than the one it fed to the reader inside it, a region covering both
+    /// readers would import the value twice under two ordinals, and the
+    /// producing region would count it twice among its live values.
+    #[test]
+    fn a_two_reader_intermediate_crosses_each_region_boundary_once() {
+        let program = multi_reader_program();
+        let sequence = multi_reader_sequence();
+        let outcome = form_hand_staged(&program, 0, &sequence);
+        let graph = outcome.graph();
+        let topology = graph.stage_topology.get(&0).unwrap();
+        let seeded = topology.intermediates[0].value;
+        let per_point = topology.intermediates[1].value;
+        let per_row = topology.intermediates[2].value;
+
+        let candidate_for = |atoms: &[SemanticStage]| {
+            outcome
+                .candidates()
+                .iter()
+                .find(|candidate| candidate.members() == atoms)
+                .unwrap_or_else(|| panic!("{atoms:?} is a legal set formation must emit"))
+        };
+        let synthetic_of = |values: &[SemanticValueId]| -> Vec<u32> {
+            values
+                .iter()
+                .filter(|value| {
+                    graph
+                        .value(value.0)
+                        .is_ok_and(|value| value.synthetic_site.is_some())
+                })
+                .map(|value| value.0)
+                .collect()
+        };
+
+        // Producer plus one reader: the value leaves once, as the same value the
+        // covered reader read.
+        let published_and_folded = candidate_for(&[staged_atom(1), staged_atom(2)]);
+        assert_eq!(
+            synthetic_of(
+                &published_and_folded
+                    .retained_outputs()
+                    .iter()
+                    .map(|output| output.value)
+                    .collect::<Vec<_>>()
+            ),
+            vec![per_point, per_row],
+            "the per-point value leaves once for the uncovered reader, beside the fold's own"
+        );
+        assert_eq!(
+            synthetic_of(published_and_folded.boundary_inputs()),
+            vec![seeded],
+            "only the value the uncovered first stage published is imported; the \
+             covered reader reads what the covered producer published"
+        );
+
+        // Both readers, producer outside: one import, however many stages read it.
+        let both_readers = candidate_for(&[staged_atom(2), staged_atom(3)]);
+        assert_eq!(
+            synthetic_of(both_readers.boundary_inputs()),
+            vec![per_point],
+            "one published value imported once by the two stages that read it"
+        );
+        assert_eq!(
+            synthetic_of(
+                &both_readers
+                    .retained_outputs()
+                    .iter()
+                    .map(|output| output.value)
+                    .collect::<Vec<_>>()
+            ),
+            Vec::<u32>::new(),
+            "the fold's value is read by a covered stage and leaves nothing"
+        );
+
+        // The final stage alone imports both values it reads, once each.
+        let last = candidate_for(&[staged_atom(3)]);
+        assert_eq!(
+            synthetic_of(last.boundary_inputs()),
+            vec![per_point, per_row]
+        );
+
+        // The whole realization: every handed value is internal.
+        let whole = candidate_for(&[
+            staged_atom(0),
+            staged_atom(1),
+            staged_atom(2),
+            staged_atom(3),
+        ]);
+        assert!(synthetic_of(whole.boundary_inputs()).is_empty());
+        assert!(
+            synthetic_of(
+                &whole
+                    .retained_outputs()
+                    .iter()
+                    .map(|output| output.value)
+                    .collect::<Vec<_>>()
+            )
+            .is_empty()
+        );
+
+        // Liveness, which the per-read synthesis inflates: the pair publishes
+        // two values and reads two from outside, so four values are live across
+        // it — not the five a second copy of the per-point value would make.
+        let nodes = [
+            graph.atom_node(staged_atom(1)).unwrap(),
+            graph.atom_node(staged_atom(2)).unwrap(),
+        ];
+        assert_eq!(region_shape(graph, &nodes).unwrap().live_values, 4);
+
+        // Every emitted candidate rebuilds from its own atoms, identity trailer
+        // included.
+        for candidate in outcome.candidates() {
+            verify_candidate(
+                graph,
+                DeterministicBudgets::governed(),
+                StrictF32NumericalContract::governed(),
+                candidate,
+            )
+            .unwrap();
+        }
     }
 
     fn member_sets(outcome: &RegionFormationOutcome) -> Vec<Vec<u32>> {
