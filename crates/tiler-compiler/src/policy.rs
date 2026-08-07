@@ -1577,6 +1577,171 @@ mod tests {
         }
     }
 
+    /// The dimensions whose freedoms act on any rounded binary32 operation.
+    ///
+    /// Not a copy of a capability row: it is the six dimensions whose
+    /// definitions are properties of *rounding itself* rather than of an
+    /// operation's shape. An operand is read before the rounding
+    /// (`InputSubnormals`), a value is produced by it (`ResultSubnormals`), the
+    /// operation joins an operand sequence some rewrite could regroup
+    /// (`Reassociation`), and the rounded arithmetic has a signed zero, a NaN,
+    /// and an infinity to answer for. The two dimensions deliberately outside
+    /// this set are the two that depend on an operation's *structure* rather
+    /// than on its rounding: `Contraction` needs a multiply adjacent to an add
+    /// and `Permutation` needs a contributor fold. Those two stay pinned by
+    /// name, per family, in the tests around this one.
+    const ARITHMETIC_CORE: [NumericalDimension; 6] = [
+        NumericalDimension::InputSubnormals,
+        NumericalDimension::ResultSubnormals,
+        NumericalDimension::Reassociation,
+        NumericalDimension::SignedZero,
+        NumericalDimension::NanAssumptions,
+        NumericalDimension::InfinityAssumptions,
+    ];
+
+    /// Whether one governed scalar operation rounds a binary32 result.
+    ///
+    /// Total over the keys the governed lowerings declare, and an unclassified
+    /// one panics rather than answering `false`: a lowering that began emitting
+    /// a scalar operation nobody had classified would otherwise silently make
+    /// its family look exact, which is the direction this whole check exists to
+    /// catch.
+    ///
+    /// `constant-f32` retains a declared bit pattern and `canonicalize-nan-f32`
+    /// replaces a NaN payload with the contract's canonical one; neither rounds,
+    /// and neither is the sole emission of any family below.
+    /// `strict-affine-u4-dequantize` computes, but its complete rounding,
+    /// saturation, and exceptional-value behaviour is fixed by its versioned
+    /// scheme contract rather than resolved by these generic dimensions, which
+    /// is the same reason [`operation_capabilities`] gives that family an empty
+    /// row.
+    fn rounds_binary32(scalar: &str) -> bool {
+        match scalar {
+            "multiply-f32" | "add-f32" | "divide-f32" | "exp-f32" | "rsqrt-f32" => true,
+            "constant-f32" | "canonicalize-nan-f32" | "strict-affine-u4-dequantize" => false,
+            other => panic!(
+                "tiler.scalar::{other} is emitted by a governed lowering and is \
+                 classified neither as rounding binary32 nor as exact, so no \
+                 capability row can be checked against it",
+            ),
+        }
+    }
+
+    /// A family whose realization rounds must claim the whole arithmetic core.
+    ///
+    /// **The safety direction of [`OperationNumericalCapability::can_consume`],
+    /// turned from a stated intention into a check.** A capability row that
+    /// under-claims used to be harmless — the delivered-realization producer
+    /// emitted a row per honoured dimension at every covered occurrence, so a
+    /// missing entry cost nothing. It now decides whether a row is emitted at
+    /// all, and a dimension left with no row is derived by the artifact builder
+    /// as `NotRequired`: a positive claim that no packaged route needs the
+    /// target to honour it, and the one claim the neutral artifact cannot
+    /// re-check. The failure direction inverted, so an under-claim is now a
+    /// silently wrong artifact rather than a redundant row.
+    ///
+    /// **What makes this a check rather than the table restated.** The oracle is
+    /// [`crate::governed::governed_index_access_capabilities`]' `emitted`
+    /// declaration — the scalar operations each family's *lowering* may apply.
+    /// It is a different statement, written for a different purpose, and it is
+    /// independently held honest: `crate::legality::refine_index_region` proves
+    /// the region a family actually emits is contained in it, so an under-claim
+    /// here cannot be hidden by editing that declaration to match. A row
+    /// narrowed to make an obligation disappear therefore has to contradict what
+    /// the lowering emits.
+    ///
+    /// The converse arm is the same rule read backwards, and it is the stricter
+    /// of the two: a family whose lowering applies no rounding must claim
+    /// *nothing*, because an empty row is the positive claim `operation_capabilities`
+    /// documents for the constant, the reindex, the broadcast, and the affine
+    /// conversions rather than an unfinished one.
+    ///
+    /// Three admitted families ship no governed index-access lowering, so this
+    /// oracle cannot speak for them. They are named rather than skipped, and
+    /// their rows are pinned dimension by dimension by the tests above.
+    #[test]
+    fn an_arithmetic_family_claims_the_whole_arithmetic_core() {
+        use std::collections::BTreeSet;
+
+        let lowerings = crate::governed::governed_index_access_capabilities()
+            .expect("the governed lowering capabilities compose");
+        let mut lowered: BTreeSet<String> = BTreeSet::new();
+        let mut rounding = 0_usize;
+        let mut exact = 0_usize;
+        for lowering in &lowerings {
+            let operation = lowering.operation().to_string();
+            if UNPLANNED_OPERATIONS.contains(&operation.as_str()) {
+                // A family this build cannot plan carries no capability row by
+                // design, checked in both directions by
+                // `every_unplanned_operation_is_registered_and_consumes_no_dimension`.
+                continue;
+            }
+            let capability = operation_capability(lowering.operation())
+                .unwrap_or_else(|| panic!("{operation} lowers but declares no capability row"));
+            let rounds = lowering
+                .emitted()
+                .iter()
+                .any(|scalar| rounds_binary32(scalar.name()));
+            if rounds {
+                rounding += 1;
+                for dimension in ARITHMETIC_CORE {
+                    assert!(
+                        capability.can_consume(dimension),
+                        "{operation} emits a rounding binary32 operation and must \
+                         consume {}: a row missing it now yields no obligation, and \
+                         the artifact asserts `NotRequired` for a dimension the \
+                         route genuinely relies on",
+                        dimension.key(),
+                    );
+                }
+            } else {
+                exact += 1;
+                assert!(
+                    capability.consumes().is_empty(),
+                    "{operation} applies no rounding binary32 operation, so its \
+                     empty row is the strict claim rather than an unfinished one: \
+                     {:?}",
+                    capability.consumes(),
+                );
+            }
+            lowered.insert(operation);
+        }
+        assert_eq!(
+            rounding, 6,
+            "the rounding families are the population the core is checked over",
+        );
+        assert_eq!(
+            exact, 4,
+            "the exact families are the population the empty row is checked over",
+        );
+        assert_eq!(
+            rounding + exact,
+            lowered.len(),
+            "every examined lowering fell into exactly one arm",
+        );
+
+        // The families this oracle cannot speak for, named so a new one cannot
+        // arrive unchecked and unnoticed.
+        let unlowered: Vec<&str> = operation_capabilities()
+            .iter()
+            .map(|capability| capability.key())
+            .filter(|key| !lowered.contains(*key))
+            .collect();
+        assert_eq!(
+            unlowered,
+            [
+                "tiler::softmax-f32@1",
+                "tiler::assemble-strict-affine@1",
+                "tiler::quantize-strict-affine@1",
+            ],
+            "these ship no governed index-access lowering, so their rows are \
+             pinned by name instead: the softmax by \
+             `the_softmax_consumes_the_reduction_dimensions_without_contraction`, \
+             and the two affine conversions by their empty rows here and in \
+             `the_capability_table_names_exactly_the_admitted_operations`",
+        );
+    }
+
     /// A subnormal freedom is founded at an operand read and at a produced value.
     ///
     /// The pair that makes two loci of one occurrence differ, checked against

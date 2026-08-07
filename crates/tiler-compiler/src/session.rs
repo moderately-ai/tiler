@@ -2612,6 +2612,30 @@ mod tests {
         builder.build().unwrap()
     }
 
+    /// Builds the bare reduction program: one input, one strict serial sum.
+    ///
+    /// **The program whose honoured contraction no packaged occurrence
+    /// consumes.** It is [`semantic_program`] with the scaling multiply and the
+    /// bias add removed, so the only occurrence a plan covers is the fold, and
+    /// `policy::operation_capabilities`'s reduction row omits contraction
+    /// because a strict serial sum's per-contributor step is `accumulator +
+    /// contributor` with no product for a fused multiply-add to act on. The
+    /// dimension is still *asked of the target*: `physical::region_proposal`
+    /// carries all four of the region realization's dimensions on every
+    /// candidate, so the plan holds an honoured contraction fact and no row
+    /// naming it.
+    fn bare_reduction_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4, 3]))
+            .unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
     /// The boundary compiles a program and hands out emittable kernels.
     ///
     /// This is the property the surface exists for: before it, no caller
@@ -3052,6 +3076,149 @@ mod tests {
                  single-locus producer collapsed onto one key",
             );
         }
+    }
+
+    /// An honoured dimension no covered occurrence consumes carries no row.
+    ///
+    /// **The producer half of the newly reachable `NotRequired` disposition.**
+    /// Narrowing rows to consuming occurrences made an empty row set possible
+    /// for a dimension the target was asked about and *did* honour, which the
+    /// artifact builder derives as `NotRequired` — the one producer assertion
+    /// the neutral artifact cannot re-check. Before the narrowing every
+    /// honoured dimension had a row at every covered occurrence, so this state
+    /// could not be produced at all.
+    ///
+    /// The two halves are asserted separately because either alone would be
+    /// consistent with a defect. The honoured facts come from the retained
+    /// plan, so contraction being among them is what rules out "nothing asked";
+    /// the row set comes from the delivered-realization view, so its emptiness
+    /// on that dimension is what makes the disposition `NotRequired` rather
+    /// than `Required`. A producer that had simply dropped the requirement
+    /// would fail the first assertion, and one that still emitted an unfounded
+    /// computation row would fail the second.
+    ///
+    /// [`semantic_program`] is compiled beside it under the identical contract
+    /// and profile and *does* carry contraction rows, so the difference is the
+    /// program's operations rather than the contract, the target, or the
+    /// dimension.
+    #[test]
+    fn an_honoured_dimension_no_covered_occurrence_consumes_carries_no_row() {
+        use std::collections::BTreeSet;
+        use tiler_ir::numerics::{NumericalDimension, PolicyLocus};
+
+        let program = bare_reduction_program();
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
+            .expect("the bare reduction compiles");
+        let plan = compilation.selected().expect("a selected alternative");
+
+        // The dimensions the target was asked about and answered for. Read from
+        // the retained plan's own honoured facts rather than from the contract,
+        // because the claim under test is that the target *did* honour
+        // contraction here and the row set is empty anyway.
+        let honoured: BTreeSet<NumericalDimension> = plan
+            .alternative
+            .plan
+            .honoured()
+            .iter()
+            .map(crate::target::honourability::HonouredDimension::dimension)
+            .collect();
+        assert_eq!(
+            honoured,
+            BTreeSet::from([
+                NumericalDimension::InputSubnormals,
+                NumericalDimension::ResultSubnormals,
+                NumericalDimension::Contraction,
+                NumericalDimension::Reassociation,
+            ]),
+            "the region proposal asks every candidate about the same four \
+             dimensions, so the honoured set is a property of the profile and \
+             the contract rather than of this program",
+        );
+
+        let covered: BTreeSet<u32> = plan
+            .abi()
+            .kernel_program()
+            .stages()
+            .flat_map(|stage| {
+                stage
+                    .coverage()
+                    .iter()
+                    .map(|record| record.occurrence().get())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(
+            covered.len(),
+            1,
+            "the fold is the only occurrence this program packages",
+        );
+
+        let rows: Vec<(u32, NumericalDimension, PolicyLocus)> = plan
+            .delivered_realization()
+            .obligations()
+            .map(|obligation| {
+                (
+                    obligation.locus().occurrence().get(),
+                    obligation.dimension(),
+                    obligation.locus().locus(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows.len(),
+            3,
+            "three of the four honoured dimensions act on the one covered \
+             occurrence: {rows:?}",
+        );
+        let stated: BTreeSet<NumericalDimension> =
+            rows.iter().map(|(_, dimension, _)| *dimension).collect();
+        assert_eq!(
+            stated,
+            BTreeSet::from([
+                NumericalDimension::InputSubnormals,
+                NumericalDimension::ResultSubnormals,
+                NumericalDimension::Reassociation,
+            ]),
+        );
+        assert!(
+            !stated.contains(&NumericalDimension::Contraction),
+            "the strict serial sum's step is `accumulator + contributor`, so no \
+             product exists for a fused multiply-add to act on and the honoured \
+             contraction fact founds no position in this program",
+        );
+
+        // The capability table is what decides that, and it is read here rather
+        // than assumed from the empty row set.
+        let fold = crate::policy::operation_capability(
+            &tiler_ir::semantic::OpKey::new("tiler", "strict-serial-sum-f32", 1)
+                .expect("a governed key"),
+        )
+        .expect("the strict serial sum is admitted");
+        assert!(!fold.can_consume(NumericalDimension::Contraction));
+        assert!(
+            crate::policy::operation_capability(&tiler_ir::semantic::multiply_f32_op())
+                .expect("the multiply is admitted")
+                .can_consume(NumericalDimension::Contraction),
+            "contraction is consumable by some admitted operation, so this is a \
+             property of the reduction rather than of the dimension",
+        );
+
+        // The same contract on the same profile, over a program that does
+        // contain a pointwise multiply and add.
+        let consuming = compile_governed(&semantic_program(), NumericalContract::STRICT_F32)
+            .expect("the scale-then-reduce program compiles");
+        let contraction_rows = consuming
+            .selected()
+            .expect("a selected alternative")
+            .delivered_realization()
+            .obligations()
+            .filter(|obligation| obligation.dimension() == NumericalDimension::Contraction)
+            .count();
+        assert_eq!(
+            contraction_rows, 2,
+            "the multiply and the add each found a contraction position, so the \
+             empty set above is the program's doing",
+        );
     }
 
     /// The selected alternative is one of the retained ones.
