@@ -2129,6 +2129,13 @@ mod tests {
         rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
     };
 
+    /// Domain separating this file's identity pins from every governed digest.
+    ///
+    /// A pin needs a stable pre-image and nothing else; it is deliberately not
+    /// one of the identity domains the workspace publishes, so a fixture digest
+    /// can never be mistaken for evidence about a subject the compiler derives.
+    const SEQUENCE_IDENTITY_PIN_DOMAIN: &[u8] = b"tiler.test.index-region-sequence-identity-pin\0";
+
     fn strict_contract() -> NumericalContractIdentity {
         NumericalContractIdentity::from(
             F32NumericalContractKey::new(
@@ -2170,6 +2177,80 @@ mod tests {
         let program = program.build().unwrap();
         let operation = program.operations().next().unwrap().id();
         IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap()
+    }
+
+    /// Every one-reader chain's identity is unchanged, byte for byte.
+    ///
+    /// **The pin is over exact bytes, taken before either widening landed.** The
+    /// three digests below were captured on base commit `dd9def76` — that is,
+    /// before `tiler.scalar::maximum-f32@1` was registered and before
+    /// [`VerifiedIndexRegionSequence::try_new`](crate::index::VerifiedIndexRegionSequence::try_new)
+    /// admitted a value with more than one reader — and they are asserted here
+    /// unchanged. The length is pinned beside the digest so a chain that moved
+    /// reports *how* rather than only that it did.
+    ///
+    /// **One pin covers both widenings, and that is the point of pinning here
+    /// rather than in `sequence.rs`.** A realized law's sequence identity is
+    /// built from its regions' canonical identities, and a region's identity
+    /// carries the projection of the scalar definitions it *reaches*. So a new
+    /// scalar key that no existing law emits must leave every byte alone, and a
+    /// wider admitted chain shape that no existing law spells must leave every
+    /// byte alone; both claims fail here if either is false.
+    ///
+    /// The rows are the two live instances plus the plain staged template: the
+    /// normalization's own law at rank two and at rank one, and the
+    /// fold-then-pointwise form no registered operation carries.
+    #[test]
+    fn the_landed_one_reader_chain_identities_are_unchanged_byte_for_byte() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        for (name, sequence, bytes, digest) in [
+            (
+                "rms-norm-3x4-axis1",
+                IndexRealizationLaw::staged_root_mean_square_scale_f32()
+                    .realize_sequence(
+                        &rms_norm_subject(&[3, 4], 1, RMS_NORM_F32_QWEN3_EPS_BITS),
+                        &scalars,
+                    )
+                    .unwrap(),
+                4072_usize,
+                "77a5cd34f014391433cc5e3e7da8e1e5483d5cd686e1242ef6fa160a949c5acf",
+            ),
+            (
+                "rms-norm-rank1-4-axis0",
+                IndexRealizationLaw::staged_root_mean_square_scale_f32()
+                    .realize_sequence(
+                        &rms_norm_subject(&[4], 0, RMS_NORM_F32_QWEN3_EPS_BITS),
+                        &scalars,
+                    )
+                    .unwrap(),
+                3649,
+                "b318507aae49b1a97232b2a209b249ad28effa481b8273a73a73fd0a960c0efb",
+            ),
+            (
+                "staged-template-rank1-4-axis0",
+                IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32 {
+                    axes_attribute: RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                    scalar: multiply_f32_scalar_op(),
+                }
+                .realize_sequence(
+                    &rms_norm_subject(&[4], 0, RMS_NORM_F32_QWEN3_EPS_BITS),
+                    &scalars,
+                )
+                .unwrap(),
+                2023,
+                "3ddd3268089e163410195e628e70addf5a6213493df25b4ffe099bb3b0324e34",
+            ),
+        ] {
+            let identity = sequence.identity().as_bytes();
+            assert_eq!(identity.len(), bytes, "{name} changed length");
+            assert_eq!(
+                tiler_digest::DigestAlgorithm::GOVERNED
+                    .digest(SEQUENCE_IDENTITY_PIN_DOMAIN, identity)
+                    .label(),
+                digest,
+                "{name} changed bytes"
+            );
+        }
     }
 
     #[test]

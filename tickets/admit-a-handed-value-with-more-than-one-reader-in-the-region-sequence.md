@@ -1,10 +1,10 @@
 ---
 id: admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence
 title: Admit a handed value with more than one reader in the region sequence
-status: in-progress
+status: review
 priority: p2
 dependencies: []
-related: [widen-the-staged-realization-law-to-the-registered-elementary-families, admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, accept-the-multi-region-index-realization-surface]
+related: [widen-the-staged-realization-law-to-the-registered-elementary-families, admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, accept-the-multi-region-index-realization-surface, accept-the-multi-reader-index-realization-retention, register-the-softmax-realization-law, widen-the-region-sequence-to-a-multi-value-handoff, carry-a-multi-reader-intermediate-through-region-formation]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
@@ -46,3 +46,59 @@ Writing the softmax's law. That additionally needs the maximum scalar key, and i
 ## Closes when
 
 A realization in which one published value has more than one reader is expressible and checked, its retention contract is stated rather than implied, the sequence identity encodes the wider source vocabulary injectively with the reasoning recorded at the encoding site, and every existing one-reader chain's identity is unchanged byte for byte.
+
+## Outcome — 2026-08-06
+
+The multi-reader arm landed and the fork **resolved rather than parked**: exactly one arm survives the elimination this ticket set. Commit `3a8b6bd5` on `tkt/admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`, base `dd9def76`, shared with [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`](admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md).
+
+### The fork's resolution
+
+Run against the softmax's four refused stagings **and** against generality.
+
+**The multi-value handoff reaches the softmax only through a copy-through, and both of its shapes are disqualified by the law layer's own standards.**
+
+- **One stage publishes `(e, d)`.** In a single region the parallel dimension and the reduction dimension are distinct `DomainRole`s on distinct dimensions, so a region writing `e_i` per point *and* folding `e` must read the scores at both and evaluate `Exp(s_i - m)` twice per element. That is "a different scalar program, not a different schedule" by the standard `StagedStrictSerialSumThenPointwiseF32`'s own doc-comment sets and `realize_root_mean_square_scale`'s split argument repeats — and here it doubles the operation's *one inexact step*, the one carrying the resolved ADR 0042 accuracy contract. This is the same argument that eliminated staging 4 in this ticket's body, applied to a different recomputation.
+- **The folding stage republishes `e` verbatim beside `d`.** Structurally sound, and it costs a full-size identity copy: an output boundary and a write that are no part of what the operation means, carried inside a region's canonical identity. It expresses retention by duplication rather than as a lifetime, against `AGENTS.md`'s "represent … lifetimes explicitly" and "keep the public graph about **what** operations mean, not **how** hardware runs them".
+
+**The multi-reader arm generalizes and the handoff arm does not, for this shape.** Layer normalization's `x - m` is read by the variance fold and again by the output pass; any log-sum-exp sibling has the same shape. Nothing was found that the multi-reader arm cannot express and the handoff can — **except a genuinely different capability**: one region producing two *independent* results consumed by one pass (a sum and a sum of squares in one fold). That is a publication-vocabulary question, not a retention one, and no reader widening reaches it. It is filed and deferred with a priced trigger at [`widen-the-region-sequence-to-a-multi-value-handoff`](widen-the-region-sequence-to-a-multi-value-handoff.md) rather than left as an unresolved fork, because no registered family asks for it.
+
+### What landed
+
+`VerifiedIndexRegionSequence::try_new` was restructured into three passes — collect each non-final stage's single publication, validate every declared source against it, then check every publication has a reader — replacing the single in-flight `handoff` slot that made adjacency and single-readership structural. `StagedInputSource::Intermediate(p)` now admits any earlier stage, and several reads of one value are admitted at one stage or across stages.
+
+**Where retention is recorded.** `StagedIntermediate` gains `retained_through()`: the last stage across which the published value stays live, so its lifetime is `producer()..=retained_through()`. It is *derived* from the declared readers and then recorded on every record of that value — the module's own "derived and checked, never declared and believed", rather than an exception to it. A separately declared span would be a second authority over one fact that could disagree with the readers. The contract is stated in the module header under **The retention contract** and in `StagedIntermediate`'s rewritten **Lifetime** paragraph, which previously said the model "deliberately cannot express" it.
+
+**Three rules bound the chain**, stated in the header: a source names a strictly earlier stage (acyclicity, which is what adjacency used to provide); a non-final stage publishes exactly one value (`NotChained` unchanged, and its comment now says why widening *that* is a separate capability); a published value has at least one reader, checked over the whole chain rather than at the following stage.
+
+**`StagedIntermediate` stays per read, not per value.** For a one-reader chain — every chain any registered law spells — the record set is exactly what it always was. This is stated as a choice worth objecting to on the acceptance node: per value is arguably cleaner, but `consumer()`/`consumer_input()` are read from `crates/tiler-compiler/src/region.rs`, which this scope could not edit, and per-boundary is the granularity this record has always had.
+
+### Identity — unchanged by construction, and pinned anyway
+
+`encode_sequence_identity` is **untouched**. `Intermediate` already wrote its producer ordinal in full under tag `2`, and `push_len` is injective over the whole `usize` range rather than over the range the chain rules happened to admit — so the admitted preimage set widened while the map did not. Every chain expressible before encodes byte for byte as before, and injectivity over the wider domain follows from the unchanged length-prefixed, tagged, ordered argument. That reasoning is recorded at the encoding site, including why the ordinal is now load-bearing where it used to be redundant.
+
+`the_landed_one_reader_chain_identities_are_unchanged_byte_for_byte` (`crates/tiler-ir/src/index/law.rs`) pins exact length plus a SHA-256 under a test-local domain for three realized sequence identities — the normalization's own law at `[3,4]` axis 1 and at `[4]` axis 0 (the live instance), and the plain staged template — captured on base commit `dd9def76` before either widening landed. **Zero pins moved**, as expected. The workspace suite is 2899 passing against a base of 2892 (seven new tests), with one expected exception owned by the sibling ticket: the compiler request digest, moved by the *scalar* registration and not by anything here.
+
+### The softmax's staging #1, expressible and checked
+
+`the_softmax_staging_publishing_the_exponentials_chains` builds the four-stage chain at the sequence layer with real reduced-rank interfaces — two `row_fold_region` stages (`[3,4] -> [3]`, a genuine `reduce`) and two `row_pointwise_region` stages (`[3,4]` and `[3]` in, `[3,4]` out) — sourced `[[Occurrence(0)], [Occurrence(0), Intermediate(0)], [Intermediate(1)], [Intermediate(1), Intermediate(2)]]`. It asserts the four reads as `(producer, consumer, retained_through)` = `[(0,1,1), (1,2,3), (1,3,3), (2,3,3)]`: the exponentials are published by stage one, read by stage two and again by stage three, and stay live across a stage that publishes something else. The regions stand for the pinned formula's steps in their *boundaries*, which is where the chain checks anything; emitting the softmax's scalar programs is [`register-the-softmax-realization-law`](register-the-softmax-realization-law.md)'s work.
+
+### Watched failures, and one that found a hole
+
+Four perturbations, each run and read:
+
+1. **Adjacency restored** (`*producer + 1 == position`): only `the_softmax_staging_publishing_the_exponentials_chains` fails, at `UnavailableIntermediate { stage: 3, slot: 0 }` — the second read of `e`. 891/892 pass.
+2. **Single readership restored** (`reads[*producer] == 0` added): the softmax test *and* `one_published_value_read_twice_by_one_stage_chains` fail, and only those two. 890/892.
+3. **The acyclicity bound dropped** (`published.get(*producer)` with no `< position` filter): **the whole suite passed.** The bound was uncovered. Both of this module's existing "wrong producer" assertions used two-stage chains, where naming stage one is already an *out-of-range* ordinal, so an implementation with no ordering rule at all refuses them. The fix is a new test, `a_value_read_at_or_before_its_producing_stage_refuses`, over three-stage chains where both the self-reference and the forward reference name a *live* producer whose element type and shape agree — plus the strictly-forward wiring of the same three regions, admitted, so the refusals prove the bound rather than proving something else was wrong. Re-run under the same perturbation, that test fails.
+4. **The retention span reduced to the single read** (`retained_through = consumer`): the softmax test fails with `(1, 2, 2)` where `(1, 2, 3)` is required — the exact claim that a value's span is a property of the value and not of one read.
+
+### Public boundary
+
+The sequence surface is public and accepted, so this widening lands as a labelled draft with its own acceptance node, [`accept-the-multi-reader-index-realization-retention`](accept-the-multi-reader-index-realization-retention.md), parked at `awaiting-decision`. Nothing is self-accepted. The module header now points at both nodes.
+
+### Also filed
+
+[`carry-a-multi-reader-intermediate-through-region-formation`](carry-a-multi-reader-intermediate-through-region-formation.md) — `crates/tiler-compiler/src/region.rs` synthesizes one `GraphValue` per `StagedIntermediate`, so a value read twice would become two independent synthetic values. Nothing is wrong today (per-read and per-value coincide for every registered law, and the workspace suite is green); the gap opens with the first multi-reader law.
+
+### Checks
+
+`cargo fmt --all --check`; `make lint` (workspace clippy less the three prototypes, `-D warnings`); `make doc` (`RUSTDOCFLAGS="-D warnings"`); `cargo nextest run --workspace` — 2899 passed, 7 skipped; `cargo test --workspace --doc`; `make full`; `tkt lint`; `git diff --check`; `tkt guard`.

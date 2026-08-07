@@ -70,8 +70,9 @@ pub use scalar::{
     ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
     ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError, add_bf16_scalar_op,
     add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op,
-    constant_f32_scalar_op, divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op,
-    multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    constant_f32_scalar_op, divide_f32_scalar_op, exp_f32_scalar_op, maximum_f32_scalar_op,
+    multiply_bf16_scalar_op, multiply_f32_scalar_op, rsqrt_f32_scalar_op,
+    strict_affine_u4_dequantize_scalar_op,
 };
 pub use sequence::{
     CanonicalIndexRegionSequenceIdentity, IndexRegionSequenceError,

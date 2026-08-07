@@ -107,6 +107,73 @@ pub fn rsqrt_f32_scalar_op() -> ScalarOpKey {
     governed_scalar_op("rsqrt-f32")
 }
 
+/// Returns the governed per-point binary32 `maximum` scalar operation key.
+///
+/// **Labelled draft.** The key, its name, its arity, and its fact record are a
+/// concrete draft pending Tom's review; see
+/// [`accept-the-governed-maximum-scalar-key`]. Admitting a scalar operation is a
+/// semantic surface rather than an implementation detail, because the key becomes
+/// part of every reached-definition projection a region carrying it derives an
+/// identity from — the reason [`rsqrt_f32_scalar_op`] carries an acceptance node
+/// of its own.
+///
+/// The **NaN-propagating** IEEE 754-2019 extrema family, ordering `-0.0 < +0.0`.
+/// It is what `tiler::softmax-f32@1`'s row maximum pins, and it is the per-point
+/// counterpart of [`crate::kernel::BinaryOp::F32Maximum`].
+///
+/// # The name, and why the bare spelling is admissible
+///
+/// [ADR 0023](../../../../docs/decisions/0023-floating-point-extrema-semantics.md)
+/// admits *two* families and requires an operation to name the one it means, so a
+/// bare `maximum` is admissible only if the number-preferring sibling can never
+/// later be registered under a name that reads as its complement. It cannot,
+/// because the two names are already complements in the standard's own
+/// vocabulary: IEEE 754-2019 spells the propagating family `maximum` and the
+/// number-preferring one `maximumNumber`, and ADR 0023 carries that pair over as
+/// `Maximum` and `MaximumNumber`. Under this module's naming rule — the spec's
+/// own name, kebab-cased, with the operand width appended, as
+/// [`rsqrt_f32_scalar_op`] and [`divide_f32_scalar_op`] already are — the sibling
+/// spells `maximum-number-f32` and this key reads as exactly its complement. A
+/// disambiguating name such as `maximum-propagating-f32` would *diverge* from the
+/// name ADR 0023 anchors on, which is the opposite of what naming the family for
+/// safety would achieve.
+///
+/// What a bare name does not do on its own is separate this family from a host or
+/// backend spelling that shares it: Rust's `f32::max` and Metal's `fmax` are both
+/// the *other* family. That separation is carried where this module already
+/// carries it for `divide-f32`'s missing reciprocal sibling — in the registered
+/// normative definition, which names the family, the NaN rule, and the zero
+/// ordering explicitly and is part of this definition's encoded identity.
+///
+/// # The signed-zero ordering is Tiler's own fact
+///
+/// `-0.0 < +0.0`, so `maximum(-0.0, +0.0)` is `+0.0` in either operand order.
+/// ADR 0023 requires the ordering of *both* Tiler families, and it is stated here
+/// as this operation's own contract rather than as a reproduction of any
+/// reference. The reference model does not implement it and is cited only as
+/// contrast: in the retained probe's pinned environment `torch.max` over
+/// `[+0.0, -0.0]` is `-0.0` and over `[-0.0, +0.0]` is `+0.0` while `torch.amax`
+/// answers the other way on both, so each spelling returns a fixed *position*
+/// rather than a fixed value — the four `torch_max_of_signed_zeros_*` and
+/// `torch_amax_of_signed_zeros_*` rows of
+/// `spikes/numerics/transformer_reference_semantics/results/2026-08-01-cpu-f32-torch2.6.0-transformers4.51.0/record.tsv`.
+/// Nothing in this key rests on them.
+///
+/// # Why it shares the exact-bit-pattern fact record, and states no third rule
+///
+/// The derivation is on `exact_bit_pattern_f32_scalar_facts` in this module,
+/// beside the record itself. The short form: this operation rounds nothing and
+/// installs the governed canonical arithmetic NaN for a NaN result, which is what
+/// the NaN-canonicalizing conversion beside it also does, so the two share one
+/// record for the reason the exponential and the reciprocal square root share
+/// theirs.
+///
+/// [`accept-the-governed-maximum-scalar-key`]: ../../../../tickets/accept-the-governed-maximum-scalar-key.md
+#[must_use]
+pub fn maximum_f32_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("maximum-f32")
+}
+
 /// Returns the governed per-point `f32` NaN-canonicalization scalar key.
 ///
 /// This is the index-region counterpart of the structured kernel's
@@ -984,6 +1051,17 @@ pub const SCALAR_FACT_ROUNDING: AttributeFieldId = AttributeFieldId::new(1);
 /// makes a *preserving* operation distinguishable from one whose payload
 /// behaviour was merely never written down: absence of
 /// [`SCALAR_FACT_CANONICAL_NAN_BITS`] never carries meaning on its own.
+///
+/// **The admitted values are [`CANONICAL_ARITHMETIC_NAN_PROFILE`] and
+/// [`DECLARED_PAYLOAD_PRESERVED`], and the vocabulary is deliberately still
+/// two.** The field's scope is what keeps it that way: it decides the payload of
+/// a *NaN result*, so an operation that installs nothing on its ordinary domain
+/// still answers it whenever it produces a NaN at all. Neither the NaN
+/// canonicalization nor the maximum is arithmetic, and both name the profile;
+/// `exact_bit_pattern_f32_scalar_facts` in this module carries that derivation
+/// and the evidence boundary behind it. An operand-payload-*propagating* rule would be a
+/// third value, and nothing registered here has one: no governed scalar lets a
+/// NaN operand's payload reach its result.
 pub const SCALAR_FACT_NAN_RESULT_RULE: AttributeFieldId = AttributeFieldId::new(2);
 
 /// Exact canonical arithmetic-NaN payload the operation installs, when it does.
@@ -1087,13 +1165,67 @@ fn elementary_f32_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> 
     ])
 }
 
-/// Facts of the governed canonical arithmetic-NaN conversion.
+/// Facts shared by the governed binary32 scalars that select rather than compute.
 ///
-/// It installs the same payload as the arithmetic scalars, but it is not
-/// arithmetic: it rounds nothing and reproduces every non-NaN binary32 pattern
-/// verbatim, including the sign of a zero. That exactness is the reason a
-/// reduction can canonicalize a singleton result without an addition.
-fn canonicalize_nan_f32_facts() -> Result<CanonicalValue, ScalarRegistryError> {
+/// Its two members are [`canonicalize_nan_f32_scalar_op`] and
+/// [`maximum_f32_scalar_op`]. Neither is arithmetic: each rounds nothing and
+/// reproduces an operand's binary32 pattern verbatim on every non-NaN input,
+/// including the sign of a zero — the conversion reproduces its one operand, and
+/// the maximum reproduces whichever operand the ordering selects. That exactness
+/// is the reason a reduction can canonicalize a singleton result without an
+/// addition, and the reason the maximum carries no rounding obligation and its
+/// reduction declares no accumulator width.
+///
+/// **The three fields say the same thing about both, which is why there is one
+/// record and not two** — the ground [`elementary_f32_scalar_facts`] states for
+/// the exponential and the reciprocal square root, and two copies would be two
+/// authorities over one statement that could drift. What separates the two keys
+/// is their arity and their registered normative definition, not this record.
+///
+/// # Why the maximum names the canonical arithmetic-NaN profile, and mints no third rule
+///
+/// [`SCALAR_FACT_NAN_RESULT_RULE`] decides *which NaN payload a result carries*,
+/// and this operation's answer is the governed canonical one. That is derived
+/// rather than chosen, from three agreeing authorities:
+///
+/// - **ADR 0023's Decision, verbatim:** "Portable-bitwise NaN results use the
+///   existing canonical arithmetic-NaN contract" — stated of both extrema
+///   families, beside the `-0.0 < +0.0` requirement.
+/// - **[Numerical semantics](../../../../docs/numerical-semantics.md), "Min and
+///   max":** "Under portable-bitwise conformance, a produced NaN follows the
+///   canonical arithmetic-NaN contract." The clause's only subject is the two
+///   extrema families.
+/// - **Both delivered realizations, which agree with it.** The Metal fixup's
+///   unordered arm returns the canonical pattern directly rather than propagating
+///   an operand (`maximum_helper` in `crates/tiler-metal/src/emit.rs`), and the
+///   reference's `maximum_f32` returns `f32::NAN`, which is that pattern
+///   (`crates/tiler-reference/src/softmax.rs`).
+///
+/// **So the operand-payload-selecting rule this key was expected to need does not
+/// exist, and asserting one would be false.** The expectation rested on reading
+/// "performs no arithmetic" as "installs no payload"; those are different claims,
+/// and [`canonicalize_nan_f32_scalar_op`] already separates them — it is
+/// explicitly not arithmetic, computes nothing, and names this profile. On an
+/// *ordered* pair the maximum installs nothing, but that is a statement about
+/// non-NaN results, which is not what this field decides and which the profile
+/// value therefore does not claim.
+///
+/// A **signalling** NaN operand needs no clause of its own and gets none. It
+/// makes the pair unordered exactly as a quiet NaN does, so the value answer is
+/// identical and both delivered realizations reach it without a special case; and
+/// the invalid-operation signal IEEE 754 would raise is outside Tiler's
+/// observable contract altogether, which numerical semantics fixes as value-only
+/// (`RaiseNoFlag`) rather than leaving to a host. An evidence boundary belongs
+/// beside that: IEEE Std 754-2019 is `metadata-only` in
+/// `docs/research/numerics/sources` — purchased and not redistributable — so the
+/// standard's own clause text is not readable from this tree. What the repository
+/// holds is the reading in
+/// [floating-point extrema precedents](../../../../docs/research/numerics/floating-point-extrema-precedents.md):
+/// that `minimum`/`maximum` propagate NaN and order `-0.0 < +0.0` separately from
+/// `minimumNumber`/`maximumNumber`. That record states no payload rule and no
+/// sNaN rule for these families, which is why the payload above is derived from
+/// Tiler's own accepted contract rather than cited to the standard.
+fn exact_bit_pattern_f32_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> {
     scalar_facts([
         (SCALAR_FACT_ROUNDING, utf8_fact("exact-binary32-bits")?),
         (
@@ -1571,11 +1703,16 @@ impl ScalarRegistryBuilder {
     /// exact per-point scalar operations the governed semantic families lower
     /// to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`],
     /// [`add_f32_scalar_op`], [`divide_f32_scalar_op`], [`exp_f32_scalar_op`],
-    /// [`rsqrt_f32_scalar_op`], [`canonicalize_nan_f32_scalar_op`],
+    /// [`rsqrt_f32_scalar_op`], [`maximum_f32_scalar_op`],
+    /// [`canonicalize_nan_f32_scalar_op`],
     /// [`strict_affine_u4_dequantize_scalar_op`], [`constant_bf16_scalar_op`],
     /// [`multiply_bf16_scalar_op`], and [`add_bf16_scalar_op`]. NaN
     /// canonicalization and the strict-affine decode are conversion operations
-    /// rather than homogeneous F32 arithmetic. The `bf16` triple is the complete
+    /// rather than homogeneous F32 arithmetic, and the maximum is a selection
+    /// rather than either. There is deliberately no number-preferring extrema
+    /// sibling beside the maximum and no `minimum-f32` at all: ADR 0023 makes each
+    /// a separate operation, and a scalar with no registered semantic operation
+    /// above it is one a law could emit into a region nothing means. The `bf16` triple is the complete
     /// per-point vocabulary of the registered `bf16` families and nothing wider:
     /// there is no `bf16` division, elementary function, or NaN canonicalization
     /// here because no `bf16` semantic operation states one. An extension
@@ -1678,7 +1815,30 @@ impl ScalarRegistryBuilder {
                  tiler.scalar::canonicalize-nan-f32@1",
                 ScalarAttributeSchema::empty(),
                 ScalarArity::exact(1)?,
-                canonicalize_nan_f32_facts()?,
+                exact_bit_pattern_f32_scalar_facts()?,
+                Arc::new(StandardF32Homogeneous),
+            )?,
+        )?;
+        // The per-point extrema key. Like the reciprocal square root before it,
+        // registering it widens this snapshot's identity and therefore every
+        // whole-snapshot provenance derived from it, and leaves reached-only
+        // projections alone — so every existing occurrence's executable coverage,
+        // and so its kernel-program and artifact identity, stays byte-identical.
+        // `the_landed_one_reader_chain_identities_are_unchanged_byte_for_byte` in
+        // `super::law` is that claim pinned over exact bytes.
+        builder.register(
+            provider.clone(),
+            standard_definition(
+                maximum_f32_scalar_op(),
+                "the NaN-propagating IEEE 754-2019 maximum over binary32, ordering -0.0 below +0.0 \
+                 and deliberately not maximumNumber; every non-NaN result is one operand's exact \
+                 bit pattern and no value is computed, and a NaN result carries the governed \
+                 canonical arithmetic-NaN payload whichever operand was a NaN and whether it was \
+                 quiet or signalling; deliberately not Rust's f32::max or Metal's fmax, which are \
+                 the number-preferring family; tiler.scalar::maximum-f32@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(2)?,
+                exact_bit_pattern_f32_scalar_facts()?,
                 Arc::new(StandardF32Homogeneous),
             )?,
         )?;
@@ -2503,6 +2663,7 @@ mod governed_fact_tests {
             multiply_f32_scalar_op(),
             add_f32_scalar_op(),
             canonicalize_nan_f32_scalar_op(),
+            super::maximum_f32_scalar_op(),
         ] {
             let definition = registry
                 .definition(&key)
@@ -2638,6 +2799,7 @@ mod governed_fact_tests {
             multiply_f32_scalar_op(),
             add_f32_scalar_op(),
             canonicalize_nan_f32_scalar_op(),
+            super::maximum_f32_scalar_op(),
         ] {
             let facts = registry
                 .definition(&key)
@@ -2710,7 +2872,11 @@ mod governed_fact_tests {
                 key.name()
             );
         }
-        for key in [constant_f32_scalar_op(), canonicalize_nan_f32_scalar_op()] {
+        for key in [
+            constant_f32_scalar_op(),
+            canonicalize_nan_f32_scalar_op(),
+            super::maximum_f32_scalar_op(),
+        ] {
             assert!(
                 stated(&key).is_none(),
                 "{} is not an arithmetic contraction participant",
@@ -2968,6 +3134,222 @@ mod governed_fact_tests {
             ),
             "a second operand must be an arity refusal; observed {arity:?}",
         );
+    }
+
+    /// The maximum is registered and shares the exact-bit-pattern fact record
+    /// with the NaN canonicalization.
+    ///
+    /// **The equality is the claim.** Both operations select rather than compute:
+    /// each reproduces an operand's binary32 pattern verbatim on every non-NaN
+    /// input and installs the governed canonical arithmetic NaN for a NaN result,
+    /// so the three fields say the same thing about both. What separates them is
+    /// arity and their registered normative definitions, which is a different
+    /// part of the definition — asserted below so a shared record cannot make the
+    /// two one row. This mirrors
+    /// `the_reciprocal_square_root_shares_the_elementary_fact_record` exactly.
+    ///
+    /// The rule assertion is the one worth reading twice: the key names
+    /// [`CANONICAL_ARITHMETIC_NAN_PROFILE`] rather than a third vocabulary value,
+    /// because ADR 0023's Decision and `docs/numerical-semantics.md`'s "Min and
+    /// max" clause both put the extrema families' NaN results under the canonical
+    /// arithmetic-NaN contract, and both delivered realizations agree.
+    #[test]
+    fn the_maximum_shares_the_exact_bit_pattern_fact_record() {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let maximum = registry
+            .definition(&super::maximum_f32_scalar_op())
+            .expect("the governed maximum is registered");
+        let canonicalize = registry
+            .definition(&canonicalize_nan_f32_scalar_op())
+            .expect("the governed NaN canonicalization is registered");
+        assert_eq!(maximum.facts(), canonicalize.facts());
+
+        // It rounds nothing, because it computes nothing: the rounding field is
+        // the exact-bits one the constant and the conversion state, never the
+        // arithmetic rule and never the elementary functions' deferral.
+        assert_eq!(
+            field(maximum.facts(), super::SCALAR_FACT_ROUNDING)
+                .map(utf8)
+                .as_deref(),
+            Some("exact-binary32-bits"),
+        );
+        assert_eq!(
+            field(maximum.facts(), SCALAR_FACT_NAN_RESULT_RULE)
+                .map(utf8)
+                .as_deref(),
+            Some(CANONICAL_ARITHMETIC_NAN_PROFILE),
+        );
+        assert!(
+            field(maximum.facts(), SCALAR_FACT_CANONICAL_NAN_BITS).is_some(),
+            "an operation naming the profile declares the payload it installs",
+        );
+        assert!(
+            field(maximum.facts(), SCALAR_FACT_CONTRACTION_PERMITTED).is_none(),
+            "a selection is not an arithmetic-contraction participant",
+        );
+
+        // Binary, where the conversion is unary, and separately named.
+        assert_eq!(maximum.operands().min(), 2);
+        assert_eq!(maximum.operands().max(), 2);
+        assert_eq!(
+            field(maximum.conformance(), AttributeFieldId::new(1))
+                .map(utf8)
+                .as_deref(),
+            Some("tiler.scalar.conformance.maximum-f32"),
+        );
+
+        // The registered normative definition is where the family, the zero
+        // ordering, and the excluded host and backend spellings are pinned. A
+        // shared fact record leaves this the only place they are stated, so it is
+        // asserted rather than assumed — and it is part of the encoded
+        // definition, so a projection separates the two keys on it.
+        let normative = maximum.normative_definition().as_str();
+        for clause in [
+            "NaN-propagating",
+            "ordering -0.0 below +0.0",
+            "deliberately not maximumNumber",
+            "f32::max",
+            "fmax",
+        ] {
+            assert!(
+                normative.contains(clause),
+                "the maximum's normative definition must pin {clause:?}",
+            );
+        }
+        assert_ne!(
+            super::maximum_f32_scalar_op(),
+            canonicalize_nan_f32_scalar_op()
+        );
+        assert_ne!(
+            registry
+                .project_reached([&super::maximum_f32_scalar_op()])
+                .expect("the governed maximum projects")
+                .as_bytes(),
+            registry
+                .project_reached([&canonicalize_nan_f32_scalar_op()])
+                .expect("the governed canonicalization projects")
+                .as_bytes(),
+        );
+    }
+
+    /// The maximum refuses the applications a homogeneous binary `f32` scalar has
+    /// no meaning for.
+    ///
+    /// Both perturbations were observed failing before the assertions were
+    /// written, and they reach different refusals: a `bf16` operand is the
+    /// inferencer's, and a third operand is the registered contract's before the
+    /// inferencer runs. A mixed pair is asserted beside the uniform foreign pair
+    /// because this key is the first *binary* one whose operands could disagree
+    /// with each other rather than only with `f32`.
+    #[test]
+    fn the_maximum_refuses_a_foreign_operand_a_mixed_pair_and_a_third_operand() {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let key = super::maximum_f32_scalar_op();
+        let f32_type = crate::semantic::F32::resolved_type();
+        let bf16_type = crate::semantic::Bf16::resolved_type();
+        let capacity = super::ScalarInferenceCapacity {
+            result_slots: 1,
+            result_count_before: 0,
+            result_limit: 1,
+            retained_bytes: usize::MAX,
+            retained_bytes_before: 0,
+            retained_byte_limit: usize::MAX,
+            per_result_overhead: 0,
+            byte_multiplier: 1,
+        };
+        let attributes = super::ScalarAttributes::empty();
+
+        let inferred = registry
+            .infer(
+                &key,
+                &[f32_type.clone(), f32_type.clone()],
+                &attributes,
+                capacity,
+            )
+            .expect("a binary f32 application is admitted");
+        assert_eq!(inferred, vec![f32_type.clone()]);
+
+        for operands in [
+            vec![bf16_type.clone(), bf16_type.clone()],
+            vec![f32_type.clone(), bf16_type],
+        ] {
+            let foreign = registry
+                .infer(&key, &operands, &attributes, capacity)
+                .expect_err("this family declares no mixed precision and no promotion");
+            let super::ScalarApplyError::Authority(super::ScalarRegistryError::Inference(
+                rejection,
+            )) = foreign
+            else {
+                panic!("a foreign operand must be the inferencer's refusal, not a host one");
+            };
+            assert_eq!(rejection.key(), &key);
+            assert_eq!(
+                rejection.rejection().code(),
+                &crate::semantic::ProviderDiagnosticCode::new("tiler.scalar.operand-type")
+                    .expect("the governed diagnostic code is valid"),
+            );
+        }
+
+        // A third operand: an extrema *reduction* folds pairwise, so the scalar
+        // is binary and a wider application is refused by the registered contract
+        // rather than reduced by an implied fold.
+        let arity = registry
+            .infer(
+                &key,
+                &[f32_type.clone(), f32_type.clone(), f32_type],
+                &attributes,
+                capacity,
+            )
+            .expect_err("the governed maximum admits exactly two operands");
+        assert!(
+            matches!(
+                arity,
+                super::ScalarApplyError::Authority(super::ScalarRegistryError::OperandArity {
+                    actual: 3,
+                    ..
+                })
+            ),
+            "a third operand must be an arity refusal; observed {arity:?}",
+        );
+    }
+
+    /// The maximum has no semantic counterpart to derive its facts from.
+    ///
+    /// The same fact that decides the restate-and-check design for the NaN
+    /// canonicalization decides it here: the graph admits no `Maximum` reduction
+    /// as a semantic key — `tiler::softmax-f32@1` carries the extrema family in
+    /// its own facts instead — so a rule that copied each scalar's record from its
+    /// semantic operation would have no source for this one either.
+    #[test]
+    fn the_maximum_has_no_semantic_counterpart() {
+        let semantic = FrozenSemanticRegistry::standard().expect("the governed authority composes");
+        for name in ["maximum-f32", "maximum-number-f32", "minimum-f32"] {
+            assert!(
+                semantic
+                    .operation_definition(&OpKey::new("tiler", name, 1).expect("the key is valid"))
+                    .is_none(),
+                "no semantic {name} family is registered",
+            );
+        }
+        let scalars = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        assert!(
+            scalars
+                .definition(&super::maximum_f32_scalar_op())
+                .is_some()
+        );
+        // And no sibling extrema scalar beside it: ADR 0023 makes each family a
+        // separate operation, so a second one is a registration rather than a
+        // reading of this one.
+        for name in ["maximum-number-f32", "minimum-f32", "minimum-number-f32"] {
+            assert!(
+                scalars
+                    .definition(
+                        &ScalarOpKey::new("tiler.scalar", name, 1).expect("the key is valid")
+                    )
+                    .is_none(),
+                "no governed {name} scalar is registered",
+            );
+        }
     }
 }
 
