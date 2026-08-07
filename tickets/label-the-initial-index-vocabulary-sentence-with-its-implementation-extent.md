@@ -1,7 +1,7 @@
 ---
 id: label-the-initial-index-vocabulary-sentence-with-its-implementation-extent
 title: Label the initial-index vocabulary sentence with its implementation extent
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [refresh-the-l2-derivation-s-symbolic-index-profile-source-claims, admit-symbolic-index-expression-coefficients]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: agent-ir-label
-lease_expires_at: 1786079519
 ---
 ## User-visible outcome
 
