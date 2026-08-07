@@ -1,7 +1,7 @@
 ---
 id: admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold
 title: Admit a governed maximum scalar key for the softmax's shifting fold
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-softmax-law
+lease_expires_at: 1786070865
 ---
 ## User-visible outcome
 

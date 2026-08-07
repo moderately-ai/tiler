@@ -1,7 +1,7 @@
 ---
 id: pin-the-fixed-content-byte-on-the-published-identity-test
 title: Pin the fixed-content byte on the published-identity test
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [attribute-the-canonical-manifest-growth-and-decide-whether-the-encoding-owes-a-budget, decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest]
@@ -9,6 +9,9 @@ scopes: [implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifacts, measurement]
+claimed_from: todo
+assignee: agent-byte-pin
+lease_expires_at: 1786070865
 ---
 ## User-visible outcome
 
