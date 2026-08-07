@@ -1,7 +1,7 @@
 ---
 id: widen-the-emitted-numerics-prologue-past-one-width
 title: Widen the emitted numerics prologue past one width
-status: review
+status: done
 priority: p2
 dependencies: [lower-bf16-to-metal]
 related: [raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells, declare-the-bf16-rows-on-the-authoritative-metal-profile]
@@ -9,9 +9,6 @@ scopes: [implementation/metal, implementation/build, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, identity, bf16, documentation]
-claimed_from: todo
-assignee: agent-numerics-prologue
-lease_expires_at: 1786071930
 ---
 ## User-visible outcome
 
