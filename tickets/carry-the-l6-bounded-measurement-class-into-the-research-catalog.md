@@ -1,7 +1,7 @@
 ---
 id: carry-the-l6-bounded-measurement-class-into-the-research-catalog
 title: Carry the L6 record's bounded-measurement class into the research catalog
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [audit-the-ingestion-records-no-measurements-header-claim]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: []
 paths: []
 tags: [documentation]
+claimed_from: todo
+assignee: agent-orch-docs
+lease_expires_at: 1786076377
 ---
 ## User-visible outcome
 
