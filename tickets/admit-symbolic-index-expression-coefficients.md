@@ -1,7 +1,7 @@
 ---
 id: admit-symbolic-index-expression-coefficients
 title: Admit symbolic coefficients to index expressions
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-live-extent-operands-to-payload-indexing, promote-the-symbolic-index-profile-to-a-public-boundary, admit-semi-affine-index-expression-class]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, shapes, public-boundary]
+claimed_from: todo
+assignee: agent-symbolic-coeff
+lease_expires_at: 1786110590
 ---
 ## User-visible outcome
 
