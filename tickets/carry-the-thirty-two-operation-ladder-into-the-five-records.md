@@ -1,7 +1,7 @@
 ---
 id: carry-the-thirty-two-operation-ladder-into-the-five-records
 title: Carry the thirty-two-operation ladder and its changed wall class into the five records the region-expansion fix could not edit
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [region-expansion-exhaustion-loses-the-only-feasible-plan, carry-the-restored-ladder-point-into-the-four-records, carry-the-widened-ladders-corrections-into-the-four-records, widen-the-identity-growth-ladder-to-the-governed-operation-budget]
@@ -9,9 +9,6 @@ scopes: [research/artifacts, contracts/decisions, contracts/artifacts, contracts
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, measurement]
-claimed_from: todo
-assignee: agent-orch-docs
-lease_expires_at: 1786080145
 ---
 ## User-visible outcome
 
@@ -44,3 +41,14 @@ Each was found by `grep -rn "region_expansions\|12\.\.=62\|2\.\.=11"`; read each
 ## Checks
 
 `tkt lint`, and `grep -rn "region_expansions" docs/` returning only statements that are true of the current tree.
+
+## Outcome — 2026-08-07, all five records corrected
+
+Every enumerated site moved and nothing numeric did:
+
+- **`docs/artifact-abi.md:247`** and **`docs/ir.md`** — the shared measurement sentence states the 2..=32 domain, residual zero at thirty-one points, the earned-and-consumed arc of the twenty-two out-of-domain confirmations, and `BudgetExhausted` on `region_members` as the remaining wall with its region-shape-not-program-size character.
+- **`docs/decisions/0104-…`** — the header measurement paragraph re-dated to the 2026-08-07 re-run with walls at 33/62/63; "Bounds on the evidence" records the full out-of-domain arc (none → one → twenty-two → all consumed) and weighs it honestly: no out-of-domain check remains, and twenty-two consecutive zero-residual predictions is a stronger position than any single probe was. No quoted figure moved.
+- **`docs/research/artifacts/manifest-fixed-content-growth.md`** — all five stale sites now carry the thirty-one-point ladder, the `region_members` wall with its parked sizing decision, and both original walls named as fixed defects.
+- **`docs/research/program-planning/complete-model-ingestion-and-execution.md`** — the header's relay enumeration re-dated; the identity-growth relay paragraph carries the 2..=32 fit and the confirmation arc; the wall paragraph's supersession note is rewritten to the double supersession, ending with the load-bearing survival: the decoder-layer program is still not compilable, now on the declared `region_members` bound rather than a truncated search.
+
+Verified by sweeping docs/ for `region_expansions`, `2..=11`, `all ten points`, `above eleven operations`, and `12..=62`: every surviving hit is either a correct current statement or explicitly dated history framed by a correction.
