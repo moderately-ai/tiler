@@ -2,7 +2,7 @@
 
 Each `growth.tsv` here is evidence about the tree it was produced on and **none of them is regenerated when a later one lands**. That is deliberate — a rerun on today's compiler would measure today's encoding, so overwriting an older file would destroy the only record of the encoding it read — but it means a reader comparing two files is comparing two trees, and the columns move for reasons that are not the curve. This file says which regime each belongs to so the comparison is possible at all. The spike's own [`README.md`](../README.md) carries the current reading; the newest file below is the one it reports.
 
-Only the newest result describes the compilation path as it stands. **The three older ones state a reachable domain of 2..=32 that no longer holds, and byte columns that no longer reproduce.** Read them as history, not as current figures.
+Only the newest result describes the compilation path as it stands. **The three oldest state a reachable domain of 2..=32 that no longer holds, and byte columns that no longer reproduce.** Read them as history, not as current figures.
 
 | Result | Ladder | What stopped it | Program-identity fit | What moved into it |
 | --- | --- | --- | --- | --- |
@@ -10,7 +10,8 @@ Only the newest result describes the compilation path as it stands. **The three 
 | [`2026-08-06-…`](2026-08-06-apple-m4-max-macos27.0-26A5388g/growth.tsv) | 2..=10, 9 points | the explain authority's detail ceiling, `InvalidCompilerOutput` at 11 | `3525n + 727` — linear | `semantic_operations` moved 8 → 62; ADR 0104's fold made the per-record graph identity a fixed-width digest |
 | [`2026-08-06-post-explain-ceiling-…`](2026-08-06-post-explain-ceiling-apple-m4-max-macos27.0-26A5388g/growth.tsv) | 2..=11, 10 points | `region_expansions`, `NoFeasiblePlan` at 12 | `3525n + 727` — linear | `refuse-nothing-legal-on-the-explain-detail-ceiling`; the eleventh point stopped refusing |
 | [`2026-08-07-post-coverage-extremes-…`](2026-08-07-post-coverage-extremes-apple-m4-max-macos27.0-26A5388g/growth.tsv) | 2..=32, 31 points | `region_members = 32`, `BudgetExhausted` at 33 | `3525n + 727` — linear | `region-expansion-exhaustion-loses-the-only-feasible-plan`; 12..=32 stopped refusing |
-| [`2026-08-07-post-derived-region-budgets-…`](2026-08-07-post-derived-region-budgets-apple-m4-max-macos27.0-26A5388g/growth.tsv) | **2..=62, 61 points** | **`semantic_operations = 62`**, `BudgetExhausted` at 63 | **`3530n + 723`** — linear | `derive-the-region-shape-budgets-from-the-declaration`, which dissolved the 33..=62 wall; and the index-refinement encoding step described below |
+| [`2026-08-07-post-derived-region-budgets-…`](2026-08-07-post-derived-region-budgets-apple-m4-max-macos27.0-26A5388g/growth.tsv) | 2..=62, 61 points | `semantic_operations = 62`, `BudgetExhausted` at 63 | `3530n + 723` — linear | `derive-the-region-shape-budgets-from-the-declaration`, which dissolved the 33..=62 wall; and the index-refinement encoding step described below |
+| [`2026-08-07-post-restored-planning-wall-…`](2026-08-07-post-restored-planning-wall-apple-m4-max-macos27.0-26A5388g/growth.tsv) | **2..=62, 61 points** | **`semantic_operations = 62`**, `BudgetExhausted` at 63 | **`3530n + 723`** — linear, **every byte column identical to its predecessor** | nothing in the encoding; `restore-a-planning-phase-refusal-to-the-identity-growth-harness` added a second wall entry and a control, and this file is the first whose wall section carries a refusal raised *after* planning |
 
 ## The two regimes, and what separates them
 
@@ -25,6 +26,12 @@ Only the newest result describes the compilation path as it stands. **The three 
 **Inference — where those bytes came from, and it is not the budget change.** Budgets are written into the canonical *request subject* and not into the kernel-program identity, so the derivation cannot have moved these columns; `DeterministicBudgets::governed`'s own note records the one pinned identity that did move with it, a request qualifier. The candidate that fits is `d39cee59`, "Admit an environment read in a proof and name it in the evidence", which stepped the canonical region domain to `tiler.index-region.v11` and appends one fixed-width `IndexDomainFactSource` tag per **discharged** index-domain assessment. `5n − 4` over a chain of one hoisted constant and `n − 1` multiplies reads as five discharged assessments per multiply and one for the constant. This is an inference from the encoder plus the arithmetic above, not a bisection: several commits touching identity-bearing code landed between the two trees and no per-commit measurement was taken.
 
 **So the older files are stale in two independent ways** — a domain that was truncated by a bound since dissolved, and byte columns from an earlier index-region encoding. Neither is a defect in them.
+
+## The last two files are one regime, and that is itself a measurement
+
+**Measurement, 2026-08-07.** The newest file was produced on base `25e76d5d`, six commits past the `cee4fe1a` its predecessor names — commits touching `tiler-compiler`, `tiler-ir` and `tiler-build`, including a widened elementary recognizer, BF16 fusion legality, and a staged family admitted over a materialized intermediate. **All nine structural columns are identical at all sixty-one points**, checked column by column rather than by fit: `requested`, `operations`, `coverage_records`, `stages`, `alternatives`, `graph_bytes`, `program_bytes`, `widest_alternative_bytes`, `coverage_bytes`. `compile_ms` is not compared and is not evidence.
+
+So `3530n + 723` is a statement about two trees rather than one, and the spike README's whole verdict — the refusal point, the margins, the embedding-ceiling crossing — carries to this base unchanged. A separate file is retained anyway because its *wall section* differs: it is the first that probes a refusal raised after planning, and the first that compiles a control.
 
 ## Why none of them is regenerated
 

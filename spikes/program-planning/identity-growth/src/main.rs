@@ -31,16 +31,25 @@
 //! number nobody can tell apart from a real one.
 //!
 //! Four `--perturb` modes exist to watch those refusals fire rather than
-//! trust them; see [`Perturbation`]. Each exits non-zero.
+//! trust them; see [`Perturbation`]. Each exits non-zero, and each names the
+//! check that refused it — the exit code alone cannot separate a working
+//! perturbation from one whose program has quietly started compiling, which is
+//! the failure [`unplannable_program`] records twice.
 //!
 //! # Reading the output
 //!
 //! One TSV row per ladder point on stdout, then a summary block of `#` comment
 //! lines carrying the structural decomposition, the exact fit, and the
 //! extrapolated refusal point solved from it. The run ends by compiling every
-//! program in [`WALLS`] and requiring each to refuse *with the class recorded
-//! beside it*, so the ladder's claim to be the whole reachable domain, and the
-//! attribution of each wall above it, are both measured rather than asserted.
+//! program in [`WALLS`] and requiring each to refuse *with the class and the
+//! phase recorded beside it*, and by compiling each control entry and requiring
+//! it to succeed — so the ladder's claim to be the whole reachable domain, and
+//! the attribution of each bound beside it, are measured rather than asserted.
+//!
+//! **Every stage runs and the exit code is their conjunction.** A failed ladder
+//! or a failed fit does not skip the wall table; the table is the only stage
+//! that can attribute a dead perturbation, so an early return there would make
+//! `--perturb=program`'s verdict unfalsifiable.
 //!
 //! Run it from this directory:
 //!
@@ -71,6 +80,11 @@ use tiler_ir::shape::Shape;
 /// life of this file a bound on *region* size stopped the family first, so the
 /// ladder was a truncation of the governed budget rather than the whole of it.
 /// [`WALLS`] compiles the point above and records which bound refuses.
+///
+/// The domain is over the *operation count* with [`EXTENT`] held fixed. The
+/// generator's other free parameter has a domain of its own, and [`WALLS`]
+/// brackets its upper end rather than sweeping it: no measured column varies
+/// with extent, so a second ladder would add rows and no information.
 ///
 /// The derivation, measured rather than read off constants:
 ///
@@ -124,10 +138,63 @@ const OPERATIONS: &[usize] = &[
     52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
 ];
 
-/// One refusal above the ladder, and the class that must raise it.
+/// Which declared bound one wall entry is about.
+///
+/// An enum rather than a string because [`print_refusal_point`] asks for one
+/// entry by name and the table's order is presentation: a widened table must be
+/// a build error at the lookup rather than a silent change of which wall the
+/// extrapolation report quotes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WallSubject {
+    /// `semantic_operations`, the governed budget that ends the ladder's domain.
+    ProgramSize,
+    /// The declaration's own measured maximum threads per grid axis.
+    LaunchGeometry,
+}
+
+impl WallSubject {
+    /// The label this subject is reported under.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::ProgramSize => "program size",
+            Self::LaunchGeometry => "launch geometry",
+        }
+    }
+}
+
+/// One program this build must refuse, and the class and phase that must do it.
 struct Wall {
-    /// The operation count probed.
-    operations: usize,
+    /// The declared bound this entry probes.
+    subject: WallSubject,
+    /// Builds the exact program compiled here.
+    ///
+    /// **A constructor rather than an operation count, and that is what makes a
+    /// `reaches_planning: true` entry statable at all.** While an integer named
+    /// the program, the table's whole vocabulary was `chain_program(n)` at the
+    /// fixed [`EXTENT`] — within which every point either compiles (2..=62) or
+    /// refuses at request verification on `semantic_operations` (≥ 63). No
+    /// program in that vocabulary refuses after planning at any `n`, so the
+    /// deliverable "an entry with `reaches_planning: true`" had an empty solution
+    /// set. The generator has a second free parameter the integer could not
+    /// reach, and the refusal that parameter runs into is raised inside the
+    /// target loop.
+    ///
+    /// The operation count is read off the built program rather than restated
+    /// beside it, so the reported number cannot disagree with what was compiled.
+    program: fn() -> SemanticProgram,
+    /// A program that must **compile**, or `None` when the ladder is the control.
+    ///
+    /// **A refusal probed without one is consistent with a broken boundary.**
+    /// The first entry needs none: it is one operation above sixty-one measured
+    /// rows of the identical family and extent, so the ladder is its control and
+    /// a session boundary that refused everything would print no rows at all. The
+    /// second needs one, because its parameter is a bound this file cannot read
+    /// off the declaration — no public accessor exposes the measured
+    /// grid-axis maximum — so the number beside it is written down. The pair is
+    /// what removes the standing claim: the refusing program sits one thread
+    /// above the recorded bound and the control sits exactly on it, so a measured
+    /// row that moved in *either* direction fires one of the two.
+    control: Option<fn() -> SemanticProgram>,
     /// The class the compiler must refuse with.
     class: CompileFailureClass,
     /// Whether the refusal is raised after a per-target trace exists.
@@ -135,12 +202,13 @@ struct Wall {
     /// A refusal raised while planning one target seals that target's trace and
     /// hands it to the caller; one raised while verifying the request refuses
     /// before any target-qualified trace exists. The two are different phases,
-    /// and while the table held several entries sharing one class this is what
-    /// separated them. It is kept now that one entry remains because the phase
-    /// is an independent property of the surviving wall: a `semantic_operations`
-    /// refusal that started arriving *after* planning would mean the
-    /// program-size gate had moved behind the target loop, which is a finding
-    /// the class alone cannot report.
+    /// and it is what separates two entries that share one class. It is an
+    /// independent property of each wall rather than a restatement of the class:
+    /// a `semantic_operations` refusal that started arriving *after* planning
+    /// would mean the program-size gate had moved behind the target loop, and a
+    /// target rejection arriving *before* it would mean a per-target refusal had
+    /// moved in front of the trace boundary. Neither is a finding the class alone
+    /// can report.
     reaches_planning: bool,
     /// What that refusal is, in the terms of the bound that produces it.
     why: &'static str,
@@ -153,16 +221,17 @@ struct Wall {
 /// moved from 8 to 62 and the probe compiled instead of refusing — which is the
 /// finding it exists to report and the reason this file was rewritten.
 ///
-/// **It is back to a single point, and that is a result rather than a
-/// regression.** Between 2026-08-06 and 2026-08-07 the table carried two and
-/// then three entries, because distinct bounds refused between the ladder's top
-/// and the governed budget and they were not interchangeable — one a search
-/// bound whose exhaustion the compiler reported as an infeasible target, one a
-/// region-shape bound, and only the last the program-size budget. Probing each
-/// **with its class and its phase** is what made a wall that moved *in kind*
-/// fail loudly rather than pass as "something refused". Every one of those
-/// intermediate bounds has since stopped refusing this family, so there is now
-/// exactly one wall to probe and the table states it rather than padding itself.
+/// **It holds two entries, they are about different bounds, and only one of
+/// them is above the ladder.** Between 2026-08-06 and 2026-08-07 it carried two
+/// and then three points of the ladder's own sweep, because distinct bounds
+/// refused between the ladder's top and the governed budget and they were not
+/// interchangeable — one a search bound whose exhaustion the compiler reported
+/// as an infeasible target, one a region-shape bound, and only the last the
+/// program-size budget. Probing each **with its class and its phase** is what
+/// made a wall that moved *in kind* fail loudly rather than pass as "something
+/// refused". Every one of those intermediate bounds has since stopped refusing
+/// this family, leaving one wall above the ladder, and it refuses before
+/// planning.
 ///
 /// **This table has fired four times, and every firing is the reason to keep
 /// it.** The 2026-08-06 run reported a probe that compiled where the governed
@@ -186,21 +255,101 @@ struct Wall {
 /// 62 is no longer probed as a wall because it is no longer one: it is the
 /// ladder's widest measured point, and the governed budget's own maximum is
 /// therefore measured rather than extrapolated to.
-const WALLS: &[Wall] = &[Wall {
-    operations: 63,
-    class: CompileFailureClass::BudgetExhausted,
-    reaches_planning: false,
-    why: "semantic_operations = 62, the one wall here that is about program size and the one \
-              that refuses before any target-qualified trace exists",
-}];
+///
+/// **The second entry is beside the ladder rather than above it, and it is the
+/// one that reaches planning.** The first bounds the ladder's *domain*: it is
+/// the point past its top, and the ladder's claim to be the whole reachable
+/// domain rests on it. The second bounds the ladder's other fixed parameter, the
+/// extent, which no operation count reaches. It is a *two*-operation chain — the
+/// smallest the generator builds — over a rank-1 tensor one element wider than
+/// the declaration's measured maximum threads per grid axis, and it is the
+/// smallest program this build recognizes, covers, offers to the physical
+/// provider, and then refuses. That is the compilation [`Perturbation::Program`]
+/// exists to watch and the only arm of [`compile_once`] that reads a target
+/// slot's own refusal.
+///
+/// It restores the phase coverage the region-shape derivations dissolved, and it
+/// restores it in a way the earlier chain entries did not have: those refused
+/// because a *compiler-internal* ceiling stopped a region, and this one refuses
+/// because a **measured hardware row** does. It cannot dissolve the way they
+/// did, because widening it would mean measuring a wider Apple row rather than
+/// deriving a bound differently.
+const WALLS: &[Wall] = &[
+    Wall {
+        subject: WallSubject::ProgramSize,
+        program: chain_past_the_operation_budget,
+        control: None,
+        class: CompileFailureClass::BudgetExhausted,
+        reaches_planning: false,
+        why: "semantic_operations = 62, the one wall about program size and the one that refuses \
+              before any target-qualified trace exists",
+    },
+    Wall {
+        subject: WallSubject::LaunchGeometry,
+        program: chain_past_the_grid_axis_bound,
+        control: Some(chain_at_the_grid_axis_bound),
+        class: CompileFailureClass::NoFeasiblePlan,
+        reaches_planning: true,
+        why: "the whole-program region's launch geometry needs one thread per element and the \
+              declaration measures max_threads_per_grid_axis at 268,435,456, so target.grid-axis \
+              rejects every region of every cover and the portfolio is empty — a hard target \
+              rejection raised inside the target loop, after the trace is opened",
+    },
+];
 
-/// The tensor extent every program in the sweep is built over.
+/// The measured maximum threads per grid axis this declaration carries.
+///
+/// **Written down because no public accessor exposes it**, and cross-checked by
+/// the [`WALLS`] entry that brackets it rather than trusted: the refusing probe
+/// sits one element above and the control sits exactly on it, so this constant
+/// disagreeing with the declaration fires one of the two. Its source is
+/// `tiler_build`'s `FIRST_MACOS_APPLE9` row `grid_axis_threads`, which the
+/// declaration projects through `declare_measured_max_threads_per_grid_axis`.
+const MEASURED_GRID_AXIS_THREADS: u64 = 268_435_456;
+
+/// Builds the chain program one operation past the ladder's top.
+fn chain_past_the_operation_budget() -> SemanticProgram {
+    chain_program_over(OPERATIONS[OPERATIONS.len() - 1] + 1, EXTENT)
+}
+
+/// Builds the smallest chain over an extent one past the measured grid axis.
+fn chain_past_the_grid_axis_bound() -> SemanticProgram {
+    chain_program_over(2, MEASURED_GRID_AXIS_THREADS + 1)
+}
+
+/// Builds the same chain over an extent exactly on the measured grid axis.
+fn chain_at_the_grid_axis_bound() -> SemanticProgram {
+    chain_program_over(2, MEASURED_GRID_AXIS_THREADS)
+}
+
+/// Returns the entry probing one declared bound.
+///
+/// Looked up by subject rather than by position, because the table's order is
+/// presentation and a report quoting "the wall" means one particular one.
+///
+/// # Panics
+///
+/// If no entry carries the subject, which is a defect in [`WALLS`].
+fn wall(subject: WallSubject) -> &'static Wall {
+    WALLS
+        .iter()
+        .find(|wall| wall.subject == subject)
+        .unwrap_or_else(|| panic!("the wall table names the {} bound", subject.label()))
+}
+
+/// The tensor extent every *ladder* program is built over.
 ///
 /// Held fixed and small deliberately. Extent enters the graph identity as a
 /// handful of bytes per value and enters nothing else this sweep measures, so
 /// varying it would add a second axis that moves the curve's constant without
 /// touching its exponent — while a large extent costs launch geometry the
 /// target profile has to admit.
+///
+/// **That last clause is now measured rather than only stated.** It is the
+/// generator's second free parameter, and the bound it runs into is the one
+/// refusal this family has that arrives *after* planning, so [`WALLS`] brackets
+/// it. Every row of the ladder still sits at this extent; nothing about the
+/// measured curve moves.
 const EXTENT: u64 = 4;
 
 /// The contract every compilation in the sweep states.
@@ -231,6 +380,13 @@ enum Perturbation {
     /// the wall table rather than written down. What it exercises is the arm the
     /// sweep must never paper over: a compilation that does not reach a verified
     /// kernel program stops the run instead of leaving a gap in the ladder.
+    ///
+    /// **It exercises the *later* of the two aborts again.** The program it
+    /// selects reaches planning, so the refusal travels back through
+    /// [`compile_once`]'s `into_targets`, `into_parts`, and target-slot
+    /// `map_err` arm — the last of which no other run reaches — and carries a
+    /// sealed trace the diagnosis prints in full. Between 2026-08-07's two runs
+    /// the selection had no such entry and silently took an earlier one.
     Program,
     /// Corrupt the expected coverage count, and watch the completeness
     /// assertion refuse.
@@ -262,6 +418,11 @@ enum Perturbation {
     /// wrong expected class leaves the compiler untouched and moves only the
     /// harness's expectation, which is what makes the refusal attributable to
     /// the comparison.
+    ///
+    /// It perturbs the first entry only. The table's third arm — a control that
+    /// refuses where it must compile — is deliberately not perturbable: moving a
+    /// control's expectation would mean asserting that a program which compiles
+    /// does not, which is a claim about nothing.
     Wall,
 }
 
@@ -315,6 +476,7 @@ fn main() -> ExitCode {
     );
 
     let mut rows: Vec<Row> = Vec::new();
+    let mut swept = true;
     for operations in OPERATIONS {
         match measure(*operations, &declaration, perturbation) {
             Ok(mut row) => {
@@ -330,39 +492,53 @@ fn main() -> ExitCode {
                     "no row is printed for a refused point, and the sweep stops rather than \
                      continuing past a program that did not verify."
                 );
-                return ExitCode::FAILURE;
+                swept = false;
+                break;
             }
         }
     }
 
-    if !summarize(&rows) {
-        return ExitCode::FAILURE;
+    // Every verdict below runs whatever the ones before it decided, and the exit
+    // code is their conjunction. Returning on the first `false` is what made
+    // `--perturb=program`'s documented verdict unable to say no: that mode's
+    // program is a [`WALLS`] entry, so the wall table is the only thing in the
+    // run that can tell a live perturbation from one whose program has started
+    // compiling — and under an early return the ladder or the fit refused first
+    // and the table was never reached. Both worlds then exited 1, which is the
+    // predecessor failure [`unplannable_program`] records, one layer up.
+    let summarized = summarize(&rows);
+    let walls_held = probe_the_walls(&declaration, perturbation);
+    if swept && summarized && walls_held {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
-    if !probe_the_walls(&declaration, perturbation) {
-        return ExitCode::FAILURE;
-    }
-    ExitCode::SUCCESS
 }
 
 /// Compiles every program in [`WALLS`], requiring each stated refusal.
 ///
-/// The ladder above claims to be the *whole* reachable domain, and that claim is
-/// only worth something if the points outside it actually refuse — and refuse
-/// for the reasons the ladder's own derivation names. Two ways this can fail and
-/// both are findings rather than passes: a probe that **compiles** means the
-/// domain is wider than the ladder, and a probe that refuses with a **different
-/// class** means the bound that binds has changed identity. Either ends the run
-/// non-zero and says what to do; neither is a hardware or timing property, so a
-/// loaded host cannot produce one.
+/// The ladder above claims to be the *whole* reachable domain for its family,
+/// and that claim is only worth something if the points outside it actually
+/// refuse — and refuse for the reasons the ladder's own derivation names. Two
+/// ways this can fail and both are findings rather than passes: a probe that
+/// **compiles** means the domain is wider than the table says, and a probe that
+/// refuses with a **different class or in a different phase** means the bound
+/// that binds has changed identity. Either ends the run non-zero and says what
+/// to do; neither is a hardware or timing property, so a loaded host cannot
+/// produce one.
+///
+/// **It runs whatever the ladder and the fit decided**, which is what makes
+/// [`unplannable_program`]'s cross-check real rather than asserted: the mode
+/// that perturbs the program compiles it here in the same run and requires the
+/// refusal, so a perturbation whose program started compiling is reported here
+/// by name instead of hiding behind a non-zero exit some other check produced.
 ///
 /// Every wall is probed even after one fails, because "which of them moved" is
 /// the whole content of the report. The table has held one, two, and three
 /// entries; the loop does not assume a count.
 fn probe_the_walls(declaration: &BoundMetalCompileDeclaration, perturbation: Perturbation) -> bool {
     println!("#");
-    println!(
-        "# THE WALLS ABOVE THE LADDER, each compiled and required to refuse with the class named:"
-    );
+    println!("# THE WALLS, each compiled and required to refuse with the class and phase named:");
     let mut held = true;
     for (index, wall) in WALLS.iter().enumerate() {
         // The perturbation moves only this harness's expectation, so a refusal
@@ -372,36 +548,31 @@ fn probe_the_walls(declaration: &BoundMetalCompileDeclaration, perturbation: Per
         } else {
             wall.class
         };
-        let program = chain_program(wall.operations);
+        let subject = wall.subject.label();
+        let program = (wall.program)();
+        let operations = program.operation_count();
+        let phase = if wall.reaches_planning {
+            "after"
+        } else {
+            "before"
+        };
         match compile_once(&program, declaration) {
             Err(refusal)
                 if refusal.class == Some(expected) && refusal.traced == wall.reaches_planning =>
             {
                 println!(
-                    "#   {} operations: CONFIRMED {expected:?} {} planning — {} [{}]",
-                    wall.operations,
-                    if wall.reaches_planning {
-                        "after"
-                    } else {
-                        "before"
-                    },
-                    wall.why,
-                    refusal.summary
+                    "#   {subject}, at {operations} operations: CONFIRMED {expected:?} {phase} \
+                     planning — {} [{}]",
+                    wall.why, refusal.summary
                 );
             }
             Err(refusal) => {
                 eprintln!(
-                    "THE WALL CHANGED KIND at {} operations: this table expects {expected:?} \
-                     raised {} planning, and the compiler refused with {} (trace {}). The bound \
-                     that binds here is no longer the one the ladder's derivation names, so the \
-                     recorded domain and every figure derived from it are stale. Re-derive WALLS \
-                     and rerun.",
-                    wall.operations,
-                    if wall.reaches_planning {
-                        "after"
-                    } else {
-                        "before"
-                    },
+                    "THE WALL CHANGED KIND at the {subject} bound, {operations} operations: this \
+                     table expects {expected:?} raised {phase} planning, and the compiler refused \
+                     with {} (trace {}). The bound that binds here is no longer the one this table \
+                     names, so the recorded domain and every figure derived from it are stale. \
+                     Re-derive WALLS and rerun.",
                     refusal.summary,
                     if refusal.traced { "present" } else { "absent" },
                 );
@@ -409,12 +580,42 @@ fn probe_the_walls(declaration: &BoundMetalCompileDeclaration, perturbation: Per
             }
             Ok((compiled, _)) => {
                 eprintln!(
-                    "THE WALL MOVED: {} operations compiled to a {}-byte identity where \
-                     {expected:?} was required, so this ladder is no longer the whole reachable \
-                     domain. Widen OPERATIONS, re-derive WALLS, and rerun; the recorded result and \
-                     its verdict are stale.",
-                    wall.operations,
+                    "THE WALL MOVED at the {subject} bound: {operations} operations compiled to a \
+                     {}-byte identity where {expected:?} was required, so the recorded domain is \
+                     no longer what this table says it is. Widen OPERATIONS or re-derive WALLS, \
+                     and rerun; the recorded result and its verdict are stale. If this is the \
+                     entry --perturb=program reads, that mode has stopped perturbing and its \
+                     non-zero exit means nothing until this is fixed.",
                     compiled.identity.len()
+                );
+                held = false;
+            }
+        }
+        let Some(control) = wall.control else {
+            continue;
+        };
+        // The control must compile, and it is not perturbed: a refusal here is
+        // the wall's own bound having widened onto a program this table records
+        // as admitted, or a boundary refusing everything — either of which makes
+        // the confirmation above evidence about nothing.
+        match compile_once(&control(), declaration) {
+            // The identity length is reported rather than discarded because it
+            // is the one measurement this program carries: read against the
+            // ladder row at the same operation count, it says how much the
+            // parameter the ladder holds fixed moves the curve it fits.
+            Ok((compiled, _)) => println!(
+                "#   {subject}, control: CONFIRMED the program one step inside the recorded bound \
+                 compiles, to a {}-byte identity, so the refusal above is that bound's and not \
+                 the session boundary's.",
+                compiled.identity.len()
+            ),
+            Err(refusal) => {
+                eprintln!(
+                    "THE CONTROL REFUSED at the {subject} bound: the program one step inside the \
+                     recorded bound must compile and refused with {}. The refusal recorded beside \
+                     it therefore attributes nothing — a boundary refusing both programs would \
+                     report exactly what this run reported. Re-derive the bound and rerun.",
+                    refusal.summary
                 );
                 held = false;
             }
@@ -423,9 +624,10 @@ fn probe_the_walls(declaration: &BoundMetalCompileDeclaration, perturbation: Per
     if held {
         println!(
             "# so the ladder above is the entire domain the ordinary compilation path admits for \
-             this family, and the governed semantic_operations budget of 62 is measured to be the \
-             bound that ends it rather than assumed to. Every bound that used to refuse below 62 \
-             is measured here to admit instead."
+             this family at this extent, and the governed semantic_operations budget of 62 is \
+             measured to be the bound that ends it rather than assumed to. Every bound that used \
+             to refuse below 62 is measured here to admit instead, and the extent bound beside \
+             them is measured to refuse after planning rather than before it."
         );
     }
     held
@@ -526,12 +728,12 @@ struct Compiled {
 ///
 /// Two renderings because they have two sinks. A refused ladder point aborts the
 /// sweep and its whole trace belongs on stderr; a confirmed wall is one line in
-/// a retained result, and a wall's trace runs to hundreds of records — the
+/// a retained result, and a wall's trace can run to hundreds of records — the
 /// eleven-operation one reached 3,478 before its explain ceiling was fixed,
-/// which is a megabyte of TSV comment nobody reads. The one surviving wall now
-/// refuses before any trace is sealed, so the split currently costs nothing
-/// there and still bounds the wall table against a planning-phase refusal
-/// returning to it.
+/// which is a megabyte of TSV comment nobody reads. The split is load-bearing
+/// again now that a wall reaches planning: the launch-geometry entry seals a
+/// 26-record trace, which the confirmation line reports the *size* of and
+/// `--perturb=program` prints in full.
 struct Refusal {
     /// The compiler's classification, absent for a harness-raised refusal.
     class: Option<CompileFailureClass>,
@@ -657,6 +859,11 @@ fn compile_once(
     ))
 }
 
+/// Builds one ladder program: a chain at the sweep's fixed [`EXTENT`].
+fn chain_program(operations: usize) -> SemanticProgram {
+    chain_program_over(operations, EXTENT)
+}
+
 /// Builds `input`, one shared constant, and a chain of `operations - 1` multiplies.
 ///
 /// The chain is the cheapest program family whose operation count is a free
@@ -667,13 +874,17 @@ fn compile_once(
 /// `1 + multiplies` — every integer in the reachable domain, and a column a
 /// reader can check by hand.
 ///
+/// The extent is a parameter here and fixed at [`chain_program`] because the
+/// ladder holds it fixed while [`WALLS`] brackets it. Nothing that varies it
+/// enters a measured row.
+///
 /// # Panics
 ///
 /// If `operations` is below two; the constant reaches the output only through a
 /// multiply, so a one-operation chain is an unreachable constant beside an
 /// input forwarded straight to the output — a different program shape, and one
 /// this build refuses for recognition.
-fn chain_program(operations: usize) -> SemanticProgram {
+fn chain_program_over(operations: usize, extent: u64) -> SemanticProgram {
     assert!(
         operations >= 2,
         "the chain needs a multiply to make its constant output-reachable"
@@ -683,7 +894,7 @@ fn chain_program(operations: usize) -> SemanticProgram {
     let input = builder
         .input::<F32>(
             InputKey::new("input").expect("the input key is valid"),
-            Shape::from_dims([EXTENT]),
+            Shape::from_dims([extent]),
         )
         .expect("the input binds");
     let scale = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the scale applies");
@@ -723,31 +934,49 @@ fn chain_program(operations: usize) -> SemanticProgram {
 /// Taking the point from the wall table removes the standing claim entirely. The
 /// same run that uses this program also compiles it under [`probe_the_walls`]
 /// and requires the refusal, so this mode cannot silently stop testing what it
-/// says it tests: the wall would fail first, loudly, and say which one moved.
+/// says it tests: the wall reports it, loudly, and says which one moved.
 ///
-/// # What this mode stopped covering on 2026-08-07, stated rather than hidden
+/// **That sentence was asserted here while `main` prevented it, and the fix is
+/// what makes it true.** `probe_the_walls` used to run only after a successful
+/// `summarize`, so under this mode the table was never reached in *either*
+/// world: a live perturbation aborted the ladder first, and a dead one left
+/// sixty-one identical rows whose operation counts are not consecutive, which
+/// the exact fit refuses. Both exited non-zero without probing anything, so the
+/// documented verdict "each exits non-zero" was true in every reachable state
+/// including the dead one — the predecessor failure above, one layer up. `main`
+/// now accumulates a verdict and runs every check.
 ///
-/// It used to select a wall that *reaches planning*, because the arm worth
-/// watching is a compilation that verified, planned, and reached no kernel
-/// program — a strictly later abort than a request the program-size budget
-/// refuses before any target compiles. Two walls reached planning while
-/// `region_members` was the constant `32`;
-/// `derive-the-region-shape-budgets-from-the-declaration` dissolved both, and
-/// **no point in this family now refuses after planning at all.** The surviving
-/// wall refuses at request verification, so this mode still proves that a
-/// refused compilation aborts the sweep, and no longer proves it for the
-/// planning phase specifically.
+/// # Which wall it selects, and why on the phase
 ///
-/// The alternative — writing down some other program that plans and covers
-/// nothing — is what this mode was rebuilt to stop doing, because such a claim
-/// expires silently and nothing in the run cross-checks it. Restoring the
-/// planning-phase arm honestly needs a point the wall table can also probe;
-/// that is `restore-a-planning-phase-refusal-to-the-identity-growth-harness`.
+/// The arm worth watching is a compilation that verified, planned, and reached
+/// no kernel program — a strictly later abort than a request the program-size
+/// budget refuses before any target compiles, and the only one that reaches
+/// [`compile_once`]'s target-slot refusal arm. So the selection is on
+/// `reaches_planning` rather than on position.
+///
+/// Two points of this family reached planning while `region_members` was the
+/// constant `32`, and `derive-the-region-shape-budgets-from-the-declaration`
+/// dissolved both. **No chain program refuses after planning at any operation
+/// count**, which is why this selection had no candidate between then and
+/// 2026-08-07's later run, and read `WALLS.first()` instead — quietly selecting
+/// a refusal one phase earlier than the one it documents. The launch-geometry
+/// entry restores a candidate without writing down a program of its own: it is a
+/// table entry, so the same run compiles it, requires its class *and* its phase,
+/// and compiles the control beside it.
+///
+/// # Panics
+///
+/// If no entry reaches planning. That is the honest failure: this mode's whole
+/// subject is the later abort, and silently falling back to an earlier one is
+/// what it did between 2026-08-07's two runs and what
+/// `restore-a-planning-phase-refusal-to-the-identity-growth-harness` was filed
+/// about.
 fn unplannable_program() -> SemanticProgram {
     let wall = WALLS
-        .first()
-        .expect("the wall table names at least one refused point");
-    chain_program(wall.operations)
+        .iter()
+        .find(|wall| wall.reaches_planning)
+        .expect("the wall table names a refusal raised after planning");
+    (wall.program)()
 }
 
 /// Writes one measured row.
@@ -900,7 +1129,7 @@ fn print_refusal_point(fit: (f64, f64, f64), first: usize, last: usize) {
          {} operations on semantic_operations, the governed program-size budget itself, so the \
          widest point any measurement can reach is {last} and the refusal point above is {:.0}x \
          beyond it. Widening the ladder further is a budget decision rather than a harness one.",
-        WALLS[0].operations,
+        (wall(WallSubject::ProgramSize).program)().operation_count(),
         refusal as f64 / last as f64
     );
 }
