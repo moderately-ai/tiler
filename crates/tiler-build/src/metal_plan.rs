@@ -1272,6 +1272,25 @@ mod tests {
     /// eleven bytes the sentence grew, which a framing step would not have
     /// produced.
     ///
+    /// **And all three moved again when the compiler began founding an
+    /// obligation's policy locus on the operation at its occurrence — the first
+    /// step in this ledger that moved these values by changing what the producer
+    /// *says* rather than how anything is framed.** `tiler.artifact-program.v15`
+    /// folds the delivered-realization record's canonical bytes, and that record
+    /// carries one row per `(subject, dimension, occurrence, locus)`. The
+    /// compiler used to emit every honoured dimension at
+    /// `PolicyLocus::Computation` of every covered occurrence; it emits each at
+    /// the position the occurrence's own operation founds, and none at an
+    /// occurrence whose operation cannot consume the dimension. For this
+    /// fixture's program — two constants, a multiply, an add, and a strict
+    /// serial sum — that takes twenty rows to eleven: the two constants consume
+    /// no numerical freedom, and the sum consumes no contraction. The byte count
+    /// fell by exactly 180, nine dropped rows at the twenty bytes an obligation
+    /// row encodes to, which is the reading a relocation alone would not have
+    /// produced. No domain stepped, because the record's grammar did not change:
+    /// the same row layout, the same locus tag space, and every dimension still
+    /// resolving `Required`, so no disposition changed width either.
+    ///
     /// **A third value is pinned below, and it is deliberately not an
     /// identity.** `FIXED_CONTENT_BYTES` is the published envelope's *fixed
     /// content*: its encoded width less the backend object bytes it carries,
@@ -1337,11 +1356,16 @@ mod tests {
     /// the step lands into, never taken from either side.
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
     /// sibling that depends on this row for exactly that reason. The constants
-    /// below were recomputed on 2026-08-06, on the tree carrying the header
-    /// widening described above over the base that already held the coverage
-    /// fold, the v11 step, the v10 step, the v9 step, the v8 step, and the
-    /// measured grid-axis row.
+    /// below were recomputed on 2026-08-07, on the tree carrying the per-locus
+    /// obligation derivation described above over the base that already held the
+    /// header widening, the coverage fold, the v11 step, the v10 step, the v9
+    /// step, the v8 step, and the measured grid-axis row.
     /// Superseded values, for a reader reconciling an older record:
+    /// the header widening, which is what these constants held immediately
+    /// before the locus derivation,
+    /// `17a16aa4d15b35a0eae7e382b9e96ea3fca7c01a5a1c80495600aace20f2e63d` /
+    /// `a3d44827bf86b5979f3d79eaf7e9392f997255ae88376edfb6f8f304e51cdfe8` /
+    /// 64,710 bytes;
     /// the coverage fold, which is what these constants held immediately before
     /// the header widened,
     /// `2b0162eb461edeaa8069a022e54057572bf7992970205a5a33f1efee2df896ca` /
@@ -1370,10 +1394,10 @@ mod tests {
     /// and pre-both
     /// `124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` /
     /// `94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
-    /// The first superseded entry above is a triple and it is the only one:
-    /// every entry after it is a pair because the byte count did not exist yet
-    /// at any of them, so none of those is a triple whose third value went
-    /// missing, and each row a later step supersedes carries all three.
+    /// The first two superseded entries above are triples and they are the only
+    /// ones: every entry after them is a pair because the byte count did not
+    /// exist yet at any of them, so none of those is a triple whose third value
+    /// went missing, and each row a later step supersedes carries all three.
     /// Regenerate on the merged tree with:
     ///
     /// ```text
@@ -1391,10 +1415,10 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "17a16aa4d15b35a0eae7e382b9e96ea3fca7c01a5a1c80495600aace20f2e63d";
+            "674ad9aaccf8d98c0fcac3d83da8e5809ce0aba4711d967440371e7f995d48f6";
         const CACHE_SUBJECT: &str =
-            "a3d44827bf86b5979f3d79eaf7e9392f997255ae88376edfb6f8f304e51cdfe8";
-        const FIXED_CONTENT_BYTES: usize = 64_710;
+            "3a34fb8aefafeffcaff58b63387d20e9f7097547145980c3ec3f353573a79ca3";
+        const FIXED_CONTENT_BYTES: usize = 64_530;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

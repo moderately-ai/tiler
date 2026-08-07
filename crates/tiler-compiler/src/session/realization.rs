@@ -22,31 +22,57 @@
 //! all-dimension coverage, obligation associations, and the evidence pool
 //! together, and three iterators can be zipped wrongly.
 //!
-//! # What today's compiler can honestly say about a locus
+//! # What founds the locus an obligation names
 //!
 //! **Fact.** `StrictF32NumericalContract` is one flat record for one arithmetic
 //! type, and [`crate::policy::dimension_requirements`] projects it into one
-//! **whole-program** requirement per consumable dimension. There is no
-//! per-occurrence, per-accumulator, or per-materialization numerical requirement
-//! anywhere on the compile path; the exact check is that
-//! `crate::policy::dimension_requirements` takes a contract and no occurrence,
-//! and that the honoured facts a plan retains are aggregated across regions and
-//! deduplicated by canonical key before any occurrence is known.
+//! **whole-program** requirement per consumable dimension. That projection is
+//! the dtype-wide *ceiling*, and it takes no occurrence.
 //!
-//! **Consequence, and why the locus is still keyed.** ADR 0011's per-operation
-//! restrictions attach to a position, so the record's shape is right and the
-//! producer for it does not exist. Until it does, this view states one obligation
-//! per honoured dimension at [`PolicyLocus::Computation`] of **every** occurrence
-//! the packaged program covers. That over-states which occurrences consume a
-//! dimension and never under-states it, which is the safe direction: an extra
-//! obligation carries real evidence and demands more of a comparing consumer,
-//! while a missing one would let a dimension's disposition be derived as
-//! `NotRequired` — the one producer assertion the neutral artifact cannot check.
-//! `derive-per-locus-numerical-obligations` owns narrowing it.
+//! **The obligations are a separate statement, and this is where the position
+//! comes from.** ADR 0011's per-operation restrictions attach to a position, so
+//! an obligation names one, and it names one this build can found rather than
+//! one the enum happens to offer. Two authorities meet here and neither alone is
+//! enough: the packaged program's proof-derived coverage says which occurrences
+//! exist, and the resolved lowering says which semantic operation realizes each.
+//! With the operation in hand, [`crate::policy::OperationNumericalCapability`]
+//! decides both whether the freedom acts at that occurrence at all and, through
+//! `founded_locus`, where in it — an operand read, the operation's own
+//! arithmetic, or a contributor fold's accumulator.
+//!
+//! So this view states one obligation per `(subject, dimension, occurrence,
+//! locus)` that a packaged route relies on. An occurrence whose operation cannot
+//! consume a dimension contributes no row for it: a constant retains its bit
+//! pattern and a broadcast moves elements, so neither has a position where a
+//! rounding or ordering freedom could act, and a row claiming otherwise would be
+//! an unfounded assertion carrying real target evidence.
+//!
+//! **That narrows loci, never dispositions.** The one direction that would be
+//! unsafe is dropping a dimension entirely, because the artifact builder derives
+//! a dimension with no obligations as `NotRequired` — the single producer
+//! assertion the neutral artifact cannot re-check. A dimension some covered
+//! occurrence consumes still carries its rows, relocated to the position that
+//! founds them; a dimension *no* covered occurrence consumes is genuinely not
+//! required by any packaged route, which is the claim `NotRequired` makes.
+//!
+//! # Two rules the producer enforces rather than assumes
+//!
+//! A locus obligation must be **at least as strict as the ceiling**, checked row
+//! by row through [`crate::policy::is_at_least_as_strict_as`]. A position may
+//! demand more than the program-wide contract and may never demand less. Today's
+//! resolution rule makes the two equal, so the check cannot fire on this build's
+//! own path — which is exactly why it is a check: a change to that rule would
+//! otherwise ship a route resting on a freedom the caller never granted.
+//!
+//! And a dimension an operation consumes must have a **founded** position. When
+//! `founded_locus` yields none the producer refuses by name rather than
+//! substituting [`tiler_ir::numerics::PolicyLocus::Computation`], so admitting a capability row for
+//! a dimension whose position nobody has sited is a typed failure instead of a
+//! plausible-looking row.
 
 use tiler_ir::numerics::{
     DIMENSION_COUNT, DimensionBehaviour, FactSourceProvenance, HonouringMeans, NumericalDimension,
-    NumericalObligationKey, PolicyLocus, ScalarArithmeticSubject,
+    NumericalObligationKey, ScalarArithmeticSubject,
 };
 use tiler_ir::program::SemanticOccurrence;
 
@@ -315,12 +341,16 @@ impl DeliveredRealizationEvidence {
     /// # Errors
     ///
     /// Returns a structural [`ProgramError`] when the contract's arithmetic type
-    /// resolves no governed scalar subject, or when a retained honoured fact
-    /// names a subject or a declaring profile other than the assessed one.
+    /// resolves no governed scalar subject, when a retained honoured fact names
+    /// a subject or a declaring profile other than the assessed one, when a
+    /// packaged occurrence has no resolved lowering to name its operation, when
+    /// an operation consumes a dimension this build founds no locus for, or when
+    /// a derived obligation would be weaker than the dtype-wide ceiling.
     pub(crate) fn materialize(
         contract: &StrictF32NumericalContract,
         plan: &SelectedPlan,
         program: &KernelProgram,
+        lowering: &crate::lowering::ResolvedLowering,
         profile_key: &str,
     ) -> Result<Self, ProgramError> {
         let subject = crate::policy::arithmetic_subject(contract.arithmetic).ok_or(
@@ -341,7 +371,10 @@ impl DeliveredRealizationEvidence {
 
         // Every occurrence the packaged program covers, in canonical ascending
         // order and deduplicated: a graph-local ordinal repeated across stages
-        // is one position, not two.
+        // is one position, not two. The *packaged* program stays the authority
+        // on which positions exist — the lowering below only says what operation
+        // sits at each, and a resolved lowering the program did not package must
+        // not add a position to this set.
         let mut occurrences: Vec<SemanticOccurrence> = program
             .core()
             .stages()
@@ -355,6 +388,25 @@ impl DeliveredRealizationEvidence {
             .collect();
         occurrences.sort_unstable();
         occurrences.dedup();
+
+        // The operation realized at each packaged occurrence, read from the one
+        // record that holds both halves. A coverage record names a
+        // `SemanticOccurrence` and nothing else, and the canonical ordinal
+        // cannot be inverted against the graph from here, so the join goes
+        // through the refinement receipt that minted the ordinal in the first
+        // place — occurrence and operation therefore come from one proof rather
+        // than from two structures a caller could pair wrongly.
+        let mut operations: Vec<(SemanticOccurrence, &tiler_ir::semantic::OpKey)> = lowering
+            .occurrences()
+            .iter()
+            .map(|occurrence| match occurrence.evidence() {
+                crate::lowering::OccurrenceEvidence::Refined(refinement) => (
+                    refinement.receipt().occurrence(),
+                    refinement.content().operation(),
+                ),
+            })
+            .collect();
+        operations.sort_unstable_by_key(|(occurrence, _)| *occurrence);
 
         let mut obligations = Vec::new();
         for honoured in plan.honoured() {
@@ -370,12 +422,53 @@ impl DeliveredRealizationEvidence {
                     rule: "numerical-realization-profile-unattributed",
                 });
             }
+            let dimension = honoured.dimension();
+            // The dtype-wide ceiling this dimension resolves to, read from the
+            // caller's contract rather than from the fact, because the rule
+            // below is precisely a comparison between the two statements.
+            let ceiling = contract.behaviour(dimension);
             for occurrence in &occurrences {
+                let operation = operations
+                    .binary_search_by_key(occurrence, |(covered, _)| *covered)
+                    .map(|position| operations[position].1)
+                    .map_err(|_| ProgramError::Structure {
+                        rule: "numerical-realization-occurrence-unlowered",
+                    })?;
+                // A capability row is what says this operation can consume the
+                // dimension at all. An occurrence whose operation cannot — a
+                // constant, a reindex, a broadcast — has no position where the
+                // freedom acts, so it contributes no row rather than a
+                // `Computation` one asserting a place nothing founds. The
+                // dimension itself is still carried by whichever occurrences do
+                // consume it, so this narrows a locus and never a disposition.
+                let Some(capability) = crate::policy::operation_capability(operation) else {
+                    continue;
+                };
+                if !capability.can_consume(dimension) {
+                    continue;
+                }
+                let Some(locus) = capability.founded_locus(dimension) else {
+                    return Err(ProgramError::Structure {
+                        rule: "numerical-realization-locus-unfounded",
+                    });
+                };
+                let required = honoured.behaviour();
+                // A locus may demand more than the program-wide contract and
+                // never less. Checked here rather than argued from the fact that
+                // today's resolution rule makes the two equal: the rule is what
+                // the record's readers rely on, and a resolution change that
+                // broke it would otherwise ship a route resting on a freedom the
+                // caller never granted, carrying real evidence for it.
+                if !crate::policy::is_at_least_as_strict_as(required, ceiling) {
+                    return Err(ProgramError::Structure {
+                        rule: "numerical-realization-locus-weaker-than-ceiling",
+                    });
+                }
                 obligations.push(SelectedObligationRow {
                     subject: 0,
-                    dimension: honoured.dimension(),
-                    locus: NumericalObligationKey::new(*occurrence, PolicyLocus::Computation),
-                    required: honoured.behaviour(),
+                    dimension,
+                    locus: NumericalObligationKey::new(*occurrence, locus),
+                    required,
                     declared: honoured.fact().behaviour(),
                     means: honoured.means(),
                     profile_key: honoured.profile().key().to_owned(),

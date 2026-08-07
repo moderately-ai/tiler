@@ -2726,7 +2726,7 @@ mod tests {
     /// packaged program does not cover, would otherwise read as evidence.
     #[test]
     fn every_obligation_carries_its_own_checked_evidence() {
-        use tiler_ir::numerics::{HonouringMeans, PolicyLocus};
+        use tiler_ir::numerics::{HonouringMeans, NumericalDimension, PolicyLocus};
         use tiler_ir::program::abi::AvailabilityPhase;
 
         let program = semantic_program();
@@ -2759,7 +2759,34 @@ mod tests {
         );
         for obligation in obligations {
             assert_eq!(obligation.subject(), &subject);
-            assert_eq!(obligation.locus().locus(), PolicyLocus::Computation);
+            // The locus is founded on the dimension's own definition, so it is
+            // asserted per dimension rather than against one constant. The two
+            // reshaping freedoms are the pair that genuinely depends on the
+            // operation — a fold puts them at its accumulator and pointwise
+            // arithmetic at its own computation — so only those admit two
+            // answers here; `the_locus_follows_the_operation_at_the_occurrence`
+            // is what pins which occurrence takes which.
+            let locus = obligation.locus().locus();
+            match obligation.dimension() {
+                NumericalDimension::InputSubnormals => assert_eq!(locus, PolicyLocus::Input),
+                NumericalDimension::ResultSubnormals => assert_eq!(locus, PolicyLocus::Result),
+                NumericalDimension::Permutation => assert_eq!(locus, PolicyLocus::Accumulator),
+                NumericalDimension::SignedZero
+                | NumericalDimension::NanAssumptions
+                | NumericalDimension::InfinityAssumptions => {
+                    assert_eq!(locus, PolicyLocus::Computation);
+                }
+                NumericalDimension::Contraction | NumericalDimension::Reassociation => assert!(
+                    matches!(locus, PolicyLocus::Computation | PolicyLocus::Accumulator),
+                    "{} is founded on the arithmetic or on a fold, never elsewhere",
+                    obligation.dimension(),
+                ),
+                dimension @ (NumericalDimension::ReciprocalTransform
+                | NumericalDimension::ApproximateIntrinsics
+                | NumericalDimension::MaterializationRounding) => {
+                    panic!("{dimension} is unconsumable, so no route founds an obligation on it")
+                }
+            }
             assert!(obligation.locus().is_well_formed());
             assert!(
                 covered.contains(&obligation.locus().occurrence().get()),
@@ -2799,6 +2826,231 @@ mod tests {
                     | HonouringMeans::SupportedWithExactEmulation
                     | HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { .. }
             ));
+        }
+    }
+
+    /// One dimension's locus follows the operation realized at the occurrence.
+    ///
+    /// **The capability this ticket adds, stated as the difference between two
+    /// positions of one program.** `semantic_program` applies two constants, a
+    /// pointwise multiply, a pointwise add, and a strict serial sum. Ordered
+    /// reassociation acts on all three arithmetic families, but not in the same
+    /// place: the sum folds a contributor sequence, so its regrouping is a
+    /// property of the accumulator, while the multiply and the add have no fold
+    /// and regroup their own arithmetic. A producer keyed by dimension alone —
+    /// or pinned at one locus, as this one was — states both as the same
+    /// position and cannot tell an accumulator obligation from a computation
+    /// one, which is precisely the collapse ADR 0011 names.
+    ///
+    /// The constants are the other half: a constant retains its declared bit
+    /// pattern, so no arithmetic freedom acts on it anywhere, and it carries no
+    /// row rather than a `Computation` row asserting a position nothing founds.
+    #[test]
+    fn the_locus_follows_the_operation_at_the_occurrence() {
+        use std::collections::{BTreeMap, BTreeSet};
+        use tiler_ir::numerics::{NumericalDimension, PolicyLocus};
+
+        let program = semantic_program();
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
+            .expect("the governed program compiles");
+        let plan = compilation.selected().expect("a selected alternative");
+        let view = plan.delivered_realization();
+
+        let covered: BTreeSet<u32> = plan
+            .abi()
+            .kernel_program()
+            .stages()
+            .flat_map(|stage| {
+                stage
+                    .coverage()
+                    .iter()
+                    .map(|record| record.occurrence().get())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(
+            covered.len(),
+            5,
+            "two constants, a multiply, an add, and a sum are packaged",
+        );
+
+        // Every row, keyed the way the record keys it. Counted rather than
+        // sampled: a locus derivation that emitted nothing would otherwise pass
+        // every `matches!` below without ever running.
+        let rows: Vec<(u32, NumericalDimension, PolicyLocus)> = view
+            .obligations()
+            .map(|obligation| {
+                (
+                    obligation.locus().occurrence().get(),
+                    obligation.dimension(),
+                    obligation.locus().locus(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows.len(),
+            11,
+            "four honoured dimensions over three arithmetic occurrences, less the \
+             one contraction the fold cannot consume",
+        );
+
+        // The constants consume nothing, so they are covered and unobligated.
+        let obligated: BTreeSet<u32> = rows.iter().map(|(occurrence, _, _)| *occurrence).collect();
+        assert!(obligated.is_subset(&covered));
+        assert_eq!(
+            obligated.len(),
+            3,
+            "the two constants carry no row: no arithmetic freedom acts on a \
+             retained bit pattern, so there is no position to name",
+        );
+
+        // The load-bearing comparison: one dimension, three occurrences, two
+        // different founded positions.
+        let reassociation: BTreeMap<u32, PolicyLocus> = rows
+            .iter()
+            .filter(|(_, dimension, _)| *dimension == NumericalDimension::Reassociation)
+            .map(|(occurrence, _, locus)| (*occurrence, *locus))
+            .collect();
+        assert_eq!(
+            reassociation.len(),
+            3,
+            "every arithmetic occurrence regroups something",
+        );
+        let folding: Vec<u32> = reassociation
+            .iter()
+            .filter(|(_, locus)| **locus == PolicyLocus::Accumulator)
+            .map(|(occurrence, _)| *occurrence)
+            .collect();
+        let pointwise: Vec<u32> = reassociation
+            .iter()
+            .filter(|(_, locus)| **locus == PolicyLocus::Computation)
+            .map(|(occurrence, _)| *occurrence)
+            .collect();
+        assert_eq!(
+            folding.len(),
+            1,
+            "the strict serial sum is the one fold this program packages, and its \
+             regrouping is a property of its accumulator",
+        );
+        assert_eq!(
+            pointwise.len(),
+            2,
+            "the multiply and the add have no fold, so they regroup their own \
+             arithmetic",
+        );
+        let fold = folding[0];
+
+        // Cross-checked against a second dimension rather than restated. The
+        // occurrence whose regrouping sits at an accumulator is the same one
+        // consuming no contraction, because a strict serial sum's step is
+        // `accumulator + contributor` with no product for a fused multiply-add
+        // to act on. Two independently derived row sets agreeing on which
+        // occurrence folds is what makes the split a property of the operation
+        // rather than of iteration order.
+        let contraction: Vec<u32> = rows
+            .iter()
+            .filter(|(_, dimension, _)| *dimension == NumericalDimension::Contraction)
+            .map(|(occurrence, _, locus)| {
+                assert_eq!(*locus, PolicyLocus::Computation);
+                *occurrence
+            })
+            .collect::<BTreeSet<u32>>()
+            .into_iter()
+            .collect();
+        assert!(!contraction.contains(&fold));
+        assert_eq!(
+            contraction, pointwise,
+            "the occurrences that can fuse a multiply into an add are exactly the \
+             two whose regrouping is not an accumulator's",
+        );
+    }
+
+    /// Two loci of one occurrence carry genuinely different obligations.
+    ///
+    /// **The case the single-locus producer could not express, and the reason
+    /// the record keys a position at all.** The contract below flushes subnormal
+    /// *operands* while preserving subnormal *results* — one arithmetic type,
+    /// two positions, two different legal requirements. Keyed by dtype alone the
+    /// second statement overwrites the first; pinned at one locus, both rows
+    /// land on `Computation` and the record says one position requires two
+    /// contradictory subnormal behaviours. Keyed by the founded position they
+    /// are the operand read and the produced value, and each is separately
+    /// checkable against the target fact that honours it.
+    #[test]
+    fn two_loci_of_one_occurrence_carry_different_obligations() {
+        use crate::session::NumericalContractBuilder;
+        use std::collections::BTreeMap;
+        use tiler_ir::numerics::{DimensionBehaviour, NumericalDimension, PolicyLocus};
+        use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
+
+        let flush = SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        };
+        let contract = NumericalContractBuilder::strict_f32()
+            .input_subnormals(flush)
+            .build()
+            .expect("flushing operands while preserving results is coherent");
+        assert_ne!(
+            flush,
+            SubnormalMode::Preserve,
+            "the two dimensions genuinely differ, or this proves nothing",
+        );
+
+        let program = semantic_program();
+        let compilation =
+            compile_governed(&program, contract).expect("the asymmetric contract compiles");
+        let plan = compilation.selected().expect("a selected alternative");
+        let view = plan.delivered_realization();
+
+        // Every subnormal row, by occurrence and position.
+        let mut by_occurrence: BTreeMap<u32, BTreeMap<PolicyLocus, DimensionBehaviour>> =
+            BTreeMap::new();
+        for obligation in view.obligations() {
+            if !matches!(
+                obligation.dimension(),
+                NumericalDimension::InputSubnormals | NumericalDimension::ResultSubnormals
+            ) {
+                continue;
+            }
+            let previous = by_occurrence
+                .entry(obligation.locus().occurrence().get())
+                .or_default()
+                .insert(obligation.locus().locus(), obligation.required());
+            assert!(
+                previous.is_none(),
+                "one position states one requirement per dimension",
+            );
+        }
+        assert_eq!(
+            by_occurrence.len(),
+            3,
+            "the three arithmetic occurrences each read operands and produce a result",
+        );
+
+        for (occurrence, loci) in &by_occurrence {
+            assert_eq!(
+                loci.len(),
+                2,
+                "occurrence {occurrence} carries an operand read and a produced value",
+            );
+            let input = loci
+                .get(&PolicyLocus::Input)
+                .expect("the operand read is founded by `InputSubnormals`");
+            let result = loci
+                .get(&PolicyLocus::Result)
+                .expect("the produced value is founded by `ResultSubnormals`");
+            assert_eq!(*input, DimensionBehaviour::Subnormals(flush));
+            assert_eq!(
+                *result,
+                DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+            );
+            // The whole point: same occurrence, same dtype, different demands.
+            assert_ne!(
+                input, result,
+                "occurrence {occurrence} requires different behaviour at its two \
+                 positions, which a dtype-wide ceiling cannot state and a \
+                 single-locus producer collapsed onto one key",
+            );
         }
     }
 
