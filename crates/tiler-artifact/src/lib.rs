@@ -1,3 +1,14 @@
+// `variant_count` sizes this crate's exhaustive-injectivity enumerations from
+// the enums themselves, so a vocabulary widened in `tiler-ir` is a build error
+// in the test that claims to cover it rather than a population that quietly
+// shrinks while still reporting no collision. A hand-written length has no such
+// check, which is exactly the failure the enumerations exist to rule out. The
+// same reasoning admitted it to `tiler-metal` and `tiler-ir`.
+//
+// Gated on `test` because the enumerations are test-local: the vocabularies are
+// public but the lists of their inhabitants are not, so an unconditional
+// declaration would widen this crate's nightly surface for nothing.
+#![cfg_attr(test, feature(variant_count))]
 //! Target-neutral artifact, ABI, validation, and routing contracts for Tiler.
 //!
 //! This crate depends on `tiler-ir` for the shared target-neutral

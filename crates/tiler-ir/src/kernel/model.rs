@@ -2145,3 +2145,93 @@ fn operation_encoded_len(data: &KernelData, operation: &OperationData) -> usize 
         .saturating_add(kind)
         .saturating_add(indices_encoded_len(&operation.results))
 }
+
+#[cfg(test)]
+mod injectivity_tests {
+    use crate::exhaustive_injectivity::{
+        EXCEPTIONAL_ASSUMPTIONS, PERMISSIONS, SUBJECT_POPULATION, SUBNORMAL_MODES,
+        assert_injective, assert_injective_fixed_width, every_synchronization_subject,
+    };
+    use crate::schedule::ExceptionalValueAssumption;
+
+    use super::{
+        push_exceptional_assumption, push_permission, push_subnormal, push_synchronization,
+    };
+
+    /// The kernel synchronization encoder is injective over all 649 inhabitants.
+    ///
+    /// **Exhaustive finite evidence.** The domain is `Option<SynchronizationSubject>`:
+    /// the 648 subjects plus the stated absence, and the absence is in the domain
+    /// rather than encoded as nothing because this record is followed by more
+    /// fields. That is what makes "this kernel synchronizes nothing" an encoded
+    /// claim, and it is exactly the pair this enumeration has to separate — a
+    /// kernel that later gains a barrier must not share identity with the one
+    /// that did not.
+    ///
+    /// A second, independent copy of the schedule's subject encoder by design,
+    /// so it gets a second, independent proof: the two identity domains step
+    /// separately, and a test that covered one would say nothing about the
+    /// other's bytes.
+    #[test]
+    fn the_kernel_synchronization_encoding_is_injective_over_its_whole_domain() {
+        let mut subjects: Vec<Option<_>> = vec![None];
+        subjects.extend(every_synchronization_subject().into_iter().map(Some));
+
+        assert_eq!(
+            subjects.len(),
+            SUBJECT_POPULATION + 1,
+            "the domain is every subject plus its stated absence"
+        );
+        assert_eq!(subjects.len(), 649);
+        for subject in &subjects {
+            let mut bytes = Vec::new();
+            push_synchronization(&mut bytes, *subject);
+            // One presence tag, and six subject bytes when present. Variable
+            // width, made unambiguous by the presence tag the collision check
+            // below confirms is doing that work.
+            let expected = if subject.is_some() { 7 } else { 1 };
+            assert_eq!(bytes.len(), expected, "{subject:?} changed width");
+        }
+        assert_injective(&subjects, push_synchronization);
+    }
+
+    /// The kernel subnormal encoder is injective over all three inhabitants.
+    ///
+    /// Exhaustive finite evidence, proved separately from the identically
+    /// spelled schedule encoder for the reason the two exist separately: one
+    /// domain's widening must not move the other's bytes, so neither test
+    /// stands in for the other.
+    #[test]
+    fn the_kernel_subnormal_encoding_is_injective_over_its_whole_domain() {
+        assert_eq!(SUBNORMAL_MODES.len(), 3);
+        assert_injective_fixed_width(&SUBNORMAL_MODES, 1, push_subnormal);
+    }
+
+    /// The kernel permission encoder is injective over both inhabitants.
+    ///
+    /// Exhaustive finite evidence.
+    #[test]
+    fn the_kernel_permission_encoding_is_injective_over_its_whole_domain() {
+        assert_eq!(PERMISSIONS.len(), 2);
+        assert_injective_fixed_width(&PERMISSIONS, 1, push_permission);
+    }
+
+    /// The kernel exceptional-assumption encoder is injective over four inhabitants.
+    ///
+    /// Exhaustive finite evidence over `1 + 3` values, variable width for the
+    /// reason the schedule copy is.
+    #[test]
+    fn the_kernel_exceptional_assumption_encoding_is_injective_over_its_whole_domain() {
+        assert_eq!(EXCEPTIONAL_ASSUMPTIONS.len(), 4);
+        for assumption in EXCEPTIONAL_ASSUMPTIONS {
+            let mut bytes = Vec::new();
+            push_exceptional_assumption(&mut bytes, assumption);
+            let expected = match assumption {
+                ExceptionalValueAssumption::MakeNoAssumption => 1,
+                ExceptionalValueAssumption::AssumeAbsent { .. } => 2,
+            };
+            assert_eq!(bytes.len(), expected, "{assumption:?} changed width");
+        }
+        assert_injective(&EXCEPTIONAL_ASSUMPTIONS, push_exceptional_assumption);
+    }
+}

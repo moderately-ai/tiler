@@ -17,11 +17,15 @@ use super::{
     permission_tag, subnormal_from_tag, subnormal_tag, value_domain_provenance_from_tag,
     value_domain_provenance_tag,
 };
+use crate::exhaustive_injectivity::{
+    APPROXIMATION_ENVELOPES, EXCEPTIONAL_ASSUMPTIONS, MATERIALIZATION_ROUNDINGS, PERMISSIONS,
+    SUBNORMAL_MODES,
+};
 use crate::program::SemanticOccurrence;
 use crate::program::abi::AvailabilityPhase;
 use crate::schedule::{
-    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
-    MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,
+    ApproximationEnvelope, ArithmeticType, FlushedZeroSign, MaterializationRounding,
+    NumericalPermission, SubnormalMode, ValueDomainProvenance,
 };
 use crate::semantic::{ResolvedValueType, StrictAffineU4, TypeKey, complex_value_type};
 
@@ -31,38 +35,35 @@ fn governed_scalar(name: &str) -> ResolvedValueType {
     )
 }
 
-/// Every behaviour this build can spell, in one enumerated population.
+/// Every inhabitant of [`DimensionBehaviour`], built from its spaces' own counts.
 ///
-/// Written out rather than sampled, so a widened behaviour space is a build
-/// error at the count assertion in [`every_behaviour_round_trips`] instead of a
-/// silently narrower round-trip check.
+/// **Derived rather than written out, and that is what makes the count a
+/// population rather than a guess.** The five arrays it walks are each sized by
+/// `variant_count` over the vocabulary they enumerate, so widening any behaviour
+/// space is a build error in `crate::exhaustive_injectivity` instead of a list
+/// that stays at twelve entries while the domain it claims to cover grows. The
+/// earlier hand-written spelling could not fail that way: a new
+/// [`SubnormalMode`] would have left this at twelve and every count assertion
+/// downstream still asserting twelve.
 fn all_behaviours() -> Vec<DimensionBehaviour> {
-    let mut behaviours = vec![
-        DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
-        DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::PreservesSign,
-        }),
-        DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::AlwaysPositive,
-        }),
-        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-        DimensionBehaviour::Transform(NumericalPermission::Permitted),
-        DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden),
-        DimensionBehaviour::Approximation(ApproximationEnvelope::BackendElementary),
-        DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
-        DimensionBehaviour::Rounding(MaterializationRounding::NearestTiesToEven),
-    ];
-    for provenance in [
-        ValueDomainProvenance::CompilerProven,
-        ValueDomainProvenance::RuntimeValidated,
-        ValueDomainProvenance::CallerDeclaredUnvalidated,
-    ] {
-        behaviours.push(DimensionBehaviour::ExceptionalValue(
-            ExceptionalValueAssumption::AssumeAbsent { provenance },
-        ));
-    }
+    let mut behaviours = Vec::new();
+    behaviours.extend(SUBNORMAL_MODES.map(DimensionBehaviour::Subnormals));
+    behaviours.extend(PERMISSIONS.map(DimensionBehaviour::Transform));
+    behaviours.extend(APPROXIMATION_ENVELOPES.map(DimensionBehaviour::Approximation));
+    behaviours.extend(EXCEPTIONAL_ASSUMPTIONS.map(DimensionBehaviour::ExceptionalValue));
+    behaviours.extend(MATERIALIZATION_ROUNDINGS.map(DimensionBehaviour::Rounding));
     behaviours
 }
+
+/// The number of distinct [`DimensionBehaviour`] values that exist.
+///
+/// One arm per space, each carrying that space's whole vocabulary, so the sum is
+/// the inhabitant count.
+const BEHAVIOUR_POPULATION: usize = SUBNORMAL_MODES.len()
+    + PERMISSIONS.len()
+    + APPROXIMATION_ENVELOPES.len()
+    + EXCEPTIONAL_ASSUMPTIONS.len()
+    + MATERIALIZATION_ROUNDINGS.len();
 
 #[test]
 fn every_dimension_tag_resolves_and_an_unknown_one_refuses() {
@@ -142,13 +143,29 @@ fn every_dimension_admits_exactly_its_own_space() {
     );
 }
 
+/// The behaviour encoding is injective, and its decoder inverts it, over all 12.
+///
+/// **Exhaustive finite evidence for both claims.** The domain is the disjoint
+/// union of five closed spaces — 3 subnormal modes, 2 permissions, 2 envelopes,
+/// 4 exceptional assumptions, 1 rounding — every one of which
+/// [`all_behaviours`] walks from its own variant count. Twelve values, so all 66
+/// pairs are compared by comparing every value.
+///
+/// Injectivity is what keeps a record's evidence rows from deduplicating two
+/// different claims into one; the round trip is the separate property that a
+/// reader recovers the behaviour a writer meant rather than a neighbouring one.
 #[test]
 fn every_behaviour_round_trips_and_consumes_exactly_its_own_width() {
     let behaviours = all_behaviours();
     assert_eq!(
         behaviours.len(),
-        12,
-        "the enumerated behaviour population must be complete; widen this count with the vocabulary",
+        BEHAVIOUR_POPULATION,
+        "the enumeration walked a different population than the spaces declare",
+    );
+    assert_eq!(
+        BEHAVIOUR_POPULATION, 12,
+        "the behaviour domain changed size; the exhaustive claim is about whatever it is now, \
+         so restate it deliberately",
     );
     for behaviour in &behaviours {
         let bytes = behaviour.canonical_key();

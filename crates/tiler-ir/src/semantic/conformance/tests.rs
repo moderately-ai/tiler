@@ -1761,3 +1761,52 @@ fn the_validator_admits_exactly_the_registry_admitted_strict_affine_contracts() 
     // The predicate vocabulary the composition names is the registry's own.
     assert_ne!(no_nan_predicate(), positive_normal_scalar_predicate());
 }
+
+/// The component value-domain encoding is injective over all 65 537 inhabitants.
+///
+/// **Exhaustive finite evidence, and the domain really is finite: it is
+/// `256 * 256` code ranges plus the one positive-normal domain.** Every value is
+/// enumerated, so all pairs are compared. The sweep runs in well under a second
+/// because each encoding is at most three bytes.
+///
+/// The bound pair is in the domain and not projected out of it, which is what
+/// this proves the encoder does: a scheme admitting codes `0..=7` and one
+/// admitting `0..=15` are different conformance obligations, and a component
+/// fact that folded them onto one identity would let a check written for the
+/// narrow range answer for the wide one.
+///
+/// The inverted range `minimum > maximum` is included deliberately. It is
+/// unreachable through the schemes this crate registers, but it *is* a value of
+/// the type, and an encoder is injective over the type it takes or it is not
+/// injective — leaving reachability to a producer's discipline is exactly the
+/// unstated invariant the identity discipline refuses.
+#[test]
+fn the_component_value_domain_encoding_is_injective_over_its_whole_domain() {
+    const POPULATION: usize = 1 + 256 * 256;
+
+    let mut domains = vec![ComponentValueDomain::PositiveNormalF32];
+    for minimum in 0..=u8::MAX {
+        for maximum in 0..=u8::MAX {
+            domains.push(ComponentValueDomain::UnsignedCodeRange { minimum, maximum });
+        }
+    }
+
+    assert_eq!(domains.len(), POPULATION);
+    assert_eq!(POPULATION, 65_537);
+
+    let mut seen: std::collections::HashMap<Vec<u8>, ComponentValueDomain> =
+        std::collections::HashMap::with_capacity(POPULATION);
+    for domain in domains {
+        let mut bytes = Vec::new();
+        domain.encode(&mut bytes);
+        let expected = match domain {
+            ComponentValueDomain::UnsignedCodeRange { .. } => 3,
+            ComponentValueDomain::PositiveNormalF32 => 1,
+        };
+        assert_eq!(bytes.len(), expected, "{domain:?} changed width");
+        if let Some(previous) = seen.insert(bytes, domain) {
+            panic!("{domain:?} and {previous:?} share one encoding");
+        }
+    }
+    assert_eq!(seen.len(), POPULATION);
+}

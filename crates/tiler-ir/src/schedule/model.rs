@@ -2656,3 +2656,106 @@ pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledReg
     push_schedule(&mut bytes, &region.schedule);
     CanonicalScheduledRegionIdentity(bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::exhaustive_injectivity::{
+        EXCEPTIONAL_ASSUMPTIONS, PERMISSIONS, SUBJECT_POPULATION, SUBNORMAL_MODES,
+        assert_injective, assert_injective_fixed_width, every_synchronization_subject,
+    };
+    use crate::schedule::ExceptionalValueAssumption;
+
+    use super::{
+        ContributorOrder, push_exceptional_assumption, push_order, push_permission, push_subnormal,
+        push_synchronization_subject,
+    };
+
+    /// The subject encoder is injective over its entire 648-value domain.
+    ///
+    /// **Exhaustive finite evidence, not a sample.** The domain is the product
+    /// of five closed vocabularies — 6 construct kinds, 3 arrival scopes, 3
+    /// publication scopes, 4 fences, 3 orderings — each enumerated in
+    /// [`crate::exhaustive_injectivity`] from its own variant count, so "all
+    /// 209 628 pairs are distinguished" is established by counting rather than
+    /// argued from the encoder's shape.
+    ///
+    /// The subject is the atomic unit a target feasibility fact ranges over, so
+    /// a collision here would let an authority answer for a realization it never
+    /// attested to. That is a wrong plan, not a cache miss.
+    #[test]
+    fn the_synchronization_subject_encoding_is_injective_over_its_whole_domain() {
+        let subjects = every_synchronization_subject();
+        assert_eq!(
+            SUBJECT_POPULATION, 648,
+            "the subject domain changed size; the exhaustive claim this test makes is about \
+             whatever it is now, so restate it deliberately"
+        );
+        assert_eq!(subjects.len(), SUBJECT_POPULATION);
+        // Six bytes: four tags and the two fence flags. Fixed, so the following
+        // field of a synchronization point cannot be shifted by the subject.
+        assert_injective_fixed_width(&subjects, 6, push_synchronization_subject);
+    }
+
+    /// The subnormal encoder is injective over all three of its inhabitants.
+    ///
+    /// Exhaustive finite evidence. `SubnormalMode` has two variants, one
+    /// carrying a two-inhabitant zero sign, so the domain is `1 + 2`. The flush
+    /// sign is in the domain because two flushes producing different zeros are
+    /// different realizations.
+    #[test]
+    fn the_subnormal_encoding_is_injective_over_its_whole_domain() {
+        assert_eq!(SUBNORMAL_MODES.len(), 3);
+        assert_injective_fixed_width(&SUBNORMAL_MODES, 1, push_subnormal);
+    }
+
+    /// The permission encoder is injective over both of its inhabitants.
+    ///
+    /// Exhaustive finite evidence, and the property that makes the encoder a
+    /// tagged value rather than the derived `permits_*` boolean it used to be: a
+    /// projection cannot fail closed when the projected enum grows, and this
+    /// counts the tags rather than trusting that it will not.
+    #[test]
+    fn the_permission_encoding_is_injective_over_its_whole_domain() {
+        assert_eq!(PERMISSIONS.len(), 2);
+        assert_injective_fixed_width(&PERMISSIONS, 1, push_permission);
+    }
+
+    /// The exceptional-assumption encoder is injective over all four inhabitants.
+    ///
+    /// Exhaustive finite evidence over `1 + 3` values. The width is deliberately
+    /// *not* fixed — `MakeNoAssumption` is one byte and `AssumeAbsent` is two —
+    /// so the widths are asserted per variant instead. What makes the variable
+    /// width safe inside the composite is that the one-byte encoding is a prefix
+    /// of no two-byte one, which follows from the distinct leading tags this
+    /// checks.
+    #[test]
+    fn the_exceptional_assumption_encoding_is_injective_over_its_whole_domain() {
+        assert_eq!(EXCEPTIONAL_ASSUMPTIONS.len(), 4);
+        for assumption in EXCEPTIONAL_ASSUMPTIONS {
+            let mut bytes = Vec::new();
+            push_exceptional_assumption(&mut bytes, assumption);
+            let expected = match assumption {
+                ExceptionalValueAssumption::MakeNoAssumption => 1,
+                ExceptionalValueAssumption::AssumeAbsent { .. } => 2,
+            };
+            assert_eq!(bytes.len(), expected, "{assumption:?} changed width");
+        }
+        assert_injective(&EXCEPTIONAL_ASSUMPTIONS, push_exceptional_assumption);
+    }
+
+    /// The contributor-order encoder is injective over its one inhabitant.
+    ///
+    /// Exhaustive finite evidence over a domain of size one, which is a real if
+    /// unexciting claim: a one-value domain cannot collide, and the assertion
+    /// that the population is one is what will fail — deliberately — on the day
+    /// a second contributor order lands and the constant `0x01` stops being a
+    /// function of the value.
+    #[test]
+    fn the_contributor_order_encoding_is_injective_over_its_whole_domain() {
+        const ORDERS: [ContributorOrder; std::mem::variant_count::<ContributorOrder>()] =
+            [ContributorOrder::OriginalAxisLexicographic];
+
+        assert_eq!(ORDERS.len(), 1);
+        assert_injective_fixed_width(&ORDERS, 1, push_order);
+    }
+}

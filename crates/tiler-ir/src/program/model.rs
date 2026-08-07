@@ -2469,3 +2469,120 @@ mod component_encoding_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod injectivity_tests {
+    use std::mem::variant_count;
+
+    use crate::exhaustive_injectivity::{assert_injective, assert_injective_fixed_width};
+    use crate::kernel::KernelType;
+
+    use super::{
+        BitPackedEncoding, PackedBitOrder, PackedTailRule, StorageEncoding, StorageScalar,
+        push_element_type, push_storage_encoding, push_storage_scalar,
+    };
+
+    /// Every kernel element type a program value can carry.
+    const ELEMENT_TYPES: [KernelType; variant_count::<KernelType>()] = [
+        KernelType::Bool,
+        KernelType::Index,
+        KernelType::F32,
+        KernelType::U8,
+        KernelType::I32,
+        KernelType::Bf16,
+    ];
+
+    /// Every physical storage carrier.
+    const STORAGE_SCALARS: [StorageScalar; variant_count::<StorageScalar>()] =
+        [StorageScalar::U8, StorageScalar::F32, StorageScalar::Bf16];
+
+    /// Every ordering of consecutive packed elements inside a byte.
+    const BIT_ORDERS: [PackedBitOrder; variant_count::<PackedBitOrder>()] = [
+        PackedBitOrder::LeastSignificantElementFirst,
+        PackedBitOrder::MostSignificantElementFirst,
+    ];
+
+    /// Every interpretation of the unused bits after the final packed element.
+    const TAIL_RULES: [PackedTailRule; variant_count::<PackedTailRule>()] = [PackedTailRule::Zero];
+
+    /// The element encoder is injective over all six kernel types.
+    ///
+    /// **Exhaustive finite evidence.** The vocabulary is closed and every
+    /// inhabitant is enumerated, so the six tags are proved pairwise distinct
+    /// rather than read as distinct literals.
+    ///
+    /// This encoder restates the table `KernelType::tag` holds rather than
+    /// calling it. The duplication is deliberate — a program identity domain and
+    /// a kernel identity domain step separately — so the proof has to be about
+    /// *these* bytes and not about the other table's.
+    #[test]
+    fn the_program_element_type_encoding_is_injective_over_its_whole_domain() {
+        assert_eq!(ELEMENT_TYPES.len(), 6);
+        assert_injective_fixed_width(&ELEMENT_TYPES, 1, push_element_type);
+    }
+
+    /// The storage-carrier encoder is injective over all three carriers.
+    ///
+    /// Exhaustive finite evidence. A carrier decides a byte width, so two
+    /// carriers sharing a tag would let one program's allocation sizes answer
+    /// for another's.
+    #[test]
+    fn the_storage_scalar_encoding_is_injective_over_its_whole_domain() {
+        assert_eq!(STORAGE_SCALARS.len(), 3);
+        assert_injective_fixed_width(&STORAGE_SCALARS, 1, push_storage_scalar);
+    }
+
+    /// The storage-encoding encoder is injective over every constructible value.
+    ///
+    /// **Exhaustive finite evidence over the constructible domain, which is the
+    /// domain that matters and is smaller than the type's.** `BitPackedEncoding`
+    /// has private fields and one constructor, and that constructor admits only
+    /// widths below eight that divide eight. The sweep below therefore offers
+    /// every one of the 512 `(u8, PackedBitOrder, PackedTailRule)` candidates to
+    /// `new` and enumerates what survives, instead of asserting which widths are
+    /// legal: the population is *derived* from the constructor, so a widened
+    /// admission rule grows this domain rather than silently leaving values
+    /// untested.
+    ///
+    /// Seven values survive — `Unpacked`, plus three widths times two bit orders
+    /// times one tail rule — and the width is not fixed across them, so the
+    /// per-variant widths are checked separately.
+    #[test]
+    fn the_storage_encoding_encoder_is_injective_over_its_constructible_domain() {
+        let mut candidates = 0_usize;
+        let mut encodings = vec![StorageEncoding::Unpacked];
+        for element_bits in 0..=u8::MAX {
+            for bit_order in BIT_ORDERS {
+                for tail in TAIL_RULES {
+                    candidates += 1;
+                    if let Some(packed) = BitPackedEncoding::new(element_bits, bit_order, tail) {
+                        encodings.push(StorageEncoding::BitPacked(packed));
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            candidates,
+            256 * BIT_ORDERS.len() * TAIL_RULES.len(),
+            "the candidate sweep did not cover the whole field product"
+        );
+        assert_eq!(
+            encodings.len(),
+            1 + 3 * BIT_ORDERS.len() * TAIL_RULES.len(),
+            "the constructible domain changed size; restate the claim deliberately"
+        );
+        assert_eq!(encodings.len(), 7);
+
+        for encoding in &encodings {
+            let mut bytes = Vec::new();
+            push_storage_encoding(&mut bytes, *encoding);
+            let expected = match encoding {
+                StorageEncoding::Unpacked => 1,
+                StorageEncoding::BitPacked(_) => 4,
+            };
+            assert_eq!(bytes.len(), expected, "{encoding:?} changed width");
+        }
+        assert_injective(&encodings, push_storage_encoding);
+    }
+}
