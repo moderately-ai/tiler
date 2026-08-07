@@ -495,7 +495,7 @@ impl F32Silu {
 /// `eps` is taken as an exact binary32 payload rather than an `f32`, so a caller
 /// cannot reach the attribute through a decimal literal whose rounding it never
 /// inspected. The pinned workload's constant is
-/// [`RMS_NORM_F32_QWEN3_EPS_BITS`](super::RMS_NORM_F32_QWEN3_EPS_BITS).
+/// [`RMS_NORM_F32_REFERENCE_EPS_BITS`](super::RMS_NORM_F32_REFERENCE_EPS_BITS).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct F32RmsNorm;
 

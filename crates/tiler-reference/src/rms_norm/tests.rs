@@ -2,7 +2,7 @@ use super::*;
 
 use tiler_ir::semantic::accuracy::{ExactRational, UlpFormat};
 use tiler_ir::semantic::{
-    RMS_NORM_F32_QWEN3_EPS_BITS, RMS_NORM_F32_SQUARING_OVERFLOW_BITS,
+    RMS_NORM_F32_REFERENCE_EPS_BITS, RMS_NORM_F32_SQUARING_OVERFLOW_BITS,
     builtin_scalar_value_type_facts, rms_norm_f32_op, rms_norm_f32_rsqrt_accuracy_contract,
 };
 
@@ -13,7 +13,7 @@ use crate::evaluate::ReferenceEvaluator;
 use crate::tensor::InputBinding;
 
 /// The pinned workload's `eps`, used by every corpus row unless it says otherwise.
-const EPS: u32 = RMS_NORM_F32_QWEN3_EPS_BITS;
+const EPS: u32 = RMS_NORM_F32_REFERENCE_EPS_BITS;
 
 /// The retained probe's `rsqrt_of_eps_alone`, from `torch.rsqrt` on its CPU row.
 ///

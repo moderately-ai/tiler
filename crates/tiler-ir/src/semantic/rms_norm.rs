@@ -21,7 +21,7 @@
 //!
 //! **`eps` is a semantic term and not a guard, so it is part of identity.** The
 //! workload's `rms_norm_eps` is `1e-06`, whose binary32 rounding is
-//! [`RMS_NORM_F32_QWEN3_EPS_BITS`] and which is not exactly representable.
+//! [`RMS_NORM_F32_REFERENCE_EPS_BITS`] and which is not exactly representable.
 //! Measurement from the [reference-semantics
 //! probe](../../../../spikes/numerics/transformer_reference_semantics/README.md):
 //! removing `eps` turns a zero row into NaNs and a subnormal row into
@@ -91,7 +91,7 @@ pub const RMS_NORM_EPS_BITS_ATTRIBUTE: AttributeFieldId = AttributeFieldId::new(
 ///
 /// It is a *constant of the workload*, not a default: the schema has no default
 /// and [`rms_norm_f32_eps_attribute`] takes the payload from its caller.
-pub const RMS_NORM_F32_QWEN3_EPS_BITS: u32 = 0x3586_37bd;
+pub const RMS_NORM_F32_REFERENCE_EPS_BITS: u32 = 0x3586_37bd;
 
 /// Exact binary32 payload above which squaring overflows to infinity.
 ///
