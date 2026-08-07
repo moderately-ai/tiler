@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets, derive-the-region-shape-budgets-from-the-declaration]
 scopes: [research/program-planning]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [research, program-planning, evidence]
 ---
@@ -48,3 +48,51 @@ Not moving any budget to manufacture a wall. Not weakening the rule that the per
 ## Closes when
 
 Either the harness watches a planning-phase abort again with the wall table cross-checking it, or the record states which programs were enumerated, that none refuses after planning under the governed profile, and what would change that.
+
+## Repaired before dispatch, 2026-08-07 — three defects, one of them in the harness itself
+
+Verified by the coordinator reading `spikes/program-planning/identity-growth/src/main.rs` and `crates/tiler-compiler/src/request.rs` in full, not relayed.
+
+### 1. This ticket's own premise is false, and so is the harness comment it was copied from
+
+Struck, from this ticket's body: "**Reading the point out of the wall table means the same run also probes it, so the mode cannot silently stop testing what it says it tests.**" The same sentence is asserted at `main.rs:723-726`.
+
+`main.rs:338-343` reads:
+
+```rust
+if !summarize(&rows) { return ExitCode::FAILURE; }
+if !probe_the_walls(&declaration, perturbation) { return ExitCode::FAILURE; }
+```
+
+`probe_the_walls` runs **only after** a successful `summarize`, so under `--perturb=program` the wall table is never reached — in *either* world. If the wall still refuses, `measure` errs and `main.rs:327-333` returns early. If the wall stops refusing — the regression this mode exists to catch — every row returns `Ok` with the same operation count, `exact_quadratic`'s consecutive-integer precondition fails, and `summarize` returns `false`. Both paths exit non-zero without probing anything.
+
+**So the mode's documented verdict cannot say no.** "Each exits non-zero" is true in every reachable state, including the state where the perturbation has died. That is verbatim the predecessor failure this harness already records at `main.rs:718-722` — "a perturbation that stops perturbing while its exit code stays 1 is worse than none" — reintroduced one layer up.
+
+**Fix it first**: accumulate a `bool` instead of returning early, so `probe_the_walls` runs regardless of `summarize`'s verdict. That is what makes this ticket's premise *true* rather than asserted, and it is a precondition for the rest of the work rather than a nicety.
+
+### 2. The stated deliverable has an empty solution set
+
+Struck: "a `WALLS` entry with `reaches_planning: true`". `Wall` carries only an operation count (`main.rs:128-147`) and `probe_the_walls` builds its probe as `chain_program(wall.operations)` (`main.rs:375`), so the table's entire vocabulary is the multiply chain — within which every point either compiles (2..=62) or refuses at request verification on `semantic_operations` (≥63). **No chain program refuses after planning**, so the deliverable as written cannot be satisfied.
+
+The body's dichotomy — a `WALLS` entry versus a written-down program with an expiry — is therefore false. **Generalize `Wall` to carry a program constructor beside its class and phase.** That admits a second family while *keeping* the cross-check property intact, since the same run still compiles the same program.
+
+### 3. Where to look, against this ticket's own contrary premise
+
+Struck: "every region-shape bound is now a derivation over the declaration, and the search bounds cost alternatives rather than plans" — offered as grounds that no bound can refuse a plan.
+
+`crates/tiler-compiler/src/request.rs:1002-1007` says the opposite for two of the three: region formation's attribution atom is a realization **stage** rather than an occurrence, and its live values include intermediates a staged law hands between stages, so "**both bounds still bind** on a program whose families realize region sequences". The collapse holds only where each occurrence is realized by *one* region. A staged family can exceed `region_members = 62` while `semantic_operations` still admits the program — a refusal raised inside the target loop, which is exactly `reaches_planning: true`.
+
+That lead is more available than when this ticket was written: `13cb0664` (staged family reading a materialized intermediate) and `0b0b4bed` (recognizer widened past the f32 wall) both landed after its cited base.
+
+### 4. Corrections to smaller claims
+
+- **Re-measure rather than carry the numbers.** The quoted output is pinned to base `cee4fe1a`; six commits have since touched `crates/tiler-compiler`, `tiler-ir` and `tiler-build`, including BF16 fusion legality and the widened recognizer. The output is honestly labelled with its base, so this is staleness rather than a false claim.
+- **The unexercised-path list is imprecise.** `into_targets` and `into_parts` *do* run on every successful ladder point (`main.rs:604-609`). Genuinely unexercised are the `outcome.map_err` arm (`main.rs:610-616`) and the three harness `ok_or_else` refusals (`main.rs:607`, `:630`, `:634`).
+
+### 5. Name the enumeration domain
+
+The closing condition's negative branch — "none refuses after planning under the governed profile" — names no domain, making it an unbounded universal over semantic programs, which AGENTS.md forbids claiming: measurements bound claims but do not prove unmeasured universals. **State the domain explicitly** (for example: the chain family over 2..=63, plus staged-reduction programs of *k* folds for an enumerated set of *k*) and report the population count, so "nothing ran" cannot read as "nothing refuses".
+
+### 6. Scope gap, fixed
+
+`shared_scopes` was empty while the work must edit this ticket file. `tkt guard`'s under-declaration check is file-authoritative with no self-ticket exemption, so the branch would have exited 6. `project/tickets` added.

@@ -5,7 +5,7 @@ status: todo
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface, reclassify-language-model-work-as-a-conformance-track]
 related: [own-operation-family-support-matrix, design-model-ingestion-and-complete-execution, implement-index-domain-predicates]
-scopes: [contracts/foundation, implementation/ir, implementation/reference, implementation/compiler, implementation/metal, contracts/navigation]
+scopes: [contracts/foundation, implementation/ir, implementation/reference, implementation/compiler, implementation/metal, contracts/navigation, contracts/decisions, research/semantic-graph]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, indexing, gather, language-model, breadth, class-generic-capability]
@@ -44,3 +44,44 @@ Scatter, and any data-dependent output shape. The workload needs neither, and `d
 ## Reconsideration trigger
 
 Active now: the selected workload's first operation requires it. If the product boundary moves so that embedding lookup happens on the consumer side and Tiler receives materialized activations, this family stops being required by this workload — and that is a decision for [`design-model-ingestion-and-complete-execution`](design-model-ingestion-and-complete-execution.md) to make explicitly rather than a gap to leave open.
+
+## Repaired before dispatch, 2026-08-07 — the "unowned and untracked" framing was false in four ways
+
+Verified by the coordinator against the corpus. The workload evidence, the index vocabulary quote, the bounds-obligation shape, and the non-goals all **verify unchanged**; what follows corrects the tracking claims built on top of them.
+
+### Struck: "the corpus already tracks it as absent, with no owner"
+
+**Four records name this ticket as the owner.** `docs/open-questions.md:280` — "The gather half's trigger **has fired**, and it is re-owned rather than left standing as a deferral (2026-08-04)"; `docs/roadmap.md:417`, `:479`, `:481`; and `docs/research/semantic-graph/operation-family-delivery-graph.md:187`. The correction is therefore not "record an absence" but "advance a tracked, owned row" — a different and smaller job.
+
+### Struck: the Q-SHAPE-007 trigger quote
+
+The ticket quotes the trigger as "gather/scatter enters an active product profile". **That string exists nowhere in the tree except inside this ticket.** The current Q-SHAPE-007 (`docs/open-questions.md:281`) reads "Trigger, for the half that has **not** fired: scatter." The gather trigger is spent, not pending.
+
+### Struck: the roadmap quote and the "no recorded rung" claim
+
+"Gather and scatter stay out until Q-SHAPE-007 triggers" **no longer exists** in `docs/roadmap.md` (`grep -c` returns 0), and the structural row now says the opposite at `:479`: "Scatter likewise stays out under Q-SHAPE-007, but **gather no longer does** … it is a family this row does not carry rather than a class held behind an unfired trigger." Gather appears at `:353`, `:408`, `:417`, `:479` and `:481` — five sites, not one.
+
+Two rungs are recorded: `docs/research/shapes/transformer-operation-and-shape-surface.md:67` and `:87` (R1), and `operation-family-delivery-graph.md:97` carries an explicit row — `| **O-08** Indirect gather | F-34 | owed; live ticket | owed | owed | owed |`. **The surviving true clause is narrower:** no row in the *roadmap matrix* specifically.
+
+### Link line numbers refreshed, and a sixth record added
+
+`transformer-operation-and-shape-surface.md` is `:188` (not `:166`); `model-level-qualification.md` is `:358` (not `:356`); `complete-model-ingestion-and-execution.md` is `:105` ✓ and `:322` (not `:305`). `first-quantized-lm-profile.md:182` and `first-attention-program-vertical.md:164` are correct. The unlisted sixth is **`docs/research/semantic-graph/operation-family-delivery-graph.md:187` and `:308`** — so six records, not five.
+
+### Two scopes added, one of them an ADR obligation this ticket did not name
+
+- **`contracts/decisions`.** ADR 0046 is `accepted`, and its `:48-49` carries the normative rejection this work must lift — "It rejects iteration-by-iteration multiplication and **tensor-data-derived indices**" — with `:73-74` adding that "Data-dependent gather, scatter, sparse iteration, and data-dependent cardinality **require later explicit IR contracts**." Admitting this access class supersedes or extends an accepted ADR, and the ticket named no ADR obligation at all. Per AGENTS.md, if the branch cannot land in `docs/decisions/`, preserve a **verbatim-landable ADR body** and file a carrier ticket — editing during transfer creates a fork.
+- **`research/semantic-graph`**, for the O-08 row at `:97` and the F-34 join row at `:308`. `docs/roadmap.md:437` makes that file the authority for which ticket holds each family's next step, so it moves when the family lands.
+
+### "Runtime binding" is not this ticket's to deliver
+
+Required Delivery demands "runtime binding, on the same terms every other family owes them". `crates/tiler-runtime/**` is `implementation/runtime`, **not declared here and deliberately not added** — that work is owned by `admit-a-storage-carrier-for-integer-program-inputs`, whose own `dependencies` list contains *this* ticket. So the item is both out of scope and assigned downstream. **Drop it from Required Delivery** and note the discharge. The semantic side needs no work: `tiler::u32@1`, `i32` and `i64` are already registered in `crates/tiler-ir/src/semantic/catalog.rs`.
+
+`implementation/conformance` is **not** added: the four landed peer family tickets all kept their evidence inside `implementation/ir` + `implementation/reference` and declared no conformance scope. Follow the peers.
+
+### Struck: the unverifiable conformance item
+
+"the tied case where the same value feeds both a gather and a contraction, **verified not to duplicate the allocation**" is degenerate in both readings. In the workload's real shape it can never say *yes* — `complete-model-ingestion-and-execution.md:68` records that under W-C those are two programs, so the matrix is bound twice, "binding two copies costs **622,329,856 bytes** and **nothing below the consumer can tell that the two bindings name one tensor**". Non-duplication is a consumer obligation with no enforcer here. In a synthetic single-program shape it can never say *no*, because inputs are bound rather than allocated, so one value with two consumers cannot duplicate. **Replace it with the two-program binding fact**, and hand the tied case to `assemble-the-embedding-and-vocabulary-projection-programs`, which already records that cost and is the real owner.
+
+### Struck: the Reconsideration trigger
+
+It cites `design-model-ingestion-and-complete-execution` as still owing the product-boundary decision. That ticket is `done` and **made the decision**, under the heading "The input boundary: the gather stays inside" — `complete-model-ingestion-and-execution.md:103`, `:105` ("It is made here."), with IN-A surviving at `:109` and IN-B eliminated at `:110`, confirmed by `docs/roadmap.md:408`. As written the trigger can fire only by superseding an accepted decision. Restate it as settled.
