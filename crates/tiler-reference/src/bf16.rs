@@ -47,27 +47,55 @@
 //! float type to borrow from, which is exactly why the rules had to be written
 //! down.
 //!
-//! # Why the declared numerical conformance is not read here
+//! # The binary32 conformance is not read here; a BF16 realization is
 //!
 //! [`ReferenceNumericalConformance`](crate::ReferenceNumericalConformance)'s two
 //! dimensions are **binary32** functions — `apply_to_operand` and
 //! `apply_to_result` take and return `f32` — and this family performs no binary32
 //! arithmetic to apply them to. Its operands are exact rationals decoded from BF16
 //! encodings and its one rounding is over BF16's value set, so a binary32
-//! subnormal mode has no site here in either direction.
+//! subnormal mode has no site here in either direction. That is unchanged, and
+//! widening the binary32 object to stand in for a BF16 one would apply a format's
+//! rule to values that are not in that format.
 //!
-//! The behaviour is not therefore unstated: the family declares it. `BF16_FACT_SUBNORMALS`
-//! resolves to `preserved-operands-and-results-in-the-bf16-subnormal-range-are-not-flushed`
+//! What this family can now be told is a subnormal realization **of its own**.
+//! [`Bf16SubnormalRealization`] carries ADR 0019's two independent dimensions over
+//! BF16's value set: the input dimension replaces a subnormal operand *encoding*
+//! before it is decoded, and the result dimension replaces a newly rounded
+//! subnormal result at [`Bf16Format::commit`] — the one place this family's
+//! arithmetic commits a value. Both act on encodings, so neither reaches the
+//! exact-rational arithmetic or the single rounding between them, and neither is
+//! an approximation of a binary32 mode.
+//!
+//! # What still supplies no flushing realization, and why that is parked
+//!
+//! Every registered capability is constructed under
+//! [`Bf16SubnormalRealization::preserving`], which is what this module computed
+//! before it could be told anything, so no registered value changes. Which route
+//! supplies a flushing one is the open half: a BF16 capability could *derive* the
+//! format from its own construction and read the format-agnostic `SubnormalMode`
+//! off the conformance it is already handed, or the subject could be *declared* on
+//! `NumericalRealization`'s two fields. That fork is a public boundary parked for
+//! Tom on `carry-a-bf16-subnormal-realization-the-reference-can-be-told`; until it
+//! is resolved, a comparison against the macOS row finding 24 of the Apple
+//! numerical record measures flushing must state the realization by hand.
+//!
+//! # The declared facts stay unconditional, deliberately
+//!
+//! `BF16_FACT_SUBNORMALS` still resolves to
+//! `preserved-operands-and-results-in-the-bf16-subnormal-range-are-not-flushed`
 //! and the value contract to
-//! `preserved-every-subnormal-encoding-denotes-a-distinct-constant`, so BF16
-//! preservation is a declared operation fact this evaluator realizes rather than
-//! a dimension it silently resolved. **A target that flushed BF16 subnormals would
-//! need a declaration neither the conformance type nor these facts carry**, which
-//! is filed as `carry-a-bf16-subnormal-realization-the-reference-can-be-told`
-//! rather than approximated with the binary32 modes.
+//! `preserved-every-subnormal-encoding-denotes-a-distinct-constant`. Those state
+//! what `tiler::multiply-bf16@1` and `tiler::add-bf16@1` *mean*. A flushing
+//! realization is a declared deviation a region's numerical contract carries, not
+//! a second opinion about the operation's semantics, and weakening the fact to
+//! match a target would be the authority substitution ADR 0076 forbids — the same
+//! reason `tiler::dequantize-strict-affine@1` keeps its own `preserve-subnormals`
+//! while its scale domain discharges it.
 
 use std::sync::Arc;
 
+use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
 use tiler_ir::semantic::accuracy::{ExactRational, ExactSign, UlpFormat};
 use tiler_ir::semantic::{
     AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, BF16_FACT_CANONICAL_NAN_BITS, Bf16,
@@ -109,6 +137,70 @@ pub(crate) enum Bf16Value {
     },
     /// Not a number. The payload is not modelled; the result is canonicalized.
     Nan,
+}
+
+/// The subnormal realization one BF16 evaluation commits its values under.
+///
+/// The BF16 counterpart of the binary32
+/// [`ReferenceNumericalConformance`](crate::ReferenceNumericalConformance)'s two
+/// subnormal dimensions, and deliberately a separate type rather than a reuse of
+/// that one: its dimensions are applied to BF16 encodings over BF16's value set,
+/// and the binary32 object's are `f32` functions that no value in this family
+/// ever reaches.
+///
+/// The *vocabulary* is shared, though — [`SubnormalMode`] and [`FlushedZeroSign`]
+/// are the schedule's own, not a second spelling of them. What is not settled here
+/// is which format a given [`SubnormalMode`] speaks about, because nothing
+/// constructs a flushing one yet; see the module header.
+///
+/// Deliberately not `Default`, for [`ReferenceNumericalConformance`]'s reason: a
+/// realization is a statement about what the committed values *mean*, and
+/// [`Self::preserving`] is that statement written out rather than an absence of
+/// one.
+///
+/// [`ReferenceNumericalConformance`]: crate::ReferenceNumericalConformance
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct Bf16SubnormalRealization {
+    input_subnormals: SubnormalMode,
+    result_subnormals: SubnormalMode,
+}
+
+impl Bf16SubnormalRealization {
+    /// States each subnormal dimension independently.
+    ///
+    /// The two are independent and neither implies the other (ADR 0019): the input
+    /// dimension treats an existing subnormal operand as zero before the
+    /// arithmetic reads it, and the result dimension replaces a newly committed
+    /// subnormal result.
+    pub(crate) const fn new(
+        input_subnormals: SubnormalMode,
+        result_subnormals: SubnormalMode,
+    ) -> Self {
+        Self {
+            input_subnormals,
+            result_subnormals,
+        }
+    }
+
+    /// Both dimensions preserved: what this family realized before it could be told.
+    ///
+    /// Every registered BF16 capability is constructed under this, so naming it
+    /// changes no evaluated value. It is stated rather than left implicit so a
+    /// caller comparing against a flushing device can see it is comparing against
+    /// a *different* realization and not against "the BF16 reference".
+    pub(crate) const fn preserving() -> Self {
+        Self::new(SubnormalMode::Preserve, SubnormalMode::Preserve)
+    }
+
+    /// The declared treatment of subnormal BF16 operands.
+    pub(crate) const fn input_subnormals(self) -> SubnormalMode {
+        self.input_subnormals
+    }
+
+    /// The declared treatment of newly committed subnormal BF16 results.
+    pub(crate) const fn result_subnormals(self) -> SubnormalMode {
+        self.result_subnormals
+    }
 }
 
 /// The BF16 value set this reference computes over, read from its declarations.
@@ -350,6 +442,67 @@ impl Bf16Format {
                 }
             }
         }
+    }
+
+    /// Returns whether one encoding is a subnormal member of this value set.
+    ///
+    /// A zero exponent field with a nonzero trailing significand, which is exactly
+    /// the encodings [`Self::decode`] reads without an implicit leading bit. The
+    /// two zeros are excluded because they are not subnormal: a flush must leave
+    /// them alone or it would be inventing a sign change.
+    fn is_subnormal_encoding(&self, bits: u16) -> bool {
+        (bits >> self.trailing_bits) & self.exponent_mask() == 0 && bits & self.trailing_mask() != 0
+    }
+
+    /// Applies one subnormal dimension to one encoding.
+    ///
+    /// Exhaustive over both vocabularies rather than written with a wildcard, so
+    /// widening either is a build error here instead of a dimension silently
+    /// resolved as preservation.
+    ///
+    /// The replacement is chosen on the *encoding*, which is what makes this exact
+    /// and keeps it out of the arithmetic: a subnormal's sign is its sign bit, and
+    /// the zero that replaces it is the encoding with that bit and nothing else.
+    /// The sign question is not incidental — finding 24 of the Apple numerical
+    /// record measures the BF16 input flush returning `0x8000` for the operand
+    /// `0x8040`, not `0x0000`.
+    fn apply_subnormal_mode(&self, bits: u16, mode: SubnormalMode) -> u16 {
+        match mode {
+            SubnormalMode::Preserve => bits,
+            SubnormalMode::FlushToZero { zero_sign } => {
+                if self.is_subnormal_encoding(bits) {
+                    match zero_sign {
+                        FlushedZeroSign::PreservesSign => bits & sign_mask(),
+                        FlushedZeroSign::AlwaysPositive => 0,
+                    }
+                } else {
+                    bits
+                }
+            }
+        }
+    }
+
+    /// Applies the input dimension to one operand encoding, before it is decoded.
+    ///
+    /// Before the decode rather than after it because the input dimension replaces
+    /// the *operand*, and an operand this reference has already decoded is an exact
+    /// rational that no longer knows it came from a subnormal encoding.
+    pub(crate) fn accept_operand(&self, bits: u16, realization: Bf16SubnormalRealization) -> u16 {
+        self.apply_subnormal_mode(bits, realization.input_subnormals())
+    }
+
+    /// Commits one exact value into BF16 under a declared subnormal realization.
+    ///
+    /// The rounding boundary, and the only site the result dimension acts at.
+    /// [`Self::round`] performs the single round-to-nearest-ties-to-even this
+    /// family declares and is untouched by the realization; the result dimension
+    /// then reads the *rounded* encoding, which is the produced result a target
+    /// flushes. A value that rounds up to the least normal is therefore normal and
+    /// is not flushed, and one that rounds down into the subnormal range is —
+    /// which is the distinction a mode applied to the pre-rounding exact value
+    /// would lose.
+    pub(crate) fn commit(&self, value: &Bf16Value, realization: Bf16SubnormalRealization) -> u16 {
+        self.apply_subnormal_mode(self.round(value), realization.result_subnormals())
     }
 
     /// Returns the encoded exponent and significand of one representable magnitude.
@@ -700,12 +853,27 @@ impl Bf16BinaryReference {
         Self { format, arithmetic }
     }
 
-    /// Evaluates the elementwise arithmetic with the scalar broadcast the
-    /// operation's own inferencer admits.
+    /// Evaluates the elementwise arithmetic under the preserving realization.
+    ///
+    /// The realization is a per-evaluation input rather than capability state
+    /// because one registered capability serves every evaluator: a registry holds
+    /// a single `Arc` per key, while the contract an evaluation is performed under
+    /// is the caller's and varies between two evaluations of the same key.
     pub(crate) fn combine(
         &self,
         left: &Tensor,
         right: &Tensor,
+    ) -> Result<Tensor, ReferenceOperationError> {
+        self.combine_under(left, right, Bf16SubnormalRealization::preserving())
+    }
+
+    /// Evaluates the elementwise arithmetic with the scalar broadcast the
+    /// operation's own inferencer admits, under one declared realization.
+    pub(crate) fn combine_under(
+        &self,
+        left: &Tensor,
+        right: &Tensor,
+        realization: Bf16SubnormalRealization,
     ) -> Result<Tensor, ReferenceOperationError> {
         let left_elements = bf16_elements(left)?;
         let right_elements = bf16_elements(right)?;
@@ -724,19 +892,25 @@ impl Bf16BinaryReference {
             .ok_or(ReferenceOperationError::ShapeTooLarge)?;
         let elements = (0..count)
             .map(|index| {
-                let left_bits = decode_element(
-                    element_at(left_elements, left.shape().rank(), index)
-                        .ok_or(ReferenceOperationError::InvalidApplication)?,
-                )?;
-                let right_bits = decode_element(
-                    element_at(right_elements, right.shape().rank(), index)
-                        .ok_or(ReferenceOperationError::InvalidApplication)?,
-                )?;
+                let left_bits = self.format.accept_operand(
+                    decode_element(
+                        element_at(left_elements, left.shape().rank(), index)
+                            .ok_or(ReferenceOperationError::InvalidApplication)?,
+                    )?,
+                    realization,
+                );
+                let right_bits = self.format.accept_operand(
+                    decode_element(
+                        element_at(right_elements, right.shape().rank(), index)
+                            .ok_or(ReferenceOperationError::InvalidApplication)?,
+                    )?,
+                    realization,
+                );
                 let result = self.arithmetic.apply(
                     &self.format.decode(left_bits),
                     &self.format.decode(right_bits),
                 );
-                encode_element(self.format.round(&result))
+                encode_element(self.format.commit(&result, realization))
             })
             .collect::<Result<Vec<_>, _>>()?;
         Tensor::dense(Bf16::resolved_type(), result_shape.clone(), elements)
