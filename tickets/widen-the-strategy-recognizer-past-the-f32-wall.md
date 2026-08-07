@@ -1,7 +1,7 @@
 ---
 id: widen-the-strategy-recognizer-past-the-f32-wall
 title: Widen the strategy recognizer past the f32 wall
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [conform-the-bf16-vertical-end-to-end, establish-bf16-optimizer-legality, correct-the-stale-dtype-f32-recognizer-claims-in-the-conformance-crate, correct-the-stale-dtype-f32-recognizer-claims-in-the-contract-documents]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [bf16, dtype, blocker]
-claimed_from: todo
-assignee: agent-recognizer
-lease_expires_at: 1786129392
 ---
 ## The wall, and why it was unowned
 
@@ -88,3 +85,35 @@ A fourth site the ticket did not name was also re-founded: `crate::pipeline::tes
 **Boundary — stale claims outside this branch's scopes, filed rather than edited.** Two comments in `crates/tiler-conformance` and five documents under `docs/` state the removed `dtype-f32` rule, and two of them cite compiler tests renamed with it. `correct-the-stale-dtype-f32-recognizer-claims-in-the-conformance-crate` and `correct-the-stale-dtype-f32-recognizer-claims-in-the-contract-documents` carry the exact sites and the corrected statement. The `docs/dtype-support.md` BF16 support-matrix row is named in the second.
 
 **What was not done.** BF16 optimizer legality, which `establish-bf16-optimizer-legality` owns and whose absence is the one remaining boundary between this and a multi-occurrence BF16 plan. The conformance run through `compile()`, which is its own ticket.
+
+## Outcome — delivered 2026-08-07 at `0b0b4bed`
+
+**The wall is down.** `select_supported_strategy` has no `dtype-f32` rule; it derives the program's one arithmetic type from its values through `request::recognized_arithmetic` — the single statement of the admitted set — and mints per-width vocabulary in one walk. Verified by the coordinator: the surviving `dtype-f32` mentions are doc comments *explaining what was removed*, not the rule.
+
+**A non-`f32` program reaches a selected `PlanAlternative`**: pure-BF16 `out = x + y` under `FLUSH_SUBNORMALS_TO_ZERO_BF16` on a profile carrying the measured BF16 rows, with the resolved contract key asserted, one alternative counted, one selected.
+
+**The refusal moved to its proper authority rather than being deleted**, which was the requirement most likely to be got wrong. A BF16 program under an `f32` contract is now refused **by the contract**, program-scoped and before any target is consulted, under a new typed `RequestError::NoApplicableNumericalContract` and the public rule `compile.request.numerics.inapplicable` — resting on ADR 0076 item 6, that arithmetic is part of contract identity and target rows are subject-keyed. The profile's own refusals (`DTypeNotDispatchable`, `NoResolvableNumericalContract`) are unchanged, and the recognizer keeps two rules of its own for a width this build spells no body for and for two widths in one program. Five perturbations, each watched failing alone and restored — including one that let a BF16 program compile under strict `f32`.
+
+**Three downstream `f32` assumptions the wall was hiding, all found and fixed.** This is exactly the class the brief said to look for and called a result rather than a setback:
+
+- `verify_semantic_output_type` required `f32` outputs exactly, so it reported a **compiler defect** for a program recognition had just admitted.
+- `region_proposal` paired the region's arithmetic with a hard-coded `tiler::f32@1` resolved type, so a BF16 region matched no row any profile could declare — every dimension `Unknown`, and `target-assessment-unresolved`.
+- `BOUNDED_CARRIER` was a constant `F32` pair sizing every buffer and accessible-byte expression at four bytes.
+
+Each is the same shape: a constant standing where a derivation belonged, invisible while only one width could reach it.
+
+**All four wall assertions re-founded, none deleted** — including a fourth site the ticket did not name, whose doc claimed no BF16 region was reachable from the request boundary and now names the *fusion* boundary that survives.
+
+**Identity: exactly one pin moved**, the explain request qualifier `e59cb8aa9b38ef70` → `de9ad4cc087697d8`, and the attribution was **proved rather than argued** — removing only the three new capability rows returns it byte-for-byte, so the whole move is the lowering-registry identity and no `f32` subject byte changed. No encoding version stepped. The standard Metal pins are unmoved and their file unedited.
+
+**No public item added or widened**; one new *value* in the public failure vocabulary.
+
+### The boundary that survives, asserted rather than left to be discovered
+
+**A multi-occurrence BF16 region still stops at `fusion_legality`.** `FusionNumericalCapabilities::governed` maps the six `f32` op keys, so a two-or-more-member BF16 region is `Unknown` and every cover placing it is skipped. The worker **deliberately did not add rows**, on a ground worth keeping: `establish-bf16-optimizer-legality` owns it, and Finding 28 measures an Apple row whose contraction behaviour **differs between `f16` and `bf16`** — so copying the `f32` rows would be a legality claim about another width, made without evidence.
+
+It is asserted by `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall`, and the module header says why: "precisely so a reader cannot mistake one planned shape for general support." That is the maturity discipline working — one planned shape is one planned shape.
+
+**Released:** [`correct-the-stale-dtype-f32-recognizer-claims-in-the-conformance-crate`](correct-the-stale-dtype-f32-recognizer-claims-in-the-conformance-crate.md) and [`correct-the-stale-dtype-f32-recognizer-claims-in-the-contract-documents`](correct-the-stale-dtype-f32-recognizer-claims-in-the-contract-documents.md), the latter naming `docs/dtype-support.md`'s BF16 support-matrix row. In-scope stale claims were corrected directly.
+
+`make full` exit 0 on the branch (2,997 workspace, 1,052 release); re-gated on the merged tree.
