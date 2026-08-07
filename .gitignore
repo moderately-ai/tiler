@@ -20,3 +20,13 @@ crates/*/target/
 /.worktrees/
 # Compiler crash reports are regenerable diagnostics, not repository evidence.
 /rustc-ice-*.txt
+# Locally retained primary-source bytes. Every document under here was read and
+# its licence resolved fail-closed: the notices grant copying only where copies
+# are not distributed for commercial advantage, and the ACM ones name posting on
+# a server explicitly, which is what checking a file in would be. Keeping the
+# bytes on one machine is not distribution, so they stay re-readable here while
+# the repository carries only our own distilled notes about them and a digest to
+# re-acquire against. Anchored to this one directory on purpose: an unanchored
+# `*.pdf` would swallow `docs/research/apple-targets/sources/`, whose three
+# specifications are deliberately tracked.
+/docs/research/cost-model/sources/local/
