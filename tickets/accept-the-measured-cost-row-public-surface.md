@@ -1,7 +1,7 @@
 ---
 id: accept-the-measured-cost-row-public-surface
 title: Accept the measured cost row public surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [activate-measured-reduction-selection-from-a-target-cost-row]
@@ -58,3 +58,21 @@ The sweep dispatched the tree at the **balanced** split; `MEASURED_TREE_PARTICIP
 ## Closes when
 
 Tom accepts the spelling, accepts with a named exclusion, or rejects it. The behaviour is landed and gated meanwhile; what is parked is the surface.
+
+## Accepted — 2026-08-07
+
+**Tom accepted the spelling on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator, without exclusion. Its draft label in `target.rs`'s header must now be retired — the marker states something no longer true.
+
+**Accepted as listed**: `TargetCostRowResolution`, the `declare_saturated_parallel_fold_steps` / `declare_measured_saturated_parallel_fold_steps` pair with its `TargetCompileProfileMeasurementSource`, `TargetProfile::saturated_parallel_fold_steps`, and `TargetProfileBuildError::DuplicateCostRow`.
+
+**And with it, the substantive change the spelling carries**: the measured term ranges over the retained valid plans and can prefer a structurally dominated plan. That was reached by measurement rather than preference — the alternative that breaks ties inside the non-dominated set cannot express the measurement, because that set is a singleton on this family, asserted by `the_parallel_reduction_plans_are_structurally_dominated` rather than assumed. It can never prefer an infeasible plan, because none is in the set.
+
+**The two reserved constraints remain answered structurally and must stay so**: no second cost-model key enters dominance, so Pareto pruning cannot go dark; and `PlanStructuralCost` keeps its four exact dimensions and no latency dimension.
+
+## Released work
+
+- [`retire-the-draft-label-on-the-accepted-cost-row-surface`](retire-the-draft-label-on-the-accepted-cost-row-surface.md) — the label retirement, plus a stale descriptor quote the landing exposed.
+
+## The measurement boundary that survives acceptance
+
+The sweep this row was fitted from dispatched the tree at the **balanced** split; `MEASURED_TREE_PARTICIPANT_CAP` landed after it. That moves which *parallel* plan is preferred, not whether a program parallelizes, so the contour the row turns on is unaffected — but it bounds the evidence and is recorded in the ledger, the spike README, and the test rather than only here. Accepting the surface does not widen it.
