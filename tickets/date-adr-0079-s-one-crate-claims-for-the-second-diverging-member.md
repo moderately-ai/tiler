@@ -92,3 +92,19 @@ Also check **`ADR:78`** ("`tiler-prototype-run` is a non-published proof executa
 ### Facts that verify unchanged
 
 Two members (`:21`); the walk not covering `prototypes/serial-sum-run` because it roots at `CARGO_MANIFEST_DIR/src` (`tests.rs:500`); the empty reverse-dependent set (no manifest declares `tiler-conformance` as a dependency); and the `43f685f` pin (`ADR:31`).
+
+
+> **The command above was itself wrong and is corrected, 2026-08-07.** It returned **5**, not 4 — it matched the `crates/tiler-conformance/src/lib.rs` doc comment, which is precisely the false positive it was written to exclude. Found by the worker on [`date-adr-0079-s-one-crate-claims-for-the-second-diverging-member`](date-adr-0079-s-one-crate-claims-for-the-second-diverging-member.md) rather than by the coordinator who wrote it. The fix is the `^\s*` line anchor, and printing **per-file locations rather than a bare total**, so a miscount is visible instead of merely wrong:
+>
+> ```sh
+> python3 -c "
+> import re, glob
+> pat = re.compile(r'^\s*#\[allow\(\s*unsafe_code', re.M)
+> for f in sorted(glob.glob('crates/**/*.rs', recursive=True) + glob.glob('prototypes/**/*.rs', recursive=True)):
+>     n = len(pat.findall(open(f).read()))
+>     if n:
+>         print(n, f)
+> "
+> ```
+>
+> Correct output is two files at two each: `crates/tiler-conformance/src/device_buffer.rs` and `prototypes/serial-sum-run/src/buffer.rs`. Substituting `r'^\s*unsafe\s*\{'` gives the identical two files at two each, and **that pairing is the evidence that no block escaped its attribute** — a count alone cannot show it. This is the same defect class the ticket exists to prevent, committed in the ticket's own repair text.

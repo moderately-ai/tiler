@@ -93,3 +93,19 @@ Reactivate before admitting the first production unsafe site, or when the admitt
   So both clauses hold: the population grew past the two prototype functions, **and** the first non-prototype admission has landed. This ticket's load-bearing Fact — "**There is no admitted unsafe site anywhere under `crates/`**" — is now false and must be rewritten before dispatch. Tom decided the rule that admitted them on 2026-08-07 (`decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`): `deny` with named per-site allows, never at the crate, FFI memory management against Metal as the only admitted justification.
 
   **Carry this in rather than re-deriving it:** a partial counting check already exists but is crate-scoped — `crates/tiler-conformance/src/bf16_vertical/tests.rs`'s `the_unsafe_site_population_is_the_two_named_ones` walks every file under that crate's `src/` and fails if a third appears, with a file-count floor so it cannot pass by scanning a shrunken tree. That is the shape a workspace-wide pin wants, generalized. Recheck, and **use a multi-line-aware matcher**: `python3 -c "import re,glob; print(sum(len(re.findall(r'#\[allow\(\s*unsafe_code', open(f).read())) for f in glob.glob('crates/**/*.rs',recursive=True)+glob.glob('prototypes/**/*.rs',recursive=True)))"` — four attributes plus one doc-comment mention.
+
+
+> **The command above was itself wrong and is corrected, 2026-08-07.** It returned **5**, not 4 — it matched the `crates/tiler-conformance/src/lib.rs` doc comment, which is precisely the false positive it was written to exclude. Found by the worker on [`date-adr-0079-s-one-crate-claims-for-the-second-diverging-member`](date-adr-0079-s-one-crate-claims-for-the-second-diverging-member.md) rather than by the coordinator who wrote it. The fix is the `^\s*` line anchor, and printing **per-file locations rather than a bare total**, so a miscount is visible instead of merely wrong:
+>
+> ```sh
+> python3 -c "
+> import re, glob
+> pat = re.compile(r'^\s*#\[allow\(\s*unsafe_code', re.M)
+> for f in sorted(glob.glob('crates/**/*.rs', recursive=True) + glob.glob('prototypes/**/*.rs', recursive=True)):
+>     n = len(pat.findall(open(f).read()))
+>     if n:
+>         print(n, f)
+> "
+> ```
+>
+> Correct output is two files at two each: `crates/tiler-conformance/src/device_buffer.rs` and `prototypes/serial-sum-run/src/buffer.rs`. Substituting `r'^\s*unsafe\s*\{'` gives the identical two files at two each, and **that pairing is the evidence that no block escaped its attribute** — a count alone cannot show it. This is the same defect class the ticket exists to prevent, committed in the ticket's own repair text.
