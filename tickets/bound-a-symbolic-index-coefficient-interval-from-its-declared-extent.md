@@ -1,7 +1,7 @@
 ---
 id: bound-a-symbolic-index-coefficient-interval-from-its-declared-extent
 title: Bound a symbolic index coefficient interval from its declared extent
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-symbolic-index-expression-coefficients]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [indexing, proofs, decision]
+claimed_from: todo
+assignee: agent-interval
+lease_expires_at: 1786121747
 ---
 ## User-visible outcome
 

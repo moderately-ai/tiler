@@ -1,7 +1,7 @@
 ---
 id: record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr
 title: Record the conformance crate in the architecture table and an admission ADR
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-the-conformance-crate-to-the-workspace]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, contracts/decisions]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [docs, architecture]
+claimed_from: todo
+assignee: agent-crate-record
+lease_expires_at: 1786121747
 ---
 ## What this owes
 

@@ -1,7 +1,7 @@
 ---
 id: answer-per-ordinal-element-counts-only-for-ordinals-an-output-reads
 title: Answer per-ordinal element counts only for ordinals an output reads
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-ordinal
+lease_expires_at: 1786121747
 ---
 ## User-visible outcome
 
