@@ -109,13 +109,19 @@ pub fn rsqrt_f32_scalar_op() -> ScalarOpKey {
 
 /// Returns the governed per-point binary32 `maximum` scalar operation key.
 ///
-/// **Labelled draft.** The key, its name, its arity, and its fact record are a
-/// concrete draft pending Tom's review; see
-/// [`accept-the-governed-maximum-scalar-key`]. Admitting a scalar operation is a
-/// semantic surface rather than an implementation detail, because the key becomes
-/// part of every reached-definition projection a region carrying it derives an
-/// identity from — the reason [`rsqrt_f32_scalar_op`] carries an acceptance node
-/// of its own.
+/// **Accepted boundary** (Tom, 2026-08-06, at the live session's decision
+/// round; relayed and executed by the coordinator rather than witnessed at this
+/// site, and the provenance packet is the `## Accepted 2026-08-06` section of
+/// the closed acceptance node [`accept-the-governed-maximum-scalar-key`], whose
+/// own "Closes when" routed this label flip here). Acceptance is not
+/// stabilization: this is accepted pre-alpha vocabulary, not a published API
+/// with compatibility obligations.
+///
+/// What was accepted is the key, its name, its arity, and its fact record.
+/// Admitting a scalar operation is a semantic surface rather than an
+/// implementation detail, because the key becomes part of every
+/// reached-definition projection a region carrying it derives an identity from
+/// — the reason [`rsqrt_f32_scalar_op`] carries an acceptance node of its own.
 ///
 /// The **NaN-propagating** IEEE 754-2019 extrema family, ordering `-0.0 < +0.0`.
 /// It is what `tiler::softmax-f32@1`'s row maximum pins, and it is the per-point
