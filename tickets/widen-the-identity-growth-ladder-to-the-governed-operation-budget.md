@@ -1,7 +1,7 @@
 ---
 id: widen-the-identity-growth-ladder-to-the-governed-operation-budget
 title: Widen the identity-growth ladder to the governed operation budget
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound, decide-whether-executable-coverage-evidence-folds-as-a-digest, attribute-the-canonical-manifest-growth-and-decide-whether-the-encoding-owes-a-budget, add-the-embedding-ceiling-trigger-to-the-coverage-digest-deferral]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, program-planning, identity, measurement]
-claimed_from: todo
-assignee: agent-ladder
-lease_expires_at: 1786070865
 ---
 ## User-visible outcome
 
