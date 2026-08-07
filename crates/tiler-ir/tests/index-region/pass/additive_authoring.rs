@@ -18,8 +18,8 @@ fn inspect_expression(expression: IndexExprView<'_>) {
 
 fn inspect_proofs(bounds: BoundsProofView, ownership: WriteOwnershipProofView) {
     let _ = match bounds {
-        BoundsProofView::VacuousEmptyDomain => 0,
-        BoundsProofView::Interval => 1,
+        BoundsProofView::VacuousEmptyDomain { .. } => 0,
+        BoundsProofView::Interval { .. } => 1,
         BoundsProofView::Exhaustive { .. } => 2,
         _ => 3,
     };

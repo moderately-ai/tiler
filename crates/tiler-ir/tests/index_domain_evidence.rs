@@ -1,9 +1,9 @@
 //! Public index-domain evidence custody tests.
 
 use tiler_ir::index::{
-    DomainRole, FrozenScalarRegistry, IndexDomainEvidence, IndexDomainPredicate,
-    IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef, IndexRegionBuilder,
-    ScalarRegistryBuilder, SourcedExtent, TensorRole, VerifiedIndexHandleError,
+    DomainRole, FrozenScalarRegistry, IndexDomainEvidence, IndexDomainFactSource,
+    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef,
+    IndexRegionBuilder, ScalarRegistryBuilder, SourcedExtent, TensorRole, VerifiedIndexHandleError,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, EncodedNumericContract, F32,
@@ -129,6 +129,9 @@ fn downstream_can_inspect_each_exact_discharged_predicate() {
                 record.evidence(),
                 IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval)
             );
+            // A wholly literal copy: no environment exists to read, so the
+            // record states the strong claim.
+            assert_eq!(record.facts(), IndexDomainFactSource::Program);
         }
     }
 }

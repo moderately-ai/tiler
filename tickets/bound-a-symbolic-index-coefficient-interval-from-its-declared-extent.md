@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [admit-symbolic-index-expression-coefficients]
-scopes: [implementation/ir]
+scopes: [implementation/ir, implementation/build, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [indexing, proofs, decision]
@@ -42,3 +42,7 @@ The environment-in-proofs question is answered for coefficients and divisors tog
 ## Graph maintenance
 
 Filed 2026-08-07 by the coordinator at integration of the producing ticket, from a remainder its worker named and reasoned about rather than silently omitted. Kept separate because it is a design expansion under a reserved boundary, not the completion of admitted work.
+
+**Scopes `implementation/build` and `research/target-profiles` added 2026-08-07 by the worker, as scheduling metadata rather than an outcome expansion.** Retaining a fact source on each discharged index-domain assessment moves the canonical region encoding to `tiler.index-region.v11`, so every region carrying a discharged predicate re-encodes — including the wholly static standard Metal path, which names no symbol and whose every new tag therefore reads `Program`. That path's three published identities are pinned in `crates/tiler-build/src/metal_plan.rs` (`implementation/build`) and mirrored in `docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md` (`research/target-profiles`), and both state the values as current fact. Leaving either stale would make the gate red and the ledger false, so moving them is part of landing the encoding rather than separable work. Neither scope had a live claim when it was added; the three live claims were `agent-ordinal`, `agent-crate-record`, and this one.
+
+**These are shared pins and the coordinator must recompute them on the merged tree.** They moved from base `73ac63f4`, `main` had already advanced to `709db244` when this branch ran, and the values below are this branch's rather than the merge's.

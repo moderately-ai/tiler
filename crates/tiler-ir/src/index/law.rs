@@ -2869,17 +2869,28 @@ mod tests {
     /// normalization's own law at rank two and at rank one, and the
     /// fold-then-pointwise form no registered operation carries.
     ///
-    /// **Rebaselined once, at the `tiler.index-region.v10` step, and the reason
-    /// is what the invariant above predicts rather than an exception to it.**
+    /// **Rebaselined twice, and each time for a reason the invariant above
+    /// predicts rather than an exception to it.**
+    ///
+    /// At the `tiler.index-region.v10` step,
     /// `admit-symbolic-index-expression-coefficients` made a linear
     /// combination's coefficient a tagged `SourcedIndexInteger` where `v9`
     /// wrote a bare integer, so every chain carrying one grew by a byte per
-    /// coefficient — three here at rank one, three at rank two. That is an
-    /// encoding change to a field these chains *do* spell, which is exactly the
-    /// class of move this pin exists to report; the claim it defends is that a
-    /// widening no existing law spells changes nothing, and admitting the
-    /// symbolic form itself changed nothing. Both digests were recomputed on the
-    /// tree that landed the step.
+    /// coefficient — three here at rank one, three at rank two.
+    ///
+    /// At the `tiler.index-region.v11` step,
+    /// `bound-a-symbolic-index-coefficient-interval-from-its-declared-extent`
+    /// gave every discharged index-domain assessment a fact-source tag, so each
+    /// chain grew by exactly one byte per discharged predicate: 24 for the rank
+    /// two normalization, 10 for its rank one instance, and 8 for the staged
+    /// template. Every one of these chains is wholly literal, so every new tag
+    /// reads `Program` — which is itself the claim that the tag reports what a
+    /// proof read rather than changing what any of them proved.
+    ///
+    /// Both are encoding changes to fields these chains *do* spell, which is
+    /// exactly the class of move this pin exists to report; the claim it defends
+    /// is that a widening no existing law spells changes nothing. Every digest
+    /// was recomputed on the tree that landed its step.
     #[test]
     fn the_landed_one_reader_chain_identities_are_unchanged_byte_for_byte() {
         let scalars = FrozenScalarRegistry::standard().unwrap();
@@ -2892,8 +2903,8 @@ mod tests {
                         &scalars,
                     )
                     .unwrap(),
-                4075_usize,
-                "e28bf1919cdade8e158570294a44e5e28372ac67959ee06302fba6fae26cc6e0",
+                4099_usize,
+                "76251765b9ab0938a554c914c346bce51dea05e134cacf7853307fe53c679a29",
             ),
             (
                 "rms-norm-rank1-4-axis0",
@@ -2903,8 +2914,8 @@ mod tests {
                         &scalars,
                     )
                     .unwrap(),
-                3652,
-                "72a0bad3b317a33f2ef07240a4462cc161f65b08c011796cbe30ce3117451654",
+                3662,
+                "f0e20e547666d2a62d906d8e87af97e957896da1d08141091eea8a12f26daea6",
             ),
             (
                 "staged-template-rank1-4-axis0",
@@ -2917,8 +2928,8 @@ mod tests {
                     &scalars,
                 )
                 .unwrap(),
-                2026,
-                "89372b3594115f381500c4b62563e3a3b79072d127903ab9c7f5f026e14a07cf",
+                2034,
+                "08353da8f68dd1bbd894a35fa9b6f284dac0f291a7603df8691c7e434b1b3d6c",
             ),
         ] {
             let identity = sequence.identity().as_bytes();
@@ -3935,10 +3946,14 @@ mod tests {
     /// that it did. Recompute both on the tree the change lands in, and put the
     /// cause in that commit.
     ///
-    /// **Recomputed once, at the `tiler.index-region.v10` step.** A linear
-    /// combination's coefficient became a tagged `SourcedIndexInteger`, so each
-    /// of this chain's coefficients grew by its tag byte — six at rank two, six
-    /// at rank one. Nothing about the softmax law itself moved.
+    /// **Recomputed twice, and neither time did the softmax law itself move.**
+    /// At the `tiler.index-region.v10` step a linear combination's coefficient
+    /// became a tagged `SourcedIndexInteger`, so each of this chain's
+    /// coefficients grew by its tag byte — six at rank two, six at rank one. At
+    /// the `tiler.index-region.v11` step every discharged index-domain
+    /// assessment gained a fact-source tag, so the chain grew by one byte per
+    /// discharged predicate — 40 at rank two, 16 at rank one. This chain is
+    /// wholly literal, so every new tag reads `Program`.
     #[test]
     fn the_softmax_chain_identity_is_pinned() {
         let scalars = FrozenScalarRegistry::standard().unwrap();
@@ -3947,15 +3962,15 @@ mod tests {
                 "softmax-3x4-axis1",
                 [3, 4].as_slice(),
                 1_u32,
-                5595_usize,
-                "cde1640ab9b047d74d5b5cb70391f6fdf16e1f9e6be3088995c0f9e25d37cadb",
+                5635_usize,
+                "5ae4e45344efb4eceeb9436347aa2ab2ea37d1d2b246811026d38e861f57c22a",
             ),
             (
                 "softmax-rank1-4-axis0",
                 [4].as_slice(),
                 0,
-                4893,
-                "c8f041f9dfa1278224cb02ee0e6a6356a6aa6aec5df53ff5b3578246121ec07f",
+                4909,
+                "c596a5cefa760cd69ccf44078df097f553c62880a8a7610b3550af6473d9b011",
             ),
         ] {
             let identity = IndexRealizationLaw::staged_softmax_f32()

@@ -17,9 +17,9 @@ use crate::index::model::{
 };
 use crate::index::scalar::{ScalarApplyError, ScalarInferenceHostFailure};
 use crate::index::{
-    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainPredicate,
-    IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef, IndexLimitKind,
-    IndexRegionBuilder, MAX_SCALAR_CANONICAL_BYTES, ProofResource, ScalarArity,
+    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainFactSource,
+    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef,
+    IndexLimitKind, IndexRegionBuilder, MAX_SCALAR_CANONICAL_BYTES, ProofResource, ScalarArity,
     ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
     ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
     ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, ScalarResultIndex,
@@ -344,6 +344,9 @@ fn every_coordinate_predicate_retains_exact_inspectable_evidence() {
                 record.evidence(),
                 IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval)
             );
+            // No environment exists here, so the record states the strong
+            // claim: the region's own literals proved it.
+            assert_eq!(record.facts(), IndexDomainFactSource::Program);
         }
     }
 }
@@ -415,6 +418,26 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
     evidence_identities.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
     evidence_identities.dedup();
     assert_eq!(evidence_identities.len(), evidence_cases.len());
+
+    // The fact source is the fourth thing a discharged record carries into
+    // identity, beside its subject, predicate, and evidence. Two regions whose
+    // bounds hold for the same reason but rest on different premises are
+    // different regions, so the tag must move the bytes.
+    let fact_source_cases = [
+        IndexDomainFactSource::Program,
+        IndexDomainFactSource::ShapeEnvironment,
+    ];
+    let mut fact_source_identities = fact_source_cases
+        .into_iter()
+        .map(|facts| {
+            let mut changed_facts = compacted();
+            changed_facts.index_domain_evidence[0].facts = facts;
+            identity(&changed_facts)
+        })
+        .collect::<Vec<_>>();
+    fact_source_identities.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    fact_source_identities.dedup();
+    assert_eq!(fact_source_identities.len(), fact_source_cases.len());
 
     let unknown = |reason| {
         let mut changed_outcome = compacted();

@@ -78,6 +78,69 @@ pub enum IndexDomainSoundProof {
     ProvedExtentEquality,
 }
 
+/// Which facts one discharged index-domain predicate rested on.
+///
+/// **Draft surface, not yet accepted.** This type, its variants, its canonical
+/// tag byte, and [`DischargedIndexDomainPredicate::facts`] are a concrete draft
+/// pending Tom's acceptance, exactly as [`SourcedIndexInteger`] is; the label is
+/// what an acceptance flips.
+///
+/// [`SourcedIndexInteger`]: super::SourcedIndexInteger
+///
+/// # Why this is beside the evidence rather than inside it
+///
+/// [`IndexDomainEvidence`] names the *argument* that closed the predicate.
+/// This names the *premises* that argument was allowed to read, and the two are
+/// independent: interval propagation, the structural equality argument, a
+/// vacuous domain, and a finite enumeration can each run over a wholly literal
+/// region or over one whose extents, divisors, and coefficients are declared
+/// symbols. Folding them into one vocabulary would multiply the variants and
+/// force a consumer that cares about only one axis to enumerate the other.
+///
+/// # One-sided, and in the safe direction
+///
+/// [`Self::Program`] is the strong claim and is stated only when every extent,
+/// divisor, and coefficient the obligation ranges over was written as a
+/// literal. [`Self::ShapeEnvironment`] is the weak one: it says a declared
+/// symbol participated, not that the environment's facts were *needed*. An
+/// access whose axis is spelled `m` in an environment that pins `m == 4` reports
+/// [`Self::ShapeEnvironment`] even though the same region spelled `[4]` would
+/// have proved the same bound from the program alone — because the two are
+/// different programs, and this reports what the proof read rather than what a
+/// differently spelled neighbour could have avoided reading.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum IndexDomainFactSource {
+    /// The region's own literals sufficed.
+    ///
+    /// No shape environment was consulted, so the proof survives any
+    /// environment the region might later be resolved against — including none.
+    Program,
+    /// This region's shape environment supplied a premise.
+    ///
+    /// The proof holds under the environment the region's identity names and is
+    /// not a claim about the same structure resolved anywhere else. That is
+    /// sound because a region folds its environment's identity into its own:
+    /// two regions spelled identically over differently constrained
+    /// environments are different regions, so a fact read from the environment
+    /// is a fact about *this* region.
+    ShapeEnvironment,
+}
+
+impl IndexDomainFactSource {
+    /// Returns the governed tag of this source, exhaustively.
+    ///
+    /// Written by a match rather than read from the discriminant, for the
+    /// reason [`SourcedExtent`](super::SourcedExtent)'s own tag gives: adding a
+    /// source is a build error here instead of a silent re-encoding of every
+    /// region identity ever derived (ADR 0074 convention 3).
+    pub(super) const fn tag(self) -> u8 {
+        match self {
+            Self::Program => 0x01,
+            Self::ShapeEnvironment => 0x02,
+        }
+    }
+}
+
 /// Evidence class attached to one exact index-domain predicate.
 ///
 /// This is an exhaustive maturity vocabulary, not a confidence scale.
@@ -140,6 +203,7 @@ pub struct DischargedIndexDomainPredicate {
     pub(super) subject: VerifiedTensorAccessId,
     pub(super) predicate: IndexDomainPredicate,
     pub(super) evidence: IndexDomainEvidence,
+    pub(super) facts: IndexDomainFactSource,
 }
 
 /// Structural authority used while minting region-owned predicate records.
@@ -190,11 +254,30 @@ impl DischargedIndexDomainPredicate {
         self.evidence
     }
 
+    /// Returns which facts the argument named by [`Self::evidence`] rested on.
+    ///
+    /// **Draft surface, not yet accepted**; [`IndexDomainFactSource`] carries
+    /// the full label.
+    ///
+    /// This is the answer to "would this proof still hold if the shape
+    /// environment were not there", and it is recorded rather than left for a
+    /// consumer to re-derive. Deriving it means walking every domain extent,
+    /// every boundary axis, and every coordinate's transitive divisors and
+    /// coefficients looking for a declared symbol; a consumer that forgot one
+    /// of those populations would conclude "literal, therefore
+    /// environment-independent" and be silently wrong about which proofs a
+    /// changed environment invalidates.
+    #[must_use]
+    pub const fn facts(self) -> IndexDomainFactSource {
+        self.facts
+    }
+
     pub(super) fn checked(
         context: IndexDomainPredicateContext<'_>,
         subject: VerifiedTensorAccessId,
         predicate: IndexDomainPredicate,
         evidence: IndexDomainEvidence,
+        facts: IndexDomainFactSource,
     ) -> Result<Option<Self>, VerifiedIndexHandleError> {
         check_predicate_handles(context, subject, predicate)?;
         match evidence {
@@ -203,6 +286,7 @@ impl DischargedIndexDomainPredicate {
                     subject,
                     predicate,
                     evidence,
+                    facts,
                 }))
             }
             IndexDomainEvidence::Empirical | IndexDomainEvidence::Unknown => Ok(None),
@@ -437,9 +521,9 @@ mod tests {
     use super::super::model::{TensorData, VerifiedAccessData};
     use super::super::sourced::SourcedShape;
     use super::{
-        DischargedIndexDomainPredicate, IndexDomainEvidence, IndexDomainPredicate,
-        IndexDomainPredicateContext, IndexDomainSoundProof, IndexExprClass, IndexExtentRef,
-        expression_class_is_stateable,
+        DischargedIndexDomainPredicate, IndexDomainEvidence, IndexDomainFactSource,
+        IndexDomainPredicate, IndexDomainPredicateContext, IndexDomainSoundProof, IndexExprClass,
+        IndexExtentRef, expression_class_is_stateable,
     };
     use crate::index::TensorRole;
     use crate::semantic::{ResolvedValueType, TypeKey};
@@ -453,6 +537,7 @@ mod tests {
                 domain: vec![0],
                 coordinates: vec![0],
                 bounds_proof: None,
+                bounds_facts: IndexDomainFactSource::Program,
                 ownership_proof: None,
             }],
             vec![TensorData {
@@ -497,9 +582,15 @@ mod tests {
         let context = IndexDomainPredicateContext::new(owner, &accesses, &tensors, 1, 1);
         for (evidence, discharged) in cases {
             assert_eq!(
-                DischargedIndexDomainPredicate::checked(context, subject, predicate, evidence,)
-                    .expect("every handle belongs to the named region")
-                    .is_some(),
+                DischargedIndexDomainPredicate::checked(
+                    context,
+                    subject,
+                    predicate,
+                    evidence,
+                    IndexDomainFactSource::Program,
+                )
+                .expect("every handle belongs to the named region")
+                .is_some(),
                 discharged
             );
         }
@@ -525,6 +616,7 @@ mod tests {
                 expression: local_expression,
             },
             evidence,
+            IndexDomainFactSource::Program,
         );
         assert!(foreign_subject.is_err());
 
@@ -535,6 +627,7 @@ mod tests {
                 expression: VerifiedIndexExprId::from_verified(foreign, 0),
             },
             evidence,
+            IndexDomainFactSource::Program,
         );
         assert!(foreign_expression.is_err());
 
@@ -549,6 +642,7 @@ mod tests {
                 },
             },
             evidence,
+            IndexDomainFactSource::Program,
         );
         assert!(foreign_tensor.is_err());
 
@@ -560,6 +654,7 @@ mod tests {
                 extent: IndexExtentRef::Dimension(VerifiedDimensionId::from_verified(foreign, 0)),
             },
             evidence,
+            IndexDomainFactSource::Program,
         );
         assert!(foreign_dimension.is_err());
 
@@ -574,6 +669,7 @@ mod tests {
                 },
             },
             evidence,
+            IndexDomainFactSource::Program,
         );
         assert!(local.expect("local handles are accepted").is_some());
     }
@@ -602,6 +698,7 @@ mod tests {
                     expression: unrelated_expression,
                 },
                 evidence,
+                IndexDomainFactSource::Program,
             )
             .is_err()
         );
@@ -617,6 +714,7 @@ mod tests {
                     },
                 },
                 evidence,
+                IndexDomainFactSource::Program,
             )
             .is_err()
         );
