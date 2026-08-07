@@ -1,7 +1,7 @@
 ---
 id: refresh-the-l1-operation-family-standing
 title: Refresh the L1 workload profile's operation-family standing against the current support matrix
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [audit-the-l1-workload-records-evidence-classes]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: agent-l1-refresh
-lease_expires_at: 1786077002
 ---
 ## User-visible outcome
 
