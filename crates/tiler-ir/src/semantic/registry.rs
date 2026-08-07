@@ -14,6 +14,7 @@ use super::broadcast::register_standard_broadcast;
 use super::catalog::register_builtin_dtype_catalog;
 use super::concatenate::register_standard_concatenate;
 use super::contraction::register_standard_contraction;
+use super::gather::register_standard_gather;
 use super::operation::{
     CanonicalValueKind, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAlgebraicCapabilities,
     OperationArity, OperationAttributeSchema, OperationAttributes, OperationConformance,
@@ -2382,6 +2383,13 @@ impl SemanticRegistryProvider for StandardSemantics {
         // broadcast, and until this registration nothing in the profile could
         // state one. Registration order fixes nothing about semantics.
         register_standard_slice(registrar)?;
+        // The fifth element-moving family, and the first whose coordinate
+        // relation is not a function of the iteration coordinate. It follows the
+        // four that are, because what separates it from them is exactly that
+        // difference; registration order fixes nothing about semantics. No
+        // realization law is registered for it below, and no lowering capability
+        // or fusion role exists, so a program stating one fails closed.
+        register_standard_gather(registrar)?;
         register_standard_quantization(registrar)?;
 
         // Logical realization support is a sidecar of this same provider

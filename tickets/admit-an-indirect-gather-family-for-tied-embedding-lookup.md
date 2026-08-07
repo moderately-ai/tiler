@@ -91,6 +91,8 @@ It cites `design-model-ingestion-and-complete-execution` as still owing the prod
 
 ## Worker Fact audit, 2026-08-07, at base `411e09bf`
 
+**Citation convention for this block.** Every `path:line` below is pinned to base `411e09bf` and is *evidence about that tree*, not a durable pointer — several of these entries exist precisely because an earlier line citation drifted. Where the claim is about content rather than about a location, the quoted text is the anchor and the line number is a convenience; re-pin against the merged tree rather than trusting the ordinal. Code citations name a symbol (`AccessData`, `bind_marker`, `input_resolved`) so they survive movement.
+
 Every source this ticket names was re-read in full at the base commit before any edit. The audit covers the original body **and** the 2026-08-07 repair block above, because a repair block is a claim like any other. Verdicts below are per-Fact; where a claim is false or imprecise the correction is stated here rather than by rewriting the claim out of existence.
 
 ### The original body's Facts
@@ -152,3 +154,42 @@ The repair block says "Admitting this access class supersedes or extends an acce
 ### What the audit changes about the work
 
 Nothing in the workload evidence, the bounds obligation, or the non-goals moved. Two things about the *shape* of the delivery did: the ADR is a new subordinate contract rather than an amendment to ADR 0046, and the reference crate owes an integer value-type registration that the repair block's discharge of the runtime item reads past.
+
+## Outcome
+
+**Delivered at `411e09bf` + this branch.** `tiler::gather-f32@1` is a **registered semantic family with a reference evaluator and no lowering** — the coherent boundary, stated as such rather than as a way-point. Maturity and evidence tiers are given per claim below because they are five different claims and only three are made.
+
+### What is claimed, by tier
+
+| Claim | Maturity | Evidence tier |
+| --- | --- | --- |
+| A registered family | **implemented support** | exhaustive finite over the registry: `the_family_is_registered_and_carries_no_realization_law` reads the frozen registry rather than a list |
+| A reference evaluator | **tested guarantee**, bounded to the covered shapes | empirical, bounded — 10 conformance cases + 19 semantic cases, each with a retained perturbation |
+| A derived fusion legality | **not claimed, and deliberately absent** | — the family takes no `FusionOperationRole`, so `classify` returns `None` |
+| A region reaching a `VerifiedKernel` | **not claimed** | — no index region can express the access |
+| A device-verified result | **not claimed** | — nothing dispatched |
+
+The bounds rule is an **empirical** guarantee at the reference boundary and `Unknown` everywhere else: there is no physical enforcement boundary, which is one of the two reasons no occurrence reaches a plan. The `[151936, 1024]` extents are exercised as a **shape** only; 155,582,464 elements is outside the reference evaluator's governed tensor bound, so the last-coordinate case uses its structural analogue and the conformance row says so.
+
+### The ADR obligation, and why it was smaller than the ticket assumed
+
+The pre-dispatch repair block framed this as "supersedes or extends an accepted ADR". The audit above found ADR 0046's *Consequences* already state that "indirect operations remain addable without weakening the verifier for the initial direct-access language", and its Decision defers "data-dependent gather … to later explicit IR contracts". So [ADR 0107](../docs/decisions/0107-admit-an-indirect-gather-as-a-semantic-family-above-the-index-language.md) **supplies that deferred contract** and leaves ADR 0046 `accepted` with its index-expression rejection intact. That also fixed what the record may not do: it admits **no** tensor-read form into `IndexNode`, because doing so is exactly the weakening ADR 0046 conditions on.
+
+ADR 0107 is `proposed`. `accept-adr-0107-indirect-gather-semantic-family` is `awaiting-decision` and is Tom's.
+
+### Public boundary — a labelled draft under ADR 0075
+
+**Included:** `gather_f32_op`, `GATHER_AXIS_ATTRIBUTE`, `GatherAxis`, `GatherError` and its diagnostic codes, `gather_axis`, `gather_result_shape`, `decide_gather_index`, `gather_index_resolved_type`, `F32Gather`, the six `GATHER_FACT_*` field IDs, and `ReferenceOperationError::GatherIndexOutOfBounds`. **Excluded and refused by name:** scatter, signed index identities, every unsigned identity but `tiler::u32@1`, and any data-dependent output shape. Not accepted.
+
+### Required Delivery, item by item
+
+- **The access class** — delivered as a *semantic* class. Bounds, duplicate-write, determinism, and validation rules are all stated in the normative definition; three are implemented and duplicate-write is stated-not-implemented because a read performs no write.
+- **Semantic identity and validation** — delivered. Governed `OpKey`, `tiler::u32@1` index operand, gathered-axis attribute, result shape composed from the index shape and the source's surviving axes.
+- **The bounds obligation** — delivered at a named enforcement boundary (the reference evaluator). It refuses naming position, value, and extent; it never clamps and never wraps. **No physical enforcement boundary exists**, which is stated rather than implied.
+- **Normative reference** — delivered. **Lowering capability, target realization** — *not* delivered, and split out rather than left implied: `admit-the-indirect-access-class-into-the-index-layer` (a decision, not an implementation) and `emit-the-indirect-gather-on-metal` (`blocked` on it). **Runtime binding** was struck pre-dispatch and stays struck.
+- **Bounded conformance evidence** — delivered in `crates/tiler-reference/tests/gather_conformance.rs`, following the four landed peer families into `implementation/reference` rather than the conformance crate.
+- **A matrix row** — delivered in `docs/roadmap.md`, under *Indirect gather*.
+
+### One stale claim found in a record outside these scopes
+
+`docs/research/program-planning/model-level-qualification.md`'s `A-token-out` row states the command `grep -rhoE '"tiler::[a-z0-9-]+@[0-9]+"' crates/ | sort -u` "lists 24 registered keys". It returned **26** before this branch and **27** after. The count also mixes operation keys with value-type keys, so it was never a count of operations. Its load-bearing half — "none is a gather" — was true and is now false by this landing, so the row needs re-reading by whoever owns `research/program-planning`.

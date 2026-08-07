@@ -15,6 +15,7 @@ mod concatenate;
 mod conformance;
 mod contraction;
 mod error;
+mod gather;
 mod handles;
 mod identity;
 mod interface;
@@ -94,6 +95,12 @@ pub use error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,
     ProgramBuildFailure, ReifyError, ShapeRefineError, ShapeWitnessError, ShapeWitnessSubject,
     ValidationDiagnostic, ValidationDiagnostics, ValueRole,
+};
+pub use gather::{
+    GATHER_AXIS_ATTRIBUTE, GATHER_FACT_COORDINATE_SOURCE, GATHER_FACT_DETERMINISM,
+    GATHER_FACT_DUPLICATE_INDEX, GATHER_FACT_OUT_OF_BOUNDS, GATHER_FACT_STORAGE_CLAIM,
+    GATHER_FACT_VALUE_BEHAVIOUR, GatherAxis, GatherError, decide_gather_index, gather_axis,
+    gather_f32_op, gather_index_resolved_type, gather_result_shape,
 };
 pub use handles::{OperationId, Value, ValueId};
 pub use identity::{SemanticGraphIdentity, SemanticIdentity};
@@ -218,8 +225,8 @@ pub use softmax::{
 };
 pub use standard_operations::{
     Bf16Add, Bf16Constant, Bf16Multiply, F32Add, F32Broadcast, F32Concatenate, F32Constant,
-    F32Multiply, F32Reindex, F32RmsNorm, F32Silu, F32Slice, F32Softmax, F32TensorContraction,
-    StrictSerialF32Sum,
+    F32Gather, F32Multiply, F32Reindex, F32RmsNorm, F32Silu, F32Slice, F32Softmax,
+    F32TensorContraction, StrictSerialF32Sum,
 };
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,

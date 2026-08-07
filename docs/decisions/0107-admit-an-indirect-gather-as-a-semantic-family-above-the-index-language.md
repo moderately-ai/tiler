@@ -1,0 +1,161 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0107"
+kind: "decision"
+title: "Admit an indirect gather as a semantic family above the index language"
+topics: ["indexing", "semantics", "operation-families", "gather", "ir"]
+catalog_group: "physical-planning-lowering"
+decision_status: "proposed"
+implementation_status: "partial"
+applies_to: ["tiler.contract.ir"]
+evidence: ["tiler.research.shapes.transformer-operation-and-shape-surface"]
+depends_on: ["ADR-0046", "ADR-0075", "ADR-0087"]
+ticket: "admit-an-indirect-gather-family-for-tied-embedding-lookup"
+---
+
+# 0107: Admit an indirect gather as a semantic family above the index language
+
+**Status:** proposed
+
+## Context
+
+The pinned `Qwen/Qwen3-0.6B-Base` profile's *first* operation is a tied embedding
+lookup: `[T]` token IDs select rows of a `[151936, 1024]` F32 matrix. It is one
+occurrence per forward pass against 253 contractions, so its cost is negligible
+and its expressibility is not — with no admitted access class the model's first
+operation cannot be stated at all, and the alternative is a different product
+boundary rather than a different implementation. That boundary question was
+decided elsewhere and the gather stays inside.
+
+[ADR 0046](0046-separate-logical-access-from-storage-addressing.md) bounds the
+initial index-expression vocabulary and "rejects iteration-by-iteration
+multiplication and tensor-data-derived indices". A token ID read from an operand
+and used as a row coordinate is exactly a tensor-data-derived index. The same ADR
+separately reserves that "data-dependent gather, scatter, sparse iteration, and
+data-dependent cardinality require later explicit IR contracts", and its
+consequences state that "indirect operations remain addable without weakening the
+verifier for the initial direct-access language".
+
+This record is that later explicit contract for the gather half. It is subordinate
+to ADR 0046 rather than an amendment to it, and the condition ADR 0046 attaches is
+what fixes its shape: nothing here may weaken the direct-access verifier.
+
+The implemented index layer is narrower than the contract paragraph and the gap is
+structural rather than a vocabulary choice. `IndexNode` has five variants and every
+operand of every one is a literal, a domain-dimension ordinal, or one declared
+shape symbol; `IndexExprClass` has three variants and no data-dependent member; and
+`AccessData` carries a single tensor ordinal, so an access has nowhere to name a
+second tensor as a coordinate source. The obstacle is the access record's shape,
+not a missing expression form.
+
+## Decision
+
+An indirect gather is admitted as a **semantic operation family**, and as nothing
+below the semantic layer.
+
+`tiler::gather-f32@1` takes a `tiler::f32@1` source and a `tiler::u32@1` index
+operand, carries one named gathered axis as a canonical unsigned attribute, and
+derives its result by composing the index operand's shape into the position the
+gathered axis occupied: for a source of rank `n` gathered on axis `a` by an index
+operand of rank `m`, the result has rank `n - 1 + m`. The result shape is derived
+and never declared. A rank-zero index operand is admitted and drops the gathered
+axis; a rank-zero source is refused.
+
+The family is one key carrying its gathered axis as a typed attribute rather than
+a key per source rank or per index rank, on the rule
+[ADR 0087](0087-model-contraction-as-one-keyed-family-with-an-index-structure.md)
+applied to the contraction and for its three transferring reasons: a frontend must
+never choose among keys, a per-class key set grows without bound, and generalizing
+a fixed key later migrates every identity that named it. The admitted index
+identity is likewise a property of the signature rather than of the key, so
+widening it is an additive registration under this key.
+
+**The index-expression vocabulary is unchanged.** No `IndexNode` variant reads
+tensor data, no `IndexExprClass` member is added, and `AccessData` still carries
+one tensor ordinal. An occurrence of this family therefore reaches no index region,
+no lowering capability resolves it, and no fusion role classifies it. A program
+stating one fails closed at the request boundary. That is the decision, not a
+deferral inside it: admitting a data-dependent form into the index language is a
+separate question whose answer must satisfy ADR 0046's non-weakening condition, and
+this record deliberately does not answer it.
+
+**Bounds are a semantic precondition discharged at a named enforcement boundary.**
+Every index element must lie in `0..extent` of the gathered axis. The values are
+tensor data, so the obligation is not decidable at construction; it is proved
+statically or validated at a named boundary, and a semantic validation failure is
+never a plan miss. An out-of-range index is refused naming the element position,
+the value, and the extent. It is **never clamped to the axis and never wrapped
+modulo its extent**: both conventions are attested in primary sources and they
+return a different tensor for one program rather than a different diagnostic, so
+inheriting either would make a frontend's meaning depend on which specification its
+author had read. The named boundary that exists today is the reference evaluator;
+no physical plan has one, which is a second reason no occurrence reaches a plan.
+
+**Duplicate indices are admitted and the duplicate-write rule is stated, not
+implemented.** The read map may be many-to-one, which ADR 0046 already permits for
+reads. The corresponding write rule belongs to scatter: a scatter's write map may
+not be many-to-one without either an exclusive-ownership proof or an explicit
+combining contract. Stating it here is what makes admitting scatter later additive
+rather than a reinterpretation of this record.
+
+**Determinism.** The result is a total function of the source, the index operand,
+and the gathered axis. There is no accumulation, no reassociation freedom, no
+ordering choice, and no reduction, so the family declares no numerical permission
+and needs none. Every result element is a source element unchanged, so an
+exceptional payload crosses a gather exactly as it left the source.
+
+**A signed index operand is refused by name** rather than admitted and then bounded
+below zero, because a signed index raises negative indexing — a second convention
+the primary authorities diverge on. Refusing the type refuses the question;
+admitting the type and rejecting negative values would answer it silently.
+
+Under [ADR 0075](0075-treat-a-tested-public-boundary-as-a-labelled-draft.md) the
+key, the attribute, and the vocabulary above are a **labelled draft** until Tom
+accepts their exact included and excluded surface.
+
+## Consequences
+
+- The workload's first operation is expressible and reference-evaluable. Nothing
+  composed from it compiles, plans, or runs.
+- ADR 0046 stays `accepted` with its index-expression rejection intact. The two
+  records agree because this one admits no expression form.
+- Q-SHAPE-007's gather half gains bounds, determinism, and validation rules for
+  reads, and states the duplicate-write rule it does not implement. The scatter
+  half stays reserved and unfired.
+- A family registered with no realization law, no lowering capability, and no
+  fusion role is the fail-closed default rather than a gap: `classify` returns
+  `None`, `derive_member` yields no legality, and the request boundary refuses.
+- The reference crate acquires its first non-float value type, `tiler::u32@1`,
+  because a reference capability is keyed by an exact resolved signature. It admits
+  no integer arithmetic and buys a coordinate carrier rather than an integer
+  profile.
+- Admitting the access class *below* the semantic layer remains open and is now
+  bounded by a stated condition rather than by an absence.
+
+## Alternatives considered
+
+**Admit a data-dependent `IndexNode` variant now.** It would let the family reach
+an index region, and it would weaken the verifier for the direct-access language —
+every bounds proof, interval propagation, and totality argument in the index layer
+is written over expressions whose operands are literals, dimensions, and symbols.
+ADR 0046 admits indirect operations on exactly the condition that this does not
+happen, so taking this route would put the two records in conflict rather than in
+sequence.
+
+**Move the lookup outside Tiler and accept materialized `[T, 1024]` activations.**
+Cheaper, and it was eliminated on the product boundary rather than here: it does not
+remove the embedding matrix from the boundary, because the tied matrix is still the
+vocabulary projection's weight; it saves no time, one gather against 253
+contractions; and it would make the consumer perform the model's first operation.
+
+**A key per source rank, or per index identity.** Rejected on ADR 0087's three
+reasons, which transfer intact.
+
+**Clamp or wrap an out-of-range index.** Both are attested in primary sources and
+both return a plausible tensor for a program that named a coordinate it does not
+have, which is the failure mode this corpus refuses. Admitting either would also
+make the family's meaning depend on which convention a frontend author had read.
+
+**Admit signed index identities and reject negative values at the bound.** It
+answers the negative-indexing convention in one direction without saying so, and it
+makes the refusal a property of the data rather than of the signature.

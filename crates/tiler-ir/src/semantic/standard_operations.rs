@@ -6,13 +6,14 @@ use super::{
     BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16, BroadcastAxisMapping,
     BuildError, CONCATENATE_AXIS_ATTRIBUTE, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField,
     CanonicalValue, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE,
-    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
-    SLICE_SELECTION_ATTRIBUTE, SemanticProgramBuilder, ShapedValue, SliceSelection, Value, ValueId,
-    add_bf16_op, add_f32_op, broadcast_f32_op, canonical_bf16_bits, concatenate_f32_axis_attribute,
-    concatenate_f32_op, constant_bf16_op, constant_f32_op, multiply_bf16_op, multiply_f32_op,
-    reindex_f32_op, rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
-    silu_f32_op, slice_f32_op, softmax_f32_axis_attribute, softmax_f32_op,
-    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    GATHER_AXIS_ATTRIBUTE, OperationAttributes, REDUCTION_AXES_ATTRIBUTE,
+    REINDEX_MAPPING_ATTRIBUTE, ReindexForm, SLICE_SELECTION_ATTRIBUTE, SemanticProgramBuilder,
+    ShapedValue, SliceSelection, Value, ValueId, add_bf16_op, add_f32_op, broadcast_f32_op,
+    canonical_bf16_bits, concatenate_f32_axis_attribute, concatenate_f32_op, constant_bf16_op,
+    constant_f32_op, gather_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
+    rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op, silu_f32_op,
+    slice_f32_op, softmax_f32_axis_attribute, softmax_f32_op, strict_serial_sum_f32_op,
+    strict_tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -431,6 +432,52 @@ impl F32Slice {
         )])
         .map_err(BuildError::InvalidOperationAttributes)?;
         apply_single(builder, slice_f32_op(), attributes, &[input.erase()])
+    }
+}
+
+/// Binary32 `Gather` reading a source at coordinates a second operand holds.
+///
+/// The index operand is passed as an erased [`ValueId`] rather than a typed
+/// [`Value`], and the asymmetry is the delivered state rather than an oversight:
+/// the standard provider binds exactly one Rust marker, `F32`, so there is no
+/// `Value<U32>` for a caller to hold. A `[T]` index operand is declared through
+/// [`SemanticProgramBuilder::input_resolved`] with
+/// [`super::gather_index_resolved_type`], which validates the identity against the
+/// frozen registry, and the registered operation authority then refuses any
+/// operand that is not `tiler::u32@1`. The type check therefore happens, once,
+/// where every other admission rule of this family happens.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32Gather;
+
+impl F32Gather {
+    /// Applies the registered gather semantics along one axis of the source.
+    ///
+    /// The result shape is derived from the source, the index operand, and the
+    /// axis, and is never declared by a caller. Nothing about the index
+    /// operand's *values* is decided here: they are tensor data, and the bounds
+    /// obligation they carry is discharged at a named enforcement boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on failure,
+    /// naming the rule the occurrence violated against these operands.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        source: Value<F32>,
+        index: ValueId,
+        axis: Axis,
+    ) -> Result<Value<F32>, BuildError> {
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            GATHER_AXIS_ATTRIBUTE,
+            CanonicalValue::unsigned_u32(axis.get()),
+        )])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        apply_single(
+            builder,
+            gather_f32_op(),
+            attributes,
+            &[source.erase(), index],
+        )
     }
 }
 

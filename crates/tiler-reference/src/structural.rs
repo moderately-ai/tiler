@@ -35,16 +35,17 @@ use std::cmp::Ordering;
 
 use tiler_ir::semantic::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
-    CONCATENATE_AXIS_ATTRIBUTE, F32, OperationAttributes, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
-    ReindexFormKind, SLICE_SELECTION_ATTRIBUTE, SliceSelection, concatenate_axis,
-    concatenate_result_shape,
+    CONCATENATE_AXIS_ATTRIBUTE, F32, GATHER_AXIS_ATTRIBUTE, GatherError, OperationAttributes,
+    REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, SLICE_SELECTION_ATTRIBUTE,
+    SliceSelection, concatenate_axis, concatenate_result_shape, decide_gather_index, gather_axis,
+    gather_index_resolved_type, gather_result_shape,
 };
 use tiler_ir::shape::{Extent, Shape};
 
 use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{decode_coordinate, f32_elements, preflight_f32_output, row_major_strides};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
-use super::tensor::Tensor;
+use super::tensor::{Tensor, TensorPayloadView};
 
 pub(crate) struct ReindexF32Reference;
 
@@ -445,4 +446,144 @@ fn broadcast_mapping(
     }
     BroadcastAxisMapping::from_canonical_value(value)
         .map_err(|_| ReferenceOperationError::InvalidApplication)
+}
+
+/// Reference semantics for `tiler::gather-f32@1`.
+///
+/// Deliberately in this module beside the four families that move elements
+/// without computing, because that is the obligation it shares with them: every
+/// result element is a source element *cloned*, so an exceptional payload crosses
+/// a gather exactly as it left the source, and neither
+/// [`canonicalize_arithmetic_f32`](crate::canonicalize_arithmetic_f32) nor the
+/// declared numerical conformance is read, for the reasons this module's header
+/// states once for all five.
+///
+/// **What it does not share with them is the whole reason the family exists**, and
+/// it is visible in this evaluator's shape. The four above recompute their
+/// coordinate map from an *attribute* and are total by construction, so their
+/// bounds hold before a single element is read. This one reads its coordinate
+/// from an operand, so it is the named enforcement boundary for a bound nothing
+/// upstream can decide: each index element is checked against the gathered axis
+/// as it is used, and an out-of-range value refuses under
+/// [`ReferenceOperationError::GatherIndexOutOfBounds`] naming the position, the
+/// value, and the extent. It is never clamped and never wrapped.
+///
+/// The shape rule is recomputed from the attribute here as it is for the other
+/// four, so an occurrence whose axis or ranks disagree with the graph refuses
+/// before any operand read begins.
+pub(crate) struct GatherF32Reference;
+
+impl ReferenceOperation for GatherF32Reference {
+    fn evaluate(
+        &self,
+        request: ReferenceEvaluationRequest<'_>,
+        outputs: &mut ReferenceOutputs,
+    ) -> Result<(), ReferenceOperationError> {
+        let [source, index] = request.operands() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        let attributes = request.attributes();
+        if attributes.fields().len() != 1 {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let Some(value) = attributes.get(GATHER_AXIS_ATTRIBUTE) else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        let axis = gather_axis(value).map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let (gathered, result_shape) = gather_result_shape(axis, source.shape(), index.shape())
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let position = gathered.position();
+        let source_extents = source.shape().extents();
+        let gathered_extent = *source_extents
+            .get(position)
+            .ok_or(ReferenceOperationError::InvalidApplication)?;
+
+        let source_elements = f32_elements(source)?;
+        let coordinates = u32_elements(index)?;
+        let count = result_shape
+            .element_count()
+            .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+        preflight_f32_output(count)?;
+
+        // The result is laid out as [outer | index | inner] in row-major order,
+        // where `outer` is the product of the source axes before the gathered one
+        // and `inner` the product of those after it. Walking those three nested
+        // runs directly is what keeps the transport exact: a source element is
+        // cloned into place, never decoded and re-encoded, and the arithmetic
+        // below only ever computes *offsets*.
+        let outer = dense_product(source_extents.get(..position).unwrap_or_default())?;
+        let inner = dense_product(
+            source_extents
+                .get(position.saturating_add(1)..)
+                .unwrap_or_default(),
+        )?;
+        let row = dense_product(&[gathered_extent])?
+            .checked_mul(inner)
+            .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+
+        let mut gathered_elements = Vec::with_capacity(count);
+        for slab in 0..outer {
+            let slab_start = slab
+                .checked_mul(row)
+                .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+            for (element_position, coordinate) in coordinates.iter().enumerate() {
+                // The bound is decided by the semantic layer's own rule rather
+                // than restated here, so a second enforcement boundary refuses
+                // under one definition instead of a second copy of it.
+                let selected =
+                    decide_gather_index(element_position, u64::from(*coordinate), gathered_extent)
+                        .map_err(|error| match error {
+                            GatherError::IndexOutOfBounds {
+                                position,
+                                value,
+                                extent,
+                            } => ReferenceOperationError::GatherIndexOutOfBounds {
+                                position,
+                                value,
+                                extent,
+                            },
+                            _ => ReferenceOperationError::InvalidApplication,
+                        })?;
+                let start = slab_start
+                    .checked_add(
+                        selected
+                            .checked_mul(inner)
+                            .ok_or(ReferenceOperationError::ShapeTooLarge)?,
+                    )
+                    .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+                let end = start
+                    .checked_add(inner)
+                    .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+                let chunk = source_elements
+                    .get(start..end)
+                    .ok_or(ReferenceOperationError::InvalidApplication)?;
+                gathered_elements.extend(chunk.iter().cloned());
+            }
+        }
+        Tensor::dense(F32::resolved_type(), result_shape, gathered_elements)
+            .map_err(|source| dense_result_error(&source))
+            .and_then(|tensor| outputs.push(tensor))
+    }
+}
+
+/// Decodes an index operand's dense `tiler::u32@1` elements.
+///
+/// The width is checked here as well as by the registered value validator,
+/// because this function reads the bytes and a validator that had not run would
+/// otherwise let a short element be interpreted as a coordinate.
+fn u32_elements(tensor: &Tensor) -> Result<Vec<u32>, ReferenceOperationError> {
+    if tensor.resolved_type() != &gather_index_resolved_type() {
+        return Err(ReferenceOperationError::InvalidApplication);
+    }
+    let TensorPayloadView::Dense(elements) = tensor.payload() else {
+        return Err(ReferenceOperationError::InvalidApplication);
+    };
+    elements
+        .iter()
+        .map(|element| {
+            <[u8; 4]>::try_from(element.as_bytes())
+                .map(u32::from_be_bytes)
+                .map_err(|_| ReferenceOperationError::InvalidApplication)
+        })
+        .collect()
 }
