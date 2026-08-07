@@ -1,7 +1,7 @@
 ---
 id: restore-a-planning-phase-refusal-to-the-identity-growth-harness
 title: Restore a planning-phase refusal to the identity-growth harness
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets, derive-the-region-shape-budgets-from-the-declaration]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, program-planning, evidence]
+claimed_from: todo
+assignee: worker-restore-a-pl
+lease_expires_at: 1786137974
 ---
 ## User-visible outcome
 

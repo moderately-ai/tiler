@@ -1,7 +1,7 @@
 ---
 id: correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed
 title: Correct the fusion-legality-wall claims left in the compiler after BF16 legality landed
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [establish-bf16-optimizer-legality, correct-the-stale-dtype-f32-recognizer-claims-in-the-conformance-crate]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-correct-the-
+lease_expires_at: 1786137974
 ---
 ## What is false
 

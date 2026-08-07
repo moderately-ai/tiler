@@ -1,7 +1,7 @@
 ---
 id: correct-the-stale-dtype-f32-recognizer-claims-in-the-conformance-crate
 title: Correct the stale dtype-f32 recognizer claims in the conformance crate
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [widen-the-strategy-recognizer-past-the-f32-wall, conform-the-bf16-vertical-end-to-end, correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, bf16, dtype, correction]
+claimed_from: todo
+assignee: worker-correct-the-
+lease_expires_at: 1786137974
 ---
 ## What is false
 

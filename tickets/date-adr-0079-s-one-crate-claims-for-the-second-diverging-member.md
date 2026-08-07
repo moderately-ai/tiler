@@ -1,7 +1,7 @@
 ---
 id: date-adr-0079-s-one-crate-claims-for-the-second-diverging-member
 title: Date ADR 0079's one-crate claims for the second diverging member
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, doc-drift]
+claimed_from: todo
+assignee: worker-date-adr-007
+lease_expires_at: 1786137974
 ---
 ## User-visible outcome
 
