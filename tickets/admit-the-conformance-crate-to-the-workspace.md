@@ -1,7 +1,7 @@
 ---
 id: admit-the-conformance-crate-to-the-workspace
 title: Admit the conformance crate to the workspace
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [decide-where-a-device-reaching-conformance-test-may-live, conform-the-bf16-vertical-end-to-end]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [architecture, workspace, conformance]
+claimed_from: todo
+assignee: agent-conformance-crate
+lease_expires_at: 1786118584
 ---
 ## User-visible outcome
 
