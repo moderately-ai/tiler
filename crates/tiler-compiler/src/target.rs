@@ -19,17 +19,26 @@
 //! this sentence is what a reader should find rather than an acceptance that was
 //! never given.
 //!
-//! The **evaluation-order-preservation** family is not covered by that
-//! acceptance either, and for the same reason: [`BackendArithmeticLicence`],
-//! [`EvaluationOrderPreservation`], [`EvaluationOrderResolution`],
+//! The **evaluation-order-preservation** family carries an acceptance of its
+//! own rather than the `4ad5a2e` one. Tom accepted it on 2026-08-06 at the live
+//! session's decision round, as-is with no exclusion, under
+//! `accept-the-evaluation-order-preservation-target-fact`:
+//! [`BackendArithmeticLicence`], [`EvaluationOrderPreservation`],
+//! [`EvaluationOrderResolution`],
 //! [`TargetProfileBuilder::declare_evaluation_order_preservation`],
-//! [`TargetProfileBuilder::declare_measured_evaluation_order_preservation`], and
-//! [`TargetProfile::evaluation_order_preservation`] are a tested concrete draft
-//! of a new declared-fact family awaiting a boundary decision of its own. The
-//! acceptance node parked for Tom is
-//! `accept-the-evaluation-order-preservation-target-fact`; until it closes, the
-//! exact included and excluded surface is a labelled draft under ADR 0075 and
-//! this sentence is what a reader should find.
+//! [`TargetProfileBuilder::declare_measured_evaluation_order_preservation`],
+//! [`TargetProfile::evaluation_order_preservation`], and
+//! [`TargetProfileBuildError::DuplicateEvaluationOrderPreservation`].
+//!
+//! Four exclusions were accepted with it and are deliberate rather than gaps: no
+//! math-mode spelling, because `safe`/`relaxed`/`fast` are one backend driver's
+//! option tokens and the licence is what the measurement attributes the
+//! behaviour to; no twelfth numerical dimension, because this states what
+//! Tiler's emission grants the backend translator rather than what a caller's
+//! contract grants Tiler; no `Unknown` variant on the verdict, because absence
+//! is the `Unknown` as it is for dtype dispatchability; and no feasibility
+//! consumer, the fact being declared and resolvable while nothing yet admits or
+//! refuses on it.
 //!
 //! ```
 //! use tiler_compiler::target::{
@@ -1526,9 +1535,9 @@ pub enum DTypeDispatchabilityResolution {
 
 /// The arithmetic-rewriting licence a backend translation is granted.
 ///
-/// **Labelled draft (ADR 0075).** The key half of the evaluation-order fact,
-/// awaiting the boundary decision `accept-the-evaluation-order-preservation-target-fact`
-/// parks for Tom.
+/// **Accepted public surface.** The key half of the evaluation-order fact, which
+/// Tom accepted on 2026-08-06 under
+/// `accept-the-evaluation-order-preservation-target-fact`.
 ///
 /// # Why the key is a licence rather than a backend flag spelling
 ///
@@ -1583,7 +1592,7 @@ impl BackendArithmeticLicence {
 /// Whether a backend translation preserves the evaluation order the emitted
 /// program pins.
 ///
-/// **Labelled draft (ADR 0075)**, with the licence key above.
+/// **Accepted public surface**, with the licence key above.
 ///
 /// Two valued, and the negative is *statable*, exactly as
 /// [`SynchronizationSupport`] is: a target measured to re-serialize a written
@@ -1618,7 +1627,7 @@ impl EvaluationOrderPreservation {
 
 /// Result of an evaluation-order-preservation lookup.
 ///
-/// **Labelled draft (ADR 0075)**, with the two vocabularies above.
+/// **Accepted public surface**, with the two vocabularies above.
 ///
 /// [`Self::Unknown`] is the fail-closed answer and the overwhelmingly common
 /// one: a profile that declares nothing about the property answers it, and a
@@ -2743,8 +2752,8 @@ impl TargetProfileBuilder {
     /// Declares whether a backend translation under one arithmetic-rewriting
     /// licence preserves the evaluation order the emitted program pins.
     ///
-    /// **Labelled draft (ADR 0075)**, awaiting the boundary decision
-    /// `accept-the-evaluation-order-preservation-target-fact` parks for Tom.
+    /// **Accepted public surface**, accepted by Tom on 2026-08-06 under
+    /// `accept-the-evaluation-order-preservation-target-fact`.
     ///
     /// The fact is keyed by the exact scalar subject as well as the licence,
     /// because nothing establishes that one width's answer is another's — the
@@ -2774,7 +2783,7 @@ impl TargetProfileBuilder {
 
     /// Declares a measured evaluation-order-preservation row.
     ///
-    /// **Labelled draft (ADR 0075)**, with the constructor above.
+    /// **Accepted public surface**, with the constructor above.
     ///
     /// The measured spelling is the one a target row is expected to use: the
     /// property is a fact about an exact backend compiler build, which no
@@ -3449,7 +3458,7 @@ impl TargetProfile {
     /// emitted evaluation order for exactly `subject`, preferring the latest
     /// declaration available through `available_phase`.
     ///
-    /// **Labelled draft (ADR 0075)**, with the declaration constructors.
+    /// **Accepted public surface**, with the declaration constructors.
     ///
     /// Returns [`EvaluationOrderResolution::Unknown`] for a subject or licence
     /// this profile does not speak about, which is every subject and licence of
