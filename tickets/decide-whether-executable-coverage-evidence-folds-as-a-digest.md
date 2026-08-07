@@ -1,7 +1,7 @@
 ---
 id: decide-whether-executable-coverage-evidence-folds-as-a-digest
 title: Decide whether executable-coverage evidence folds as a digest
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound, bind-stage-coverage-to-index-refinement-identity, site-the-governed-digest-so-layered-identity-encoders-can-reach-it]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, implementation/ir, implementation/build, implement
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, decision, program-planning, deferred]
-claimed_from: todo
-assignee: agent-identity-campaign
-lease_expires_at: 1786061768
 ---
 ## User-visible outcome
 
@@ -86,3 +83,8 @@ A trigger has fired, Tom has answered, and the answer is an accepted ADR or an e
 
 - 2026-08-05 — **not fired.** All three triggers evaluated at `5f14cd11`. `semantic_operations` is 8, two orders of magnitude below trigger 1's ~350. No family widening has landed, so trigger 2's slope is the measured 134. The per-layer boundary stands as a pending proposal, so trigger 3 has not moved. Reproduce: `grep -n 'semantic_operations: ' crates/tiler-compiler/src/request.rs`.
 - 2026-08-06 — **trigger 4 fired at the moment it was added** ([`add-the-embedding-ceiling-trigger-to-the-coverage-digest-deferral`](add-the-embedding-ceiling-trigger-to-the-coverage-digest-deferral.md) landed it from the manifest-growth attribution). `DeterministicBudgets::governed` caps `semantic_operations` at **62** — `grep -n 'semantic_operations' crates/tiler-compiler/src/request.rs` — which is past the ~30-operation embedding-ceiling crossing (and past the ~46 post-digest one), so the boundary already admits programs whose envelopes could not be embedded. Triggers 1 and 3 remain unfired (62 < ~350; the per-layer boundary stands); trigger 2 is currently **unevaluable** — the identity-growth ladder refuses on its own wall probe now that the budget passed 8, owned by [`widen-the-identity-growth-ladder-to-the-governed-operation-budget`](widen-the-identity-growth-ladder-to-the-governed-operation-budget.md). Per this ticket's own procedure, the atomic question goes to Tom with the measurement as evidence.
+
+## Outcome — answered, ADR 0104 accepted
+
+**The choice is the digest fold, made under Tom's 2026-08-06 delegation and accepted by him the same day together with the siting answer** (a new bottom crate for the governed digest — [`site-the-governed-digest-so-layered-identity-encoders-can-reach-it`](site-the-governed-digest-so-layered-identity-encoders-can-reach-it.md) records the decision and carries the execution). [ADR 0104](../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md) is accepted; the identity-domain step (coverage projection v1 → v2, kernel-program identity linear at `3525n + 719`) lands whole under the siting ticket with every pin recomputed. This ticket's own closes-when — a fired trigger, Tom's answer, an accepted ADR — all hold.
+

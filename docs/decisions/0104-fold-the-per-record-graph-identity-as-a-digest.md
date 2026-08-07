@@ -5,7 +5,7 @@ kind: "decision"
 title: "Fold the per-coverage-record graph identity as a digest, and site the governed digest so it can be"
 topics: ["ir", "identity", "program-planning", "limits", "artifacts", "public-boundary"]
 catalog_group: "artifacts-build-toolchains"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.ir", "tiler.contract.artifact-abi"]
 evidence: ["tiler.research.artifacts.manifest-fixed-content-growth"]
@@ -15,7 +15,7 @@ ticket: "decide-whether-executable-coverage-evidence-folds-as-a-digest"
 
 # 0104: Fold the per-coverage-record graph identity as a digest, and site the governed digest so it can be
 
-**Status:** proposed, and **nothing in the tree has moved for it.** Tom delegated the *choice* among three candidates on 2026-08-06 under named criteria — "the most performant, correct, long term maintainable/extensible/quality choice" — relayed by the orchestrator; the provenance packet is [`decide-whether-executable-coverage-evidence-folds-as-a-digest`](../../tickets/decide-whether-executable-coverage-evidence-folds-as-a-digest.md). This record makes that choice and derives it. **It also reports that the choice cannot be executed under the delegation**, because it requires a governed digest at a crate that has none, and supplying one is a public crate-boundary decision Tom retains under ADR 0075. No identity domain steps here and no pin moves; what this record asks for is acceptance of the choice *and* an answer to the one boundary question below.
+**Status:** accepted, and **nothing in the tree has moved for it yet — execution is scheduled behind the accepted siting**. Tom accepted this record's choice and answered its boundary question on 2026-08-06 at the live session's decision round (presented by the orchestrator, relay source [`site-the-governed-digest-so-layered-identity-encoders-can-reach-it`](../../tickets/site-the-governed-digest-so-layered-identity-encoders-can-reach-it.md)): **the governed digest moves to a new bottom crate below `tiler-ir`**, owning `DigestAlgorithm`, `Digest`, the tag table, and the domains, with `tiler-artifact` re-exporting — on the grounds that hashing is a separate responsibility from tensor IR, the one-authority rule gets a structural home, and future layered-identity consumers reach it without re-litigating the boundary. The implementation ticket executes the crate, the relocation, and this record's identity-domain step whole. Tom delegated the *choice* among three candidates on 2026-08-06 under named criteria — "the most performant, correct, long term maintainable/extensible/quality choice" — relayed by the orchestrator; the provenance packet is [`decide-whether-executable-coverage-evidence-folds-as-a-digest`](../../tickets/decide-whether-executable-coverage-evidence-folds-as-a-digest.md). This record makes that choice and derives it. **It also reports that the choice cannot be executed under the delegation**, because it requires a governed digest at a crate that has none, and supplying one is a public crate-boundary decision Tom retains under ADR 0075. No identity domain steps here and no pin moves; what this record asks for is acceptance of the choice *and* an answer to the one boundary question below.
 
 ## Context
 

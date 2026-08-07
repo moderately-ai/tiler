@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest
 title: Decide whether the manifest carries the identity preimage or its digest
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [attribute-the-canonical-manifest-growth-and-decide-whether-the-encoding-owes-a-budget, decide-whether-executable-coverage-evidence-folds-as-a-digest]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, implementation/artifact, contracts/artifacts, cont
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, decision, artifacts, encoding]
-claimed_from: todo
-assignee: agent-identity-campaign
-lease_expires_at: 1786061758
 ---
 ## User-visible outcome
 
@@ -75,4 +72,4 @@ Two figures differ from this ticket's estimate of 56,065 and both are accounted 
 
 **Carried by [ADR 0103](../docs/decisions/0103-declare-the-manifests-artifact-identity-by-digest.md), `decision_status: proposed`.** Tom accepts the record; the substance he decided on 2026-08-06 is stated in it with its relay provenance. The ledger moved with it: `docs/artifact-abi.md`'s identity ledger reads manifest schema 15.0, the governed-digest section carries four domains and the union obligation is now over eight, and the no-layered-digests block records why an identity *declaration* by digest is envelope framing rather than a second identity authority.
 
-**What executes it, and why it waited.** The ADR carrying the identity-domain step (a `MANIFEST_SCHEMA` major step; the ADR 0074 convention-2 argument recorded from the record's own derivation) and the codec implementation land together under one implementation ticket. **Held: [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md) is in flight holding `implementation/artifact` and stepping `MANIFEST_SCHEMA` itself for the staged-realization declaration — two uncoordinated steps of one schema cannot co-run. Release trigger: that ticket integrates into main; the digest step then lands against the post-declaration encoding.** This ticket stays open until the ADR is accepted and the step lands whole.
+**What executes it, and why it waited.** The ADR carrying the identity-domain step (a `MANIFEST_SCHEMA` major step; the ADR 0074 convention-2 argument recorded from the record's own derivation) and the codec implementation land together under one implementation ticket. **Held: [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md) is in flight holding `implementation/artifact` and stepping `MANIFEST_SCHEMA` itself for the staged-realization declaration — two uncoordinated steps of one schema cannot co-run. Release trigger: that ticket integrates into main; the digest step then lands against the post-declaration encoding.** This ticket stays open until the ADR is accepted and the step lands whole. **Both held by 2026-08-06 evening: the step landed at MANIFEST_SCHEMA 15.0 with zero pins moved (114,059 → 57,978 fixed-content bytes), and Tom accepted ADR 0103 at the live session's decision round.**

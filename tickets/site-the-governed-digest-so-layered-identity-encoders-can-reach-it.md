@@ -1,7 +1,7 @@
 ---
 id: site-the-governed-digest-so-layered-identity-encoders-can-reach-it
 title: Site the governed digest so layered identity encoders can reach it
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-whether-executable-coverage-evidence-folds-as-a-digest, decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, implementation/ir, implementation/artifact, contra
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, decision, public-boundary, architecture]
+claimed_from: todo
+assignee: agent-digest-crate
+lease_expires_at: 1786066635
 ---
 ## User-visible outcome
 
@@ -39,3 +42,7 @@ Not re-deciding ADR 0104's *choice* among the three coverage encodings — that 
 ## Closes when
 
 Tom has answered, and the answer is either an accepted boundary with ADR 0104 unblocked and its identity-domain step scheduled, or a recorded decision to keep layered identities canonical-bytes-only with the ceiling accepted and a reopening trigger stated.
+
+## Decision — a new bottom crate
+
+**Decided by Tom on 2026-08-06 at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket): the governed digest moves to a new workspace crate below `tiler-ir`**, owning `DigestAlgorithm`, `Digest`, `DIGEST_BYTES`, the tag table, and the domain-separation discipline, with `tiler-artifact` re-exporting so every current consumer keeps its path. Grounds accepted: hashing is a separate responsibility from tensor IR; the one-authority property gets a structural home rather than riding in whichever crate needed it first; future layered-identity consumers reach it without reopening the boundary. ADR 0104 is accepted with this answer and its identity-domain step is scheduled; this ticket becomes the implementation vehicle and closes when the crate exists, the relocation lands with the ownership statements in `docs/artifact-abi.md` and the ADR 0050/0056 framing moved coherently, and ADR 0104's coverage-fold step lands whole with every pin recomputed.

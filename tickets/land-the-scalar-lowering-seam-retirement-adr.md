@@ -1,7 +1,7 @@
 ---
 id: land-the-scalar-lowering-seam-retirement-adr
 title: Land the scalar-lowering seam retirement ADR
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [resolve-or-retire-the-scalar-lowering-provider-seam, own-or-close-the-adr-internal-open-questions]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, adr, extensions, capability]
+claimed_from: todo
+assignee: agent-scalar-adr
+lease_expires_at: 1786066635
 ---
 ## User-visible outcome
 

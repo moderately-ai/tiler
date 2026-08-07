@@ -5,7 +5,7 @@ kind: "decision"
 title: "Declare the manifest's artifact identity by digest rather than by preimage"
 topics: ["artifacts", "codec", "identity", "limits", "public-boundary"]
 catalog_group: "artifacts-build-toolchains"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "implemented"
 applies_to: ["tiler.contract.artifact-abi"]
 evidence: ["tiler.research.artifacts.manifest-fixed-content-growth"]
@@ -15,7 +15,7 @@ ticket: "decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest
 
 # 0103: Declare the manifest's artifact identity by digest rather than by preimage
 
-**Status:** proposed. **The choice this record carries was made by Tom on 2026-08-06, at the live session's decision round** — presented by the orchestrator under explain-then-recommend, relayed rather than witnessed by the author of this file, and the provenance packet is the `## Decision — the digest` section of [`decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest`](../../tickets/decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest.md). What Tom decided is the *substance*: the manifest carries a digest, the producer-disagreement refusal is retained rather than deleted, and the ADR 0074 convention-2 argument below is the ground accepted. This record states that decision, its identity-domain step, and its measured consequence so that acceptance is a separate act on a written record; `decision_status` stays `proposed` until Tom accepts this file.
+**Status:** accepted. **The choice this record carries was made by Tom on 2026-08-06, at the live session's decision round** — presented by the orchestrator under explain-then-recommend, relayed rather than witnessed by the author of this file, and the provenance packet is the `## Decision — the digest` section of [`decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest`](../../tickets/decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest.md). What Tom decided is the *substance*: the manifest carries a digest, the producer-disagreement refusal is retained rather than deleted, and the ADR 0074 convention-2 argument below is the ground accepted. This record states that decision, its identity-domain step, and its measured consequence so that acceptance is a separate act on a written record. **Accepted by Tom on 2026-08-06, at the live session's decision round, as recommended and with the implemented step's measured numbers (114,059 → 57,978 bytes, zero pins) in the packet** — presented by the orchestrator, relay source the same ticket's Outcome.
 
 ## Context
 
