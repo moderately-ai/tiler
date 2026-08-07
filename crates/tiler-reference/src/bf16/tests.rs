@@ -40,9 +40,10 @@ use super::{
 use crate::evaluate::EvaluationRetention;
 use crate::registry::{ReferenceEvaluationRequest, ReferenceOutputs};
 use crate::{
-    FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, ReferenceOperation,
-    ReferenceOperationError, ReferenceValueError, ReferenceValueValidator, Tensor,
-    TensorPayloadView, UnsupportedBf16Declaration,
+    FloatBitOrder, FrozenReferenceRegistry, InputBinding, ReferenceElement, ReferenceEvaluator,
+    ReferenceNumericalConformance, ReferenceOperation, ReferenceOperationError,
+    ReferenceValueError, ReferenceValueValidator, Tensor, TensorPayloadView,
+    UnsupportedBf16Declaration,
 };
 
 /// Named BF16 encodings every witness below is written in terms of.
@@ -115,6 +116,16 @@ mod bits {
     /// One quantum below [`NEAREST_THIRD`], `170 * 2^-9`.
     pub(super) const BELOW_NEAREST_THIRD: u16 = 0x3eaa;
 }
+
+/// Both subnormal dimensions preserved.
+///
+/// The reading the strict conformance resolves to, which is what every check
+/// written before this family could be told a contract measured. Spelled out here
+/// rather than owned by the module under test, so a check asserting the preserving
+/// answer states the two modes rather than inheriting whatever a shorthand there
+/// resolved to.
+const PRESERVING: Bf16SubnormalRealization =
+    Bf16SubnormalRealization::new(SubnormalMode::Preserve, SubnormalMode::Preserve);
 
 /// One named conformance witness: an arithmetic applied to exact operands.
 struct Witness {
@@ -1007,7 +1018,7 @@ fn the_flushed_zero_sign_is_read_on_both_dimensions() {
 #[test]
 fn the_preserving_realization_is_the_identity_on_every_encoding() {
     let format = format();
-    let preserving = Bf16SubnormalRealization::preserving();
+    let preserving = PRESERVING;
     let mut subnormals = 0_usize;
     let mut failures = Vec::new();
     for encoding in 0..=u16::MAX {
@@ -1035,11 +1046,11 @@ fn the_preserving_realization_is_the_identity_on_every_encoding() {
     assert!(!format.is_subnormal_encoding(bits::MIN_NORMAL));
 }
 
-/// The capability carries the realization, and its default is the preserving one.
+/// The capability carries the realization it is given, tensor-shaped.
 ///
 /// The format-level checks above are about the boundary; this is about the
-/// capability a registry holds. `combine` is what the three registered keys reach,
-/// so its answer is the one a landing must not have moved.
+/// capability a registry holds, one step below the trait method the registered
+/// keys are dispatched through.
 #[test]
 fn the_capability_evaluates_under_the_realization_it_is_given() {
     let flush = SubnormalMode::FlushToZero {
@@ -1058,17 +1069,7 @@ fn the_capability_evaluates_under_the_realization_it_is_given() {
             )
         };
         assert_eq!(
-            bf16_bits(
-                &reference
-                    .combine(&left, &right)
-                    .expect("a scalar bf16 pair combines")
-            ),
-            vec![case.preserved],
-            "{}: the registered path is the preserving one",
-            case.name
-        );
-        assert_eq!(
-            combine(Bf16SubnormalRealization::preserving()),
+            combine(PRESERVING),
             vec![case.preserved],
             "{}: told preserve",
             case.name
@@ -1082,6 +1083,87 @@ fn the_capability_evaluates_under_the_realization_it_is_given() {
         checked += 1;
     }
     assert_eq!(checked, 7, "every counterexample reached the capability");
+}
+
+/// The registered capability applies the realization its *conformance* states.
+///
+/// Driven through [`ReferenceOperation::evaluate`], and through the whole
+/// evaluator that dispatches to it, rather than through `combine_under`: the link
+/// this pins is precisely the one `evaluate` lacked, so a check reaching past it
+/// would restate machinery the counterexamples above already hold. Each of the
+/// four readings must produce its own hand-derived answer **and** none of the
+/// others', so a capability that ignored the conformance fails on every case where
+/// the readings differ, and one that swapped the two dimensions fails on the cases
+/// that isolate one of them.
+///
+/// The operands arrive through `tiler::constant-bf16@1`, which reproduces a
+/// declared payload and applies no dimension, so a flushed subnormal operand is
+/// flushed by the *arithmetic's* input dimension and not on the way in.
+#[test]
+fn the_registered_capability_evaluates_under_the_conformance_it_is_told() {
+    let mut failures = Vec::new();
+    let mut checked = 0_usize;
+    for case in subnormal_counterexamples() {
+        for ((reading, realization), expected) in
+            realizations().into_iter().zip(expected_answers(&case))
+        {
+            let actual = evaluate_under(
+                &case,
+                ReferenceNumericalConformance::new(
+                    realization.input_subnormals(),
+                    realization.result_subnormals(),
+                ),
+            );
+            if actual != expected {
+                failures.push(format!(
+                    "[{reading}] {}: expected {expected:#06x}, produced {actual:#06x}",
+                    case.name
+                ));
+            }
+            for (other, other_expected) in realizations()
+                .map(|(name, _)| name)
+                .into_iter()
+                .zip(expected_answers(&case))
+                .filter(|(_, other_expected)| *other_expected != expected)
+            {
+                if actual == other_expected {
+                    failures.push(format!(
+                        "[{reading}] {}: returned the {other} answer {other_expected:#06x}",
+                        case.name
+                    ));
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 28, "seven cases under each of the four readings");
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// Evaluates one counterexample as a program, under one declared conformance.
+fn evaluate_under(
+    case: &SubnormalCounterexample,
+    conformance: ReferenceNumericalConformance,
+) -> u16 {
+    let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+    let left = Bf16Constant::apply(&mut graph, case.left).unwrap();
+    let right = Bf16Constant::apply(&mut graph, case.right).unwrap();
+    let result = match case.arithmetic {
+        Bf16Arithmetic::Multiply => Bf16Multiply::apply(&mut graph, left, right),
+        Bf16Arithmetic::Add => Bf16Add::apply(&mut graph, left, right),
+    }
+    .unwrap();
+    graph
+        .output(OutputKey::new("result").unwrap(), result)
+        .unwrap();
+    let program = graph.build().unwrap();
+    let outputs = ReferenceEvaluator::under(
+        FrozenReferenceRegistry::standard().expect("the governed reference profile builds"),
+        conformance,
+    )
+    .evaluate(&program, &[])
+    .expect("a pure-bf16 program evaluates");
+    bf16_bits(&outputs[0])[0]
 }
 
 /// The three keys evaluate through the standard evaluator to exact bits.
@@ -1208,7 +1290,7 @@ fn a_shaped_bf16_program_broadcasts_a_scalar_and_refuses_a_mismatch() {
     let reference = Bf16BinaryReference::new(format(), Bf16Arithmetic::Add);
     let other = bf16_tensor(Shape::from_dims([2]), &[bits::ONE, bits::ONE]);
     assert_eq!(
-        reference.combine(&tensor, &other),
+        reference.combine_under(&tensor, &other, PRESERVING),
         Err(ReferenceOperationError::InvalidApplication)
     );
 }
@@ -1238,13 +1320,13 @@ fn a_non_bf16_operand_is_refused_by_every_bf16_capability() {
         (&f32_scalar, &f32_scalar),
     ] {
         assert_eq!(
-            reference.combine(left, right),
+            reference.combine_under(left, right, PRESERVING),
             Err(ReferenceOperationError::InvalidApplication)
         );
     }
     // The same pair in bf16 is admitted, so the refusals are about the operand
     // type rather than about the fixture.
-    assert!(reference.combine(&bf16, &bf16).is_ok());
+    assert!(reference.combine_under(&bf16, &bf16, PRESERVING).is_ok());
 
     let validator = Bf16ValueValidator {
         payload_bytes: format().payload_bytes(),
@@ -1551,7 +1633,7 @@ fn apply_constant(
             // A BF16 constant reproduces a declared payload and performs no
             // binary32 arithmetic, so this dimension has no site in the callback
             // below; the strict reading is stated rather than left absent.
-            conformance: crate::ReferenceNumericalConformance::strict(),
+            conformance: ReferenceNumericalConformance::strict(),
         },
         &mut outputs,
     );
