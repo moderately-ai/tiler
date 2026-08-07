@@ -1,7 +1,7 @@
 ---
 id: admit-symbolic-index-expression-coefficients
 title: Admit symbolic coefficients to index expressions
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-live-extent-operands-to-payload-indexing, promote-the-symbolic-index-profile-to-a-public-boundary, admit-semi-affine-index-expression-class]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, contracts/foundation, implementation/reference, impl
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, shapes, public-boundary]
-claimed_from: todo
-assignee: agent-symbolic-coeff
-lease_expires_at: 1786110590
 ---
 ## User-visible outcome
 
@@ -49,3 +46,15 @@ Identity moves: an index-region domain step is required, because a coefficient w
 ## Closes when
 
 A symbolic coefficient and addend are expressible through an accepted public surface, normalization and interval behaviour are decided and tested rather than inherited, every refusal is fail-capable, the identity domain step lands with recomputed pins, and `docs/ir.md`'s implemented-extent paragraph is updated to say the coefficient half landed.
+
+## Outcome — delivered 2026-08-07 at `8326ce93`, closed late
+
+**This ticket's work landed on 2026-08-07 and the coordinator failed to close it at the time** — the acceptance node was written and closed, and this implementation ticket was left `in-progress` with a live claim for several hours. Found by the worker on `repoint-the-sourced-extent-paths-in-the-four-documents-that-name-them`, which hit it as a live `contracts/foundation` collision, checked whether it was concurrent editing, and correctly diagnosed stale ticket state instead: the deliverables were already ancestors of its base and the `docs/ir.md` closing condition was already satisfied. Recorded rather than quietly re-statused, because a ticket reading `in-progress` over landed work is exactly the drift that makes the board untrustworthy.
+
+**What landed.** A declared `ShapeSymbol` may be an index expression's coefficient or addend. `SourcedIndexInteger` and `IndexRegionBuilder::sourced_linear_combination` were added; `LinearTermRef::coefficient` widened from `&IndexInteger` to `&SourcedIndexInteger` — the only widening. The identity domain stepped `tiler.index-region.v9 → v10`, with five law-chain pins and the standard Metal identity, cache subject and byte count recomputed and ledgered.
+
+**Two decisions worth re-reading before building on this.** Normalization **declines every fold** over a symbolic coefficient — never merged, dropped at a pinned zero, distributed, or unwrapped at a pinned one — because folding when the environment happens to pin a value would make canonicalization a function of the binding. And a symbolic **addend rides as the term `symbol * 1`** rather than occupying the constant slot, which must stay exact because literal constants from any operand fold into it; so `LinearCombination { constant }` did **not** widen, and the accepted surface is narrower than this ticket's text implies.
+
+**Accepted by Tom on 2026-08-07** under [`accept-the-symbolic-index-coefficient-surface`](accept-the-symbolic-index-coefficient-surface.md), conditional on the deferred capability being captured on the board — discharged by [`bound-a-symbolic-index-coefficient-interval-from-its-declared-extent`](bound-a-symbolic-index-coefficient-interval-from-its-declared-extent.md), which has since **landed and refuted the ground this ticket recorded for declining it**: a `ShapeEnv` holds no values, so an environment-derived bound is a fact about the region rather than about a binding. The decline was an unexamined exception, not a principled line, and the exception is now closed.
+
+**Residual drift this ticket's landing caused, now owned elsewhere:** six documentation sites still say a bound symbol cannot be an index coefficient or addend. Filed as [`correct-the-symbolic-coefficient-era-index-vocabulary-claims`](correct-the-symbolic-coefficient-era-index-vocabulary-claims.md), which names the trap — the literal wording survives for `SourcedExtent` while the claim it supports does not, so find-and-replace produces true-but-misleading sentences.
