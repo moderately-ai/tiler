@@ -61,3 +61,10 @@ Found while assessing `correct-the-stale-dtype-f32-recognizer-claims-in-the-conf
 ## Closes when
 
 Each of the three sites is classified as **live false claim** or **already-dated correction**, and each live one is repaired. Report the classification per site with the evidence — a count cannot distinguish the two, which is the failure mode this repository keeps hitting. `cargo nextest list` resolves every cited test name in the crate, and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-compiler` passes (this one **does** exercise `session.rs`, unlike the conformance crate whose modules are all `#[cfg(test)]`).
+
+
+> **Correction, 2026-08-07 — the coordinator's "reassociation is withheld as `Unknown`" was over-general and is struck.** Found by the worker on [`correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed`](correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed.md), which declined to write the claim into the code rather than repeating it, and verified by the coordinator at `crates/tiler-compiler/src/fusion_legality.rs:1641-1653`.
+>
+> The obligation is discharged **`SoundProof`** when `!has_reduction || reassociation == Forbidden`. A multi-occurrence **pointwise** BF16 region has no reduction, so its `ReductionReassociation` records `SoundProof` **vacuously** — not `Unknown`. The `Unknown { "unproven-reassociation" }` branch requires a reduction **and** a permitting contract, which is precisely the surviving wall `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall` (`crates/tiler-compiler/tests/bf16_numerical_contract.rs:691`).
+>
+> **The substance stands and only the mechanism was wrong:** reassociation is *not proved* for these regions, merely *not required*, because the region carries no reduction order to preserve. Say that, grounded on `BF16_FACT_REASSOCIATION_PERMITTED` being `false` and no BF16 family declaring an algebraic capability. **Writing "the obligation records `Unknown`" would be a new false claim** — the exact defect these tickets exist to remove.
