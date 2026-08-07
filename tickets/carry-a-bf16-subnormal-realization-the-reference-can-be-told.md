@@ -92,7 +92,7 @@ Two cases separate the input dimension alone, four the result dimension alone, a
 
 ### The declared fact: unchanged, and that is a decision rather than a deferral
 
-`BF16_FACT_SUBNORMALS`'s unconditional `preserved-operands-and-results-in-the-bf16-subnormal-range-are-not-flushed` **honestly survives this landing and is not edited.** The fact states what `tiler::multiply-bf16@1` and `tiler::add-bf16@1` *mean*; a flushing realization is a declared deviation a region's numerical contract carries, not a second opinion about the operation's semantics. Weakening it to match a target would be the authority substitution ADR 0076 forbids, and the repository already answers this question the same way one module over: `crates/tiler-ir/src/semantic/quantization.rs:182` records that `tiler::dequantize-strict-affine@1`'s `preserve-subnormals` "stays declared and unweakened: it is what the decode *means*, and substituting a flushing realization for it would be the authority substitution ADR 0076 forbids." `crates/tiler-ir/src/semantic/bf16.rs:33` says the same thing prospectively — "Subnormal preservation here is semantics, never a target claim."
+`BF16_FACT_SUBNORMALS`'s unconditional `preserved-operands-and-results-in-the-bf16-subnormal-range-are-not-flushed` **honestly survives this landing and is not edited.** The fact states what `tiler::multiply-bf16@1` and `tiler::add-bf16@1` *mean*; a flushing realization is a declared deviation a region's numerical contract carries, not a second opinion about the operation's semantics. Weakening it to match a target would be the authority substitution ADR 0076 forbids, and the repository already answers this question the same way one module over: `crates/tiler-ir/src/semantic/quantization.rs:182` records that `tiler::dequantize-strict-affine@1`'s `preserve-subnormals` "stays declared and unweakened: it is what the decode *means*, and substituting a flushing realization for it would be the authority substitution ADR 0076 forbids." `crates/tiler-ir/src/semantic/bf16.rs:35` says the same thing prospectively — "Subnormal preservation here is semantics, never a target claim."
 
 Two consequences. The change is confined to `implementation/reference` and touches no `tiler-ir` file, which is the graph note's stated preference. And it steps no identity: operation definition facts move the registry snapshot and every identity derived from it (`crates/tiler-ir/src/semantic/bf16.rs:12-16`), so leaving the fact alone leaves every pin alone. This holds under **both** arms of the fork, so it is not a deferral to the decision.
 
@@ -104,19 +104,19 @@ Rewritten to the new state: the binary32 conformance object still cannot reach t
 
 ### Commit
 
-`a759c058` on `tkt/carry-a-bf16-subnormal-realization-the-reference-can-be-told`, base `dedb95b6`. Two files, both under `implementation/reference`: `crates/tiler-reference/src/bf16.rs` and `crates/tiler-reference/src/bf16/tests.rs`. `implementation/ir` is declared and unused, per the fact decision above.
+On `tkt/carry-a-bf16-subnormal-realization-the-reference-can-be-told`, base `dedb95b6`. The machinery and its population landed at `a759c058`, this record and the decision node at `efa5bc68`, and a test-readability follow-up at `598989c9`; the branch tip is one commit further and carries this paragraph. Integrate the tip, which the gate below was run against. Four files: `crates/tiler-reference/src/bf16.rs` and `crates/tiler-reference/src/bf16/tests.rs` under `implementation/reference`, and the two tickets under `project/tickets`. `implementation/ir` is declared and unused, per the fact decision above.
 
 ### Checks
 
-Run in the worktree at the branch tip:
+Run in the worktree. `make full` was green at the gated commit: 2921 workspace tests passed with 7 skipped, the release numerical run 1012 passed with 3 skipped, rustdoc under `-D warnings`, doc-tests, `tkt lint`, and shellcheck. The branch tip carries one further **ticket-only** markdown correction on top of that commit and touches nothing under `crates/`, `Cargo.toml`, `Cargo.lock`, `.config/`, `Makefile`, `rust-toolchain.toml`, `rustfmt.toml`, or `deps.sh`, so it carries the gate under the delta rule; `tkt lint` was rerun on it.
 
 - `cargo fmt --all --check`
 - `cargo clippy -p tiler-reference --all-targets -- -D warnings`
 - `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-reference --no-deps`
-- `cargo nextest run --workspace`
+- `cargo nextest run --workspace` — 2921 passed, 7 skipped
 - `cargo test --workspace --doc`
-- `make full`
-- `tkt lint`, `git diff --check`, `tkt guard tkt/carry-a-bf16-subnormal-realization-the-reference-can-be-told --format json`
+- `make full` — exit 0
+- `tkt lint` (clean), `git diff --check` (clean), and `tkt guard tkt/carry-a-bf16-subnormal-realization-the-reference-can-be-told --format json` — `"conflict": false`, `"under_declared": []`, severity `warn` from shared-scope overlaps only, changed files exactly the four above.
 
 ### What is not delivered
 
