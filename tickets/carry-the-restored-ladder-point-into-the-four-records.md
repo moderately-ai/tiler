@@ -1,7 +1,7 @@
 ---
 id: carry-the-restored-ladder-point-into-the-four-records
 title: Carry the restored ladder point into the four records the explain-ceiling fix could not edit
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [refuse-nothing-legal-on-the-explain-detail-ceiling, carry-the-widened-ladders-corrections-into-the-four-records, region-expansion-exhaustion-loses-the-only-feasible-plan]
@@ -9,9 +9,6 @@ scopes: [research/artifacts, contracts/decisions, contracts/artifacts, contracts
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, measurement]
-claimed_from: todo
-assignee: agent-orch-docs
-lease_expires_at: 1786075458
 ---
 ## User-visible outcome
 
@@ -42,3 +39,13 @@ The four records that state the identity-growth ladder's domain and its walls sa
 ## Closes when
 
 All four records carry the corrections, each read in full around the edit so no adjacent sentence still asserts the superseded state, and no record still names the explain detail ceiling as an open defect.
+
+## Outcome — 2026-08-06, all four records corrected
+
+Every enumerated statement moved, and nothing numeric did:
+
+- **`docs/artifact-abi.md:247`** and **`docs/ir.md:1138`** — the shared measurement sentence now states the 2..=11 domain, residual zero at all ten points, the earned out-of-domain confirmation at 39,502 bytes with its one-step-wide bound, and `region_expansions` as the remaining refusal.
+- **`docs/decisions/0104-…`** — the header measurement paragraph states the widened domain and that the eleven-operation wall was a fixed defect (the point is now the ladder's tenth row); "Bounds on the evidence" records the weakening as **discharged with its own bound** rather than silently dropped, and the wall list drops the fixed entry. No number moved; the accepted-tense derivation body is untouched.
+- **`docs/research/artifacts/manifest-fixed-content-growth.md`** — all seven stale sites (Sections 5, 6, and 8) now carry the ten-point ladder, the restored confirmation, the single remaining `region_expansions` wall with the fixed defect noted as fixed, and "No program above 11 operations compiles at all". The ordering conclusion — the embedding ceiling binds first — is unchanged.
+
+Verified by grepping the four files for `2..=10`, `nine points`, `above ten operations`, `no out-of-domain`, and `detail ceiling` after the edits: every surviving hit is inside an explicitly dated historical paragraph framed by a corrected current statement.
