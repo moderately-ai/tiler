@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(target_os = "macos"),
+    allow(
+        dead_code,
+        reason = "everything downstream of opening a published envelope has `apple` as its only caller, and an envelope needs the offline Apple toolchain to exist at all: reading the pair and its sidecar, binding and placing the declared interface, compiling the declared shape to name the packaged program, the live-device requirement adapter, and the eight fail-closed probes with their subject and failure vocabulary. They are compiled on every host rather than gated, so that the recognizers, the classifications, and the comparisons a device merely supplies numbers to keep running where the workspace's tests do; a gate would move them onto hardware and shrink what a non-Apple host is held to. Named here rather than at each of the thirty-odd items because the reason is one reason, and stated under `not(target_os = \"macos\")` so an item that becomes genuinely unused is still a red build on the host that does use it."
+    )
+)]
+
 //! The artifact-delivered route: dispatching from a published envelope alone.
 //!
 //! # Why this exists beside `crate::serial_sum`

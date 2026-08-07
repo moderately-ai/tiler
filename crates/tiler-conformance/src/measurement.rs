@@ -123,9 +123,12 @@ impl std::fmt::Display for MeasurementBoundary {
 /// having the question compiled away, and two verticals state theirs in one
 /// vocabulary rather than in two that can drift apart.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "`Ran` and `Failed` are constructible only under cfg(target_os = \"macos\"), where the device and the Apple toolchain exist. They are declared unconditionally so a host without either answers in the same vocabulary — reporting `Unavailable` with its reason — rather than reporting nothing; narrowing the enum by cfg would make the two hosts' outcomes incomparable, which is the silent-skip failure this module exists to prevent."
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(
+        dead_code,
+        reason = "`Ran` and `Failed` are constructed only under cfg(target_os = \"macos\"), where the device and the Apple toolchain exist. They are declared unconditionally so a host without either answers in the same vocabulary — reporting `Unavailable` with its reason — rather than reporting nothing; narrowing the enum by cfg would make the two hosts' outcomes incomparable, which is the silent-skip failure this module exists to prevent. Negated rather than unconditional: an Apple host does construct both, so an allow that also covered it would absorb a variant that had genuinely stopped being reachable there."
+    )
 )]
 pub(crate) enum Measured<T> {
     /// The device ran, and here is the row the result is bounded to.
