@@ -8,7 +8,7 @@ catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "pending"
 implementation_status: "not-started"
-evidence_classes: ["primary-source-synthesis"]
+evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.correctness-and-testing"]
 depends_on: ["tiler.research.apple-targets.numerical-behaviour"]
 ticket: "define-first-metal-lm-workload"
@@ -26,6 +26,8 @@ ticket: "define-first-metal-lm-workload"
 - **Contract destinations:** the model-level oracle form below is written against [Correctness and testing](../../correctness-and-testing.md) and [Numerical semantics](../../numerical-semantics.md); neither has consumed it yet, which is why `disposition` reads `pending` rather than `adopted`.
 
 Claims are labelled **Fact** when traced to inspected primary source at a recorded immutable revision, **Inference** when derived from stated facts, **Measurement** when tied to an exact environment and procedure, and **Proposal** when not yet accepted or tested.
+
+This profile takes no measurement of its own and relays four, which is why `evidence_classes` carries `bounded-measurement` beside `primary-source-synthesis`. Three come from the C1 conformance fixture's retained 2026-08-01 record on the host that directory names — the fixture's own retained outcomes, the decode-step arithmetic over the 18 retained vectors, and the F32 sensitivity envelope measured both ways — and the fourth, the qualified row's F32 subnormal flush, comes from [Apple GPU numerical behaviour](../apple-targets/numerical-behaviour.md). Each is labelled in place with the record that owns it, and none of the four generalizes past the inputs, environment, and procedure its source states. The digests, safetensors header reads, and prompt token IDs this profile produced itself are labelled **Fact** rather than **Measurement** deliberately: each is reproducible from pinned immutable bytes and depends on no host, which is the distinction the two labels carry here.
 
 ## What is fixed, and what this document adds
 
