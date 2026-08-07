@@ -273,14 +273,14 @@ mod tests {
     /// is checkable rather than assumed, and a new domain that violates it fails
     /// a test instead of silently merging two subjects.
     ///
-    /// **This test covers the envelope's three domains and not the crate's
-    /// seven.** The property is global: one algorithm hashes both the envelope
+    /// **This test covers the envelope's four domains and not the crate's
+    /// eight.** The property is global: one algorithm hashes both the envelope
     /// and the proof sidecar in one process, so a domain added to either
     /// container could collide with one in the other, and a check confined to
-    /// three of the seven would report separation it had not established.
+    /// four of the eight would report separation it had not established.
     /// `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another`
     /// checks the union and is the authority for the property; this test is the
-    /// envelope-local half. A fourth envelope domain must be added to **both**,
+    /// envelope-local half. A fifth envelope domain must be added to **both**,
     /// and `docs/artifact-abi.md` records the union obligation normatively.
     #[test]
     fn no_governed_domain_is_a_prefix_of_another() {
@@ -288,6 +288,7 @@ mod tests {
             super::super::encode::MANIFEST_DIGEST_DOMAIN,
             super::super::encode::SECTION_DIGEST_DOMAIN,
             super::super::encode::ENVELOPE_DIGEST_DOMAIN,
+            super::super::encode::IDENTITY_DIGEST_DOMAIN,
         ];
         for (index, left) in domains.iter().enumerate() {
             for right in domains.iter().skip(index + 1) {

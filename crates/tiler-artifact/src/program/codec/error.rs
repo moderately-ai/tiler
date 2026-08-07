@@ -568,6 +568,14 @@ pub(crate) enum ArtifactCodecError {
     /// a reader must implement to use the artifact correctly.
     DeclaredFeatureMismatch,
     /// The identity the manifest declares is not the identity of its content.
+    ///
+    /// The manifest declares its identity as a digest under
+    /// `tiler.artifact-envelope.identity-digest.v1`, so this compares the digest
+    /// of the decoder's own derivation against the carried one. The refused set
+    /// is the same one the carried preimage refused: the check has always been
+    /// on whether a producer's two derivations of one artifact agree, never on
+    /// the wire against the world, so no sibling variant separates a "digest
+    /// disagreed" case from an "identity disagreed" one — there is one case.
     ArtifactIdentityMismatch,
     /// A closed enumeration presented a tag this reader does not implement.
     UnknownTag {

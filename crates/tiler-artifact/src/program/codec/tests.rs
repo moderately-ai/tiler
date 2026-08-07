@@ -63,10 +63,11 @@ use super::super::{
     VerifiedArtifactProgram,
 };
 use super::decode::{Cursor, decode, parse_dependencies, parse_expression_arena};
-use super::digest::DigestAlgorithm;
+use super::digest::{DIGEST_BYTES, DigestAlgorithm};
 use super::encode::{
     ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA,
-    encode, encode_with_identity, envelope_digest, matches_canonical_encoding, section_digest,
+    encode, encode_with_identity, envelope_digest, identity_digest, matches_canonical_encoding,
+    section_digest,
 };
 use super::error::{
     ArtifactCodecError, CodecLimitKind, OrderedSubject, ReferenceSubject, TagSubject,
@@ -127,11 +128,13 @@ fn manifest_offset(bytes: &[u8], pattern: &[u8]) -> usize {
 /// Returns every absolute offset at which one byte pattern occurs in the manifest.
 ///
 /// A caller that expects one field uses [`manifest_offset`]; a caller reaching
-/// for this one owes an assertion on how many it expects and why, because the
-/// manifest legitimately restates some rows — it ends with the artifact
-/// identity, whose encoder writes several of the same fields the rows above it
-/// wrote — and an unstated count is how "the pattern moved" becomes
-/// indistinguishable from "the pattern is now somewhere else too".
+/// for this one owes an assertion on how many it expects and why, and an
+/// unstated count is how "the pattern moved" becomes indistinguishable from
+/// "the pattern is now somewhere else too". Until manifest schema `15.0` the
+/// usual second occurrence was the trailing artifact-identity *preimage*, whose
+/// encoder writes several of the same fields the rows above it wrote; the
+/// manifest now declares its identity by digest, so a pattern that still occurs
+/// twice is restated by something other than the identity.
 fn manifest_occurrences(bytes: &[u8], pattern: &[u8]) -> Vec<usize> {
     let manifest_len = usize::try_from(u64::from_be_bytes(
         bytes[MANIFEST_LENGTH_AT..MANIFEST_LENGTH_AT + 8]
@@ -309,7 +312,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (14, 0));
+    assert_eq!(MANIFEST_SCHEMA, (15, 0));
 }
 
 /// The canonicity backstop compares a derivation against bytes rather than
@@ -997,17 +1000,73 @@ fn a_stage_dependency_on_itself_is_rejected() {
 // satisfied direction against a real two-stage plan; the contradicting direction
 // wants a two-stage fixture here and is owed one.
 
+/// The manifest's declared identity is refused when it is not the content's.
+///
+/// The declaration is a digest of the derived identity under its own domain, so
+/// the forgery flips a byte of that digest rather than of an identity preimage —
+/// the manifest carries none since schema `15.0`. What the case proves is
+/// unchanged and is the reason the run exists: a producer whose two derivations
+/// of one artifact disagree is refused, over the identical set of
+/// disagreements, and the whole of `validate` and the canonicity backstop pass
+/// on the way there.
 #[test]
 fn a_forged_identity_is_rejected() {
-    let bytes = encoded(&default_artifact());
-    let identity = default_artifact().canonical_identity().as_bytes().to_vec();
-    let at = manifest_offset(&bytes, &identity);
+    let artifact = default_artifact();
+    let bytes = encoded(&artifact);
+    let declared = identity_digest(DigestAlgorithm::GOVERNED, artifact.canonical_identity());
+    let at = manifest_offset(&bytes, declared.as_bytes());
     let mut forged = bytes;
     forged[at] ^= 0xff;
     reseal(&mut forged);
     assert_eq!(
         decode(&forged),
         Err(ArtifactCodecError::ArtifactIdentityMismatch),
+    );
+}
+
+/// The declared identity is a digest under its own domain, not the identity.
+///
+/// Two claims one assertion cannot make together. The manifest no longer
+/// contains the identity preimage anywhere — which is the 49% of the envelope
+/// this schema step removed — and what stands in its place is the digest a
+/// decoder re-derives and compares, at the manifest's exact end.
+#[test]
+fn the_manifest_declares_its_identity_by_digest_and_carries_no_preimage() {
+    let artifact = default_artifact();
+    let bytes = encoded(&artifact);
+    let identity = artifact.canonical_identity().as_bytes();
+    assert!(
+        identity.len() > DIGEST_BYTES,
+        "the fixture's identity must be long enough for its absence to mean something",
+    );
+    assert!(
+        manifest_occurrences(&bytes, identity).is_empty(),
+        "the manifest must not carry the canonical identity preimage",
+    );
+    let declared = identity_digest(DigestAlgorithm::GOVERNED, artifact.canonical_identity());
+    let manifest_len = usize::try_from(u64::from_be_bytes(
+        bytes[MANIFEST_LENGTH_AT..MANIFEST_LENGTH_AT + 8]
+            .try_into()
+            .expect("a fixed-width field"),
+    ))
+    .expect("the fixture manifest fits usize");
+    let end = HEADER_BYTES + manifest_len;
+    assert_eq!(
+        &bytes[end - DIGEST_BYTES..end],
+        declared.as_bytes(),
+        "the manifest ends with the digest of the identity it declares",
+    );
+    // A digest under a different domain is a different value, which is what the
+    // fourth governed domain buys: the manifest digest already covers these very
+    // bytes, so the two must not be one subject.
+    assert_ne!(
+        declared.as_bytes(),
+        DigestAlgorithm::GOVERNED
+            .digest(
+                MANIFEST_DIGEST_DOMAIN,
+                artifact.canonical_identity().as_bytes()
+            )
+            .as_bytes(),
     );
 }
 
@@ -2821,6 +2880,19 @@ fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::
 /// depends on, which is why widening the vocabulary moved neither
 /// `ARTIFACT_DOMAIN` nor `MANIFEST_SCHEMA`; and the identity inequality says two
 /// artifacts differing only in their carrier are two artifacts.
+/// Byte positions at which the carrier-only fixture pair differs.
+///
+/// **Measured, and it is exactly the arithmetic with no digest byte
+/// coinciding:** 32 for the manifest digest in the framing header, 32 for the
+/// identity digest the manifest ends with, and one each for the interface
+/// component's carrier and access tags and the binding row's pair. It was
+/// **40** at manifest schema `14.0`, where the trailing identity *preimage*
+/// restated both tag pairs in four bytes rather than being covered by a digest;
+/// the step traded those four for thirty-two. A digest byte can coincide by
+/// chance, so this is measured rather than asserted arithmetic, and it is
+/// pinned because `docs/artifact-abi.md` states it as a measurement.
+const DIFFERING_CARRIER_POSITIONS: usize = 68;
+
 #[test]
 fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {
     let at_f32 = envelope_of(&default_artifact());
@@ -2848,6 +2920,24 @@ fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {
         "a carrier is one tag byte, so no framing width moves with it",
     );
     assert_ne!(bytes, at_f32_bytes, "the tag byte itself did move");
+
+    // Pinned rather than described, because `docs/artifact-abi.md` carried this
+    // count as prose and manifest schema `15.0` silently falsified it: the
+    // trailing identity *preimage* used to restate both tag pairs, and the
+    // manifest now declares its identity by digest instead. The count is
+    // therefore the two tag pairs plus the two thirty-two-byte digests that
+    // cover them — the manifest digest in the framing header and the identity
+    // digest the manifest ends with — less whatever digest bytes coincide.
+    let differing = bytes
+        .iter()
+        .zip(&at_f32_bytes)
+        .filter(|(left, right)| left != right)
+        .count();
+    assert_eq!(
+        differing, DIFFERING_CARRIER_POSITIONS,
+        "the carrier-only byte difference moved; update the count here and the \
+         measurement in docs/artifact-abi.md together",
+    );
 
     let identity_at_bf16 = at_bf16
         .canonical_identity()
@@ -2971,18 +3061,19 @@ fn an_unassigned_carrier_or_access_tag_is_refused_before_its_width_is_used() {
     push_storage_encoding(&mut head, StorageEncoding::Unpacked);
     head.push(address_space_tag(AddressSpace::Device));
     head.push(buffer_access_tag(BufferAccess::Read));
-    // Two occurrences, not one, and the count is asserted rather than assumed:
-    // the manifest ends with the artifact identity, and the identity encoder
-    // restates a binding's carrier and access tags in the same order the entry
-    // row writes them. The manifest's own row comes first, and it is the one to
-    // perturb — a reader frames the entry long before it reaches the identity to
-    // compare, so the refusal under test is the tag reader's rather than
-    // `ArtifactIdentityMismatch`.
+    // One occurrence, and the count is asserted rather than assumed. It was two
+    // until manifest schema `15.0`: the manifest ended with the artifact
+    // identity *preimage*, whose encoder restates a binding's carrier and access
+    // tags in the same order the entry row writes them. The manifest now
+    // declares its identity by digest, so the row is the only spelling left, and
+    // it is still the one to perturb — a reader frames the entry long before it
+    // reaches the identity to compare, so the refusal under test is the tag
+    // reader's rather than `ArtifactIdentityMismatch`.
     let found = manifest_occurrences(&bytes, &head);
     assert_eq!(
         found.len(),
-        2,
-        "the binding row and its restatement inside the carried identity",
+        1,
+        "the binding row, with no identity preimage left to restate it",
     );
     let at = found[0];
 
@@ -3934,13 +4025,15 @@ const PROBE_QUANTITY: u64 = 0x0000_0000_dead_beef;
 /// distinctive quantity — rather than by a computed offset, so the search fails
 /// loudly if the row's layout changes instead of quietly patching another field.
 ///
-/// **The pattern occurs exactly twice, and that is asserted rather than worked
-/// around.** The second occurrence is inside the artifact identity the manifest
-/// also carries, because the identity folds each row's canonical bytes — which
-/// is the property that makes a declared device precondition part of what the
-/// artifact *is*. The row itself is written first, so the first match is the one
-/// to patch; a count other than two would mean the identity stopped folding the
-/// row, or that something else in the manifest now collides with it.
+/// **The pattern occurs exactly once, and that is asserted rather than worked
+/// around.** It occurred twice until manifest schema `15.0`, the second time
+/// inside the identity *preimage* the manifest then carried; the manifest now
+/// declares its identity by digest, so the only spelling of the row left in
+/// these bytes is the row. The identity still folds the row's canonical bytes —
+/// which is the property that makes a declared device precondition part of what
+/// the artifact *is* — but through a digest this search cannot see. A count
+/// other than one would mean something else in the manifest now collides with
+/// the row, or that the manifest carries a second copy of it again.
 fn resource_row_offset(bytes: &[u8]) -> usize {
     let mut pattern = vec![0x01, RouteResourceDimension::SubgroupThreads.tag()];
     pattern.extend_from_slice(&PROBE_QUANTITY.to_be_bytes());
@@ -3958,8 +4051,8 @@ fn resource_row_offset(bytes: &[u8]) -> usize {
         .collect();
     assert_eq!(
         found.len(),
-        2,
-        "the row is written once and folded into the identity once",
+        1,
+        "the row is written once and the identity it folds into is carried as a digest",
     );
     HEADER_BYTES + found[0]
 }

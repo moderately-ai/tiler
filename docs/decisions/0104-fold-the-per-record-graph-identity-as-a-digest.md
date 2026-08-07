@@ -1,0 +1,61 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0104"
+kind: "decision"
+title: "Fold the per-coverage-record graph identity as a digest, and site the governed digest so it can be"
+topics: ["ir", "identity", "program-planning", "limits", "artifacts", "public-boundary"]
+catalog_group: "artifacts-build-toolchains"
+decision_status: "proposed"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.ir", "tiler.contract.artifact-abi"]
+evidence: ["tiler.research.artifacts.manifest-fixed-content-growth"]
+depends_on: ["ADR-0050", "ADR-0071", "ADR-0072", "ADR-0074", "ADR-0075", "ADR-0082", "ADR-0103"]
+ticket: "decide-whether-executable-coverage-evidence-folds-as-a-digest"
+---
+
+# 0104: Fold the per-coverage-record graph identity as a digest, and site the governed digest so it can be
+
+**Status:** proposed, and **nothing in the tree has moved for it.** Tom delegated the *choice* among three candidates on 2026-08-06 under named criteria — "the most performant, correct, long term maintainable/extensible/quality choice" — relayed by the orchestrator; the provenance packet is [`decide-whether-executable-coverage-evidence-folds-as-a-digest`](../../tickets/decide-whether-executable-coverage-evidence-folds-as-a-digest.md). This record makes that choice and derives it. **It also reports that the choice cannot be executed under the delegation**, because it requires a governed digest at a crate that has none, and supplying one is a public crate-boundary decision Tom retains under ADR 0075. No identity domain steps here and no pin moves; what this record asks for is acceptance of the choice *and* an answer to the one boundary question below.
+
+## Context
+
+**Measurement, 2026-08-05, retained at [`spikes/program-planning/identity-growth/`](../../spikes/program-planning/identity-growth/README.md).** Kernel-program identity is exactly `134n² + 3650n + 719` bytes over the domain the ordinary compilation path admitted, an exact fit reproducing every measured point to the byte — and the graph identity it embeds is `134n + 149`. **The equality of the two 134s is the mechanism, not a coincidence:** one whole `SemanticGraphIdentity` is written per coverage record, and there is one record per semantic operation, so the quadratic term *is* the per-record graph restatement, `n × (134n + 149) = 134n² + 149n`.
+
+**Fact — the restatement is at one site, and it is the coverage identity's first payload field.** `encode_executable_coverage_identity` (`crates/tiler-ir/src/index/refinement.rs`) opens with `push_slice(&mut bytes, subject.graph.as_bytes())`. `encode_identity` (`crates/tiler-ir/src/program/model.rs`) writes the program's one `SemanticGraphIdentity` above the stage section and then, per record, the occurrence ordinal and the framed coverage identity — whose head is another full copy of that same graph. The index-region identity does not carry a graph, which the fitted coefficient independently confirms: a second graph-sized term per record would make it 268.
+
+**Fact — the encoded copy has no reader anywhere in the workspace.** Nothing parses `IndexRefinementExecutableCoverageIdentity` bytes; the type has no decoder, no field accessors, and two `compile_fail` doctests holding that it has no byte constructor. Every touch of `as_bytes()` is a write into a larger identity, a length for a capacity precomputation, or a measurement. The one graph check that exists — `ForeignCoverageGraph` in the program builder — reads a *separate, unencoded* in-memory field on `CoveredOccurrence` and would be unaffected by any change to the encoding. The bytes are written and never read, exactly as ADR 0103's manifest preimage was.
+
+**Fact — the ceiling that binds is not the one the deferral was sized against.** `MAX_PROGRAM_IDENTITY_BYTES` (64 MiB) refuses at 695 operations. The 1 MiB per-invocation embedding ceiling binds between 50 and 51 operations after ADR 0103, against a governed `semantic_operations` budget of 62 and a roadmap decoder layer of ≥ 51 — so the encoding is at its ceiling *now*, and the embedding ceiling has no typed refusal at the artifact layer at all.
+
+## Decision
+
+**Fold the graph identity as a digest inside the coverage record.** `encode_executable_coverage_identity` writes a fixed-width digest of `subject.graph` under its own governed domain in place of the framed preimage, and `tiler.ir.index-refinement-executable-coverage.v1` and its staged sibling step to `v2`.
+
+**What it does to the curve.** Program identity becomes `3525n + 719` — **linear**. At the governed budget of 62 operations it is 219,269 bytes, and twice that (the post-0103 envelope multiplicity) is 41.8% of the per-invocation ceiling where the current encoding is at 283%. **The embedding-ceiling crossing moves from between 50 and 51 operations to between 148 and 149**, and the 64 MiB program bound moves from 695 operations to roughly 19,000. More important than either number: the ceiling now scales linearly, so doubling a program's size doubles its envelope instead of quadrupling it.
+
+**What it does to meaning.** Nothing a consumer can observe. The record still states "this occurrence of *this* graph", still refuses two records that name one occurrence ordinal in different graphs, and is still a well-defined standalone value; what it stops doing is carrying bytes from which the graph identity could be reconstructed, which nothing does.
+
+## The boundary question this record cannot answer, and why it is Tom's
+
+**Fact — the crate that mints the coverage identity cannot reach a governed digest, and the dependency cannot be reversed.** `IndexRefinementExecutableCoverageIdentity` is minted in `tiler-ir`, which is the workspace's bottom crate: its only dependencies are `num-bigint`, `num-integer`, and `num-traits`, and no workspace crate sits below it. The one governed digest lives in `tiler-artifact`, which depends **on** `tiler-ir`.
+
+So the decision above needs one of two things, and both are outside a delegated choice among three encodings:
+
+- **(a) A hashing implementation inside `tiler-ir`.** Refused here rather than proposed. `crates/tiler-artifact/src/program/codec/digest.rs` states the invariant in terms: being "the *only* place that maps the governed tag to an implementation is the whole point, and that property is what a second component reaching for a hash function would destroy." ADR 0082 records that the expansion cache's *previous* owner was replaced precisely because it "proved unable to reach the governed digest", which is this same constraint decided once already, in the direction of moving the consumer rather than duplicating the digest.
+- **(b) Siting the governed digest where both crates can reach it** — relocating `DigestAlgorithm` and `Digest` into `tiler-ir`, or into a new crate below both. This is a consequential public crate, module, and type boundary, which AGENTS.md reserves to Tom, and it moves an ownership that [the ABI contract](../artifact-abi.md) and ADR 0050 currently place with the artifact envelope and that `tiler-cache` reaches there.
+
+**The question, stated atomically:** should the governed digest move below `tiler-ir` so that layered identity encoders can fold a bounded-width reference, or should the coverage encoding keep its quadratic until some other lever removes it?
+
+## Alternatives considered
+
+**Keep the embedded graph identity.** Coverage evidence stays byte-recoverable, and the encoding rests on encoding injectivity alone rather than additionally on collision resistance. **Rejected on the criteria as stated**: it leaves a quadratic whose embedding ceiling binds between 50 and 51 operations — *at* the roadmap's own ≥ 51-operation decoder layer and below the admitted budget of 62 — with no typed refusal, so the failure mode is an artifact that compiles and cannot be embedded. This is the status quo and it is what the tree still does, because the chosen option is blocked; that is a fact about authority, not a re-ranking.
+
+**Stop restating the graph per record at all, naming it by the program's folded copy.** This is executable today with no digest, no new dependency, and no boundary question — a deletion. **Rejected on correctness, which the criteria order first.** The coverage identity's own encoder documents that the operation key, ordered signature, host-canonical attributes, and boundary shapes are deliberately *not* re-encoded because "`tiler.semantic-graph.v2` already writes each of them for every operation in canonical traversal order" and the retained occurrence is that same canonical ordinal — that is, the record delegates its entire description of *which operation this is* to the (graph, occurrence) **pair**. Delete the graph and the pair becomes a bare ordinal that determines nothing: two receipts for occurrence 7 of two unrelated graphs mint byte-equal coverage identities, falsifying the type's documented claim to retain "the selected graph occurrence" and making a public identity non-injective on its stated subject. ADR 0071's amended clause rests on that pair too, calling the retained coordinate "the canonical traversal ordinal paired with the graph identity rather than a storage selector". **And it buys almost nothing over the chosen option:** `3493n + 719` against `3525n + 719`, thirty-two bytes per record, 0.9% of the linear term. Paying non-injectivity for 0.9% is the trade the criteria exist to refuse.
+
+**Mint two coverage identities — one graph-anchored and standalone, one graph-free for embedding.** Executable with no digest, and it preserves the standalone property exactly; it is also the pattern the layer already uses one level up, where `IndexRefinementReceiptIdentity` is complete and the executable-coverage projection is reached-only. **Rejected**: those two are different *subjects* (complete provenance against reached-only), whereas these two would be one subject spelled twice — a second canonical encoding whose agreement with the first could only be argued and never checked. That is the shape the 2026-07-27 no-layered-digests decision names, in a sharper form than the chosen option takes, since the chosen option mints no second value at all. It is also a new public type in `tiler_ir::index` and therefore Tom's on its own terms.
+
+**Raise the embedding ceiling, or the `semantic_operations` budget, instead.** Out of scope and in the wrong direction: the budget was sized deliberately to the decoder-layer program, and the ceiling is a per-invocation property of the consumer, not a Tiler constant.
+
+## Bounds on the evidence
+
+The multiplier of two is measured on one fixture for one landing's coverage increment and is structural rather than sampled at other program shapes. The curve is fitted over 2..=8 operations, which was the whole reachable domain when it ran and is not any more; its widest fitted point is 8 and every crossing quoted here is an extrapolation. Two things bound how far that can be wrong and neither removes it: the fitted curve reproduces a 9-operation probe outside its domain to the byte, and the conclusion at 62 operations survives deleting the quadratic term entirely. **What this licenses is the ordering — the embedding ceiling binds first, and folding the graph turns a quadratic into a linear — and not the exact numbers 50, 51, 148, or 149.** The harness that owns the curve currently refuses on its own wall probe and is stale by its own verdict; [`widen-the-identity-growth-ladder-to-the-governed-operation-budget`](../../tickets/widen-the-identity-growth-ladder-to-the-governed-operation-budget.md) owns re-running it, and no figure here was re-measured on a widened ladder.

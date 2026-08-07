@@ -91,7 +91,9 @@ pub use digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // needs.
 pub(crate) use encode::envelope_digest;
 #[cfg(test)]
-pub(crate) use encode::{ENVELOPE_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN};
+pub(crate) use encode::{
+    ENVELOPE_DIGEST_DOMAIN, IDENTITY_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN,
+};
 // The carried-payload vocabulary is the one part of this module that is
 // public. A backend assembler outside this crate must be able to describe what
 // it compiled, and nothing else here is reachable: the envelope, the encoder,
