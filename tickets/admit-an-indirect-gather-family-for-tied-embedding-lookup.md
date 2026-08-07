@@ -1,7 +1,7 @@
 ---
 id: admit-an-indirect-gather-family-for-tied-embedding-lookup
 title: Admit an indirect gather access family
-status: in-progress
+status: done
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface, reclassify-language-model-work-as-a-conformance-track]
 related: [own-operation-family-support-matrix, design-model-ingestion-and-complete-execution, implement-index-domain-predicates]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, implementation/ir, implementation/reference, impl
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, indexing, gather, language-model, breadth, class-generic-capability]
-claimed_from: todo
-assignee: w-admit-an
-lease_expires_at: 1786142810
 ---
 ## User-visible outcome
 
@@ -193,3 +190,45 @@ ADR 0107 is `proposed`. `accept-adr-0107-indirect-gather-semantic-family` is `aw
 ### One stale claim found in a record outside these scopes
 
 `docs/research/program-planning/model-level-qualification.md`'s `A-token-out` row states the command `grep -rhoE '"tiler::[a-z0-9-]+@[0-9]+"' crates/ | sort -u` "lists 24 registered keys". It returned **26** before this branch and **27** after. The count also mixes operation keys with value-type keys, so it was never a count of operations. Its load-bearing half — "none is a gather" — was true and is now false by this landing, so the row needs re-reading by whoever owns `research/program-planning`.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`56046f77`** (worker commits `fab1f6db` audit, `cf9578ee` family). 22 files. `make full` exit 0 on the merged tree — **1,090 release tests**, 3,127 workspace tests, 29 of them new.
+
+### ADR 0046 was never superseded, and the coordinator's brief was wrong to say so
+
+This is the finding that changed the shape of the work. The brief framed admitting a tensor-data-derived index class as superseding or extending an accepted ADR. **It does neither.** ADR 0046's own Consequences already state that "**Indirect operations remain addable without weakening the verifier**" for the initial direct-access language, and its Decision defers data-dependent gather to "**later explicit IR contracts**". So ADR 0107 *supplies the contract 0046 deferred*: 0046 stays `accepted`, its rejection intact and untouched by this branch — coordinator-verified at lines 74 and 86, and by confirming the file is absent from the diff.
+
+That reframing also fixed what the record may **not** do: admit no tensor-read form into `IndexNode`.
+
+### Three errors in this ticket's own 2026-08-07 repair block, all the coordinator's
+
+1. The repair "corrected" a citation to `:322`. **It is `:324`** — a two-line drift replaced by a two-line drift the other way.
+2. "**Six records, not five**" double-counts: `operation-family-delivery-graph.md:308` contains no link, and the same repair block added `research/semantic-graph` as a scope, moving that record *into* scope. Outside editable scopes it is **five, unchanged**.
+3. "**Four records name this ticket as owner**" is **three records at five sites**.
+
+Also corrected: "the semantic side needs no work" read past the reference crate — no integer identity had a registered reference value type, which was real work.
+
+### The boundary is the decision, not a deferral inside it
+
+`AccessData` carries **one tensor ordinal** and `IndexNode` has no variant reading tensor data, so the gap is the access record's *shape*, not a missing expression form. The family is admitted at the semantic layer and **deliberately nowhere below**.
+
+**No fusion role, on purpose.** Slice and concatenate took `CoordinateRelation`, whose contract says its aliasing is the index verifier's concern — false of a gather, since the verifier cannot bound a coordinate it cannot see. `classify` returns `None`, so no region derives legality. Fail-closed.
+
+| Claim | Maturity | Evidence |
+| --- | --- | --- |
+| Registered family | implemented support | exhaustive-finite over the frozen registry |
+| Reference evaluator | tested guarantee, bounded | empirical, 29 cases with retained perturbations |
+| Derived fusion legality | **not claimed** | deliberately absent |
+| Region → `VerifiedKernel` | **not claimed** | no index region expresses it |
+| Device-verified | **not claimed** | nothing dispatched |
+
+`[151936, 1024]` is exercised as a **shape only** — materializing it exceeds the reference tensor bound.
+
+Six perturbations, each on the subject: clamping instead of refusing returns row 4 exactly as predicted; ignoring the index operand fails 7 of 10; appending instead of composing the shape transposes the result; dropping the signed refusal changes the diagnostic code; skipping registration and removing the `UNPLANNED_OPERATIONS` entry each fire their own gate. The pinned explain digest was recomputed **on this tree** per its ledger instruction, `de9ad4cc` → `f99d1e5e`.
+
+### Owed onward
+
+**ADR 0107 is `proposed`** and `accept-adr-0107-indirect-gather-semantic-family` is `awaiting-decision` — Tom's, under ADR 0075, with the included and excluded surface enumerated. The remainder is mapped, not landed: `admit-the-indirect-access-class-into-the-index-layer` (itself a decision bounded by ADR 0046's condition) and `emit-the-indirect-gather-on-metal`, blocked on it. `model-level-qualification.md`'s stale key count is filed separately.
+
+The audit's `path:line` entries are evidence about base `411e09bf` and predate `make citations`; they should be re-pinned against the merged tree if reused.
