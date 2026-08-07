@@ -1,7 +1,7 @@
 ---
 id: admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence
 title: Admit a handed value with more than one reader in the region sequence
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [widen-the-staged-realization-law-to-the-registered-elementary-families, admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, accept-the-multi-region-index-realization-surface, accept-the-multi-reader-index-realization-retention, register-the-softmax-realization-law, widen-the-region-sequence-to-a-multi-value-handoff, carry-a-multi-reader-intermediate-through-region-formation]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-softmax-law
-lease_expires_at: 1786070865
 ---
 ## User-visible outcome
 
