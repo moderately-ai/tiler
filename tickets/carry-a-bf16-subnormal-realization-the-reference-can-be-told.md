@@ -1,9 +1,9 @@
 ---
 id: carry-a-bf16-subnormal-realization-the-reference-can-be-told
 title: Carry a BF16 subnormal realization the reference can be told
-status: in-progress
+status: blocked
 priority: p2
-dependencies: []
+dependencies: [accept-the-bf16-subnormal-resolution-carrier]
 related: [apply-the-declared-numerical-conformance-on-every-reference-evaluation-path, derive-the-oracle-for-a-permitted-divergence-candidate, conform-the-bf16-vertical-end-to-end, declare-the-bf16-rows-on-the-authoritative-metal-profile, state-and-check-a-bf16-numerical-contract, accept-the-bf16-subnormal-resolution-carrier]
 scopes: [implementation/reference, implementation/ir]
 shared_scopes: [project/tickets]
