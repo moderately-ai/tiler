@@ -4,7 +4,7 @@ title: Conform the BF16 vertical end to end against the exact reference corpus
 status: blocked
 priority: p2
 dependencies: [validate-bf16-at-the-runtime-routing-boundary, carry-a-bf16-subnormal-realization-the-reference-can-be-told]
-related: [spike-bf16-through-the-second-dtype-seams, evaluate-bf16-reference-semantics, own-the-dtype-support-maturity-matrix, lower-bf16-to-metal, dispatch-a-tiler-region-on-metal-hardware]
+related: [spike-bf16-through-the-second-dtype-seams, evaluate-bf16-reference-semantics, own-the-dtype-support-maturity-matrix, lower-bf16-to-metal, dispatch-a-tiler-region-on-metal-hardware, wire-the-bf16-reference-to-the-realization-it-is-told]
 scopes: [implementation/reference, contracts/numerics, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -72,3 +72,14 @@ No conformance run, no corpus, no perturbation, no execution witness, no measure
 ### To unblock
 
 Resolve the placement fork in Block 1, land `carry-a-bf16-subnormal-realization-the-reference-can-be-told`, then move this to `todo` and redispatch with `implementation/reference`, `contracts/numerics`, and `implementation/runtime`.
+
+## Dependency note, 2026-08-07 — both dependencies are now `done`, and this stays blocked
+
+Both edges are satisfied: `validate-bf16-at-the-runtime-routing-boundary` and [`carry-a-bf16-subnormal-realization-the-reference-can-be-told`](carry-a-bf16-subnormal-realization-the-reference-can-be-told.md) both read `done`, the latter closed on 2026-08-07 when Tom decided its parked fork (arm A — the format derived at the point of use).
+
+**That does not unblock this ticket, and the status is deliberately left at `blocked`.** The two blocks recorded on 2026-08-06 are structural and neither is a dependency edge:
+
+- **Block 1 is unchanged and is Tom's.** Only `prototypes/serial-sum-run` can reach a Metal device, and putting a device edge under `crates/tiler-reference` would invert the dependency the target-independent oracle exists to prevent. Where a device-reaching conformance test may live is an architecture decision, not a scope a worker may assemble.
+- **The flush half is now closer but not landed.** This ticket's evidence list requires "the declared flush is applied to the reference before comparison". The reference can be *told* a realization, and after Tom's decision the route that tells it is settled — but the wiring itself is [`wire-the-bf16-reference-to-the-realization-it-is-told`](wire-the-bf16-reference-to-the-realization-it-is-told.md) and has not landed. Until it does, applying the flush here would mean stating the realization by hand, which is what the module header describes and not what this ticket asks for.
+
+Add a dependency on the wiring ticket when it is claimed; it is left as a relation for now so this node is not re-pointed at work that may land before Block 1 is answered either way.

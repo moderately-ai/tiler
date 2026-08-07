@@ -1,16 +1,13 @@
 ---
 id: carry-a-bf16-subnormal-realization-the-reference-can-be-told
 title: Carry a BF16 subnormal realization the reference can be told
-status: blocked
+status: done
 priority: p2
 dependencies: [accept-the-bf16-subnormal-resolution-carrier]
 related: [apply-the-declared-numerical-conformance-on-every-reference-evaluation-path, derive-the-oracle-for-a-permitted-divergence-candidate, conform-the-bf16-vertical-end-to-end, declare-the-bf16-rows-on-the-authoritative-metal-profile, state-and-check-a-bf16-numerical-contract, accept-the-bf16-subnormal-resolution-carrier]
 scopes: [implementation/reference, implementation/ir]
 shared_scopes: [project/tickets]
 tags: [numerics, reference, conformance, bf16]
-claimed_from: todo
-assignee: agent-bf16-subnormal
-lease_expires_at: 1786079690
 ---
 ## User-visible outcome
 
@@ -128,3 +125,16 @@ Filed by [`apply-the-declared-numerical-conformance-on-every-reference-evaluatio
 
 - `implementation/ir` is required only by the *declared* route in the fork above. A dispatcher choosing the derived route can run this on `implementation/reference` alone; the scope stays declared either way, because the fork is not resolved until Tom resolves it and a brief must not pre-commit the scope set to one arm.
 - The exception this gap creates in [Correctness and testing](../docs/correctness-and-testing.md#semantic-authority) — that the declared-contract comparison rule has one family that cannot follow it — was recorded on 2026-08-06 by `conform-the-bf16-vertical-end-to-end`. Closing this ticket must retire that paragraph in the same change, or it becomes a stale disclosure of a gap that no longer exists.
+
+## Closed 2026-08-07 — the fork is resolved and the remainder is split out
+
+**Tom decided the fork on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator: **arm A**, the format derived at the point of use, with no mixed-width refusal and arm B closed against a trigger. The reasoning, including why this node's own recommendation of the staged shape was refuted by reading the source in full, is on [`accept-the-bf16-subnormal-resolution-carrier`](accept-the-bf16-subnormal-resolution-carrier.md).
+
+**This ticket's own deliverables are all landed and in `main`** — commits `a759c058`, `efa5bc68` and `598989c9` are ancestors of `HEAD`, confirmed by the coordinator rather than relayed. The machinery, the seven-case counterexample population, the watched-failing perturbations in both directions and on each dimension separately, and the module header are in the tree.
+
+**The remainder is a narrow ticket rather than an open parent**, per AGENTS.md: split the bounded remainder, then close the revised parent so dependents can proceed. Two pieces:
+
+- [`wire-the-bf16-reference-to-the-realization-it-is-told`](wire-the-bf16-reference-to-the-realization-it-is-told.md) — the one missing link, `ReferenceOperation::evaluate` reaching `combine_under` with the realization built from `request.conformance()`, plus retiring the [Correctness and testing](../docs/correctness-and-testing.md#semantic-authority) exception paragraph this gap created.
+- [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md) — filed from a defect found while assessing the fork: `ReferenceNumericalConformance::from_realization` has **no caller anywhere**, so every evaluation in the workspace runs under the strict reading whatever a region declared. Neither arm of the fork would have delivered this ticket's user-visible outcome without it.
+
+**The declared facts stayed unconditional and no identity moved**, which holds under the accepted arm exactly as this ticket's Outcome argued it would.
