@@ -1,7 +1,7 @@
 ---
 id: cover-the-newly-reachable-notrequired-disposition-for-an-unconsumed-dimension
 title: Cover the newly reachable NotRequired disposition for an unconsumed dimension
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [derive-per-locus-numerical-obligations, wire-the-delivered-realization-record-into-the-artifact]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, fail-closed, test-coverage]
-claimed_from: todo
-assignee: agent-notrequired
-lease_expires_at: 1786115582
 ---
 ## What changed, and why it needs its own node
 
@@ -64,3 +61,21 @@ Restored and re-run green: `2 tests run: 2 passed, 740 skipped` for the compiler
 ## Graph maintenance
 
 Filed 2026-08-07 by the coordinator at integration of the producing ticket, from a consequence its worker named and asked for explicit sign-off on rather than treating as authorized. Kept separate because it is a test and safety-direction obligation on a behaviour change, not part of the locus derivation itself.
+
+## Outcome — delivered 2026-08-07 at `cae15d26`
+
+**The newly reachable path is now exercised.** A bare reduction — one `tiler::strict-serial-sum-f32@1` over an `f32` input, with the scaling multiply and bias add removed so the fold is the only covered occurrence — leaves **contraction** honoured but consumed by nothing, because `policy.rs`'s `REDUCTION` row omits it: a strict serial sum's per-contributor step is `accumulator + contributor`, with no product for ADR 0015's fused multiply-add permission to act on. That follows from the rows rather than from search, and contraction is the *only* honoured dimension a single-family program can leave unconsumed, since `region_proposal` asks every candidate about exactly four dimensions and the other three are consumed by every arithmetic family this build can plan alone.
+
+The dimension is **honoured, not merely unasked** — the compiler test reads the retained plan's own honoured facts and pins that four-element set by name, so the empty row set cannot be "nobody asked". Carried through to a packaged artifact in `crates/tiler-build/tests/custom_backend/`, which walks all eleven dimensions: **three `Required`** (input subnormals at `Input`, result subnormals at `Result`, reassociation at `Accumulator`) and **eight `NotRequired`** including contraction. The record still *states* contraction's resolution as `Transform(Forbidden)`, so the disposition is a claim about reliance rather than a silence.
+
+**The safety direction is now a check rather than an intention, and this is the part that matters.** An under-claiming capability row used to be harmless — the producer emitted a row per honoured dimension at every occurrence, so a missing entry cost nothing. It now decides whether a row is emitted at all, and a dimension left with no row is derived as `NotRequired`: a positive claim the neutral artifact cannot re-check. **The failure direction inverted when the locus derivation landed**, and `an_arithmetic_family_claims_the_whole_arithmetic_core` is what catches it.
+
+What makes it a check rather than the table restated: the oracle is `governed_index_access_capabilities()`'s `emitted` declaration — the scalar operations each family's *lowering* may apply. That is a different statement written for a different purpose, and `legality::refine_index_region` proves the region a family actually emits is contained in it, so an under-claim cannot be hidden by editing the declaration to match. `rounds_binary32` is total over the emitted keys and **panics on an unclassified one rather than answering `false`**, which is the direction that would otherwise make a family silently look exact. Populations: 6 rounding families, 4 exact, and the 3 with no governed lowering named rather than skipped, so a new one cannot arrive unchecked.
+
+**Watched failing**, by removing `Reassociation` from the `REDUCTION` row: the policy check reports that the family emits a rounding binary32 operation and must consume the dimension, and the build-side test reports that `NotRequired` there would be a false producer assertion the neutral artifact cannot re-check. Both restored green.
+
+**No identity moved.** `metal_plan.rs` still pins `23c46a19…`, `e89c4d82…`, and 64,542 bytes, recomputed green on the merged tree. `make full` exit 0 on the branch and again after merge: 2,953 workspace tests, 1,033 release numerical.
+
+**Scope added:** `implementation/build`. The disposition is derived by `tiler-artifact`'s builder from the obligations that arrive, and `tiler-compiler` has no artifact edge, so no compiler-side test can carry a program to a packaged artifact. `crates/tiler-build/tests/custom_backend/` is the non-Metal producer that already does exactly that, against public surfaces only.
+
+**Remainder.** Three admitted families ship no governed index-access lowering, so the oracle cannot speak for them; their rows stay pinned by name, and if `softmax-f32` gains a lowering the `unlowered` assertion fails and forces the row under the oracle — deliberate.
