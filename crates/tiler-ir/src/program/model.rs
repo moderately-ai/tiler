@@ -1798,6 +1798,32 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// program *declares* it to continue an earlier dispatch's realization, and
 /// **which occurrence** it continues is not derivable at all, because coverage
 /// records only the occurrence's first stage.
+///
+/// **`v11` holds through ADR 0104, and the derivation is the reason rather than
+/// the absence of one.** That record folds the bound graph's identity inside
+/// each executable-coverage record as a fixed-width digest, so every program's
+/// identity bytes move — this encoding shrinks by one graph identity per
+/// coverage record, which is the whole of its quadratic term. Every step in the
+/// ledger above moved every program's bytes too, so "the bytes moved" is not
+/// what decides a step; what decides it is whether a reader of the previous
+/// version, handed the new bytes, recovers a different program rather than
+/// failing. Here it cannot. The coverage record's grammar is unchanged — a
+/// four-byte occurrence and then [`push_slice`] over the coverage identity — and
+/// the framed run opens with the coverage identity's *own* separator, which
+/// stepped to `tiler.ir.index-refinement-executable-coverage.v2` for exactly
+/// this change. So no `v11` identity taken over `v1` coverage can equal one
+/// taken over `v2` coverage, injectivity across the step rests on a separator
+/// that did step, and a cache or artifact holding the older bytes misses.
+///
+/// That is the `tiler.schedule.v4`, `tiler.schedule.v5`, and
+/// `tiler.contract.f32.v2` shape, not the `v9` one: those moved content below a
+/// separator this encoding folds *by reference*, and none of them stepped a
+/// domain above it, while `v9` changed the coverage record's own grammar here
+/// and had to. [`STAGE_KEY_DOMAIN`] holds for the same reason and by the same
+/// framing, and so do `tiler.artifact-program.stage.v3`,
+/// `tiler.artifact-program.v15`, and manifest schema 15.0 one layer up. A domain
+/// stepped without a grammar change would cost a cache miss it had no reading to
+/// protect.
 const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v11\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {

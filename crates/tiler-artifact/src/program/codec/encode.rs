@@ -19,9 +19,9 @@ use super::super::model::{
 };
 use super::super::requirement::RouteRequirement;
 use super::budget::check_budgets;
-use super::digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::model::{ArtifactEnvelope, EntryRow, MAX_SECTION_BYTES, Section, ordinal};
+use tiler_digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::program::abi::TargetPropertyRequirementRelation;
 
@@ -550,16 +550,21 @@ fn encode_interface_components<K>(
 /// Derives one section's content digest over its purpose, schema, and bytes.
 ///
 /// The qualifiers are fixed width and precede the variable-length content, so
-/// the pre-image is unambiguous without a length prefix between them.
+/// the pre-image is unambiguous without a length prefix between them. That shape
+/// is what [`DigestAlgorithm::digest_qualified`] admits and the only shape it
+/// does; a variable-length qualifier is the caller's error and is what the
+/// signature exists to make visible.
 pub(super) fn section_digest(algorithm: DigestAlgorithm, section: &Section) -> Digest {
     let schema = section.kind.schema();
-    algorithm.digest_parts(&[
+    algorithm.digest_qualified(
         SECTION_DIGEST_DOMAIN,
-        &[section.kind.tag()],
-        &schema.major().to_be_bytes(),
-        &schema.minor().to_be_bytes(),
+        &[
+            &[section.kind.tag()],
+            &schema.major().to_be_bytes(),
+            &schema.minor().to_be_bytes(),
+        ],
         &section.bytes,
-    ])
+    )
 }
 
 /// Encodes the selected providers and backend payload descriptors.

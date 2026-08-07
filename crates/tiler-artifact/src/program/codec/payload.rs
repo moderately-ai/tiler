@@ -149,8 +149,8 @@
 use super::super::error::{ArtifactBuildError, ProvenanceField};
 use super::super::keys::{BackendEntryKey, PayloadDigest, RepresentationKey};
 use super::decode::Cursor;
-use super::digest::DigestAlgorithm;
 use super::error::{ArtifactCodecError, CodecLimitKind, OrderedSubject, TagSubject, codec_limit};
+use tiler_digest::DigestAlgorithm;
 use tiler_ir::identity::{push_len, push_slice};
 
 /// Versioned domain tag opening the canonical payload-metadata bytes.

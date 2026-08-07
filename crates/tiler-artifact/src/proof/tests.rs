@@ -821,8 +821,8 @@ fn every_payload_digest_binds_its_canonical_slot() {
     let algorithm = DigestAlgorithm::GOVERNED;
     let bytes = [0x5a_u8; 8];
     assert_ne!(
-        algorithm.digest_parts(&[PAYLOAD_DIGEST_DOMAIN, &0_u32.to_be_bytes(), &bytes]),
-        algorithm.digest_parts(&[PAYLOAD_DIGEST_DOMAIN, &1_u32.to_be_bytes(), &bytes]),
+        algorithm.digest_qualified(PAYLOAD_DIGEST_DOMAIN, &[&0_u32.to_be_bytes()], &bytes),
+        algorithm.digest_qualified(PAYLOAD_DIGEST_DOMAIN, &[&1_u32.to_be_bytes()], &bytes),
     );
 }
 

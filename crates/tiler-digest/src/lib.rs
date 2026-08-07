@@ -1,14 +1,14 @@
-//! The governed content-digest algorithm of the artifact envelope.
+//! The one governed content-digest algorithm every Tiler identity hashes under.
 //!
-//! `docs/artifact-abi.md` requires every digest use to name an explicit
-//! governed algorithm and domain separator, and forbids a parser from inferring
-//! the algorithm from a digest width. The envelope therefore carries an
-//! algorithm tag in its fixed header, and this module is the only place that
-//! maps that tag to an implementation.
+//! `docs/artifact-abi.md` requires every digest use to name an explicit governed
+//! algorithm and domain separator, and forbids a parser from inferring the
+//! algorithm from a digest width. The artifact envelope therefore carries an
+//! algorithm tag in its fixed header, and this crate is the only place that maps
+//! that tag to an implementation.
 //!
 //! # Why the implementation is local
 //!
-//! The wire contract governs FIPS 180-4 SHA-256 as `tiler.digest.sha-256.v1` with tag `0x01`; the envelope, manifest, section, and sidecar domains are likewise governed constants. `select-the-governed-artifact-digest-implementation` separately measured the implementation choice and adopted `sha2` 0.11.0. Keeping that implementation behind this module leaves the wire algorithm and every encoded envelope byte independent of the dependency that computes them.
+//! The wire contract governs FIPS 180-4 SHA-256 as `tiler.digest.sha-256.v1` with tag `0x01`; the envelope, manifest, section, and sidecar domains are likewise governed constants. `select-the-governed-artifact-digest-implementation` separately measured the implementation choice and adopted `sha2` 0.11.0. Keeping that implementation behind this crate leaves the wire algorithm and every encoded envelope byte independent of the dependency that computes them.
 //!
 //! The implementation is FIPS 180-4 SHA-256. It is pinned by the standard
 //! published test vectors, by the message lengths that exercise every padding
@@ -18,27 +18,70 @@
 //! itself or with a constant a reader cannot re-derive, so a consistently wrong
 //! padding rule satisfies them.
 //!
-//! # Why this module is public
+//! # Why this is a crate, and why it is the bottom one
 //!
-//! Being the *only* place that maps the governed tag to an implementation is
-//! the whole point, and that property is what a second component reaching for a
-//! hash function would destroy. ADR 0050 requires the expansion cache to
-//! validate a stored bundle's section digests on every hit; Tom decided on
-//! 2026-07-25 that the cache is a dedicated crate reaching this algorithm rather
-//! than owning one. [`DigestAlgorithm`] and [`Digest`] are therefore public.
+//! Being the *only* place that maps the governed tag to an implementation is the
+//! whole point, and that property is what a second component reaching for a hash
+//! function would destroy. The property used to be held by a private module of
+//! `tiler-artifact`, which is where the first consumer happened to need it; ADR
+//! 0050 then required the expansion cache to validate a stored bundle's section
+//! digests on every hit, and Tom decided on 2026-07-25 that the cache is a
+//! dedicated crate reaching this algorithm rather than owning one (ADR 0082).
+//! That resolved a reachability problem by moving the *consumer*.
 //!
-//! What stays private is as deliberate as what does not. `digest_parts` is
-//! crate-private because its documented contract puts unambiguity on the caller,
-//! and every use inside this crate discharges it with a governed domain followed
-//! by fixed-width qualifiers. An outside caller gets [`DigestAlgorithm::digest`],
-//! which takes exactly one domain and one run, and therefore cannot express the
-//! ambiguous concatenation.
+//! [ADR 0104](../../../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md)
+//! reached the case where that move is impossible. `tiler-ir` mints
+//! `IndexRefinementExecutableCoverageIdentity` and folds the bound graph's
+//! identity into it as a digest, and `tiler-ir` is the crate every other member
+//! depends on — it cannot be relocated above `tiler-artifact`, and reversing the
+//! edge is not available either. Tom decided on 2026-08-06 that the governed
+//! digest is its own crate below both, on the grounds that hashing is a separate
+//! responsibility from tensor IR, that the one-authority rule deserves a
+//! structural home rather than riding in whichever crate needed it first, and
+//! that a future layered-identity consumer should reach it without reopening the
+//! boundary. `tiler-artifact` re-exports [`DigestAlgorithm`], [`Digest`], and
+//! [`DIGEST_BYTES`] from `tiler_artifact::program`, so every path a consumer
+//! already used still resolves.
+//!
+//! # What the public surface admits, and what it refuses to express
+//!
+//! What is absent is as deliberate as what is not. There is no entry point that
+//! digests an arbitrary sequence of parts, because such a call puts unambiguity
+//! entirely on the caller and a concatenation of variable-length runs has no
+//! unambiguous reading. The two shapes every governed use in this workspace
+//! actually takes carry that obligation in their signatures instead:
+//! [`DigestAlgorithm::digest`] takes exactly one domain and one run, and
+//! [`DigestAlgorithm::digest_qualified`] takes one domain, fixed-width
+//! qualifiers, and exactly one trailing variable-length run. Both put every
+//! variable-length byte in one place a reader can find, so neither can express
+//! the ambiguous concatenation. `tiler-artifact` carried a `pub(crate)`
+//! parts-digest for its section and sidecar-payload subjects while it owned this
+//! module; both are qualified digests and say so now, and the general form is
+//! gone rather than promoted across a crate boundary.
+//!
+//! # The domain-separation discipline
+//!
+//! A domain is a prefix of the pre-image, so separation rests on no admitted
+//! domain being a prefix of another — otherwise a longer domain and a shorter
+//! one followed by leading body bytes would collide. The property is global
+//! rather than per container: one algorithm hashes the artifact envelope, the
+//! proof sidecar, and the shared IR's layered identities in one process, so a
+//! domain admitted anywhere could collide with one admitted anywhere else, and a
+//! check confined to one container reports a separation it has not established.
+//!
+//! This crate cannot hold that check, because it deliberately knows none of the
+//! domains: a domain belongs to the authority that decides what it names. What
+//! each such authority owes is the check over the set it admits, plus the
+//! argument that its set cannot prefix another's.
+//! `tiler_artifact::proof::tests::no_governed_domain_of_either_container_prefixes_another`
+//! is the authority for the envelope's and sidecar's eight, and
+//! `docs/artifact-abi.md` records the obligation normatively.
 
 use std::fmt;
 
 use sha2::Digest as _;
 
-/// Byte width of one governed artifact digest.
+/// Byte width of one governed content digest.
 pub const DIGEST_BYTES: usize = 32;
 
 /// The governed digest algorithm one envelope was written with.
@@ -54,7 +97,7 @@ pub enum DigestAlgorithm {
 }
 
 impl DigestAlgorithm {
-    /// The algorithm this build of the crate writes.
+    /// The algorithm this build of the workspace writes.
     pub const GOVERNED: Self = Self::Sha256;
 
     /// Returns the governed wire tag of this algorithm.
@@ -85,27 +128,40 @@ impl DigestAlgorithm {
     /// Digests `bytes` under an explicit domain separator.
     ///
     /// The domain is a prefix, so separation rests on no admitted domain being
-    /// a prefix of another. Every domain this crate writes is one of its own
-    /// constants and the property is checked over them; a caller outside this
-    /// crate that introduces a domain owns the same obligation for its own set.
+    /// a prefix of another. Every caller that introduces a domain owns that
+    /// obligation for its own set; see the crate documentation for why this
+    /// crate cannot discharge it.
     #[must_use]
     pub fn digest(self, domain: &[u8], bytes: &[u8]) -> Digest {
-        self.digest_parts(&[domain, bytes])
+        self.digest_qualified(domain, &[], bytes)
     }
 
-    /// Digests the concatenation of `parts` in order.
+    /// Digests `bytes` under a domain and a run of fixed-width qualifiers.
     ///
-    /// The caller owns unambiguity. Every use here opens with a governed domain
-    /// separator and follows it with fixed-width qualifiers before any
-    /// variable-length run, so no two distinct part sequences can produce one
-    /// pre-image.
-    pub(crate) fn digest_parts(self, parts: &[&[u8]]) -> Digest {
+    /// The pre-image is the domain, then each qualifier in order, then `bytes`.
+    /// **Every qualifier must be fixed width**, which is what makes the
+    /// pre-image unambiguous without a length prefix between the qualifiers and
+    /// the content: the number of bytes each one occupies is a property of the
+    /// subject rather than of this call, so no two distinct qualifier tuples can
+    /// produce one pre-image. Exactly one variable-length run is admitted and it
+    /// is the last, which is the part the signature holds rather than the
+    /// caller.
+    ///
+    /// This is what a content address over a *qualified* subject needs — a
+    /// section digest binds its purpose and content schema, and a sidecar
+    /// payload digest binds its canonical ordinal — so that the digest still
+    /// distinguishes two subjects once it is lifted out of the container that
+    /// distinguished them positionally.
+    #[must_use]
+    pub fn digest_qualified(self, domain: &[u8], qualifiers: &[&[u8]], bytes: &[u8]) -> Digest {
         match self {
             Self::Sha256 => {
                 let mut state = sha2::Sha256::new();
-                for part in parts {
-                    state.update(part);
+                state.update(domain);
+                for qualifier in qualifiers {
+                    state.update(qualifier);
                 }
+                state.update(bytes);
                 Digest(state.finalize().into())
             }
         }
@@ -120,16 +176,17 @@ impl fmt::Display for DigestAlgorithm {
 
 /// Opaque fixed-width content digest of one exact byte run.
 ///
-/// The bytes are derived by [`DigestAlgorithm::digest`] alone; there is no
-/// public constructor, so no caller can assemble a digest naming bytes that
-/// were never hashed (ADR 0074 convention 2).
+/// The bytes are derived by [`DigestAlgorithm::digest`] and
+/// [`DigestAlgorithm::digest_qualified`] alone; there is no public constructor,
+/// so no caller can assemble a digest naming bytes that were never hashed
+/// (ADR 0074 convention 2).
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Digest([u8; DIGEST_BYTES]);
 
 impl Digest {
     /// Wraps digest bytes read from an envelope being validated.
     ///
-    /// The result is a *claim* until it is compared with a digest this crate
+    /// The result is a *claim* until it is compared with a digest this workspace
     /// derived; decoding never treats a read digest as evidence on its own.
     #[must_use]
     pub const fn from_wire(bytes: [u8; DIGEST_BYTES]) -> Self {
@@ -168,21 +225,20 @@ impl fmt::Debug for Digest {
     }
 }
 
-/// SHA-256's block size, which the framing this module writes is stated against.
-const BLOCK_BYTES: usize = 64;
-
 #[cfg(test)]
 mod tests {
     use super::DigestAlgorithm;
 
-    /// Digests one byte run through the crate's own entry point.
+    /// Digests one byte run under the empty domain, unqualified.
     ///
-    /// Deliberately `digest_parts` and not the internals of whatever
-    /// implements SHA-256: these cases pin the bytes this module *publishes*,
-    /// which is the contract artifact identity rests on, and they must keep
-    /// meaning the same thing when the implementation behind it is replaced.
+    /// Deliberately the crate's own entry point and not the internals of
+    /// whatever implements SHA-256: these cases pin the bytes this crate
+    /// *publishes*, which is the contract artifact identity rests on, and they
+    /// must keep meaning the same thing when the implementation behind it is
+    /// replaced. The empty domain is what lets a published FIPS vector be
+    /// compared at all — every governed subject carries a real one.
     fn hex(bytes: &[u8]) -> String {
-        DigestAlgorithm::GOVERNED.digest_parts(&[bytes]).label()
+        DigestAlgorithm::GOVERNED.digest(b"", bytes).label()
     }
 
     /// The FIPS 180-4 published vectors, including the one-million-character case.
@@ -211,8 +267,11 @@ mod tests {
     fn every_padding_branch_agrees_with_a_single_shot_digest() {
         for length in [54_usize, 55, 56, 63, 64, 65, 119, 120, 127, 128] {
             let message = vec![0x5a_u8; length];
-            let split = DigestAlgorithm::GOVERNED
-                .digest_parts(&[&message[..length / 2], &message[length / 2..]]);
+            let split = DigestAlgorithm::GOVERNED.digest_qualified(
+                b"",
+                &[&message[..length / 2]],
+                &message[length / 2..],
+            );
             assert_eq!(
                 split.label(),
                 hex(&message),
@@ -228,7 +287,7 @@ mod tests {
     /// compares a chunked digest with a single-shot digest, so both sides run
     /// *this* implementation and a padding rule that is consistently wrong
     /// satisfies it. The expected value here was produced by Python's
-    /// `hashlib`, which shares no code with this module, so it is external
+    /// `hashlib`, which shares no code with this crate, so it is external
     /// evidence rather than a self-consistency check.
     ///
     /// The sweep is exhaustive rather than sampled because the padding length
@@ -248,7 +307,7 @@ mod tests {
             accumulated.extend_from_slice(algorithm.digest(b"m\0", &message).as_bytes());
         }
         assert_eq!(
-            algorithm.digest_parts(&[&accumulated]).label(),
+            algorithm.digest(b"", &accumulated).label(),
             "2f4c4d8de88a0f18ec22cfbdd365ce45ec57c0ecf63936a8cf98a18ca24c156a",
             "a digest over every message length 0..=192 disagrees with the value \
              Python's hashlib produces for the same sequence",
@@ -264,40 +323,37 @@ mod tests {
         );
     }
 
-    /// The separator is a prefix, so separation rests on the domains themselves.
+    /// The two public entry points agree where their subjects coincide.
     ///
-    /// `digest(domain, body)` hashes `domain || body`, which distinguishes two
-    /// subjects only when no admitted domain is a prefix of another — otherwise
-    /// a longer domain and a shorter one with leading body bytes would collide.
-    /// Every governed domain is a fixed constant of this crate, so the property
-    /// is checkable rather than assumed, and a new domain that violates it fails
-    /// a test instead of silently merging two subjects.
-    ///
-    /// **This test covers the envelope's four domains and not the crate's
-    /// eight.** The property is global: one algorithm hashes both the envelope
-    /// and the proof sidecar in one process, so a domain added to either
-    /// container could collide with one in the other, and a check confined to
-    /// four of the eight would report separation it had not established.
-    /// `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another`
-    /// checks the union and is the authority for the property; this test is the
-    /// envelope-local half. A fifth envelope domain must be added to **both**,
-    /// and `docs/artifact-abi.md` records the union obligation normatively.
+    /// [`DigestAlgorithm::digest`] is *defined* through
+    /// [`DigestAlgorithm::digest_qualified`], so this holds the definition
+    /// rather than restating it: an unqualified subject and a qualified one
+    /// with no qualifiers are the same pre-image, and every governed digest in
+    /// the workspace is one or the other. A future implementation that framed
+    /// the qualifier run — a count, a length, anything at all — would move every
+    /// unqualified digest ever taken, and this is the case that says so.
     #[test]
-    fn no_governed_domain_is_a_prefix_of_another() {
-        let domains = [
-            super::super::encode::MANIFEST_DIGEST_DOMAIN,
-            super::super::encode::SECTION_DIGEST_DOMAIN,
-            super::super::encode::ENVELOPE_DIGEST_DOMAIN,
-            super::super::encode::IDENTITY_DIGEST_DOMAIN,
-        ];
-        for (index, left) in domains.iter().enumerate() {
-            for right in domains.iter().skip(index + 1) {
-                assert!(
-                    !left.starts_with(right) && !right.starts_with(left),
-                    "one governed digest domain prefixes another",
-                );
-            }
-        }
+    fn a_qualified_digest_with_no_qualifiers_is_the_plain_digest() {
+        let algorithm = DigestAlgorithm::GOVERNED;
+        assert_eq!(
+            algorithm.digest_qualified(b"tiler.a\0", &[], b"payload"),
+            algorithm.digest(b"tiler.a\0", b"payload"),
+        );
+    }
+
+    /// A qualifier separates two subjects that share a domain and a body.
+    ///
+    /// This is the property the qualified form exists for: a section digest
+    /// binds its purpose so that two sections of different purposes carrying
+    /// equal bytes do not share one content address once the digest is lifted
+    /// out of the envelope that distinguished them positionally.
+    #[test]
+    fn a_qualifier_separates_two_subjects_sharing_a_domain_and_a_body() {
+        let algorithm = DigestAlgorithm::GOVERNED;
+        assert_ne!(
+            algorithm.digest_qualified(b"tiler.a\0", &[&[0x01]], b"payload"),
+            algorithm.digest_qualified(b"tiler.a\0", &[&[0x02]], b"payload"),
+        );
     }
 
     #[test]
@@ -310,8 +366,8 @@ mod tests {
 
     /// The two message lengths this workspace actually digests.
     ///
-    /// **These are measured, not chosen.** Instrumenting [`digest_parts`] to
-    /// print its total input length and running the two suites that reach it
+    /// **These are measured, not chosen.** Instrumenting the algorithm to print
+    /// its total input length and running the two suites that reach it
     /// gave 17,914 calls from `tiler-artifact` and 1,546 from `tiler-cache`,
     /// and the two populations barely overlap:
     ///
@@ -328,10 +384,18 @@ mod tests {
     /// about the other, which is why both lengths are reported here.
     ///
     /// One figure this corrects: the manifest is **18,013 bytes**, not the
-    /// 25,000 that `codec/tests.rs` records in
+    /// 25,000 that `tiler-artifact`'s `codec/tests.rs` records in
     /// `single_byte_corruptions_are_rejected`. The 26 KB that other tickets
     /// cite is the *envelope*, which the same instrumentation saw at 26,169
     /// bytes; the manifest is its interior and is smaller.
+    ///
+    /// The counts predate [ADR 0104](../../../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md),
+    /// which added one short call per coverage record from `tiler-ir` and made
+    /// every artifact-side message shorter. The lengths are kept because they
+    /// are what the throughput report is comparable against; the third
+    /// population `tiler-ir` now contributes is one 400-to-1,200-byte graph
+    /// identity per record, which sits inside the cache path's regime rather
+    /// than opening a new one.
     const MEASURED_LENGTHS: [(usize, &str); 3] = [
         (36, "tiler-cache subject key"),
         (8_122, "tiler-artifact section digest"),
@@ -355,7 +419,7 @@ mod tests {
     /// Release matters — workspace crates build at `opt-level = 0` by default:
     ///
     /// ```text
-    /// cargo nextest run --release -p tiler-artifact -E 'test(digest_throughput)' --no-capture
+    /// cargo nextest run --release -p tiler-digest -E 'test(digest_throughput)' --no-capture
     /// ```
     #[test]
     fn digest_throughput_by_message_length() {
@@ -390,11 +454,11 @@ mod tests {
     /// nothing. Record it with `samply`:
     ///
     /// ```text
-    /// CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --tests -p tiler-artifact
+    /// CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --tests -p tiler-digest
     /// TILER_PROFILE_SECONDS=20 samply record --save-only --unstable-presymbolicate \
     ///     --rate 4000 -o digest.profile.json.gz \
-    ///     -- target/release/deps/tiler_artifact-<hash> \
-    ///        --ignored --exact program::codec::digest::tests::digest_profile_loop --nocapture
+    ///     -- target/release/deps/tiler_digest-<hash> \
+    ///        --ignored --exact tests::digest_profile_loop --nocapture
     /// ```
     ///
     /// `CARGO_PROFILE_RELEASE_DEBUG=true` is required — the release profile

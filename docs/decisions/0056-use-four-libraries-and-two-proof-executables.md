@@ -49,6 +49,19 @@ created for the first proof.
 - Cargo mechanically checks the compiler/runtime and target-neutral boundaries
   that the proof is meant to validate.
 - Package count remains smaller than the mature conceptual architecture.
+  **Note, 2026-08-06:** the count is superseded again, and this record's own
+  next bullet is the clause that admitted the change. [ADR
+  0104](0104-fold-the-per-record-graph-identity-as-a-digest.md) splits the
+  governed content digest out of `tiler-artifact` into a new bottom crate,
+  `tiler-digest`, making it the workspace's twelfth library. `tiler-ir` needed
+  the one governed algorithm to name a bounded-width graph reference per
+  coverage record — the difference between kernel-program identity growing
+  quadratically and linearly in operation count — and it sits below
+  `tiler-artifact`, so the reachability could not be resolved by moving the
+  consumer the way [ADR 0082](0082-admit-tiler-cache-as-the-expansion-cache-owner.md)
+  did. `docs/architecture.md` holds the live packaging profile;
+  `crates/tiler/tests/workspace_population.rs` is what makes a stale count fail
+  rather than merely go unread.
 - All APIs remain explicitly unstable; later component splits may preserve
   source compatibility through re-exports when evidence justifies them.
 - `tiler-artifact` may use lockstep internal IR types during the prototype but

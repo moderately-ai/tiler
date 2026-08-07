@@ -63,10 +63,10 @@ use super::super::{
     VerifiedArtifactProgram,
 };
 use super::decode::{Cursor, decode, parse_dependencies, parse_expression_arena};
-use super::digest::{DIGEST_BYTES, DigestAlgorithm};
 use super::encode::{
-    ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA,
-    encode, encode_with_identity, envelope_digest, identity_digest, matches_canonical_encoding,
+    ENVELOPE_DIGEST_DOMAIN, ENVELOPE_FORMAT, HEADER_BYTES, IDENTITY_DIGEST_DOMAIN, MAGIC,
+    MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA, SECTION_DIGEST_DOMAIN, encode,
+    encode_with_identity, envelope_digest, identity_digest, matches_canonical_encoding,
     section_digest,
 };
 use super::error::{
@@ -81,6 +81,7 @@ use super::payload::{
     PayloadPlatform, PayloadProvenance, PayloadSdkIdentity, PayloadTargetObligation, ToolComponent,
     decode_metadata,
 };
+use tiler_digest::{DIGEST_BYTES, DigestAlgorithm};
 
 // -------------------------------------------------------------------------
 // Test-local helpers
@@ -116,6 +117,50 @@ fn reseal(bytes: &mut [u8]) {
     let manifest = bytes[HEADER_BYTES..HEADER_BYTES + manifest_len].to_vec();
     let digest = DigestAlgorithm::GOVERNED.digest(MANIFEST_DIGEST_DOMAIN, &manifest);
     bytes[MANIFEST_DIGEST_AT..MANIFEST_DIGEST_AT + 32].copy_from_slice(digest.as_bytes());
+}
+
+/// The separator is a prefix, so separation rests on the domains themselves.
+///
+/// `digest(domain, body)` hashes `domain || body`, which distinguishes two
+/// subjects only when no admitted domain is a prefix of another — otherwise a
+/// longer domain and a shorter one with leading body bytes would collide. Every
+/// governed domain is a fixed constant of a crate that admits it, so the
+/// property is checkable rather than assumed, and a new domain that violates it
+/// fails a test instead of silently merging two subjects.
+///
+/// **This test covers the envelope's four domains and not every domain the
+/// workspace admits.** The property is global: one algorithm hashes the
+/// envelope, the proof sidecar, and the shared IR's layered identities in one
+/// process, so a domain added to any of them could collide with one in another,
+/// and a check confined to four would report separation it had not established.
+/// `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another`
+/// checks the union of this crate's eight and is the authority for the property;
+/// this test is the envelope-local half. `tiler-ir`'s coverage-graph domain
+/// opens `tiler.ir.` where all eight of these open `tiler.artifact-`, so no
+/// prefix relation between the two crates' sets is expressible; that argument is
+/// what stands in for a check neither crate can hold, since neither depends on
+/// the other. A fifth envelope domain must be added to **both** checks here, and
+/// `docs/artifact-abi.md` records the union obligation normatively.
+///
+/// It lives beside the codec rather than with the algorithm because a domain
+/// belongs to the authority that decides what it names: `tiler-digest` owns the
+/// algorithm and deliberately knows none of the domains it is called with.
+#[test]
+fn no_governed_domain_is_a_prefix_of_another() {
+    let domains = [
+        MANIFEST_DIGEST_DOMAIN,
+        SECTION_DIGEST_DOMAIN,
+        ENVELOPE_DIGEST_DOMAIN,
+        IDENTITY_DIGEST_DOMAIN,
+    ];
+    for (index, left) in domains.iter().enumerate() {
+        for right in domains.iter().skip(index + 1) {
+            assert!(
+                !left.starts_with(right) && !right.starts_with(left),
+                "one governed digest domain prefixes another",
+            );
+        }
+    }
 }
 
 /// Returns the absolute offset of one unique byte pattern in the manifest.

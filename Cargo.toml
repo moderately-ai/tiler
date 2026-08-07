@@ -5,6 +5,7 @@ members = [
     "crates/tiler-build",
     "crates/tiler-cache",
     "crates/tiler-compiler",
+    "crates/tiler-digest",
     "crates/tiler-ir",
     "crates/tiler-macros",
     "crates/tiler-metal",
@@ -35,11 +36,12 @@ metal = "0.33.0"
 num-bigint = "0.4.6"
 num-integer = "0.1.46"
 num-traits = "0.2.19"
-# The governed artifact digest. Hand-rolling SHA-256 was a mistake: the version
-# it replaced ran at 53 MiB/s because a `[u32; 8]` rotate silently became a
-# generic slice rotation, and this crate cannot reach the ARMv8 crypto
-# instructions `sha2` selects at runtime, because workspace policy forbids
-# unsafe code. Bytes are identical by specification and pinned by test.
+# The implementation behind the governed digest, reached by `tiler-digest` and
+# by nothing else. Hand-rolling SHA-256 was a mistake: the version it replaced
+# ran at 53 MiB/s because a `[u32; 8]` rotate silently became a generic slice
+# rotation, and a workspace crate cannot reach the ARMv8 crypto instructions
+# `sha2` selects at runtime, because workspace policy forbids unsafe code. Bytes
+# are identical by specification and pinned by test.
 sha2 = "0.11.0"
 # `tiler` sorts here and is deliberately absent. It is the consumer-facing
 # facade, so nothing in this workspace may depend on it, and an entry here would
@@ -49,6 +51,7 @@ tiler-artifact = { path = "crates/tiler-artifact" }
 tiler-build = { path = "crates/tiler-build" }
 tiler-cache = { path = "crates/tiler-cache" }
 tiler-compiler = { path = "crates/tiler-compiler" }
+tiler-digest = { path = "crates/tiler-digest" }
 tiler-ir = { path = "crates/tiler-ir" }
 tiler-macros = { path = "crates/tiler-macros" }
 tiler-metal = { path = "crates/tiler-metal" }
