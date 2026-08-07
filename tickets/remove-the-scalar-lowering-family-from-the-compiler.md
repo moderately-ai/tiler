@@ -1,7 +1,7 @@
 ---
 id: remove-the-scalar-lowering-family-from-the-compiler
 title: Remove the scalar-lowering family from the compiler
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [accept-adr-0105-retire-the-scalar-lowering-seam, resolve-or-retire-the-scalar-lowering-provider-seam, land-the-scalar-lowering-seam-retirement-adr]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/optimizer, contracts/numerics, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, extension-seams]
-claimed_from: todo
-assignee: agent-scalar-removal
-lease_expires_at: 1786068414
 ---
 ## User-visible outcome
 
