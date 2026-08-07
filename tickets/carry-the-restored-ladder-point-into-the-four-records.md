@@ -1,7 +1,7 @@
 ---
 id: carry-the-restored-ladder-point-into-the-four-records
 title: Carry the restored ladder point into the four records the explain-ceiling fix could not edit
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [refuse-nothing-legal-on-the-explain-detail-ceiling, carry-the-widened-ladders-corrections-into-the-four-records, region-expansion-exhaustion-loses-the-only-feasible-plan]
@@ -9,6 +9,9 @@ scopes: [research/artifacts, contracts/decisions, contracts/artifacts, contracts
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, measurement]
+claimed_from: todo
+assignee: agent-orch-docs
+lease_expires_at: 1786075458
 ---
 ## User-visible outcome
 
