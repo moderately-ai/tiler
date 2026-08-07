@@ -2082,4 +2082,67 @@ mod tests {
             Err(TypeIdentityError::TooManyPayloadBytes)
         );
     }
+
+    /// The component-shape encoding is injective over both of its inhabitants.
+    ///
+    /// **Exhaustive finite evidence.** `EncodedComponentShape` has two variants
+    /// and its payload, `ParameterIndexMap`, has one inhabitant, so the domain
+    /// is exactly two values and both are enumerated.
+    ///
+    /// The widths differ — one byte for the logical-value relation, two for the
+    /// parameter map — so the composite relies on the leading tag rather than on
+    /// a fixed width, and that is what the collision check confirms is doing the
+    /// work. `encoded_len` is checked against the bytes actually written, so the
+    /// length predictor that sizes the enclosing declaration cannot drift from
+    /// the encoder it predicts.
+    #[test]
+    fn the_component_shape_encoding_is_injective_over_its_whole_domain() {
+        const SHAPES: [EncodedComponentShape; 2] = [
+            EncodedComponentShape::LogicalValue,
+            EncodedComponentShape::ParameterMap(ParameterIndexMap(
+                ParameterIndexMapKind::PerTensor,
+            )),
+        ];
+
+        assert_eq!(SHAPES.len(), 2);
+        let mut encodings: Vec<Vec<u8>> = Vec::new();
+        for shape in &SHAPES {
+            let mut bytes = Vec::new();
+            shape.encode(&mut bytes);
+            assert_eq!(
+                bytes.len(),
+                shape.encoded_len(),
+                "{shape:?} wrote a different width than its predictor states"
+            );
+            assert!(
+                !encodings.contains(&bytes),
+                "{shape:?} shares an encoding with an earlier component shape"
+            );
+            encodings.push(bytes);
+        }
+        assert_eq!(encodings.len(), SHAPES.len());
+    }
+
+    /// The parameter-map encoding is injective over its one inhabitant.
+    ///
+    /// Exhaustive finite evidence over a domain of size one. A one-value domain
+    /// cannot collide, so what this actually pins is the *population*: the
+    /// assertion below is what fails, deliberately, on the day a second map form
+    /// lands and the constant byte stops being a function of the value.
+    #[test]
+    fn the_parameter_index_map_encoding_is_injective_over_its_whole_domain() {
+        const MAPS: [ParameterIndexMapKind; std::mem::variant_count::<ParameterIndexMapKind>()] =
+            [ParameterIndexMapKind::PerTensor];
+
+        assert_eq!(MAPS.len(), 1);
+        let mut encodings: Vec<Vec<u8>> = Vec::new();
+        for kind in MAPS {
+            let mut bytes = Vec::new();
+            ParameterIndexMap(kind.clone()).encode(&mut bytes);
+            assert_eq!(bytes.len(), ParameterIndexMap::encoded_len());
+            assert!(!encodings.contains(&bytes), "{kind:?} collided");
+            encodings.push(bytes);
+        }
+        assert_eq!(encodings.len(), MAPS.len());
+    }
 }

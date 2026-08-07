@@ -2892,6 +2892,36 @@ mod tests {
     };
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    /// The static-evidence-authority encoding is injective over both inhabitants.
+    ///
+    /// **Exhaustive finite evidence.** A two-value closed vocabulary, both
+    /// enumerated. The authority reaches the registry snapshot identity, so a
+    /// collision would let a registry that carries the standard semantics'
+    /// static evidence share identity with one that carries none — two different
+    /// answers to what a downstream check may assume without re-deriving.
+    #[test]
+    fn the_static_evidence_authority_encoding_is_injective_over_its_whole_domain() {
+        const AUTHORITIES: [StaticEvidenceAuthority;
+            std::mem::variant_count::<StaticEvidenceAuthority>()] = [
+            StaticEvidenceAuthority::None,
+            StaticEvidenceAuthority::StandardSemanticsV7,
+        ];
+
+        assert_eq!(AUTHORITIES.len(), 2);
+        let mut encodings: Vec<Vec<u8>> = Vec::new();
+        for authority in AUTHORITIES {
+            let mut bytes = Vec::new();
+            authority.encode(&mut bytes);
+            assert_eq!(bytes.len(), 1, "{authority:?} changed width");
+            assert!(
+                !encodings.contains(&bytes),
+                "{authority:?} shares an encoding with an earlier authority"
+            );
+            encodings.push(bytes);
+        }
+        assert_eq!(encodings.len(), AUTHORITIES.len());
+    }
+
     #[test]
     fn standard_algebraic_capabilities_are_operation_owned_and_conservative() {
         let registry = FrozenSemanticRegistry::standard().unwrap();

@@ -5,6 +5,7 @@
 //! itself already accepted. Nothing here asserts that a kernel computes the
 //! operations its stage covers; that remains compiler-owned evidence.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tiler_ir::identity::{push_len, push_slice};
@@ -27,19 +28,21 @@ use tiler_ir::program::abi::{
     TargetPropertyRequirementRelation,
 };
 use tiler_ir::program::{
-    AllocationOwnership, AllocationSpec, ByteWindow, CoveredOccurrence, KernelProgramBuilder,
-    MaterializedComponentSpec, MaterializedOrigin, MaterializedValueSpec, MemorySpace,
-    RoutingCommitState, RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch,
-    StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
+    AllocationOwnership, AllocationSpec, BitPackedEncoding, ByteWindow, CoveredOccurrence,
+    KernelProgramBuilder, MaterializedComponentSpec, MaterializedOrigin, MaterializedValueSpec,
+    MemorySpace, PackedBitOrder, PackedTailRule, RoutingCommitState, RoutingCommitTransition,
+    StageAccess, StageAccessMode, StageLaunch, StorageEncoding, StorageScalar, ValueRole,
+    VerifiedKernelProgram, ViewId,
 };
 use tiler_ir::schedule::{
     Access, AccessMode, ApproximationEnvelope, ArithmeticType, Bf16NumericalContractKey,
     BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder, ExceptionalValueAssumption,
-    ExecutionBinding, F32NumericalContractKey, FlushedZeroSign, InputOrdinal, KernelSchedule,
-    LaunchPlan, LogicalAccess, MaterializationRounding, NumericalPermission, NumericalRealization,
-    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder,
-    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
-    ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    ExecutionBinding, F32NumericalContractKey, FencedSpaces, FlushedZeroSign, InputOrdinal,
+    KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding, MemoryOrdering,
+    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, PointwiseBf16ExpressionBuilder, PointwiseF32ExpressionBuilder,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode,
+    SynchronizationKind, SynchronizationScope, SynchronizationSubject, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, Bf16, Bf16Add, Bf16Constant, Bf16Multiply,
@@ -62,7 +65,10 @@ use tiler_ir::shape::{Axis, Extent, Shape};
 use tiler_ir::numerics::{CANONICAL_DIMENSIONS, DIMENSION_COUNT};
 
 use super::BackendFeatureRequirement;
-use super::model::{ARTIFACT_DOMAIN_LABEL, LENGTH_BYTES, STAGE_KEY_DOMAIN, framed, stage_key};
+use super::model::{
+    ARTIFACT_DOMAIN_LABEL, LENGTH_BYTES, STAGE_KEY_DOMAIN, framed, push_storage_encoding,
+    push_synchronization, stage_key,
+};
 use super::{
     AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiFactBinder, AbiFacts, AbiRoot, AbiType,
     AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
@@ -5360,4 +5366,202 @@ fn a_route_requirement_needs_a_variant_this_builder_minted() {
     // The handle is good against the builder that minted it, which is what makes
     // the refusal above about ownership rather than about the handle's shape.
     assert!(first.require_route(foreign, route_resource(32)).is_ok());
+}
+
+// -------------------------------------------------------------------------
+// Exhaustive injectivity of the finite-domain identity encoders
+// -------------------------------------------------------------------------
+//
+// An encoder is injective when no two distinct inputs produce the same bytes,
+// and a collision in artifact identity is two different packaged programs
+// answering to one name — a cache hit on the wrong artifact, not a miss. Most
+// encoders here carry a `u32` ordinal, a slice, or a string, so their domains
+// cannot be walked and their injectivity rests on the framing argument in
+// `tiler_ir::identity`. The two below can be walked, and walking them turns the
+// claim into exhaustive finite evidence: every pair is compared because every
+// value is.
+//
+// The enumerations are sized by `variant_count`, so a vocabulary widened in
+// `tiler-ir` is a build error here. That guard is why enumerating these
+// vocabularies a second time on this side of the crate boundary is safe: the
+// two lists cannot silently disagree about how large the domain is, because
+// neither can silently stop covering it.
+
+/// Every construct class an artifact's synchronization requirement can name.
+const SYNCHRONIZATION_KINDS: [SynchronizationKind;
+    std::mem::variant_count::<SynchronizationKind>()] = [
+    SynchronizationKind::ControlBarrier,
+    SynchronizationKind::AsynchronousCopy,
+    SynchronizationKind::SplitPhaseBarrier,
+    SynchronizationKind::Collective,
+    SynchronizationKind::Atomic,
+    SynchronizationKind::InterDispatchDependency,
+];
+
+/// Every invocation set an arrival or a publication can range over.
+const SYNCHRONIZATION_SCOPES: [SynchronizationScope;
+    std::mem::variant_count::<SynchronizationScope>()] = [
+    SynchronizationScope::Subgroup,
+    SynchronizationScope::Workgroup,
+    SynchronizationScope::Device,
+];
+
+/// Every ordering a synchronization requirement can establish.
+const MEMORY_ORDERINGS: [MemoryOrdering; std::mem::variant_count::<MemoryOrdering>()] = [
+    MemoryOrdering::Relaxed,
+    MemoryOrdering::AcquireRelease,
+    MemoryOrdering::SequentiallyConsistent,
+];
+
+/// Every fence a synchronization requirement can name.
+///
+/// `FencedSpaces` is a struct, so `variant_count` does not apply; this is the
+/// product of `bool`'s two inhabitants over its two fields, exhaustive by the
+/// type's definition.
+const FENCED_SPACES: [FencedSpaces; 4] = [
+    FencedSpaces {
+        workgroup: false,
+        device: false,
+    },
+    FencedSpaces {
+        workgroup: false,
+        device: true,
+    },
+    FencedSpaces {
+        workgroup: true,
+        device: false,
+    },
+    FencedSpaces {
+        workgroup: true,
+        device: true,
+    },
+];
+
+/// The artifact synchronization encoder is injective over all 649 inhabitants.
+///
+/// **Exhaustive finite evidence.** The domain is `Option<SynchronizationSubject>`:
+/// the product of five closed vocabularies — 6 construct kinds, 3 arrival
+/// scopes, 3 publication scopes, 4 fences, 3 orderings — plus the stated
+/// absence. The subject's fields are independent and carry no constructor
+/// invariant, so `6 * 3 * 3 * 4 * 3 + 1 = 649` is the inhabitant count and not
+/// an estimate of it.
+///
+/// The three component tag tables are separately round-tripped elsewhere in this
+/// crate, and that is a strictly weaker claim than this one: three injective
+/// component maps can still compose into a non-injective record if a field is
+/// dropped or written twice. Only the product distinguishes those, which is why
+/// it is enumerated rather than inferred.
+#[test]
+fn the_artifact_synchronization_encoding_is_injective_over_its_whole_domain() {
+    const POPULATION: usize = 1 + SYNCHRONIZATION_KINDS.len()
+        * SYNCHRONIZATION_SCOPES.len()
+        * SYNCHRONIZATION_SCOPES.len()
+        * FENCED_SPACES.len()
+        * MEMORY_ORDERINGS.len();
+
+    let mut subjects: Vec<Option<SynchronizationSubject>> = vec![None];
+    for kind in SYNCHRONIZATION_KINDS {
+        for execution_scope in SYNCHRONIZATION_SCOPES {
+            for visibility_scope in SYNCHRONIZATION_SCOPES {
+                for fenced_spaces in FENCED_SPACES {
+                    for ordering in MEMORY_ORDERINGS {
+                        subjects.push(Some(SynchronizationSubject {
+                            kind,
+                            execution_scope,
+                            visibility_scope,
+                            fenced_spaces,
+                            ordering,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    assert_eq!(subjects.len(), POPULATION);
+    assert_eq!(
+        POPULATION, 649,
+        "the subject domain changed size; the exhaustive claim is about whatever it is now, \
+         so restate it deliberately"
+    );
+
+    let mut seen: HashMap<Vec<u8>, Option<SynchronizationSubject>> =
+        HashMap::with_capacity(POPULATION);
+    for subject in subjects {
+        let mut bytes = Vec::new();
+        push_synchronization(&mut bytes, subject);
+        // One presence tag, and six subject bytes when present. The width is
+        // variable, so what keeps the record unambiguous is the presence tag —
+        // and the collision check below is what confirms it is doing that work.
+        let expected = if subject.is_some() { 7 } else { 1 };
+        assert_eq!(bytes.len(), expected, "{subject:?} changed width");
+        if let Some(previous) = seen.insert(bytes, subject) {
+            panic!("{subject:?} and {previous:?} share one encoding");
+        }
+    }
+    assert_eq!(seen.len(), POPULATION);
+}
+
+/// The artifact storage-encoding encoder is injective over every constructible value.
+///
+/// **Exhaustive finite evidence over the constructible domain.**
+/// `BitPackedEncoding` has private fields and one constructor, which admits only
+/// element widths below eight that divide eight. The sweep offers all 512
+/// `(u8, PackedBitOrder, PackedTailRule)` candidates to that constructor and
+/// enumerates the survivors, so the population is *derived* from the admission
+/// rule instead of asserted alongside it — a widened rule grows this domain
+/// rather than leaving new values untested.
+///
+/// A second, independent copy of `tiler-ir`'s program encoder, so it earns a
+/// second proof: this crate's copy inlines its own `PackedBitOrder` and
+/// `PackedTailRule` tables with no shared tag function and no decode inverse, so
+/// nothing about the other copy's bytes constrains these.
+#[test]
+fn the_artifact_storage_encoding_is_injective_over_its_constructible_domain() {
+    const BIT_ORDERS: [PackedBitOrder; std::mem::variant_count::<PackedBitOrder>()] = [
+        PackedBitOrder::LeastSignificantElementFirst,
+        PackedBitOrder::MostSignificantElementFirst,
+    ];
+    const TAIL_RULES: [PackedTailRule; std::mem::variant_count::<PackedTailRule>()] =
+        [PackedTailRule::Zero];
+
+    let mut candidates = 0_usize;
+    let mut encodings = vec![StorageEncoding::Unpacked];
+    for element_bits in 0..=u8::MAX {
+        for bit_order in BIT_ORDERS {
+            for tail in TAIL_RULES {
+                candidates += 1;
+                if let Some(packed) = BitPackedEncoding::new(element_bits, bit_order, tail) {
+                    encodings.push(StorageEncoding::BitPacked(packed));
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        candidates,
+        256 * BIT_ORDERS.len() * TAIL_RULES.len(),
+        "the candidate sweep did not cover the whole field product"
+    );
+    assert_eq!(
+        encodings.len(),
+        1 + 3 * BIT_ORDERS.len() * TAIL_RULES.len(),
+        "the constructible domain changed size; restate the claim deliberately"
+    );
+    assert_eq!(encodings.len(), 7);
+
+    let mut seen: HashMap<Vec<u8>, StorageEncoding> = HashMap::with_capacity(encodings.len());
+    for encoding in encodings {
+        let mut bytes = Vec::new();
+        push_storage_encoding(&mut bytes, encoding);
+        let expected = match encoding {
+            StorageEncoding::Unpacked => 1,
+            StorageEncoding::BitPacked(_) => 4,
+        };
+        assert_eq!(bytes.len(), expected, "{encoding:?} changed width");
+        if let Some(previous) = seen.insert(bytes, encoding) {
+            panic!("{encoding:?} and {previous:?} share one encoding");
+        }
+    }
+    assert_eq!(seen.len(), 7);
 }

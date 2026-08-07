@@ -1,5 +1,19 @@
 #![feature(generic_const_parameter_types)]
 #![feature(min_adt_const_params)]
+// `variant_count` is what makes an exhaustive-injectivity test's domain
+// enumeration a *proof* rather than a sample: it sizes the enumerating array
+// from the enum itself, so a variant added to a vocabulary and not to the
+// enumeration is a build error instead of a population that silently shrinks
+// while the test keeps reporting no collision. Every other mechanism available
+// here — a hand-written length, a successor chain, a wildcard-free match — can
+// be satisfied by an enumeration that has stopped covering its domain. The same
+// reasoning admitted it to `tiler-metal`; see that crate's `lib.rs`.
+//
+// Gated on `test` because the enumerations are test-local: the vocabularies
+// themselves are public but the *lists* of their inhabitants are not, so
+// declaring the feature unconditionally would widen this crate's nightly
+// surface for nothing and warn as an unused feature on every non-test build.
+#![cfg_attr(test, feature(variant_count))]
 #![allow(incomplete_features)]
 //! Target-independent representations and verifiers for Tiler.
 //!
@@ -29,6 +43,10 @@
 //! ```
 
 mod convenience;
+
+/// Counted enumerations shared by this crate's exhaustive-injectivity tests.
+#[cfg(test)]
+mod exhaustive_injectivity;
 
 /// Canonical byte-encoding primitives shared by every identity derivation.
 pub mod identity;
