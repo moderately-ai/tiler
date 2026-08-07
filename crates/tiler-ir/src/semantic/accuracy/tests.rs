@@ -103,6 +103,108 @@ fn exact_rationals_normalize_to_one_spelling() {
     );
 }
 
+/// Reducing by a shift finds the divisor the general algorithm finds.
+///
+/// A power-of-two denominator is the shape a certified enclosure produces at
+/// every outward rounding, and its reduction is a trailing-zero count rather than
+/// a greatest-common-divisor loop. The whole population is enumerated and both
+/// answers are counted, so a shift that reduced nothing could not look like
+/// agreement. The oracle divides by `num_integer::Integer::gcd` directly, so it
+/// is the general algorithm rather than a second copy of the shift.
+#[test]
+fn a_dyadic_denominator_reduces_by_the_general_divisor() {
+    use num_bigint::BigUint;
+    use num_integer::Integer;
+
+    const MAGNITUDES: i128 = 192;
+    const EXPONENTS: u32 = 12;
+
+    let one = BigUint::from(1_u32);
+    let mut checked = 0_usize;
+    let mut shared_a_factor = 0_usize;
+    for magnitude in 1..=MAGNITUDES {
+        for exponent in 0..=EXPONENTS {
+            for sign in [1_i128, -1] {
+                let reduced = ExactRational::from_integer(sign * magnitude).scale_by_power_of_two(
+                    -i32::try_from(exponent).expect("a bounded exponent fits i32"),
+                );
+                let numerator =
+                    BigUint::from(u128::try_from(magnitude).expect("strictly positive"));
+                let denominator = &one << exponent;
+                let divisor = numerator.gcd(&denominator);
+                let expected = ExactRational::from_sign_magnitude_ratio(
+                    if sign < 0 {
+                        ExactSign::Negative
+                    } else {
+                        ExactSign::Positive
+                    },
+                    &(&numerator / &divisor).to_bytes_be(),
+                    &(&denominator / &divisor).to_bytes_be(),
+                )
+                .expect("dividing out the greatest common divisor leaves lowest terms");
+                assert_eq!(reduced, expected, "{sign} * {magnitude} / 2^{exponent}");
+                checked += 1;
+                if divisor != one {
+                    shared_a_factor += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(
+        checked,
+        usize::try_from(MAGNITUDES).expect("bounded") * (EXPONENTS as usize + 1) * 2
+    );
+    // A factor is shared exactly when the magnitude is even and the exponent is
+    // at least one: 96 even magnitudes, 12 nonzero exponents, both signs.
+    assert_eq!(shared_a_factor, 96 * 12 * 2);
+}
+
+/// The widest dyadic pair the decode boundary admits is decided, both ways.
+///
+/// [`MAX_EXACT_RATIONAL_MAGNITUDE_BYTES`] is what an outside caller may present,
+/// so this is the boundary's own worst case rather than a convenient one. The odd
+/// numerator is coprime with every power of two and is admitted; the same
+/// magnitude made even shares the denominator's factor and is refused, which is
+/// the invariant that keeps one number from acquiring two spellings.
+#[test]
+fn the_widest_dyadic_decode_is_decided_both_ways() {
+    let mut denominator = vec![0_u8; MAX_EXACT_RATIONAL_MAGNITUDE_BYTES];
+    denominator[0] = 1;
+
+    // Compared as a boolean rather than with `assert_eq!` throughout, because a
+    // mismatch on four-kilobyte magnitudes would otherwise bury the reason under
+    // the operands.
+    let odd = vec![0xff_u8; MAX_EXACT_RATIONAL_MAGNITUDE_BYTES];
+    let admitted =
+        ExactRational::from_sign_magnitude_ratio(ExactSign::Positive, &odd, &denominator)
+            .expect("an odd magnitude is coprime with a power of two");
+    assert!(
+        admitted.to_sign_magnitude_ratio()
+            == (ExactSign::Positive, odd.clone(), denominator.clone()),
+        "a pair already in lowest terms must decode unchanged"
+    );
+
+    let mut even = odd;
+    let last = even.len() - 1;
+    even[last] = 0xfe;
+    match ExactRational::from_sign_magnitude_ratio(ExactSign::Positive, &even, &denominator) {
+        Err(error) => assert_eq!(error, ExactRationalError::NotInLowestTerms),
+        Ok(_) => panic!("an even magnitude shares the denominator's factor of two"),
+    }
+
+    // Zero is the one magnitude whose divisor is the denominator itself, which no
+    // shift expresses, so the reduction answers it apart. Two rules refuse this
+    // pair — that answer, and the decoder's own zero rule below it — and breaking
+    // either alone still leaves it refused, so this holds the pair rather than
+    // one site.
+    assert_eq!(
+        ExactRational::from_sign_magnitude_ratio(ExactSign::Zero, &[], &[2])
+            .expect_err("zero over two is a second spelling of zero"),
+        ExactRationalError::NotInLowestTerms
+    );
+    assert!(ExactRational::from_sign_magnitude_ratio(ExactSign::Zero, &[], &[1]).is_ok());
+}
+
 /// A second spelling of one number is refused on decode, not renormalized.
 #[test]
 fn a_non_lowest_terms_decode_is_refused() {
