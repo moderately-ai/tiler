@@ -1,7 +1,7 @@
 ---
 id: carry-the-device-executed-value-proof-into-the-conformance-crate
 title: Carry the device-executed value proof into the conformance crate
-status: in-progress
+status: done
 priority: p1
 dependencies: [conform-the-bf16-vertical-end-to-end]
 related: [admit-the-conformance-crate-to-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access, publish-an-l3-contraction-cell-through-the-accepted-route, integrate-the-contraction-vertical-into-the-runtime, survey-what-belongs-in-the-conformance-crate]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance, implementation/runtime, implementation/work
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, conformance, runtime, migration]
-claimed_from: todo
-assignee: agent-value-proof
-lease_expires_at: 1786125786
 ---
 ## User-visible outcome
 
@@ -71,3 +68,27 @@ Landed on `tkt/carry-the-device-executed-value-proof-into-the-conformance-crate`
 **The loader fixture cannot be relocated to `crates/tiler-runtime/tests/`.** That module compiles programs through `tiler_compiler::session::compile` (`compile_under`, `Compilation`, `PlanAlternative`, `plan.delivered_realization()`) and reaches `tiler_build::realization::translate`, `tiler_metal::applicability`, and `metal::MTLCommandBufferStatus`. `crates/tiler-runtime/tests/identity_join/main.rs`'s `the_consumer_links_no_compiler_emitter_or_build_provider` reads `Cargo.lock` — which merges normal, build, and development edges into one list — and asserts `tiler-runtime`'s closure contains none of `FORBIDDEN_PACKAGES = ["tiler-build", "tiler-compiler", "tiler-cache", "tiler-metal", "tiler-metal-aot"]`. Adding four of those five as dev-dependencies turns that test red, and it is the negative the survey ticket recorded as only true where it sits. The fixture therefore stays in the prototype, where it still runs in the gate exactly as it does today, so no coverage was lost. A compiler-free rewrite onto `adapter_route/fixture.rs`'s existing assembler is possible and is a different ticket: it re-derives the fixture rather than relocating it, and several of its cases pin the *producer/runner* interface, which only means anything while both prototypes exist.
 
 **The envelope half is gated on an ambient input rather than on the producer.** The published base arrives as `TILER_CONFORMANCE_ARTIFACT_BASE`; absent, the runs report the artifact boundary as unavailable naming `cargo run -p tiler-prototype-compile -- --out <base>`, and `TILER_REQUIRE_METAL_CONFORMANCE` makes that a failure (both watched). So in `make full` the routed half reports unavailable and only the device-free half runs: the interface recognizers and their nine misses, the sidecar payload-length refusal, the routed dtype rows, the member/class/digest pins, the FIPS 180-4 vectors and the digest domain, and the retained comparison's perturbation. Producing the envelope in process would put the whole route into the gate and is reachable — this crate already declares the producer's entire dependency row and would add no dependency — but this ticket names that a second ticket and a scope not to pre-declare, so it was not taken.
+
+## Outcome — delivered 2026-08-07 at `0f948637`
+
+The migration is contained: `git diff --name-only 08b29a5d..HEAD` outside `crates/tiler-conformance/` and this ticket file is **empty**, verified by the coordinator. The crate went from 17 tests to 47.
+
+**Every claim `proof.rs` proves is re-proved, each verified executing** on macOS 27.0 `26A5388g` / Apple M4 Max / Apple9 / metal `32023.921`. The two that mattered most, because nothing else in the corpus holds them: the **only device observation of a permitted reassociated answer** — tree and split returning `0x3f800001` against the fold's `0x3f800000`, each held to its own published partition, with three wrong-but-permitted groupings refused — and the **only executed match against a retained device digest**, at `79810ce4…`. That digest pin was watched failing by perturbing a nibble, which failed the routed run and the source pin independently.
+
+**A large class of checks now runs on every host** that previously needed `cargo run`: refusal classification, boundary comparisons, interface recognizers, sidecar length, dtype rows and digest vectors are device-free and reach `make full` everywhere.
+
+**Tom's unsafe rule holds, checked by the coordinator rather than taken from the report.** `unsafe_code = "deny"` at the manifest, exactly two `unsafe` blocks, two named per-site `#[allow(unsafe_code, …)]` in `device_buffer.rs`, and **no crate-level allow anywhere**. The scanner's file floor rose 5 → 12 so it cannot pass by scanning a shrunken tree. The `f32` path is now *stronger* than the prototype's: `to_le_bytes` in safe code rather than a native-endian pointer copy, so a width can be perturbed without perturbing a raw-pointer copy — which is what keeps the composition perturbation expressible.
+
+**Pins unmoved** — `7a2bfe51…`, `8bdcde64…`, 65,294 byte-identical, with zero diff under `crates/tiler-build/`.
+
+### Two obligations not met, both for real reasons
+
+**The routed half is still gated on `TILER_CONFORMANCE_ARTIFACT_BASE`**, so in `make full` it reports the artifact boundary unavailable and only the device-free half runs. That is better than the prototype, where nothing ran under the gate at all, and it is not what the migration existed for. Producing the envelope in process needs **no new dependency** — the crate already declares the producer's whole row — so it is the call that is missing rather than the reach. The worker named it the single highest-value follow-up and correctly declined to take it as outcome expansion mid-migration: [`produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate`](produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate.md), p1.
+
+**The loader fixture cannot move, and this is a fact about the destination rather than a shortfall.** It compiles through `tiler_compiler::session::compile` and reaches `tiler_build::realization::translate`, `tiler_metal::applicability` and `metal`; `identity_join`'s `the_consumer_links_no_compiler_emitter_or_build_provider` reads `Cargo.lock` — which merges normal, build *and* development edges — and asserts the loader's closure contains none of those packages. The move needs four of the five forbidden packages as dev-dependencies and turns that test red. **It stays in the prototype, still running in the gate exactly as today, so no coverage was lost.** A compiler-free rewrite onto `adapter_route/fixture.rs`'s existing assembler is possible and is its own ticket.
+
+**The prototype was not deleted** — its retirement is a fork that is Tom's. The worker's input, recorded rather than acted on: the thin-driver option is now cheap, since the conformance crate holds all the machinery and the prototype's remaining unique value is that loader fixture.
+
+**A risk the migration created, filed rather than left implicit:** the crate now *restates* the workspace lint table rather than inheriting it, because a member cannot inherit and then relax one entry. Its lints can drift from the workspace's silently, and this is the first member where `AGENTS.md`'s "inspect `[lints]` changes" guidance has no fallback — [`stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace`](stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace.md).
+
+`make full` exit 0 on the branch (3,027 workspace tests) and again on the merged tree.
