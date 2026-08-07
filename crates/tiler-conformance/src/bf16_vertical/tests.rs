@@ -21,7 +21,7 @@ use super::{
     declared_expectations, declared_realization, emit_vertical, flush_moved_indices, operands,
     pack, preserved_expectations, realization_of, reference_bits, region_under, unpack,
 };
-use crate::measurement::{MeasuredHalf, REQUIRE_MEASUREMENT, measured_half};
+use crate::measurement::{measured_half, require_or_report};
 
 /// Corpus positions this file names, so a reordering is a failure rather than a
 /// silently different claim.
@@ -347,35 +347,6 @@ fn a_wrongly_derived_operand_width_changes_what_the_kernel_reads() {
     );
 }
 
-/// Reports the measured half's outcome and honours the require-measurement
-/// input.
-///
-/// Returns the observed encodings when the device ran. A skip is impossible:
-/// either the boundary is printed or the reason it does not exist is, and with
-/// `TILER_REQUIRE_METAL_CONFORMANCE` set the second is a failure.
-fn require_or_report(label: &str, outcome: MeasuredHalf) -> Option<Vec<u16>> {
-    match outcome {
-        MeasuredHalf::Ran { boundary, observed } => {
-            eprintln!("{label}: measured on this row:\n{boundary}");
-            Some(observed)
-        }
-        MeasuredHalf::Unavailable(reason) => {
-            assert!(
-                std::env::var_os(REQUIRE_MEASUREMENT).is_none(),
-                "{REQUIRE_MEASUREMENT} is set and the measured half is unavailable: {reason}",
-            );
-            eprintln!(
-                "{label}: MEASUREMENT BOUNDARY UNAVAILABLE — {reason}. The deterministic half \
-                 above ran; nothing here claims a device result.",
-            );
-            None
-        }
-        MeasuredHalf::Failed(detail) => {
-            panic!("{label}: the measured half reached its environment and refused: {detail}")
-        }
-    }
-}
-
 /// The vertical agrees with the oracle, element for element, on the row that ran.
 ///
 /// The one comparison this crate exists for. The device executes the emitted
@@ -532,9 +503,11 @@ fn the_unsafe_site_population_is_the_two_named_ones() {
     collect_rust_sources(&root, &mut files);
     files.sort();
     assert!(
-        files.len() >= 5,
+        files.len() >= 12,
         "the scan found {} source file(s), which is fewer than this crate has; a walk that \
-         stopped finding files would report an empty population as a clean one",
+         stopped finding files would report an empty population as a clean one. The floor rises \
+         with the crate rather than tracking it exactly, so adding a module is not an edit here \
+         and losing most of them still is.",
         files.len(),
     );
 

@@ -126,9 +126,13 @@
 //!
 //! | module | what it owns |
 //! | --- | --- |
-//! | `bf16_vertical` | the corpus, the semantic program, the scheduled region, emission, and the comparison |
+//! | `bf16_vertical` | the BF16 corpus, its semantic program, scheduled region, emission, and comparison |
+//! | `serial_sum` | the `f32` reduction vertical: the direct path, the retained portfolio, and the declared-grouping oracle |
+//! | `envelope` | the artifact-delivered route: interface, placement, fail-closed probes, and the retained-digest comparison |
+//! | `applicability` | whether this host may *offer* the profile it routes under, and the observation that is asked from |
+//! | `device_preflight` | every obligation a host discharges before a routing commit, and how each refusal is classified |
 //! | `measurement` | whether this host could measure, and the exact row a measured result is bounded to |
-//! | `dispatch` | preparing, encoding, submitting, and classifying one device dispatch (macOS only) |
+//! | `dispatch` | preparing, encoding, submitting, and classifying device dispatches (macOS only) |
 //! | `device_buffer` | the two unsafe sites, and nothing else (macOS only) |
 //!
 //! Every module is `#[cfg(test)]`, which is the honest shape of what this crate
@@ -141,13 +145,25 @@
 //! The Metal binding and the two unsafe sites carry a second gate,
 //! `cfg(target_os = "macos")`, which is what lets a non-Apple host build and
 //! run the deterministic half and report the measured half as unavailable
-//! rather than skip.
+//! rather than skip. **Only two modules carry that gate**, and the split is
+//! deliberate: every comparison, classification, and refusal a device merely
+//! supplies numbers to lives in a module compiled on every host, so the
+//! device-free half of each claim runs in the gate wherever the workspace's
+//! tests do rather than only on hardware.
 
+#[cfg(test)]
+mod applicability;
 #[cfg(test)]
 mod bf16_vertical;
 #[cfg(all(test, target_os = "macos"))]
 mod device_buffer;
+#[cfg(test)]
+mod device_preflight;
 #[cfg(all(test, target_os = "macos"))]
 mod dispatch;
 #[cfg(test)]
+mod envelope;
+#[cfg(test)]
 mod measurement;
+#[cfg(test)]
+mod serial_sum;
