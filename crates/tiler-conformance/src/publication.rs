@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(target_os = "macos"),
+    allow(
+        dead_code,
+        reason = "publishing a member emits MSL and invokes `metal` and `metallib`, so this module and its `proof` child are called only from `crate::envelope::apple` and are dead on every other host: the publication context and its two entry points, the per-member stage, the failure vocabulary, and the whole proof-case corpus, its operand tables, and its encoder. What a non-Apple host does hold this module to is `tests` — the published row count that keeps an artifact-derived shape distinguishable from this crate's own, and the removal that keeps a routed run from leaving its envelopes on disk — which is why the module is compiled everywhere rather than gated. Stated under `not(target_os = \"macos\")`, so an item nothing uses is still a red build on the host that publishes."
+    )
+)]
+
 //! Publishing, in this run, the envelopes [`crate::envelope`] then routes.
 //!
 //! # Why this exists, and what changed when it did

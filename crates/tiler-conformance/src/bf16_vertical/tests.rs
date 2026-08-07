@@ -29,6 +29,7 @@ use super::{
     unpack,
 };
 use crate::measurement::{measured_half, require_or_report};
+use crate::portability::collect_rust_sources;
 
 /// Corpus positions this file names, so a reordering is a failure rather than a
 /// silently different claim.
@@ -642,19 +643,6 @@ fn the_unsafe_site_population_is_the_two_named_ones() {
         allows, 2,
         "each unsafe site carries its own reasoned allow; found {allows}",
     );
-}
-
-/// Collects every `.rs` file beneath one directory.
-fn collect_rust_sources(directory: &Path, into: &mut Vec<std::path::PathBuf>) {
-    let entries = std::fs::read_dir(directory).expect("the crate's source directory is readable");
-    for entry in entries {
-        let path = entry.expect("a directory entry is readable").path();
-        if path.is_dir() {
-            collect_rust_sources(&path, into);
-        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
-            into.push(path);
-        }
-    }
 }
 
 /// Every corpus case is reachable by name, so an unnamed one cannot hide.

@@ -805,6 +805,18 @@ pub(crate) struct AlternativeRun {
     /// How many command encoders the submission carried, in execution order.
     pub(crate) encoders: usize,
     /// Bytes of `metallib` this alternative linked.
+    ///
+    /// Reported by the dispatch that linked it and summed into the measurement
+    /// boundary, both of which are `apple`'s, so on a host that links nothing
+    /// the field is written by nobody and read by nobody. It stays on the
+    /// struct so `AlternativeRun` means the same thing on both hosts.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(
+            dead_code,
+            reason = "the field is written and read only by `apple`, which a non-Apple host does not compile; stated per item because it is the whole of this module's non-Apple dead population, and stated under the negated predicate so a genuinely unread field is still a red build on the host that links"
+        )
+    )]
     pub(crate) metallib_bytes: usize,
 }
 

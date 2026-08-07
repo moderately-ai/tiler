@@ -146,6 +146,7 @@
 //! | `applicability` | whether this host may *offer* the profile it routes under, and the observation that is asked from |
 //! | `device_preflight` | every obligation a host discharges before a routing commit, and how each refusal is classified |
 //! | `measurement` | whether this host could measure, and the exact row a measured result is bounded to |
+//! | `portability` | the census that holds the non-Apple claim below to a population rather than to this paragraph |
 //! | `dispatch` | preparing, encoding, submitting, and classifying device dispatches (macOS only) |
 //! | `device_buffer` | the two unsafe sites, and nothing else (macOS only) |
 //!
@@ -159,11 +160,54 @@
 //! The Metal binding and the two unsafe sites carry a second gate,
 //! `cfg(target_os = "macos")`, which is what lets a non-Apple host build and
 //! run the deterministic half and report the measured half as unavailable
-//! rather than skip. **Only two modules carry that gate**, and the split is
-//! deliberate: every comparison, classification, and refusal a device merely
-//! supplies numbers to lives in a module compiled on every host, so the
-//! device-free half of each claim runs in the gate wherever the workspace's
-//! tests do rather than only on hardware.
+//! rather than skip. **Only two of the modules above carry that gate** —
+//! `dispatch` and `device_buffer` — and the split is deliberate: every
+//! comparison, classification, and refusal a device merely supplies numbers to
+//! lives in a module compiled on every host, so the device-free half of each
+//! claim runs in the gate wherever the workspace's tests do rather than only on
+//! hardware. Four *nested* modules carry it too — `envelope::apple`,
+//! `measurement::host`, `measurement::apple`, and `serial_sum::apple` — and
+//! each is paired with a `cfg(not(target_os = "macos"))` sibling of the same
+//! name, so what a non-Apple host loses there is the body of a device call and
+//! never the call itself.
+//!
+//! # That claim is checked rather than asserted
+//!
+//! It has failed twice without anything noticing, so it is worth being exact
+//! about which instrument covers which half.
+//!
+//! **That the crate compiles off Apple** is not observable from inside a
+//! running test, and the instrument is a cross-target build:
+//!
+//! ```sh
+//! cargo check   -p tiler-conformance --all-targets --target x86_64-unknown-linux-gnu
+//! cargo clippy  -p tiler-conformance --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+//! ```
+//!
+//! **It is deliberately not in `make full`**, and that is Tom's standing
+//! decision rather than an omission: the target is a 156 MB standard library
+//! that no host bootstrapped from `deps.sh` installs, and
+//! `declare-the-cross-compilation-targets-in-the-toolchain-manifest` parked
+//! taking it as a gate dependency. It is a manual check owned by whoever
+//! changes this crate, and it has to be re-run when a module is added, when an
+//! item's only caller moves behind the macOS predicate, or when the routed half
+//! grows.
+//!
+//! **That the deterministic tests still exist there** is the failure the manual
+//! check would not catch even when it is run, because a collapsed population
+//! compiles and lints perfectly. `portability` is the in-gate instrument for
+//! it: it counts the test population the macOS predicate does *not* remove and
+//! refuses a floor, on both hosts, so gating one more module fails on the
+//! machine that did it. It reads that population out of the source, which is
+//! why this header names the test attribute in prose rather than spelling it —
+//! a literal here would be counted as a test in the one file that declares the
+//! gates, and that file is the one the census cannot classify.
+//!
+//! The items an `apple` module is the only caller of are dead on every other
+//! host, and `envelope` and `publication` say so at the module rather than at
+//! each of their forty-odd items — under `cfg(not(target_os = "macos"))`, so the
+//! host that does use them is still held to the ordinary lint. Their headers
+//! name the population.
 
 #[cfg(test)]
 mod applicability;
@@ -179,6 +223,8 @@ mod dispatch;
 mod envelope;
 #[cfg(test)]
 mod measurement;
+#[cfg(test)]
+mod portability;
 #[cfg(test)]
 mod publication;
 #[cfg(test)]
