@@ -1,7 +1,7 @@
 ---
 id: move-the-bf16-optimizer-legality-ledger-cell
 title: Move the BF16 optimizer legality ledger cell
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [establish-bf16-optimizer-legality]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, support-matrix]
-claimed_from: todo
-assignee: agent-ledger
-lease_expires_at: 1786132480
 ---
 ## What this owes
 
@@ -30,3 +27,30 @@ Other BF16 cells moved the same day and may now be stale in either direction —
 ## Closes when
 
 The cell states the derived legality with its extent and its vacuous half, the rest of the BF16 row is checked and either correct or corrected, and no cell claims more than its evidence.
+
+## Outcome — delivered 2026-08-07 at `6430b9f5`
+
+The cell moved from `absent/unsupported` to **"tested guarantee, derived for constant/multiply/add only; the reduction obligations discharge vacuously"**, with a dated paragraph carrying the extent rather than restating the legality argument.
+
+**Three bounds are stated as maturity claims**, which is what this ticket existed for: every obligation is *derived*, and **none is discharged `Empirical`** — with `FusionEvidenceClass`'s distinctness named as the reason a derived row cannot be read as a measured one; the four reduction obligations discharge **vacuously**, classed `SoundProof` over an empty population, because the BF16 vocabulary is exactly constant/multiply/add with no reduction, contraction-capable family or coordinate relation registered at that width; and BF16 reassociation stays `Unknown`, withheld at the operation vocabulary. Finding 28 is recorded as *decided* — the profile's authority, resolved by subject before a region reaches the derivation.
+
+**It carries its own reopening condition**: registering a BF16 fold family reopens all four obligations with a real population, and the cell must then be re-derived rather than carried. Verified against `fusion_legality.rs` rather than against the ticket alone.
+
+### Reading the whole row found the more valuable defects
+
+**Two cells were *understated*, which is as wrong as overstating and much easier to miss.** `Backend execution` read `absent/unsupported` when BF16 had already executed on a device; `Conformance evidence` read "no end-to-end run" when a device run exists. Both landings that caused the drift had explicitly recorded that these cells "need a `contracts/navigation` holder" — so the obligation was filed and simply never picked up until a worker read the row rather than the cell.
+
+`Backend lowering`'s qualifier "offline emission and compilation **only**" became false the moment the same emission was dispatched. And `ABI and materialization` was **kept word for word**, with the new paragraph saying *why* it survives: the device run never builds an artifact envelope. Keeping a cell and explaining why is the harder call than moving it.
+
+Six stale current-state clauses in the family notes were repaired as appended dated corrections rather than rewrites, per the file's own convention, and the recipe's non-monotone worked example was rewritten because it claimed BF16 had no rung-8 legality and no dispatch.
+
+### Four items reported rather than edited, all belonging to the unclaimed sibling
+
+[`correct-the-stale-dtype-f32-recognizer-claims-in-the-contract-documents`](correct-the-stale-dtype-f32-recognizer-claims-in-the-contract-documents.md) cannot batch with this one on `contracts/navigation`, which is why it is unclaimed. Left for it, and worth carrying into its brief:
+
+1. Three `dtype-f32` occurrences in this file are untouched, and the new paragraphs deliberately cite no test name and never restate the wall — the "does not cross" claim is written as a property of the run rather than of a rule that no longer exists.
+2. **`Physical carrier`'s qualifier "schedule-assembled regions only" may now understate**, since the recognizer widening replaced the constant carrier with a contract-derived one and a single-occurrence BF16 program reaches a selected plan.
+3. **That ticket's own body is partly stale** — its "What is true now" says optimizer legality is unreachable, written before `establish-bf16-optimizer-legality` landed. It needs repair before dispatch.
+4. **`docs/roadmap.md`'s reduced-precision-float row** carries the same staleness at greater length; its recheck still says the recognizer "refuses a pure-BF16 program with `dtype-f32`".
+
+**Delta rule confirmed by the coordinator against the merge's own file list**: one file, `docs/dtype-support.md`, touching none of the build-configuration set, so it carries the latest green gate with `tkt lint` rerun.
