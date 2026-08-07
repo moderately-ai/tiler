@@ -48,15 +48,48 @@ tiler-runtime.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 metal.workspace = true
 
-# Inherited in full, including `unsafe_code = "forbid"`. That forbid is reached
-# by the first content rather than by this admission, and it is recorded here
-# because it is not visible from the inherited table: `MTLBuffer` storage is
-# reachable only through the raw pointer `metal::Buffer::contents` returns, so
-# moving operands in and results out cannot be spelled safely, and `forbid`
-# cannot be relaxed by an inner attribute at any scope. Admitting a named unsafe
-# site is a decision under
-# [ADR 0079](../../docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md),
-# so it is left to the ticket that first needs one rather than pre-authorized
-# here by a weaker lint level.
-[lints]
-workspace = true
+# This crate does not inherit `[workspace.lints]`, and the difference is exactly
+# one lint. The workspace sets `unsafe_code = "forbid"`, which cannot be relaxed
+# by an inner attribute at any scope; this crate sets `deny` instead so the two
+# functions that must reach `MTLBuffer` storage can carry narrow, reasoned
+# `#[allow(unsafe_code)]` attributes. Every other member keeps `forbid`.
+#
+# **Decided by Tom on 2026-08-07** and recorded on
+# `decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`.
+# The rule is narrower than the `prototypes/serial-sum-run` precedent it matches
+# in shape, and the narrowing is the point:
+#
+# - `deny` with named `#[allow(unsafe_code)]` at **individual sites**. A
+#   crate-level allow is refused outright and is not a fallback if the sites
+#   prove awkward.
+# - The **only admitted justification is FFI memory management with Metal** —
+#   concretely the raw pointer `metal::Buffer::contents` returns, because
+#   `MTLBuffer` storage is reachable no other way. Not convenience, not
+#   performance, not a tidier shape.
+# - **Isolation is a design constraint.** Every site lives in `src/device_buffer.rs`,
+#   which exposes a safe byte interface; the conformance logic — corpus, oracle
+#   comparison, evidence attribution — contains no `unsafe` and must not need
+#   any.
+# - Each site carries what
+#   [ADR 0079](../../docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md)
+#   requires: no safe foreign-API route, a reasoned `#[allow]`, a bounding
+#   assertion, and a `SAFETY` explanation naming the invariant and why the
+#   foreign API forces it.
+#
+# The population is **two**, named in `src/device_buffer.rs`'s header and
+# counted by `bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`,
+# which walks `src/` so a third site — or a new file carrying one — is a red
+# test rather than an absorbed addition.
+#
+# The level moved with the first site that needed it rather than as a standalone
+# relaxation: a level moved with no site under it would be a relaxation for
+# nothing.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Mirrors the workspace, which this crate cannot inherit; see the note there.
+too_many_lines = "allow"

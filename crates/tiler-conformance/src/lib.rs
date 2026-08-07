@@ -3,13 +3,24 @@
 //! A target profile is a set of claims, and conformance is what refutes them.
 //! Tiler has the declaring half built — typed profiles, measured rows,
 //! numerical realizations, feasibility predicates — and this crate is the
-//! refuting half. A run here builds a program in the shared IR, plans it
-//! through the compiler, lowers and compiles it for a real target, packages
-//! and validates the artifact, executes it on a device, and compares the
-//! result against the independent oracle. Every layer it crosses already
-//! tests itself; what nothing tested is the composition, so a regression
-//! anywhere in the vertical becomes a red test in `make full` rather than a
-//! spike someone remembers to run.
+//! refuting half. A run here builds a program in the shared IR, lowers and
+//! compiles it for a real target, executes it on a device, and compares the
+//! result against the independent oracle. Every layer it crosses already tests
+//! itself; what nothing tested is the composition, so a regression anywhere in
+//! the vertical becomes a red test in `make full` rather than a spike someone
+//! remembers to run.
+//!
+//! **Which layers one run crosses is the run's own claim, not this crate's.**
+//! This paragraph read "plans it through the compiler … packages and validates
+//! the artifact" when the crate was admitted, ahead of any content, and the
+//! first run does neither: `tiler_compiler`'s recognizer refuses every
+//! non-`f32` program under the rule `dtype-f32` before a subject is normalized,
+//! so nothing can produce the plan alternative the optimizer, the artifact
+//! envelope, and the runtime routing commit all consume. `bf16_vertical`
+//! records that boundary at the function a reader would expect a `compile()`
+//! call in, and states it again in its module header. A later run over an
+//! `f32` program crosses those layers; a claim that *this* crate always does
+//! would have been a claim about a member rather than about a run.
 //!
 //! The crate is admitted ahead of its first run deliberately. Admitting a
 //! workspace member fixes a dependency edge and a verifier-ownership boundary,
@@ -86,4 +97,57 @@
 //! namespace is a boundary under
 //! [ADR 0075](../../../docs/decisions/0075-scope-public-boundary-approval-by-change-category.md);
 //! anything here stays `pub(crate)` or test-only until an item has a stated
-//! consumer and its own acceptance.
+//! consumer and its own acceptance. Every module below is private and every
+//! item in them is `pub(crate)`, so this crate exports nothing at all — the
+//! runs are `#[cfg(test)]` entry points into private machinery.
+//!
+//! # `unsafe`, and where the whole of it lives
+//!
+//! This crate carries `unsafe_code = "deny"` rather than the workspace's
+//! `forbid`, and the level moved here with the first site that needed it.
+//! Tom decided the rule on 2026-08-07
+//! (`decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`):
+//! named `#[allow(unsafe_code)]` at **individual sites, never at the crate**,
+//! with FFI memory management against Metal as the only admitted justification,
+//! and isolation as a design constraint rather than a preference.
+//!
+//! The complete population is **two sites**, both in `device_buffer`, both for
+//! the raw pointer `metal::Buffer::contents` returns. Named rather than linked
+//! throughout this header: every module below is `#[cfg(test)]`, so an
+//! intra-doc link to one does not resolve when the crate is documented, which
+//! is a rustdoc error rather than a dead link. The conformance logic — corpus,
+//! oracle comparison, evidence attribution — contains none and does not need
+//! any: `device_buffer` exposes a byte interface, so every width,
+//! stride, and element count stays in safe code where it can be perturbed.
+//! `bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`
+//! walks `src/` and fails when a third appears.
+//!
+//! # Modules
+//!
+//! | module | what it owns |
+//! | --- | --- |
+//! | `bf16_vertical` | the corpus, the semantic program, the scheduled region, emission, and the comparison |
+//! | `measurement` | whether this host could measure, and the exact row a measured result is bounded to |
+//! | `dispatch` | preparing, encoding, submitting, and classifying one device dispatch (macOS only) |
+//! | `device_buffer` | the two unsafe sites, and nothing else (macOS only) |
+//!
+//! Every module is `#[cfg(test)]`, which is the honest shape of what this crate
+//! is: a conformance run is a *test*, and the machinery it needs has no
+//! non-test caller and must not acquire one. The normal dependency edges in the
+//! manifest still state what the crate is for — see the note there — and
+//! `cargo check --workspace --all-targets`, `cargo nextest run --workspace`,
+//! and therefore `make full` all build and run this content.
+//!
+//! The Metal binding and the two unsafe sites carry a second gate,
+//! `cfg(target_os = "macos")`, which is what lets a non-Apple host build and
+//! run the deterministic half and report the measured half as unavailable
+//! rather than skip.
+
+#[cfg(test)]
+mod bf16_vertical;
+#[cfg(all(test, target_os = "macos"))]
+mod device_buffer;
+#[cfg(all(test, target_os = "macos"))]
+mod dispatch;
+#[cfg(test)]
+mod measurement;
