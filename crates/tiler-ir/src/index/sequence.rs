@@ -54,11 +54,15 @@
 //! exponentials through the folding stage verbatim, which puts a materialization
 //! that is no part of what the operation means into a region's canonical identity.
 //!
-//! The public surface here is a concrete draft pending Tom's review; see
-//! `tickets/accept-the-multi-region-index-realization-surface.md` for the
-//! originally accepted shape and
-//! `tickets/accept-the-multi-reader-index-realization-retention.md` for this
-//! widening.
+//! **Accepted boundary**, in two rulings. The original one-reader shape was
+//! accepted at `tickets/accept-the-multi-region-index-realization-surface.md`,
+//! and the multi-reader retention widening was accepted as offered by Tom on
+//! 2026-08-06 at the live session's decision round — relayed and executed by
+//! the coordinator, provenance in the `## Accepted 2026-08-06` section of the
+//! closed node `tickets/accept-the-multi-reader-index-realization-retention.md`,
+//! whose "Closes when" routed this label flip here. Acceptance is not
+//! stabilization: this is accepted pre-alpha vocabulary, not a published API
+//! with compatibility obligations.
 
 use core::fmt;
 use std::error::Error;

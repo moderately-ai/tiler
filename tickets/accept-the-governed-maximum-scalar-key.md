@@ -1,7 +1,7 @@
 ---
 id: accept-the-governed-maximum-scalar-key
 title: Accept the governed maximum scalar key
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, admit-the-registered-elementary-families-as-recognizable-program-stages]
@@ -68,3 +68,7 @@ Registering the key widens `CanonicalScalarRegistrySnapshotIdentity` and therefo
 ## Closes when
 
 Tom accepts or rejects the exact surface above. On acceptance the draft label at `crates/tiler-ir/src/index/scalar.rs` is removed in the same change that closes this node.
+
+## Accepted 2026-08-06
+
+**Who:** Tom. **Venue:** the live session's decision round, presented by the orchestrator via a structured question and answered "Accept as offered". **Relay:** executed by the coordinator in the change closing this node; the draft label at `crates/tiler-ir/src/index/scalar.rs` is replaced by the accepted-boundary paragraph in the same commit. **Scope of the acceptance:** exactly the included surface above, with the stated exclusions (no `maximum-number-f32`, no `minimum-f32`, no `bf16` sibling) standing as exclusions rather than omissions. Tom flagged a decisions review for the following morning; this acceptance is cheap to reverse until then, per the relayed-change rule.

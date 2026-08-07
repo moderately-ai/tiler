@@ -1,7 +1,7 @@
 ---
 id: accept-the-multi-reader-index-realization-retention
 title: Accept the multi-reader index realization retention
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence, accept-the-multi-region-index-realization-surface]
@@ -55,3 +55,7 @@ The deriving ticket names a real fork: a value surviving multiple stages, or a m
 ## Closes when
 
 Tom accepts, accepts with a named exclusion, or rejects. Nothing releases meanwhile; the surface is in use inside `tiler-ir` and labelled a draft there.
+
+## Accepted 2026-08-06
+
+**Who:** Tom. **Venue:** the live session's decision round, presented by the orchestrator via a structured question and answered "Accept as offered". **Relay:** executed by the coordinator in the change closing this node; the draft pointer in `crates/tiler-ir/src/index/sequence.rs`'s module header is replaced by the accepted-boundary paragraph in the same commit. **Scope of the acceptance:** the exact surface above — `retained_through()`, the widened `try_new` admission, the per-read record granularity, and the unchanged refusal vocabulary and identity encoder — with the two-independent-values capability staying deferred behind its priced trigger. The per-value-records alternative was presented and not taken. Tom flagged a decisions review for the following morning; this acceptance is cheap to reverse until then, per the relayed-change rule.
