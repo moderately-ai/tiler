@@ -1,7 +1,7 @@
 ---
 id: derive-per-locus-numerical-obligations
 title: Derive per-locus numerical obligations in the compiler
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [redesign-the-delivered-realization-record-from-typed-evidence, accept-the-delivered-realization-artifact-surface]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics, implementation/build, rese
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, compiler]
-claimed_from: todo
-assignee: agent-per-locus
-lease_expires_at: 1786113672
 ---
 ## Why
 
@@ -58,3 +55,11 @@ Two rules survive unchanged: the dtype-wide ceiling and the locus obligations ar
 - The review packet at `spikes/numerics/delivered-realization-record/` records the shape this must fill; do not re-derive it.
 - This does not block `accept-the-delivered-realization-artifact-surface`: the packet is reviewable, and the record admits a single-locus producer.
 - `wire-the-delivered-realization-record-into-the-artifact` may land against the single-locus producer; this widens what that path carries.
+
+## Integrated 2026-08-07
+
+Merged at `f4901933` into `main`; the composed tree gates green with `make full` exit 0. The three identity pins were **recomputed by the coordinator on the merged tree**, not taken from the branch — see the correction above the branch measurement. The `metal_plan.rs` pin ladder and the [authority ledger](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md) both carry the merged values and name both same-day steps, so the two records agree.
+
+**One consequence was released rather than absorbed.** Narrowing rows to consuming occurrences makes the artifact's `NotRequired` disposition reachable for a dimension no covered occurrence consumes — previously impossible, because every dimension always had rows. The producer's reasoning that this is correct is sound and the change is forced rather than chosen, but it is untested and it rests entirely on `can_consume` never under-claiming. Filed as [`cover-the-newly-reachable-notrequired-disposition-for-an-unconsumed-dimension`](cover-the-newly-reachable-notrequired-disposition-for-an-unconsumed-dimension.md).
+
+**Also recorded, untouched:** `docs/artifact-abi.md` states the manifest schema moved to "13.0" while `MANIFEST_SCHEMA` is `(15, 0)`. Pre-existing drift found during this work, outside its scopes, and not repaired here.
