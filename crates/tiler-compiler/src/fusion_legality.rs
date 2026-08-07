@@ -32,6 +32,25 @@
 //! guarantee, sound proof, exhaustive-finite, empirical, and unknown — are kept
 //! distinct and are never collapsed into one another.
 //!
+//! # Legality is derived per width, never carried across one
+//!
+//! Every obligation below is discharged for the arithmetic type the *contract*
+//! states, and three of them read that width directly: the conversion-boundary
+//! obligation compares each member's operand and result encodings against the
+//! region's own dtype, the exceptional-value obligation compares the contract's
+//! NaN payload against the one that width canonically produces, and the closed
+//! contraction proof is keyed on exact operation keys rather than on roles.
+//!
+//! That is not fastidiousness. Finding 28 of the Apple numerical behaviour
+//! record measures a row on which `f16` fuses a written multiply/add pair under
+//! `safe` with `-ffp-contract=fast` and `bf16` does not, so even the *target*
+//! side does not agree across widths; and reassociation error is bounded by the
+//! significand, which is 8 bits at BF16 against binary32's 24. A row copied from
+//! the `f32` table would therefore be a legality claim about another width made
+//! without evidence. Each registered family below states the derivation that
+//! placed it, and a width with no registered capability resolves to no fusion
+//! legality at all rather than to the nearest neighbour's.
+//!
 //! Scope boundary: this authority derives legality of one candidate. It selects
 //! no cover, chooses no physical implementation, schedules nothing, and costs
 //! nothing.
@@ -47,12 +66,14 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::identity::{push_len, push_slice};
-use tiler_ir::schedule::NumericalPermission;
+use tiler_ir::numerics::registered_arithmetic_value_type;
+use tiler_ir::schedule::{ArithmeticType, NumericalPermission};
 use tiler_ir::semantic::{
-    F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
-    add_f32_op, broadcast_f32_op, concatenate_f32_op, constant_f32_op, multiply_f32_op,
-    reindex_f32_op, rms_norm_f32_op, silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
-    strict_tensor_contraction_f32_op,
+    CANONICAL_BF16_ARITHMETIC_NAN_BITS, CANONICAL_F32_ARITHMETIC_NAN_BITS, FrozenSemanticRegistry,
+    OpKey, OperationEffect, ProviderIdentity, SemanticProgram, add_bf16_op, add_f32_op,
+    broadcast_f32_op, concatenate_f32_op, constant_bf16_op, constant_f32_op, multiply_bf16_op,
+    multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, softmax_f32_op,
+    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 use crate::region::{
@@ -69,7 +90,21 @@ const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.fusion-legality-occurren
 /// Namespace of the governed compiler-owned fusion-capability provider.
 const GOVERNED_PROVIDER_NAMESPACE: &str = "tiler";
 /// Name of the governed compiler-owned fusion-capability provider.
-const GOVERNED_PROVIDER_NAME: &str = "fusion-strict-f32";
+///
+/// **Renamed from `fusion-strict-f32` when the table stopped being one width's.**
+/// The old name was a true statement while every registered family was `f32`-keyed
+/// and every obligation was discharged against the binary32 constants. It became
+/// false the moment this provider declared a role for a BF16 family: an
+/// explain record attributing a BF16 region's legality to an authority named
+/// `strict-f32` tells a reader the opposite of what happened, and a proof
+/// identity binding that name asserts a width the proof is not about.
+///
+/// The name is part of [`ProviderIdentity`], so this moves every fusion-legality
+/// proof identity and every explain record attributed to it. Both are
+/// compilation-local — a proof is replayed by equality inside one compilation
+/// and is never published — so no artifact identity, cache subject, or golden
+/// depends on it.
+const GOVERNED_PROVIDER_NAME: &str = "fusion-numerical-capabilities";
 /// Output-affecting revision of the governed fusion-capability provider.
 const GOVERNED_PROVIDER_REVISION: u32 = 1;
 
@@ -282,13 +317,24 @@ pub(crate) struct FusionNumericalCapabilities {
 }
 
 impl FusionNumericalCapabilities {
-    /// Builds the governed strict-`f32` fusion-capability registry.
+    /// Builds the governed fusion-capability registry.
     ///
     /// The table below is the complete set of families the governed provider
     /// declares a role for; every registered family absent from it resolves to
     /// no fusion legality at all. Each entry states the derivation that placed
     /// it, because resolution is a checked lookup and a role is therefore
     /// decided per family rather than inferred from a neighbour.
+    ///
+    /// **The table spans two widths and the entries are not each other's.** The
+    /// three BF16 families at the end were decided from `tiler-ir`'s own
+    /// declared record for them — `arithmetic_bf16_facts` and
+    /// `constant_bf16_facts` — and not transferred from the `f32` neighbour that
+    /// shares their shape; each states which of its answers is derived from that
+    /// record and which is vacuous. What is deliberately **absent** is as
+    /// load-bearing as what is present: no BF16 reduction, prologue-carrying
+    /// reduction, extremum-shifted reduction, or coordinate relation appears,
+    /// because `tiler-ir` registers no such family at that width, and a row for
+    /// an operation that does not exist would be a legality claim about nothing.
     #[must_use]
     pub(crate) fn governed() -> Self {
         let provider = ProviderIdentity::new(
@@ -466,6 +512,92 @@ impl FusionNumericalCapabilities {
             strict_tensor_contraction_f32_op(),
             FusionOperationRole::PrologueCarryingOrderedReduction,
         );
+        // The three BF16 families, decided from their own declared record.
+        //
+        // *Why a role at all.* Without one, `derive_member` returns `Ok(None)`
+        // and every BF16 region covering two or more occurrences resolves to no
+        // legality at all, so every cover placing it is skipped and the
+        // compilation refuses `NoFeasiblePlan`. That refusal had a premise while
+        // nothing had decided the width's obligations; deciding them is what
+        // this entry is.
+        //
+        // *Why the `f32` rows could not simply be copied.* Two of the nine
+        // obligations are width-sensitive in ways this vocabulary can state.
+        // `ReductionReassociation` is bounded by the significand — 8 bits at
+        // BF16 against binary32's 24 — so a regrouping permitted under one
+        // width's error budget is not the same permission at the other. And
+        // finding 28 of `docs/research/apple-targets/numerical-behaviour.md`
+        // measures a *target* whose contraction behaviour differs between `f16`
+        // and `bf16` under `safe` with `-ffp-contract=fast`. Neither refutes the
+        // rows below, and each is why they are derived rather than transferred;
+        // the derivations are per obligation and are recorded on the two entries
+        // they belong to.
+        //
+        // *The constant.* A value source for the reason
+        // [`FusionOperationRole::ValueSource`] states: it contributes a value the
+        // region did not otherwise have and no reordering, conversion, or
+        // reduction obligation of its own. `constant_bf16_facts` declares its
+        // rounding "none-the-declared-payload-is-already-the-exact-bf16-encoding"
+        // and its NaN behaviour "preserved-exactly-the-declared-payload-is-not-
+        // canonicalized", so the family performs no arithmetic at all and fusing
+        // an occurrence of it neither adds nor removes a rounding. Not a
+        // coordinate relation: it computes a value rather than an access map over
+        // one the region already holds.
+        roles.insert(constant_bf16_op(), FusionOperationRole::ValueSource);
+        // *The two arithmetics.* Elementwise arithmetic, and every one of the
+        // nine obligations is decided from `arithmetic_bf16_facts` rather than
+        // inherited:
+        //
+        // - **Referential transparency.** `OperationEffect::Pure` is declared on
+        //   both registrations, and `derive_member` errors rather than guesses
+        //   when the derived graph purity disagrees with it.
+        // - **Conversion-boundary preservation.** Computation, accumulator,
+        //   intermediate-materialization, and result types all resolve to
+        //   `tiler::bf16@1`, and the family's own inferencer refuses a
+        //   mixed-precision operand pair and an implicit promotion by name at
+        //   application time. So a BF16 member is homogeneous in the *region's*
+        //   width, which `derive_fusion_legality` now derives from the contract
+        //   rather than from the binary32 constant.
+        // - **Arithmetic contraction.** `BF16_FACT_ARITHMETIC_CONTRACTION_PERMITTED`
+        //   and `BF16_FACT_FUSED_MULTIPLY_ADD_PERMITTED` are both `false`, and
+        //   `docs/research/apple-targets/numerical-behaviour.md`'s boundaries
+        //   record that MSL provides no `bfloat` overload of `fma` at all, so
+        //   there is no fused primitive at this width to contract into. The
+        //   closed proof below is extended to these keys on the same argument it
+        //   admits the `f32` add and multiply on — an all-add or all-multiply
+        //   region has no multiply-plus-add adjacency — and the contract's own
+        //   `Forbidden` resolution discharges the rest by normative guarantee.
+        //   **Finding 28 is not a counterexample to that**: it measures what a
+        //   target's compiler does under a given flag row, which is the target
+        //   profile's authority to declare per subject and is checked before
+        //   planning; this obligation asks only whether *fusing* changes what the
+        //   contract authorizes, and fusing adds no adjacency the unfused form
+        //   lacks.
+        // - **Exceptional values.** `BF16_FACT_NAN_BEHAVIOUR` is
+        //   "quiet-nan-propagates-and-every-arithmetic-nan-result-is-canonicalized"
+        //   and `BF16_FACT_CANONICAL_NAN_BITS` is
+        //   `CANONICAL_BF16_ARITHMETIC_NAN_BITS`, so the per-result
+        //   canonicalization a fused body must still apply is defined at this
+        //   width and is compared against the contract's own payload below.
+        // - **The four reduction obligations.** Vacuous, and vacuous by
+        //   *derivation* rather than by omission: `is_reduction` is false for this
+        //   role, and no BF16 family carrying a fold is registered anywhere in
+        //   `tiler-ir`, so there is no BF16 contributor sequence for an identity,
+        //   an empty domain, an order, a regrouping, or a permutation to be about.
+        //   This is where the significand argument would bite and it has nothing
+        //   to bite on: `BF16_FACT_REASSOCIATION_PERMITTED` is `false`, the family
+        //   declares no algebraic capability, and the reassociation question at
+        //   this width therefore stays open at the *operation vocabulary* rather
+        //   than being answered here.
+        //
+        // Not a coordinate relation and not a value source: both perform
+        // per-point arithmetic with their own separate rounding, declared as
+        // "bf16-round-to-nearest-ties-to-even-at-every-observable-materialization".
+        roles.insert(
+            multiply_bf16_op(),
+            FusionOperationRole::ElementwiseArithmetic,
+        );
+        roles.insert(add_bf16_op(), FusionOperationRole::ElementwiseArithmetic);
         Self {
             provider,
             revision: GOVERNED_PROVIDER_REVISION,
@@ -1071,7 +1203,29 @@ pub(crate) fn derive_fusion_legality(
     let registry = program.semantic_registry();
 
     let ordered = ordered_members(graph, candidate)?;
-    let governed_dtype = F32::resolved_type().canonical_encoding();
+    // The region's own dtype, read from the contract rather than from a binary32
+    // constant. A contract states its resolutions for exactly one
+    // `ArithmeticType` (ADR 0076 item 6) and `recognized_program_arithmetic`
+    // refuses a program whose values are two widths at once, so this is the width
+    // every member of a compilable region is stated in — and comparing a member's
+    // encodings against binary32's would report every BF16 member as carrying an
+    // unproven conversion boundary.
+    //
+    // A width the governed scalar catalog does not describe is invalid compiler
+    // state rather than a legality outcome, and is classed with the other two
+    // faults this derivation guards: `registered_arithmetic_value_type` is total
+    // over the arithmetic vocabulary — `tiler-ir` pins the vocabulary and the
+    // catalog to each other, and
+    // `every_governed_arithmetic_resolves_a_region_encoding` re-states the
+    // population here — so `None` means those two have drifted apart, not that a
+    // caller asked something unanswerable. Failing closed with a named rule keeps
+    // the drift loud instead of comparing every member against nothing.
+    let Some(region_type) = registered_arithmetic_value_type(contract.arithmetic) else {
+        return Err(FusionLegalityError::Structure {
+            rule: "ungoverned-region-arithmetic",
+        });
+    };
+    let governed_dtype = region_type.canonical_encoding();
     let governed_dtype = governed_dtype.as_bytes();
 
     // An unresolved capability makes the whole derivation unknown before any
@@ -1294,9 +1448,17 @@ fn derive_obligations(
     // `ConversionBoundaryPreservation` above discharges only when every member
     // is homogeneous, so a removed dtype-conversion boundary is refused there
     // rather than here.
-    let governed = StrictF32NumericalContract::governed();
-    let exceptional_ok =
-        contract.canonical_arithmetic_nan_bits == governed.canonical_arithmetic_nan_bits;
+    //
+    // **The payload is compared against the contract's own width's**, not
+    // against binary32's. A BF16 contract carries
+    // `CANONICAL_BF16_ARITHMETIC_NAN_BITS`, which is the leading sixteen bits of
+    // the binary32 pattern and therefore a different `u32`; measuring it against
+    // the `f32` constant would report every BF16 region's exceptional-value
+    // behaviour as unproven while the two governed arithmetics both canonicalize
+    // exactly as their registered records declare. A width with no governed
+    // payload stays unknown rather than borrowing a neighbour's.
+    let exceptional_ok = governed_canonical_arithmetic_nan_bits(contract.arithmetic)
+        .is_some_and(|governed| contract.canonical_arithmetic_nan_bits == governed);
     obligations.push(if exceptional_ok {
         DerivedObligation::discharged(
             FusionObligation::ExceptionalValues,
@@ -1313,6 +1475,47 @@ fn derive_obligations(
     obligations
 }
 
+/// The canonical arithmetic-NaN payload one governed width's arithmetic installs.
+///
+/// Exhaustive over [`ArithmeticType`] with no wildcard arm (ADR 0074 convention
+/// 3): a width admitted later must decide its own payload here as a compile
+/// error rather than fall through to a neighbour's, which is the exact failure
+/// mode the per-width keying exists to prevent. `f16` and `f64` are named by the
+/// arithmetic vocabulary and carry no registered canonical payload, so they
+/// answer `None` and the obligation stays unknown.
+///
+/// The two values are the constants `tiler-ir` registers on the arithmetic
+/// families themselves — `BF16_FACT_CANONICAL_NAN_BITS` carries the `bf16` one
+/// and the binary32 families carry the other — rather than a second statement of
+/// them here.
+const fn governed_canonical_arithmetic_nan_bits(arithmetic: ArithmeticType) -> Option<u32> {
+    match arithmetic {
+        ArithmeticType::F32 => Some(CANONICAL_F32_ARITHMETIC_NAN_BITS),
+        ArithmeticType::Bf16 => Some(CANONICAL_BF16_ARITHMETIC_NAN_BITS as u32),
+        ArithmeticType::F16 | ArithmeticType::F64 => None,
+    }
+}
+
+/// Whether every arithmetic member is one governed same-family pointwise chain.
+///
+/// **Closed over exact keys at both widths, and each key's transfer is decided
+/// rather than read off its role.** The `f32` derivations are recorded at their
+/// arms below; the two BF16 arithmetics are admitted on the identical argument
+/// the `f32` add and multiply are admitted on — the conclusion is drawn only
+/// when every arithmetic member is an add or every one is a multiply, and a
+/// region of adds alone holds no product for an add to absorb — and the BF16
+/// constant is admitted on the argument the `f32` constant is, that a value
+/// source performing no arithmetic introduces no adjacency.
+///
+/// **The add/multiply predicates span the two widths and the conclusion still
+/// holds**, which is worth stating because a mixed-width region reaching here
+/// would otherwise look like an unexamined case. `recognized_program_arithmetic`
+/// refuses a program whose values are two widths at once and
+/// [`FusionObligation::ConversionBoundaryPreservation`] independently refuses a
+/// member that is not the region's own dtype, so no compilable region mixes
+/// them; and if one did, a region of an `f32` add beside a `bf16` add still
+/// contains no multiply, so "no multiply-plus-add adjacency" is true of it for
+/// the same reason.
 fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool {
     let constant = constant_f32_op();
     let add = add_f32_op();
@@ -1320,13 +1523,18 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
     let reindex = reindex_f32_op();
     let broadcast = broadcast_f32_op();
     let concatenate = concatenate_f32_op();
+    let bf16_constant = constant_bf16_op();
+    let bf16_add = add_bf16_op();
+    let bf16_multiply = multiply_bf16_op();
     let mut arithmetic_count = 0_usize;
     let mut all_add = true;
     let mut all_multiply = true;
 
     for member in members {
         match member.role {
-            FusionOperationRole::ValueSource if member.reached.operation == constant => {}
+            FusionOperationRole::ValueSource
+                if member.reached.operation == constant
+                    || member.reached.operation == bf16_constant => {}
             // A governed coordinate relation neither creates nor removes a
             // multiply-plus-add adjacency, so it is passed over rather than
             // disqualifying the region. The soundness rests on what survives
@@ -1353,8 +1561,9 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
                     || member.reached.operation == concatenate => {}
             FusionOperationRole::ElementwiseArithmetic => {
                 arithmetic_count = arithmetic_count.saturating_add(1);
-                all_add &= member.reached.operation == add;
-                all_multiply &= member.reached.operation == multiply;
+                all_add &= member.reached.operation == add || member.reached.operation == bf16_add;
+                all_multiply &= member.reached.operation == multiply
+                    || member.reached.operation == bf16_multiply;
             }
             // Every remaining role disqualifies the sound proof, and the
             // prologue-carrying reduction disqualifies it for its own reason
@@ -3136,5 +3345,555 @@ mod contraction_role_tests {
             );
             assert_eq!(unknown.reason(), "unsupported-operation-capability");
         }
+    }
+}
+
+/// BF16 legality, established here rather than inherited from the `f32` table.
+#[cfg(test)]
+mod bf16_role_tests {
+    use super::{
+        FusionEvidenceClass, FusionLegality, FusionLegalityError, FusionNumericalCapabilities,
+        FusionObligation, FusionOperationRole, ObligationAssessment, derive_fusion_legality,
+        derive_obligations, governed_canonical_arithmetic_nan_bits,
+    };
+    use crate::region::form_region_candidates;
+    use crate::request::{DeterministicBudgets, NumericalPermission, StrictF32NumericalContract};
+    use tiler_ir::numerics::registered_arithmetic_value_type;
+    use tiler_ir::schedule::ArithmeticType;
+    use tiler_ir::semantic::{
+        Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CANONICAL_BF16_ARITHMETIC_NAN_BITS,
+        CANONICAL_F32_ARITHMETIC_NAN_BITS, InputKey, OutputKey, SemanticProgram,
+        SemanticProgramBuilder, add_bf16_op, add_f32_op, constant_bf16_op, constant_f32_op,
+        multiply_bf16_op, multiply_f32_op,
+    };
+    use tiler_ir::shape::Shape;
+
+    /// `out = (x * 1.0) + 2.0`, in BF16: two constants, a multiply, and an add.
+    ///
+    /// Four occurrences, because `derive_fusion_legality` is skipped below two
+    /// members: a one-occurrence fixture would leave every claim here about a
+    /// region no authority is asked about. The multiply beside the add is also
+    /// what keeps the contraction obligation live rather than discharged by the
+    /// closed same-family proof.
+    fn bf16_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let one = Bf16Constant::apply(&mut builder, 0x3f80).unwrap();
+        let two = Bf16Constant::apply(&mut builder, 0x4000).unwrap();
+        let scaled = Bf16Multiply::apply(&mut builder, input, one).unwrap();
+        let shifted = Bf16Add::apply(&mut builder, scaled, two).unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), shifted)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// A BF16 sum of two inputs: two occurrences, both adds, no multiply.
+    ///
+    /// The shape the closed same-family proof admits, which is what separates the
+    /// contraction obligation's two arms at this width.
+    fn bf16_add_only_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let left = builder
+            .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let right = builder
+            .input::<Bf16>(InputKey::new("y").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let bias = Bf16Constant::apply(&mut builder, 0x3f80).unwrap();
+        let sum = Bf16Add::apply(&mut builder, left, right).unwrap();
+        let biased = Bf16Add::apply(&mut builder, sum, bias).unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), biased)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn strict_bf16() -> StrictF32NumericalContract {
+        crate::session::NumericalContract::STRICT_BF16.resolve()
+    }
+
+    /// The three registered BF16 families resolve their own roles.
+    ///
+    /// Asserting each by name is what keeps a later change from quietly
+    /// reclassifying one: the constant as elementwise arithmetic would put a
+    /// rounding on a family whose declared rounding is "none", and either
+    /// arithmetic as a value source would make the structural counts report the
+    /// region as holding an independent value it does not. The `f32` neighbours
+    /// are asserted beside them so the insertion is shown to have widened the map
+    /// rather than moved an entry.
+    ///
+    /// The withheld rows are counted, not described: exactly three BF16 families
+    /// are registered in `tiler-ir`, so a fourth role appearing here would be a
+    /// row for an operation that does not exist.
+    #[test]
+    fn the_three_bf16_families_resolve_their_own_roles() {
+        let capabilities = FusionNumericalCapabilities::governed();
+        assert_eq!(
+            capabilities.classify(&constant_bf16_op()),
+            Some(FusionOperationRole::ValueSource)
+        );
+        assert_eq!(
+            capabilities.classify(&multiply_bf16_op()),
+            Some(FusionOperationRole::ElementwiseArithmetic)
+        );
+        assert_eq!(
+            capabilities.classify(&add_bf16_op()),
+            Some(FusionOperationRole::ElementwiseArithmetic)
+        );
+        for f32_key in [constant_f32_op(), multiply_f32_op(), add_f32_op()] {
+            assert!(
+                capabilities.classify(&f32_key).is_some(),
+                "{f32_key}'s row moved",
+            );
+        }
+        // A BF16 key and its `f32` counterpart are different keys, so the two
+        // rows are two decisions rather than one entry read twice.
+        assert_ne!(add_bf16_op(), add_f32_op());
+        assert_ne!(multiply_bf16_op(), multiply_f32_op());
+        assert_ne!(constant_bf16_op(), constant_f32_op());
+    }
+
+    /// A multi-occurrence BF16 region derives legality instead of failing closed.
+    ///
+    /// The perturbation is the same region with one role withdrawn, one family at
+    /// a time, which is what makes the positive result a property of each
+    /// registered row rather than of the region.
+    #[test]
+    fn a_bf16_region_derives_legality_instead_of_failing_closed() {
+        let program = bf16_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = strict_bf16();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("a governed bf16 region is legal, not {outcome:?}");
+        };
+
+        let structure = proof.content().structure();
+        assert_eq!(structure.members, 4);
+        assert_eq!(structure.value_sources, 2);
+        assert_eq!(structure.arithmetic, 2);
+        assert_eq!(structure.reductions, 0);
+        assert_eq!(structure.coordinate_relations, 0);
+        assert_eq!(
+            structure.members,
+            structure.value_sources
+                + structure.arithmetic
+                + structure.reductions
+                + structure.coordinate_relations,
+            "the four role counts account for every member at this width too"
+        );
+
+        // Every one of the nine obligations is discharged, counted rather than
+        // filtered: a population assertion that named no obligation would pass
+        // over an empty list.
+        let obligations = proof.content().obligations();
+        assert_eq!(obligations.len(), 9);
+        assert!(
+            obligations
+                .iter()
+                .all(|derived| matches!(derived.assessment(), ObligationAssessment::Discharged)),
+            "{obligations:?}"
+        );
+        // The four reduction obligations carry the *vacuous* structural proof,
+        // not a normative guarantee: no BF16 family carrying a fold is registered,
+        // so there is no contributor sequence for them to be about. Asserting the
+        // class is what stops a later reduction row from silently inheriting a
+        // guarantee this width has no evidence for.
+        for obligation in [
+            FusionObligation::ReductionIdentityAndEmptyDomain,
+            FusionObligation::ReductionContributorOrder,
+            FusionObligation::ReductionReassociation,
+            FusionObligation::ReductionOperandPermutation,
+        ] {
+            let derived = obligations
+                .iter()
+                .find(|derived| derived.obligation() == obligation)
+                .unwrap();
+            assert_eq!(derived.evidence(), FusionEvidenceClass::SoundProof);
+        }
+        // The proof carries the width it was stated for: the contract key renders
+        // its own domain, so a `bf16` proof and an `f32` one are distinguishable
+        // from the content alone.
+        assert!(
+            proof
+                .content()
+                .numerical_contract_key()
+                .starts_with("tiler.contract.bf16."),
+            "the proof does not name the bf16 contract it was derived under",
+        );
+
+        for excluded in [constant_bf16_op(), multiply_bf16_op(), add_bf16_op()] {
+            let perturbed = derive_fusion_legality(
+                &program,
+                budgets,
+                contract,
+                &FusionNumericalCapabilities::governed_without(&excluded),
+                &formation,
+                &candidate,
+            )
+            .unwrap();
+            let FusionLegality::Unknown(unknown) = perturbed else {
+                panic!("withdrawing {excluded}'s role must fail closed, not {perturbed:?}");
+            };
+            assert_eq!(
+                unknown.obligation(),
+                FusionObligation::OperationCapabilitiesResolved
+            );
+            assert_eq!(unknown.reason(), "unsupported-operation-capability");
+        }
+    }
+
+    /// The `f32` rows do not answer for a BF16 region's conversion boundary.
+    ///
+    /// **The keying, driven in the direction that would be silent.** The
+    /// conversion-boundary obligation compares every member's operand and result
+    /// encodings against the *region's* dtype. Derived under the BF16 contract the
+    /// members are homogeneous and the obligation discharges; derived under a
+    /// binary32 contract — the exact substitution the old constant performed
+    /// unconditionally — the same members are refused by name. The request
+    /// boundary already refuses this pairing before planning
+    /// (`compile.request.numerics.inapplicable`), so this drives the authority
+    /// directly rather than through a compile.
+    #[test]
+    fn an_f32_contract_does_not_discharge_a_bf16_regions_conversion_boundary() {
+        let program = bf16_program();
+        let budgets = DeterministicBudgets::governed();
+        let bf16 = strict_bf16();
+        let f32 = StrictF32NumericalContract::governed();
+        assert_ne!(bf16.arithmetic, f32.arithmetic);
+
+        let formation = form_region_candidates(&program, budgets, bf16).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+        assert!(
+            matches!(
+                derive_fusion_legality(
+                    &program,
+                    budgets,
+                    bf16,
+                    &FusionNumericalCapabilities::governed(),
+                    &formation,
+                    &candidate,
+                )
+                .unwrap(),
+                FusionLegality::Legal(_)
+            ),
+            "the region's own contract discharges it, so the refusal below is the substitution's",
+        );
+
+        let f32_formation = form_region_candidates(&program, budgets, f32).unwrap();
+        let f32_candidate = f32_formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+        let FusionLegality::Unknown(unknown) = derive_fusion_legality(
+            &program,
+            budgets,
+            f32,
+            &FusionNumericalCapabilities::governed(),
+            &f32_formation,
+            &f32_candidate,
+        )
+        .unwrap() else {
+            panic!("a binary32 contract cannot establish a bf16 region's conversion boundary");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::ConversionBoundaryPreservation
+        );
+        assert_eq!(unknown.reason(), "unproven-conversion-preservation");
+    }
+
+    /// The exceptional-value obligation reads the contract's own width's payload.
+    ///
+    /// Three cases, because the middle one is the whole content: the governed
+    /// BF16 payload discharges, the binary32 payload on a BF16 contract does not
+    /// — which is exactly what the removed `StrictF32NumericalContract::governed()`
+    /// comparison asserted for every BF16 region — and a width with no registered
+    /// payload answers `None` rather than borrowing a neighbour's.
+    #[test]
+    fn the_exceptional_value_obligation_is_keyed_on_the_contracts_own_width() {
+        assert_eq!(
+            governed_canonical_arithmetic_nan_bits(ArithmeticType::F32),
+            Some(CANONICAL_F32_ARITHMETIC_NAN_BITS)
+        );
+        assert_eq!(
+            governed_canonical_arithmetic_nan_bits(ArithmeticType::Bf16),
+            Some(u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS))
+        );
+        assert_ne!(
+            CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+            "the two payloads coincide, so no substitution could have been observed",
+        );
+        for unregistered in [ArithmeticType::F16, ArithmeticType::F64] {
+            assert_eq!(governed_canonical_arithmetic_nan_bits(unregistered), None);
+        }
+
+        let program = bf16_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = strict_bf16();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+
+        // The substitution, driven end to end: the same BF16 contract carrying
+        // binary32's payload leaves the obligation unknown.
+        let mut substituted = contract;
+        substituted.canonical_arithmetic_nan_bits = CANONICAL_F32_ARITHMETIC_NAN_BITS;
+        let FusionLegality::Unknown(unknown) = derive_fusion_legality(
+            &program,
+            budgets,
+            substituted,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            &candidate,
+        )
+        .unwrap() else {
+            panic!("a foreign NaN payload cannot be proved at this width");
+        };
+        assert_eq!(unknown.obligation(), FusionObligation::ExceptionalValues);
+        assert_eq!(unknown.reason(), "unproven-exceptional-values");
+    }
+
+    /// The closed contraction proof reads the BF16 keys, and still withholds.
+    ///
+    /// **The pair is the claim.** An add-only BF16 region carries the closed
+    /// same-family sound proof, because the arm names `tiler::add-bf16@1` by key;
+    /// a region mixing the BF16 multiply and add does not, and under a
+    /// contraction-*permitting* contract it stays `unrealized-contraction`. So
+    /// the arm was extended by deciding each key rather than by widening to a
+    /// role, and the withholding half is intact at this width.
+    ///
+    /// The permitting contract is asserted to permit before anything rests on it:
+    /// a contract that forbids contraction discharges the obligation on its own
+    /// and would make both halves vacuous.
+    #[test]
+    fn the_contraction_arm_reads_the_bf16_keys_and_still_withholds_the_mixed_region() {
+        let budgets = DeterministicBudgets::governed();
+        let mut permitting = strict_bf16();
+        permitting.contraction = NumericalPermission::Permitted;
+        assert!(!matches!(
+            permitting.contraction,
+            NumericalPermission::Forbidden
+        ));
+
+        let add_only = bf16_add_only_program();
+        let formation = form_region_candidates(&add_only, budgets, permitting).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+        let outcome = derive_fusion_legality(
+            &add_only,
+            budgets,
+            permitting,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("an add-only bf16 region carries the closed proof, not {outcome:?}");
+        };
+        let contraction = proof
+            .content()
+            .obligations()
+            .iter()
+            .find(|derived| derived.obligation() == FusionObligation::ArithmeticContraction)
+            .unwrap();
+        assert_eq!(contraction.assessment(), ObligationAssessment::Discharged);
+        assert_eq!(contraction.evidence(), FusionEvidenceClass::SoundProof);
+
+        let mixed = bf16_program();
+        let mixed_formation = form_region_candidates(&mixed, budgets, permitting).unwrap();
+        let mixed_candidate = mixed_formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+        let FusionLegality::Unknown(unknown) = derive_fusion_legality(
+            &mixed,
+            budgets,
+            permitting,
+            &FusionNumericalCapabilities::governed(),
+            &mixed_formation,
+            &mixed_candidate,
+        )
+        .unwrap() else {
+            panic!("a permitting contract cannot establish the mixed region's contraction");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::ArithmeticContraction
+        );
+        assert_eq!(unknown.reason(), "unrealized-contraction");
+    }
+
+    /// Every governed arithmetic resolves the encoding the derivation reads.
+    ///
+    /// This is what makes `ungoverned-region-arithmetic` a drift guard rather
+    /// than a reachable outcome, and it names and counts its population so a
+    /// vocabulary that stopped resolving one width fails here instead of silently
+    /// turning a legality question into a compiler fault.
+    #[test]
+    fn every_governed_arithmetic_resolves_a_region_encoding() {
+        let mut resolved = 0_usize;
+        for arithmetic in ArithmeticType::ALL {
+            assert!(
+                registered_arithmetic_value_type(arithmetic).is_some(),
+                "{arithmetic:?} resolves no registered value identity",
+            );
+            resolved += 1;
+        }
+        assert_eq!(
+            resolved,
+            ArithmeticType::ALL.len(),
+            "the sweep visited fewer widths than the vocabulary names",
+        );
+        assert_eq!(
+            FusionLegalityError::Structure {
+                rule: "ungoverned-region-arithmetic",
+            }
+            .reason(),
+            "ungoverned-region-arithmetic",
+        );
+    }
+
+    /// A BF16 region's obligations are not the `f32` region's, byte for byte.
+    ///
+    /// Two structurally identical regions — the same operation shape, the same
+    /// counts, the same discharged obligations — derived under the two widths'
+    /// contracts carry *different* content identities, because the contract key is
+    /// part of the content. That is the property that stops a proof stated at one
+    /// width from being replayed as evidence at the other.
+    #[test]
+    fn a_bf16_proof_and_its_f32_counterpart_do_not_share_a_content_identity() {
+        use tiler_ir::semantic::{F32, F32Add, F32Constant};
+
+        let budgets = DeterministicBudgets::governed();
+        let bf16_contract = strict_bf16();
+        let bf16 = bf16_add_only_program();
+        let bf16_formation = form_region_candidates(&bf16, budgets, bf16_contract).unwrap();
+        let FusionLegality::Legal(bf16_proof) = derive_fusion_legality(
+            &bf16,
+            budgets,
+            bf16_contract,
+            &FusionNumericalCapabilities::governed(),
+            &bf16_formation,
+            bf16_formation.whole_program_candidate().unwrap(),
+        )
+        .unwrap() else {
+            panic!("the bf16 region is legal");
+        };
+
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let left = builder
+            .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let right = builder
+            .input::<F32>(InputKey::new("y").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let sum = F32Add::apply(&mut builder, left, right).unwrap();
+        let biased = F32Add::apply(&mut builder, sum, bias).unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), biased)
+            .unwrap();
+        let f32_program = builder.build().unwrap();
+        let f32_contract = StrictF32NumericalContract::governed();
+        let f32_formation = form_region_candidates(&f32_program, budgets, f32_contract).unwrap();
+        let FusionLegality::Legal(f32_proof) = derive_fusion_legality(
+            &f32_program,
+            budgets,
+            f32_contract,
+            &FusionNumericalCapabilities::governed(),
+            &f32_formation,
+            f32_formation.whole_program_candidate().unwrap(),
+        )
+        .unwrap() else {
+            panic!("the f32 region is legal");
+        };
+
+        // Same shape, same counts, same obligations — and different identities.
+        assert_eq!(
+            bf16_proof.content().structure(),
+            f32_proof.content().structure(),
+            "the two fixtures are not structurally identical, so the identity \
+             difference could be the structure's rather than the width's",
+        );
+        assert_eq!(
+            bf16_proof.content().obligations(),
+            f32_proof.content().obligations(),
+        );
+        assert_ne!(
+            bf16_proof.content().identity(),
+            f32_proof.content().identity(),
+            "a proof stated at one width shares its identity with the other's",
+        );
+    }
+
+    /// The evidence class an obligation carries is derived, not stamped.
+    ///
+    /// Driven through `derive_obligations` directly so the assertion is about the
+    /// derivation rather than about the fixture reaching it.
+    #[test]
+    fn a_bf16_contract_forbidding_contraction_discharges_by_normative_guarantee() {
+        let program = bf16_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = strict_bf16();
+        assert!(matches!(
+            contract.contraction,
+            NumericalPermission::Forbidden
+        ));
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let FusionLegality::Legal(proof) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            formation.whole_program_candidate().unwrap(),
+        )
+        .unwrap() else {
+            panic!("a forbidding bf16 contract discharges the mixed region");
+        };
+        let contraction = proof
+            .content()
+            .obligations()
+            .iter()
+            .find(|derived| derived.obligation() == FusionObligation::ArithmeticContraction)
+            .unwrap();
+        assert_eq!(
+            contraction.evidence(),
+            FusionEvidenceClass::NormativeGuarantee,
+            "the mixed region carried the closed structural proof, so the \
+             contract's own resolution was not what discharged it",
+        );
+
+        // And the obligation count is nine at this width, from the derivation
+        // rather than from a proof that happened to be assembled.
+        let members_only = derive_obligations(&[], contract);
+        assert_eq!(members_only.len(), 9);
     }
 }
