@@ -49,6 +49,46 @@ const F32_NEGATIVE_ONE_BITS: u32 = 0xbf80_0000;
 /// requires the candidate region's exact canonical identity to equal the region
 /// this law constructs. A semantically equivalent alternate logical index form
 /// is deliberately refused; physical alternatives belong to later planning.
+///
+/// # Stating a refusal no construction path reaches
+///
+/// **A law may state a refusal rule no current producer can reach, when a
+/// subject could present the refused form.** A law is interpreted against an
+/// [`IndexRefinementSubject`], never against the inferencer that produced one.
+/// [`IndexRefinementSubject::derive`] is that subject's only producer today, and
+/// it builds one from the family's own inferencer — so a family rule refusing a
+/// malformed occurrence refuses it before any subject exists. That is a fact
+/// about the current producer rather than about the vocabulary a law reads: the
+/// refused form is expressible in the subject's own types, so a subject re-read
+/// from durable bytes, hand-built by a later producer, or derived for a family
+/// registered afterwards can present it, and the law is what answers. Stating
+/// the rule is what makes that answer a named refusal instead of a realization
+/// of something this law does not mean. That is a **reinterpretation boundary**,
+/// and it is the ground such a rule stands on.
+///
+/// **It does not extend to a refusal nothing can reach.** Where the checked
+/// value comes from a total function, no subject however built denotes the
+/// refused state, so the check can never be watched failing and stating it
+/// claims a maturity no evidence supports. The rejected case is the mixed-width
+/// refusal proposed for the `bf16` reference: `region_arithmetic_type` maps
+/// every `ScalarProgram` to one `ArithmeticType`, so no constructible program
+/// could ever fire it.
+///
+/// One question separates the two: **can a subject reach this rule by any route,
+/// including one no current producer takes?** If yes, state it. If no, it is not
+/// a check and does not belong in a law.
+///
+/// **Nothing here relaxes the discipline for a *reachable* refusal**, which is
+/// still watched failing before it is trusted. The exception is this one class,
+/// and each member of it says at its own site that it is unreachable and why it
+/// is stated anyway, so the reason travels with the rule. The four members are
+/// `softmax-reduced-axis-rank` in `realize_softmax`, and
+/// `concatenate-result-arity`, `concatenate-result-shape`, and
+/// `concatenate-operand-binding` in `realize_concatenate`,
+/// `ConcatenatePlan::derive`, and `emit_partitioned_concatenate`.
+///
+/// The convention is stated for the realization-law vocabulary. Whether it
+/// reaches any other vocabulary is undecided, and nothing here decides it.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum IndexRealizationLaw {
@@ -1612,12 +1652,18 @@ fn realize_softmax(
     }
     let axes = reduction_axes(subject.attributes(), axes_attribute)?;
     if axes.len() != 1 {
-        // Unreachable from a verified occurrence: `tiler::softmax-f32@1`'s own
-        // inferencer refuses an absent, duplicated, or second axis before a
-        // subject exists. Stated anyway because a law is interpreted against a
-        // subject rather than against the inferencer that produced it, and the
-        // reference pins the formula over *the single reduced axis* — a two-axis
-        // fold would be a different operation realized under this law's name.
+        // Unreachable from a verified occurrence, and stated under the
+        // unreachable-refusal convention at `IndexRealizationLaw`.
+        // `tiler::softmax-f32@1`'s own inferencer refuses an absent axis, a
+        // duplicated one, and any count other than one — `softmax.f32.axis`'s
+        // `absent`, `duplicated`, and `rank` codes — before a subject exists,
+        // and no other registered family reaches this line: the only other one
+        // whose single record field is a `u32` axis sequence is the strict
+        // serial sum, whose result drops those axes and is refused by
+        // `softmax-shape` above. A subject carrying a two-axis sequence is
+        // nonetheless expressible, and the reference pins the formula over *the
+        // single reduced axis* — a two-axis fold would be a different operation
+        // realized under this law's name.
         return Err(unsupported("softmax-reduced-axis-rank"));
     }
     let shape = result.shape().clone();
@@ -1897,6 +1943,14 @@ fn realize_concatenate(
     context: &mut LawContext<'_>,
     attribute: AttributeFieldId,
 ) -> Result<(), IndexRealizationLawError> {
+    // Unreachable from a verified occurrence, and stated under the
+    // unreachable-refusal convention at `IndexRealizationLaw`: every registered
+    // family declares exactly one result, so no subject `derive` can build today
+    // carries a second one or none. The graph admits up to
+    // `MAX_OPERATION_RESULTS` of them, so the first multi-result family to be
+    // registered makes this reachable — and a join that realized the first of
+    // several results as though it were the whole occurrence would be exactly
+    // the silent wrongness this refusal exists to prevent.
     let [result] = context.subject.results() else {
         return Err(unsupported("concatenate-result-arity"));
     };
@@ -1943,6 +1997,29 @@ struct ConcatenatePlan {
 }
 
 impl ConcatenatePlan {
+    /// Re-derives the partition from the axis and the operands' own shapes.
+    ///
+    /// **Both of this function's refusals are unreachable from a verified
+    /// occurrence, and both are stated under the unreachable-refusal convention
+    /// at [`IndexRealizationLaw`].**
+    ///
+    /// `concatenate-operand-binding` refuses an operand position outside the
+    /// input boundaries. [`IndexRefinementSubject::derive`] builds those
+    /// positions *as* indices into the boundary list it collects — one boundary
+    /// per distinct operand value — so no subject it produces can carry an
+    /// out-of-range one. The subject's own types express one, and a later
+    /// producer or a re-read is what would present it; a law that indexed
+    /// blindly would then read some other operand's shape as this member's.
+    ///
+    /// `concatenate-result-shape` refuses a re-derived result the declared one
+    /// disagrees with. `tiler::concatenate-f32@1`'s inferencer derives the
+    /// declared result with this same `concatenate_result_shape` call over the
+    /// same ordered operand shapes, so for a verified occurrence the two agree
+    /// by construction. The rule's three further sites are downstream of that
+    /// agreement rather than independent checks: the derivation just proved the
+    /// axis within every operand's shared rank and the exact prefix sum
+    /// representable, so neither the extent lookup nor the accumulation below
+    /// can fail once it has succeeded.
     fn derive(
         axis: Axis,
         inputs: &[(ResolvedValueType, Shape)],
@@ -2011,6 +2088,10 @@ fn emit_partitioned_concatenate(
         )?;
         let mut write_coordinates = read_coordinates.clone();
         write_coordinates[plan.position] = displaced;
+        // The second site of the same unreachable rule, for the same reason
+        // `ConcatenatePlan::derive` states: a subject's operand positions are
+        // built as indices into its own boundary list, and this tensor list is
+        // one entry per boundary in that order.
         let tensor = *tensors
             .get(*operand)
             .ok_or_else(|| unsupported("concatenate-operand-binding"))?;
@@ -4229,13 +4310,12 @@ mod tests {
 
     /// The law refuses an occurrence outside its exact supported form.
     ///
-    /// Three refusals, each on a subject a caller can actually build. The two
+    /// Three refusals, each on a subject a caller can actually build. The three
     /// remaining rules — a re-derived result shape disagreeing with the declared
-    /// one, and an operand position outside the input boundaries — are
-    /// unreachable from a *verified* occurrence, because `derive` builds both
-    /// from the family's own inferencer; they are stated anyway because a law is
-    /// interpreted against a subject rather than against the inferencer that
-    /// produced it.
+    /// one, an operand position outside the input boundaries, and a subject
+    /// carrying other than one result — are unreachable from a *verified*
+    /// occurrence, and each says so at its own site under the
+    /// unreachable-refusal convention at [`IndexRealizationLaw`].
     #[test]
     fn the_concatenate_law_refuses_occurrences_outside_its_form() {
         let scalars = FrozenScalarRegistry::standard().unwrap();
