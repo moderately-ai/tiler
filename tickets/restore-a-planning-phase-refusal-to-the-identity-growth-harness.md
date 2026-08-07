@@ -19,7 +19,9 @@ lease_expires_at: 1786137974
 
 ## Why this exists
 
-**Fact, 2026-08-07.** The mode takes its program from `WALLS` rather than writing one down, deliberately: its predecessor was a hand-written reverse-axis `tiler::reindex-f32@1` whose justification expired silently when all six `ReindexFormKind` arms became recognized, at which point the perturbation stopped perturbing while its exit code stayed 1. Reading the point out of the wall table means the same run also probes it, so the mode cannot silently stop testing what it says it tests.
+**Fact, 2026-08-07.** The mode takes its program from `WALLS` rather than writing one down, deliberately: its predecessor was a hand-written reverse-axis `tiler::reindex-f32@1` whose justification expired silently when all six `ReindexFormKind` arms became recognized, at which point the perturbation stopped perturbing while its exit code stayed 1.
+
+~~Reading the point out of the wall table means the same run also probes it, so the mode cannot silently stop testing what it says it tests.~~ **Struck; see §1 below.** It was false when written — `probe_the_walls` ran only after a successful `summarize`, so under this mode the wall table was never reached in either world. Making it true was the first deliverable, and it now is: `main` accumulates a verdict and every stage runs.
 
 `unplannable_program` therefore selected the first wall with `reaches_planning: true`. After [`derive-the-region-shape-budgets-from-the-declaration`](derive-the-region-shape-budgets-from-the-declaration.md) and [`rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets`](rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets.md), **the table holds exactly one wall and it refuses before planning**: 63 operations on `semantic_operations = 62`, raised at request verification with no target-qualified trace. The selection was changed to `WALLS.first()` so the mode still runs, and the coverage it lost is recorded in the harness's own doc comment and in the spike README's boundary section rather than left to be discovered.
 
@@ -99,3 +101,80 @@ The closing condition's negative branch — "none refuses after planning under t
 ### 6. Scope gap, fixed
 
 `shared_scopes` was empty while the work must edit this ticket file. `tkt guard`'s under-declaration check is file-authoritative with no self-ticket exemption, so the branch would have exited 6. `project/tickets` added.
+
+## Outcome, 2026-08-07 — the positive branch fired
+
+Base `25e76d5d911e830ddebadd813dbeecf3e546eba0`. Files changed: `spikes/program-planning/identity-growth/src/main.rs`, its `README.md`, `results/README.md`, a retained `results/2026-08-07-post-restored-planning-wall-apple-m4-max-macos27.0-26A5388g/growth.tsv`, and this ticket. No `crates/` file was touched, read-only as scoped.
+
+### 1. The ordering defect is fixed, and the fix is demonstrated rather than asserted
+
+`main` accumulates a verdict — `swept && summarized && walls_held` — and every stage runs whatever the ones before it decided. The ladder loop `break`s on a refused point instead of returning.
+
+**Demonstrated by deliberate failure**, with the perturbation killed at its source (`chain_past_the_grid_axis_bound` built at the bound rather than one past it, so the mode's program compiles) and one variable changed between the two runs:
+
+| Run | Ordering | Exit | stderr | Wall section |
+| --- | --- | --- | --- | --- |
+| A | accumulated (fixed) | 1 | `THE WALL MOVED at the launch geometry bound: 2 operations compiled to a 7793-byte identity where NoFeasiblePlan was required … If this is the entry --perturb=program reads, that mode has stopped perturbing and its non-zero exit means nothing until this is fixed.` | present, names the moved entry |
+| B | early-return (pre-fix) | 1 | **empty, 0 bytes** | **absent** |
+
+Both print 61 ladder rows and both exit 1. Under B the only signal is the fit refusing a degenerate ladder — indistinguishable from a genuine encoding change, and exactly the state in which the documented verdict "each exits non-zero" is true while the mode tests nothing. Under A the same run names the dead perturbation. Both demo edits were reverted; the committed tree carries neither, and a fresh sweep reproduces the retained file on every column but `compile_ms`.
+
+### 2. `Wall` carries a program constructor, and the deliverable's solution set is no longer empty
+
+`Wall` is now `{ subject: WallSubject, program: fn() -> SemanticProgram, control: Option<fn() -> SemanticProgram>, class, reaches_planning, why }`. The operation count is read off the built program instead of restated beside it. `unplannable_program` selects `WALLS.iter().find(|w| w.reaches_planning)` and panics if none exists, rather than falling back to `WALLS.first()`.
+
+`control` is new and load-bearing: a probe that must **compile**, so a refusal recorded beside it cannot be a boundary refusing everything.
+
+### 3. What refuses after planning — and it is not what §3 above predicted
+
+**The `region_members`-on-a-staged-family lead does not reach a program refusal, and the source says why.** `region.rs:2104` reports an over-budget member count as a `RegionRejection::Budget`, which *drops the candidate*; `whole_program_candidate` is then absent and the program still compiles whenever any other cover is implementable. For the one family whose only implementable cover is the whole-program region — this chain — members equal occurrences, so `check_program_budgets` refuses at 63 before region formation runs. The route needs a program whose only implementable cover is a >62-stage region, and nothing in this build's vocabulary builds one.
+
+**The staged normalization does refuse after planning, but not under this spike's profile.** `rms_norm(matmul(a, b), a)` refuses `NoFeasiblePlan` after planning against `TargetProfile::governed()`, which `crates/tiler-compiler/tests/staged_family_over_a_materialized_intermediate.rs` asserts. Against `BoundMetalCompileDeclaration::first_macos_apple9()` — the profile this spike compiles at — it refuses `UnsupportedCapability { rule: "accuracy.elementary.no-installed-realization" }` with **no trace**, two phases earlier, and so does its declared-input control. That profile installs no elementary realization for the normalization at all. A wall this spike cannot probe under its own profile is not a wall it may record.
+
+**What does refuse after planning is the generator's own second parameter.** The ladder sweeps operation count and holds extent fixed at 4; the extent has a domain of its own, and its top is a measured hardware row:
+
+```text
+#   launch geometry, at 2 operations: CONFIRMED NoFeasiblePlan after planning — … [the target slot refused: TargetCompileFailure { failure: CompileFailure { class: NoFeasiblePlan, explain: "26 records" }, refusal: None }]
+#   launch geometry, control: CONFIRMED the program one step inside the recorded bound compiles, to a 7793-byte identity, …
+```
+
+The sealed trace names it exactly: `rule=target.grid-axis@1 … event=feasibility:grid-axis:rejected:target-infeasible:threads=268435457:268435456`. This is the arm the ticket wanted — recognized, covered, offered to the physical provider, declined — and it is the only run that reaches `compile_once`'s `outcome.map_err` arm. **It cannot dissolve the way its two predecessors did**: `region_expansions` and `region_members` were compiler-internal ceilings removed by re-deriving a bound; this is a measured Apple row, and widening it means measuring a wider family.
+
+### 4. Enumeration domain, population 66
+
+| Population | Count | Outcome |
+| --- | --- | --- |
+| chain, 2..=63 operations at extent 4 | 62 | 2..=62 compile; 63 refuses `BudgetExhausted` before planning |
+| chain, 2 operations at extents 1,024 / 65,536 / 16,777,216 / 268,435,455 / 268,435,456 | 5 | all compile |
+| chain, 2 operations at extents 268,435,457 / 1,073,741,824 / 4,294,967,296 | 3 | all refuse `NoFeasiblePlan` after planning, each naming `target.grid-axis` with `threads=<extent>:268435456` |
+| `rms_norm(matmul(a, b), a)` over two `[2, 2]` inputs, and its two-declared-input control | 2 | both refuse `UnsupportedCapability { rule: "accuracy.elementary.no-installed-realization" }` before planning |
+
+All against the Apple9 declaration under `FLUSH_SUBNORMALS_TO_ZERO_F32`. Sixty-one run on every ordinary sweep and four more in every wall section; the last row ran once and is recorded rather than retained. **This bounds one program family over two parameters plus one two-occurrence staged family, under one contract and one profile.** It is not a statement about semantic programs, other families, or other declarations — the last row is the worked example of why the difference matters.
+
+### 5. Re-measured, and nothing moved
+
+Base `25e76d5d`, six commits past the quoted `cee4fe1a`. **All nine structural columns are identical at all sixty-one points**, compared column by column rather than through the fit; `program_bytes(n) = 3530n + 723` and `graph_bytes(n) = 134n + 149` both still reproduce every point to the byte. So the spike's verdict now describes two trees. Retained at `results/2026-08-07-post-restored-planning-wall-…/growth.tsv`; the run's own second full sweep reproduces every column but `compile_ms`.
+
+One figure is new: the launch-geometry control compiles a two-operation chain at extent 268,435,456 to a **7,793**-byte identity against the ladder's 7,783 at the same operation count — ten bytes for an extent nine orders of magnitude larger, which measures the `EXTENT` note's claim that the held-fixed parameter moves the constant and not the slope.
+
+### 6. Perturbation modes, each with the line that produced its exit code
+
+| Mode | Exit | Diagnosis |
+| --- | --- | --- |
+| `--perturb=program` | 1 | stderr: `REFUSED at operations=2: the target slot refused: TargetCompileFailure { failure: CompileFailure { class: NoFeasiblePlan, explain: "26 records" }, refusal: None } | tiler-explain-v7 …` (whole 26-record trace) |
+| `--perturb=coverage` | 1 | stderr: `REFUSED at operations=2: the selected alternative covers 2 semantic occurrences but the graph has 3 operations; …` |
+| `--perturb=fit` | 1 | **stdout**: `# NO EXACT QUADRATIC FITS the measured program-identity curve, so no refusal point is stated. …` — stderr is empty by design; the fit's verdict belongs in the summary block beside the fit |
+| `--perturb=wall` | 1 | stderr: `THE WALL CHANGED KIND at the program size bound, 63 operations: this table expects NoFeasiblePlan raised before planning, and the compiler refused with … BudgetExhausted …` |
+
+All four now reach the wall table, which none did before under `--perturb=program`.
+
+### 7. Corrections carried into the records
+
+- The harness's unexercised-path list was imprecise as the repair section said. `into_targets` and `into_parts` run on every successful ladder point; the `outcome.map_err` arm is now exercised by the launch-geometry wall and by `--perturb=program`. The three `ok_or_else` refusals remain unexercised.
+- `Refusal`'s claim that "the one surviving wall now refuses before any trace is sealed, so the split currently costs nothing" is corrected: a wall seals a 26-record trace again, and the two-sink split is load-bearing.
+- The README's "there is no program this compilation path admits that the ladder does not already contain" is narrowed to "at this extent", because the control is such a program.
+- `carry-the-exhausted-resource-through-the-budget-refusal` no longer covers every wall here: the launch-geometry entry attributes itself from its own trace.
+
+### Not done, deliberately
+
+No budget was moved. No `crates/` file was touched. The ticket is left `in-progress` for the coordinator to close.
