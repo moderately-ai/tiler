@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [stop-copying-the-carried-payload-through-the-envelope-projection, measure-artifact-decoder-allocation-amplification]
 scopes: [implementation/artifact]
-shared_scopes: [research/artifacts]
+shared_scopes: [research/artifacts, project/tickets]
 paths: []
 tags: [artifact, codec, performance]
 claimed_from: todo
