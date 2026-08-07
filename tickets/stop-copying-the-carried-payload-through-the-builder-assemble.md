@@ -228,7 +228,22 @@ shellcheck.
 
 The spike is a separate workspace and no `make` target reaches it, so its own
 `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings` were
-run from `spikes/artifacts/decoder-allocation`.
+run from `spikes/artifacts/decoder-allocation`. The recorded `build-after` table
+was reproduced byte-identically from the branch tip after the last doc-comment
+edit, so the retained file is the tree's output and not an earlier build's.
+
+The only delta after the `make full` gate is this ticket's frontmatter and
+Outcome and the spike README's measured-peak paragraph, which touch none of
+`crates/`, `prototypes/`, `Cargo.toml`, `Cargo.lock`, `.config/`, `Makefile`,
+`rust-toolchain.toml`, `rustfmt.toml`, or `deps.sh`, so the gate carries under
+the rule AGENTS.md states for exactly that case. `tkt lint` was rerun on the
+final tree and `tkt guard` reports `severity: warn`, `conflict: false`,
+`under_declared: []`; the remaining collisions are `project/tickets` and
+`research/artifacts` shared-scope holders plus five `implementation/artifact`
+tickets that are all `done`.
+
+`project/tickets` was added as a shared scope for this Outcome, which is the
+ticket update convention; `tkt guard` reported it under-declared before it was.
 
 ### Files
 
