@@ -1537,7 +1537,7 @@ pub(crate) struct NormalizedContraction {
     pub(crate) contracted_elements: u64,
 }
 
-/// One read an elementwise epilogue's expression leaf binds.
+/// Which boundary tensor one recognized read binds.
 ///
 /// **The access position and the boundary role are separate facts here, and a
 /// whole-program elementwise region never had to distinguish them.** That region
@@ -1549,8 +1549,19 @@ pub(crate) struct NormalizedContraction {
 /// states the same separation from the schedule side, and
 /// `crate::program::CoverAssembly::from_plan` is what resolves the role against
 /// the program's declared interface.
+///
+/// **Two recognized shapes carry it, and the separation is the same fact in
+/// both.** An epilogue's read list names the tensor each expression leaf binds;
+/// a staged family's operand run names the tensor each *occurrence operand*
+/// binds, because
+/// [`admit-a-staged-family-that-reads-a-materialized-intermediate`](../../../tickets/admit-a-staged-family-that-reads-a-materialized-intermediate.md)
+/// made an operand's source a recognition-time property. One vocabulary rather
+/// than two is what keeps `crate::program::CoverAssembly::from_plan` resolving
+/// one kind of role against the cover, and what keeps
+/// [`Self::tensor`] the single statement of the mapping onto
+/// [`TensorRole`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum EpilogueRead {
+pub(crate) enum BoundaryRead {
     /// The value the producer region staged, bound to the materialization edge
     /// the cover hands this region.
     ///
@@ -1562,7 +1573,7 @@ pub(crate) enum EpilogueRead {
     Input(u32),
 }
 
-impl EpilogueRead {
+impl BoundaryRead {
     /// Returns the boundary tensor this read binds.
     pub(crate) const fn tensor(self) -> TensorRole {
         match self {
@@ -1570,6 +1581,15 @@ impl EpilogueRead {
             Self::Input(ordinal) => TensorRole::Input {
                 ordinal: InputOrdinal::new(ordinal),
             },
+        }
+    }
+
+    /// Returns the declared input ordinal this read binds, or `None` for the
+    /// staged one.
+    pub(crate) const fn declared_ordinal(self) -> Option<u32> {
+        match self {
+            Self::Staged => None,
+            Self::Input(ordinal) => Some(ordinal),
         }
     }
 }
@@ -1610,8 +1630,8 @@ pub(crate) struct NormalizedEpilogue {
     ///
     /// Parallel to the region's reads: leaf `i` is served by entry `i`, which
     /// names the boundary tensor it binds and the relation it addresses that
-    /// tensor with. Exactly one entry is [`EpilogueRead::Staged`].
-    pub(crate) reads: Vec<(EpilogueRead, LogicalAccess)>,
+    /// tensor with. Exactly one entry is [`BoundaryRead::Staged`].
+    pub(crate) reads: Vec<(BoundaryRead, LogicalAccess)>,
     /// The occurrences the epilogue region itself covers.
     pub(crate) members: Vec<SemanticStage>,
     pub(crate) inputs: Vec<ValueId>,
@@ -1640,8 +1660,36 @@ pub(crate) struct NormalizedEpilogue {
 /// [`SemanticStage::first`] — the occurrence — and
 /// [`NormalizedOutput::owns_region_members`] answers for whichever stage atoms
 /// formation actually minted.
+///
+/// **One operand may be a value another region materializes, and the shape says
+/// which.** `rms_norm(matmul(a, b), a)` reads its first operand across a
+/// materialization edge rather than from a declared buffer, so
+/// [`Self::operand_reads`] carries a per-operand [`BoundaryRead`] and
+/// [`Self::producer`] carries the recognized shape whose regions write it. Both
+/// are recognition-time facts and both live here, which is the resolution
+/// [`admit-a-staged-family-that-reads-a-materialized-intermediate`](../../../tickets/admit-a-staged-family-that-reads-a-materialized-intermediate.md)
+/// chose over deriving the operand's source from the cover's materialization
+/// edges: an operand supplied by no declared input and no recognizable producer
+/// is a property of the *program*, and a stage that discovered it later could
+/// only report it as a cover it could not assemble.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedStaged {
+    /// The recognized shape producing the value one operand reads, when an
+    /// operand is a materialized intermediate.
+    ///
+    /// `None` exactly when every entry of [`Self::operand_reads`] is
+    /// [`BoundaryRead::Input`]. It is carried for the reason
+    /// [`NormalizedEpilogue::producer`] is carried: the producing occurrences
+    /// belong to *this* output's walk — nothing else claims them, and
+    /// [`check_output_cover`] refuses a program with an occurrence no walk
+    /// claimed — so the region a cover places for them has to be spelled from a
+    /// recognized shape this partition holds.
+    ///
+    /// Its `output_key` is this occurrence's own, for the reason
+    /// [`NormalizedEpilogue::producer`] states: a producer publishes nothing and
+    /// the field means the ordered named output the partition it belongs to
+    /// publishes.
+    pub(crate) producer: Option<Box<NormalizedOutput>>,
     /// The registered family this occurrence belongs to.
     pub(crate) operation: OpKey,
     /// The law the registry carries for that family.
@@ -1678,12 +1726,15 @@ pub(crate) struct NormalizedStaged {
     pub(crate) attribute_record: OperationAttributes,
     pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
-    /// Declared input ordinal supplying each occurrence operand, in operand
-    /// order.
+    /// Boundary tensor supplying each occurrence operand, in operand order.
     ///
-    /// Every operand is a declared input: see [`recognize_staged_family`]'s
-    /// `staged-operand` refusal for the boundary and its owner.
-    pub(crate) operand_inputs: Vec<u32>,
+    /// At most one entry is [`BoundaryRead::Staged`], and the bound is the
+    /// unordinalled [`TensorRole::Intermediate`]'s rather than a simplification:
+    /// a second staged operand — one value read twice, or two different
+    /// materialized values — has nothing to say which edge each read binds.
+    /// [`recognize_staged_family`]'s `staged-operand-conflict` refusal is that
+    /// boundary and [`Self::producer`] is the one edge that survives it.
+    pub(crate) operand_reads: Vec<BoundaryRead>,
     /// Operand shapes, in operand order.
     pub(crate) operand_shapes: Vec<Shape>,
     /// The published shape of the occurrence's one result.
@@ -1695,6 +1746,41 @@ pub(crate) struct NormalizedStaged {
     /// Operand element counts, in operand order.
     pub(crate) operand_elements: Vec<u64>,
     pub(crate) output_elements: u64,
+}
+
+impl NormalizedStaged {
+    /// Returns whether one region's members are exactly stages of this
+    /// occurrence.
+    ///
+    /// **Narrower than [`NormalizedOutput::owns_region_members`] on purpose, and
+    /// the difference is the producer.** That predicate answers for every region
+    /// of this output's partition, which since a staged operand became
+    /// recognizable includes the producer's own regions; this one answers only
+    /// for the stages *this* occurrence realizes as. [`crate::physical`] asks
+    /// this before it names a stage spelling, because a producer region resolved
+    /// to this output belongs to the producer's family and not to the law's two
+    /// stages.
+    ///
+    /// The stage list is deliberately not enumerated here: region formation
+    /// decided how many stages there are and which atoms exist, so asking for a
+    /// stage list would be a second account of that decision, free to disagree
+    /// with the candidates actually enumerated. An empty member set is no region
+    /// of this occurrence.
+    pub(crate) fn owns_stage_members(&self, members: &[SemanticStage]) -> bool {
+        !members.is_empty() && members.iter().all(|atom| atom.member() == self.member)
+    }
+
+    /// Returns each operand that binds a declared input, as `(ordinal, count)`.
+    ///
+    /// The staged operand is skipped rather than reported at some ordinal: its
+    /// element count sizes a materialization edge, not a declared buffer, and a
+    /// caller scaling work over a declared input must not receive it.
+    fn declared_operands(&self) -> impl Iterator<Item = (u32, u64)> + '_ {
+        self.operand_reads
+            .iter()
+            .zip(&self.operand_elements)
+            .filter_map(|(read, elements)| Some((read.declared_ordinal()?, *elements)))
+    }
 }
 
 /// One recognized ordered named program output, and the region partition that
@@ -1721,11 +1807,13 @@ pub(crate) enum NormalizedOutput {
     /// Boxed because it carries a whole further recognized output inside it,
     /// which would otherwise make every value of this enum the size of two.
     Epilogue(Box<NormalizedEpilogue>),
-    /// One occurrence of a registered family realized as a region sequence.
+    /// One occurrence of a registered family realized as a region sequence, and
+    /// the shape producing the value one operand reads when that operand is a
+    /// materialized intermediate.
     ///
     /// Boxed because it carries an operand-indexed shape list, an element-count
-    /// list, and the occurrence's canonical attribute bytes, none of which the
-    /// other variants pay for.
+    /// list, the occurrence's canonical attribute bytes, and a whole further
+    /// recognized output, none of which the other variants pay for.
     Staged(Box<NormalizedStaged>),
 }
 
@@ -1778,7 +1866,7 @@ impl NormalizedOutput {
         }
     }
 
-    /// Returns the recognized shape every *producer* region of this output is
+    /// Returns the recognized shape one *producer* region of this output is
     /// built from.
     ///
     /// A chain's producer regions — the fold, its prologue, its split passes,
@@ -1788,12 +1876,25 @@ impl NormalizedOutput {
     /// standalone output. The epilogue region is the one part that is not built
     /// from it, and [`crate::physical::RegionSpellingKind::Epilogue`] is what
     /// distinguishes it.
-    pub(crate) fn producer_shape(&self) -> &Self {
+    ///
+    /// **It takes the region's members, and it has to since a staged family may
+    /// read a materialized intermediate.** Such an output holds two recognized
+    /// shapes whose regions a cover both places — the occurrence's own two
+    /// stages, and its producer's partition — so "the producer shape" is not a
+    /// property of the output alone. The epilogue arm descends unconditionally
+    /// because its own region is never spelled through here; the staged arm
+    /// descends exactly when the members are not the occurrence's stages, which
+    /// is the same question [`crate::physical::spell_region`] answered to reach
+    /// this call.
+    pub(crate) fn producer_shape_for(&self, members: &[SemanticStage]) -> &Self {
         match self {
-            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) | Self::Staged(_) => {
-                self
-            }
-            Self::Epilogue(chain) => &chain.producer,
+            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) => self,
+            Self::Epilogue(chain) => chain.producer.producer_shape_for(members),
+            Self::Staged(normalized) => normalized
+                .producer
+                .as_deref()
+                .filter(|_| !normalized.owns_stage_members(members))
+                .map_or(self, |producer| producer.producer_shape_for(members)),
         }
     }
 
@@ -1863,7 +1964,7 @@ impl NormalizedOutput {
                 let consumed = chain
                     .reads
                     .iter()
-                    .any(|(read, _)| *read == EpilogueRead::Input(ordinal))
+                    .any(|(read, _)| *read == BoundaryRead::Input(ordinal))
                     .then_some(chain.elements);
                 match (produced, consumed) {
                     (Some(produced), Some(consumed)) if produced != consumed => None,
@@ -1871,21 +1972,31 @@ impl NormalizedOutput {
                     (None, None) => None,
                 }
             }
-            // Every operand of a staged occurrence is a declared input, so the
-            // count is the operand's own and the operand run is the read list.
-            // Agreement or nothing when one declared input supplies two
-            // operands, for the reason
-            // [`NormalizedProgram::agreed_input_elements_at`] states: two
-            // operand positions reading one tensor at different extents give a
+            // The operand run is the occurrence's read list, so an operand
+            // binding a declared input answers that operand tensor's own count
+            // and the staged operand answers nothing — its count sizes a
+            // materialization edge rather than a declared buffer.
+            //
+            // Agreement or nothing, over the occurrence's own operands *and* its
+            // producer's answer, for the reason the chain arm above and
+            // [`NormalizedProgram::agreed_input_elements_at`] both state: two
+            // operand positions reading one tensor at different extents, or a
+            // producer reading it at a domain the occurrence does not, give a
             // work-scaling caller no single answer.
             Self::Staged(normalized) => agreed(
                 normalized
-                    .operand_inputs
-                    .iter()
-                    .zip(&normalized.operand_elements)
-                    .filter(|(operand, _)| **operand == ordinal)
-                    .map(|(_, elements)| *elements),
-            ),
+                    .declared_operands()
+                    .filter(|(operand, _)| *operand == ordinal)
+                    .map(|(_, elements)| Some(elements))
+                    .chain(
+                        normalized
+                            .producer
+                            .as_deref()
+                            .filter(|producer| producer.reads_declared_input(ordinal))
+                            .map(|producer| producer.input_elements_at(InputOrdinal::new(ordinal))),
+                    ),
+            )
+            .flatten(),
         }
     }
 
@@ -1922,13 +2033,23 @@ impl NormalizedOutput {
                 chain
                     .reads
                     .iter()
-                    .any(|(read, _)| *read == EpilogueRead::Input(ordinal))
+                    .any(|(read, _)| *read == BoundaryRead::Input(ordinal))
                     || chain.producer.reads_declared_input(ordinal)
             }
             // The recognized operand map, not the declared arity: a staged
             // occurrence binds one read per operand and a program may declare an
-            // input it never names.
-            Self::Staged(normalized) => normalized.operand_inputs.contains(&ordinal),
+            // input it never names. Its producer's regions are part of this
+            // output's partition too, so a declared input only the producer
+            // reaches is one this output reads.
+            Self::Staged(normalized) => {
+                normalized
+                    .declared_operands()
+                    .any(|(operand, _)| operand == ordinal)
+                    || normalized
+                        .producer
+                        .as_deref()
+                        .is_some_and(|producer| producer.reads_declared_input(ordinal))
+            }
         }
     }
 
@@ -1951,19 +2072,28 @@ impl NormalizedOutput {
                 if chain
                     .reads
                     .iter()
-                    .any(|(read, _)| matches!(read, EpilogueRead::Input(_)))
+                    .any(|(read, _)| matches!(read, BoundaryRead::Input(_)))
                 {
                     chain.elements
                 } else {
                     0
                 },
             ),
+            // The declared-input operands only, and the producer's own answer
+            // beside them: a staged operand's count is a materialization edge's
+            // extent, and reporting it here would overstate the largest declared
+            // input this output reads.
             Self::Staged(normalized) => normalized
-                .operand_elements
-                .iter()
-                .copied()
+                .declared_operands()
+                .map(|(_, elements)| elements)
                 .max()
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .max(
+                    normalized
+                        .producer
+                        .as_deref()
+                        .map_or(0, NormalizedOutput::max_input_elements),
+                ),
         }
     }
 
@@ -1990,12 +2120,24 @@ impl NormalizedOutput {
                 members.dedup();
                 members
             }
-            // The occurrence, once. A staged family's realization stages are
-            // region formation's to enumerate — see [`NormalizedStaged`] — and
-            // claiming them here would state the same split twice and make
-            // [`check_output_cover`]'s per-occurrence accounting count a
-            // realization choice as program work.
-            Self::Staged(normalized) => vec![SemanticStage::first(normalized.member)],
+            // The occurrence, once, and its producer's own claim when an operand
+            // is a materialized intermediate. A staged family's realization
+            // stages are region formation's to enumerate — see
+            // [`NormalizedStaged`] — and claiming them here would state the same
+            // split twice and make [`check_output_cover`]'s per-occurrence
+            // accounting count a realization choice as program work. The
+            // producer's occurrences are program work and are claimed by this
+            // walk alone, exactly as a chain's producer's are.
+            Self::Staged(normalized) => {
+                let mut members = normalized
+                    .producer
+                    .as_deref()
+                    .map_or_else(Vec::new, NormalizedOutput::members);
+                members.push(SemanticStage::first(normalized.member));
+                members.sort_unstable();
+                members.dedup();
+                members
+            }
         }
     }
 
@@ -2042,19 +2184,18 @@ impl NormalizedOutput {
             Self::Epilogue(chain) => {
                 members == chain.members || chain.producer.owns_region_members(members)
             }
-            // Every region whose atoms are all stages of this one occurrence,
-            // which is the whole partition a staged family has: region formation
-            // decided how many stages there are and which atoms exist, so asking
-            // for a stage list here would be a second account of that decision
-            // that could disagree with the candidates actually enumerated. A
-            // region mixing this occurrence's stages with another occurrence's
-            // atoms is not a part and is declined, exactly as a region
-            // straddling two outputs' walks is.
+            // Every region whose atoms are all stages of this one occurrence —
+            // which is [`NormalizedStaged::owns_stage_members`], and which states
+            // why no stage list is enumerated here — or any part of the
+            // producer's partition when an operand is a materialized
+            // intermediate. The two are disjoint by construction: a producer's
+            // atoms name a different occurrence, so no member set can be both.
             Self::Staged(normalized) => {
-                !members.is_empty()
-                    && members
-                        .iter()
-                        .all(|atom| atom.member() == normalized.member)
+                normalized.owns_stage_members(members)
+                    || normalized
+                        .producer
+                        .as_deref()
+                        .is_some_and(|producer| producer.owns_region_members(members))
             }
         }
     }
@@ -2358,11 +2499,48 @@ pub(crate) enum NormalizedOutputSubject {
     Epilogue(Box<NormalizedEpilogueSubject>),
     /// Boxed for the reason [`NormalizedOutput::Staged`] is.
     ///
-    /// The recognized shape is carried whole rather than projected: it holds no
-    /// graph handle a subject must not bind, because the occurrence coordinate
-    /// it does carry is the graph-local member ordinal every other arm's member
-    /// run already writes.
-    Staged(Box<NormalizedStaged>),
+    /// The occurrence's recognized shape is carried whole rather than projected:
+    /// it holds no graph handle a subject must not bind, because the occurrence
+    /// coordinate it does carry is the graph-local member ordinal every other
+    /// arm's member run already writes. Its producer is the one part that *is*
+    /// projected, into the subject's own recursive slot, for the reason
+    /// [`NormalizedEpilogueSubject`] projects a chain's.
+    Staged(Box<NormalizedStagedSubject>),
+}
+
+/// The subject projection of one recognized staged family.
+///
+/// It carries the producer's own subject rather than a summary of it, for the
+/// reason [`NormalizedEpilogueSubject`] does: a region of the producer's
+/// partition binds against exactly the subject it would bind against if the
+/// producer were the whole declared output, so [`crate::physical`]'s binding
+/// recurses instead of restating each producing family's obligations again.
+///
+/// **The occurrence copy's own [`NormalizedStaged::producer`] slot is cleared,
+/// and the clearing is what keeps one fact in one place.** Carrying the producer
+/// both as a recognized shape and as a subject would be two accounts of one
+/// value, free to disagree; the recognized side is [`NormalizedProgram`]'s and
+/// the subject side is this one's.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedStagedSubject {
+    occurrence: Box<NormalizedStaged>,
+    producer: Option<Box<NormalizedOutputSubject>>,
+}
+
+impl NormalizedStagedSubject {
+    /// Returns the occurrence's own recognized shape.
+    ///
+    /// Its producer slot is cleared; [`Self::producer`] is where the producer
+    /// travels.
+    pub(crate) const fn occurrence(&self) -> &NormalizedStaged {
+        &self.occurrence
+    }
+
+    /// Returns the producer subject a region of the producing partition binds
+    /// against, or `None` when every operand binds a declared input.
+    pub(crate) fn producer(&self) -> Option<&NormalizedOutputSubject> {
+        self.producer.as_deref()
+    }
 }
 
 /// The subject projection of one recognized elementwise epilogue chain.
@@ -2379,7 +2557,7 @@ pub(crate) struct NormalizedEpilogueSubject {
     output_key: OutputKey,
     shape: Shape,
     expression: PointwiseF32Expression,
-    reads: Vec<(EpilogueRead, LogicalAccess)>,
+    reads: Vec<(BoundaryRead, LogicalAccess)>,
     members: Vec<SemanticStage>,
     elements: u64,
 }
@@ -2399,7 +2577,7 @@ impl NormalizedEpilogueSubject {
         &self.expression
     }
     /// Returns the epilogue region's reads, in access order.
-    pub(crate) fn reads(&self) -> &[(EpilogueRead, LogicalAccess)] {
+    pub(crate) fn reads(&self) -> &[(BoundaryRead, LogicalAccess)] {
         &self.reads
     }
     /// Returns the occurrences the epilogue region itself covers.
@@ -2898,8 +3076,8 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
             push_len(bytes, normalized.reads.len());
             for (read, map) in &normalized.reads {
                 match read {
-                    EpilogueRead::Staged => bytes.push(0x01),
-                    EpilogueRead::Input(ordinal) => {
+                    BoundaryRead::Staged => bytes.push(0x01),
+                    BoundaryRead::Input(ordinal) => {
                         bytes.push(0x02);
                         bytes.extend_from_slice(&ordinal.to_be_bytes());
                     }
@@ -2930,35 +3108,77 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
         // region content identity uses, so the two never disagree about what an
         // attribute value is.
         NormalizedOutputSubject::Staged(normalized) => {
-            push_slice(bytes, b"staged-family.v1");
-            push_slice(bytes, normalized.operation.namespace().as_bytes());
-            push_slice(bytes, normalized.operation.name().as_bytes());
-            bytes.extend_from_slice(&normalized.operation.semantic_version().to_be_bytes());
-            push_slice(bytes, &normalized.attributes);
-            push_len(bytes, normalized.input_keys.len());
-            for key in &normalized.input_keys {
+            let occurrence = normalized.occurrence();
+            // **The sub-tag steps to `v2`, and the step is forced.** An operand
+            // entry used to open with its declared input ordinal and now opens
+            // with the boundary-role tag that says whether there *is* one, so
+            // every byte string this arm could already produce moves. The
+            // per-tag injectivity argument that licenses a same-domain re-tag —
+            // "no already-encodable subject's bytes move" — therefore does not
+            // close, and half a step is worse than none.
+            //
+            // Only this arm's bytes move. The enclosing
+            // `tiler.compiler.request-subject.v5` domain does not step, because
+            // a program naming no staged family encodes exactly what it did, and
+            // no pinned request qualifier encodes a staged subject:
+            // `explain`'s `deterministic_trace_is_sealed_and_rendered_separately`
+            // qualifies a multiply and `tiler-build`'s standard Metal goldens
+            // qualify a reduction.
+            push_slice(bytes, b"staged-family.v2");
+            push_slice(bytes, occurrence.operation.namespace().as_bytes());
+            push_slice(bytes, occurrence.operation.name().as_bytes());
+            bytes.extend_from_slice(&occurrence.operation.semantic_version().to_be_bytes());
+            push_slice(bytes, &occurrence.attributes);
+            push_len(bytes, occurrence.input_keys.len());
+            for key in &occurrence.input_keys {
                 push_slice(bytes, key.as_str().as_bytes());
             }
-            push_slice(bytes, normalized.output_key.as_str().as_bytes());
-            // The operand run: which declared input supplies each operand, at
+            push_slice(bytes, occurrence.output_key.as_str().as_bytes());
+            // The operand run: which boundary tensor supplies each operand, at
             // which shape and element count. Position is identity because the
             // family reads its operands by position — `rms_norm(x, w)` and
-            // `rms_norm(w, x)` are different programs — and the ordinals are the
-            // program's own, which is what the ABI binds.
-            push_len(bytes, normalized.operand_inputs.len());
-            for ((ordinal, shape), elements) in normalized
-                .operand_inputs
+            // `rms_norm(w, x)` are different programs — the ordinals are the
+            // program's own, which is what the ABI binds, and the role tag is
+            // identity because `rms_norm(x, w)` and `rms_norm(matmul(a, b), w)`
+            // agree on every other field of this entry.
+            //
+            // The two tags are the epilogue arm's, for the reason they are one
+            // vocabulary rather than two: the same [`BoundaryRead`] is written,
+            // and the arm's own sub-tag separates the two runs before either is
+            // read.
+            push_len(bytes, occurrence.operand_reads.len());
+            for ((read, shape), elements) in occurrence
+                .operand_reads
                 .iter()
-                .zip(&normalized.operand_shapes)
-                .zip(&normalized.operand_elements)
+                .zip(&occurrence.operand_shapes)
+                .zip(&occurrence.operand_elements)
             {
-                bytes.extend_from_slice(&ordinal.to_be_bytes());
+                match read {
+                    BoundaryRead::Staged => bytes.push(0x01),
+                    BoundaryRead::Input(ordinal) => {
+                        bytes.push(0x02);
+                        bytes.extend_from_slice(&ordinal.to_be_bytes());
+                    }
+                }
                 encode_explain_shape(bytes, shape);
                 bytes.extend_from_slice(&elements.to_be_bytes());
             }
-            encode_explain_shape(bytes, &normalized.output_shape);
-            bytes.extend_from_slice(&normalized.member.0.to_be_bytes());
-            bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+            encode_explain_shape(bytes, &occurrence.output_shape);
+            bytes.extend_from_slice(&occurrence.member.0.to_be_bytes());
+            bytes.extend_from_slice(&occurrence.output_elements.to_be_bytes());
+            // The producer, present exactly when some operand above is staged,
+            // written through this same function so it encodes exactly as the
+            // standalone output of its family would — the epilogue arm's own
+            // property, and what keeps two spellings of one contraction from
+            // acquiring two identities. The presence byte leads so the arm stays
+            // self-delimiting.
+            match normalized.producer() {
+                Some(producer) => {
+                    bytes.push(0x01);
+                    encode_output_subject(bytes, producer);
+                }
+                None => bytes.push(0x00),
+            }
         }
     }
 }
@@ -3502,7 +3722,20 @@ fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputSubject {
         NormalizedOutput::Contraction(normalized) => {
             NormalizedOutputSubject::Contraction(normalized.clone())
         }
-        NormalizedOutput::Staged(normalized) => NormalizedOutputSubject::Staged(normalized.clone()),
+        NormalizedOutput::Staged(normalized) => {
+            let mut occurrence = normalized.clone();
+            // Cleared here rather than left duplicated: the producer travels in
+            // the subject's own recursive slot beside it, and two copies of one
+            // recognized shape are two accounts of one fact.
+            let producer = occurrence
+                .producer
+                .take()
+                .map(|producer| Box::new(output_subject(&producer)));
+            NormalizedOutputSubject::Staged(Box::new(NormalizedStagedSubject {
+                occurrence,
+                producer,
+            }))
+        }
         NormalizedOutput::Epilogue(chain) => {
             NormalizedOutputSubject::Epilogue(Box::new(NormalizedEpilogueSubject {
                 producer: Box::new(output_subject(&chain.producer)),
@@ -4495,8 +4728,24 @@ fn resolve_numerical_contract(
 ///   stopping at it, the producer is recognized as its own shape, and the cover
 ///   search places the materialization edge between them. What is still refused
 ///   under `operation-set` is a chain one boundary deeper — a walk that reaches a
-///   second folded value has nothing to attribute a second staged read to,
-///   because `TensorRole::Intermediate` carries no ordinal.
+///   *second, different* folded value — and that is a rule about chain depth
+///   rather than about ordinals, because each of those regions would read one
+///   intermediate. [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md)
+///   owns it, together with [`recognize_staged_family`]'s `staged-operand-depth`,
+///   which states the same rule for the operand walk. The neighbouring refusal
+///   that *is* about the unordinalled role is [`record_leaf`]'s: one staged value
+///   read twice by one walk.
+/// - **A staged family reading a materialized intermediate is admitted**, which
+///   is where the last of this rule's rows moved.
+///   [`admit-a-staged-family-that-reads-a-materialized-intermediate`](../../../tickets/admit-a-staged-family-that-reads-a-materialized-intermediate.md)
+///   gave the recognized staged shape a per-operand [`BoundaryRead`] and the
+///   producer whose regions write the edge, so `rms_norm(matmul(a, b), a)` is one
+///   output's partition rather than a `staged-operand` refusal. It stops one
+///   layer down instead: the consuming stage would read that edge *and* the value
+///   the producing stage handed it, which is two `TensorRole::Intermediate`
+///   accesses, so [`crate::physical::staged_plan`] declines the occurrence and
+///   `crates/tiler-compiler/tests/staged_family_over_a_materialized_intermediate.rs`
+///   measures where that leaves it.
 ///
 /// **A reduction reading a declared input directly was the third wall here, and
 /// it is gone.** `sum(x)` was refused under `reduction-prologue` because
@@ -4725,6 +4974,11 @@ fn recognize_output(
             output.key().clone(),
             member,
             &root,
+            // The declared output's own occurrence is at the near side of every
+            // materialization edge this walk may place, so it is the one that
+            // may read one. See [`recognize_staged_family`]'s
+            // `staged-operand-depth` refusal for the far side.
+            StagedOperandAdmission::OneEdge,
         )
         .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
     } else {
@@ -5478,13 +5732,14 @@ fn plan_elementwise(
             // expression is a per-point body. Naming the value lets the epilogue
             // recognizer read it as the tensor an earlier region staged. A walk
             // that already reads one staged value reports the ordinary rule
-            // instead: `TensorRole::Intermediate` carries no ordinal, so a second
-            // staged read has nothing to attribute it to a second edge.
-            if leaves.staged.is_none()
-                && (operation.key() == &strict_serial_sum_f32_op()
-                    || operation.key() == &strict_tensor_contraction_f32_op()
-                    || laws.family_realizes_region_sequence(operation.key()))
-            {
+            // instead, and that is the chain-depth rule rather than the
+            // unordinalled-role one: naming a second, *different* folded value
+            // would make the recognized chain two materialization boundaries
+            // deep, which is
+            // `admit-a-recognized-chain-more-than-one-materialization-boundary-deep`'s.
+            // The unordinalled-role refusal is `record_leaf`'s, for one staged
+            // value read twice.
+            if leaves.staged.is_none() && materializes_its_result(&operation, laws) {
                 return Err(ElementwiseRefusal::Folded(value));
             }
             return refused("operation-set");
@@ -6247,9 +6502,9 @@ fn recognize_epilogue(
         .iter()
         .map(|leaf| {
             let read = if leaf.value == staged {
-                EpilogueRead::Staged
+                BoundaryRead::Staged
             } else {
-                EpilogueRead::Input(declared_ordinal(declared, leaf.value)?)
+                BoundaryRead::Input(declared_ordinal(declared, leaf.value)?)
             };
             Ok((read, leaf.map.clone()))
         })
@@ -6270,12 +6525,44 @@ fn recognize_epilogue(
     })
 }
 
-/// Recognizes the producer half of one epilogue chain.
+/// Returns whether one occurrence's result is a value some region *materializes*
+/// rather than a value a consumer's own per-point body can recompute.
 ///
-/// The two folding families and nothing else. The refusal is not dead code
-/// standing in for an impossible state: [`plan_elementwise`] names a value only
-/// for these two families today, and a third family added to that discovery
-/// without a producer region here must refuse rather than acquire one.
+/// **The single statement of where a materialization edge may sit**, asked by
+/// [`plan_elementwise`]'s folding discovery and by
+/// [`recognize_staged_family`]'s operand walk. The two used to be one disjunct
+/// written once; they are one function now because a second copy would be free
+/// to disagree about which programs contain an edge at all, and the shape of
+/// that disagreement is a walk naming a boundary the producer recognizer refuses
+/// to build for.
+///
+/// A recognized *elementwise* family is deliberately not here. Its result is an
+/// expression its consumer evaluates per point, which is the whole reason the
+/// expression vocabulary exists; treating it as an edge would materialize a
+/// value — and add the observable rounding boundary — the caller's program never
+/// asked for.
+fn materializes_its_result(
+    operation: &tiler_ir::semantic::OperationRef<'_>,
+    laws: &FrozenIndexRealizationLawRegistry,
+) -> bool {
+    operation.key() == &strict_serial_sum_f32_op()
+        || operation.key() == &strict_tensor_contraction_f32_op()
+        || laws.family_realizes_region_sequence(operation.key())
+}
+
+/// Recognizes the shape producing one materialized value.
+///
+/// The folding families and nothing else, which is exactly
+/// [`materializes_its_result`]'s set. The refusal is not dead code standing in
+/// for an impossible state: both callers gate on that predicate, and a family
+/// added to it without a producer region here must refuse rather than acquire
+/// one.
+///
+/// **The producer is at the far side of an edge, so it places none of its own**
+/// — [`StagedOperandAdmission::NoEdge`] below — and that is the "one
+/// materialization boundary deep" rule [`recognize_epilogue`] already states,
+/// applied to the staged family's operand for the same reason. Widening it is
+/// [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md)'s.
 fn recognize_epilogue_producer(
     program: &SemanticProgram,
     staged: ValueId,
@@ -6290,11 +6577,35 @@ fn recognize_epilogue_producer(
         normalize_contraction(program, staged, output_key)
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
     } else if laws.family_realizes_region_sequence(root.key()) {
-        recognize_staged_family(program, laws, staged, output_key, member, &root)
-            .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
+        recognize_staged_family(
+            program,
+            laws,
+            staged,
+            output_key,
+            member,
+            &root,
+            StagedOperandAdmission::NoEdge,
+        )
+        .map(|normalized| NormalizedOutput::Staged(Box::new(normalized)))
     } else {
         mismatch("operation-set")
     }
+}
+
+/// Whether one staged occurrence may place a materialization edge of its own.
+///
+/// **A depth counter would be the wrong shape.** What bounds the recognized
+/// chain is not a number of levels but a rule about *sides*: a recognized shape
+/// admits at most one edge of its own, and a shape reached across an edge admits
+/// none. Two variants say exactly that, and a reader can refute the rule by
+/// checking the two call sites rather than by reasoning about arithmetic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StagedOperandAdmission {
+    /// One operand may be a value another region materializes.
+    OneEdge,
+    /// Every operand must be a declared input, because this occurrence is
+    /// already at the far side of an edge.
+    NoEdge,
 }
 
 /// Recognizes one occurrence of a registered family realized as a region
@@ -6316,6 +6627,17 @@ fn recognize_epilogue_producer(
 /// [`recognize_elementwise_output`]'s own doc argues against for the same
 /// reason.
 ///
+/// **One operand may be a value another region materializes, and that is this
+/// function's own admission rather than a later stage's derivation.** The
+/// recognized shape carries a [`BoundaryRead`] per operand and the producer's
+/// recognized shape beside them, so `rms_norm(matmul(a, b), w)` is a partition
+/// this output owns end to end — the producer's occurrence included, which is
+/// what [`check_output_cover`] requires and what makes the *producing* region
+/// spellable from a shape this partition holds. The alternative considered and
+/// rejected was deriving each operand's source from the cover's materialization
+/// edges: it keeps one authority for the stage split and moves a recognition-time
+/// property to a stage that can only report it as a cover it could not assemble.
+///
 /// # Errors
 ///
 /// Returns [`RequestError::UnsupportedCapability`] naming the exact property
@@ -6325,20 +6647,29 @@ fn recognize_epilogue_producer(
 ///   recognized value. A staged realization's final stage writes the
 ///   occurrence's results and every earlier stage publishes one handed value, so
 ///   a second result would need a second write this boundary cannot attribute.
-/// - `staged-operand` for an operand that is not a declared program input —
-///   which is a staged family reading a value another region materializes. That
-///   is the shape [`EpilogueRead::Staged`] expresses for an elementwise
-///   consumer, and expressing it here needs the *producing* stage's read list to
-///   carry a boundary role, which no recognized staged shape has because the
-///   stage split is not this boundary's. It is refused by name rather than
-///   admitted and dropped;
-///   [`admit-a-staged-family-that-reads-a-materialized-intermediate`](../../../tickets/admit-a-staged-family-that-reads-a-materialized-intermediate.md)
-///   owns the widening.
+/// - `staged-operand` for an operand that is neither a declared program input
+///   nor a value some region materializes — an elementwise expression feeding
+///   the family directly, whose result [`materializes_its_result`] says is no
+///   materialization edge at all. Admitting it here would be a second account of
+///   where an edge may sit, disagreeing with the one
+///   [`plan_elementwise`]'s folding discovery reads.
+/// - `staged-operand-conflict` for a second operand supplied by a
+///   materialization edge, whether that is one staged value read twice or two
+///   different ones. [`TensorRole::Intermediate`] carries no ordinal, so nothing
+///   says which edge each read binds; it is the same unattributable pair
+///   [`record_leaf`] refuses for an epilogue's leaves.
+/// - `staged-operand-depth` for a staged operand of an occurrence that is
+///   *itself* at the far side of an edge. That is a recognized chain more than
+///   one materialization boundary deep, which is the rule
+///   [`recognize_epilogue`] already states for its own producer and which
+///   [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md)
+///   owns widening.
 /// - `staged-attributes` for an attribute record the canonical encoder cannot
 ///   write. The record is part of the occurrence's meaning, so a subject that
 ///   could not carry it whole must refuse rather than bind a partial one.
 /// - `input-handle`/`output-handle` for a value the program holds no shape for,
-///   and every rule [`declared_ordinal`] reports.
+///   and every rule [`declared_ordinal`] and [`recognize_epilogue_producer`]
+///   report.
 ///
 /// Returns [`RequestError::ShapeProductOverflow`] for a domain whose extents do
 /// not multiply into a `u64`.
@@ -6349,20 +6680,46 @@ fn recognize_staged_family(
     output_key: OutputKey,
     member: u32,
     operation: &tiler_ir::semantic::OperationRef<'_>,
+    admission: StagedOperandAdmission,
 ) -> Result<NormalizedStaged, RequestError> {
     if operation.results().collect::<Vec<_>>() != [result] {
         return mismatch("staged-result-arity");
     }
     let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
     let operands: Vec<ValueId> = operation.operands().collect();
-    let mut operand_inputs = Vec::with_capacity(operands.len());
+    let mut operand_reads = Vec::with_capacity(operands.len());
     let mut operand_shapes = Vec::with_capacity(operands.len());
     let mut operand_elements = Vec::with_capacity(operands.len());
+    let mut producer = None;
     for operand in &operands {
-        if !declared.contains(operand) {
-            return mismatch("staged-operand");
-        }
-        operand_inputs.push(declared_ordinal(&declared, *operand)?);
+        let read = if declared.contains(operand) {
+            BoundaryRead::Input(declared_ordinal(&declared, *operand)?)
+        } else {
+            // The operand is computed. Whether that makes it a *materialization
+            // edge* is `materializes_its_result`'s answer and not this walk's,
+            // which is what keeps one statement of where an edge may sit; the
+            // producer's own recognition is `recognize_epilogue_producer`'s, so
+            // this arm decides only that there is one edge and that this
+            // occurrence is allowed to place it.
+            let (_, root) = producer_for_value(program, *operand)?;
+            if !materializes_its_result(&root, laws) {
+                return mismatch("staged-operand");
+            }
+            if producer.is_some() {
+                return mismatch("staged-operand-conflict");
+            }
+            if admission == StagedOperandAdmission::NoEdge {
+                return mismatch("staged-operand-depth");
+            }
+            producer = Some(Box::new(recognize_epilogue_producer(
+                program,
+                *operand,
+                output_key.clone(),
+                laws,
+            )?));
+            BoundaryRead::Staged
+        };
+        operand_reads.push(read);
         let shape = program
             .shape(*operand)
             .map_err(|_| RequestError::UnsupportedCapability {
@@ -6400,13 +6757,14 @@ fn recognize_staged_family(
         })?
         .clone();
     Ok(NormalizedStaged {
+        producer,
         operation: operation.key().clone(),
         law,
         attribute_record: operation.attributes().clone(),
         attributes: attributes.into_boxed_slice(),
         input_keys: program.inputs().map(|input| input.key().clone()).collect(),
         output_key,
-        operand_inputs,
+        operand_reads,
         operand_shapes,
         output_shape,
         member: SemanticMemberId(member),
@@ -7468,7 +7826,11 @@ mod tests {
         };
         assert_eq!(staged.operation, tiler_ir::semantic::rms_norm_f32_op());
         assert_eq!(staged.member, SemanticMemberId(0));
-        assert_eq!(staged.operand_inputs, [0, 1]);
+        assert_eq!(
+            staged.operand_reads,
+            [BoundaryRead::Input(0), BoundaryRead::Input(1)]
+        );
+        assert_eq!(staged.producer, None);
         assert_eq!(staged.output_shape, Shape::from_dims([2, 2]));
         assert_eq!(staged.output_elements, 4);
         assert!(
@@ -7510,16 +7872,24 @@ mod tests {
         );
     }
 
-    /// A staged family reading a value another region computes refuses by name.
+    /// A staged family reading a value another region *computes* refuses by name.
     ///
-    /// The wall this ticket does *not* move, named rather than dropped: the
-    /// producing stage's reads would have to carry a boundary role, and a staged
-    /// shape carries no read list because the stage split is not the
-    /// recognizer's. Watched failing under a deliberate perturbation: deleting
-    /// the `declared.contains(operand)` guard refuses the same program under
-    /// `elementwise-reads`, which is [`declared_ordinal`] complaining about a
-    /// leaf list this shape does not have — a true statement about the wrong
-    /// property, and the reason the guard states the operand rule itself.
+    /// **This is the neighbour that keeps the widening below attributable, and
+    /// its rule survives the widening with a narrower meaning.** A multiply's
+    /// result is no materialization edge — [`materializes_its_result`] is the one
+    /// statement of where an edge may sit, and it says the expression vocabulary
+    /// evaluates a multiply per point — so admitting it here would be a second
+    /// account of that fact, and materializing it would add exactly the
+    /// observable rounding boundary the caller's program never asked for. Only
+    /// the operand differs between this program and
+    /// [`a_staged_family_reading_a_materialized_intermediate_is_recognized`].
+    ///
+    /// Watched failing under a deliberate perturbation: replacing
+    /// `materializes_its_result(&root, laws)` with `true` admits the walk to
+    /// [`recognize_epilogue_producer`], which refuses the same program under
+    /// `operation-set` — a true statement about the producing family and not
+    /// about this occurrence's operand, and the reason the guard states the
+    /// operand rule itself.
     #[test]
     fn a_staged_family_reading_a_computed_value_refuses_by_name() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -7544,6 +7914,248 @@ mod tests {
             .unwrap();
         let program = builder.build().unwrap();
         assert_eq!(recognize(&program).unwrap_err(), "staged-operand");
+    }
+
+    /// A normalization over a materialized contraction result, optionally with
+    /// a trailing elementwise pass and optionally normalizing that result twice.
+    ///
+    /// `ab,bc->ac` over two `[2, 2]` declared inputs, so the product's shape is
+    /// the shape the normalization publishes and the *first* declared input can
+    /// serve as the weight. **Two declared inputs rather than three, and that is
+    /// forced rather than stylistic**: `normalize_contraction` refuses a program
+    /// declaring a third input under `input-arity`, so `rms_norm(matmul(a, b), w)`
+    /// spelled with its own weight tensor is refused by the *contraction*
+    /// recognizer's declared-arity rule rather than by anything this ticket
+    /// touched. That wall's owner is
+    /// [`name-the-contraction-operand-arity-wall-and-separate-its-rule`](../../../tickets/name-the-contraction-operand-arity-wall-and-separate-its-rule.md),
+    /// which files the admission itself as its follow-on.
+    fn contraction_fed_normalization(passed: bool, doubly_staged: bool) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let shape = Shape::from_dims([2, 2]);
+        let left = builder
+            .input::<F32>(InputKey::new("a").unwrap(), shape.clone())
+            .unwrap();
+        let right = builder
+            .input::<F32>(InputKey::new("b").unwrap(), shape)
+            .unwrap();
+        let structure = ContractionIndexStructure::new(
+            [
+                vec![ContractionIndex::new(0), ContractionIndex::new(1)],
+                vec![ContractionIndex::new(1), ContractionIndex::new(2)],
+            ],
+            [ContractionIndex::new(0), ContractionIndex::new(2)],
+        )
+        .expect("ab,bc->ac is an admitted structure");
+        let product =
+            tiler_ir::semantic::F32TensorContraction::apply(&mut builder, &structure, left, right)
+                .unwrap();
+        let weight = if doubly_staged { product } else { left };
+        let normalized = tiler_ir::semantic::F32RmsNorm::apply(
+            &mut builder,
+            product,
+            weight,
+            Axis::new(1),
+            1.0e-6_f32.to_bits(),
+        )
+        .unwrap();
+        let root = if passed {
+            F32Multiply::apply(&mut builder, normalized, left).unwrap()
+        } else {
+            normalized
+        };
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// A staged family reading a materialized intermediate is recognized, and
+    /// the operand's boundary role is the recognized shape's.
+    ///
+    /// **The admission this ticket exists for.** `rms_norm(matmul(a, b), a)`
+    /// reads its first operand across a materialization edge, which used to be
+    /// refused under `staged-operand` because nothing in the recognized staged
+    /// shape could record that operand zero is served by an edge rather than by a
+    /// declared buffer. Both halves are asserted, because either alone would be
+    /// consistent with a defect: the operand run names the boundary tensor per
+    /// operand, and the producer is carried so that the contraction's occurrence
+    /// is claimed by this output's walk — without which [`check_output_cover`]
+    /// refuses the program under `operation-set` for an occurrence no walk owns.
+    ///
+    /// The partition is asserted too, on both sides of the edge, because it is
+    /// what lets a cover place two regions here: the occurrence's own stages and
+    /// the contraction's part are all this output's, and a set mixing them is
+    /// nobody's.
+    ///
+    /// Watched failing under a deliberate perturbation: dropping the
+    /// `producer` field from [`NormalizedOutput::members`]'s staged arm — so the
+    /// walk claims only its own occurrence — refuses this program under
+    /// `operation-set`, which is exactly the coverage obligation the producer is
+    /// carried to discharge.
+    #[test]
+    fn a_staged_family_reading_a_materialized_intermediate_is_recognized() {
+        let program = contraction_fed_normalization(false, false);
+        assert_eq!(program.operation_count(), 2);
+        let recognized = recognize(&program).expect("the staged operand is recognized");
+        let NormalizedOutput::Staged(staged) = &recognized else {
+            panic!("a normalization output recognizes as a staged family")
+        };
+        // The operand's source, carried by the recognized shape: operand zero is
+        // the edge and operand one is the first declared input.
+        assert_eq!(
+            staged.operand_reads,
+            [BoundaryRead::Staged, BoundaryRead::Input(0)]
+        );
+        assert_eq!(staged.member, SemanticMemberId(1));
+        // The producer, recognized as the shape a standalone contraction output
+        // would be, so every region builder the contraction already has applies
+        // to it unchanged.
+        let producer = staged
+            .producer
+            .as_deref()
+            .expect("a staged operand carries the shape producing it");
+        assert!(producer.contraction().is_some());
+        assert_eq!(
+            producer.members(),
+            [SemanticStage::first(SemanticMemberId(0))]
+        );
+
+        // The whole partition: the contraction's part, and the occurrence's own
+        // stages. The population is counted, so an assertion about the parts is
+        // an assertion about the whole program's occurrences.
+        assert_eq!(recognized.members().len(), program.operation_count());
+        let fold = SemanticStage::first(SemanticMemberId(1));
+        for part in [
+            vec![SemanticStage::first(SemanticMemberId(0))],
+            vec![fold],
+            vec![fold.next_stage()],
+        ] {
+            assert!(
+                recognized.owns_region_members(&part),
+                "{part:?} is a part of this output's partition",
+            );
+        }
+        assert!(
+            !recognized.owns_region_members(&[SemanticStage::first(SemanticMemberId(0)), fold]),
+            "a region straddling the materialization edge is no part",
+        );
+
+        // Which declared input each side reads, and at which count. Both are
+        // read by the occurrence's own operand run *and* by the producer, and
+        // the two agree at `[2, 2]`, so the accessor answers rather than
+        // refusing.
+        for ordinal in [0, 1] {
+            assert!(recognized.reads_declared_input(ordinal));
+            assert_eq!(
+                recognized.input_elements_at(InputOrdinal::new(ordinal)),
+                Some(4),
+            );
+        }
+        assert!(!recognized.reads_declared_input(2));
+        assert_eq!(recognized.max_input_elements(), 4);
+
+        // **The boundary this widening does not move, asserted rather than
+        // implied.** The consuming stage would read the occurrence's operand
+        // edge *and* the value the producing stage handed it, and
+        // `TensorRole::Intermediate` carries no ordinal, so
+        // [`crate::physical::staged_plan`] declines the occurrence outright. Its
+        // control is the same law over two declared operands, whose plan exists
+        // — without which this `None` would be evidence that the plan derivation
+        // had stopped working rather than evidence about the edge.
+        assert_eq!(crate::physical::staged_plan(staged), None);
+        let declared = normalization_program(false, 1.0e-6_f32.to_bits());
+        let NormalizedOutput::Staged(control) = recognize(&declared).unwrap() else {
+            panic!("a normalization output recognizes as a staged family")
+        };
+        assert!(crate::physical::staged_plan(&control).is_some());
+    }
+
+    /// The two shapes a staged operand still refuses, each by its own name.
+    ///
+    /// **Both are asserted rather than left implicit, because one admitted shape
+    /// reads as general support unless its boundary is stated.** Their admitted
+    /// neighbour is
+    /// [`a_staged_family_reading_a_materialized_intermediate_is_recognized`]'s
+    /// program, which differs from each by exactly the property named:
+    ///
+    /// - *A second operand supplied by a materialization edge.*
+    ///   `rms_norm(m, m)` gives one occurrence two `TensorRole::Intermediate`
+    ///   reads, and that role carries no ordinal, so nothing says which edge each
+    ///   binds. `staged-operand-conflict`.
+    /// - *An occurrence already at the far side of an edge reading its own.*
+    ///   `rms_norm(matmul(a, b), a) * a` makes the normalization an epilogue
+    ///   chain's producer, so admitting its operand edge would be a recognized
+    ///   chain two materialization boundaries deep. `staged-operand-depth`, whose
+    ///   owner is
+    ///   [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md).
+    ///
+    /// Each was watched failing before it was restored: with the
+    /// `producer.is_some()` guard deleted the first program is recognized with
+    /// two `BoundaryRead::Staged` operands and one producer, and with the
+    /// `StagedOperandAdmission::NoEdge` guard deleted the second is recognized as
+    /// a two-boundary chain — both admissions no region vocabulary here can
+    /// spell.
+    #[test]
+    fn a_staged_operand_still_refuses_a_second_edge_and_a_deeper_chain() {
+        assert_eq!(
+            recognize(&contraction_fed_normalization(false, true)).unwrap_err(),
+            "staged-operand-conflict",
+        );
+        assert_eq!(
+            recognize(&contraction_fed_normalization(true, false)).unwrap_err(),
+            "staged-operand-depth",
+        );
+    }
+
+    /// The staged subject separates an edge-fed operand from a declared one, and
+    /// separates a carried producer from an absent one.
+    ///
+    /// **Two claims, each isolated, because either alone would pass on the
+    /// other's evidence.** The occurrence's own operand run and the producer are
+    /// two facts the `staged-family.v2` arm writes, and a forgery that moved both
+    /// at once would be separated by whichever the encoder still carried — the
+    /// exact way a check stops exercising its shape while staying green.
+    ///
+    /// Each forgery therefore moves exactly one field of the *same* recognized
+    /// value, leaving every operand shape, element count, key, member ordinal and
+    /// published shape identical. Neither forgery is a value the recognizer
+    /// produces; that is what makes them drivable at all, and it is the same
+    /// device the request-subject mutation tests above use.
+    ///
+    /// Watched failing under two deliberate perturbations, one per claim:
+    /// dropping the role tag from `encode_output_subject`'s staged arm makes the
+    /// first pair equal, and dropping its producer run makes the second pair
+    /// equal.
+    #[test]
+    fn a_staged_subject_separates_an_edge_fed_operand_from_a_declared_one() {
+        let program = contraction_fed_normalization(false, false);
+        let normalized = select_supported_strategy(&program, &laws_of(&program)).unwrap();
+        let [recognized] = normalized.outputs() else {
+            panic!("the fixture declares one output");
+        };
+        let encoded = |output: &NormalizedOutput| {
+            let mut bytes = Vec::new();
+            encode_output_subject(&mut bytes, &output_subject(output));
+            bytes
+        };
+        let forge = |edit: fn(&mut NormalizedStaged)| {
+            let mut forged = recognized.clone();
+            let NormalizedOutput::Staged(staged) = &mut forged else {
+                panic!("a normalization output recognizes as a staged family")
+            };
+            edit(staged);
+            encoded(&forged)
+        };
+        assert_ne!(
+            encoded(recognized),
+            forge(|staged| staged.operand_reads[0] = BoundaryRead::Input(0)),
+            "the operand's boundary role is part of what the occurrence reads",
+        );
+        assert_ne!(
+            encoded(recognized),
+            forge(|staged| staged.producer = None),
+            "the shape writing the edge is part of what this partition computes",
+        );
     }
 
     /// Two occurrences differing only in `eps` bind different request subjects.
@@ -8516,16 +9128,21 @@ mod tests {
             1,
             "the epilogue reads only the staged value"
         );
-        assert_eq!(chain.reads[0].0, EpilogueRead::Staged);
+        assert_eq!(chain.reads[0].0, BoundaryRead::Staged);
 
         // `operation-set`, from the one side the discovery deliberately does not
         // open: a fold whose *contributors* are another fold's result. The chain
-        // the recognizer admits is one materialization boundary deep, so a
-        // prologue reading a staged value has no second staged read to attribute
-        // — `TensorRole::Intermediate` carries no ordinal — and is refused
-        // rather than silently flattened. The accepted neighbour is the same
-        // fold over the same scaling of the *declared input*, so the difference
-        // between them is exactly where the scaled value comes from.
+        // the recognizer admits is one materialization boundary deep, and a
+        // prologue reading a staged value would make it two, so it is refused
+        // rather than silently flattened. The rule is about chain depth rather
+        // than about ordinals — each of the two regions reads one intermediate —
+        // and its owner is
+        // `admit-a-recognized-chain-more-than-one-materialization-boundary-deep`,
+        // with `name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`
+        // owning the rule name this refusal currently shares. The accepted
+        // neighbour is the same fold over the same scaling of the *declared
+        // input*, so the difference between them is exactly where the scaled
+        // value comes from.
         let folded_prologue = |nested: bool| {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
             let input = builder
