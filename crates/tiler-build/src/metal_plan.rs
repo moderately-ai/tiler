@@ -1109,9 +1109,11 @@ mod tests {
     /// Two artifacts with different payload bytes can share one canonical
     /// identity, and a structural assertion over variants and entries would pass
     /// through a change that silently moved what a consumer files or loads. The
-    /// two byte runs below are the whole producer-visible result of the standard
-    /// path: the artifact identity a loading host compares, and the composed
-    /// subject the expansion cache keys on.
+    /// two byte runs below are the whole producer-visible *identity* of the
+    /// standard path: the artifact identity a loading host compares, and the
+    /// composed subject the expansion cache keys on. A third pinned value, which
+    /// is a byte count rather than an identity, is introduced by its own
+    /// paragraph below.
     ///
     /// They are recorded rather than derived because the point is that they do
     /// **not** move: this path was rewritten to route through the
@@ -1256,8 +1258,67 @@ mod tests {
     /// one, which changed the coverage record's own grammar here and had to step
     /// with it.
     ///
+    /// **A third value is pinned below, and it is deliberately not an
+    /// identity.** `FIXED_CONTENT_BYTES` is the published envelope's *fixed
+    /// content*: its encoded width less the backend object bytes it carries,
+    /// which is what this artifact would encode to if its compiled object were
+    /// empty. The subtraction is exact rather than approximate, because section
+    /// framing is fixed width — one `u32` position and one `u64` length ahead of
+    /// every section's bytes — so removing an object's bytes removes nothing but
+    /// them. It is subtracted rather than assumed absent because this fixture's
+    /// fake toolchain does emit an object: eight bytes, `MTLBplan`, against a
+    /// 64,707-byte envelope. Reading it through the decoded envelope the cache
+    /// resolution carries, rather than by re-encoding the producer-side artifact,
+    /// keeps the pinned quantity the one a loading host actually receives.
+    ///
+    /// **What moves it, and why it is worth a third assertion when two
+    /// identities are already pinned.** It moves whenever the encoded *size* of
+    /// anything the manifest or a framed section carries moves — so most
+    /// identity-domain steps in the ledger above move it too, and the two pins
+    /// above would have caught those anyway. What it catches that they cannot is
+    /// a size-moving change to the wire that moves no subject, and manifest
+    /// schema `15.0` is the worked example: replacing the manifest's trailing
+    /// identity preimage with a thirty-two-byte digest took 49.2% out of a
+    /// measured fixture's fixed content while every pinned identity, golden, and
+    /// cache subject in the workspace held unchanged. That is the class of change
+    /// that reaches a consumer as bytes and reached this test as nothing. Watched
+    /// failing rather than assumed to work: lengthening `MANIFEST_DOMAIN` by one
+    /// byte in `tiler-artifact`'s envelope encoder leaves both identity
+    /// assertions passing and fails this one with `left: 64700`.
+    ///
+    /// **What it does not catch, since a byte count is not a digest of the
+    /// bytes.** A wire change that moves content without moving its width — a
+    /// reordering, a swapped fixed-width field, a renamed domain of the same
+    /// length — passes here. Widening this to a digest over the envelope was
+    /// rejected because the fixture's compiled object is a fake toolchain's
+    /// eight bytes, so such a pin would rebaseline on test-fixture edits that say
+    /// nothing about the encoding. The three consumers that price against
+    /// envelope size are the expansion cache's fail-closed per-hit validation,
+    /// the 1 MiB per-invocation inline-embedding ceiling, and the cache's
+    /// steady-state footprint, and all three price the *size*; none of them owned
+    /// the number, which is how it grew 4.4× over 107 landings before a research
+    /// sweep attributed it.
+    /// `docs/research/artifacts/manifest-fixed-content-growth.md` is that
+    /// attribution and this pin is its Section 6 recommendation.
+    ///
+    /// **The counterpoint, carried rather than dropped, because it bounds what
+    /// this pin may be read as covering.** A pin on one fixture at one operation
+    /// count measures a coefficient, not a curve: it is blind to program-size
+    /// growth, which is the growth that will actually consume the embedding
+    /// ceiling. The demonstration is in that record's own ladder — `36d05128`
+    /// raised the governed `semantic_operations` budget from 8 to 62, admitting
+    /// by size a program whose envelope the then-quadratic encoding put at ~2.8×
+    /// the per-invocation ceiling, and moved a fixed fixture's fixed content by
+    /// exactly zero. The two folds since landed make that arithmetic historical
+    /// and not the blind spot: identity is linear now and the crossing sits near
+    /// 148 operations, while a fixture pinned at one operation count still cannot
+    /// report a budget being widened underneath it. Covering that is the
+    /// embedding-ceiling trigger on the coverage-digest deferral, not this pin;
+    /// this value is the cheap half that fires on the encoding, and the trigger
+    /// is the half that fires on the program.
+    ///
     /// The values are recorded rather than written in because a sibling branch
-    /// may move the same two pins from its own base, and two branch-local
+    /// may move the same three pins from its own base, and two branch-local
     /// rebaselines cannot compose: a pinned identity is recomputed on the tree
     /// the step lands into, never taken from either side.
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
@@ -1289,6 +1350,9 @@ mod tests {
     /// and pre-both
     /// `124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` /
     /// `94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
+    /// Every superseded entry above is a pair because the byte count did not
+    /// exist yet at any of them; none of them is a triple whose third value went
+    /// missing, and each row a later step supersedes carries all three.
     /// Regenerate on the merged tree with:
     ///
     /// ```text
@@ -1296,9 +1360,11 @@ mod tests {
     ///   'test(the_standard_metal_path_publishes_its_recorded_identities)'
     /// ```
     ///
-    /// and take each assertion's `left` value in turn — the cache subject is
-    /// asserted second, so the artifact identity has to be moved first for the
-    /// run to reach it.
+    /// and take each assertion's `left` value in turn, in the order they are
+    /// asserted — artifact identity, then cache subject, then fixed content —
+    /// because each has to be moved before the run reaches the next. Three runs,
+    /// not one, and the count is the reason to correct all three in one commit
+    /// rather than leaving a later one to a follow-up.
     ///
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
@@ -1307,6 +1373,7 @@ mod tests {
             "2b0162eb461edeaa8069a022e54057572bf7992970205a5a33f1efee2df896ca";
         const CACHE_SUBJECT: &str =
             "8e48d6fbfca8c490c883a557be2c7c5dfcb8264a751c84e585c574d4cd12f186";
+        const FIXED_CONTENT_BYTES: usize = 64_699;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1335,6 +1402,19 @@ mod tests {
             pinned(accepted.cache_subject().as_bytes()),
             CACHE_SUBJECT,
             "the standard Metal cache subject moved",
+        );
+        let published = accepted.decoded();
+        let envelope = published
+            .re_encode()
+            .expect("the published envelope re-encodes");
+        let objects: usize = (0..published.payloads().len())
+            .filter_map(|payload| published.payload_object(payload))
+            .map(<[u8]>::len)
+            .sum();
+        assert_eq!(
+            envelope.len() - objects,
+            FIXED_CONTENT_BYTES,
+            "the standard Metal envelope's fixed content moved",
         );
         let _ = std::fs::remove_dir_all(directory);
     }
