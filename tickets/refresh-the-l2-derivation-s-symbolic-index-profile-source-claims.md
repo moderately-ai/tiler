@@ -1,7 +1,7 @@
 ---
 id: refresh-the-l2-derivation-s-symbolic-index-profile-source-claims
 title: Refresh the L2 derivation's symbolic index profile source claims
-status: review
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: agent-l2-symbolic
-lease_expires_at: 1786078751
 ---
 ## User-visible outcome
 
