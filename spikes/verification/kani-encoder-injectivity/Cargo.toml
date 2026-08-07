@@ -1,0 +1,22 @@
+[package]
+name = "kani-encoder-injectivity"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Its own workspace root, following `spikes/program-planning/identity-growth`:
+# `make` never reaches here and this spike's toolchain is not the repository's.
+#
+# There are no path dependencies, and that is the spike's central limitation
+# rather than an oversight: `tiler-ir` does not compile under Kani's bundled
+# rustc, so the encoders below are *copies* of the source text and not the
+# source. `guard.sh` is what ties the copies back; see README.md.
+#
+# `edition = "2021"`, not the repository's 2024, because Kani 0.67.0's bundled
+# rustc is 1.93.0-nightly and the spike does not need 2024. This directory
+# carries no `rust-toolchain.toml`: Kani selects its own toolchain regardless,
+# which the README records as a measured fact.
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
