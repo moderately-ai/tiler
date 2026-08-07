@@ -1762,7 +1762,7 @@ impl HostAbi {
     /// invocation *per participant* inside one workgroup, so its work items are
     /// the participant count and its width is too, while its output count is one.
     ///
-    /// The effect was not a wrong dispatch — `verify_stage_abi` below and the
+    /// The effect was not a wrong dispatch — `verify_entry` below and the
     /// shared kernel-program builder each prove the declared launch against the
     /// schedule, so the whole compilation failed as invalid compiler output the
     /// first time a tree reached a kernel program. Deriving the declaration from

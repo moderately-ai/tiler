@@ -4790,28 +4790,22 @@ fn resolve_numerical_contract(
 /// region's owning write would have to serve both a materialization edge and a
 /// publication: two keys naming one value, and a published intermediate that is
 /// also consumed. [`tiler_ir::program::ValueRole`] is exclusive and a region
-/// writes one owning tensor, so both are refused a layer down.
-/// The copy stage that would lift the second is blocked in four places, and only
-/// the last of them is in `tiler-ir`. A stage publishing a value another region
-/// computed claims no occurrence of its own, and
-/// `tiler_ir::program`'s `verify_partial_reductions` admits an uncovering stage
-/// only as the declared combiner of a split — but that refusal is never reached
-/// today. Measured by disabling each wall in turn against a governed spelling of
-/// the published-and-consumed fixture, the order is: this rule; then
-/// `crate::program`'s `cover-named-output-attribution`, because the cover places
-/// the producing region as both the edge's producer and the publication's
-/// retainer; then `crate::program`'s `internal-unwritten`, because that region's
-/// one owning write goes to the edge and nothing writes the published value; and
-/// only then `UncoveringStage`. The third is the copy stage's real absence and it
-/// is a *physical and frontier* widening in this crate — the region needs a
-/// second dispatch, exactly as a split reduction has one — so each individual
-/// region being expressible, which `materialized_intermediate_epilogue_wall.rs`
-/// measures, is necessary rather than sufficient.
-/// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence for
-/// where that boundary now is, and
+/// writes one owning tensor, so a cover this boundary let through would die
+/// mid-pipeline instead.
+///
+/// **One spelling of the overlap is now admitted, and the four walls that
+/// blocked it came down together.** A published-and-consumed intermediate is
+/// realized as two dispatches of the region that computed it — one staging the
+/// value the fold reads across, one publishing a copy of it — so the shape is
+/// no longer refused here. [`check_output_cover`] owns that rule and states the
+/// measured order the four walls fell in; it is not restated here, because two
+/// derivations of one measurement are what drift.
 /// [`crate::pipeline::conformance`]'s
-/// `a_published_and_consumed_intermediate_refuses_by_name` records the measured
-/// wall order.
+/// `a_published_and_consumed_intermediate_compiles_and_agrees` is the compiling
+/// assertion, `an_output_key_pair_naming_one_value_still_refuses_by_name` is the
+/// neighbour that must keep refusing, and
+/// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence for
+/// where the boundary now is.
 fn select_supported_strategy(
     program: &SemanticProgram,
     laws: &FrozenIndexRealizationLawRegistry,

@@ -3987,17 +3987,33 @@ fn bf16_semantic_program(key: &InputKey, elements: u64) -> SemanticProgram {
 /// `crates/tiler-compiler/tests/bf16_numerical_contract.rs`'s
 /// `a_flush_accepting_bf16_contract_reaches_a_selected_plan` asserts.
 ///
-/// **What keeps this region hand-assembled is the *shape* it needs, not the
-/// dtype.** This fixture is a `(x * 3.0) + (-0.0)` chain, whose region covers
+/// **The fusion wall was the second reason and it is gone too; what keeps this
+/// region hand-assembled is the realization it needs *stated* rather than
+/// resolved.** This fixture is a `(x * 3.0) + (-0.0)` chain, whose region covers
 /// four occurrences, and a multi-occurrence region is put to
-/// `derive_fusion_legality` before any cover survives — an authority still keyed
-/// by the `f32` operation set, so the region is `Unknown` and every cover
-/// placing it is skipped.
-/// [`establish-bf16-optimizer-legality`](../../../../tickets/establish-bf16-optimizer-legality.md)
-/// owns that widening. Until it lands, a compiled BF16 region is reachable for a
-/// single-occurrence program and this chain is not, so what is established here
-/// stays what it was: that the schedule, kernel, and physical-carrier
-/// vocabularies admit and verify this region.
+/// `derive_fusion_legality` before any cover survives — an authority that now
+/// carries governed rows for the three registered BF16 families, so such a
+/// region derives its own legality and fuses, which
+/// `crates/tiler-compiler/tests/bf16_numerical_contract.rs`'s
+/// `a_multi_occurrence_bf16_program_derives_its_own_fusion_legality` asserts.
+/// What survives there is narrower and is asserted separately: a BF16 region
+/// under a contraction-*permitting* contract still stops, at
+/// `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall`.
+/// And where a compiled BF16 request still stops on the profile this build
+/// ships, it stops a phase *earlier* than fusion legality — the authoritative
+/// macOS Apple9 ledger states its reshaping rows for the `f32` subject alone, so
+/// a flush-accepting BF16 contract clears the measured subnormal dimensions and
+/// meets contraction undeclared, which
+/// `the_measured_subnormal_rows_alone_leave_the_remaining_dimensions_unknown`
+/// asserts. Neither boundary is this fixture's.
+///
+/// The two tests below need a region whose numerical realization is the strict
+/// BF16 vector — both subnormal dimensions preserving — written down here and
+/// handed straight to `lower_scheduled_region`, so the interpreted kernel and
+/// the reference oracle are compared over preserved subnormals rather than over
+/// whatever a contract and a profile resolved between them. So what is
+/// established here stays what it was: that the schedule, kernel, and
+/// physical-carrier vocabularies admit and verify this region.
 fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduledRegion {
     use tiler_ir::schedule::{
         Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
@@ -6546,7 +6562,7 @@ fn the_frontier_retains_the_workgroup_tree_beside_serial_and_the_split() {
 /// that runs one independent invocation per result element, and both are false
 /// for a single-workgroup tree: it launches one invocation per participant
 /// inside one workgroup, so its work items and its width are the participant
-/// count while its output count is one. `verify_stage_abi` and the shared
+/// count while its output count is one. `crate::program`'s `verify_entry` and the shared
 /// kernel-program builder each prove the declared launch against the schedule,
 /// so the effect was the whole compilation failing as invalid compiler output —
 /// `ThreadsPerWorkgroupDisagreement { expected: 2, actual: 1 }` on the first

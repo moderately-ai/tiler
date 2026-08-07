@@ -265,7 +265,7 @@ fn composed_region_with_a_structural_occurrence() -> SemanticProgram {
     builder.build().unwrap()
 }
 
-/// [`composed_region_with_an_unspellable_occurrence`] with the reversal moved
+/// [`composed_region_with_a_structural_occurrence`] with the reversal moved
 /// behind the activation.
 ///
 /// `sum(reverse(silu(a)) + c, axis 1)`: the same admitted reversal over a value
@@ -680,8 +680,8 @@ fn a_broadcast_widening_a_declared_weight_compiles_as_a_replication_relation() {
 /// copy and no arithmetic, so it consumes no numerical freedom of its own: the
 /// contraction-permitting contract declines this program for the multiply/add
 /// adjacency its prologue already had, which is the same verdict
-/// `an_elementary_neighbour_resolves_where_the_composed_region_declines` records
-/// for the same three occurrences published as one output. A row that differed
+/// `a_program_composing_two_admitted_families_compiles_through_the_session`
+/// records for the same three occurrences published as one output. A row that differed
 /// from that neighbour would mean the copy had acquired a numerical claim it has
 /// no business making.
 ///
