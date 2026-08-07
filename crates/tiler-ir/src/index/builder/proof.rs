@@ -488,6 +488,10 @@ impl IndexRegionBuilder {
         points: Option<u64>,
     ) -> Vec<PendingIndexDomainPredicate> {
         let mut predicates = Vec::with_capacity(access.coordinates.len().saturating_mul(2));
+        // One answer for the whole access, so its two atoms per axis and the
+        // enumeration that may later rewrite them all describe the same
+        // permitted premises.
+        let facts = self.access_fact_source(access, shape);
         for (axis, (coordinate, extent)) in access
             .coordinates
             .iter()
@@ -546,6 +550,7 @@ impl IndexRegionBuilder {
                         ),
                         evidence => PendingIndexDomainDisposition::Discharged(evidence),
                     },
+                    facts,
                 });
             }
         }
@@ -732,21 +737,32 @@ impl IndexRegionBuilder {
         {
             let mut bound = constant.0.abs();
             for term in terms {
-                // Both `expect`s below rest on one invariant, already checked
-                // above: this expression has an interval, and `interval_linear`
-                // states one only when every child had one *and* every
-                // coefficient was literal. A symbolic coefficient therefore
-                // left `data.interval` empty and the early return has fired.
-                let coefficient = term
-                    .coefficient
-                    .as_literal()
-                    .expect("a linear interval requires every coefficient to be literal");
+                // A symbolic coefficient is bounded by the largest magnitude
+                // its declared extent admits, which is what `interval_linear`
+                // multiplied by and is therefore the same bound the propagated
+                // interval rests on. `None` is unreachable for the same reason
+                // the `expect` below is: this expression has an interval, and
+                // `interval_linear` states one only when every child had one
+                // and every symbolic coefficient was bounded. It still fails
+                // closed at the widest budget rather than asserting.
+                let coefficient_bound = match &term.coefficient {
+                    SourcedIndexInteger::Literal(value) => value.0.abs(),
+                    SourcedIndexInteger::Symbol(symbol) => {
+                        let Some(bound) = self
+                            .extent_interval(&SourcedExtent::Symbol(symbol.clone()))
+                            .map(|interval| BigInt::from(interval.upper))
+                        else {
+                            return u128::MAX;
+                        };
+                        bound
+                    }
+                };
                 let (minimum, maximum) = self.expressions[term.value as usize]
                     .interval
                     .as_ref()
                     .expect("a linear interval requires every child interval");
                 let child_bound = minimum.abs().max(maximum.abs());
-                let Ok(product) = checked_index_product(&coefficient.0.abs(), &child_bound) else {
+                let Ok(product) = checked_index_product(&coefficient_bound, &child_bound) else {
                     return u128::MAX;
                 };
                 if checked_index_add_assign(&mut bound, &product).is_err() {
@@ -795,11 +811,11 @@ impl IndexRegionBuilder {
             return false;
         };
         // Fail closed rather than walking: the caller's `enumerable` gate
-        // already excluded an undetermined divisor, so reaching this returns
-        // "not proved" with no diagnostic — a write's ownership requirement is
-        // refused separately by that same gate, and inventing an
+        // already excluded an undetermined divisor or coefficient, so reaching
+        // this returns "not proved" with no diagnostic — a write's ownership
+        // requirement is refused separately by that same gate, and inventing an
         // out-of-bounds refutation here would be a claim nothing established.
-        let Some(divisors) = self.plan_divisors(expression_plan) else {
+        let Some(scalars) = self.plan_scalars(expression_plan) else {
             return false;
         };
         let mut seen = owns_alone.then(|| vec![0_u64; elements.div_ceil(64)]);
@@ -811,7 +827,7 @@ impl IndexRegionBuilder {
                 .copied()
                 .zip(point.iter().copied())
                 .collect();
-            let evaluated = self.evaluate_expressions(expression_plan, &assignments, &divisors);
+            let evaluated = self.evaluate_expressions(expression_plan, &assignments, &scalars);
             let mut linear = 0_usize;
             let mut in_bounds = true;
             for (coordinate, extent) in access.coordinates.iter().zip(axes) {
@@ -880,12 +896,27 @@ impl IndexRegionBuilder {
     /// Returns whether every expression reachable from these coordinates has a
     /// value at a domain point.
     ///
-    /// The only way it can fail is a semi-affine divisor the environment does
-    /// not pin to one value: with no divisor there is no quotient, and a walk
-    /// that produced no value for a coordinate would be indistinguishable, to
+    /// It fails on a symbolic divisor or a symbolic coefficient the environment
+    /// does not pin to one value: with no divisor there is no quotient and with
+    /// no coefficient there is no product, and a walk that produced no value for
+    /// a coordinate would be indistinguishable, to
     /// [`Self::verify_access_exhaustively`], from a coordinate that landed out
     /// of bounds. Deciding it before the walk is what keeps a missing proof from
     /// being reported as a refutation.
+    ///
+    /// **A pinned symbol is read here, in both positions.** An earlier draft
+    /// read the divisor and declined the coefficient, on the ground that
+    /// resolving a coefficient would make an enumeration's result a function of
+    /// the binding while a divisor's value "was already required to make the
+    /// expression defined at all". That carve-out does not hold: what admission
+    /// required of a divisor is [`ExtentSources::proves_positive`], and an
+    /// environment stating `d` in `[1, 64]` satisfies it while determining
+    /// nothing, so [`ExtentSources::determined`] reads strictly more than
+    /// definedness ever demanded. The two halves are on one rule instead, the
+    /// one [`interval_linear`] states: a proof may read this region's shape
+    /// environment, because the region's identity names that environment; a
+    /// rewrite may not, which is why normalization still refuses to fold `S * x`
+    /// at `S == 1`.
     pub(super) fn coordinates_are_evaluable(&self, coordinates: &[u32]) -> bool {
         let mut reached = BTreeSet::new();
         for coordinate in coordinates {
@@ -896,48 +927,58 @@ impl IndexRegionBuilder {
                 IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
                     self.determined(divisor).is_some()
                 }
-                // A symbolic coefficient is not evaluable, and deliberately not
-                // *even when the environment pins it*. Resolving it would make
-                // an enumeration's result a function of the binding rather than
-                // of the program, which is the same reason normalization and
-                // interval propagation decline on it. A divisor differs because
-                // its value was already required to make the expression defined
-                // at all, so reading it here decides nothing new.
-                IndexNode::LinearCombination { terms, .. } => terms
-                    .iter()
-                    .all(|term| term.coefficient.as_literal().is_some()),
+                IndexNode::LinearCombination { terms, .. } => terms.iter().all(|term| {
+                    term.coefficient.as_literal().is_some()
+                        || self.determined_scalar(&term.coefficient).is_some()
+                }),
                 IndexNode::Constant(_) | IndexNode::Dimension(_) => true,
             },
         )
     }
 
-    /// Resolves every divisor an enumeration plan will need.
+    /// Resolves every environment-sourced scalar an enumeration plan will need.
     ///
     /// `None` when one of them is undetermined, which
     /// [`Self::coordinates_are_evaluable`] already excluded before any budget
     /// was taken. Resolving them once, up front, is what lets the point loop
     /// below be total arithmetic rather than a per-point lookup that could fail
     /// halfway through a walk.
-    fn plan_divisors(&self, plan: &[u32]) -> Option<BTreeMap<u32, u64>> {
-        let mut divisors = BTreeMap::new();
+    ///
+    /// Divisors are keyed by their owning expression because each quotient has
+    /// its own; coefficients are keyed by *symbol* because one symbol scaling
+    /// two terms is one value, and resolving it per term would ask the
+    /// environment the same question twice and leave two answers that a future
+    /// change could let diverge.
+    fn plan_scalars(&self, plan: &[u32]) -> Option<PlanScalars> {
+        let mut scalars = PlanScalars {
+            divisors: BTreeMap::new(),
+            coefficients: BTreeMap::new(),
+        };
         for index in plan {
             match &*self.expressions[*index as usize].node {
                 IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
-                    divisors.insert(*index, self.determined(divisor)?);
+                    scalars.divisors.insert(*index, self.determined(divisor)?);
                 }
-                IndexNode::Constant(_)
-                | IndexNode::Dimension(_)
-                | IndexNode::LinearCombination { .. } => {}
+                IndexNode::LinearCombination { terms, .. } => {
+                    for term in terms {
+                        if let Some(symbol) = term.coefficient.symbol() {
+                            scalars
+                                .coefficients
+                                .insert(symbol.clone(), self.determined_scalar(&term.coefficient)?);
+                        }
+                    }
+                }
+                IndexNode::Constant(_) | IndexNode::Dimension(_) => {}
             }
         }
-        Some(divisors)
+        Some(scalars)
     }
 
     pub(super) fn evaluate_expressions(
         &self,
         plan: &[u32],
         dimensions: &BTreeMap<u32, u64>,
-        divisors: &BTreeMap<u32, u64>,
+        scalars: &PlanScalars,
     ) -> BTreeMap<u32, BigInt> {
         let mut values: BTreeMap<u32, BigInt> = BTreeMap::new();
         for index in plan {
@@ -949,21 +990,23 @@ impl IndexRegionBuilder {
                 }
                 IndexNode::LinearCombination { constant, terms } => {
                     terms.iter().fold(constant.0.clone(), |sum, term| {
-                        // Total arithmetic: `coordinates_are_evaluable` refused
-                        // a symbolic coefficient before any budget was taken,
-                        // so every term in a planned expression is literal.
-                        let coefficient = term
-                            .coefficient
-                            .as_literal()
-                            .expect("an evaluable plan carries only literal coefficients");
-                        sum + &coefficient.0 * &values[&term.value]
+                        // Total arithmetic: `plan_scalars` resolved every
+                        // symbolic coefficient in this plan before any budget
+                        // was taken, so both arms are present by construction.
+                        let coefficient = match &term.coefficient {
+                            SourcedIndexInteger::Literal(value) => value.0.clone(),
+                            SourcedIndexInteger::Symbol(symbol) => {
+                                BigInt::from(scalars.coefficients[symbol])
+                            }
+                        };
+                        sum + coefficient * &values[&term.value]
                     })
                 }
                 IndexNode::FloorDiv { dividend, .. } => {
-                    values[dividend].div_floor(&BigInt::from(divisors[index]))
+                    values[dividend].div_floor(&BigInt::from(scalars.divisors[index]))
                 }
                 IndexNode::Modulo { dividend, .. } => {
-                    values[dividend].mod_floor(&BigInt::from(divisors[index]))
+                    values[dividend].mod_floor(&BigInt::from(scalars.divisors[index]))
                 }
             };
             values.insert(*index, value);
@@ -1265,9 +1308,9 @@ impl IndexRegionBuilder {
                 self.mark_expr(*coordinate, &mut reached);
             }
             let plan = reached.into_iter().collect::<Vec<_>>();
-            let (Some(extents), Some(divisors)) = (
+            let (Some(extents), Some(scalars)) = (
                 self.domain_extents(&access.domain),
-                self.plan_divisors(&plan),
+                self.plan_scalars(&plan),
             ) else {
                 return self.refuse_unproved_partition(roots, diagnostics);
             };
@@ -1285,7 +1328,7 @@ impl IndexRegionBuilder {
                     .copied()
                     .zip(point.iter().copied())
                     .collect();
-                let evaluated = self.evaluate_expressions(&plan, &assignments, &divisors);
+                let evaluated = self.evaluate_expressions(&plan, &assignments, &scalars);
                 let mut linear = 0_usize;
                 for (coordinate, extent) in access.coordinates.iter().zip(&axes) {
                     let Some(value) = evaluated.get(coordinate).and_then(ToPrimitive::to_usize)
@@ -1357,6 +1400,18 @@ impl IndexRegionBuilder {
         });
         None
     }
+}
+
+/// Every environment-sourced scalar one enumeration plan needs, resolved once.
+///
+/// Held together rather than as two returns so that a caller cannot resolve the
+/// divisors of a plan and forget its coefficients: the walk needs both, and
+/// both are refused before any budget is charged.
+pub(super) struct PlanScalars {
+    /// One resolved divisor per quotient or remainder expression in the plan.
+    divisors: BTreeMap<u32, u64>,
+    /// One resolved value per declared symbol a plan coefficient names.
+    coefficients: BTreeMap<ShapeSymbol, u64>,
 }
 
 /// What interval reasoning concluded about one output's write roots.

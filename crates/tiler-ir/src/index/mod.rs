@@ -39,8 +39,8 @@ pub use model::{
 };
 pub use predicate::{
     CanonicalIndexDomainObligationKey, DischargedIndexDomainPredicate, IndexDomainEvidence,
-    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef,
-    UnknownIndexDomainPredicate,
+    IndexDomainFactSource, IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason,
+    IndexExtentRef, UnknownIndexDomainPredicate,
 };
 pub use refinement::{
     FrozenIndexRealizationLawRegistry, IndexDomainDisproof, IndexDomainProofAssessment,

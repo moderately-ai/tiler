@@ -6,11 +6,11 @@ use crate::semantic::ResolvedValueType;
 use super::handles::VerifiedRegionOwner;
 use super::sourced::{ExtentSources, SourcedExtent, SourcedIndexInteger, SourcedShape};
 use super::{
-    DischargedIndexDomainPredicate, IndexDomainPredicate, IndexEntityKind, IndexExtentRef,
-    IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex, UnknownIndexDomainPredicate,
-    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError,
-    VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
-    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
+    DischargedIndexDomainPredicate, IndexDomainFactSource, IndexDomainPredicate, IndexEntityKind,
+    IndexExtentRef, IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex,
+    UnknownIndexDomainPredicate, VerifiedDimensionId, VerifiedIndexExprId,
+    VerifiedIndexHandleError, VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId,
+    VerifiedScalarOperationId, VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
 
 /// Whether one boundary tensor is consumed or produced.
@@ -165,6 +165,13 @@ pub(super) struct VerifiedAccessData {
     pub domain: Vec<u32>,
     pub coordinates: Vec<u32>,
     pub bounds_proof: Option<BoundsProof>,
+    /// Which facts this access's bounds obligation was allowed to read.
+    ///
+    /// Held beside the proof kind rather than inside it because the two are
+    /// independent axes — see [`IndexDomainFactSource`] — and stored even when
+    /// `bounds_proof` is `None`, so that pairing them is one place's job rather
+    /// than a rule two optional fields would have to keep between them.
+    pub bounds_facts: IndexDomainFactSource,
     pub ownership_proof: Option<WriteOwnershipProof>,
 }
 
@@ -964,13 +971,20 @@ impl<'a> TensorAccessRef<'a> {
             .map(move |index| VerifiedIndexExprId::from_verified(owner, index))
     }
     /// Returns retained bounds evidence.
+    ///
+    /// Each form carries the facts it rested on, so a caller reads *how* the
+    /// access was proved and *what the proof was allowed to consult* from one
+    /// value. A second optional accessor beside this one would have made their
+    /// complementarity a rule only a test could hold, which is the defect the
+    /// total extent and boundary views already replaced.
     #[must_use]
     pub fn bounds_proof(self) -> Option<BoundsProofView> {
+        let facts = self.data.bounds_facts;
         self.data.bounds_proof.map(|proof| match proof {
-            BoundsProof::VacuousEmptyDomain => BoundsProofView::VacuousEmptyDomain,
-            BoundsProof::Interval => BoundsProofView::Interval,
-            BoundsProof::ProvedExtentEquality => BoundsProofView::ProvedExtentEquality,
-            BoundsProof::Exhaustive { points } => BoundsProofView::Exhaustive { points },
+            BoundsProof::VacuousEmptyDomain => BoundsProofView::VacuousEmptyDomain { facts },
+            BoundsProof::Interval => BoundsProofView::Interval { facts },
+            BoundsProof::ProvedExtentEquality => BoundsProofView::ProvedExtentEquality { facts },
+            BoundsProof::Exhaustive { points } => BoundsProofView::Exhaustive { points, facts },
         })
     }
     /// Returns retained complete-write evidence when this is a write.
@@ -998,13 +1012,26 @@ impl<'a> TensorAccessRef<'a> {
 }
 
 /// Public view of one sound bounds proof.
+///
+/// Every form carries an [`IndexDomainFactSource`], because the argument and
+/// the premises it read are independent: each of the four below can run over a
+/// wholly literal region or over one whose extents, divisors, and coefficients
+/// are declared symbols. The field is repeated on each variant rather than
+/// hoisted beside the enum so that a new form has to decide the question rather
+/// than inherit an answer, and [`Self::facts`] reads it without a match.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum BoundsProofView {
     /// The iteration domain is empty, so bounds hold vacuously.
-    VacuousEmptyDomain,
+    VacuousEmptyDomain {
+        /// Facts the emptiness rested on.
+        facts: IndexDomainFactSource,
+    },
     /// Exact interval propagation proved every coordinate in bounds.
-    Interval,
+    Interval {
+        /// Facts the propagated intervals rested on.
+        facts: IndexDomainFactSource,
+    },
     /// Every coordinate *is* a domain dimension whose extent the environment
     /// proves equal to the axis it indexes.
     ///
@@ -1016,12 +1043,33 @@ pub enum BoundsProofView {
     /// propagation cannot express this, because a wholly undetermined symbol's
     /// interval is the entire extent domain and no comparison against it
     /// closes.
-    ProvedExtentEquality,
+    ProvedExtentEquality {
+        /// Facts the proved equality rested on.
+        facts: IndexDomainFactSource,
+    },
     /// Finite enumeration proved every coordinate in bounds.
     Exhaustive {
         /// Enumerated domain points.
         points: u64,
+        /// Facts the walked extents, divisors, and coefficients rested on.
+        facts: IndexDomainFactSource,
     },
+}
+
+impl BoundsProofView {
+    /// Returns which facts this proof rested on.
+    ///
+    /// **Draft surface, not yet accepted**; [`IndexDomainFactSource`] carries
+    /// the full label.
+    #[must_use]
+    pub const fn facts(self) -> IndexDomainFactSource {
+        match self {
+            Self::VacuousEmptyDomain { facts }
+            | Self::Interval { facts }
+            | Self::ProvedExtentEquality { facts }
+            | Self::Exhaustive { facts, .. } => facts,
+        }
+    }
 }
 /// Public view of one sound complete-write proof.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

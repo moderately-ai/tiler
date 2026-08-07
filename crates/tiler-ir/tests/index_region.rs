@@ -6,15 +6,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tiler_ir::CheckedBuildError;
 use tiler_ir::index::{
-    BoundsProofView, DomainRole, IndexBuildError, IndexDomainPredicate, IndexDomainUnknownReason,
-    IndexInteger, IndexIntegerSign, IndexLimitKind, IndexRegionBuilder, IndexRegionDiagnostic,
-    JointPartitionProofView, MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS,
-    MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_INTEGER_BYTES, MAX_TENSOR_RANK, ProofResource,
-    ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
-    ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
-    ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-    ScalarRegistryBuilder, ScalarRegistryError, SourcedExtent, SymbolicExtentError, TensorRole,
-    WriteOwnershipProofView,
+    BoundsProofView, DomainRole, IndexBuildError, IndexDomainFactSource, IndexDomainPredicate,
+    IndexDomainUnknownReason, IndexInteger, IndexIntegerSign, IndexLimitKind, IndexRegionBuilder,
+    IndexRegionDiagnostic, JointPartitionProofView, MAX_EXHAUSTIVE_PROOF_BYTES,
+    MAX_EXHAUSTIVE_PROOF_CELLS, MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_INTEGER_BYTES,
+    MAX_TENSOR_RANK, ProofResource, ScalarArity, ScalarAttributeField, ScalarAttributeSchema,
+    ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
+    ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
+    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError, SourcedExtent,
+    SymbolicExtentError, TensorRole, WriteOwnershipProofView,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, FrozenSemanticRegistry,
@@ -1383,8 +1383,14 @@ fn conservative_interval_overlap_uses_finite_proof() {
     let write = builder.write(output, &[dimension], &[expression]).unwrap();
     builder.output(write, value).unwrap();
     let region = builder.build().unwrap();
+    // A wholly literal region: no environment exists to consult, so the walked
+    // extents and divisors are the program's own.
     assert!(region.accesses().any(|access| {
-        access.bounds_proof() == Some(BoundsProofView::Exhaustive { points: 5 })
+        access.bounds_proof()
+            == Some(BoundsProofView::Exhaustive {
+                points: 5,
+                facts: IndexDomainFactSource::Program,
+            })
     }));
 }
 
@@ -1675,9 +1681,10 @@ fn a_zero_extent_partition_member_owns_nothing_and_is_admitted() {
     // The empty root's own bounds obligation is vacuous rather than unproved:
     // it has no point at which a coordinate could leave the boundary.
     assert!(
-        region
-            .accesses()
-            .any(|access| access.bounds_proof() == Some(BoundsProofView::VacuousEmptyDomain)),
+        region.accesses().any(|access| access.bounds_proof()
+            == Some(BoundsProofView::VacuousEmptyDomain {
+                facts: IndexDomainFactSource::Program,
+            })),
         "the empty root's coordinates are discharged over an unvisited domain"
     );
 }
@@ -1892,7 +1899,9 @@ fn empty_reduction_read_is_vacuous_and_parallel_write_is_proved() {
     let mut accesses = region.accesses();
     assert_eq!(
         accesses.next().unwrap().bounds_proof(),
-        Some(BoundsProofView::VacuousEmptyDomain)
+        Some(BoundsProofView::VacuousEmptyDomain {
+            facts: IndexDomainFactSource::Program,
+        })
     );
     assert_eq!(
         accesses.next().unwrap().write_ownership_proof(),
@@ -2233,11 +2242,12 @@ fn late_zero_domain_is_vacuous_before_cardinality_overflow() {
     let write = builder.write(output, &dimensions, &coordinates).unwrap();
     builder.output(write, value).unwrap();
     let region = builder.build().unwrap();
-    assert!(
-        region
-            .accesses()
-            .all(|access| { access.bounds_proof() == Some(BoundsProofView::VacuousEmptyDomain) })
-    );
+    assert!(region.accesses().all(|access| {
+        access.bounds_proof()
+            == Some(BoundsProofView::VacuousEmptyDomain {
+                facts: IndexDomainFactSource::Program,
+            })
+    }));
 }
 
 #[test]
@@ -2740,7 +2750,12 @@ fn a_contraction_emits_two_operand_projections_dropping_different_coordinates() 
     // static extent, so both projections and the write discharge cheaply; a
     // contraction does not pay for an exhaustive proof.
     for access in &accesses[..2] {
-        assert_eq!(access.bounds_proof(), Some(BoundsProofView::Interval));
+        assert_eq!(
+            access.bounds_proof(),
+            Some(BoundsProofView::Interval {
+                facts: IndexDomainFactSource::Program,
+            })
+        );
     }
     assert_eq!(
         accesses[2].write_ownership_proof(),

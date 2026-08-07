@@ -801,12 +801,12 @@ mod tests {
     use super::{ExtentSources, SourcedExtent, SourcedIndexInteger, SourcedShape};
     use crate::index::{
         AccessMode, BoundsProofView, DomainRole, FrozenScalarRegistry, IndexBuildError,
-        IndexDomainPredicate, IndexDomainUnknownReason, IndexExprClass, IndexExprView,
-        IndexExtentRef, IndexRegionBuildError, IndexRegionBuilder, IndexRegionDiagnostic,
-        ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
-        ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
-        ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, TensorRole,
-        VerifiedIndexRegion, WriteOwnershipProofView,
+        IndexDomainFactSource, IndexDomainPredicate, IndexDomainUnknownReason, IndexExprClass,
+        IndexExprView, IndexExtentRef, IndexRegionBuildError, IndexRegionBuilder,
+        IndexRegionDiagnostic, ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
+        ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
+        ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
+        ScalarRegistryBuilder, TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
     };
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
@@ -1080,12 +1080,15 @@ mod tests {
             &[ExtentRelation::interval(term("n"), 1, 4).unwrap()],
         );
         let bounded = region(Some(bounded), 4).expect("`n <= 4` bounds a read of a 4-element axis");
-        // The retained evidence names *how* it was proved. Interval, not
-        // enumeration: nothing walked a domain whose size is unknown.
+        // The retained evidence names *how* it was proved and *what it read*.
+        // Interval, not enumeration: nothing walked a domain whose size is
+        // unknown. And the environment, not the program: the bound came from
+        // `n`'s declared extent and nothing in the region carries it.
         assert!(
-            bounded
-                .accesses()
-                .any(|access| access.bounds_proof() == Some(BoundsProofView::Interval)),
+            bounded.accesses().any(|access| access.bounds_proof()
+                == Some(BoundsProofView::Interval {
+                    facts: IndexDomainFactSource::ShapeEnvironment,
+                })),
             "the symbolic read is proved by the environment's interval",
         );
 
@@ -1534,11 +1537,13 @@ mod tests {
         ))
         .expect("`m >= 8` admits every coordinate a 4-point domain produces");
         // Interval, not enumeration: the axis length is still unknown, so
-        // nothing could have been walked.
+        // nothing could have been walked. The symbolic axis is what the proof
+        // read, so the facts name the environment.
         assert!(
-            roomy
-                .accesses()
-                .any(|access| access.bounds_proof() == Some(BoundsProofView::Interval)),
+            roomy.accesses().any(|access| access.bounds_proof()
+                == Some(BoundsProofView::Interval {
+                    facts: IndexDomainFactSource::ShapeEnvironment,
+                })),
             "the read into a symbolic axis is proved by the environment's interval",
         );
 
@@ -1792,7 +1797,10 @@ mod tests {
 
         assert!(
             region.accesses().all(|access| {
-                access.bounds_proof() == Some(BoundsProofView::ProvedExtentEquality)
+                access.bounds_proof()
+                    == Some(BoundsProofView::ProvedExtentEquality {
+                        facts: IndexDomainFactSource::ShapeEnvironment,
+                    })
             }),
             "neither interval propagation nor an enumeration closed this; the equality did",
         );
@@ -2162,7 +2170,7 @@ mod tests {
             SourcedIndexInteger::Symbol(symbol("b")),
         )
         .expect("both symbols are declared and available in time")
-        .expect("an unproved read bound is an obligation, not a verification failure");
+        .expect("`b == 2` and `s == 0` bound `s + b * i` below a 64-element axis");
 
         let combination = region
             .index_expressions()
@@ -2355,24 +2363,33 @@ mod tests {
         );
     }
 
-    /// Interval propagation declines over a symbolic coefficient, and the
-    /// obligation it leaves names missing facts rather than a spent budget.
+    /// A symbolic coefficient is bounded from its declared extent, and the
+    /// evidence says the environment is what bounded it.
     ///
-    /// Both halves of the read's bound are open, and that is the honest answer:
-    /// with no value for `b` the scaled coordinate's range states neither a
-    /// floor nor a ceiling. The reason is
-    /// [`IndexDomainUnknownReason::InsufficientFacts`] and explicitly *not*
-    /// [`IndexRegionDiagnostic::ProofResourceLimit`], which is what charging a
-    /// budget for a walk that could never run would have produced — nothing
-    /// could be enumerated, because enumerating needs the same value the
-    /// interval needed.
+    /// **The successor to `an_interval_over_a_symbolic_coefficient_declines_with_a_named_reason`.**
+    /// That case asserted the deliberate decline
+    /// [`admit-symbolic-index-expression-coefficients`] left in
+    /// [`interval_linear`], on the ground that a bound read from the
+    /// environment would make an expression's interval a function of the
+    /// binding. The ground did not survive inspection: a `ShapeEnv` holds no
+    /// values, a region folds its environment's *identity* into its own, and
+    /// every neighbouring proof in this crate already reads that environment —
+    /// a symbolic dimension's interval, a symbolic axis, a pinned divisor's
+    /// quotient interval, and the enumeration's own divisors. The coefficient
+    /// was the only exception, and it is not one now.
     ///
-    /// The neighbour is the same region with the coefficient written as the
-    /// literal the environment pins `b` to. It closes by interval, which is
-    /// what makes this a fact about the *symbol* rather than about the shape of
-    /// the region.
+    /// [`admit-symbolic-index-expression-coefficients`]: super::super::IndexRegionBuilder
+    ///
+    /// Three fixtures, and the contrast between them is the whole point. `b`
+    /// pinned to one proves the bound and records
+    /// [`IndexDomainFactSource::ShapeEnvironment`]; the literal `1` proves the
+    /// same bound and records [`IndexDomainFactSource::Program`], so a caller
+    /// can tell which it got. `b` bounded nowhere above still leaves the upper
+    /// bound open under [`IndexDomainUnknownReason::InsufficientFacts`] — and
+    /// explicitly not [`IndexRegionDiagnostic::ProofResourceLimit`], because
+    /// nothing could be enumerated either.
     #[test]
-    fn an_interval_over_a_symbolic_coefficient_declines_with_a_named_reason() {
+    fn a_symbolic_coefficient_is_bounded_from_its_declared_extent() {
         let pinned = environment_over(
             EXTENT_PHASE_CEILING,
             &["b"],
@@ -2384,36 +2401,23 @@ mod tests {
             SourcedIndexInteger::Symbol(symbol("b")),
         )
         .expect("`b` is declared and available in time")
-        .expect("an unproved read bound is an obligation, not a verification failure");
-
-        let unknown: Vec<_> = symbolic.unknown_index_domain_predicates().collect();
-        assert_eq!(unknown.len(), 2);
-        assert!(
-            unknown.iter().any(|record| matches!(
-                record.predicate(),
-                IndexDomainPredicate::NonNegative { .. }
-            ))
-        );
-        assert!(unknown.iter().any(|record| matches!(
-            record.predicate(),
-            IndexDomainPredicate::LessThanExtent { .. }
-        )));
-        assert!(
-            unknown
-                .iter()
-                .all(|record| record.reason() == IndexDomainUnknownReason::InsufficientFacts),
-            "no enumeration existed to exhaust, so this is missing facts and not a budget",
-        );
+        .expect("`b == 1` bounds `b * i` below a 64-element axis");
+        assert_eq!(symbolic.unknown_index_domain_predicates().count(), 0);
         assert!(
             symbolic
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof().is_none()),
-            "nothing proved the read in bounds, and no proof kind claims otherwise",
+                .all(|access| access.bounds_proof()
+                    == Some(BoundsProofView::Interval {
+                        facts: IndexDomainFactSource::ShapeEnvironment,
+                    })),
+            "the bound exists only because the environment declares `b`'s extent",
         );
 
-        // The environment pins `b == 1`, and the interval still declines: the
-        // literal spelling of that same value is what closes the bound.
+        // The same arithmetic written as the literal the environment pins `b`
+        // to. It proves the same bound and records the *strong* claim, which is
+        // the distinction a caller needs and the reason the fact source is
+        // retained rather than left to be re-derived.
         let literal = scaled_copy(None, 0_i128.into(), 1_i128.into())
             .expect("literals need no environment")
             .expect("`1 * i` over eight points is in bounds by interval");
@@ -2422,7 +2426,162 @@ mod tests {
             literal
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof() == Some(BoundsProofView::Interval)),
+                .all(|access| access.bounds_proof()
+                    == Some(BoundsProofView::Interval {
+                        facts: IndexDomainFactSource::Program,
+                    })),
+        );
+
+        // An environment that bounds `b` nowhere above proves no upper bound,
+        // and the obligation is retained rather than approximated. The *lower*
+        // bound still closes, and that is not an accident of the fixture: `b`
+        // resolves through a `ShapeSymbol`, which names an extent, so every
+        // model assigns it at least zero.
+        let unbounded = scaled_copy(
+            Some(environment_over(EXTENT_PHASE_CEILING, &["b"], &[])),
+            0_i128.into(),
+            SourcedIndexInteger::Symbol(symbol("b")),
+        )
+        .expect("`b` is declared and available in time")
+        .expect("an unproved read bound is an obligation, not a verification failure");
+        let unknown: Vec<_> = unbounded.unknown_index_domain_predicates().collect();
+        assert_eq!(unknown.len(), 1);
+        assert!(matches!(
+            unknown[0].predicate(),
+            IndexDomainPredicate::LessThanExtent { .. }
+        ));
+        assert_eq!(
+            unknown[0].reason(),
+            IndexDomainUnknownReason::InsufficientFacts,
+            "no enumeration existed to exhaust, so this is missing facts and not a budget",
+        );
+        assert!(
+            unbounded
+                .accesses()
+                .filter(|access| access.mode() == AccessMode::Read)
+                .all(|access| access.bounds_proof().is_none()),
+            "one open atom leaves the access unproved, and no proof kind claims otherwise",
+        );
+    }
+
+    /// Copies `input[(B * i) mod 2 + (B * i) / 2]` into `output[i]` over five
+    /// points, against a three-element input axis.
+    ///
+    /// The shape that reaches the *enumeration* fallback with a symbolic
+    /// coefficient inside it. A bare linear form never can: its propagated
+    /// interval is exact, so an interval that fails to close there means a point
+    /// that really is out of bounds. Splitting the scaled coordinate into a
+    /// remainder and a quotient and adding them back makes propagation bound the
+    /// two branches independently — `[0, 1] + [0, 2]` reaches `[0, 3]`, which
+    /// does not close against an axis of three — while no visited point exceeds
+    /// two.
+    fn split_copy(
+        environment: Arc<ShapeEnv>,
+        coefficient: SourcedIndexInteger,
+    ) -> Result<Result<VerifiedIndexRegion, IndexRegionBuildError>, SymbolicExtentError> {
+        let mut builder =
+            IndexRegionBuilder::new_with_shape_environment(registry(), environment).unwrap();
+        let input = builder
+            .tensor(TensorRole::Input, value_type(), Shape::from_dims([3]))
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, value_type(), Shape::from_dims([5]))
+            .unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(5))
+            .unwrap();
+        let coordinate = builder.dimension_expr(dimension).unwrap();
+        let scaled =
+            builder.sourced_linear_combination(0_i128.into(), &[(coefficient, coordinate)])?;
+        let two = SourcedExtent::Static(Extent::new(2));
+        let remainder = builder.modulo(scaled, two.clone())?;
+        let quotient = builder.floor_div(scaled, two)?;
+        let split = builder.linear_combination(
+            0_i128.into(),
+            &[(1_i128.into(), remainder), (1_i128.into(), quotient)],
+        )?;
+        let value = builder.read(input, &[dimension], &[split]).unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+        Ok(builder.build())
+    }
+
+    /// A symbolic coefficient the environment pins is *enumerated* through the
+    /// same query the divisor already used, so the two halves end on one rule.
+    ///
+    /// The walk needs the coefficient's value at a point and takes it from the
+    /// environment exactly as `plan_scalars` takes a divisor's. The retained
+    /// evidence is [`BoundsProofView::Exhaustive`] over
+    /// [`IndexDomainFactSource::ShapeEnvironment`], which is the pairing this
+    /// ticket's closing condition demands: no path derives a bound from the
+    /// environment without its evidence saying so.
+    ///
+    /// **The write in the same region is the control.** Its coordinate is the
+    /// bare dimension and its axis and domain are literals, so it records
+    /// [`IndexDomainFactSource::Program`] — the axis therefore separates
+    /// accesses *within* one region rather than only regions from one another.
+    #[test]
+    fn an_enumerated_symbolic_coefficient_resolves_as_a_symbolic_divisor_does() {
+        let region = split_copy(
+            environment_over(
+                EXTENT_PHASE_CEILING,
+                &["b"],
+                &[ExtentRelation::interval(term("b"), 1, 1).unwrap()],
+            ),
+            SourcedIndexInteger::Symbol(symbol("b")),
+        )
+        .expect("`b` is declared and available in time")
+        .expect("every visited point lands inside the three-element axis");
+
+        assert_eq!(region.unknown_index_domain_predicates().count(), 0);
+        assert_eq!(
+            region
+                .accesses()
+                .find(|access| access.mode() == AccessMode::Read)
+                .unwrap()
+                .bounds_proof(),
+            Some(BoundsProofView::Exhaustive {
+                points: 5,
+                facts: IndexDomainFactSource::ShapeEnvironment,
+            }),
+            "the walk resolved `b` from the environment, and the evidence says so",
+        );
+        assert_eq!(
+            region
+                .accesses()
+                .find(|access| access.mode() == AccessMode::Write)
+                .unwrap()
+                .bounds_proof(),
+            Some(BoundsProofView::Interval {
+                facts: IndexDomainFactSource::Program,
+            }),
+            "the write names no symbol, so its own bound is the program's",
+        );
+
+        // The neighbour differs only in that nothing pins `b`. There is no value
+        // to multiply by at a point, so no enumeration exists — and the
+        // obligation is missing facts rather than a spent budget, exactly as an
+        // undetermined divisor's is.
+        let unpinned = split_copy(
+            environment_over(
+                EXTENT_PHASE_CEILING,
+                &["b"],
+                &[ExtentRelation::interval(term("b"), 1, 4).unwrap()],
+            ),
+            SourcedIndexInteger::Symbol(symbol("b")),
+        )
+        .expect("`b` is declared and available in time")
+        .expect("an unproved read bound is an obligation, not a verification failure");
+        let unknown: Vec<_> = unpinned.unknown_index_domain_predicates().collect();
+        assert_eq!(unknown.len(), 1);
+        assert!(matches!(
+            unknown[0].predicate(),
+            IndexDomainPredicate::LessThanExtent { .. }
+        ));
+        assert_eq!(
+            unknown[0].reason(),
+            IndexDomainUnknownReason::InsufficientFacts,
+            "a coefficient nothing fixes leaves no walk to budget",
         );
     }
 
@@ -2441,7 +2600,10 @@ mod tests {
     /// This is also what makes the normalization decision observable. Declining
     /// to fold a symbolic coefficient is *why* these two identities differ; a
     /// builder that resolved `b` to `4` because the environment allowed it
-    /// would make this assertion fail.
+    /// would make this assertion fail. **That the two spellings now prove the
+    /// same bound is exactly the separation under test**: reading `b`'s
+    /// declared extent inside a proof leaves the node naming `b`, so the
+    /// identities stay apart while the analysis closes on both.
     #[test]
     fn a_coefficient_identity_names_its_symbol_rather_than_a_resolved_value() {
         let pinned = environment_over(
@@ -2452,7 +2614,7 @@ mod tests {
         let region = |coefficient: SourcedIndexInteger| {
             scaled_copy(Some(Arc::clone(&pinned)), 0_i128.into(), coefficient)
                 .expect("`b` is declared and available in time")
-                .expect("both spellings verify; only the literal proves its bound")
+                .expect("both spellings prove their bound; only their identities differ")
         };
 
         let symbolic = region(SourcedIndexInteger::Symbol(symbol("b")));
@@ -2547,7 +2709,7 @@ mod tests {
             SourcedIndexInteger::Symbol(symbol("u")),
         )
         .expect("`u` is declared and available in time")
-        .expect("an unproved read bound is an obligation");
+        .expect("`u == 1` bounds `u * i` below a 64-element axis");
         let terms = twice
             .index_expressions()
             .find_map(|expression| match expression.view() {

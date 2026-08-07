@@ -64,34 +64,40 @@ use super::sourced::{
 };
 use super::{
     AccessMode, CanonicalIndexRegionIdentity, DimensionId, DischargedIndexDomainPredicate,
-    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainPredicate,
-    IndexDomainSoundProof, IndexDomainUnknownReason, IndexEntityKind, IndexExprClass, IndexExprId,
-    IndexExtentRef, IndexInteger, IndexLimitKind, IndexRegionBuildError, IndexRegionDiagnostic,
-    MAX_ACCESS_CANONICAL_BYTES, MAX_BOUNDARY_CANONICAL_BYTES, MAX_BOUNDARY_TENSORS,
-    MAX_DOMAIN_DIMENSIONS, MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS,
-    MAX_INDEX_CANONICAL_BYTES, MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_EXPRESSION_OPERANDS,
-    MAX_INDEX_EXPRESSIONS, MAX_INDEX_INTEGER_BYTES, MAX_INDEX_REGION_IDENTITY_BYTES,
-    MAX_OUTPUT_ROOTS, MAX_SCALAR_CANONICAL_BYTES, MAX_SCALAR_EXPRESSION_DEPTH,
-    MAX_SCALAR_EXPRESSIONS, MAX_SCALAR_OPERANDS, MAX_TENSOR_ACCESSES, MAX_TENSOR_RANK,
-    ProofResource, ReductionTraversal, ScalarAttributes, ScalarOpKey, ScalarOperationId,
-    ScalarResultIndex, ScalarValueId, TensorAccessId, TensorId, TensorRole,
-    UnknownIndexDomainPredicate, VerifiedIndexExprId, VerifiedIndexRegion, VerifiedTensorAccessId,
-    VerifiedTensorId,
+    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainFactSource,
+    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexEntityKind,
+    IndexExprClass, IndexExprId, IndexExtentRef, IndexInteger, IndexLimitKind,
+    IndexRegionBuildError, IndexRegionDiagnostic, MAX_ACCESS_CANONICAL_BYTES,
+    MAX_BOUNDARY_CANONICAL_BYTES, MAX_BOUNDARY_TENSORS, MAX_DOMAIN_DIMENSIONS,
+    MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS, MAX_INDEX_CANONICAL_BYTES,
+    MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_EXPRESSION_OPERANDS, MAX_INDEX_EXPRESSIONS,
+    MAX_INDEX_INTEGER_BYTES, MAX_INDEX_REGION_IDENTITY_BYTES, MAX_OUTPUT_ROOTS,
+    MAX_SCALAR_CANONICAL_BYTES, MAX_SCALAR_EXPRESSION_DEPTH, MAX_SCALAR_EXPRESSIONS,
+    MAX_SCALAR_OPERANDS, MAX_TENSOR_ACCESSES, MAX_TENSOR_RANK, ProofResource, ReductionTraversal,
+    ScalarAttributes, ScalarOpKey, ScalarOperationId, ScalarResultIndex, ScalarValueId,
+    TensorAccessId, TensorId, TensorRole, UnknownIndexDomainPredicate, VerifiedIndexExprId,
+    VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use crate::shape::{ExtentInterval, ShapeEnv, ShapeSymbol};
 
 /// The domain separator of one verified index region's canonical identity.
 ///
-/// `v10` rather than `v9`: a linear combination's coefficient now encodes as a
+/// `v11` rather than `v10`: every discharged index-domain assessment now
+/// appends an [`IndexDomainFactSource`] tag naming whether its argument read
+/// this region's shape environment, so **every** region carrying a discharged
+/// predicate re-encodes — including wholly static ones, whose new tag reads
+/// `Program`. The tag is fixed-width and unconditional for exactly that reason:
+/// a slot present only on environment-reading records would make a reader's
+/// byte count depend on the evidence it had just parsed.
+///
+/// `v10` was the step before: a linear combination's coefficient encodes as a
 /// tagged [`SourcedIndexInteger`] where `v9` wrote a bare sign-and-magnitude
 /// integer, so the bytes of an *exact* coefficient changed even though its
-/// meaning did not, and every region carrying a linear combination moves. That
-/// is the same step the divisor took at `v9`, stated rather than left to two
-/// encodings sharing one domain. The additive constant is unchanged and did not
-/// move it — normalization keeps that slot an exact integer — and neither did
+/// meaning did not. The additive constant is unchanged and did not move either
+/// version — normalization keeps that slot an exact integer — and neither did
 /// admitting the symbolic form, which adds regions rather than re-encoding
 /// existing ones.
-const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v10\0";
+const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v11\0";
 
 /// What interval propagation concluded about one access's coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -181,6 +187,13 @@ struct PendingIndexDomainPredicate {
     axis: u32,
     bound: PendingIndexDomainBound,
     disposition: PendingIndexDomainDisposition,
+    /// Which facts an argument over this predicate's access may read.
+    ///
+    /// Carried on the pending record rather than recomputed at compaction so
+    /// that the enumeration fallback, which rewrites `disposition` in place
+    /// after the budget runs, cannot leave a record whose facts describe a
+    /// different argument than the one that discharged it.
+    facts: IndexDomainFactSource,
 }
 
 struct ReductionInputs {
@@ -891,6 +904,92 @@ impl IndexRegionBuilder {
             .map(|interval| interval.lower)
     }
 
+    /// Returns the one value this region's environment fixes for an index
+    /// scalar.
+    ///
+    /// The coefficient counterpart of [`Self::determined`], reached through
+    /// that same query so a literal and a symbol the environment pins to that
+    /// literal answer alike. This is a *proof* reading the environment and
+    /// never a rewrite: nothing here writes the resolved value into a node,
+    /// which is the line [`interval_linear`] states and the reason
+    /// [`SourcedIndexInteger::as_literal`] keeps answering `None` for a pinned
+    /// symbol.
+    fn determined_scalar(&self, value: &SourcedIndexInteger) -> Option<u64> {
+        match value {
+            // A literal coefficient may be negative, where an extent may not.
+            // Only the symbolic half resolves through the environment, so only
+            // it is answered here; the literal half is read from the node.
+            SourcedIndexInteger::Literal(_) => None,
+            SourcedIndexInteger::Symbol(symbol) => {
+                self.determined(&SourcedExtent::Symbol(symbol.clone()))
+            }
+        }
+    }
+
+    /// Returns whether evaluating or bounding this expression consults the
+    /// environment.
+    ///
+    /// One-sided in the safe direction: `true` says a declared symbol
+    /// participates, not that the environment's facts were *needed*. `S * x`
+    /// answers `true` even where the environment pins `S == 1`, because the
+    /// region names the symbol and a different environment could bind it
+    /// differently — which is the same reason the expression's own class stays
+    /// [`IndexExprClass::SemiAffine`] there.
+    fn expression_reads_environment(&self, expression: u32) -> bool {
+        let mut reached = BTreeSet::new();
+        self.mark_expr(expression, &mut reached);
+        reached
+            .into_iter()
+            .any(|index| match &*self.expressions[index as usize].node {
+                IndexNode::Constant(_) => false,
+                // A coordinate's dimensions are a subset of its access's domain
+                // by construction, so this arm is redundant with the domain
+                // scan in `access_fact_source` — kept because the answer must
+                // be a property of the expression alone wherever it is asked.
+                IndexNode::Dimension(dimension) => self.dimensions[*dimension as usize]
+                    .extent
+                    .symbol()
+                    .is_some(),
+                IndexNode::LinearCombination { terms, .. } => {
+                    terms.iter().any(|term| term.coefficient.symbol().is_some())
+                }
+                IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
+                    divisor.symbol().is_some()
+                }
+            })
+    }
+
+    /// Returns which facts any bounds obligation over this access may rest on.
+    ///
+    /// Computed once per access and shared by every one of its predicates and
+    /// by its retained [`BoundsProof`], rather than per argument, so the four
+    /// proof forms cannot come to disagree about what the same access was
+    /// allowed to read. The three populations are the whole of what a bounds
+    /// argument here consults: the domain extents that fix which points are
+    /// visited, the boundary axes a coordinate is compared against, and the
+    /// coordinate expressions themselves.
+    fn access_fact_source(
+        &self,
+        access: &AccessData,
+        shape: &SourcedShape,
+    ) -> IndexDomainFactSource {
+        let reads_environment = access.domain.iter().any(|dimension| {
+            self.dimensions[*dimension as usize]
+                .extent
+                .symbol()
+                .is_some()
+        }) || shape.extents().any(|extent| extent.symbol().is_some())
+            || access
+                .coordinates
+                .iter()
+                .any(|coordinate| self.expression_reads_environment(*coordinate));
+        if reads_environment {
+            IndexDomainFactSource::ShapeEnvironment
+        } else {
+            IndexDomainFactSource::Program
+        }
+    }
+
     /// Returns whether the environment proves two extents are one extent.
     ///
     /// The symbolic form of a literal `==`. A wholly static region has no
@@ -1259,7 +1358,12 @@ impl IndexRegionBuilder {
             depth = depth.max(expression.depth.saturating_add(1));
         }
         check_integer(&normalized_constant)?;
-        let interval = interval_linear(&normalized_constant, &terms, &self.expressions)?;
+        let interval = interval_linear(
+            &normalized_constant,
+            &terms,
+            &self.expressions,
+            self.sources.as_ref(),
+        )?;
         self.intern_index(
             IndexNode::LinearCombination {
                 constant: IndexInteger(normalized_constant),

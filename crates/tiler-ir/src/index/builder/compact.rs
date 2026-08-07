@@ -116,6 +116,7 @@ impl IndexRegionBuilder {
                             subject,
                             predicate,
                             evidence,
+                            pending.facts,
                         )
                         .expect("compaction mints every evidence handle from one owner")
                         .expect("a discharged predicate carries evidence"),
@@ -384,6 +385,10 @@ impl IndexRegionBuilder {
                     points: enumerated_points(points),
                 })
             },
+            // Read from the same authority the per-predicate records use, so
+            // the access-level summary and the atoms it summarizes cannot
+            // disagree about which premises the access was allowed to read.
+            bounds_facts: self.access_fact_source(access, shape),
             // The partition arm comes first because it is the verifier's own
             // precedence: for an output several roots share, the joint
             // obligation is the only thing that was decided, and neither of the

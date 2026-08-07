@@ -26,46 +26,105 @@ enum IndexDomainAssessment {
 
 /// Propagates an interval through a linear combination, or declines.
 ///
-/// `Ok(None)` is a refusal to state a bound, and it has exactly two causes.
-/// A child whose own interval is unknown is the long-standing one. A term whose
-/// **coefficient is symbolic** is the other: the environment need not pin the
-/// symbol, and a term nothing bounds cannot contribute a bound.
-///
-/// Declining is what the symbolic divisor already does, and for the same
-/// reason. An interval nothing proved would be worse than `None`, because
-/// `None` falls through to a proof that either closes another way or is
-/// retained as an explicit obligation under
+/// `Ok(None)` is a refusal to state a bound. A child whose own interval is
+/// unknown is one cause; a symbolic coefficient the region's environment bounds
+/// nowhere above is the other. An interval nothing proved would be worse than
+/// `None`, because `None` falls through to a proof that either closes another
+/// way or is retained as an explicit obligation under
 /// `IndexDomainUnknownReason::InsufficientFacts`, whereas a fabricated bound
-/// would be believed. Note that the environment *could* often bound the symbol
-/// through `ExtentSources::interval`; reading it here is a deliberate
-/// non-goal, because a bound derived from the environment would make an
-/// expression's cached interval — and so which accesses verify — a function of
-/// the binding rather than of the program.
+/// would be believed.
+///
+/// # Why a symbolic coefficient is bounded here rather than declined
+///
+/// **A proof may read this region's shape environment; a rewrite may not.**
+/// The environment is part of the program this region denotes: `encode_region`
+/// folds `ExtentSources::environment_identity` into the region's canonical
+/// bytes, and that identity covers the environment's symbol declarations,
+/// root-binding provenance, and semantic constraints. Two regions spelled
+/// identically over differently constrained environments therefore have
+/// different identities, and a fact read from the environment is a fact about
+/// *this* region and about no other. It is not a fact about a runtime binding:
+/// a `ShapeEnv` holds no values, only declarations, typed root bindings naming
+/// where a value will come from, and constraints over the symbols.
+///
+/// What the sourced boundary keeps apart is the other operation — writing an
+/// environment-derived *value* into a node. Normalization declines to fold `S *
+/// x` at `S == 1`, and `SourcedIndexInteger::as_literal` answers `None` for a
+/// pinned symbol, because the node's bytes must keep naming the symbol: a
+/// region scaled by `b` adapts to its caller and one scaled by `4` does not,
+/// and collapsing the first into the second would collapse graph identity into
+/// specialized identity. Reading the symbol's declared interval leaves the node
+/// untouched, so it crosses nothing.
+///
+/// That rule is the one the rest of this crate already runs on, and it is
+/// applied here so both halves of the admitted symbolic vocabulary end on it.
+/// A dimension expression's interval comes from `extent_upper_bound`, a
+/// boundary axis is compared through `extent_interval`, a quotient's interval
+/// comes from `determined` on its divisor, `plan_divisors` resolves a divisor
+/// for enumeration, and `extents_proved_equal` decides a permutation — every
+/// one of them an environment read inside a proof. The coefficient was the sole
+/// exception.
+///
+/// # Soundness of the product
+///
+/// A symbolic coefficient resolves through a `ShapeSymbol`, which names an
+/// extent, so its interval is nonnegative — but the *child* interval need not
+/// be, and the extrema of `a * x` over a rectangle sit at its corners whatever
+/// the signs. All four are computed and reduced rather than the sign of a
+/// literal being read, because with `a` ranging there is no single sign to
+/// read.
 pub(super) fn interval_linear(
     constant: &BigInt,
     terms: &[LinearTermData],
     expressions: &[DraftIndexExpr],
+    sources: Option<&ExtentSources>,
 ) -> Result<Option<(BigInt, BigInt)>, IndexBuildError> {
     let (mut minimum, mut maximum) = (constant.clone(), constant.clone());
     for term in terms {
-        let Some(coefficient) = term.coefficient.as_literal() else {
-            return Ok(None);
-        };
         let Some((child_minimum, child_maximum)) =
             expressions[term.value as usize].interval.clone()
         else {
             return Ok(None);
         };
-        let (term_minimum, term_maximum) = if coefficient.0.sign() == num_bigint::Sign::Minus {
-            (
-                checked_index_product(&coefficient.0, &child_maximum)?,
-                checked_index_product(&coefficient.0, &child_minimum)?,
-            )
-        } else {
-            (
-                checked_index_product(&coefficient.0, &child_minimum)?,
-                checked_index_product(&coefficient.0, &child_maximum)?,
-            )
+        let (term_minimum, term_maximum) = match &term.coefficient {
+            SourcedIndexInteger::Literal(coefficient) => {
+                if coefficient.0.sign() == num_bigint::Sign::Minus {
+                    (
+                        checked_index_product(&coefficient.0, &child_maximum)?,
+                        checked_index_product(&coefficient.0, &child_minimum)?,
+                    )
+                } else {
+                    (
+                        checked_index_product(&coefficient.0, &child_minimum)?,
+                        checked_index_product(&coefficient.0, &child_maximum)?,
+                    )
+                }
+            }
+            SourcedIndexInteger::Symbol(symbol) => {
+                // A symbolic coefficient with no environment is unresolvable
+                // rather than unconstrained. No constructor can produce one —
+                // `admit_index_scalar` refuses the symbol as undeclared — so
+                // this is a fail-closed floor rather than a reachable path.
+                let Some(sources) = sources else {
+                    return Ok(None);
+                };
+                let Some(bound) = sources.interval(&SourcedExtent::Symbol(symbol.clone())) else {
+                    return Ok(None);
+                };
+                let (lower, upper) = (BigInt::from(bound.lower), BigInt::from(bound.upper));
+                let low_min = checked_index_product(&lower, &child_minimum)?;
+                let low_max = checked_index_product(&lower, &child_maximum)?;
+                let high_min = checked_index_product(&upper, &child_minimum)?;
+                let high_max = checked_index_product(&upper, &child_maximum)?;
+                (
+                    low_min
+                        .clone()
+                        .min(low_max.clone())
+                        .min(high_min.clone())
+                        .min(high_max.clone()),
+                    low_min.max(low_max).max(high_min).max(high_max),
+                )
+            }
         };
         checked_index_add_assign(&mut minimum, &term_minimum)?;
         checked_index_add_assign(&mut maximum, &term_maximum)?;
@@ -605,6 +664,11 @@ fn encode_index_domain_assessment(output: &mut Vec<u8>, assessment: IndexDomainA
                 IndexDomainEvidence::Empirical => output.push(3),
                 IndexDomainEvidence::Unknown => output.push(4),
             }
+            // Which facts the argument above was allowed to read, encoded for
+            // every discharged record rather than only the environment-reading
+            // ones, so the slot is fixed-width and a reader never has to know
+            // the evidence to know how many bytes follow it.
+            output.push(record.facts.tag());
         }
         IndexDomainAssessment::Unknown(record) => {
             encode_index_domain_subject_predicate(output, record.subject, record.predicate);
@@ -636,6 +700,8 @@ fn encoded_index_domain_assessment_len(assessment: IndexDomainAssessment) -> usi
             encoded_index_domain_subject_predicate_len(record.predicate)
                 .saturating_add(1)
                 .saturating_add(evidence)
+                // The fact-source tag `encode_index_domain_assessment` appends.
+                .saturating_add(1)
         }
         IndexDomainAssessment::Unknown(record) => {
             let reason = match record.reason {

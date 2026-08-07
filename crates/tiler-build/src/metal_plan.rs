@@ -1399,7 +1399,34 @@ mod tests {
     /// `the_declared_profile_states_the_measured_cost_row` drives both halves —
     /// so nothing but this one profile's identity moved.
     ///
+    /// **The 2026-08-07 `tiler.index-region.v11` step is what these constants
+    /// hold now.**
+    /// `bound-a-symbolic-index-coefficient-interval-from-its-declared-extent`
+    /// gives every discharged index-domain assessment a one-byte
+    /// `IndexDomainFactSource` tag naming whether the argument that closed it
+    /// read the region's shape environment. Every region carrying a discharged
+    /// predicate therefore re-encodes, and this fixture is one of them even
+    /// though it names no symbol at all: its every new tag reads `Program`,
+    /// which is exactly the claim the tag exists to make legible.
+    ///
+    /// **The delta's *form* is encoding-predicted and its *count* is measured**,
+    /// and the distinction is stated rather than blurred because only the form
+    /// was derived here. The form is one byte per discharged index-domain
+    /// assessment, appended unconditionally so the slot is fixed-width; the
+    /// count is the 52 such assessments this fixture's embedded regions carry,
+    /// read off the move rather than derived from the program. **65,242 + 52 =
+    /// 65,294.** That the growth is a whole number of single bytes with no
+    /// residue is the evidence no layout moved — the same standard the two
+    /// steps above meet, one notch weaker because the multiplicand was not
+    /// independently counted. The neighbouring `v10` step's 12 coefficient tags
+    /// are the comparable population and were recorded the same way.
+    ///
     /// Superseded values, for a reader reconciling an older record:
+    /// the measured cost row, which is what these constants held immediately
+    /// before the `v11` step,
+    /// `357f06767e459ea99fb45a11d6aaffd01f46051a941ec2f1e3eed54ae4290b73` /
+    /// `c626e43b6cfc64ccb828f0394c0a641e0d01d7f54bcb3b506cdc3b8651dac59b` /
+    /// 65,242 bytes;
     /// the per-locus obligation derivation composed with the symbolic-coefficient
     /// step, which is what these constants held immediately before the cost row,
     /// `23c46a19f6bc601d35bf4ca653e890372da3079b1bb60526220dc3b3221dcdd0` /
@@ -1464,10 +1491,10 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "357f06767e459ea99fb45a11d6aaffd01f46051a941ec2f1e3eed54ae4290b73";
+            "7a2bfe51619c05a13fe86cd973e1dfa85c7353da33e4e75af0531068b774357d";
         const CACHE_SUBJECT: &str =
-            "c626e43b6cfc64ccb828f0394c0a641e0d01d7f54bcb3b506cdc3b8651dac59b";
-        const FIXED_CONTENT_BYTES: usize = 65_242;
+            "8bdcde644d7df6d4ca95736f445a011b2d163efdfb3ba93a5c0a954d139b1aa2";
+        const FIXED_CONTENT_BYTES: usize = 65_294;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
