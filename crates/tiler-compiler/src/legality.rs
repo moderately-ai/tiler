@@ -83,6 +83,19 @@ const CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.v2
 /// region's identity and a one-stage realization retains no leading stage. Only
 /// a chain is written under this tag, and neither tag is a prefix of the other,
 /// so the two preimages are disjoint.
+///
+/// **What it encodes for a handed value several stages read: nothing of its
+/// own.** This domain names no intermediate at all. It carries the chain's
+/// [`CanonicalIndexRegionSequenceIdentity`] and one reached-authority block per
+/// stage, and the reader multiplicity lives entirely inside the first of those:
+/// the sequence encoder writes each stage's declared source list, so a value
+/// read by two stages appears as an `Intermediate(p)` entry in each reading
+/// stage's list, at that stage's own boundary position. That is what separates
+/// two chains over identical regions that hand their values differently, and it
+/// is why no per-intermediate block is needed here. The per-stage authority
+/// blocks are indexed by stage rather than by read, so a stage reading one
+/// published value at two of its boundaries contributes exactly one — reading a
+/// value twice does not change which scalar operations the stage reached.
 const STAGED_CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.staged.v1\0";
 /// Canonical domain-separation tag for one single-region refinement occurrence.
 const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurrence.v2\0";
@@ -92,6 +105,14 @@ const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurre
 /// occurrence binding over a chain carries every stage's provider-attributed
 /// admission provenance, and a one-stage binding carries exactly the one it
 /// always has.
+///
+/// **What it encodes for a handed value several stages read.** Like the content
+/// domain, nothing of its own: it embeds those content bytes and appends the
+/// semantic site, the receipt identity, the provider, and one admission pair per
+/// *stage*. A value's readers reach these bytes only through the embedded
+/// sequence identity, and admissions are per stage for the reason the reached
+/// authorities are — how many boundaries of a stage read one value is not a fact
+/// about what that stage was admitted to emit.
 const STAGED_OCCURRENCE_IDENTITY_TAG: &[u8] =
     b"tiler.compiler.index-refinement-occurrence.staged.v1\0";
 
