@@ -58,6 +58,21 @@ pub(super) fn advance_point(point: &mut [u64], extents: &[u64]) -> bool {
     }
     false
 }
+/// Folds one literally scaled operand into a constant and a coefficient map.
+///
+/// The coefficient is exact by construction: only
+/// `IndexRegionBuilder::assemble_linear_combination`'s literal arm calls this,
+/// and a symbolic coefficient is retained verbatim there instead.
+///
+/// **Distribution over a nested sum declines when that sum carries a symbolic
+/// term.** Scaling `S * x` by `c` would need the coefficient `c * S`, which the
+/// sourced vocabulary does not represent — it holds one literal or one declared
+/// symbol, deliberately, because a composed magnitude is a relation in the
+/// environment's constraint set rather than arithmetic the index layer
+/// re-derives. Such an operand therefore stays opaque and takes the same path a
+/// quotient does: it becomes one term scaled by `c`, which is exact, and two
+/// mentions of it still merge. Nothing is approximated and nothing is lost —
+/// the sum is simply not flattened.
 pub(super) fn accumulate_linear_term(
     constant: &mut BigInt,
     coefficients: &mut BTreeMap<Arc<Vec<u8>>, (u32, BigInt)>,
@@ -69,6 +84,12 @@ pub(super) fn accumulate_linear_term(
         return Ok(());
     }
     let expression = &expressions[value as usize];
+    let distributable = match &*expression.node {
+        IndexNode::LinearCombination { terms, .. } => terms
+            .iter()
+            .all(|term| term.coefficient.as_literal().is_some()),
+        _ => false,
+    };
     match &*expression.node {
         IndexNode::Constant(inner) => {
             let product = checked_index_product(coefficient, &inner.0)?;
@@ -77,11 +98,15 @@ pub(super) fn accumulate_linear_term(
         IndexNode::LinearCombination {
             constant: inner_constant,
             terms,
-        } => {
+        } if distributable => {
             let product = checked_index_product(coefficient, &inner_constant.0)?;
             checked_index_add_assign(constant, &product)?;
             for term in terms {
-                let nested_coefficient = checked_index_product(coefficient, &term.coefficient.0)?;
+                let inner = term
+                    .coefficient
+                    .as_literal()
+                    .expect("a distributable sum carries only literal coefficients");
+                let nested_coefficient = checked_index_product(coefficient, &inner.0)?;
                 accumulate_linear_term(
                     constant,
                     coefficients,

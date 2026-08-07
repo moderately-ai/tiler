@@ -24,6 +24,23 @@ enum IndexDomainAssessment {
     Unknown(UnknownIndexDomainPredicate),
 }
 
+/// Propagates an interval through a linear combination, or declines.
+///
+/// `Ok(None)` is a refusal to state a bound, and it has exactly two causes.
+/// A child whose own interval is unknown is the long-standing one. A term whose
+/// **coefficient is symbolic** is the other: the environment need not pin the
+/// symbol, and a term nothing bounds cannot contribute a bound.
+///
+/// Declining is what the symbolic divisor already does, and for the same
+/// reason. An interval nothing proved would be worse than `None`, because
+/// `None` falls through to a proof that either closes another way or is
+/// retained as an explicit obligation under
+/// `IndexDomainUnknownReason::InsufficientFacts`, whereas a fabricated bound
+/// would be believed. Note that the environment *could* often bound the symbol
+/// through `ExtentSources::interval`; reading it here is a deliberate
+/// non-goal, because a bound derived from the environment would make an
+/// expression's cached interval — and so which accesses verify — a function of
+/// the binding rather than of the program.
 pub(super) fn interval_linear(
     constant: &BigInt,
     terms: &[LinearTermData],
@@ -31,20 +48,23 @@ pub(super) fn interval_linear(
 ) -> Result<Option<(BigInt, BigInt)>, IndexBuildError> {
     let (mut minimum, mut maximum) = (constant.clone(), constant.clone());
     for term in terms {
+        let Some(coefficient) = term.coefficient.as_literal() else {
+            return Ok(None);
+        };
         let Some((child_minimum, child_maximum)) =
             expressions[term.value as usize].interval.clone()
         else {
             return Ok(None);
         };
-        let (term_minimum, term_maximum) = if term.coefficient.0.sign() == num_bigint::Sign::Minus {
+        let (term_minimum, term_maximum) = if coefficient.0.sign() == num_bigint::Sign::Minus {
             (
-                checked_index_product(&term.coefficient.0, &child_maximum)?,
-                checked_index_product(&term.coefficient.0, &child_minimum)?,
+                checked_index_product(&coefficient.0, &child_maximum)?,
+                checked_index_product(&coefficient.0, &child_minimum)?,
             )
         } else {
             (
-                checked_index_product(&term.coefficient.0, &child_minimum)?,
-                checked_index_product(&term.coefficient.0, &child_maximum)?,
+                checked_index_product(&coefficient.0, &child_minimum)?,
+                checked_index_product(&coefficient.0, &child_maximum)?,
             )
         };
         checked_index_add_assign(&mut minimum, &term_minimum)?;
@@ -640,7 +660,10 @@ pub(super) fn encoded_index_node_len(node: &IndexNode) -> usize {
             .saturating_add(
                 terms
                     .iter()
-                    .map(|term| encoded_integer_len(&term.coefficient).saturating_add(4))
+                    // Read from the coefficient rather than fixed at an
+                    // integer's width, for the reason the divisor's own length
+                    // gives: a symbolic one carries its scope and name.
+                    .map(|term| term.coefficient.encoded_len().saturating_add(4))
                     .fold(0_usize, usize::saturating_add),
             ),
         // One tag byte, the dividend's index, and the divisor's own tagged
@@ -653,8 +676,7 @@ pub(super) fn encoded_index_node_len(node: &IndexNode) -> usize {
 }
 
 pub(super) fn encoded_integer_len(value: &IndexInteger) -> usize {
-    let magnitude = usize::try_from(value.0.bits().div_ceil(8)).unwrap_or(usize::MAX);
-    9_usize.saturating_add(magnitude)
+    value.encoded_len()
 }
 
 pub(super) fn encoded_operation_kind_len(kind: &ScalarOperationKindData) -> usize {

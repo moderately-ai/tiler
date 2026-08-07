@@ -80,8 +80,8 @@ pub use sequence::{
     VerifiedIndexRegionSequence,
 };
 pub use sourced::{
-    EXTENT_PHASE_CEILING, ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape,
-    SymbolicExtentError,
+    EXTENT_PHASE_CEILING, ExtentSourceError, ExtentSources, SourcedExtent, SourcedIndexInteger,
+    SourcedShape, SymbolicExtentError,
 };
 
 /// Maximum dimensions admitted by one region.

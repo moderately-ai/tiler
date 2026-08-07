@@ -120,7 +120,7 @@
 
 use std::sync::Arc;
 
-use super::IndexBuildError;
+use super::{IndexBuildError, IndexInteger};
 use crate::program::abi::AvailabilityPhase;
 use crate::shape::{
     Extent, ExtentInterval, Shape, ShapeEnv, ShapeEnvIdentity, ShapeError, ShapeSymbol,
@@ -212,6 +212,161 @@ impl SourcedExtent {
         match self {
             Self::Static(_) => 1 + 8,
             Self::Symbol(symbol) => 1 + symbol.encoded_len(),
+        }
+    }
+}
+
+/// One signed index-expression scalar, and where its value comes from.
+///
+/// **Draft surface, not yet accepted.** This type, its variants, its
+/// conversions, its tag byte, and its canonical encoding are a concrete draft
+/// pending Tom's acceptance of the widened linear-combination boundary, along
+/// with [`IndexRegionBuilder::sourced_linear_combination`],
+/// [`LinearTermRef::coefficient`], and the `constant` field of
+/// [`IndexExprView::LinearCombination`]. It is in use inside `tiler-ir`
+/// meanwhile, exactly as the sourced divisor's vocabulary was; the label is
+/// what an acceptance flips.
+///
+/// [`IndexRegionBuilder::sourced_linear_combination`]: super::IndexRegionBuilder::sourced_linear_combination
+/// [`LinearTermRef::coefficient`]: super::LinearTermRef::coefficient
+/// [`IndexExprView::LinearCombination`]: super::IndexExprView::LinearCombination
+///
+/// # Why this is not [`SourcedExtent`]
+///
+/// [`SourcedExtent`] is the crate's one constant-or-symbol vocabulary for an
+/// index-layer *magnitude*, and a coefficient is not a magnitude: it is a
+/// signed, arbitrary-precision [`IndexInteger`], and existing regions are
+/// authored with negative ones. Widening `SourcedExtent` to carry a sign would
+/// put a signed value where a domain extent, a boundary axis, and a divisor all
+/// require a nonnegative one, so the two domains stay distinct types.
+///
+/// What is *not* duplicated is the symbol half. A frontend that holds the
+/// [`SourcedExtent`] it sized a domain or a boundary with converts *that* into
+/// this type, so there is exactly one spelling for "this value comes from a
+/// declared symbol", one admission path ([`ExtentSources::admit`]), and one
+/// place to extend when a third source kind arrives.
+///
+/// # The normalization invariant
+///
+/// The [`SourcedExtent`] conversion collapses [`SourcedExtent::Static`] into
+/// [`Self::Literal`], so [`Self::Symbol`] holds a symbol and a value has exactly
+/// one spelling. That is what makes [`Self::as_literal`] a fact about the value
+/// rather than about which constructor authored it, exactly as
+/// [`SourcedShape::as_static`] is about its boundary.
+///
+/// # Why a symbolic value carries no sign
+///
+/// [`Self::Symbol`] resolves through a [`ShapeSymbol`], which names an extent
+/// and is therefore never negative. That loses nothing, because multiplication
+/// is commutative and the *operand* carries the sign: `-B * p` is written as the
+/// term `B * (-p)`, and a negated symbolic addend is the term `S * (-1)` over a
+/// constant operand. A signed symbolic variant would add a second spelling for
+/// each of those without adding a program.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum SourcedIndexInteger {
+    /// An exact signed integer fixed when the region was authored.
+    Literal(IndexInteger),
+    /// A declared `ShapeEnv` symbol, resolved through that environment alone.
+    Symbol(ShapeSymbol),
+}
+
+impl SourcedIndexInteger {
+    /// Returns the governed tag of this source kind, exhaustively.
+    ///
+    /// Written by a match rather than read from the discriminant, for the
+    /// reason [`SourcedExtent`]'s own tag gives: adding a kind is a build error
+    /// here instead of a silent re-encoding of every region identity ever
+    /// derived (ADR 0074 convention 3).
+    const fn tag(&self) -> u8 {
+        match self {
+            Self::Literal(_) => 0x01,
+            Self::Symbol(_) => 0x02,
+        }
+    }
+
+    /// Returns the symbol this value names, if it names one.
+    #[must_use]
+    pub const fn symbol(&self) -> Option<&ShapeSymbol> {
+        match self {
+            Self::Symbol(symbol) => Some(symbol),
+            Self::Literal(_) => None,
+        }
+    }
+
+    /// Returns the exact integer, for a literally authored value only.
+    ///
+    /// `None` for a symbolic value even when its environment determines one:
+    /// this asks what was *written*, exactly as [`SourcedExtent::as_static`]
+    /// does, and identity is a function of that. A pass that can use a pinned
+    /// value reads [`ExtentSources::determined`] explicitly.
+    #[must_use]
+    pub const fn as_literal(&self) -> Option<&IndexInteger> {
+        match self {
+            Self::Literal(value) => Some(value),
+            Self::Symbol(_) => None,
+        }
+    }
+
+    /// Appends this value's canonical bytes.
+    ///
+    /// A symbolic value encodes its symbol, never a resolved value, for the
+    /// reason [`SourcedExtent::encode`] states: folding a bound value in here
+    /// would collapse `graph identity` into `specialized identity`. The region
+    /// folds the environment's own identity once, so the symbol reference is
+    /// complete.
+    pub(crate) fn encode(&self, bytes: &mut Vec<u8>) {
+        bytes.push(self.tag());
+        match self {
+            Self::Literal(value) => value.encode(bytes),
+            Self::Symbol(symbol) => symbol.encode(bytes),
+        }
+    }
+
+    /// Returns the exact canonical byte length [`Self::encode`] appends.
+    pub(crate) fn encoded_len(&self) -> usize {
+        1_usize.saturating_add(match self {
+            Self::Literal(value) => value.encoded_len(),
+            Self::Symbol(symbol) => symbol.encoded_len(),
+        })
+    }
+}
+
+impl From<IndexInteger> for SourcedIndexInteger {
+    fn from(value: IndexInteger) -> Self {
+        Self::Literal(value)
+    }
+}
+
+impl From<i128> for SourcedIndexInteger {
+    fn from(value: i128) -> Self {
+        Self::Literal(IndexInteger::from_i128(value))
+    }
+}
+
+impl From<u64> for SourcedIndexInteger {
+    fn from(value: u64) -> Self {
+        Self::Literal(IndexInteger::from_u64(value))
+    }
+}
+
+impl From<ShapeSymbol> for SourcedIndexInteger {
+    fn from(value: ShapeSymbol) -> Self {
+        Self::Symbol(value)
+    }
+}
+
+impl From<SourcedExtent> for SourcedIndexInteger {
+    /// Reads the crate's one magnitude vocabulary as a signed index scalar.
+    ///
+    /// This is the bridge that keeps the symbol half single: a frontend holding
+    /// the [`SourcedExtent`] it sized a domain or a boundary with multiplies by
+    /// *that* rather than re-naming its symbol through a second type. A literal
+    /// extent normalizes to [`Self::Literal`] so the two vocabularies cannot
+    /// disagree about what `4` is.
+    fn from(value: SourcedExtent) -> Self {
+        match value {
+            SourcedExtent::Static(extent) => Self::Literal(IndexInteger::from_u64(extent.get())),
+            SourcedExtent::Symbol(symbol) => Self::Symbol(symbol),
         }
     }
 }
@@ -643,7 +798,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::{EXTENT_PHASE_CEILING, ExtentSourceError, SymbolicExtentError};
-    use super::{ExtentSources, SourcedExtent, SourcedShape};
+    use super::{ExtentSources, SourcedExtent, SourcedIndexInteger, SourcedShape};
     use crate::index::{
         AccessMode, BoundsProofView, DomainRole, FrozenScalarRegistry, IndexBuildError,
         IndexDomainPredicate, IndexDomainUnknownReason, IndexExprClass, IndexExprView,
@@ -1934,6 +2089,475 @@ mod tests {
                 .index_expressions()
                 .all(|expression| expression.class() != IndexExprClass::SemiAffine),
             "no expression divided by a symbol, so none is semi-affine",
+        );
+    }
+
+    /// Copies `input[addend + coefficient * i]` into `output[i]` over eight points.
+    ///
+    /// The coefficient half's counterpart of [`divided_copy`], built the same
+    /// way and for the same reason: the only symbolic things in the region are
+    /// the two scalars under test, so what the region can prove about the read
+    /// turns on the environment's facts about them and on nothing else. The
+    /// write is a plain permutation of the static parallel dimension, so
+    /// ownership is discharged whatever the scalars do.
+    ///
+    /// The input axis is 64 against a domain of 8 so that the *literal*
+    /// neighbours every test below compares against — `1 * i`, `2 * i`, `4 * i`
+    /// — are provably in bounds. A shorter axis would refute them, and the
+    /// contrast under test would become "declined versus refuted" rather than
+    /// "declined versus proved by interval".
+    fn scaled_copy(
+        environment: Option<Arc<ShapeEnv>>,
+        addend: SourcedIndexInteger,
+        coefficient: SourcedIndexInteger,
+    ) -> Result<Result<VerifiedIndexRegion, IndexRegionBuildError>, SymbolicExtentError> {
+        let mut builder = match environment {
+            Some(environment) => {
+                IndexRegionBuilder::new_with_shape_environment(registry(), environment).unwrap()
+            }
+            None => IndexRegionBuilder::new(registry()).unwrap(),
+        };
+        let input = builder
+            .tensor(TensorRole::Input, value_type(), Shape::from_dims([64]))
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, value_type(), Shape::from_dims([8]))
+            .unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(8))
+            .unwrap();
+        let coordinate = builder.dimension_expr(dimension).unwrap();
+        let scaled = builder.sourced_linear_combination(addend, &[(coefficient, coordinate)])?;
+        let value = builder.read(input, &[dimension], &[scaled]).unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+        Ok(builder.build())
+    }
+
+    /// A symbolic coefficient and a symbolic addend are both expressible, and
+    /// the expression that carries them is semi-affine.
+    ///
+    /// This is what the ticket is for. ADR 0046 admits "symbolic coefficients
+    /// **or** proven-positive symbolic divisors" and only the divisor was
+    /// implemented; `i * B + S` is the other half, written through the same
+    /// sourced vocabulary the divisor uses.
+    ///
+    /// The class assertion is about the expression's *form*, exactly as the
+    /// divisor's is: `B` is pinned to two here, so the region could have been
+    /// spelled with literals, and it stays [`IndexExprClass::SemiAffine`]
+    /// anyway because the canonical bytes name the symbols and another
+    /// environment could bind them differently.
+    #[test]
+    fn a_symbolic_coefficient_and_addend_are_expressible_and_classed_semi_affine() {
+        let region = scaled_copy(
+            Some(environment_over(
+                EXTENT_PHASE_CEILING,
+                &["b", "s"],
+                &[
+                    ExtentRelation::interval(term("b"), 2, 2).unwrap(),
+                    ExtentRelation::interval(term("s"), 0, 0).unwrap(),
+                ],
+            )),
+            SourcedIndexInteger::Symbol(symbol("s")),
+            SourcedIndexInteger::Symbol(symbol("b")),
+        )
+        .expect("both symbols are declared and available in time")
+        .expect("an unproved read bound is an obligation, not a verification failure");
+
+        let combination = region
+            .index_expressions()
+            .find(|expression| matches!(expression.view(), IndexExprView::LinearCombination { .. }))
+            .expect("the coordinate is a linear combination");
+        assert_eq!(
+            combination.class(),
+            IndexExprClass::SemiAffine,
+            "a symbol the region names but does not fix makes the form semi-affine",
+        );
+
+        let IndexExprView::LinearCombination { constant, terms } = combination.view() else {
+            unreachable!("matched above")
+        };
+        // The additive slot stays exact; the symbolic addend became a term.
+        assert_eq!(constant.to_string(), "0");
+        let coefficients: Vec<_> = terms.map(|term| term.coefficient().clone()).collect();
+        assert!(
+            coefficients.contains(&SourcedIndexInteger::Symbol(symbol("b"))),
+            "the coefficient names `b`: {coefficients:?}",
+        );
+        assert!(
+            coefficients.contains(&SourcedIndexInteger::Symbol(symbol("s"))),
+            "the addend is carried as a term scaled by `s`: {coefficients:?}",
+        );
+
+        // The literal spelling of the same arithmetic is affine, so the class
+        // tracks the form rather than the environment's resolution of it.
+        let literal = scaled_copy(None, 0_i128.into(), 2_i128.into())
+            .expect("literals need no environment")
+            .expect("`2 * i` over eight points is in bounds by interval");
+        assert!(
+            literal
+                .index_expressions()
+                .all(|expression| expression.class() != IndexExprClass::SemiAffine),
+            "no expression named a symbol, so none is semi-affine",
+        );
+    }
+
+    /// A symbolic coefficient's source is refused under the authority that
+    /// refused it, and positivity is never the question.
+    ///
+    /// Three refusals, each with its own typed cause: the region has no
+    /// environment and so declares nothing; the environment declares other
+    /// symbols but not this one; and the symbol's value arrives after the
+    /// ceiling. All three come from [`ExtentSources::admit`] — the same path a
+    /// domain extent, a boundary axis, and a divisor use.
+    ///
+    /// **`proves_positive` is deliberately not consulted, and the last case is
+    /// what proves it.** An environment that says nothing at all about `b`
+    /// refuses a *divisor* under
+    /// [`ExtentSourceError::DivisorNotProvedPositive`], because `x floordiv 0`
+    /// is undefined; the same environment admits `b` as a coefficient, because
+    /// every magnitude it could take denotes a coordinate.
+    #[test]
+    fn a_symbolic_coefficient_source_is_refused_under_the_authority_that_refused_it() {
+        assert_eq!(
+            scaled_copy(
+                None,
+                0_i128.into(),
+                SourcedIndexInteger::Symbol(symbol("b"))
+            )
+            .unwrap_err(),
+            SymbolicExtentError::Source(ExtentSourceError::UndeclaredSymbol {
+                symbol: symbol("b"),
+            }),
+            "a region with no environment declares no symbol, so none is admissible",
+        );
+
+        assert_eq!(
+            scaled_copy(
+                Some(environment_over(EXTENT_PHASE_CEILING, &["b"], &[])),
+                0_i128.into(),
+                SourcedIndexInteger::Symbol(symbol("elsewhere")),
+            )
+            .unwrap_err(),
+            SymbolicExtentError::Source(ExtentSourceError::UndeclaredSymbol {
+                symbol: symbol("elsewhere"),
+            }),
+            "a symbol from another environment is undeclared in this one",
+        );
+
+        for phase in [
+            AvailabilityPhase::PreparedKernelPreflight,
+            AvailabilityPhase::LaunchPreflight,
+        ] {
+            assert_eq!(
+                scaled_copy(
+                    Some(environment_over(phase, &["b"], &[])),
+                    0_i128.into(),
+                    SourcedIndexInteger::Symbol(symbol("b")),
+                )
+                .unwrap_err(),
+                SymbolicExtentError::Source(ExtentSourceError::SourceTooLate {
+                    symbol: symbol("b"),
+                    available: phase,
+                    ceiling: EXTENT_PHASE_CEILING,
+                }),
+                "a coefficient obeys the same ceiling a domain extent does",
+            );
+            // The addend reaches the same authority, so neither scalar position
+            // is admitted by a path the other is not.
+            assert_eq!(
+                scaled_copy(
+                    Some(environment_over(phase, &["b"], &[])),
+                    SourcedIndexInteger::Symbol(symbol("b")),
+                    1_i128.into(),
+                )
+                .unwrap_err(),
+                SymbolicExtentError::Source(ExtentSourceError::SourceTooLate {
+                    symbol: symbol("b"),
+                    available: phase,
+                    ceiling: EXTENT_PHASE_CEILING,
+                }),
+            );
+        }
+
+        // An environment that proves nothing about `b` still admits it as a
+        // coefficient. The divisor neighbour below is the same environment and
+        // the same symbol, refused — so the difference is the predicate and not
+        // the environment.
+        scaled_copy(
+            Some(environment_over(EXTENT_PHASE_CEILING, &["b"], &[])),
+            0_i128.into(),
+            SourcedIndexInteger::Symbol(symbol("b")),
+        )
+        .expect("a coefficient is never required to be proved positive")
+        .expect("its unproved read bound is an obligation");
+        assert_eq!(
+            divided_copy(
+                Some(environment_over(EXTENT_PHASE_CEILING, &["d"], &[])),
+                SourcedExtent::Symbol(symbol("d")),
+            )
+            .unwrap_err(),
+            SymbolicExtentError::Source(ExtentSourceError::DivisorNotProvedPositive {
+                symbol: symbol("d"),
+            }),
+            "the divisor's extra predicate is what a coefficient does not carry",
+        );
+    }
+
+    /// A refused coefficient leaves the draft exactly as it was.
+    ///
+    /// The refusal happens before any operand is resolved, any expression is
+    /// interned, or any constant is created, so a builder that survived one is
+    /// byte-identical to a builder that never attempted it. Asserted over
+    /// canonical identity rather than over an internal counter, because that is
+    /// what a half-applied draft would actually corrupt.
+    #[test]
+    fn a_refused_coefficient_leaves_the_draft_unchanged() {
+        fn region(attempt_refused: bool) -> VerifiedIndexRegion {
+            let mut builder = IndexRegionBuilder::new_with_shape_environment(
+                registry(),
+                environment_over(EXTENT_PHASE_CEILING, &["b"], &[]),
+            )
+            .unwrap();
+            let input = builder
+                .tensor(TensorRole::Input, value_type(), Shape::from_dims([8]))
+                .unwrap();
+            let output = builder
+                .tensor(TensorRole::Output, value_type(), Shape::from_dims([8]))
+                .unwrap();
+            let dimension = builder
+                .dimension(DomainRole::Parallel, Extent::new(8))
+                .unwrap();
+            let coordinate = builder.dimension_expr(dimension).unwrap();
+            if attempt_refused {
+                assert_eq!(
+                    builder.sourced_linear_combination(
+                        0_i128.into(),
+                        &[(SourcedIndexInteger::Symbol(symbol("elsewhere")), coordinate)],
+                    ),
+                    Err(SymbolicExtentError::Source(
+                        ExtentSourceError::UndeclaredSymbol {
+                            symbol: symbol("elsewhere"),
+                        }
+                    )),
+                );
+            }
+            let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+            let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+            builder.output(write, value).unwrap();
+            builder.build().expect("a static copy verifies")
+        }
+
+        assert_eq!(
+            region(true).canonical_identity(),
+            region(false).canonical_identity(),
+            "a refusal is not a mutation: the surviving draft names the same region",
+        );
+    }
+
+    /// Interval propagation declines over a symbolic coefficient, and the
+    /// obligation it leaves names missing facts rather than a spent budget.
+    ///
+    /// Both halves of the read's bound are open, and that is the honest answer:
+    /// with no value for `b` the scaled coordinate's range states neither a
+    /// floor nor a ceiling. The reason is
+    /// [`IndexDomainUnknownReason::InsufficientFacts`] and explicitly *not*
+    /// [`IndexRegionDiagnostic::ProofResourceLimit`], which is what charging a
+    /// budget for a walk that could never run would have produced — nothing
+    /// could be enumerated, because enumerating needs the same value the
+    /// interval needed.
+    ///
+    /// The neighbour is the same region with the coefficient written as the
+    /// literal the environment pins `b` to. It closes by interval, which is
+    /// what makes this a fact about the *symbol* rather than about the shape of
+    /// the region.
+    #[test]
+    fn an_interval_over_a_symbolic_coefficient_declines_with_a_named_reason() {
+        let pinned = environment_over(
+            EXTENT_PHASE_CEILING,
+            &["b"],
+            &[ExtentRelation::interval(term("b"), 1, 1).unwrap()],
+        );
+        let symbolic = scaled_copy(
+            Some(pinned),
+            0_i128.into(),
+            SourcedIndexInteger::Symbol(symbol("b")),
+        )
+        .expect("`b` is declared and available in time")
+        .expect("an unproved read bound is an obligation, not a verification failure");
+
+        let unknown: Vec<_> = symbolic.unknown_index_domain_predicates().collect();
+        assert_eq!(unknown.len(), 2);
+        assert!(
+            unknown.iter().any(|record| matches!(
+                record.predicate(),
+                IndexDomainPredicate::NonNegative { .. }
+            ))
+        );
+        assert!(unknown.iter().any(|record| matches!(
+            record.predicate(),
+            IndexDomainPredicate::LessThanExtent { .. }
+        )));
+        assert!(
+            unknown
+                .iter()
+                .all(|record| record.reason() == IndexDomainUnknownReason::InsufficientFacts),
+            "no enumeration existed to exhaust, so this is missing facts and not a budget",
+        );
+        assert!(
+            symbolic
+                .accesses()
+                .filter(|access| access.mode() == AccessMode::Read)
+                .all(|access| access.bounds_proof().is_none()),
+            "nothing proved the read in bounds, and no proof kind claims otherwise",
+        );
+
+        // The environment pins `b == 1`, and the interval still declines: the
+        // literal spelling of that same value is what closes the bound.
+        let literal = scaled_copy(None, 0_i128.into(), 1_i128.into())
+            .expect("literals need no environment")
+            .expect("`1 * i` over eight points is in bounds by interval");
+        assert_eq!(literal.unknown_index_domain_predicates().count(), 0);
+        assert!(
+            literal
+                .accesses()
+                .filter(|access| access.mode() == AccessMode::Read)
+                .all(|access| access.bounds_proof() == Some(BoundsProofView::Interval)),
+        );
+    }
+
+    /// A coefficient's identity names the symbol it was written with, not the
+    /// value its environment resolves that symbol to.
+    ///
+    /// The coefficient counterpart of
+    /// `a_boundary_identity_names_its_symbol_rather_than_a_resolved_value`, and
+    /// the reason is the same accepted contract: `graph identity`, `interface
+    /// identity`, and `specialized identity` stay distinguishable. A region
+    /// scaled by `b` in an environment that happens to pin `b == 4` is a
+    /// program that adapts to its caller; one scaled by the literal `4` is a
+    /// program that does not. Folding the resolved value in would collapse the
+    /// first into the second and a cache would then serve either for the other.
+    ///
+    /// This is also what makes the normalization decision observable. Declining
+    /// to fold a symbolic coefficient is *why* these two identities differ; a
+    /// builder that resolved `b` to `4` because the environment allowed it
+    /// would make this assertion fail.
+    #[test]
+    fn a_coefficient_identity_names_its_symbol_rather_than_a_resolved_value() {
+        let pinned = environment_over(
+            EXTENT_PHASE_CEILING,
+            &["b"],
+            &[ExtentRelation::interval(term("b"), 4, 4).unwrap()],
+        );
+        let region = |coefficient: SourcedIndexInteger| {
+            scaled_copy(Some(Arc::clone(&pinned)), 0_i128.into(), coefficient)
+                .expect("`b` is declared and available in time")
+                .expect("both spellings verify; only the literal proves its bound")
+        };
+
+        let symbolic = region(SourcedIndexInteger::Symbol(symbol("b")));
+        let literal = region(4_i128.into());
+        assert_eq!(
+            symbolic.canonical_identity(),
+            region(SourcedIndexInteger::Symbol(symbol("b"))).canonical_identity(),
+            "one environment and one structure name one region",
+        );
+        assert_ne!(
+            symbolic.canonical_identity(),
+            literal.canonical_identity(),
+            "a coefficient written as a symbol is a different program from one \
+             written as that symbol's value",
+        );
+    }
+
+    /// Normalization declines on a symbolic coefficient, term by term.
+    ///
+    /// Each assertion is one rewrite the literal path performs and the symbolic
+    /// path does not, and each is a deliberate decision rather than a gap: none
+    /// is available without a value the environment need not pin, and doing it
+    /// *when* the environment happens to pin one would make canonicalization a
+    /// function of the binding. The environment here pins `z == 0` and `u == 1`
+    /// precisely so that a builder which resolved symbols would visibly fold.
+    #[test]
+    fn a_symbolic_coefficient_declines_every_fold_a_literal_takes() {
+        let environment = environment_over(
+            EXTENT_PHASE_CEILING,
+            &["z", "u"],
+            &[
+                ExtentRelation::interval(term("z"), 0, 0).unwrap(),
+                ExtentRelation::interval(term("u"), 1, 1).unwrap(),
+            ],
+        );
+        let mut builder =
+            IndexRegionBuilder::new_with_shape_environment(registry(), Arc::clone(&environment))
+                .unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(8))
+            .unwrap();
+        let coordinate = builder.dimension_expr(dimension).unwrap();
+
+        // Interning makes these identity comparisons total: two spellings that
+        // normalized to one node are one `IndexExprId`, and two that did not
+        // are not. No view is needed to see which rewrites ran.
+        //
+        // A zero-pinned symbol is not dropped, where a literal zero is.
+        let zeroed = builder
+            .sourced_linear_combination(
+                1_i128.into(),
+                &[(SourcedIndexInteger::Symbol(symbol("z")), coordinate)],
+            )
+            .unwrap();
+        let one = builder.constant(1_i128.into()).unwrap();
+        assert_ne!(
+            zeroed, one,
+            "`1 + z * i` keeps its term even though the environment pins `z == 0`",
+        );
+        assert_eq!(
+            builder
+                .linear_combination(1_i128.into(), &[(0_i128.into(), coordinate)])
+                .unwrap(),
+            one,
+            "the literal zero `z` is pinned to *is* dropped, leaving the constant",
+        );
+
+        // A one-pinned symbol is not unwrapped, where a literal one is.
+        let scaled = builder
+            .sourced_linear_combination(
+                0_i128.into(),
+                &[(SourcedIndexInteger::Symbol(symbol("u")), coordinate)],
+            )
+            .unwrap();
+        assert_ne!(
+            scaled, coordinate,
+            "`u * i` is not the dimension itself even though `u == 1`",
+        );
+        assert_eq!(
+            builder
+                .linear_combination(0_i128.into(), &[(1_i128.into(), coordinate)])
+                .unwrap(),
+            coordinate,
+            "the literal one `u` is pinned to *is* unwrapped",
+        );
+
+        // Two symbolic terms over one operand are not merged. Read through a
+        // verified region because the count is a property of the retained node.
+        let twice = scaled_copy(
+            Some(environment),
+            0_i128.into(),
+            SourcedIndexInteger::Symbol(symbol("u")),
+        )
+        .expect("`u` is declared and available in time")
+        .expect("an unproved read bound is an obligation");
+        let terms = twice
+            .index_expressions()
+            .find_map(|expression| match expression.view() {
+                IndexExprView::LinearCombination { terms, .. } => Some(terms.len()),
+                _ => None,
+            })
+            .expect("the coordinate is a linear combination");
+        assert_eq!(
+            terms, 1,
+            "one symbolic term stays one term, and it is not folded into the constant",
         );
     }
 }
