@@ -1,7 +1,7 @@
 ---
 id: size-the-region-shape-budgets-to-the-programs-the-profile-admits
 title: Decide whether the three region-shape budgets move with semantic_operations
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [region-expansion-exhaustion-loses-the-only-feasible-plan, carry-the-thirty-two-operation-ladder-into-the-five-records, assemble-the-decoder-layer-program]
@@ -31,3 +31,37 @@ The 2026-08-05 widening's own comment recorded the ground for leaving every `reg
 - **Derive all three from the decoder layer's widest recognized region**, as the five program-scoped bounds were derived from its measured counts. This is the answer that matches the rule `check_program_budgets` states and that every previous widening followed. It needs a number that does not exist yet: the layer's widest region is a property of a plan, and [`assemble-the-decoder-layer-program`](assemble-the-decoder-layer-program.md) has the program but the profile refuses to plan it.
 
 **Recommendation: the third, deferred until the decoder layer is plannable, and 32 left standing until then.** A widening now would be sized from a program count rather than a region count, would move every artifact identity in the workspace, and would have to move again when the real number arrives — which is the "second identity move this one cannot honestly absorb" the 2026-08-05 comment already anticipated. What this ticket asks Tom to confirm is that the envelope disagreement is acceptable in the meantime, now that it is measured rather than unknown.
+
+## Decided — derive, do not pick, 2026-08-07
+
+**Tom decided on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator: **none of the three options as framed.** All three were "choose a constant", and choosing a constant sized to today's largest known program is the self-constraint the decision rejects. The three region-shape bounds become **derivations over the declaration**, as the five program-scoped bounds already are.
+
+### Why this node's own recommendation was withdrawn
+
+This ticket recommended the third option deferred until the decoder layer is plannable, with 32 left standing. **That rested on a dependency that does not govern**, and the coordinator checked it at source before recommending against it: `DeterministicBudgets::governed`'s own comment states that "clearing the budget gate [does not] compile a decoder layer — the recognizer's refusal is untouched, and what this widening removes is only the refusal that was about *size*." The layer is blocked by `select_supported_strategy`, a separate refusal with a separate remedy. So the deferral was waiting on something that was never in the way.
+
+### The defect, stated correctly
+
+The five program-scoped bounds are each a **formula over the declaration** — `semantic_values` is eighteen inputs plus one result per occurrence, `regions` is the four-stage widest chain times three declared outputs, `host_expression_nodes` is two per input plus four per output plus three, `buffers` is inputs plus four per output. The three region-shape bounds are **bare constants**: 32, 8, 64, with no derivation and no stated rule. That asymmetry is why one set moved coherently on 2026-08-05 and the other could not.
+
+**The repository has already made this exact correction once.** `regions` was `4` and "checked against a constant rather than derived", on the ground that a region count is a property of a *plan* and this profile plans no decoder layer. The comment records the outcome in terms: *"That ground survives and its conclusion did not."* A plan covers every declared output, so a plan-scoped quantity is still a function of the **declaration**. That precedent applies here unchanged.
+
+### The derivation, which is structural rather than a heuristic
+
+**A region is a subset of the program's occurrences, so it cannot hold more than the program contains.** `semantic_operations` therefore already bounds `region_members`; a separate, tighter constant is a second and undermotivated ceiling, and it is the entire source of the envelope disagreement this ticket was filed about. `region_live_values` bounds against `semantic_values` and `region_boundary_outputs` against the declared outputs on the same reasoning.
+
+**This is not the rejected option two.** Reusing the literal 62 because it is the decoder layer's occurrence count is the category error this ticket named — sizing a region bound from a program count. Deriving `region_members` *from* `semantic_operations` because a region cannot exceed the program is a different claim, and it is true of every program rather than of one.
+
+### What this buys, against the stated criteria
+
+The stated admission envelope and the actual planning envelope agree, because they are the same derivation — the disagreement is dissolved rather than recorded. It is **one identity move and the last of this kind for these three**, because a derivation tracks the declaration instead of being a ceiling raised per program. And it is available now rather than after the layer becomes plannable.
+
+### The risk to measure rather than assume
+
+A wider admissible region may raise per-candidate cost. The shape bounds are not what bound search work — `region_candidates_per_seed` and `region_expansions` do that — but the per-candidate cost of checking a wider region is real and should be measured before landing, not argued.
+
+## Released work
+
+- [`derive-the-region-shape-budgets-from-the-declaration`](derive-the-region-shape-budgets-from-the-declaration.md) — the change itself.
+- [`state-the-rule-that-a-deterministic-budget-is-a-derivation`](state-the-rule-that-a-deterministic-budget-is-a-derivation.md) — the general rule, so the next constant does not drift into a ceiling.
+- [`decide-whether-a-derived-budget-belongs-in-the-request-subject`](decide-whether-a-derived-budget-belongs-in-the-request-subject.md) — the structural question underneath all of it.
