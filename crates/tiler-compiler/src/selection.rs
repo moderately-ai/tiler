@@ -587,6 +587,13 @@ impl SelectedPortfolio {
 pub(crate) enum PlanRejection {
     /// A cover region has no feasible implementation on this target, so no complete
     /// plan can cover it. This is the legitimate reason a cover contributes no plan.
+    ///
+    /// **One rejection per region, not per (cover, region) pair.** Whether a
+    /// region has an admitted implementation is decided by that region's own
+    /// frontier, which `enumerate_frontier` answers once per region subject and
+    /// which no cover can change: two covers placing the same region are
+    /// refused on the identical ground. The cover multiplicity is therefore a
+    /// quantity rather than a set of distinct grounds, and it is carried as one.
     RegionUnimplemented {
         /// The bounded explain label of the region occurrence that had no
         /// implementation.
@@ -594,13 +601,18 @@ pub(crate) enum PlanRejection {
         /// The region rather than only its role, because the role is a
         /// four-valued presentation label: a cover places many regions under
         /// `unrecognized`, and keying the gap by role reported one of them and
-        /// silently dropped the rest. This is the only authority that states
-        /// the coverage gap *per cover*, so it has to name which region.
+        /// silently dropped the rest.
         region: String,
         /// The region presentation role that had no implementation.
         role: &'static str,
-        /// The cover identity whose region was unimplemented.
-        cover: Vec<u8>,
+        /// Distinct legal covers this missing implementation left uncompletable.
+        ///
+        /// Exact rather than approximate: a cover's regions are distinct
+        /// occurrences, so one cover contributes at most one to any region's
+        /// count. Read against `cover.enumeration.v1`'s retained cover count it
+        /// separates a region that kills every enumerated partition from one
+        /// that kills some.
+        covers: u64,
     },
     /// A candidate combination's per-region boundary contracts do not compose.
     BoundaryDisagreement {
@@ -612,30 +624,17 @@ pub(crate) enum PlanRejection {
 }
 
 impl PlanRejection {
-    /// Returns the bounded explain label of the cover this rejection is about.
-    ///
-    /// Derived from the identity bytes the rejection already carries rather
-    /// than stored beside them, so the label a reader sees and the identity the
-    /// deduplication uses cannot disagree.
-    pub(crate) fn cover_label(&self) -> String {
-        match self {
-            Self::RegionUnimplemented { cover, .. } | Self::BoundaryDisagreement { cover, .. } => {
-                crate::region::hex_label("region-cover:", digest(cover))
-            }
-        }
-    }
-
     fn encode(&self, output: &mut Vec<u8>) {
         match self {
             Self::RegionUnimplemented {
                 region,
                 role,
-                cover,
+                covers,
             } => {
                 output.push(1);
                 push_slice(output, region.as_bytes());
                 push_slice(output, role.as_bytes());
-                push_slice(output, cover);
+                output.extend_from_slice(&covers.to_be_bytes());
             }
             Self::BoundaryDisagreement {
                 disagreement,
@@ -648,6 +647,11 @@ impl PlanRejection {
         }
     }
 
+    /// The canonical order key, which is the rejection's own encoding.
+    ///
+    /// [`Self::RegionUnimplemented`]'s cover count trails its region and role,
+    /// which already identify it uniquely, so a count that changes cannot
+    /// reorder the rejections around it.
     fn sort_key(&self) -> Vec<u8> {
         let mut key = Vec::new();
         self.encode(&mut key);
@@ -942,6 +946,7 @@ pub(crate) fn select_physical_plans(
     let target_profile_key = coherent_target_profile(sources)?;
     let mut retained: BTreeMap<SelectedPlanIdentity, SelectedPlan> = BTreeMap::new();
     let mut rejections: BTreeMap<Vec<u8>, PlanRejection> = BTreeMap::new();
+    let mut unimplemented_regions: BTreeMap<(&str, &'static str), u64> = BTreeMap::new();
     let mut budget_stops: BTreeMap<Vec<u8>, PlanBudgetStop> = BTreeMap::new();
 
     for source in sources {
@@ -952,26 +957,31 @@ pub(crate) fn select_physical_plans(
 
         // A cover region with no admitted implementation cannot be completed.
         //
-        // The rejection is keyed by the region occurrence and the cover, so one
-        // rejection is recorded per region a cover could not implement. It used
-        // to be keyed by role and cover, which collapsed every `unrecognized`
-        // region of one cover into a single rejection: the governed program
-        // recorded 38 of these per compile, every one of them under that role,
-        // and a reader could not tell which region each was about.
+        // Accumulated per region occurrence, counting the covers it blocked.
+        // The region rather than the role, because the role is a four-valued
+        // presentation label: keying by it reported one of a cover's many
+        // `unrecognized` regions and silently dropped the rest.
         //
-        // The cover's regions are distinct occurrences, so no deduplication is
-        // needed within one cover; the map still deduplicates across the covers
-        // that place the same region.
+        // The count and not the covers themselves, because the answer is the
+        // region's alone — `entry.admitted` comes from that region's frontier,
+        // which `enumerate_frontier` decides once per region subject however
+        // many covers place it. Retaining one rejection per (cover, region)
+        // pair therefore restated one ground up to `region_covers` times, and
+        // the explain reader downstream turned each restatement into a record:
+        // an eleven-operation multiply chain inside every governed budget
+        // produced about 2,300 of them against a single unimplemented singleton
+        // region and exhausted the trace's canonical-byte ceiling, refusing a
+        // legal program as `InvalidCompilerOutput`.
+        //
+        // A cover's regions are distinct occurrences, so one cover contributes
+        // at most one to any region's count and the count is exact.
         let mut unimplemented = false;
         for entry in &region_impls {
             if entry.admitted.is_empty() {
                 unimplemented = true;
-                let rejection = PlanRejection::RegionUnimplemented {
-                    region: entry.region.to_owned(),
-                    role: entry.role,
-                    cover: cover_identity.to_vec(),
-                };
-                rejections.entry(rejection.sort_key()).or_insert(rejection);
+                *unimplemented_regions
+                    .entry((entry.region, entry.role))
+                    .or_insert(0) += 1;
             }
         }
         if unimplemented {
@@ -987,6 +997,18 @@ pub(crate) fn select_physical_plans(
             &mut rejections,
             &mut budget_stops,
         )?;
+    }
+
+    // Joined into the one canonically ordered rejection list only now that
+    // every source has been visited, because a region's cover count is not
+    // final until the last cover that could place it has been bound.
+    for ((region, role), covers) in unimplemented_regions {
+        let rejection = PlanRejection::RegionUnimplemented {
+            region: region.to_owned(),
+            role,
+            covers,
+        };
+        rejections.insert(rejection.sort_key(), rejection);
     }
 
     let mut plans: Vec<SelectedPlan> = retained.into_values().collect();
@@ -2542,6 +2564,91 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// A region nothing implements is rejected once, counting every cover it
+    /// blocked rather than restating the ground per cover.
+    ///
+    /// Two enumerated covers place the same singleton reduction region, and the
+    /// three regions around it are placed by one cover each. One rejection
+    /// carrying `covers: 2` beside three carrying `covers: 1` is the statement
+    /// that the count is a property of the region: keeping a rejection per
+    /// (cover, region) pair would give four rejections all reading `1`, and
+    /// deduplicating without counting would give four reading nothing at all.
+    #[test]
+    fn one_unimplemented_region_counts_every_cover_it_blocked() {
+        let program = serial_sum_program();
+        let request = request_for(&program);
+        let two_region = cover_with_partitions(&program, &[vec![4], vec![0, 1, 2, 3]]);
+        let three_region = cover_with_partitions(&program, &[vec![1], vec![4], vec![0, 2, 3]]);
+        // Nothing implements anything, so every region of both covers reports a
+        // gap and the counts are readable side by side.
+        let sources: Vec<CoverFrontiers<'_>> = [&two_region, &three_region]
+            .into_iter()
+            .map(|cover| {
+                let frontiers = cover
+                    .regions()
+                    .iter()
+                    .map(|region| {
+                        empty_frontier(
+                            FrontierRegionSubject::new(
+                                "unrecognized",
+                                region.members().to_vec(),
+                                crate::physical::RegionWrite::Materialized,
+                            ),
+                            &request,
+                        )
+                    })
+                    .collect();
+                CoverFrontiers::new(cover, frontiers)
+            })
+            .collect();
+        let portfolio = select_physical_plans(
+            &program,
+            budgets(),
+            &formation_of(&program),
+            cover_policy(),
+            &sources,
+        )
+        .unwrap();
+
+        assert!(portfolio.is_empty());
+        let shared = two_region
+            .regions()
+            .iter()
+            .find(|region| region.members().iter().map(|atom| atom.member().0).eq([4]))
+            .expect("the two-region cover places the reduction singleton")
+            .label();
+        let counted: Vec<(&str, u64)> = portfolio
+            .rejections()
+            .iter()
+            .map(|rejection| match rejection {
+                PlanRejection::RegionUnimplemented { region, covers, .. } => {
+                    (region.as_str(), *covers)
+                }
+                PlanRejection::BoundaryDisagreement { .. } => {
+                    panic!("no combination was reachable to disagree")
+                }
+            })
+            .collect();
+        assert_eq!(counted.len(), 4, "four distinct regions across two covers");
+        assert_eq!(
+            counted
+                .iter()
+                .find(|(region, _)| *region == shared)
+                .map(|(_, covers)| *covers),
+            Some(2),
+            "the region both covers place blocked both",
+        );
+        assert_eq!(
+            counted
+                .iter()
+                .filter(|(region, _)| *region != shared)
+                .map(|(_, covers)| *covers)
+                .collect::<Vec<u64>>(),
+            vec![1, 1, 1],
+            "a region one cover places blocked one",
+        );
     }
 
     /// The bounded profile's guarantee set, for facets assembled by hand.

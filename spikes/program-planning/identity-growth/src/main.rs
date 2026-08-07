@@ -67,35 +67,40 @@ use tiler_ir::shape::Shape;
 /// **This ladder is not a sample; it is every program size the ordinary
 /// compilation path admits for this program family.** It is *not* the domain
 /// `DeterministicBudgets::governed`'s `semantic_operations` names. That budget
-/// is 62, and 62 is not reachable: two bounds below it stop this family first,
-/// and [`WALLS`] compiles at each of them and records which one refuses.
+/// is 62, and 62 is not reachable: a search bound below it stops this family
+/// first, and [`WALLS`] compiles at each point and records which bound refuses.
 ///
 /// The derivation, measured rather than read off constants:
 ///
-/// - **2..=10 compiles.** Every point verifies, carries one coverage record per
+/// - **2..=11 compiles.** Every point verifies, carries one coverage record per
 ///   semantic operation, and retains a selected alternative.
-/// - **11 refuses `InvalidCompilerOutput`.** Region formation still succeeds
-///   there — sixty-six candidates, no budget stop — but the explain authority's
-///   detail ceiling (`MAX_RECORDS`, 4,096 records in
-///   `crates/tiler-compiler/src/explain.rs`) is exhausted by cover enumeration's
-///   per-alternative rejection records, and a trace that would not fit fails the
-///   compilation closed rather than dropping records.
 /// - **12..=62 refuses `NoFeasiblePlan`.** `region_expansions` (10,000) stops
 ///   candidate growth before the whole-program region is reached, and every
 ///   surviving singleton cover names an unimplemented region, so the portfolio
 ///   is empty.
 /// - **63 refuses `BudgetExhausted`**, which is `semantic_operations = 62`
-///   itself — the only one of the three that is about program *size*.
+///   itself — the only one of the two that is about program *size*.
 ///
-/// So the domain widened from seven points to nine, and it widened by two rather
-/// than by fifty-four because the budget that moved is not the budget that
-/// binds. Nine consecutive integers is what makes the second-difference fit in
-/// [`exact_quadratic`] a fit rather than an interpolation.
+/// **Eleven was a wall on 2026-08-06 and is a ladder point now.** It refused
+/// `InvalidCompilerOutput` because the coverage-gap explain rule emitted one
+/// record per (cover, region) pair and cover enumeration reached about 2,300 of
+/// them against a single unimplemented singleton region, exhausting the explain
+/// writer's canonical-byte ceiling — a program-size limit no budget declared,
+/// filed and fixed as
+/// `refuse-nothing-legal-on-the-explain-detail-ceiling`. The rule now emits one
+/// record per unimplemented region carrying the count of covers it blocked, and
+/// the point this table was written to report is that the wall it removed was
+/// never about the program.
+///
+/// So the domain widened from seven points to ten, and it widened by three
+/// rather than by fifty-five because the budget that moved is not the budget
+/// that binds. Ten consecutive integers is what makes the second-difference fit
+/// in [`exact_quadratic`] a fit rather than an interpolation.
 ///
 /// The generator emits one shared constant and a chain of multiplies, so the
 /// operation count is `1 + multiplies` and every integer in the domain is
 /// reachable.
-const OPERATIONS: &[usize] = &[2, 3, 4, 5, 6, 7, 8, 9, 10];
+const OPERATIONS: &[usize] = &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 /// One refusal above the ladder, and the class that must raise it.
 struct Wall {
@@ -114,24 +119,27 @@ struct Wall {
 /// moved from 8 to 62 and the probe compiled instead of refusing — which is the
 /// finding it exists to report and the reason this file was rewritten.
 ///
-/// A single point cannot re-anchor the discipline now, because three distinct
-/// bounds refuse between the ladder's top and the governed budget and they are
-/// not interchangeable: two are search bounds whose exhaustion the compiler
-/// reports as a defect or as an infeasible target, and only the third is the
-/// program-size budget. Probing each **with its class** is what makes a wall
-/// that moves *in kind* — an explain ceiling raised, a search budget widened, a
-/// program budget moved — fail loudly rather than pass as "something refused".
+/// A single point cannot re-anchor the discipline now, because distinct bounds
+/// refuse between the ladder's top and the governed budget and they are not
+/// interchangeable: one is a search bound whose exhaustion the compiler reports
+/// as an infeasible target, and only the other is the program-size budget.
+/// Probing each **with its class** is what makes a wall that moves *in kind* —
+/// a search budget widened, a program budget moved — fail loudly rather than
+/// pass as "something refused".
+///
+/// **This table has fired twice, and both firings are the reason to keep it.**
+/// The 2026-08-06 run reported a probe that compiled where the governed budget
+/// was expected to refuse, which is what replaced its single-point predecessor.
+/// The run below it reported the same arm again at eleven operations, where an
+/// explain-ceiling entry stood: `refuse-nothing-legal-on-the-explain-detail-ceiling`
+/// removed the per-cover restatement that exhausted it, the probe compiled, and
+/// the row moved into [`OPERATIONS`]. An entry leaving this table because the
+/// defect behind it was fixed is the outcome it exists to produce.
 ///
 /// 62 is probed explicitly because it is the governed budget's own maximum: the
 /// largest program the profile admits by size is measured to refuse for a reason
 /// that has nothing to do with size.
 const WALLS: &[Wall] = &[
-    Wall {
-        operations: 11,
-        class: CompileFailureClass::InvalidCompilerOutput,
-        why: "the explain authority's detail ceiling, exhausted by cover-enumeration rejections; \
-              the compiler classes its own refusal as a defect",
-    },
     Wall {
         operations: 12,
         class: CompileFailureClass::NoFeasiblePlan,
@@ -458,8 +466,9 @@ struct Compiled {
 ///
 /// Two renderings because they have two sinks. A refused ladder point aborts the
 /// sweep and its whole trace belongs on stderr; a confirmed wall is one line in
-/// a retained result, and the eleven-operation wall's trace alone is 3,478
-/// records — a megabyte of TSV comment nobody reads.
+/// a retained result, and a wall's trace runs to hundreds of records — the
+/// eleven-operation one reached 3,478 before its explain ceiling was fixed,
+/// which is a megabyte of TSV comment nobody reads.
 struct Refusal {
     /// The compiler's classification, absent for a harness-raised refusal.
     class: Option<CompileFailureClass>,
@@ -641,9 +650,9 @@ fn chain_program(operations: usize) -> SemanticProgram {
 /// same run that uses this program also compiles it under [`probe_the_walls`]
 /// and requires the refusal, so this mode cannot silently stop testing what it
 /// says it tests: the wall would fail first, loudly, and say which one moved.
-/// The `NoFeasiblePlan` wall is chosen over the earlier `InvalidCompilerOutput`
-/// one because an infeasible target is an ordinary refusal rather than a
-/// compiler defect.
+/// The `NoFeasiblePlan` wall rather than the `BudgetExhausted` one because an
+/// infeasible target refuses a *verified* program, which is the arm this mode
+/// watches, where a budget refusal never reaches planning at all.
 fn unplannable_program() -> SemanticProgram {
     let wall = WALLS
         .iter()
