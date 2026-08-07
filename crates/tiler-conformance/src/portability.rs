@@ -47,18 +47,19 @@ use std::path::{Path, PathBuf};
 /// How many test functions a non-Apple host must still run.
 ///
 /// **A floor, and it sits one below the population deliberately.** The crate
-/// declares 54 tests and the macOS predicate removes three of them, in
-/// `dispatch`, so a non-Apple host runs 51. Fifty is what makes the *smallest*
-/// collapse fail rather than only the large ones: the two smallest device-free
-/// modules, `device_preflight` and `publication`'s own tests, hold two tests
-/// each, so gating either drops the population to 49 and this refuses it.
-/// Gating `envelope`, `serial_sum`'s tests, or `bf16_vertical` drops it to 39.
+/// declares 56 tests and the macOS predicate removes three of them, in
+/// `dispatch`, so a non-Apple host runs 53. Fifty-two is what makes the
+/// *smallest* collapse fail rather than only the large ones: the three smallest
+/// device-free modules, `device_preflight`, `lints`, and `publication`'s own
+/// tests, hold two tests each, so gating any of them drops the population to 51
+/// and this refuses it. Gating `envelope`, `serial_sum`'s tests, or
+/// `bf16_vertical` drops it to 41.
 ///
 /// The narrow margin is the cost of that sensitivity: removing two device-free
 /// tests for any reason turns this red. Raising the floor with the population
 /// is the ordinary edit; lowering it is a decision about what a non-Apple host
 /// is held to, and belongs in a ticket rather than in this line.
-const DEVICE_FREE_TEST_FLOOR: usize = 50;
+const DEVICE_FREE_TEST_FLOOR: usize = 52;
 
 /// A non-Apple host still runs the device-free test population.
 ///

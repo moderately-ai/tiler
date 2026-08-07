@@ -135,6 +135,16 @@
 //! `bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`
 //! walks `src/` and fails when a third appears.
 //!
+//! **Not inheriting has a second cost, and it is also checked.** A member that
+//! cannot inherit one entry of the workspace lint table has to restate all of
+//! it, and a restatement drifts: a lint added, tightened, or removed
+//! workspace-wide reaches every other member and not this one. `lints` reads
+//! both manifests and fails unless they differ by exactly that one level. The
+//! workspace-wide half of the property — a third member dropping inheritance,
+//! or `prototypes/serial-sum-run`'s identical divergence — is not held by it or
+//! by anything else, and its header states so rather than leaving a reader to
+//! assume the coverage is wider than it is.
+//!
 //! # Modules
 //!
 //! | module | what it owns |
@@ -147,6 +157,7 @@
 //! | `device_preflight` | every obligation a host discharges before a routing commit, and how each refusal is classified |
 //! | `measurement` | whether this host could measure, and the exact row a measured result is bounded to |
 //! | `portability` | the census that holds the non-Apple claim below to a population rather than to this paragraph |
+//! | `lints` | this crate's uninherited lint table, held against the workspace's |
 //! | `dispatch` | preparing, encoding, submitting, and classifying device dispatches (macOS only) |
 //! | `device_buffer` | the two unsafe sites, and nothing else (macOS only) |
 //!
@@ -221,6 +232,8 @@ mod device_preflight;
 mod dispatch;
 #[cfg(test)]
 mod envelope;
+#[cfg(test)]
+mod lints;
 #[cfg(test)]
 mod measurement;
 #[cfg(test)]

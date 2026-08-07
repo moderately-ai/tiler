@@ -96,6 +96,16 @@ metal.workspace = true
 # The level moved with the first site that needed it rather than as a standalone
 # relaxation: a level moved with no site under it would be a relaxation for
 # nothing.
+#
+# **Restating the table has its own cost, and it is checked rather than
+# trusted.** A lint added, tightened, or removed in `[workspace.lints]` reaches
+# every other member through inheritance and does not reach this one.
+# `src/lints.rs` reads both manifests and fails unless they differ by exactly
+# the one level above — so drift is a red test here, and matching the tables by
+# weakening a lint fails the same way. What it does not cover is the
+# workspace-wide half: a third member dropping `[lints] workspace = true`, and
+# `prototypes/serial-sum-run`'s identical divergence, still have no check of any
+# kind, which ADR 0079 records under its Consequences.
 [lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"
