@@ -4456,16 +4456,54 @@ fn a_registry_without_capabilities_defers_and_fails_closed() {
     ));
 }
 
+/// A search bound costs alternatives and leaves the compilation a plan.
+///
+/// The bounded profile implements no singleton region for this program, so the
+/// whole-program region is the only implementable cover it has. A zero per-seed
+/// growth budget therefore used to refuse the program outright, which is the
+/// defect `region-expansion-exhaustion-loses-the-only-feasible-plan` reports: a
+/// bound documented to cost an alternative cost the only plan. Region formation
+/// retains both coverage extremes before growth starts, so the fused plan
+/// survives the stop while the stop stays on the trace naming what it did cost.
 #[test]
-fn region_budget_retains_the_verified_baseline() {
+fn a_search_budget_costs_alternatives_and_never_the_only_plan() {
     let semantic = semantic(false);
-    // A zero per-seed growth budget leaves only singleton candidates, and the
-    // bounded profile implements no singleton region. Every plan therefore
-    // depends on a region that was never formed, so compilation fails closed
-    // with a typed no-complete-plan error rather than implementing a region
-    // region formation never proposed.
     let mut bounded = CompilationRequest::governed(&semantic);
     bounded.budgets.region_candidates_per_seed = 0;
+    let product = compile(bounded).expect("the fused plan survives an exhausted search bound");
+    assert!(product.targets[0].failure().is_none());
+    assert_eq!(product.targets[0].portfolio.alternatives.len(), 1);
+    assert_eq!(selected_kind(&product), ProgramAlternativeKind::Fused);
+    let explain = &product.targets[0].explain;
+    assert!(explain.records().iter().any(|record| {
+        record.rule().key().as_str() == "region.formation.v1"
+            && record.event().disposition() == ExplainDisposition::BudgetStopped
+    }));
+    // The five singletons and the whole-program region: coverage, and nothing
+    // the exhausted per-seed bound would have discovered between them.
+    assert_eq!(
+        explain
+            .records()
+            .iter()
+            .filter(|record| record.rule().key().as_str() == "region.candidate.v1")
+            .count(),
+        6
+    );
+}
+
+/// A bound on one region's *shape* can refuse the program, and says which.
+///
+/// `region_members` bounds no search: it declares the largest region this
+/// profile admits, and a program whose only implementable cover needs a larger
+/// one has no plan under it. That is an exhausted deterministic budget and never
+/// a target's verdict, so it carries `BudgetExhausted` naming the bound to widen
+/// rather than `NoFeasiblePlan`, whose contract is that it "is a hard target
+/// rejection, never an exhausted analysis budget".
+#[test]
+fn a_region_shape_budget_below_the_only_implementable_cover_reports_the_budget() {
+    let semantic = semantic(false);
+    let mut bounded = CompilationRequest::governed(&semantic);
+    bounded.budgets.region_members = 1;
     let product = compile(bounded).expect("a target-local refusal is an ordered outcome");
     let CompileError::Explained { source, explain } = product.targets[0]
         .failure()
@@ -4473,24 +4511,33 @@ fn region_budget_retains_the_verified_baseline() {
     else {
         panic!("target compilation failures retain their explain trace");
     };
+    assert!(
+        matches!(
+            source.as_ref(),
+            CompileError::BudgetExhausted(RequestError::BudgetExceeded {
+                resource: "region-members",
+                limit: 1,
+                ..
+            })
+        ),
+        "the refusal names the bound whose widening would change the answer: {source:?}"
+    );
+    let failure = explain
+        .records()
+        .iter()
+        .find(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+        .expect("a terminal failure record");
     assert!(matches!(
-        source.as_ref(),
-        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(SelectionError::Structure {
-            rule: "no-complete-plan"
-        }))
+        failure.event(),
+        ExplainEvent::CompilerFailure {
+            stage: ExplainStage::Selection,
+            reason,
+        } if reason.as_str() == "portfolio-empty-after-budget-stop"
     ));
     assert!(explain.records().iter().any(|record| {
         record.rule().key().as_str() == "region.formation.v1"
             && record.event().disposition() == ExplainDisposition::BudgetStopped
     }));
-    assert_eq!(
-        explain
-            .records()
-            .iter()
-            .filter(|record| record.rule().key().as_str() == "region.candidate.v1")
-            .count(),
-        5
-    );
 }
 
 /// A cover budget never loses the two covers the enumerator retains

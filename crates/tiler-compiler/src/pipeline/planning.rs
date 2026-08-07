@@ -49,6 +49,9 @@ pub(super) struct CompletePlans {
     pub(super) numerical: Option<Box<FusionNumericalProof>>,
     /// Region subjects the frontier rejected as hard-infeasible on this target.
     pub(super) rejections: TargetRejections,
+    /// Every budget that stopped the partition search, retained so an empty
+    /// portfolio can say whether the space it searched was the whole one.
+    pub(super) cover_budget_stops: Vec<crate::cover::CoverBudgetStop>,
     /// The complete-plan selection record every alternative is caused by.
     pub(super) selection_record: ExplainRecordId,
 }
@@ -452,6 +455,7 @@ pub(super) fn enumerate_complete_plans(
         legality,
         numerical,
         rejections,
+        cover_budget_stops: enumeration.budget_stops().to_vec(),
         selection_record,
     })
 }

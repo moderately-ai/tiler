@@ -776,6 +776,14 @@ pub(crate) struct DeterministicBudgets {
     /// stage's own explicit budget over committed rewrites.
     pub(crate) normalization_rewrites: u32,
     /// Semantic occurrences admitted in one region candidate.
+    ///
+    /// **This and the two below bound a region's admissible *shape* rather
+    /// than a search, and each of them can refuse a program.** They declare the
+    /// largest region this profile will form at all, so a program whose only
+    /// implementable cover needs a bigger one has no plan under them however
+    /// long the search runs — a refusal reported as `BudgetExhausted` naming
+    /// the bound, because the caller's action is to widen it. The two search
+    /// bounds below carry the opposite guarantee.
     pub(crate) region_members: u32,
     /// Retained boundary outputs admitted for one region candidate.
     pub(crate) region_boundary_outputs: u32,
@@ -783,11 +791,21 @@ pub(crate) struct DeterministicBudgets {
     pub(crate) region_live_values: u32,
     /// Grown candidates admitted for one seed occurrence.
     ///
-    /// Singleton coverage is emitted before growth starts and is never bounded
-    /// by this budget, so exhausting it loses fused alternatives rather than the
-    /// unfused plan.
+    /// Both coverage extremes — every singleton region and the whole-program
+    /// region — are emitted before growth starts and neither is bounded by this
+    /// budget, so exhausting it loses the partitions discovered between them
+    /// rather than either end.
     pub(crate) region_candidates_per_seed: u32,
     /// Candidate expansion attempts admitted for one compilation request.
+    ///
+    /// Bounds the same discovered space as `region_candidates_per_seed` and
+    /// carries the same guarantee, for the same reason: coverage precedes
+    /// growth. It did not before
+    /// `region-expansion-exhaustion-loses-the-only-feasible-plan`, and the
+    /// consequence was not academic — growth reaches the whole-program
+    /// candidate last, so a twelve-operation chain exhausted this bound before
+    /// forming the one region the profile could implement and the compilation
+    /// refused.
     pub(crate) region_expansions: u32,
     /// Distinct legal complete covers retained for one enumeration request.
     ///
@@ -878,10 +896,24 @@ impl DeterministicBudgets {
     /// They move again when the decoder layer becomes plannable, and that is a
     /// second identity move this one cannot honestly absorb.
     ///
-    /// `normalization_rewrites` and every `region_*` bound are unchanged because
-    /// none of them admits or refuses a program: each bounds a *search*, and
+    /// `normalization_rewrites` and every `region_*` bound are unchanged, and
+    /// the ground stated here for that was **half right**. It read that none of
+    /// them admits or refuses a program because each bounds a *search*, and
     /// exhausting one costs an alternative while the verified input and complete
-    /// coverage survive.
+    /// coverage survive. That holds of `normalization_rewrites`,
+    /// `region_candidates_per_seed`, and `region_expansions`, whose searches sit
+    /// between two coverage extremes region formation emits unconditionally. It
+    /// is false of `region_members`, `region_boundary_outputs`, and
+    /// `region_live_values`: those three declare the largest region this profile
+    /// forms, and a program whose only implementable cover needs a bigger one is
+    /// refused by them. `region_members` is the binding one for a pointwise
+    /// family, where the recognized partition is the whole program and nothing
+    /// smaller is implementable, so **32 is the widest such program this profile
+    /// can plan** — about half the `semantic_operations` maximum this widening
+    /// set to 62, which is the decode row's own occurrence count. Whether the
+    /// three move with `semantic_operations` is reopened by that and is not
+    /// decided here: it is another identity move, on the same terms as the ones
+    /// above.
     ///
     /// The widening is a *deliberate* decision and not a test-enabling edit,
     /// because every one of these numbers is inside the canonical request

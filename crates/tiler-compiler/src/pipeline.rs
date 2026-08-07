@@ -945,7 +945,21 @@ fn compile_candidate_target(
         }
         Err(failure) => {
             let explain = explain.finish_failure(*failure.context)?;
-            if matches!(failure.source.as_ref(), CompileError::NoFeasiblePlan(_)) {
+            // A refusal that is about *this target's* plan space is retained as
+            // that target's outcome; every other one ends the batch, because a
+            // sibling target cannot excuse it.
+            //
+            // A budget stop qualifies here and a program-budget refusal does
+            // not, and the difference is which question the budget answered.
+            // `check_program_budgets` refuses a property of the submitted
+            // program before any target compiles. A stop reaching this point
+            // truncated *this* target's analysis and left its portfolio empty,
+            // and a sibling profile that implements a region this one does not
+            // still reaches a plan under the very same bound.
+            if matches!(
+                failure.source.as_ref(),
+                CompileError::NoFeasiblePlan(_) | CompileError::BudgetExhausted(_)
+            ) {
                 return Ok(CandidateTargetCompilation {
                     key: candidate.key.clone(),
                     request: verified.clone(),
@@ -1561,6 +1575,43 @@ impl TargetRejections {
     }
 }
 
+/// The declared budget that truncated this compilation's analysis, if any.
+///
+/// Read only when the portfolio is empty and no target disproved anything, and
+/// it answers the one question that case turns on: was the searched space the
+/// whole space? Three stages can answer no, and they are consulted in pipeline
+/// order because the earliest truncation is the one whose widening could change
+/// what the later stages ever saw — region formation bounds which candidates
+/// exist, cover enumeration bounds which partitions of them were assembled, and
+/// plan selection bounds which implementation joins were tried.
+///
+/// A [`crate::cover::CoverBudgetResource::Refusals`] stop is deliberately not a
+/// truncation: it bounds how many refusals the *explanation* retains, and a
+/// search that explored the whole space while declining to name every candidate
+/// it refused found everything there was to find.
+fn truncating_budget(
+    formation: &RegionFormationOutcome,
+    plans: &planning::CompletePlans,
+) -> Option<RequestError> {
+    let exceeded = |resource: &'static str, limit: u64, actual: u64| RequestError::BudgetExceeded {
+        resource,
+        limit: u32::try_from(limit).unwrap_or(u32::MAX),
+        actual: usize::try_from(actual).unwrap_or(usize::MAX),
+    };
+    if let Some(stop) = formation.budget_stops().first() {
+        return Some(exceeded(stop.resource.key(), stop.limit, stop.actual));
+    }
+    if let Some(stop) = plans
+        .cover_budget_stops
+        .iter()
+        .find(|stop| stop.resource != crate::cover::CoverBudgetResource::Refusals)
+    {
+        return Some(exceeded(stop.resource.key(), stop.limit, stop.actual));
+    }
+    let stop = plans.portfolio.budget_stops().first()?;
+    Some(exceeded(stop.resource.key(), stop.limit, stop.actual))
+}
+
 fn target_axis(error: &PhysicalError) -> &'static str {
     match error {
         PhysicalError::Target { rule, .. }
@@ -1749,8 +1800,29 @@ fn compile_target_with_explain(
         alternatives.push(alternative);
     }
     if alternatives.is_empty() {
+        // A disproved target predicate is concrete evidence about a region that
+        // was actually proposed, so it is reported ahead of any budget stop: it
+        // is the hard target rejection `NoFeasiblePlan` names, and a truncated
+        // search does not make it less true.
+        let truncation = truncating_budget(&formation, &plans);
         if let Some(failure) = plans.rejections.into_failure() {
             return Err(failure);
+        }
+        // With no such rejection the portfolio is empty either because the
+        // whole legal space was searched and held nothing, or because a
+        // declared budget stopped the search before it reached something. Only
+        // the first is a statement about the target, and `NoFeasiblePlan` "is a
+        // hard target rejection, never an exhausted analysis budget" — so the
+        // second names the bound whose widening could change the answer.
+        if let Some(truncation) = truncation {
+            return Err(target_failure(
+                CompileError::from(truncation),
+                ExplainStage::Selection,
+                "portfolio-empty-after-budget-stop",
+                SubjectKind::KernelProgram,
+                "portfolio",
+                record_cause(region_root),
+            ));
         }
         return Err(target_failure(
             CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(
