@@ -1,7 +1,7 @@
 ---
 id: survey-what-belongs-in-the-conformance-crate
 title: Survey what belongs in the conformance crate
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-conformance-crate-to-the-workspace, decide-where-a-device-reaching-conformance-test-may-live]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, conformance, architecture]
-claimed_from: todo
-assignee: agent-survey
-lease_expires_at: 1786123387
 ---
 ## User-visible outcome
 
@@ -185,3 +182,28 @@ Plus a comment on [`route-the-two-hand-rolled-test-hashes-through-the-digest-cra
 - Did not re-open where the crate lives, and did not pre-empt the unsafe-lint decision — which is `done`, and whose answer is `deny` with named per-site `#[allow(unsafe_code)]` exceptions concentrated in a single narrow module, never a crate-level allow, admitted only for FFI memory management with Metal. `carry-the-device-executed-value-proof-into-the-conformance-crate` restates that rule rather than reopening it.
 - Did not read `crates/tiler-reference/src/oracle.rs` (2,752 lines) or `crates/tiler-ir/src/semantic/conformance.rs` (1,938 lines) in full. Both were read far enough to establish they are production authority code rather than tests — the first is the generic slow oracle for verified index regions, the second is resolved-value binding conformance — and neither is a migration candidate under any reading of the crate's charter. Full reads were spent on the candidates whose classification was in doubt.
 - Did not edit `retain-contraction-conformance-evidence` to narrow it to its reference half. That is outcome mutation on another open ticket and belongs to the coordinator; the recommendation is recorded in the filed ticket that supersedes its other half.
+
+## Outcome — 21 candidates classified, 3 move, 18 stay, 2026-08-07 at `3f073476`
+
+**The "stays" population is the majority and it is argued, not defaulted.** The four `*_conformance.rs` reference tests each state their own exclusion — "not evidence about any schedule, any lowering, any compiled kernel, any device" — and their import sets confirm it. `custom_backend/` executes nothing: it has no dev-dependencies at all and reaches `tiler_reference` nowhere. `adapter_route/` would be **destroyed** by moving, since `tiler-runtime`'s dev-dependency comment records that its tests must not reach `tiler-compiler`, which `tiler-conformance` depends on normally.
+
+**The hard case was named rather than smoothed.** `identity_join/` *is* cross-layer executed evidence by ADR 0106's own definition, and it stays anyway — because `the_consumer_links_no_compiler_emitter_or_build_provider` proves a **negative about its own dependency closure** that is only true where it sits. That yields a proposed fourth anti-goal the crate's three do not cover: **not a home for a run whose claim is about what its consumer cannot reach.** Worth adopting.
+
+**Genuine uncertainty was flagged rather than resolved to keep the table tidy:** `governed/contraction_conformance.rs`'s retained-digest leg is the transcribe-by-hand pattern ADR 0106 names, and what settles it is whichever shape `route-the-index-region-conformance-through-the-staged-oracle` chooses.
+
+### The verdict on the missing-component claim — confirmed, and my evidence for it was partly false
+
+**Stronger than argued.** The cross-layer executed run *already exists*: `prototypes/serial-sum-run/src/proof.rs` is 8,159 lines, declares the same dependency row the new crate does, dispatches on GPU by two paths and compares both against `tiler-reference` — and is reached **only** by `cargo run`. No `Makefile` target invokes it; the only mentions are two Clippy `--exclude` flags. It holds the corpus's only device observation of a permitted reassociated answer and the only executed match against a retained device digest, in the one tree the repository deliberately holds to a lower standard.
+
+**And partly false, which is the coordinator's error.** I told Tom, and ADR 0106 records, that five conformance tickets have scope sets such that "no two share" one. **Three of the five carry identical scope sets** and are about one compiler file. The real population is 283 conformance-mentioning tickets, 76 non-terminal — not five. The conclusion survives on the stronger evidence above; the stated evidence did not, and [`correct-the-scope-set-claim-in-adr-0106-s-missing-component-evidence`](correct-the-scope-set-claim-in-adr-0106-s-missing-component-evidence.md) repairs the record rather than leaving a false claim inside an accepted ADR.
+
+### The long-term answers
+
+- **Derivable ledger cells: exactly one of nine** — `Conformance evidence`. The other eight report what *authority exists at a layer*, which no run observes. A run also supplies three qualifiers most tested cells lack: operation set, environment row, and measured-half availability.
+- **The maturity ladder cannot be stamped, and should not be.** Three of its four rungs describe states with no run at all, and the top rung's rule is a scoping judgement. It has three different spellings across `AGENTS.md`, `dtype-support.md` and `roadmap.md`, and no Rust representation. A harness can only *compare* — refuse a `tested guarantee` cell with no run naming it.
+- **The evidence ladder is reportable, not assignable, and not yet either.** Four disagreeing Rust types exist, differing in variants and visibility; `ConformanceEvidenceClass` spells the top rung `FormalProof`. Assigning would be the second authority the first anti-goal refuses.
+- **Target multiplication** needs a run declared as a *value* — operation set × dtype × contract key × shape class × environment row — with one executor, the profile supplied rather than baked in, the environment row as an operand so unavailability is a stated outcome, and refusal recorded as a case outcome. Explicitly **not** a combinatorial generator: the matrix is sparse and non-monotone by design.
+
+Five tickets filed, two of them `deferred` with triggers, reproducing commands and dated check-log entries. A comment rather than a duplicate ticket was added to the sha256 ticket, whose population is three rather than two — its closing grep is `crates/`-only and never reaches the third transcription.
+
+**One stated deviation:** two large production files were read far enough to establish they are authority code rather than migration candidates, not in full; full reads went to candidates whose classification was in doubt. Recorded in the survey body as well as here.

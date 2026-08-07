@@ -1,7 +1,7 @@
 ---
 id: conform-the-bf16-vertical-end-to-end
 title: Conform the BF16 vertical end to end against the exact reference corpus
-status: in-progress
+status: done
 priority: p2
 dependencies: [validate-bf16-at-the-runtime-routing-boundary, carry-a-bf16-subnormal-realization-the-reference-can-be-told, decide-where-a-device-reaching-conformance-test-may-live, wire-the-bf16-reference-to-the-realization-it-is-told, admit-the-conformance-crate-to-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
 related: [spike-bf16-through-the-second-dtype-seams, evaluate-bf16-reference-semantics, own-the-dtype-support-maturity-matrix, lower-bf16-to-metal, dispatch-a-tiler-region-on-metal-hardware, wire-the-bf16-reference-to-the-realization-it-is-told]
@@ -9,9 +9,6 @@ scopes: [implementation/reference, contracts/numerics, implementation/runtime, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, conformance, testing]
-claimed_from: todo
-assignee: agent-bf16-vertical
-lease_expires_at: 1786122049
 ---
 ## User-visible outcome
 
@@ -143,3 +140,23 @@ Apple M4 Max reporting `MTLGPUFamilyApple9`; macOS 27.0 build `26A5388g`; `arm64
 
 - **The compile/artifact/routing leg.** Carrying a BF16 semantic program through `compile()` needs the recognizer's `dtype-f32` rule widened, which is `implementation/compiler` and is not owned by any live ticket — `establish-bf16-optimizer-legality` holds legality keying, not recognition. A ticket for it, and a follow-up conformance run that crosses the artifact envelope and the routing commit once it exists, are both unfiled.
 - **The `contracts/navigation` cells** named above.
+
+## Outcome — BF16 executes on a device, 2026-08-07 at `b7c01815`
+
+`crates/tiler-conformance` has its first content. A pure-BF16 `(x * 1.5) + 0.0` program is carried from semantic construction through the exact-rational oracle, a scheduled region, a structured kernel, `bfloat` MSL against the authoritative macOS Apple9 declaration, the real Apple offline toolchain, a GPU dispatch, and a bit comparison. It passes.
+
+**Three legs are not crossed and cannot be, and this is the headline rather than a footnote.** `select_supported_strategy` refuses every non-`f32` program under the rule `dtype-f32` before a subject is normalized, so `compile()`, the artifact envelope, and the runtime routing commit are unreachable — nothing can produce the `PlanAlternative` those layers consume. The region is therefore assembled through `tiler-ir`'s public builders, the same route the compiler's own BF16 vertical takes for the same recorded reason. Three existing test sites assert that wall deliberately. Widening the recognizer is `crates/tiler-compiler/`, a stop condition on this dispatch and live-claimed, so the worker stopped at the boundary rather than editing it. **That is a fourth structural block on this ticket's first evidence bullet and it was unowned** — filed as [`widen-the-strategy-recognizer-past-the-f32-wall`](widen-the-strategy-recognizer-past-the-f32-wall.md).
+
+**Tom's unsafe rule was met exactly.** Two sites, both in `crates/tiler-conformance/src/device_buffer.rs`, both forced by Metal's FFI memory management, each with a `SAFETY` argument naming the invariant. **No crate-level allow exists** — the manifest carries `unsafe_code = "deny"` and the old open-question comment is replaced by the decision. The module's interface is `&[u8]`, so every width, stride and element count stays in safe code, which is what makes the composition perturbation expressible at all. `the_unsafe_site_population_is_the_two_named_ones` walks every source file, requires exactly two blocks and two allows both in that module, and refuses to count fewer than five files — so a third site cannot arrive absorbed.
+
+**The evidence list was met, not trimmed.** Fifteen hand-derived corpus elements covering both zeros, both least subnormals, the greatest subnormal, the least normal, a tie to even, an ordinary rounding, an overflow, both infinities, and a non-canonical NaN. The declared flush moved exactly elements `[2, 3, 4, 5, 6]` — the subnormal operands — each required to return its flushed answer *and not* the preserving one, which is what makes bit equality there a signal to distrust rather than a success. Execution witnesses on non-subnormal operands: `multiply 0x3f80 -> 0x3fc0`, `add 0x8000 -> 0x0000`.
+
+**The composition perturbation is the one every layer-local test passes**: operands strided at the `f32` carrier's four bytes while the kernel addresses at two, one mis-derived site, watched failing at 8 of 15 elements. Its symmetric version is asserted to round-trip unchanged, which is why the perturbation is one-sided.
+
+**The unavailable path was watched both ways**, so it is real rather than aspirational: with `xcrun` off `PATH` the run reported the measurement boundary unavailable and passed; under `TILER_REQUIRE_METAL_CONFORMANCE=1` it failed. Clippy against a non-Apple target is clean, so the deterministic branch compiles.
+
+**Measurement boundary.** Apple M4 Max reporting Apple9; macOS 27.0 build `26A5388g`; offline `Apple metal version 32023.921`; SDK 27.0 build `26A5388f`; profile `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1`; target `air64-apple-macos26.0` under `metal4.0`. Three operations, one target family, one contract. **Stated limitation:** the trailing `+0.0` maps every zero to `+0`, so this run does not separate a sign-preserving flush from an always-positive one — a deliberate trade for the add witness, recorded in three places.
+
+No pin moved. No public item added — the crate still exports nothing, so no ADR 0075 node is owed. `make full` exit 0 on the branch and again on the merged tree.
+
+**Not done, and owed elsewhere:** `docs/dtype-support.md`'s BF16 conformance and backend-execution cells are supported by this run *bounded to three operations, one target family, one measured row, and a vertical that does not cross the optimizer, artifact or routing*. That is `contracts/navigation` and needs a holder.
