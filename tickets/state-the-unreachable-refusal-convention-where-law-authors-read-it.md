@@ -1,7 +1,7 @@
 ---
 id: state-the-unreachable-refusal-convention-where-law-authors-read-it
 title: State the unreachable refusal convention where law authors read it
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [accept-the-softmax-realization-law, accept-the-partitioned-concatenate-realization-law]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, conventions]
+claimed_from: todo
+assignee: agent-convention
+lease_expires_at: 1786127580
 ---
 ## What this owes
 
