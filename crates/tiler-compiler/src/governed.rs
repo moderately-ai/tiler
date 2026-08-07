@@ -21,10 +21,10 @@ use std::sync::Arc;
 
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
-    ScalarRegistryError, ScalarValueId, SourcedExtent, StagedInputSource, add_bf16_scalar_op,
-    add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op,
-    constant_f32_scalar_op, divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op,
-    multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    ScalarRegistryError, ScalarValueId, StagedInputSource, add_bf16_scalar_op, add_f32_scalar_op,
+    canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op, constant_f32_scalar_op,
+    divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op, multiply_f32_scalar_op,
+    rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16,
@@ -41,7 +41,7 @@ use tiler_ir::semantic::{
     multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
     strict_tensor_contraction_f32_op,
 };
-use tiler_ir::shape::{Axis, Extent, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape, SourcedExtent};
 
 use crate::capability::{
     FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,

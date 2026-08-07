@@ -1208,7 +1208,7 @@ mod tests {
         IndexRefinementSubject, IndexRefinementVerificationError, NumericalContractIdentity,
         ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
         ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
-        ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, SourcedExtent,
+        ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder,
     };
     use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::{
@@ -1216,7 +1216,7 @@ mod tests {
         ProviderDiagnosticCode, ProviderIdentity, ResolvedValueType, SemanticProgram,
         SemanticProgramBuilder, constant_f32_op, multiply_f32_op,
     };
-    use tiler_ir::shape::{Extent, Shape};
+    use tiler_ir::shape::{Extent, Shape, SourcedExtent};
 
     use tiler_reference::{
         FloatBitOrder, FrozenReferenceRegistry, IndexRegionAuthority, IndexRegionEvaluator,

@@ -57,11 +57,6 @@ pub use refinement::{
     NumericalContractIdentity, OperandBinding, PendingIndexRefinementReceipt,
     ResolvedIndexRealization, ResultBinding,
 };
-// The symbolic index profile is re-exported flat here rather than published as
-// a `tiler_ir::index::sourced` module, matching the re-export precedent this
-// module already sets for every other child. The canonical encoders stay inside
-// it: a caller that could encode an extent could derive an identity under rules
-// the encoder does not establish.
 pub use scalar::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity,
     FrozenScalarRegistry, ScalarAdmissionProvenanceIdentity, ScalarApplicationRejection,
@@ -79,10 +74,20 @@ pub use sequence::{
     MAX_INDEX_REGION_SEQUENCE_STAGES, StagedInputSource, StagedIntermediate,
     VerifiedIndexRegionSequence,
 };
-pub use sourced::{
-    EXTENT_PHASE_CEILING, ExtentSourceError, ExtentSources, SourcedExtent, SourcedIndexInteger,
-    SourcedShape, SymbolicExtentError,
-};
+// The symbolic index profile is re-exported flat here rather than published as
+// a `tiler_ir::index::sourced` module, matching the re-export precedent this
+// module already sets for every other child. The canonical encoders stay inside
+// it: a caller that could encode an index scalar could derive an identity under
+// rules the encoder does not establish.
+//
+// Only the two index-layer types are exported from here, and there is no
+// re-export of the shape-layer vocabulary they build on. `SourcedExtent`,
+// `SourcedShape`, `ExtentSources`, `ExtentSourceError`, and
+// `EXTENT_PHASE_CEILING` are `tiler_ir::shape`'s and are named from there by
+// every caller, including the ones inside this module. One canonical path per
+// item is the point of the relocation; a compatibility re-export here would
+// restore the second spelling it removed.
+pub use sourced::{SourcedIndexInteger, SymbolicExtentError};
 
 /// Maximum dimensions admitted by one region.
 pub const MAX_DOMAIN_DIMENSIONS: usize = 1_024;

@@ -19,18 +19,18 @@ use tiler_ir::index::{
     IndexInteger, MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView, ReductionTraversal,
     ScalarAttributeField, ScalarAttributes, ScalarAuthorityEvidence, ScalarOpKey,
     ScalarOperationDefinition, ScalarOperationKindRef, ScalarOperationRef, ScalarReductionRef,
-    ScalarRegistryError, ScalarValueDefinitionView, SourcedExtent, SourcedIndexInteger,
-    TensorAccessRef, TensorRole, VerifiedDimensionId, VerifiedIndexExprId,
-    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedReducerBodyOperationId,
-    VerifiedReducerBodyValueId, VerifiedScalarOperationId, VerifiedScalarValueId,
-    VerifiedTensorAccessId, VerifiedTensorId, add_f32_scalar_op, canonicalize_nan_f32_scalar_op,
-    constant_f32_scalar_op, multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    ScalarRegistryError, ScalarValueDefinitionView, SourcedIndexInteger, TensorAccessRef,
+    TensorRole, VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError,
+    VerifiedIndexRegion, VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId,
+    VerifiedScalarOperationId, VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
+    add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_f32_scalar_op,
+    multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::semantic::{
     CanonicalField, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
     FrozenSemanticRegistry, ProviderIdentity, ResolvedValueType, TypeKey, U4,
 };
-use tiler_ir::shape::{Extent, Shape};
+use tiler_ir::shape::{Extent, Shape, SourcedExtent};
 
 use crate::arithmetic::{ExactInteger, MagnitudeExceeded};
 use crate::evaluate::{decode_f32, f32_element};

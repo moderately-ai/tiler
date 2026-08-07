@@ -11,8 +11,8 @@ use tiler_ir::index::{
     IndexRegionDiagnostic, ScalarArity, ScalarAttributeField, ScalarAttributeSchema,
     ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
     ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarValueId, SourcedExtent,
-    SourcedIndexInteger, TensorRole, VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
+    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarValueId, SourcedIndexInteger,
+    TensorRole, VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
@@ -22,7 +22,8 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::{
     BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
-    RootBinding, SemanticInputConstraint, Shape, ShapeEnvBuilder, ShapeSymbol, SymbolScope,
+    RootBinding, SemanticInputConstraint, Shape, ShapeEnvBuilder, ShapeSymbol, SourcedExtent,
+    SymbolScope,
 };
 use tiler_reference::{
     FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry, IndexRegionAuthority,

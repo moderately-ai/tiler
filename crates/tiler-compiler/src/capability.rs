@@ -45,15 +45,15 @@ use tiler_ir::index::{
     IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementSignature,
     IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder, IndexRegionDiagnostic,
     IndexRegionSequenceError, MAX_INDEX_REGION_SEQUENCE_STAGES, ScalarAttributes, ScalarOpKey,
-    ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId, SourcedExtent,
-    StagedInputSource, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
-    VerifiedIndexRegion, VerifiedIndexRegionSequence,
+    ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId, StagedInputSource,
+    SymbolicExtentError, TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
+    VerifiedIndexRegionSequence,
 };
 use tiler_ir::semantic::{
     FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, RegistryError,
     ResolvedValueType, SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity,
 };
-use tiler_ir::shape::{Extent, Shape};
+use tiler_ir::shape::{Extent, Shape, SourcedExtent};
 
 /// Canonical identity domain-separation tag for a frozen registry snapshot.
 const REGISTRY_IDENTITY_TAG: &[u8] = b"tiler.compiler.lowering-capability-registry.v2\0";
@@ -787,7 +787,7 @@ impl<'a> IndexAccessLoweringContext<'a> {
     /// so a provider spells a literal as [`SourcedExtent::Static`]. A symbolic
     /// divisor is refused for as long as this context's region is built without
     /// a shape environment — as a
-    /// [`tiler_ir::index::ExtentSourceError::UndeclaredSymbol`], which is
+    /// [`tiler_ir::shape::ExtentSourceError::UndeclaredSymbol`], which is
     /// exactly what it is here — rather than being unrepresentable and so
     /// unable to say why.
     ///
