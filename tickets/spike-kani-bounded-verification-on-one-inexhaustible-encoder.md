@@ -1,7 +1,7 @@
 ---
 id: spike-kani-bounded-verification-on-one-inexhaustible-encoder
 title: Spike Kani bounded verification on one inexhaustible encoder
-status: in-progress
+status: done
 priority: p2
 dependencies: [prove-the-exhaustible-encoder-injectivity-claims-natively]
 related: []
@@ -9,9 +9,6 @@ scopes: [research/verification]
 shared_scopes: [project/tickets]
 paths: []
 tags: [verification, spike, kani, identity, toolchain]
-claimed_from: todo
-assignee: w-spike-ka
-lease_expires_at: 1786142810
 ---
 
 ## User-visible outcome
@@ -97,3 +94,40 @@ The three complete harnesses are not "`SoundProof`-with-bound": they are unbound
 ### Out of scope, filed
 
 `docs/research/README.md` and `spikes/README.md` are `contracts/navigation`, not `research/verification`. Both catalog rows are preserved verbatim in `catalog-the-kani-verification-research-and-spike`.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge `8d7ff18f`'s ancestor (worker commit `6c567c66`). Spike under `spikes/verification/kani-encoder-injectivity/`, its own workspace — **coordinator-confirmed**: `cargo metadata` reports 16 members with the spike absent, so no workspace command reaches it. Delta carries the green gate.
+
+### A positive result stronger than the exhaustive tests, and about a different thing
+
+| harness | wall | verdict |
+| --- | --- | --- |
+| `push_tensor_role_injective` (2³²+2, all pairs) | 1.44 s | complete |
+| `push_component_role_injective` (2³²+1) | 1.00 s | complete |
+| `push_resources_injective` (~2¹⁶¹ pairs) | 71.6 s | complete |
+| `push_resources_prefix_free_tail_4` | 182.9 s | bounded, 4-byte tails |
+| `push_numerical_injective_fixed_key` | 1.46 s | narrow, key concrete |
+| `push_numerical_injective_key_len_0` | **>900 s, capped** | no verdict |
+
+The first three cover their **whole domains** — a stronger claim than `crates/tiler-ir/src/exhaustive_injectivity.rs` makes — but about a **copy** of the encoder, which that work is not. Keep the two apart.
+
+**The bound is on the output, not the input.** Unbounded, `push_tensor_role` ran past 7,370 `memcmp` unwindings in ten minutes: the 2³² domain was never the problem, `Vec<u8>` comparison over a symbolic length was. `#[kani::unwind(6)]` took it to 1.44 s, and because each encoder has a known maximum output width, CBMC's unwinding assertion *proves* the bound sufficient rather than assuming it.
+
+### The negative is the more useful half, and it was isolated rather than reported as a wall
+
+The string encoder capped at the **smallest symbolic bound that exists** — an empty key — never reaching SAT. Rather than stopping there, the worker isolated the cause: the *same* encoder costs **1.46 s with a concrete key**, and traces show `run_utf8_validation` dominating `memcmp` 840:40 when the key is symbolic and absent when it is not. So **`String` defeats Kani, not the encoding logic**, and the property is recoverable by proving `push_slice`'s framing separately — one primitive shared by all nine string encoders. Filed as the next bounded experiment.
+
+`key_len_1/_2/_4` are checked in but deliberately not run, each being strictly harder than one that already capped. That is labelled **Inference**, and the README marks them not-to-run with the command for anyone wanting confirmation.
+
+### Blocked on toolchain convergence, and the re-probe assumption was wrong
+
+`cargo kani -p tiler-ir --only-codegen` fails with 9 errors from three independent causes: `min_adt_const_params` is an *unknown feature name* at Kani's bundled nightly (E0635), `[u64; RANK]` const params rejected, and `atomic_try_update` unstable. **Kani does not accept a caller-supplied toolchain** — measured, not inferred: its diagnostic reads `this compiler was built on 2025-11-20` against our `nightly-2026-07-19` pin.
+
+**The ticket's "Kani ships monthly releases" is stale and it changes the re-probe.** Monthly held through mid-2025; since then 0.65.0 (2025-08-07), 0.66.0 (2025-11-06), 0.67.0 (2026-01-16), and **nothing in the ~7 months since**. The re-probe condition assumed a cadence that would close the gap on its own; it will not necessarily. Measured bracket: fails at `nightly-2025-11-21`, compiles clean at `nightly-2026-05-03`. One command re-probes it.
+
+### Host state changed — flagged for Tom
+
+`kani-verifier` 0.67.0 plus two nightlies (`nightly-2025-11-21` bundled, `nightly-2026-05-03` for the bracket) now exist on this host. The worker reports the install predated the coordinator's authorization note, on this ticket's own trigger log. **The evidence environment is unaffected**: the pinned toolchain is unchanged, `1.97.0` remains default, and nothing in the repository's gate invokes Kani. Recorded rather than assumed harmless.
+
+The spike is tied to the crate by `guard.sh` — 28 items, token-content comparison, asserting its own population — **watched failing on four planted drifts** before being trusted. Catalog rows are owed and filed as `catalog-the-kani-verification-research-and-spike`.

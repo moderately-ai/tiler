@@ -1,7 +1,7 @@
 ---
 id: pin-lint-inheritance-across-the-workspace-member-set
 title: Pin lint inheritance across the workspace member set
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, implementation/frontend, implementation/runti
 shared_scopes: [project/tickets]
 paths: []
 tags: [lints, maintainability]
-claimed_from: todo
-assignee: w-pin-lint
-lease_expires_at: 1786144902
 ---
 ## What is still unheld
 
@@ -75,3 +72,29 @@ Three checks, none of which restates the workspace lint table.
 ## Remainder, not closed here
 
 `prototypes/serial-sum-run` still has **no per-site unsafe check**. This ticket closed its *table*; the site census in `tiler-conformance` remains rooted at its own `CARGO_MANIFEST_DIR`, so a third `#[allow(unsafe_code)]` site added under `prototypes/serial-sum-run/src/` still compiles and still passes the complete gate, exactly as ADR 0079's Consequences record. Fact 2 bundles the two gaps in one paragraph and only the table half is discharged. This wants its own ticket.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`7a933e8c`** (worker commit `b8169dc1`). Touches `Cargo.toml`, `crates/` and `prototypes/`, so it carries nothing — **`make full` exit 0** on the merged tree, 1,090 release tests.
+
+**The per-Fact audit found no false Fact — the first ticket in this corpus to manage it**, and the worker stated that as a finding rather than letting it pass as the default.
+
+### Zero duplicated parsing, and the one root where that was possible
+
+`prototypes/serial-sum-run/tests/lint_table.rs` is a single `#[path]` line running `crates/tiler-conformance/src/lints.rs` **unmodified**. It works because every assertion in that module is relative to `CARGO_MANIFEST_DIR` and the two restated tables are not merely similar but **identical**.
+
+The ruled-out alternative is the informative part: `#[path]`-including it into `crates/tiler/tests/` would **fail**, because `crates/tiler` inherits `[lints] workspace = true` and the module's own header assertion panics on that. A dependency edge is forbidden in both directions. So the prototype was the only root where verbatim reuse works — and it is exactly the member that needed the check.
+
+`crates/tiler/tests/workspace_lint_inheritance.rs` partitions all 16 members and holds the diverging set equal to a declared `UNINHERITED_LINT_MEMBERS` — the deleted Python gate's own name, carried back. Both directions fail, and a third test is the seam: each exception must name a table check, inside the member it governs, reaching the one shared reader.
+
+**On placement, evaluated rather than inherited.** The previous worker's argument holds, with a second reason it did not give: `tiler-conformance` is *one of the two members the check polices*, so a census inside it must special-case its own exception — the exact asymmetry that stopped `lints.rs` reaching this property. `crates/tiler` inherits like every non-exception member and observes from outside both sides.
+
+`cargo metadata` emitting no lint tables was **verified by measurement**, not trust: 59,759 bytes with zero occurrences of `lints`, `unsafe_code`, or any lint name.
+
+Seven perturbations, each reddening exactly one assertion and leaving the rest green — including the prototype's `deny`→`allow`, which panics at a path routed through the shared reader, visible proof it is running from the prototype's root rather than a copy.
+
+### Remainder, deliberately not closed
+
+`prototypes/serial-sum-run` still has **no per-site unsafe check**. Fact 2 bundled two gaps and only the table half is closed; the site census stays rooted at `tiler-conformance`'s manifest dir, so a third `#[allow(unsafe_code)]` under the prototype's `src/` still compiles and passes the complete gate — exactly as ADR 0079 records. Recorded on the ticket rather than quietly folded in.
+
+The ADR 0079 citation drift this work surfaced (+199 lines) is filed as `extend-the-citation-check-to-docs-and-repair-adr-0079-s-drifted-test-citation`.
