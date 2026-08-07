@@ -1,7 +1,7 @@
 ---
 id: refuse-nothing-legal-on-the-explain-detail-ceiling
 title: Refuse nothing legal on the explain detail ceiling
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [widen-the-identity-growth-ladder-to-the-governed-operation-budget, carry-the-exhausted-resource-through-the-budget-refusal]
