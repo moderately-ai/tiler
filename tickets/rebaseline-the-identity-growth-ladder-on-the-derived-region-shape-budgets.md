@@ -1,7 +1,7 @@
 ---
 id: rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets
 title: Rebaseline the identity-growth ladder on the derived region-shape budgets
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [derive-the-region-shape-budgets-from-the-declaration, widen-the-identity-growth-ladder-to-the-governed-operation-budget, measure-executable-coverage-identity-growth-against-the-program-identity-bound]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, program-planning, identity, measurement]
-claimed_from: todo
-assignee: agent-ladder
-lease_expires_at: 1786127614
 ---
 ## User-visible outcome
 
@@ -56,3 +53,32 @@ Not moving any budget. Not correcting the records outside `spikes/program-planni
 ## Closes when
 
 The harness exits 0 over the widened domain, a new result is retained beside the old ones, and the README states which figures reproduced, which moved, and how far the ladder reached with the reason it stopped there.
+
+## Outcome — delivered 2026-08-07 at `a0a9eaeb`
+
+**The harness fired first, as designed.** Run unmodified at `cee4fe1a` it exited **1** with `THE WALL MOVED` twice — 33 operations compiling to a 117,213-byte identity and 62 to 219,583, both where `BudgetExhausted` was required. Everything below rests on that, rather than on a report that the wall had moved.
+
+**Ladder 2..=32 → 2..=62**, so for the first time it is exactly the domain `semantic_operations` names. `WALLS` reduces to the single pre-planning refusal at 63. Sweep exits 0; all four perturbation modes exit 1 with their stated refusal text.
+
+### The finding that was not in the brief, and it is the important one
+
+**The fit's *form* held over the doubled domain; its *coefficients* did not.** Thirty new consecutive points landed on one line with second difference exactly zero — and `3525n + 727` no longer reproduces a single point. Every shared point is larger by exactly **`5n − 4`**, `graph_bytes` is identical at every shared point, and the `program_bytes` and `coverage_bytes` deltas are equal, so the whole move lives in the coverage section and subtracting `5n − 4` recovers the old ladder exactly.
+
+**So the extrapolation now has no out-of-domain confirmation and no way to obtain one.** The thirty new points were *not* predictions of the fitted line, because the line moved under them. That is a sharper answer than the brief asked for — it asked whether the fit still holds over the wider range, and the answer is that the question cannot be asked of this pair of regimes at all. Stated explicitly in the record rather than left for a reader to notice.
+
+The `5n − 4` is attributed to the `tiler.index-region.v11` step's per-assessment fact-source tag — five per multiply and one for the hoisted constant — and **labelled `Inference` rather than `Measurement`**, because it was not bisected. The worker judged the encoder diff plus the exact arithmetic sufficient and said so, rather than dressing it as measured. That is the right call and the right label.
+
+### Two corrections the rerun forced, both pre-existing
+
+- **The README's quadratic confirmation was false.** It claimed `134·9² + 3650·9 + 719` reproduced a compiled nine-operation point; the retained 2026-08-05 file records 9 as a **confirmed wall** and fits `…+ 710`, not 719. **The quadratic encoding never had an out-of-domain confirmation either.** Unrelated to the budget change, in the worker's own file, and corrected in place rather than left.
+- **`--perturb=program` had silently lost its planning-phase arm**, since no point in this family refuses after planning any more. It now selects the first wall and still proves a refused compilation aborts the sweep — but not at the planning phase. The worker **declined to invent an unplannable program** to restore it, on the ground that a written-down standing claim is exactly what the current design removed. Filed as [`restore-a-planning-phase-refusal-to-the-identity-growth-harness`](restore-a-planning-phase-refusal-to-the-identity-growth-harness.md).
+
+### The judgement on retained results, and it is well argued
+
+**Stale, and deliberately not regenerated.** Regenerating means checking out the tree each names and rebuilding, which would not restore the file but produce a fifth regime's numbers under an older path name — destroying the only surviving record of the 2026-08-05 and 2026-08-06 encodings. The reconciliations (`graph_bytes` identical, `program_bytes` differing by exactly `5n − 4`) are stronger evidence the old files were read correctly than a regeneration would be. A new `results/README.md` indexes all five regimes with the bound that ended each ladder, so the superseded state stays legible rather than merely retained.
+
+### Derived figures re-derived, including one that could have flipped
+
+51 operations **stopped being an extrapolation** — measured at 180,753 B — though that measures this multiply-chain family rather than the decoder layer, so the coefficient caveat is untouched. Margin ×372 → ×371. **The 148/149 embedding crossing did not move**, which is the one conclusion the new coefficients could plausibly have flipped; it was checked rather than assumed.
+
+**Delta rule confirmed by the coordinator against the merge's own file list**: six files under `spikes/` and `tickets/` only, none under `crates/`, `prototypes/`, or the build-configuration set, so it carries the latest green gate with `tkt lint` rerun.
