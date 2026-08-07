@@ -49,7 +49,11 @@ Tom has answered, and the answer is either an accepted boundary with ADR 0104 un
 
 ## Outcome — 2026-08-06
 
-Delivered whole at **`d48a33af`** on branch `tkt/site-the-governed-digest-so-layered-identity-encoders-can-reach-it`, over base `b54138b1`. `make full` green on the completed branch, `tkt lint` clean, `git diff --check` clean, `tkt guard` reporting no scope escape. (This paragraph's own hash is recorded in the follow-up commit that adds it; `d48a33af` is the commit carrying every source, contract, and pin change.)
+Delivered on branch `tkt/site-the-governed-digest-so-layered-identity-encoders-can-reach-it` over base `b54138b1`, in three commits: **`d48a33af`** carries every source, contract, and pin change; `96d1f284` records this Outcome; **`8416ace6`** sharpens one doc comment and is the head to integrate.
+
+`make full` green on `8416ace6` — 2,888 nextest cases passing with 7 skipped, the doc-test pass that reaches the two `compile_fail` cases, `RUSTDOCFLAGS="-D warnings" cargo doc`, the release `tiler-reference`/`tiler-compiler` run at 1,000 passing, `ticketsplease lint`, and `shellcheck`. `git diff --check` clean, working tree clean.
+
+`tkt guard tkt/site-the-governed-digest-so-layered-identity-encoders-can-reach-it --format json` reports `"conflict": false` and `"under_declared": []`. It warns that `crates/tiler-digest/Cargo.toml` and `crates/tiler-digest/src/lib.rs` are "covered by no scope"; that is the branch-local-scope misread AGENTS.md names, since the guard resolves the scope map from the base and `implementation/digest` exists only on this branch (`git show main:ticketsplease.toml | grep -c implementation/digest` returns 0, the branch file has it at lines 115 and 131). No scope escape. Every reported collision is against a non-live ticket; the one other in-progress claim, `declare-evaluation-order-preservation-in-the-target-profile`, holds `implementation/metal` and `implementation/compiler`, and `tkt why` reports the pair as parallel-safe.
 
 ### The crate
 
