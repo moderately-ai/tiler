@@ -1,7 +1,7 @@
 ---
 id: realign-the-compiler-refinement-error-mirror-with-the-grouped-result-arity
 title: Realign the compiler refinement error mirror with the grouped result arity
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [bind-a-partitioned-output-through-index-refinement]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, compiler]
-claimed_from: todo
-assignee: agent-mirror-realign
-lease_expires_at: 1786080145
 ---
 ## User-visible outcome
 
