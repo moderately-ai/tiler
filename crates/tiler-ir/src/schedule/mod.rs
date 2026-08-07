@@ -142,6 +142,7 @@ mod numerics;
 mod pointwise;
 mod pointwise_bf16;
 mod synchronization;
+mod witness;
 
 pub use builder::ScheduledRegionBuilder;
 pub use cooperative::{
@@ -189,6 +190,9 @@ pub use synchronization::{
     ConvergenceEvidence, FencedSpaces, MemoryOrdering, SynchronizationKind,
     SynchronizationPlacement, SynchronizationPoint, SynchronizationRule, SynchronizationScope,
     SynchronizationSubject, required_subject,
+};
+pub use witness::{
+    RealizationWitness, UnevaluableRealization, UnpinnedFreedomSite, UnrecordedFoldContraction,
 };
 
 /// Maximum logical accesses admitted by one scheduled region.
