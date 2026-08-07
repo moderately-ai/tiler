@@ -1,7 +1,7 @@
 ---
 id: spike-kani-bounded-verification-on-one-inexhaustible-encoder
 title: Spike Kani bounded verification on one inexhaustible encoder
-status: todo
+status: in-progress
 priority: p2
 dependencies: [prove-the-exhaustible-encoder-injectivity-claims-natively]
 related: []
@@ -9,6 +9,9 @@ scopes: [research/verification]
 shared_scopes: [project/tickets]
 paths: []
 tags: [verification, spike, kani, identity, toolchain]
+claimed_from: todo
+assignee: w-spike-ka
+lease_expires_at: 1786142810
 ---
 
 ## User-visible outcome

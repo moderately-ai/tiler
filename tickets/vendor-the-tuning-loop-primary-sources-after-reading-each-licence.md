@@ -1,7 +1,7 @@
 ---
 id: vendor-the-tuning-loop-primary-sources-after-reading-each-licence
 title: Vendor the tuning-loop primary sources after reading each licence
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature]
@@ -9,6 +9,9 @@ scopes: [research/cost-model]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, cost-model, documentation]
+claimed_from: todo
+assignee: w-vendor-t
+lease_expires_at: 1786142810
 ---
 ## User-visible outcome
 

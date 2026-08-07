@@ -1,7 +1,7 @@
 ---
 id: admit-an-indirect-gather-family-for-tied-embedding-lookup
 title: Admit an indirect gather access family
-status: todo
+status: in-progress
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface, reclassify-language-model-work-as-a-conformance-track]
 related: [own-operation-family-support-matrix, design-model-ingestion-and-complete-execution, implement-index-domain-predicates]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, implementation/ir, implementation/reference, impl
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, indexing, gather, language-model, breadth, class-generic-capability]
+claimed_from: todo
+assignee: w-admit-an
+lease_expires_at: 1786142810
 ---
 ## User-visible outcome
 

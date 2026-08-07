@@ -1,7 +1,7 @@
 ---
 id: pin-ticket-source-citations-against-the-tree-they-name
 title: Pin ticket source citations against the tree they name
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-pin-tick
+lease_expires_at: 1786142810
 ---
 ## Why this exists
 
