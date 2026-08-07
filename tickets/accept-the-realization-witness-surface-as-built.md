@@ -1,7 +1,7 @@
 ---
 id: accept-the-realization-witness-surface-as-built
 title: Accept the realization witness surface as built
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [implement-the-realization-witness-vocabulary, accept-the-realization-witness-surface]
@@ -50,3 +50,19 @@ The first three are not additions in substance: Part 2 names `axes`, `contracted
 ## Closes when
 
 Tom accepts both deltas, accepts with a named exclusion, or rejects either. Nothing releases meanwhile; the seven Delta 2 items stay labelled drafts at their definitions, and the `order` narrowing is in use inside `tiler-ir`.
+
+## Accepted — both deltas, 2026-08-07
+
+**Tom accepted both deltas on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator, without exclusion.
+
+**Delta 1 accepted.** `RealizationWitness::order` returns `Option<ContributorOrder>` rather than the drafted total `ContributorOrder`. The narrowing stands on its stated ground: a region whose topology is `ReductionTopology::None` combines no contributors, and a total accessor would return the vocabulary's single variant for a sequence that does not exist — the mirror class the freedom-sites record exists to reject. The accepted cost is that a caller unwraps an `Option` at sites where the region is known to reduce and the `None` is statically unreachable.
+
+**Delta 2 accepted.** The seven items Part 7.2 drafted no accessor for — `reduced_axes`, `contracted_shape`, `pass`, `fold_epilogue`, `unpinned_freedom_site`, and the payload enums `UnrecordedFoldContraction` and `UnevaluableRealization` — are accepted as public surface. **Their `**Draft surface, not yet accepted.**` labels must now be removed**, since that marker states a thing that is no longer true; leaving it would be exactly the stale disclosure this repository keeps finding. `pass` is retained on its stated ground: a partial and a final pass agree on every other field and commit different values, so a witness without it cannot separate two plans that differ.
+
+**Unchanged and not revisited.** `RealizationWitness` in `tiler_ir::schedule`, aggregated by `RealizationWitness::of`; `UnpinnedFreedomSite` with no `Conforms`-shaped arm; item C still redirected to the plain-scalar form, with no `tiler-reference` file touched.
+
+**`RealizationWitness` still derives no `PartialEq`**, and this acceptance does not change that. It is the consequence of the refuted converse in Part 5 — the witness is too fine, never too coarse — and [`share-identical-constants-in-the-pointwise-expression-canonical-form`](share-identical-constants-in-the-pointwise-expression-canonical-form.md) owns the repair and the identity question under it. Deriving `PartialEq` before that lands would let a caller read witness equality as function equality.
+
+## Released work
+
+[`retire-the-draft-labels-on-the-accepted-witness-surface`](retire-the-draft-labels-on-the-accepted-witness-surface.md) — the label removal this acceptance owes, released to its own ticket rather than landed here.
