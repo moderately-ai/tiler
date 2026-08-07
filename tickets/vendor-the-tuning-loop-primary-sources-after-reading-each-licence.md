@@ -12,7 +12,9 @@ tags: [research, cost-model, documentation]
 ---
 ## User-visible outcome
 
-`docs/research/cost-model/sources/` classifies each of its eleven reachable records licence-aware rather than uniformly metadata-only, and vendors the bytes of every document whose own terms permit redistribution, so a claim in [the measured-feedback tuning loop](../docs/research/cost-model/measured-feedback-tuning-loop.md) can be checked against a preserved file rather than against a re-retrieval that may serve different bytes.
+`docs/research/cost-model/sources/` classifies each of its reachable records licence-aware rather than uniformly metadata-only, and vendors the bytes of every document whose own terms permit redistribution, so a claim in [the measured-feedback tuning loop](../docs/research/cost-model/measured-feedback-tuning-loop.md) can be checked against a preserved file rather than against a re-retrieval that may serve different bytes.
+
+**Population update, 2026-08-07.** This ticket was written when the record held eleven reachable rows. [`acquire-the-three-unreachable-adaptive-execution-sources`](acquire-the-three-unreachable-adaptive-execution-sources.md) has since retrieved and recorded two more — `markl-pop-sigmod-2004` and `cole-graefe-sigmod-1994` — under the same metadata-only classification and with no licence verdict reached, so the population is **thirteen**. Read "eleven" below as "thirteen"; nothing else about this ticket's scope changes.
 
 ## Why this exists
 
@@ -28,4 +30,4 @@ The digests already recorded are the identity a re-acquisition is checked agains
 
 ## Non-goals
 
-Re-reading the papers or revising any conclusion in the design record. This ticket changes the preservation classification and nothing else. The three unreachable rows stay unreachable; [`acquire-the-three-unreachable-adaptive-execution-sources`](acquire-the-three-unreachable-adaptive-execution-sources.md) owns those.
+Re-reading the papers or revising any conclusion in the design record. This ticket changes the preservation classification and nothing else. The one remaining awaiting-retrieval row stays out of scope; [`acquire-the-three-unreachable-adaptive-execution-sources`](acquire-the-three-unreachable-adaptive-execution-sources.md) owns it.
