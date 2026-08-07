@@ -1,7 +1,7 @@
 ---
 id: relocate-the-sourced-extent-vocabulary-to-the-shape-module
 title: Relocate the sourced-extent vocabulary from the index module to the shape module
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [carry-symbolic-extents-into-the-semantic-program, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, api]
-claimed_from: todo
-assignee: agent-relocate
-lease_expires_at: 1786133925
 ---
 ## User-visible outcome
 
@@ -59,3 +56,26 @@ Three of this ticket's stated Facts no longer matched the tree at base `0ee647ee
 **Refusal observed failing.** Replacing `available > EXTENT_PHASE_CEILING` with `false` in the relocated `ExtentSources::admit` fails four tests (`a_source_after_the_phase_ceiling_is_refused_at_the_dimension`, `a_boundary_source_after_the_phase_ceiling_is_refused_where_it_is_written`, `a_divisor_source_is_refused_under_the_authority_that_refused_it`, `a_symbolic_coefficient_source_is_refused_under_the_authority_that_refused_it`); restored before commit.
 
 **Out of scope for this worker.** `docs/ir.md` (`contracts/foundation`), `docs/roadmap.md` and `docs/open-questions.md` (`contracts/navigation`, held by a parallel worker), and `docs/research/shapes/symbolic-semantic-extents.md` (`research/shapes`) all name `tiler_ir::index::SourcedExtent` and now carry stale paths; A1 of that record also lists the six-item set corrected above. Its line 32 Fact — that grepping the semantic module for `SourcedExtent` "returns nothing" — was already false at base (`semantic/slice.rs`, `semantic/softmax/tests.rs`). These need a follow-up ticket in the owning scopes.
+
+## Outcome — delivered 2026-08-07 at `f32813da`
+
+Five items moved from `tiler_ir::index::` to `tiler_ir::shape::`: `SourcedExtent`, `SourcedShape`, `ExtentSources`, `ExtentSourceError`, `EXTENT_PHASE_CEILING`. No signature, field, variant or behaviour changed. Fourteen call sites moved with them. **No compatibility re-export was left**, deliberately — a re-export would reinstate the second spelling this relocation exists to remove, and `AGENTS.md` requires a complete replacement to remove the superseded path.
+
+**Purity was proved, not argued.** The worker materialized base `0ee647ee` as a plain directory, installed an identical throwaway probe in both trees, and compared canonical encodings — one wholly static region (1,090 bytes) and one carrying a symbolic boundary, a symbolic divisor and a symbolic coefficient (1,466 bytes). `diff` reports identical, same SHA-256 both sides. `INDEX_REGION_DOMAIN` stays `tiler.index-region.v11`; the pinned population was enumerated at 8 files and 35 literals, none touched; and the standard Metal identity test was **run explicitly** rather than inferred from a green suite. Test-site count is 3,056 at base and at head and matches per-file across all eleven touched files, so nothing was silently dropped in the move.
+
+### The ticket named six items; five moved, and the sixth was argued rather than forgotten
+
+**`SymbolicExtentError` stays in `index`.** It is `Source(ExtentSourceError) | Structural(IndexBuildError) | ShapeVocabulary(ShapeError)`, so moving it to `shape` would make the crate's *base* vocabulary name `crate::index::IndexBuildError` — **inverting the exact layering this ticket argues for.** And it would not deliver the sharing: a second consumer refusing a sourced extent puts its own build error in the structural slot and needs its own union. Only `ExtentSourceError` is the shared authority, which is what moved. That is the same argument the `ShapeVocabulary` variant already carries one level down.
+
+**`SourcedIndexInteger` stays for the same reason**, and this ticket could not have named it — it arrived after filing, with the `v9 → v10` step.
+
+Two further ticket Facts were repaired rather than worked around: the phase-ceiling key had its direction backwards, and its ladder was missing the linear-combination-coefficient rung that postdates the ticket.
+
+### Released
+
+- [`accept-the-sourced-extent-vocabulary-at-its-shape-module-paths`](accept-the-sourced-extent-vocabulary-at-its-shape-module-paths.md) — five changed public paths are a boundary under ADR 0075 even with no signature change, so they park for Tom. The node carries the objection worth making: `ExtentSources` is consumed almost entirely by index-region construction, so these items now live away from every one of their callers.
+- [`repoint-the-sourced-extent-paths-in-the-four-documents-that-name-them`](repoint-the-sourced-extent-paths-in-the-four-documents-that-name-them.md) — four documents name paths that no longer exist, each outside this ticket's scopes. The shapes record additionally lists the wrong six-item set, and carries a Fact — "grepping the semantic module returns nothing" — that was **already false at base**, contradicted by `semantic/slice.rs` and `semantic/softmax/tests.rs`.
+
+**Stated read boundary.** Five files were read in full; for `law.rs` (4,439 lines), `refinement.rs` (6,750) and the eight cross-crate consumers the change is confined to `use`-list membership and doc-link paths, so each import block and every occurrence site of the moved symbols was read rather than the whole file — with the compiler and the 3,049-test suite verifying the substitution exhaustively. Recorded rather than left implicit.
+
+`make full` exit 0 on the branch and again on the merged tree.
