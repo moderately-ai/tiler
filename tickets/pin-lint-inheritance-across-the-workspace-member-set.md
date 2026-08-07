@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
 scopes: [implementation/workspace, implementation/frontend, implementation/runtime]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [lints, maintainability]
 claimed_from: todo
@@ -44,3 +44,34 @@ The root `Cargo.toml`'s `sha2` comment says a workspace crate "cannot reach the 
 ## Closes when
 
 A check fails on a member that drops lint inheritance without being the declared exception, and on either declared exception's table diverging from the workspace's by more than its named lint level; and the workspace table names its exceptions.
+
+## Per-Fact audit, 2026-08-07 at `d8913a9d`
+
+Every source this ticket names was re-read in full at that base. **No Fact is false and none needed repair** — unusual for this corpus, and stated as an outcome rather than as a default. Verdicts:
+
+- **Intro** — verified. `stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace` carries `scopes: [implementation/conformance]` in its frontmatter, so it genuinely could not reach past that crate. `git log --oneline -1 e197176` is `e197176f Replace the Python gate with a Makefile of cargo commands`, and its stat shows `scripts/check_workspace.py` deleted at 952 lines.
+- **Fact 1, the population is two** — verified, and the command reproduces exactly. `for f in crates/*/Cargo.toml prototypes/*/Cargo.toml; do grep -q '^\[lints\]' "$f" || echo "$f"; done` returns `crates/tiler-conformance/Cargo.toml` and `prototypes/serial-sum-run/Cargo.toml` and nothing else, over sixteen member manifests. The check now prints the same partition as a census: 14 of 16 inherit.
+- **Fact 1, `UNINHERITED_LINT_MEMBERS`** — verified against ADR 0079's "Fact — the exception was pinned, and is now permitted without a pin".
+- **Fact 2, same divergence shape** — verified, and it is *stronger* than "same shape". The two restated tables are identical, which is what made the reuse below work: `crates/tiler-conformance/src/lints.rs` compiled unmodified from the prototype's root passes both its tests, because every assertion in it is stated relative to `CARGO_MANIFEST_DIR`.
+- **Fact 2, the unsafe-site census cannot see the prototype** — verified. `the_unsafe_site_population_is_the_two_named_ones` roots at `Path::new(env!("CARGO_MANIFEST_DIR")).join("src")`. **This half is not closed by this ticket** — see the remainder below.
+- **Fact 3, the workspace end is unstated** — verified at base; closed here.
+- **"Where it would live", `cargo metadata` does not emit lint tables** — verified by measurement rather than accepted. `cargo metadata --no-deps --format-version 1` emits 59,759 bytes at this base containing zero occurrences of `lints`, and zero of `missing_docs`, `unsafe_code`, `pedantic`, or `too_many_lines`. A text reader is therefore the only option, which is what makes reusing the existing one rather than writing a second load-bearing.
+- **"Also worth checking while there"** — verified. `crates/tiler-digest/Cargo.toml` declares `[lints]` with `workspace = true`, so it does inherit `forbid`, and the `sha2` comment's "workspace policy forbids unsafe code" was the over-broad half. Narrowed to a claim about `tiler-digest`.
+
+**One citation elsewhere has drifted, and it is outside this ticket's scopes.** ADR 0079's Consequences place `the_unsafe_site_population_is_the_two_named_ones` at "lines 497–548" of `crates/tiler-conformance/src/bf16_vertical/tests.rs`; at this base it occupies 696–747. Same 52-line extent, moved down 199 lines. `contracts/decisions` is not held here, so this is reported rather than repaired.
+
+## Outcome
+
+Three checks, none of which restates the workspace lint table.
+
+- `crates/tiler/tests/workspace_lint_inheritance.rs` — new. Reads `[workspace] members` from the root manifest, partitions the sixteen members on whether each declares `[lints]` with `workspace = true`, and holds the diverging set equal to a declared `UNINHERITED_LINT_MEMBERS` — the name from the deleted Python gate, carried back deliberately. Both directions fail: an undeclared member that stops inheriting, and a declared exception that starts. A third test is the seam between the member half and the table half: each declared exception must name a table check, that check must lie inside the member it governs, and it must reach the one shared reader.
+- `prototypes/serial-sum-run/tests/lint_table.rs` — new, and it is one `#[path]` declaration. It runs `crates/tiler-conformance/src/lints.rs` unmodified from this member's root. **Zero duplicated parsing.** The conformance crate was not edited; `implementation/conformance` is not held here.
+- The root `Cargo.toml` names both exceptions under `[workspace.lints.rust]`, with the reason and all three checks, so the difference is stated at both ends rather than one.
+
+**Why `crates/tiler/tests/` and not `tiler-conformance`.** The previous worker's argument was evaluated rather than inherited, and it holds — with a second reason it did not give. Its reason: that crate owns cross-layer *executed* evidence and a manifest policy executes nothing. The stronger one: `tiler-conformance` is **one of the two members the check polices**, and a census living inside a member of the population it enumerates has to special-case its own exception. `crates/tiler` inherits the workspace table like every other non-exception member, and `workspace_population.rs`, `dependency_direction.rs`, and `labelled_diagnostic.rs` are already there doing workspace-wide reads across the same frontier.
+
+**Each property was perturbed separately and every failure message quoted in the worker report.** A third member dropping inheritance (`crates/tiler-digest`); the prototype's `deny` widened to `allow`; a lint added to the workspace side only; a lint added to the prototype side only; the member population collapsed below its floor; a declared exception losing its table check; and that check replaced by a second reader. Each reddened exactly one assertion and left the others green.
+
+## Remainder, not closed here
+
+`prototypes/serial-sum-run` still has **no per-site unsafe check**. This ticket closed its *table*; the site census in `tiler-conformance` remains rooted at its own `CARGO_MANIFEST_DIR`, so a third `#[allow(unsafe_code)]` site added under `prototypes/serial-sum-run/src/` still compiles and still passes the complete gate, exactly as ADR 0079's Consequences record. Fact 2 bundles the two gaps in one paragraph and only the table half is discharged. This wants its own ticket.
