@@ -41,3 +41,51 @@ Do not change what ADR 0079 decides — items 1 through 4 stand, including that 
 ## Closes when
 
 Each stale Consequences bullet carries a dated note with its verifying command and commit, the asymmetry between the two diverging members is stated rather than averaged, and no repaired site carries a bare count without its command and commit.
+
+## Repaired before dispatch, 2026-08-07 — as written this ticket would have put a FALSE claim into an accepted ADR
+
+Verified by the coordinator reading `docs/decisions/0079-…md`, `crates/tiler-conformance/src/bf16_vertical/tests.rs` and `AGENTS.md` in full.
+
+### The one false Fact, and it is the dangerous one
+
+Struck: "the in-crate site-population test is **real enforcement of item 3** that ADR 0079's Implementation boundary lists as review-only."
+
+`the_unsafe_site_population_is_the_two_named_ones` (`crates/tiler-conformance/src/bf16_vertical/tests.rs:497-548`) asserts a file-count floor (`files.len() >= 12`, `:505`), that `unsafe {` and the literal `unsafe_code,` appear in no file but `device_buffer.rs` (`:521-531`), and that `blocks == 2` and `allows == 2` (`:536`, `:544`). It checks **none of item 3's four conditions** (`ADR:57-60`): not structural unavoidability, not the `reason` *text* — it counts the token `unsafe_code,` and never reads the string — not the bounding assertion, not the `SAFETY` comment.
+
+So **`ADR:85` and `ADR:87` are still true and must not be dated.** Dispatched as written, a worker would write a false enforcement claim into an accepted ADR. What the test actually closes is Consequences bullet 4's counting/locating gap, and only for `tiler-conformance`.
+
+### The site population is four — and the obvious command finds none of them
+
+State it explicitly, with a command that works. `grep -rn 'allow(unsafe_code' --include='*.rs' crates prototypes` returns **exactly one hit, and it is a doc comment** (`crates/tiler-conformance/src/lib.rs:110`) — zero of the four real attributes, because all four wrap across lines. Use:
+
+```sh
+python3 -c "import re,glob; print(sum(len(re.findall(r'#\[allow\(\s*unsafe_code', open(f).read())) for f in glob.glob('crates/**/*.rs',recursive=True)+glob.glob('prototypes/**/*.rs',recursive=True)))"
+```
+
+Four attributes, four `unsafe` blocks, two crates: `crates/tiler-conformance/src/device_buffer.rs` (`write_bytes` attr `:61-64` block `:80`; `read_bytes` attr `:91-94` block `:110`) and `prototypes/serial-sum-run/src/buffer.rs` (`write_f32` attr `:35-37` block `:52`; `read_f32` attr `:67-69` block `:85`). Both crates declare `[lints.rust] unsafe_code = "deny"`; every other member inherits `forbid`.
+
+### `Closes when` under-covered its own repair list — seven more sites
+
+It said "each stale **Consequences** bullet", but four of the stale claims are in the Decision section and two more are elsewhere. A worker could satisfy it and leave the ADR still saying "the diverging crate". Extend to:
+
+- **`ADR:47`** — "**Both admitted sites** carry `#[allow(unsafe_code, reason = "…")]`…" Four now. Its second half ("neither the crate root nor any module carries one") **remains true** — no `#![allow` exists in either `src/` tree — so date the count without disturbing it.
+- **`ADR:49`** — "**The diverging crate** replaces `forbid` with `deny`… throughout **that crate**." Two diverging crates.
+- **`ADR:59`** — "**Both landed sites** assert the byte length they are about to touch against `buffer.length()`." Four, and all four do assert.
+- **`ADR:64`** — "**A third site is a new decision.**" Reads prospective; the third and fourth landed 2026-08-07 under Tom's conformance rule.
+- **`ADR:75`** — carries **two independently false clauses**, and this one the ticket missed entirely: "so **nothing enforces the pins now**" (something now enforces a count-and-location pin inside `tiler-conformance`) and "**`AGENTS.md` correctly states that no check keeps an inventory of admitted sites**" (`grep -in inventor AGENTS.md` is **empty**; the surviving text is `AGENTS.md:220`, and commit `7b1e3a7e` removed the clause).
+- **`ADR:71` and `ADR:73`** — "the **one layer**" and "the **one crate** permitted to have them", already named by this ticket.
+- **`ADR:83`** — the Implementation boundary's status paragraph, which the repair to `:35` above changes the reading of.
+
+Also check **`ADR:78`** ("`tiler-prototype-run` is a non-published proof executable") — classify it; the argument it supports may now need `tiler-conformance` named beside it.
+
+### Non-goals: add `AGENTS.md`
+
+`ADR:75`'s false AGENTS.md clause is repairable **inside the ADR**, by restating what AGENTS.md says now. `AGENTS.md` itself is `implementation/workspace`, which this ticket does not declare — and the existing non-goals forbid only `crates/` and `prototypes/`, so a worker who decided to "restore" the sentence would escape scope silently. **Do not edit `AGENTS.md` from this branch.**
+
+### Live scope collision — sequence these two
+
+`pin-the-admitted-unsafe-sites-in-the-workspace-gate` is `todo` with `scopes: [implementation/workspace, contracts/navigation, contracts/decisions]`, and its settled work rewrites exactly `ADR:73-77` — the bullet this ticket dates. **Run `tkt why` on the pair before batching, and do not dispatch them together.** This ticket should land first: it corrects what the ADR *says*, and the other changes what the gate *does*, so dating first avoids the pin ticket rewriting text that is still wrong.
+
+### Facts that verify unchanged
+
+Two members (`:21`); the walk not covering `prototypes/serial-sum-run` because it roots at `CARGO_MANIFEST_DIR/src` (`tests.rs:500`); the empty reverse-dependent set (no manifest declares `tiler-conformance` as a dependency); and the `43f685f` pin (`ADR:31`).
