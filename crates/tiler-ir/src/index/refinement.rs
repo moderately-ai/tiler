@@ -67,8 +67,11 @@ const STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
 /// [ADR 0104](../../../../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md)
 /// replaced the framed `SemanticGraphIdentity` preimage at the head of every
 /// coverage record with a fixed-width digest under this domain, which is why
-/// both tags above step to `v2`: a `v1` reader handed these bytes would read
-/// thirty-two digest bytes as a length prefix and recover nothing.
+/// both tags above step to `v2`: the record's grammar changed at its first
+/// field, so a reader following the `v1` grammar would take the digest's leading
+/// eight bytes for the graph identity's length prefix and frame everything after
+/// it wrongly. No such reader exists — the type has no decoder — but the step is
+/// what keeps that from ever being a question a later one has to answer.
 ///
 /// **It is a separate domain rather than a reuse of either coverage tag** because
 /// those two are *encoding* separators — the first bytes of a canonical run —
