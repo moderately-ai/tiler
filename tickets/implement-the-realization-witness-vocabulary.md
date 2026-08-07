@@ -1,7 +1,7 @@
 ---
 id: implement-the-realization-witness-vocabulary
 title: Implement the realization witness vocabulary
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [accept-the-realization-witness-surface, enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, conformance, numerics, witness]
-claimed_from: todo
-assignee: agent-witness
-lease_expires_at: 1786117170
 ---
 
 ## The accepted surface this implements
@@ -52,3 +49,21 @@ The redirection left the refusal without a producer, so one is sited beside the 
 **Evidence.** Nine tests in `crates/tiler-ir/src/schedule/witness/tests.rs` over six verified-region fixtures (pointwise `f32`, pointwise `bf16`, serial fold, both split passes, cooperative tile at one and two rounds, contraction). Each of the three refusal arms was watched failing before restoration, and each payload variant is separately named and counted. No identity domain moved: `tiler.schedule.v5` is unchanged and no pinned artifact, cache, or region identity in the workspace moved.
 
 **Scope added.** `research/reference`, required by the Part 7 update the ticket's Closes-when demands. No live sibling claim declares it.
+
+## Outcome — delivered 2026-08-07 at `1f764e00`
+
+`RealizationWitness<'a>` and `UnpinnedFreedomSite` landed in `crates/tiler-ir/src/schedule/witness.rs`, re-exported from `tiler_ir::schedule`. The witness **borrows** the region's realization, scalar program, and reduction topology rather than copying, so "a witness cannot disagree with the plan it describes" is structural rather than asserted. `UnpinnedFreedomSite` carries the three drafted arms and **no `Conforms`-shaped arm**, which was the accepted item B's whole content. No `crates/tiler-reference/` or `crates/tiler-compiler/` file was touched.
+
+**Mirrors are never read.** Nothing consults `permits_reassociation`/`permits_permutation` off a topology, and `FusedMultiplyAddSerialSum`'s `contraction` field is named as an unrecorded adjacency rather than treated as an answer.
+
+**The determinism claim was tested before anything was built on it, and it is refuted in the general form the record states.** Part 5's canonical-form claim holds for the two mitigations it names and fails for a third neither reaches: nothing shares an identical constant, so `x * 2.0 + 2.0` spelled with one constant and with two produces four-node and five-node expressions, two witnesses, and two canonical schedule identities for one binary32 function. The failure is of the **converse** — the witness is too fine, never too coarse — so a conformance oracle built on it stays fail-closed. `RealizationWitness` therefore derives no `PartialEq`, with the reason at its definition. Filed as [`share-identical-constants-in-the-pointwise-expression-canonical-form`](share-identical-constants-in-the-pointwise-expression-canonical-form.md), which must first settle whether the compiler can even mint the duplicated spelling.
+
+**Five drift corrections against the record, each read at source**, landed as Part 7.5 with forward pointers at the six places the record now makes a superseded claim. The sharpest: site 3.1's stated ground is simply wrong — the record says hard-coding `false` "would fail the schedule verifier's realization cross-check", and there is no such cross-check; the verifier admits `FusedMultiplyAddSerialSum` only when the field is `false`, while `physical.rs` still derives it from the contract, so a permitting contract yields a region the verifier *refuses*. Site 4.8's spend population turns out to be empty; site 4.9 is new; site 3.3's refusal is narrower than the record predicts. Current split: 25 sites, 7 evaluable witnesses, 3 unevaluable.
+
+**Watched failing on all three refusal arms**, each restored green: `ContractionUnrecorded`, `BackendOrderUndeclared`, and `RealizationNotEvaluable`. Populations counted — 9 new tests over 8 verified-region fixtures, with `population.len() == 6`, `cases.len() == 4` twice, and `named.len() == 3` twice asserted, so a loop over nothing cannot look green.
+
+**No identity moved.** `tiler.schedule.v5` unchanged; the three standard Metal pins verified identical before any edit and at the final commit. `make full` exit 0 on the branch and again on the merged tree: 2,959 workspace tests, 1,033 release numerical.
+
+**Two things released rather than absorbed.** The built surface differs from the drafted one — one accepted signature narrowed (`order` returns `Option<ContributorOrder>`, because a total accessor would hand back a value for a contributor sequence that does not exist) and seven items exist that Part 7.2 drafted no accessor for, landed as labelled drafts. Both park on [`accept-the-realization-witness-surface-as-built`](accept-the-realization-witness-surface-as-built.md) for Tom.
+
+**One judgement call the coordinator let stand.** The worker set the record's `implementation_status` to `partial` but left `disposition: pending`, because changing it would oblige a catalog edit in `docs/research/README.md` under `contracts/navigation` — a scope it did not hold and declined to add unilaterally. That is the right call: the catalog and the disposition must move together, and doing half of it would be the drift this repository keeps finding.
