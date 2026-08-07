@@ -1,7 +1,7 @@
 ---
 id: accept-the-sourced-extent-vocabulary-at-its-shape-module-paths
 title: Accept the sourced extent vocabulary at its shape module paths
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [relocate-the-sourced-extent-vocabulary-to-the-shape-module]
@@ -47,3 +47,15 @@ If you would rather they had stayed, the cost of reverting rises with every cons
 ## Closes when
 
 Tom accepts the five paths, accepts with a named exclusion, or rejects. Nothing releases meanwhile; the items are in use inside `tiler-ir` at their new paths and no old path survives.
+
+## Accepted — Tom, 2026-08-07
+
+**Provenance.** Accepted by Tom on 2026-08-07, in the interactive orchestration session, as a direct answer to the decision presented with its trade-off and counterpoint. Not relayed through any intermediary. The option taken was **accept as landed** — all five items at their new `tiler_ir::shape::*` paths, with no exclusion and no compatibility re-export.
+
+**What is now accepted**, and this is the exact surface the decision covers: `SourcedExtent`, `SourcedShape`, `ExtentSources`, `ExtentSourceError`, and `EXTENT_PHASE_CEILING`, each moved from `tiler_ir::index::*` to `tiler_ir::shape::*` with no change to signature, field, variant, or behaviour. The absence of a re-export is part of what was accepted, not an oversight: `AGENTS.md` requires a complete replacement to remove the superseded path, and a re-export would reinstate the second spelling the relocation exists to remove.
+
+**What was argued and stays in `index`**, and remains outside this acceptance: `SymbolicExtentError`, because moving it would make the crate's base vocabulary name `crate::index::IndexBuildError` and invert the layering the relocation establishes; and `SourcedIndexInteger`, which did not exist when the relocation was filed and inverts the layering identically. **`SourcedIndexInteger` keeps its own draft label and its own pending acceptance** — this decision does not reach it.
+
+**The counterpoint accepted alongside it.** `ExtentSources` is consumed almost entirely by index-region construction and proof, so the five now live away from nearly every one of their callers. That navigability cost was stated and accepted; the layering the crate can now state was judged worth it. The reasoning assumes shape-level consumers arrive — the symbolic-shape thread is the expected one — so if that thread stalls indefinitely, this trade reads worse in hindsight and is worth revisiting rather than treating as settled forever.
+
+**Reverting is no longer nearly free.** It was cheap only while nothing had been built on the new paths, which was true at the moment of acceptance and stops being true with each new consumer.
