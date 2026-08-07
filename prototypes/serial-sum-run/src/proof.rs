@@ -244,10 +244,12 @@ const COLUMNS: u64 = 3;
 const PARALLEL_ROWS: u64 = 1;
 /// Contributors reduced per output on the parallel strategies' input.
 ///
-/// **Four, because below that nothing splits.** `governed_partition` requires at
-/// least two partitions of at least two contributors each, so four is the
-/// smallest extent at which a split or a workgroup tree exists to be retained at
-/// all. It is also the smallest extent *above*
+/// **Four, because below that nothing splits.** Both partition rules require at
+/// least two partitions of at least two contributors each — `governed_partition`
+/// for the split, `capped_tree_partition` for the tree — so four is the smallest
+/// extent at which a split or a workgroup tree exists to be retained at all. The
+/// two admit exactly the same extents and differ only in the width they pick, so
+/// this floor is one number rather than a coincidence. It is also the smallest extent *above*
 /// `correct-the-declined-strategy-record-for-an-unsplittable-reduction`, which
 /// records a sub-four reduction failing with `InvalidCompilerOutput` under a
 /// reassociation-permitting contract: this shape is sized above that defect
@@ -302,7 +304,9 @@ const PARALLEL_OPERANDS: [u32; 4] = [
 /// | `0x3300_0000` | `2^-25` | `0.25` |
 ///
 /// **The derivation, so the two answers are attributable rather than merely
-/// different.** `governed_partition(4)` is two partitions of two, so both
+/// different.** At four contributors both rules return two partitions of two —
+/// `governed_partition(4)` for the split and `capped_tree_partition(4)` for the
+/// tree — so both
 /// parallel strategies fold `(a0 + a1) + (a2 + a3)` while the serial fold folds
 /// `((a0 + a1) + a2) + a3`; both share the prefix `0.75 + 0.25 = 1.0`, exact.
 /// The serial fold then adds `0.375 ulp` and `0.25 ulp` in turn, and each lands
@@ -2041,10 +2045,18 @@ fn prove_parallel_strategies(
 /// The blocked contributor partition one dispatched alternative declares.
 ///
 /// **Read from the plan's own published launch geometry, never assumed.** The
-/// two parallel strategies declare the *same* split — `governed_partition`'s
-/// balanced exact split, blocked and contiguous — and each publishes it in a
+/// two parallel strategies declare the *same* split **at the four contributors
+/// this prototype runs**, blocked and contiguous — and each publishes it in a
 /// different observable, which is why this reads a different quantity per
 /// strategy rather than one field:
+///
+/// They no longer declare the same split in general. Since the tree took its
+/// measured participant cap the split reads `governed_partition` and the tree
+/// reads `capped_tree_partition`; the two agree at four and diverge from twelve
+/// contributors upward. This prototype fixes `PARALLEL_COLUMNS = 4`, so the
+/// equality below is a property of that extent rather than of the strategies,
+/// and reading each partition from its own published geometry — which is what
+/// the code does — is what keeps that distinction honest.
 ///
 /// - The **tree** runs one participant per partition inside one workgroup, so
 ///   its declared `threads_per_workgroup` is the partition count. That is the

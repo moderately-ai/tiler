@@ -51,12 +51,12 @@ Of 36 shapes, **exactly one retains all three alternatives: `rows=1, contributor
 
 Under the profile as it stood on 2026-08-02, the sweep confirmed a result that did not depend on which shapes were sampled. Two constraints bounded the domain from opposite sides:
 
-- `governed_partition` returns `None` below four contributors, so **both** parallel strategies require `contributors >= 4`. Below that the portfolio holds the serial fold alone and there is nothing to compare it against. **This half still holds.**
+- `governed_partition` returns `None` below four contributors, so **both** parallel strategies require `contributors >= 4`. Below that the portfolio holds the serial fold alone and there is nothing to compare it against. **This half still holds, through a mechanism that has since changed.** The tree stopped reading `governed_partition` when it took its measured participant cap on 2026-08-07; it reads `capped_tree_partition`, which admits exactly the same extents and so preserves this bound unchanged, while choosing a different width within them.
 - The profile's `GridAxisThreads` row was 4, and the prologue launches one invocation per element, so a plan existed only where `rows * contributors <= 4`. **This half is the one that moved.**
 
 Since `rows >= 1`, the two gave `4 <= contributors <= rows * contributors <= 4`, which forced `rows = 1` and `contributors = 4`. **The domain was a single point by derivation**, and sampling more shapes could not have enlarged it. The derivation is not wrong; its second premise is simply no longer the profile's row.
 
-The workgroup axis did not vary independently either: the tree's participant count is `governed_partition(4)`, a balanced exact split into 2 partitions of 2. One shape, one workgroup width, one point.
+The workgroup axis did not vary independently either: at the one shape this sweep reached, the tree's participant count was 2 partitions of 2 — `governed_partition(4)` when this ran, and `capped_tree_partition(4)` today, which returns the same pair. One shape, one workgroup width, one point.
 
 ## Why no timing run followed in 2026-08-02
 

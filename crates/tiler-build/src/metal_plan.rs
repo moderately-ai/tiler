@@ -1463,10 +1463,12 @@ mod tests {
 
     /// A reassociating sum over four contributors, on one output.
     ///
-    /// **Four contributors, because below that nothing splits.**
-    /// `governed_partition` requires at least two partitions of at least two
-    /// contributors each, so four is the smallest extent at which a split or a
-    /// tree exists to be retained at all. It is also the smallest extent above
+    /// **Four contributors, because below that nothing splits.** Both partition
+    /// rules require at least two partitions of at least two contributors each
+    /// — `governed_partition` for the split and `capped_tree_partition` for the
+    /// tree, which admit exactly the same extents and differ only in the width
+    /// they choose within them — so four is the smallest extent at which a
+    /// split or a tree exists to be retained at all. It is also the smallest extent above
     /// `correct-the-declined-strategy-record-for-an-unsplittable-reduction`,
     /// which records a sub-four reduction failing with `InvalidCompilerOutput`
     /// under a reassociation-permitting contract; this fixture is sized above
@@ -1663,8 +1665,8 @@ mod tests {
     /// least two shapes on which all three strategies exist and can be timed. Its
     /// 2026-08-02 outcome recorded that exactly one existed, and named the cause
     /// — the grid-axis row capped the prologue's one-invocation-per-element
-    /// launch at four, and `governed_partition` withholds both parallel
-    /// strategies below four contributors, so
+    /// launch at four, and both partition rules withhold their parallel
+    /// strategy below four contributors, so
     /// `4 <= contributors <= rows * contributors <= bound` closed on `(1, 4)`.
     ///
     /// **This test replaces a trigger that could not have fired.**
