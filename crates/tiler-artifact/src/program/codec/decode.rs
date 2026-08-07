@@ -68,7 +68,6 @@ use super::super::{
     MAX_ROUTE_FEATURE_PAYLOAD_BYTES, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS,
     MAX_STAGE_DEPENDENCIES, MAX_VARIANT_ENTRIES,
 };
-use super::digest::{Digest, DigestAlgorithm};
 use super::encode::{
     CANONICAL_ENCODING, ENVELOPE_FORMAT, HEADER_BYTES, IDENTITY_DIGEST_DOMAIN, MAGIC,
     MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES,
@@ -86,6 +85,7 @@ use super::model::{
     canonical_expression_order, ordinal, position,
 };
 use super::validate::validate;
+use tiler_digest::{Digest, DigestAlgorithm};
 
 /// Decodes and fully validates one encoded artifact envelope.
 ///

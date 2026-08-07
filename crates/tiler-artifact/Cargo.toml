@@ -24,8 +24,11 @@ doc = true
 # verifier through `tiler_ir::index` instead, which they need anyway: their
 # provider-provenance and dual-output graphs are ones governed compilation
 # refuses.
+# `sha2` was here until ADR 0104 moved the governed digest to `tiler-digest`,
+# which is where it lives now. This crate reaches the algorithm rather than the
+# implementation, and re-exports it from `program` so every consumer path holds.
 [dependencies]
-sha2.workspace = true
+tiler-digest.workspace = true
 tiler-ir.workspace = true
 
 [lints]

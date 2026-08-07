@@ -589,8 +589,13 @@ fn position(index: u32) -> usize {
 }
 
 /// Derives one payload's content digest over its canonical ordinal and bytes.
+///
+/// The ordinal is a fixed-width qualifier ahead of the one variable-length run,
+/// which is the shape [`DigestAlgorithm::digest_qualified`] admits and the
+/// reason two payloads carrying equal bytes at different slots do not share a
+/// content address.
 fn payload_digest(algorithm: DigestAlgorithm, slot: u32, bytes: &[u8]) -> Digest {
-    algorithm.digest_parts(&[PAYLOAD_DIGEST_DOMAIN, &slot.to_be_bytes(), bytes])
+    algorithm.digest_qualified(PAYLOAD_DIGEST_DOMAIN, &[&slot.to_be_bytes()], bytes)
 }
 
 /// Walks a sidecar's payloads in the one canonical framing order.

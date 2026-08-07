@@ -535,10 +535,18 @@ pub use codec::{
 // (`decide-the-expansion-cache-owner-and-digest-authority`). The expansion
 // cache validates a stored bundle's section digests on every hit (ADR 0050),
 // and the alternative — a hash function local to that crate — would make it a
-// second identity authority over the same subject. The promotion is
-// deliberately the algorithm and the opaque digest alone: `digest_parts` and
-// [`envelope_digest`] stay crate-private, so an outside caller can digest a
-// subject under its own domain and cannot construct an envelope association.
+// second identity authority over the same subject.
+//
+// This crate owned the algorithm until ADR 0104, which needed it in `tiler-ir`
+// — the crate every other member depends on, so the *consumer* could not be
+// moved the way ADR 0082 moved the cache. Tom decided on 2026-08-06 that the
+// governed digest is its own bottom crate, `tiler-digest`, and this re-export is
+// what keeps `tiler_artifact::program::{DIGEST_BYTES, Digest, DigestAlgorithm}`
+// resolving for every consumer that already used it. The surface a consumer sees
+// is unchanged and still deliberately narrow: the algorithm and the opaque
+// digest, with `digest_parts` private to `tiler-digest` and [`envelope_digest`]
+// crate-private here, so an outside caller can digest a subject under its own
+// domain and cannot construct an envelope association.
 pub use codec::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // [`envelope_digest`] *is* the proof sidecar's association with an envelope, and
 // nothing outside this crate has a use for it. Named re-exports rather than a

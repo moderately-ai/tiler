@@ -64,7 +64,6 @@
 
 mod budget;
 mod decode;
-mod digest;
 mod encode;
 mod error;
 mod model;
@@ -78,14 +77,17 @@ mod view;
 pub(crate) use model::{
     ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, canonical_entry_positions, position,
 };
-// The governed digest is the one part of this module that is public, for the
-// reason `digest.rs` states: `docs/artifact-abi.md` requires every digest use
-// to name one governed algorithm, and a component that hashed under a different
-// one would be a second identity authority over the same subject. `crate::proof`
-// reaches it here, and so does `tiler-cache` — the expansion cache must validate
-// the section digests of a stored bundle on every hit, and ADR 0050's whole
-// argument rests on that digest being *the* governed one.
-pub use digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
+// The governed digest is re-exported rather than owned, for the reason
+// `tiler-digest` states: `docs/artifact-abi.md` requires every digest use to
+// name one governed algorithm, and a component that hashed under a different one
+// would be a second identity authority over the same subject. It lived here
+// until ADR 0104 needed it in `tiler-ir`, which sits below this crate and cannot
+// be moved above it; the algorithm moved to the workspace's bottom crate and
+// this path keeps resolving. `crate::proof` reaches it here, and so does
+// `tiler-cache` — the expansion cache must validate the section digests of a
+// stored bundle on every hit, and ADR 0050's whole argument rests on that digest
+// being *the* governed one.
+pub use tiler_digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // The external envelope digest stays crate-private: it names one published
 // encoding of an artifact, which only `crate::proof`'s sidecar association
 // needs.

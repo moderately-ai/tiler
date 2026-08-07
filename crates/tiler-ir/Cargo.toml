@@ -15,10 +15,18 @@ doc = true
 [lints]
 workspace = true
 
+# `tiler-digest` is the one governed content-digest algorithm, and the only
+# workspace member below this one. ADR 0104 folds the bound graph's identity into
+# each executable-coverage record as a fixed-width digest instead of restating
+# it, which is what turns kernel-program identity from quadratic in operation
+# count into linear. A hash function local to this crate would make it a second
+# identity authority over one subject, which is exactly what the digest crate
+# exists to prevent.
 [dependencies]
 num-bigint.workspace = true
 num-integer.workspace = true
 num-traits.workspace = true
+tiler-digest.workspace = true
 
 [dev-dependencies]
 trybuild.workspace = true

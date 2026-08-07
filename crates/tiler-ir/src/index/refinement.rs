@@ -28,6 +28,9 @@ use std::sync::Arc;
 use num_bigint::{BigInt, Sign};
 use num_integer::Integer;
 use num_traits::{ToPrimitive, Zero};
+#[cfg(test)]
+use tiler_digest::DIGEST_BYTES;
+use tiler_digest::DigestAlgorithm;
 
 use crate::identity::{push_len, push_slice};
 use crate::program::SemanticOccurrence;
@@ -56,9 +59,34 @@ use super::{
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
 const STAGED_RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-staged-receipt.v1\0";
 const EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
-    b"tiler.ir.index-refinement-executable-coverage.v1\0";
+    b"tiler.ir.index-refinement-executable-coverage.v2\0";
 const STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
-    b"tiler.ir.index-refinement-staged-executable-coverage.v1\0";
+    b"tiler.ir.index-refinement-staged-executable-coverage.v2\0";
+/// Governed digest domain of the bound graph identity a coverage record folds.
+///
+/// [ADR 0104](../../../../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md)
+/// replaced the framed `SemanticGraphIdentity` preimage at the head of every
+/// coverage record with a fixed-width digest under this domain, which is why
+/// both tags above step to `v2`: the record's grammar changed at its first
+/// field, so a reader following the `v1` grammar would take the digest's leading
+/// eight bytes for the graph identity's length prefix and frame everything after
+/// it wrongly. No such reader exists — the type has no decoder — but the step is
+/// what keeps that from ever being a question a later one has to answer.
+///
+/// **It is a separate domain rather than a reuse of either coverage tag** because
+/// those two are *encoding* separators — the first bytes of a canonical run —
+/// while this one is a *digest* separator, the first bytes of a pre-image. The
+/// two kinds never have to be distinguished from each other, but two digests do:
+/// this is the only subject this crate hashes, and any later one must be
+/// checkably non-prefixing against it.
+///
+/// The no-prefix obligation `docs/artifact-abi.md` records normatively spans
+/// every domain the workspace admits, because one algorithm hashes them all in
+/// one process. It is discharged across crates by construction rather than by a
+/// check neither crate could hold: this domain opens `tiler.ir.` and all eight
+/// of `tiler-artifact`'s open `tiler.artifact-`, so no prefix relation between
+/// the two sets is expressible.
+const COVERAGE_GRAPH_DIGEST_DOMAIN: &[u8] = b"tiler.ir.index-refinement-coverage-graph.v1\0";
 const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v2\0";
 #[cfg(test)]
 const LEGACY_SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v1\0";
@@ -1020,6 +1048,17 @@ impl IndexRefinementReceiptIdentity {
 /// to that same canonical ordinal. Encoding them a second time would restate
 /// what the graph and occurrence pair already determines rather than close a
 /// substitution the pair leaves open.
+///
+/// **The graph half of that pair is named by digest rather than restated**, as
+/// of `v2` and ADR 0104: the record opens with a fixed-width governed digest of
+/// the bound graph's identity instead of the identity itself. What the pair
+/// determines is unchanged — two receipts for one occurrence ordinal of two
+/// different graphs still mint different bytes — and what changes is that the
+/// graph identity is no longer recoverable from these bytes, which nothing in
+/// the workspace attempted. The restatement was the whole of kernel-program
+/// identity's quadratic term — one graph identity per record, one record per
+/// semantic operation — and folding it makes that curve linear; `encode_executable_coverage_identity`
+/// carries the derivation and `docs/artifact-abi.md` the measured constants.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IndexRefinementExecutableCoverageIdentity(Box<[u8]>);
 
@@ -3355,6 +3394,29 @@ fn mint_receipt(
 /// domain tag. The two tags are distinct byte strings in the first position, so
 /// the preimages are disjoint and no staged coverage can spell a single-region
 /// one.
+///
+/// **Why the graph is a digest and not the identity itself.** One whole
+/// `SemanticGraphIdentity` used to open every record, and there is one record per
+/// semantic operation, so the product of a linear encoding with a linear count
+/// made kernel-program identity quadratic in operation count — measured at
+/// `134n² + 3650n + 727` bytes, whose quadratic coefficient *is* the graph
+/// encoding's per-operation slope. [ADR 0104] folds it to
+/// [`DIGEST_BYTES`] under [`COVERAGE_GRAPH_DIGEST_DOMAIN`], which makes the
+/// curve linear.
+///
+/// It is written unframed because it is fixed width: a length prefix exists to
+/// make a variable-length run self-delimiting, and thirty-two bytes that are
+/// always thirty-two bytes are already that. The record therefore says exactly
+/// what it said before — "this occurrence of *this* graph" — and still refuses
+/// two records naming one occurrence ordinal in different graphs, which is the
+/// injectivity the pair carries and the reason the graph could not simply be
+/// dropped. What it stops doing is carrying bytes the graph identity could be
+/// reconstructed from, which nothing in the workspace does: the type has no
+/// decoder, no field accessors, and two `compile_fail` doctests holding that it
+/// has no byte constructor.
+///
+/// [ADR 0104]: ../../../../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md
+/// [`DIGEST_BYTES`]: tiler_digest::DIGEST_BYTES
 fn encode_executable_coverage_identity(
     subject: &IndexRefinementSubject,
     resolution: &ResolvedIndexRealization,
@@ -3370,7 +3432,11 @@ fn encode_executable_coverage_identity(
     } else {
         EXECUTABLE_COVERAGE_IDENTITY_TAG.to_vec()
     };
-    push_slice(&mut bytes, subject.graph.as_bytes());
+    bytes.extend_from_slice(
+        DigestAlgorithm::GOVERNED
+            .digest(COVERAGE_GRAPH_DIGEST_DOMAIN, subject.graph.as_bytes())
+            .as_bytes(),
+    );
     bytes.extend_from_slice(&subject.occurrence.get().to_be_bytes());
     push_slice(&mut bytes, subject.numerical_contract.as_bytes());
     if staged {
@@ -4326,6 +4392,77 @@ mod tests {
                 receipt.result_bindings(),
                 &[proof]
             )
+        );
+    }
+
+    /// The digest is what separates two graphs at one occurrence ordinal.
+    ///
+    /// ADR 0104 replaced the framed `SemanticGraphIdentity` at the head of every
+    /// coverage record with a fixed-width digest of it. The record's documented
+    /// claim — that it names "this occurrence of *this* graph" — then rests on
+    /// the digest rather than on a restatement, so this pins all three halves of
+    /// that: the preimage is gone from the bytes, the digest is present at the
+    /// exact position it left, and two graphs sharing one occurrence ordinal
+    /// still mint different coverage identities.
+    ///
+    /// The neighbouring replay-and-substitution test already perturbs the graph
+    /// and watches the bytes move, and it would keep passing if the encoder had
+    /// written the graph identity whole. It is the *position* assertion here
+    /// that says which encoding produced the difference, which is the fact the
+    /// linear identity curve depends on.
+    #[test]
+    fn one_occurrence_of_two_graphs_is_separated_by_the_folded_graph_digest() {
+        let (subject, resolution, realization, receipt) = reached_semantic_fixture(1);
+        let encode = |subject: &IndexRefinementSubject| {
+            encode_executable_coverage_identity(
+                subject,
+                &resolution,
+                &realization,
+                &receipt.scalar_authorities(),
+                receipt.operand_bindings(),
+                receipt.result_bindings(),
+                &[],
+            )
+        };
+
+        let baseline = encode(&subject);
+        let head = EXECUTABLE_COVERAGE_IDENTITY_TAG.len();
+        assert_eq!(
+            &baseline[head..head + DIGEST_BYTES],
+            DigestAlgorithm::GOVERNED
+                .digest(COVERAGE_GRAPH_DIGEST_DOMAIN, subject.graph.as_bytes())
+                .as_bytes(),
+            "the record opens with the governed digest of its bound graph",
+        );
+
+        let graph_preimage = subject.graph.as_bytes();
+        assert!(
+            !baseline
+                .windows(graph_preimage.len())
+                .any(|window| window == graph_preimage),
+            "the graph identity preimage still occurs in the coverage record",
+        );
+
+        // A second graph at the same occurrence ordinal. The constant fixture
+        // selects a different operation, which is what makes its graph identity
+        // genuinely different rather than another revision of one.
+        let foreign = constant_receipt_with_unused_authority(None, 1, None);
+        assert_ne!(subject.graph(), foreign.graph());
+        let mut other = subject.clone();
+        other.graph = foreign.graph().clone();
+        let separated = encode(&other);
+        assert_eq!(
+            other.occurrence, subject.occurrence,
+            "the ordinal is held fixed so the graph is the only thing that moved",
+        );
+        assert_ne!(
+            baseline, separated,
+            "two graphs at one occurrence ordinal minted equal coverage bytes",
+        );
+        assert_eq!(
+            baseline[head + DIGEST_BYTES..],
+            separated[head + DIGEST_BYTES..],
+            "the graph digest is the only field that moved",
         );
     }
 

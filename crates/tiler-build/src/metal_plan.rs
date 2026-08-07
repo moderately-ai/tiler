@@ -1236,17 +1236,41 @@ mod tests {
     /// `tiler.artifact-program.v15`, and manifest schema 14.0 all hold, each
     /// framing the complete stepped program identity with its own separator.
     ///
+    /// **And both moved again at ADR 0104's coverage fold, which is the first
+    /// step in this ledger that moved these values without stepping a domain
+    /// above the one it changed.** Each of the five coverage records in this
+    /// program's one stage used to open with a whole framed
+    /// `SemanticGraphIdentity`; it opens with a thirty-two-byte governed digest
+    /// of that identity now, so this program's kernel-program identity *shrank*
+    /// — and every program's does, from `134n² + 3650n + 727` bytes to
+    /// `3525n + 727`, quadratic in operation count to linear. The domain that
+    /// stepped is `tiler.ir.index-refinement-executable-coverage.v1` to `v2`,
+    /// with its staged sibling. Nothing above it stepped:
+    /// `tiler.kernel-program.v11`, `tiler.kernel-program.stage.v2`,
+    /// `tiler.artifact-program.stage.v3`, `tiler.artifact-program.v15`, and
+    /// manifest schema 15.0 each frame the complete stepped coverage identity
+    /// with their own separator and re-derive no subset of it, so a `v1` and a
+    /// `v2` fold cannot collide and there is no reading for a stepped domain
+    /// above to protect. That is the `tiler.schedule.v4` and
+    /// `tiler.contract.f32.v2` shape rather than the `tiler.kernel-program.v9`
+    /// one, which changed the coverage record's own grammar here and had to step
+    /// with it.
+    ///
     /// The values are recorded rather than written in because a sibling branch
     /// may move the same two pins from its own base, and two branch-local
     /// rebaselines cannot compose: a pinned identity is recomputed on the tree
     /// the step lands into, never taken from either side.
     /// `raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells` is the
     /// sibling that depends on this row for exactly that reason. The constants
-    /// below were recomputed on 2026-08-06, on the tree carrying the
-    /// kernel-program v11 step described above over the base that already held
-    /// the v10 step, the v9 step, the v8 step, and the measured grid-axis row.
+    /// below were recomputed on 2026-08-06, on the tree carrying the coverage
+    /// fold described above over the base that already held the v11 step, the
+    /// v10 step, the v9 step, the v8 step, and the measured grid-axis row.
     /// Superseded values, for a reader reconciling an older record:
-    /// v10, which is what these constants held immediately before the v11 step,
+    /// v11-without-the-fold, which is what these constants held immediately
+    /// before the coverage fold,
+    /// `e57b8852b4a9172057dba08f4758574b96fe140a0f2d974390e890dc7425c59d` /
+    /// `f107cd81f779decff8c2bb15fd61881a2e79ad004457b042fcbfdea25ad97c88`;
+    /// v10, which is what they held immediately before the v11 step,
     /// `e3ac0aee9e9ce35b23edc2ee49ce7fdb4b40cabbb34774b782b7325d4455fa34` /
     /// `14cbccad74c0d2f1c4a05f295a6b04e87aa45aa13be86460e810e76ff478a263`;
     /// v9, which is what they held immediately before the v10 step,
@@ -1280,9 +1304,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "e57b8852b4a9172057dba08f4758574b96fe140a0f2d974390e890dc7425c59d";
+            "2b0162eb461edeaa8069a022e54057572bf7992970205a5a33f1efee2df896ca";
         const CACHE_SUBJECT: &str =
-            "f107cd81f779decff8c2bb15fd61881a2e79ad004457b042fcbfdea25ad97c88";
+            "8e48d6fbfca8c490c883a557be2c7c5dfcb8264a751c84e585c574d4cd12f186";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

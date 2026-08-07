@@ -26,8 +26,9 @@ doc = true
 # in the consumer's binary, and `route` is what decodes and routes it — so this
 # is the crate that has to hold the loader. The cost is the one the facade
 # documentation already priced: `tiler-runtime`'s dependency closure is
-# `[tiler-artifact]` by ADR 0081 item 2, `tiler-artifact` is `sha2` and
-# `tiler-ir`, and `tiler-ir` was already here. Neither reaches an Apple
+# `[tiler-artifact]` by ADR 0081 item 2, `tiler-artifact` is `tiler-digest` and
+# `tiler-ir`, `tiler-ir` was already here, and `tiler-digest` is `sha2` — the
+# same closure ADR 0104 redistributed rather than widened. Neither reaches an Apple
 # toolchain, a device object, or a compiler: `tiler-runtime` "touches no device,
 # no `MTLDevice`, no pipeline state, and no platform binding", which is what
 # makes it affordable on a consumer-neutral boundary where `tiler-metal-aot` is

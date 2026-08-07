@@ -1087,13 +1087,15 @@ fn byte_offsets_of(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
 /// a key appears must now agree on the order; under the sorted rule the output
 /// section was transposed against the rest.
 ///
-/// The population is counted rather than pinned. A key appears once inside the
-/// folded semantic graph identity, which has encoded outputs in declaration
-/// order all along; once inside each coverage record's refinement evidence,
-/// which nests that same graph identity; and once in the program's own output
-/// section. Deriving the expected count from the program's own coverage is what
-/// keeps this check able to say no after a coverage change, instead of failing
-/// on a stale literal that says nothing about ordering.
+/// **The population is two, and it says which change moved it there.** A key
+/// appears once inside the folded semantic graph identity, which has encoded
+/// outputs in declaration order all along, and once in the program's own output
+/// section. It used to appear a third time per coverage record, because every
+/// record restated the whole bound graph identity; ADR 0104 replaced that
+/// restatement with a fixed-width digest, and a digest of a key is not the key.
+/// The coverage population is asserted non-empty beside the count for the reason
+/// the count used to be derived from it — a program that covered nothing would
+/// otherwise satisfy a literal `2` while proving nothing at all.
 #[test]
 fn published_output_interface_order_reaches_program_identity() {
     let semantic = two_chain_program_keyed(["z_sum", "a_sum"]);
@@ -1113,11 +1115,15 @@ fn published_output_interface_order_reaches_program_identity() {
     let declared_first = byte_offsets_of(identity, b"z_sum");
     let declared_second = byte_offsets_of(identity, b"a_sum");
     let coverage_records: usize = program.stages().map(|stage| stage.coverage().len()).sum();
-    let expected = coverage_records + 2;
+    assert!(
+        coverage_records > 0,
+        "a program covering no occurrence proves nothing about what coverage restates",
+    );
+    let expected = 2;
     assert_eq!(
         declared_first.len(),
         expected,
-        "semantic fold, one per coverage record, then output section"
+        "the semantic fold and the output section, and no per-record graph restatement"
     );
     assert_eq!(declared_second.len(), expected);
     for (first, second) in declared_first.iter().zip(&declared_second) {

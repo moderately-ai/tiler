@@ -1,0 +1,27 @@
+[package]
+name = "tiler-digest"
+description = "The one governed content-digest algorithm every Tiler identity authority hashes under"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+test = true
+doctest = true
+doc = true
+
+# The workspace's bottom crate, and the dependency list is the decision rather
+# than an accident of what this needed first. `sha2` is the measured
+# implementation of the governed algorithm and nothing else belongs here: this
+# crate owns one algorithm, one opaque digest, and the discipline that separates
+# their subjects, so a second dependency would mean it had acquired a second
+# responsibility. Nothing in the workspace sits below it, which is the whole
+# point — `tiler-ir` reaches it, and `tiler-ir` is what every other member
+# depends on.
+[dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true

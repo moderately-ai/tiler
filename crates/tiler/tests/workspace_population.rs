@@ -25,15 +25,16 @@ use std::process::Command;
 
 /// Every workspace member, by package name.
 ///
-/// Eleven production crates plus the three prototype proof executables. A
+/// Twelve production crates plus the three prototype proof executables. A
 /// change to the workspace updates this list in the same commit — that is
 /// the intended failure, not an obstacle.
-const EXPECTED_MEMBERS: [&str; 14] = [
+const EXPECTED_MEMBERS: [&str; 15] = [
     "tiler",
     "tiler-artifact",
     "tiler-build",
     "tiler-cache",
     "tiler-compiler",
+    "tiler-digest",
     "tiler-ir",
     "tiler-macros",
     "tiler-metal",
