@@ -1,7 +1,7 @@
 ---
 id: route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge
 title: Route the BF16 vertical's declared conformance through the checked bridge
-status: in-progress
+status: done
 priority: p2
 dependencies: [give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject]
 related: [give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject, accept-the-bf16-subnormal-resolution-carrier, conform-the-bf16-vertical-end-to-end]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reference, bf16, fail-closed]
-claimed_from: todo
-assignee: w-route-bf16
-lease_expires_at: 1786143052
 ---
 ## User-visible outcome
 
@@ -60,3 +57,23 @@ The BF16 vertical's oracle conformance is derived from the region's own witness 
 ## Graph maintenance
 
 Filed 2026-08-07 by the worker on the parent, on discovering that the parent's own "every construction site is `strict()` or a test's `new()`" Fact was false and that the false half named this exact site. Split rather than absorbed because `crates/tiler-conformance/**` and `docs/correctness-and-testing.md` are outside the parent's `implementation/reference` scope.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`f8a93f90`** (worker commit `c650b631`). `make full` exit 0; 1,080 release tests. `crates/tiler-reference/**` untouched — the routing needed no signature change there, which was the open question at dispatch.
+
+`declared_conformance()` now derives through `from_realization` off a **single** `RealizationWitness::of(&region)`, so the oracle is told the contract the device half is dispatched under rather than a second reading of the same accessors kept beside it. That puts the bridge's six transform refusals and its subject-agreement check on the production route, where the transcription had bypassed them.
+
+**Coordinator-verified deliberate failure, on the subject rather than an assertion.** Stating the subject as `F32` against the `bf16` realization makes the bridge refuse in production — `DeclaredNanPayloadMismatch { arithmetic: F32, declared: 32704, expected: 2143289344 }` — and reverting `conformance_of` to the transcription reproduces exactly the silently-ignored subnormal modes the ticket predicted, `subject: Unstated` where `Arithmetic(Bf16)` is required.
+
+### The Fact audit found this ticket's own claims imprecise in a way worth keeping
+
+- **"`tiler-reference` names no region type at all" — false.** It names `VerifiedIndexRegion` at `crates/tiler-reference/src/oracle.rs:24`. The conclusion survives on the narrower true ground: `RealizationWitness::of` needs a `VerifiedScheduledRegion`, which that crate never names.
+- **"`from_realization` has no caller" — false as implied.** It had **four test callers**; what was absent was a *non-test* caller. And the clause the ticket did not quote was the most clearly false of all: "no capability yet checks…" — `conformance_for` → `checked_for` is precisely that check.
+- **One owed-item correction that changed the work:** no registered `NumericalContract` permits reassociation in `bf16`, and `realization_of` overwrites the NaN payload with BF16's, so passing an `f32` reassociating contract would have *mislabelled* the region. The perturbation composes its contract through the public `NumericalContractBuilder::strict_bf16()` instead.
+
+### Both stale documents classified as live false claims and repaired in their own file's convention
+
+`bf16_vertical.rs`'s used that file's struck-blockquote form; `docs/correctness-and-testing.md`'s used that document's "This paragraph recorded … until 2026-08-07" form. Both now state the boundary that actually holds: `ConformanceSubject::Unstated` reaches every capability unchecked, and a subjected conformance is checked. `strict()` and `new()` state no subject, and this vertical's preserving-reading comparisons still use `strict()` — so the uncovered population is named rather than implied.
+
+`portability.rs`'s device-free floor moved 52 → 53 with the population 56 → 57. Test count **57 passed, 0 skipped** — the measured half genuinely ran. One transient `LEAK` on an unrelated test did not recur, matching the known macOS pipe-inheritance race rather than an unreaped child.
