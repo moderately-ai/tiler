@@ -314,8 +314,15 @@ impl OperationNumericalCapability {
 /// record measures a target whose contraction behaviour differs between `f16`
 /// and `bf16`. So a row copied from the `f32` set would widen this build's
 /// numerical surface on evidence about another width.
-/// [`establish-bf16-optimizer-legality`](../../../tickets/establish-bf16-optimizer-legality.md)
-/// owns writing the rows on evidence of BF16's own.
+///
+/// **`establish-bf16-optimizer-legality` landed and deliberately did not write
+/// these rows.** It decided the three families' *fusion* roles in
+/// `crate::fusion_legality`, from `tiler-ir`'s own `arithmetic_bf16_facts` and
+/// `constant_bf16_facts` records, which is a different table answering a
+/// different question: whether fusing an occurrence preserves the contract, not
+/// which freedom an occurrence may consume. Rowlessness here is therefore a
+/// decided state rather than an unfinished one, and writing a row would still
+/// need evidence of BF16's own.
 ///
 /// **Inference — and this changed when the activation was admitted.**
 /// `MaterializationRounding` is still unconsumable: it is not the strict-affine
@@ -1097,12 +1104,18 @@ mod tests {
     /// permit that dimension at all, and reassociation and contraction error are
     /// bounded by the significand, so writing one from the `f32` set would widen
     /// this build's numerical surface on evidence about another width.
-    /// `establish-bf16-optimizer-legality` owns writing them on BF16's own. What
-    /// is no longer true is the ground that used to be given for it — that no
-    /// arithmetic in this build realizes BF16. Each of the three now carries a
-    /// governed index-access lowering and a BF16 program is recognized and
-    /// planned; what a missing row costs today is the *fusion* of a
-    /// multi-occurrence BF16 region, which is refused rather than assumed.
+    ///
+    /// **Two grounds that used to be given for it are gone, and the conclusion
+    /// is not.** The first was that no arithmetic in this build realizes BF16:
+    /// each of the three now carries a governed index-access lowering and a BF16
+    /// program is recognized and planned. The second was that a missing row cost
+    /// the *fusion* of a multi-occurrence BF16 region:
+    /// `establish-bf16-optimizer-legality` gave the three families governed
+    /// fusion-capability rows in `crate::fusion_legality`, so such a region now
+    /// derives its own legality and fuses, and that table is a different
+    /// authority from this one. What a missing row costs today is narrower and
+    /// is the whole of it: no BF16 occurrence consumes any numerical freedom, so
+    /// every rewrite that asks one for a regrouping or a contraction declines.
     ///
     /// `tiler::concatenate-f32@1` is here for a different reason again, and the
     /// difference is worth keeping. It is unplanned because nothing *physical*

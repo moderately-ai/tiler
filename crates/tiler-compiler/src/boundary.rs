@@ -669,7 +669,7 @@ impl ByteAlignment {
     /// Panics if a storage carrier's byte width is not a positive power of two
     /// within `u32`, which would make it unrepresentable as an alignment at all.
     /// No carrier in the vocabulary is such a width, and
-    /// `every_storage_carrier_has_a_natural_alignment` checks the whole
+    /// `every_storage_carrier_has_a_representable_alignment` checks the whole
     /// vocabulary rather than leaving that a claim about the two that exist now.
     pub(crate) fn natural_for(scalar: StorageScalar) -> Self {
         u32::try_from(scalar.byte_width())

@@ -1717,23 +1717,61 @@ impl NumericalContractBuilder {
     /// require their behaviour of different arithmetic and a target declares the
     /// two independently.
     ///
-    /// **Statable, and now planned for one shape.** The semantic registry admits
+    /// **Statable, and now planned.** The semantic registry admits
     /// `tiler::constant-bf16@1`, `tiler::multiply-bf16@1`, and
     /// `tiler::add-bf16@1`; a profile can declare measured `bf16`
-    /// honourability; and each of the three families now carries a governed
-    /// index-access lowering, so a `bf16` program whose profile dispatches the
-    /// dtype and whose contract that profile honours is recognized, planned, and
-    /// selected. A positive answer here therefore reports feasibility *and*, for
-    /// a program of one occurrence, reachable support.
+    /// honourability; and each of the three families carries both a governed
+    /// index-access lowering and a governed fusion-capability row, so a `bf16`
+    /// program whose profile dispatches the dtype and whose contract that
+    /// profile honours is recognized, planned, and selected — for a region
+    /// covering one occurrence and for one covering several. In
+    /// `crates/tiler-compiler/tests/bf16_numerical_contract.rs`,
+    /// `a_flush_accepting_bf16_contract_reaches_a_selected_plan` asserts the
+    /// first and
+    /// `a_multi_occurrence_bf16_program_derives_its_own_fusion_legality` the
+    /// second, where its predecessor asserted a refusal.
     ///
-    /// **It is still not general support.** A `bf16` region covering several
-    /// occurrences meets `fusion_legality`, whose capability table is keyed by
-    /// the `f32` operation set, and every cover placing it is ruled out —
-    /// `crates/tiler-compiler/tests/bf16_numerical_contract.rs`'s
-    /// `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` is
-    /// where that boundary is asserted, and
-    /// [`establish-bf16-optimizer-legality`](../../../tickets/establish-bf16-optimizer-legality.md)
-    /// owns it.
+    /// **It is still not general support, and a fused `bf16` region proves less
+    /// than that it fused.** Two boundaries survive the widening and are named
+    /// here rather than left to be read off the outcome.
+    ///
+    /// *Reassociation is not proved at this width; it is merely never
+    /// required.* `BF16_FACT_REASSOCIATION_PERMITTED` is `false` and no
+    /// registered `bf16` family declares an algebraic capability, so nothing in
+    /// this build establishes that regrouping preserves meaning against an
+    /// 8-bit significand — the question stays open at the operation vocabulary
+    /// instead of being answered by a region that happened to fuse.
+    ///
+    /// *The four reduction obligations discharge vacuously, over an empty
+    /// population.* `tiler-ir` registers no `bf16` family carrying a fold at
+    /// all, so there is no `bf16` contributor sequence for an identity, an
+    /// empty domain, an order, or a regrouping to be about. That is evidence
+    /// that no reduction was present, never that a `bf16` reduction would be
+    /// legal.
+    ///
+    /// The wall moved rather than vanished: a `bf16` region under a
+    /// contraction-*permitting* contract still stops, because nothing in a
+    /// bounded profile establishes that a fused `bf16` body will decline a
+    /// permission the contract granted.
+    /// `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall`
+    /// asserts that boundary in the same file.
+    ///
+    /// **On the one profile this build ships, a `bf16` request does not reach
+    /// fusion legality at all — it is refused a phase earlier.** The
+    /// authoritative macOS Apple9 ledger declares `bf16` dispatchability and the
+    /// two `bf16` subnormal tables and nothing else; its seven reshaping and
+    /// exceptional-value rows are each stated for the `f32` subject. So a
+    /// flush-accepting `bf16` contract clears the measured subnormal dimensions
+    /// and then meets an *undeclared* one — contraction, canonically first among
+    /// the remaining consumable dimensions — whose disposition is `Unknown`, and
+    /// the target refuses at numerical resolution before any cover is
+    /// enumerated. That the refusal names contraction rather than a subnormal
+    /// dimension is itself the evidence that the flush was honoured.
+    /// `the_measured_subnormal_rows_alone_leave_the_remaining_dimensions_unknown`
+    /// asserts that exact rejection against a profile restating the ledger's own
+    /// rows, so widening the ledger moves that test rather than passing
+    /// silently. Reaching a plan on this target needs the missing `bf16` rows
+    /// measured, not a further optimizer widening.
     #[must_use]
     pub const fn strict_bf16() -> Self {
         Self::strict(
@@ -3238,6 +3276,57 @@ mod tests {
             "the multiply and the add each found a contraction position, so the \
              empty set above is the program's doing",
         );
+    }
+
+    /// Every named contract this module publishes survives its own assessment.
+    ///
+    /// **The claim [`super::NumericalContractBuilder::resolved`] makes about
+    /// itself, checked rather than asserted.** That constructor is `const` and
+    /// skips coherence, so each named constant reaches a caller unassessed on
+    /// the argument that none of them resolves an exceptional-value assumption.
+    /// Driving each through
+    /// [`super::NumericalContractBuilder::build`] — the one gate a composed
+    /// contract passes — is what turns that argument into a checked fact, and it
+    /// wraps the constant itself rather than respelling its dimension vector, so
+    /// a constant that moved is assessed in its moved form.
+    ///
+    /// The population is counted rather than iterated over silently: a named
+    /// contract added without a row here would leave this test passing about the
+    /// seven it still names.
+    #[test]
+    fn named_contracts_are_coherent() {
+        let named = [
+            ("STRICT_F32", NumericalContract::STRICT_F32),
+            (
+                "FLUSH_SUBNORMALS_TO_ZERO_F32",
+                NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+            ),
+            ("RELAXED_F32", NumericalContract::RELAXED_F32),
+            ("REASSOCIATE_F32", NumericalContract::REASSOCIATE_F32),
+            (
+                "FLUSH_AND_REASSOCIATE_F32",
+                NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+            ),
+            ("STRICT_BF16", NumericalContract::STRICT_BF16),
+            (
+                "FLUSH_SUBNORMALS_TO_ZERO_BF16",
+                NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
+            ),
+        ];
+        assert_eq!(
+            named.len(),
+            7,
+            "a named contract was added or removed without moving this row",
+        );
+        for (name, contract) in named {
+            let assessed = super::NumericalContractBuilder(contract)
+                .build()
+                .unwrap_or_else(|cause| panic!("{name} is not a coherent contract: {cause}"));
+            assert_eq!(
+                assessed, contract,
+                "{name} did not survive its own assessment unchanged",
+            );
+        }
     }
 
     /// The selected alternative is one of the retained ones.

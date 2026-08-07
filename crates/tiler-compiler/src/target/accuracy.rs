@@ -786,8 +786,10 @@ pub(crate) fn assess_elementary_accuracy(
 /// places none, which is the correct answer for every operation whose complete
 /// result is fixed by IEEE-754 alone. Adding a row is therefore a positive claim
 /// that the family's result set is *not* determined by the arithmetic, and
-/// `every_installed_realization_answers_a_required_contract` is what keeps the
-/// two directions paired.
+/// `the_installed_realizations_are_exactly_the_registered_families` is what
+/// keeps the two directions paired: it pins the installed set to exactly the
+/// registered families and then watches a contract naming a family with no
+/// installed row fail closed as `NoInstalledRealization`.
 ///
 /// The contracts are read from `tiler-ir`'s own registered definitions rather
 /// than restated: `silu_f32_exponential_accuracy_contract` and its siblings are
