@@ -99,6 +99,7 @@ mod grammar;
 mod numerics;
 mod preflight;
 mod region;
+mod retention;
 mod tokens;
 
 use aot::{AotRefusal, RouteFacts};

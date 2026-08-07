@@ -65,6 +65,14 @@
 //!   That module owns the variable, the default, the opt-out, the amortization
 //!   rule, and what becomes of the report; what this module owns is the single
 //!   `Resolution::Published` test that keeps a scan off the hit path.
+//! - **Every resolution reads its retention back, and a quiet one says
+//!   nothing.** The entry this expansion resolved to carries the debug text the
+//!   Metal producer retained, and [`crate::retention`] turns it into a note on
+//!   standard error when a retained run has bytes. It runs on a hit as well as
+//!   on a publication, because the retention is stored precisely so a hit can
+//!   serve it; it is never fatal, because a retention exists only where the
+//!   compilation succeeded. That module owns the predicate, the message, and
+//!   why the note is neither a `compile_error!` nor a spanned diagnostic.
 //! - **A rooted cache is probed once per process, and the probe refuses
 //!   nothing.** [`open_cache`] hands the root it just opened to
 //!   [`crate::preflight`], which reports an unsuitable filesystem on standard
@@ -225,6 +233,7 @@ use crate::delivery::{DeliveryPlan, FamilyDelivery, PlanRefusal};
 use crate::eviction::EvictionSchedule;
 use crate::numerics::StatedContract;
 use crate::preflight::{PreflightGate, report_unsuitable_root};
+use crate::retention::report_retained_output;
 
 /// The optimization level every delivering expansion compiles at.
 ///
@@ -678,6 +687,20 @@ pub(crate) fn deliver(
     {
         eviction.sweep(&cache, bound);
     }
+
+    // Read back on every resolution rather than only on the one that compiled.
+    // A hit serves the retention the publishing build stored — `tiler_build`'s
+    // `a_succeeding_stages_output_returns_from_a_validated_cache_hit` pins that
+    // it does so without re-entering the compiler — so a developer whose cache
+    // is warm still sees what the tools said about the bytes being embedded,
+    // rather than a diagnostic that existed once on whichever machine published
+    // first.
+    report_retained_output(match accepted.resolution() {
+        Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => {
+            entry.retained_debug()
+        }
+        Resolution::Uncached { retained, .. } => retained,
+    });
 
     let artifact = accepted.artifact();
     let [payload] = artifact.payloads() else {
