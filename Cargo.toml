@@ -40,9 +40,12 @@ num-traits = "0.2.19"
 # The implementation behind the governed digest, reached by `tiler-digest` and
 # by nothing else. Hand-rolling SHA-256 was a mistake: the version it replaced
 # ran at 53 MiB/s because a `[u32; 8]` rotate silently became a generic slice
-# rotation, and a workspace crate cannot reach the ARMv8 crypto instructions
-# `sha2` selects at runtime, because workspace policy forbids unsafe code. Bytes
-# are identical by specification and pinned by test.
+# rotation, and `tiler-digest` cannot reach the ARMv8 crypto instructions `sha2`
+# selects at runtime, because it inherits the `forbid` below. That is a claim
+# about the crate that would hand-roll the digest, not about the workspace as a
+# whole: the note under `[workspace.lints.rust]` names two members carrying
+# `deny` instead, and neither is this one. Bytes are identical by specification
+# and pinned by test.
 sha2 = "0.11.0"
 # `tiler` sorts here and is deliberately absent. It is the consumer-facing
 # facade, so nothing in this workspace may depend on it, and an entry here would
@@ -100,6 +103,36 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 1
 
+# Reaches a member only through `[lints] workspace = true` in that member's
+# manifest, and **two members deliberately do not carry it**:
+# `crates/tiler-conformance` and `prototypes/serial-sum-run`. Each restates this
+# table with `unsafe_code = "deny"` instead of `forbid`, because `forbid` cannot
+# be reopened by an inner attribute at any scope and both need narrow, reasoned
+# `#[allow(unsafe_code)]` on the functions that must reach `MTLBuffer` storage
+# through the `metal` binding's raw pointer. Each member's own `[lints]` note
+# records the decision that admitted it -- Tom's of 2026-07-25 for the prototype
+# and of 2026-08-07 for the conformance crate -- and ADR 0079,
+# `docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md`,
+# governs both. The exception is stated here as well as there so a reader of
+# this table can reach it; a difference named at one end only reads as an
+# oversight from the other.
+#
+# Three checks hold the arrangement, and none of them restates this table:
+#
+# - `crates/tiler/tests/workspace_lint_inheritance.rs` reads the member list
+#   above and fails on any member that is not one of those two and does not
+#   inherit -- so a *third* member dropping these two lines is a red test rather
+#   than a crate that quietly stops being linted. It also fails when a declared
+#   exception has no check over its own table.
+# - `crates/tiler-conformance/src/lints.rs` reads this file and its member's and
+#   fails unless they differ by exactly `rust.unsafe_code`. Adding, tightening,
+#   or removing a lint here reaches the fourteen inheriting members for free and
+#   reaches neither of these two, so that comparison is what makes the drift
+#   visible.
+# - `prototypes/serial-sum-run/tests/lint_table.rs` is one `#[path]` line
+#   running that same module from the prototype's root. One reader, two roots --
+#   a second parser of these tables would drift against the first exactly as the
+#   tables drift without either.
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"
