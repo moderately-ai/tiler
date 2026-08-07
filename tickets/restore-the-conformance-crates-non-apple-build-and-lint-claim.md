@@ -1,7 +1,7 @@
 ---
 id: restore-the-conformance-crates-non-apple-build-and-lint-claim
 title: Restore the conformance crate's non-Apple build and lint claim
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [conform-the-bf16-vertical-end-to-end, produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [conformance, portability]
-claimed_from: todo
-assignee: w-restore-th
-lease_expires_at: 1786140348
 ---
 ## The claim and what falsifies it
 
@@ -108,3 +105,34 @@ All on `crates/tiler-conformance`, which touches `crates/` and so carries no gat
 **No non-Apple machine was available, and nothing here claims one ran.** What is established is that the crate *compiles and lints* for `x86_64-unknown-linux-gnu` — which is a compilation fact, checked by the compiler that would build it — and that the test population which survives the macOS predicate is 51 rather than collapsing. What is **not** established is that those 51 tests *pass* on a Linux host: they have never been executed off Apple, no `Measured::Unavailable` outcome has been observed on a genuinely non-Apple machine, and `absent_apple_row`'s sentence has never been printed by a host that is not Apple's. The closest existing evidence remains `conform-the-bf16-vertical-end-to-end`'s `xcrun`-off-`PATH` run, which is an Apple host simulating a missing toolchain and not a non-Apple host.
 
 Closing that gap needs a Linux runner, which is a host-environment decision and Tom's.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`639671ef`** (worker commit `dd8f43db`). `make full` exit 0 on the merged tree; 1,071 release numerical tests.
+
+### The two failure modes were separated, which was the point
+
+- `cargo check -p tiler-conformance --all-targets --target x86_64-unknown-linux-gnu` → **exit 0** at the base. The crate already built off Apple; `-D warnings` was masking that answer.
+- `cargo clippy … --target x86_64-unknown-linux-gnu -- -D warnings` → **exit 101, 56 errors** (not 57 — the 57th line was the `could not compile` summary). Every symbol was reachable only from a `cfg(target_os = "macos")` module.
+
+**No toolchain was mutated.** `x86_64-unknown-linux-gnu` was verified already installed with `rustup target list --installed` before anything ran — coordinator-confirmed.
+
+### The instrument that a clean lint cannot supply
+
+New `crates/tiler-conformance/src/portability.rs`. It walks `src/`, derives the macOS-gated file set **from the `cfg` attributes on the `mod` declarations themselves** rather than restating them, partitions the test population, and refuses below a floor of 50. It runs on **both** hosts — so the collapse is caught on the Apple host that cannot otherwise observe it.
+
+Census here: 17 source files, **51 device-free tests and 3 macOS-gated**, and 51 + 3 = 54 = the whole harness population.
+
+**Coordinator-verified deliberate failure:** gating `device_preflight` behind macOS drops the census to 49 and the test refuses **by name**, listing the newly gated module and stating that "shrinking what that host runs is a decision to argue rather than a number to lower." The diagnostic names the module, the counts, and the floor.
+
+### A false Fact in this ticket, and it mattered
+
+The ticket cited `measurement.rs:126` as the `cfg_attr` precedent. **It was an *unconditional* `allow`** — coordinator-confirmed in the base — so it silenced the lint on Apple too, where `Ran`/`Failed` are constructed at eight sites. The real precedent is `absent_apple_row` at `:404`. The worker tightened `Measured` to the negated predicate and host clippy stayed clean, which *proves* the unconditional form was covering nothing.
+
+The chosen form is `#[cfg_attr(not(target_os = "macos"), allow(dead_code, reason = …))]`. The negated predicate preserves the non-goal: `make lint` runs on the host target, so on macOS no allow applies and a genuinely unused item is still a red build. Both `cfg`-gating alternatives were rejected in writing because they delete 18 device-free tests to satisfy a lint, inverting why the split exists.
+
+### What is not established, stated rather than glossed
+
+The crate **compiles and lints** for `x86_64-unknown-linux-gnu` and its surviving population is 51 rather than collapsing. **Not** established: that those 51 tests *pass* on Linux, or that any genuinely non-Apple host has printed `Measured::Unavailable`. The nearest existing evidence is an Apple host with `xcrun` off `PATH`, which simulates a missing toolchain rather than being a different platform. Closing that needs a Linux runner — a host-environment decision and Tom's.
+
+The cross-target command **stays manual**, named in the crate header, deliberately not in `make full`: it needs a 156 MB standard library no `deps.sh` bootstrap installs, and skipping when absent is exactly the uncounted-population pass that `declare-the-cross-compilation-targets-in-the-toolchain-manifest` refuses. A dated `not fired` trigger-check entry was logged there.

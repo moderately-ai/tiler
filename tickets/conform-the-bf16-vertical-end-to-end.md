@@ -164,3 +164,17 @@ Apple M4 Max reporting `MTLGPUFamilyApple9`; macOS 27.0 build `26A5388g`; `arm64
 No pin moved. No public item added — the crate still exports nothing, so no ADR 0075 node is owed. `make full` exit 0 on the branch and again on the merged tree.
 
 **Not done, and owed elsewhere:** `docs/dtype-support.md`'s BF16 conformance and backend-execution cells are supported by this run *bounded to three operations, one target family, one measured row, and a vertical that does not cross the optimizer, artifact or routing*. That is `contracts/navigation` and needs a holder.
+
+## Corrected 2026-08-07 — this ticket's narrative asserts a rule that no longer exists
+
+Flagged by the worker on [`restore-the-conformance-crates-non-apple-build-and-lint-claim`](restore-the-conformance-crates-non-apple-build-and-lint-claim.md) and verified by the coordinator. This ticket is `done`, so nothing here reopens it; the correction exists because the repository treats a record as a claim about current behaviour, and two passages read as live.
+
+**Struck, from the Outcome section:** "`select_supported_strategy` refuses every non-`f32` program under the rule `dtype-f32` before a subject is normalized, so `compile()`, the artifact envelope, and the runtime routing commit are unreachable." **The `dtype-f32` rule no longer exists.** `widen-the-strategy-recognizer-past-the-f32-wall` landed and the recognizer now derives the program's one arithmetic type, admitting the widths this build spells a per-point body in, refusing an unspellable width under `dtype-recognized` and a mixed-width program under `dtype-uniform`.
+
+**Struck, from "Remainder to schedule":** widening the recognizer is described as "not owned by any live ticket". It was filed, dispatched and landed the same day.
+
+**What is true now, and it is a different layer.** The recognizer admits a BF16 program, and fusion legality admits a multi-occurrence BF16 region too — `establish-bf16-optimizer-legality` landed. What keeps this vertical hand-assembled is **numerical resolution against the target profile**: `crates/tiler-build/src/metal_declaration.rs:781-871` declares seven complete numerical rows — contraction, reassociation both ways, permutation, signed zero, NaN, infinity — and **every one is bound to `f32`**, with BF16 given only dispatchability and the two subnormal tables. So BF16's contraction dimension is `Unknown` and the profile refuses, which a live `compile()` probe reproduces as `NoFeasiblePlan` with `Contraction { subject: Bf16, required: Forbidden, disposition: Unknown }`.
+
+That refusal is now pinned by `bf16_vertical::tests::the_request_boundary_stops_at_the_ledgers_undeclared_bf16_contraction_row`, so widening the ledger's BF16 rows turns the crate red rather than silently changing what this vertical means.
+
+**The three unreachable legs are still unreachable** — the conclusion survives; only its stated cause was retired.
