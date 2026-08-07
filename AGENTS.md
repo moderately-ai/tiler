@@ -79,6 +79,8 @@ Prefer primary specifications, papers, official documentation, and exact source 
 
 For inaccessible sources, record the exact reference, attempts, and decision it would inform. A visible evidence gap is better than an invented citation.
 
+Never circumvent an access control to retrieve a source. A CAPTCHA, bot wall, interstitial, login form, or paywall is the publisher refusing automated access, so do not drive a browser through it, retry under another user agent, or seek an evasion mirror — this holds even where we could read the work by other means. Plain fetches of public URLs stay fine. On hitting a barrier, stop on that source and hand it to Tom, who retrieves documents and resolves DOIs himself: give the full citation, the DOI or library identifier with your confidence in it, what blocked you and where, the claim that stays thinner without it, and what would change if it disagrees. Rank the list by how much conclusions actually depend on each. A circumvented citation is worse than an absent one.
+
 Turn important unknowns into bounded experiments with explicit inputs, outputs, metrics, unsupported cases, and stop conditions. Separate host-specific observations from portable guarantees.
 
 Research should end in a contract update, accepted decision, bounded experiment, or deferred question with a reconsideration trigger.
