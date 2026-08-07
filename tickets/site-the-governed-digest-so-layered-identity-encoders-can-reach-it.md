@@ -1,7 +1,7 @@
 ---
 id: site-the-governed-digest-so-layered-identity-encoders-can-reach-it
 title: Site the governed digest so layered identity encoders can reach it
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [decide-whether-executable-coverage-evidence-folds-as-a-digest, decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, implementation/ir, implementation/artifact, contra
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, decision, public-boundary, architecture]
-claimed_from: todo
-assignee: agent-digest-crate
-lease_expires_at: 1786066635
 ---
 ## User-visible outcome
 

@@ -6,7 +6,7 @@ title: "Retire the scalar-lowering provider seam"
 topics: ["extensions", "api", "capability", "governance"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "complete"
 applies_to: ["tiler.contract.operation-extensions", "tiler.contract.optimizer", "tiler.contract.correctness-and-testing"]
 evidence: ["tiler.research.extensions.backend-provider-composition"]
 depends_on: ["ADR-0044", "ADR-0072", "ADR-0078"]
@@ -93,7 +93,7 @@ Nothing here changes the index-access seam, the semantic registry seam, the refe
 
 ## Implementation boundary
 
-**This record retires a surface and removes none of it yet.** `implementation_status` is `not-started`, and the tree state below is read at `5811aada`. `LoweringFamily::ScalarLowering`, the `ScalarLoweringProvider` trait, `ScalarLoweringContext` and its five methods, `ScalarLoweringResults`, `LoweringImplementation::ScalarLowering`, `LoweringCapabilityRegistryBuilder::register_scalar_lowering`, `FrozenLoweringCapabilityRegistry::resolve_scalar_lowering`, `ResolvedLoweringCapability::scalar_provider`, and `legality`'s `RefinementError::WrongFamily` with its family guard all still compile and are still tested. Acceptance decides that they go; the removal ticket executes it as one change.
+**This record retired a surface, and the removal is executed.** `implementation_status` is `complete`: [`remove-the-scalar-lowering-family-from-the-compiler`](../../tickets/remove-the-scalar-lowering-family-from-the-compiler.md) landed the removal as one change on 2026-08-06 — `LoweringFamily::ScalarLowering`, the `ScalarLoweringProvider` trait, `ScalarLoweringContext` and its methods, `ScalarLoweringResults`, `LoweringImplementation::ScalarLowering`, `register_scalar_lowering`, `resolve_scalar_lowering`, `ResolvedLoweringCapability::scalar_provider`, and `legality`'s `RefinementError::WrongFamily` with its family guard are gone; the ten registry-mechanics tests are ported to `register_index_access` with their discriminating perturbations preserved, one test narrowed to the surviving family, and two genuinely scalar-specific tests deleted by name. The removal was identity-preserving as this record derived: index access is tag 1 before and after, and the whole workspace suite passed with no pin, golden, or frozen-registry encoding recomputed.
 
 **The removal costs nothing in identity, and that is checkable in one line.** `encode_capability_key` writes `key.family.tag()`, and `LoweringFamily::IndexAccess` is tag `1`; removing the second variant leaves every frozen registry that exists today encoding to the same `CanonicalLoweringRegistryIdentity` bytes before and after, and `LoweringFamily::key_token` keeps `"index-access"` so no governed capability key moves. No ledger, golden, or identity pin is recomputed by this decision, and none may be — a recomputed pin would be evidence the removal was executed wrongly.
 
