@@ -1,7 +1,7 @@
 ---
 id: close-the-four-licence-readings-tom-supplied-and-admit-graefe-and-ward
 title: Close the four licence readings Tom supplied and admit Graefe and Ward
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [vendor-the-tuning-loop-primary-sources-after-reading-each-licence, acquire-the-three-unreachable-adaptive-execution-sources]
@@ -9,9 +9,6 @@ scopes: [research/cost-model]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-licence
-lease_expires_at: 1786143861
 ---
 ## What happened
 
@@ -53,3 +50,35 @@ Report whether each holds against the primary. The one thing that would change a
 ## Closes when
 
 Four licence verdicts recorded with their operative clauses quoted; the awaiting-retrieval class emptied and **kept rather than deleted**, per its own stated reason that an emptied channel which stops being counted is one a re-opened request slips back into unnoticed; Graefe & Ward's two secondary characterisations each confirmed or refuted against the primary; and the vendoring ticket's population figures updated to match.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge `15342bdc`'s ancestor (worker commit `cb79e543`). 9 files, +554/−39, **zero binary blobs**. Delta is `docs/` and `tickets/` only, carrying the green gate from `56046f77`.
+
+**Digests re-verified before any terms were read.** The three with recorded hashes reproduced exactly; Graefe & Ward is a first acquisition at `c128847c…`. **Coordinator-confirmed on the merged tree**: `verify-sources.sh` reports `14 records verified (0 vendored, 4 local-only, 10 metadata-only, 0 pending-acquisition)` with `4 present and digest-verified, 0 absent`. The gitignored-bytes arrangement works end to end.
+
+### The audit corrected the coordinator twice on precision
+
+- **`pqo-vldb-1992`** — I called the notice "the same VLDB notice **verbatim**". The *notice* is; the *extraction* is not, being OCR-damaged in three tokens (`gmnttdpmvicfed`, `Very Lurge`, a broken `no- tice`). Operative words undamaged.
+- **`graefe-ward-sigmod-1989`** — the paper reads "Association **for** Computing Machinery" where I wrote "of", and its copyright line is OCR-damaged, extracting a bare `0` where `©` belongs. **My "© 1989 ACM" silently normalized damaged text**, which is the thing the record's own convention forbids; it is now recorded as a measurement rather than a quotation.
+- **A false Fact in this ticket**: "thirteen readings rather than nine" — both numbers wrong. The record had **ten** read and three unread, and Graefe & Ward sat outside the thirteen-row reachable population. Correct is **fourteen, up from ten**.
+
+All four verdicts otherwise agree: **not vendored**, fail-closed, on the non-commercial condition each notice carries.
+
+### Both second-hand characterisations turned out partly wrong
+
+- **"Left two all-important questions unanswered" — confirmed, and understated.** §7 lists both as open, defers the plan-selection criterion by name, and the experiment never exercised the decision procedure at all: *"we 'forced' the choose-plan operator to use a plan of our choice."*
+- **The minimal-decision-procedure attribution — right about the goal, wrong about the mechanism.** "Inverse" and cognates appear **zero times** in the 1989 paper; its method is repeated *forward* evaluation to find the break-even point. So 1994's rejection of "building inverses for all cost functions" refuses a stronger requirement than its predecessor ever made.
+- **Markl et al.'s "binary search will not work" — citation real, premise wrong.** The 1989 paper handles non-smoothness *before* searching, splitting the range at discontinuities. The real gap is that it never says how smoothness is determined — which is not what the quoted sentence names.
+
+**The finding that would have mattered is refuted.** The 1989 procedure is cheaper at start-up, but does **not** avoid carrying alternatives — the access module must contain support functions for all possible plans — and carries **no optimality guarantee**, which is 1994's contribution. Same retention cost without the justification, so the `AvailabilityPhase` conclusion is **strengthened**, not weakened.
+
+### The §4 finding: an under-citation, not an error
+
+Reddy & Haritsa §4 tests the three assumptions the PQO literature rests on — convexity, uniqueness, homogeneity — and reports "**none of the three assumptions hold true, even approximately**". That is the missing empirical half of the design record's Rule 2: if the winning region is non-convex and non-contiguous, interpolating between two measured winners is unsound *in general* rather than merely unproven. The record cited this paper only for the 68→7 geometry. It reaches Rule 2 independently and changes nothing, and is bounded to three commercial optimizers on TPC-H with the authors self-describing as "perforce speculative" — **nothing is established about Tiler's cost space**.
+
+### The manifest decision reversed itself, for a new reason
+
+`expected-sources.tsv` was built after all, at 14 rows, reversing the earlier no-manifest call. The deciding reason did not exist then: **a gitignored `local/` is invisible to `git status`, so it is exactly where a stray licence-restricted PDF hides.** `verify-sources.sh` was made to fail six ways — stray file, mutated bytes, truncated manifest, unknown classification, path escaping `local/`, missing row — and its summary always prints present-vs-absent counts so absent bytes are legitimate but never silent. `local-only` is defined as a **preservation class and explicitly not a licence verdict**; all fourteen rows remain non-redistributable.
+
+The four catalog rows this owes `docs/research/README.md` are filed separately.
