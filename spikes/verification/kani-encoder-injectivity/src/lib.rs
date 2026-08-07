@@ -574,9 +574,13 @@ mod proofs {
 
     /// Injective over `NumericalFacts` with a key of at most 4 bytes.
     ///
-    /// Outside the proof: every key of length 5 or more — which is every key the
-    /// workspace actually uses. See the README on why the bound does not reach
-    /// the real keys and what that costs the claim.
+    /// **Outside the proof: every key of length 5 or more, which is every key
+    /// the workspace actually constructs.** The `profile_key` literals in the
+    /// crates measure 30 to 43 bytes — `tiler.test.scalar-host-profile` at 30,
+    /// `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` at 43. So this harness
+    /// proves nothing about any key in use; it establishes how the cost scales
+    /// with the bound, and the scaling is what says the real lengths are out of
+    /// reach. See the research record for the measured curve.
     #[kani::proof]
     #[kani::unwind(25)]
     fn push_numerical_injective_key_len_4() {

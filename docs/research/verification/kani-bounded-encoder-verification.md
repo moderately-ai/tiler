@@ -135,6 +135,14 @@ Setting `#[kani::unwind(6)]` took the same harness to **1.44 s**. The bound is n
 
 That distinction is the difference between a bounded model check and a proof, and here it is checkable per harness by reading one line of output.
 
+## Harness ergonomics, which the ticket asks to be recorded
+
+**`Arbitrary` derivation was frictionless for every type in the identity vocabulary.** `#[cfg_attr(kani, derive(kani::Arbitrary))]` worked unmodified on plain enums, on enums with struct variants carrying another enum (`SubnormalMode`, `ExceptionalValueAssumption`), on multi-field structs (`SynchronizationSubject`, `ResourceRequirements`), on `u32` newtypes, and on `Option<T>` of a derived type. Nothing needed a hand-written implementation and nothing needed a bound narrowed to make the derive work.
+
+**`String` is the one type that has no `Arbitrary`, and that is the whole reason the `push_numerical` harnesses carry a bound.** A symbolic key has to be built by hand from a fixed-size symbolic byte array plus a symbolic length, which puts a `const N` in the harness and makes `N` the proof's domain boundary. Any encoder in the predecessor's string list inherits exactly this.
+
+**The workspace lint set is a projected friction, not an observed one.** This spike is its own workspace and inherits none of it. `[workspace.lints]` sets `missing_docs = "warn"`, `unsafe_code = "forbid"`, and clippy `all` + `pedantic` at warn, and `crates/tiler-ir` takes them via `[lints] workspace = true`. A `#[cfg(kani)]` harness living inside the crate would face all of it — `missing_docs` on any `pub` harness helper, and pedantic on the harness bodies — under `-D warnings` in `make lint`. Whether harness code should be `cfg`-excluded from those lints or written to satisfy them is a question for whoever lands the in-crate version, and it is not answered here because nothing in-crate compiles yet.
+
 ## What this would be worth if the primary path unblocked
 
 **Inference.** Three of the predecessor's named inexhaustible encoders move from "unverified framing argument" to complete proof, at a cost between 1 s and 72 s each. The 2^32 ordinals are the interesting part: they are not reachable by enumeration at any test budget, and they are reachable by CBMC essentially for free, because a SAT solver does not walk a domain.
