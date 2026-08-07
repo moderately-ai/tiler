@@ -44,8 +44,10 @@ use backend::{
 use image::{ScalarImageRefusal, encode};
 
 use tiler_artifact::program::{
-    ArtifactBuildError, ArtifactExecutionPolicy, DecodedArtifact, PayloadContent, PayloadMetadata,
-    PayloadPlatform, ProvenanceField, RepresentationKey, VerifiedArtifactProgram, decode_artifact,
+    ArtifactBuildError, ArtifactExecutionPolicy, CANONICAL_DIMENSIONS, DecodedArtifact,
+    DimensionBehaviour, DispositionView, NumericalDimension, NumericalPermission, PayloadContent,
+    PayloadMetadata, PayloadPlatform, PolicyLocus, ProvenanceField, RepresentationKey,
+    ScalarArithmeticSubject, VerifiedArtifactProgram, decode_artifact,
 };
 use tiler_build::{
     AcceptedArtifact, CompiledPayloads, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
@@ -86,6 +88,33 @@ fn semantic_program() -> SemanticProgram {
     let product = F32Multiply::apply(&mut builder, input, scale).expect("the product applies");
     let mapped = F32Add::apply(&mut builder, product, bias).expect("the bias applies");
     let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).expect("the sum");
+    builder
+        .output(
+            OutputKey::new("result").expect("the output key is valid"),
+            sum,
+        )
+        .expect("the output binds");
+    builder.build().expect("the program verifies")
+}
+
+/// Builds the bare reduction graph: one input and one strict serial sum.
+///
+/// [`semantic_program`] without the scaling multiply and the bias add, so the
+/// only occurrence a plan covers is the fold. The compiler's reduction
+/// capability row omits contraction — a strict serial sum's per-contributor step
+/// is `accumulator + contributor`, with no product for a fused multiply-add to
+/// act on — so the honoured contraction fact founds no position anywhere in this
+/// program and the packaged record carries no obligation naming it.
+fn bare_reduction_program() -> SemanticProgram {
+    let mut builder =
+        SemanticProgramBuilder::try_standard().expect("the semantic profile composes");
+    let input = builder
+        .input::<F32>(
+            InputKey::new("input").expect("the input key is valid"),
+            Shape::from_dims([2, 3]),
+        )
+        .expect("the input binds");
+    let sum = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(1)]).expect("the sum");
     builder
         .output(
             OutputKey::new("result").expect("the output key is valid"),
@@ -400,6 +429,136 @@ fn a_compile_time_workgroup_bound_mints_no_deferred_predicate() {
     let decoded = decode_artifact(&produced.bytes).expect("the produced envelope decodes");
     let variant = decoded.variants().next().expect("one packaged variant");
     assert_eq!(variant.deferred_predicates().len(), 0);
+}
+
+/// A dimension the target honours and no packaged route consumes says so.
+///
+/// **The one producer assertion the neutral artifact cannot re-check, reached
+/// from a real compilation for the first time.** A disposition is *derived* by
+/// the artifact builder from the obligations that arrive — nothing translates
+/// one — so `NotRequired` here means the compiler emitted no obligation for
+/// contraction at all. That state became reachable when the delivered-realization
+/// producer narrowed rows to occurrences whose operation can consume the
+/// dimension: before, every honoured dimension had a row at every covered
+/// occurrence and no compiled program could produce this record.
+///
+/// [`bare_reduction_program`] is that program. Contraction is still *asked of the
+/// target* — the region proposal carries all four realization dimensions on
+/// every candidate, and the profile honours them or the plan would not exist —
+/// and it is still *stated* in the record, whose resolution is asserted below
+/// beside the disposition. What is absent is any claim that a packaged route
+/// relies on the target at a position, because a strict serial sum has no
+/// product for a fused multiply-add to act on.
+///
+/// [`semantic_program`] is packaged beside it through the identical backend,
+/// profile, and contract and comes back `Required`, so the difference is the
+/// program's operations rather than the translation, the target, or the
+/// dimension.
+#[test]
+fn an_unconsumed_honoured_dimension_is_packaged_as_not_required() {
+    let semantic = bare_reduction_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let produced = sound(&semantic, plan);
+    let decoded = decode_artifact(&produced.bytes).expect("the produced envelope decodes");
+
+    let subject = ScalarArithmeticSubject::f32().identity();
+    let delivered = decoded
+        .delivered_realization()
+        .scalar_arithmetic(&subject)
+        .expect("the packaged f32 contract");
+
+    // Every dimension, so a count cannot hide a dimension that moved arms.
+    let mut required = Vec::new();
+    let mut not_required = Vec::new();
+    for dimension in CANONICAL_DIMENSIONS {
+        match delivered.assessment(dimension) {
+            DispositionView::Required(obligations) => {
+                assert!(
+                    !obligations.is_empty(),
+                    "a `Required` disposition names a non-empty range",
+                );
+                required.push((dimension, obligations.len()));
+            }
+            DispositionView::NotRequired => not_required.push(dimension),
+        }
+    }
+    // The direction that must never be reached: the fold reads operands, produces
+    // results, and regroups its contributor sequence, so a `NotRequired` on any
+    // of the three would be the artifact asserting that no packaged route needs
+    // the target to honour a freedom this program genuinely exercises.
+    for dimension in [
+        NumericalDimension::InputSubnormals,
+        NumericalDimension::ResultSubnormals,
+        NumericalDimension::Reassociation,
+    ] {
+        assert!(
+            !not_required.contains(&dimension),
+            "the packaged fold consumes {dimension}, so `NotRequired` here is a \
+             false producer assertion the neutral artifact cannot re-check",
+        );
+    }
+    assert_eq!(
+        required,
+        [
+            (NumericalDimension::InputSubnormals, 1),
+            (NumericalDimension::ResultSubnormals, 1),
+            (NumericalDimension::Reassociation, 1),
+        ],
+        "one obligation each, at the one occurrence this program packages",
+    );
+    assert_eq!(
+        not_required.len(),
+        8,
+        "eleven dimensions, three of them required by the one covered fold",
+    );
+    assert!(
+        not_required.contains(&NumericalDimension::Contraction),
+        "the honoured contraction fact founds no position in this program, so \
+         the derived disposition is the `NotRequired` assertion: {not_required:?}",
+    );
+
+    // The disposition is not a silence about the contract. The record still
+    // states what contraction resolves to for this subject; what it withholds is
+    // a target fact nothing packaged relies on.
+    assert_eq!(
+        delivered.resolution(NumericalDimension::Contraction),
+        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+        "the strict contract's own resolution is carried whether or not a route \
+         requires the dimension",
+    );
+    let DispositionView::Required(obligations) =
+        delivered.assessment(NumericalDimension::Reassociation)
+    else {
+        panic!("the fold's regrouping is required by the packaged route");
+    };
+    assert_eq!(
+        obligations[0].locus().locus(),
+        PolicyLocus::Accumulator,
+        "a fold's regrouping is a property of its accumulator",
+    );
+
+    // The same backend, profile, and contract over a program whose pointwise
+    // multiply and add can fuse.
+    let consuming = semantic_program();
+    let consuming_compilation = scalar_host_compilation(&consuming);
+    let consuming_plan = consuming_compilation.selected().expect("one selected plan");
+    let consuming_produced = sound(&consuming, consuming_plan);
+    let consuming_decoded =
+        decode_artifact(&consuming_produced.bytes).expect("the produced envelope decodes");
+    let DispositionView::Required(contraction) = consuming_decoded
+        .delivered_realization()
+        .scalar_arithmetic(&subject)
+        .expect("the packaged f32 contract")
+        .assessment(NumericalDimension::Contraction)
+    else {
+        panic!("the multiply and the add each found a contraction position");
+    };
+    assert_eq!(
+        contraction.len(),
+        2,
+        "the two pointwise arithmetic occurrences, and not the fold",
+    );
 }
 
 // -------------------------------------------------------------------------

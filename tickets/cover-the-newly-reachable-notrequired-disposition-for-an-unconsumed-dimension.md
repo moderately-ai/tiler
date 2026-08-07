@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [derive-per-locus-numerical-obligations, wire-the-delivered-realization-record-into-the-artifact]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, fail-closed, test-coverage]
@@ -32,6 +32,34 @@ lease_expires_at: 1786115582
 ## Explicit non-goals
 
 Not a revert of the narrowing — it is correct and forced. Not a change to the locus derivation, the strictness rule, or the founded-locus refusal, all of which landed with their own evidence.
+
+## Worker record, 2026-08-07
+
+**Fact — the program is the bare reduction, and contraction is the dimension.** `input: f32[4, 3]` into one `tiler::strict-serial-sum-f32@1` over axis 1, with no pointwise multiply and no add — `session::tests::bare_reduction_program` and its `[2, 3]` sibling `custom_backend::bare_reduction_program`. The dimension is unconsumed because `policy::operation_capabilities`' `REDUCTION` row omits contraction: a strict serial sum's per-contributor step is `accumulator + contributor`, so there is no product for ADR 0015's fused multiply-add permission to act on. It is the only honoured dimension for which a single-family program can do this — `physical::region_proposal` asks every candidate about exactly `{InputSubnormals, ResultSubnormals, Contraction, Reassociation}`, and the other three are consumed by every arithmetic family this build can plan alone.
+
+**Fact — the dimension is honoured, not merely unasked, and both halves are asserted.** `session::tests::an_honoured_dimension_no_covered_occurrence_consumes_carries_no_row` reads the *retained plan's own* honoured facts and pins the set to those four by name, then reads the delivered-realization view and counts 1 covered occurrence and 3 rows with contraction absent. Either assertion alone would be consistent with a defect: a producer that had dropped the requirement fails the first, and one still emitting an unfounded `Computation` row fails the second. `semantic_program` is compiled beside it under the identical contract and profile and yields 2 contraction rows, so the difference is the program.
+
+**Fact — the artifact derives `NotRequired`, through the non-Metal producer.** `custom_backend::an_unconsumed_honoured_dimension_is_packaged_as_not_required` packages the reduction program through `assemble_plan_artifact`, encodes, decodes, and walks all eleven dimensions: 3 `Required` with one obligation each (`InputSubnormals` at `Input`, `ResultSubnormals` at `Result`, `Reassociation` at `Accumulator`), 8 `NotRequired`, contraction among them. The record still *states* contraction's resolution as `Transform(Forbidden)`, so the disposition is a claim about reliance rather than a silence about the contract. The same backend over `semantic_program` returns `Required` with 2 obligations.
+
+**The safety direction is now a check with an independent oracle.** `policy::tests::an_arithmetic_family_claims_the_whole_arithmetic_core` reads `governed::governed_index_access_capabilities`' `emitted` declaration — the scalar operations each family's *lowering* may apply — and requires that a family emitting any rounding binary32 operation (`multiply-f32`, `add-f32`, `divide-f32`, `exp-f32`, `rsqrt-f32`) consume all six dimensions whose freedoms act on rounding itself, and that a family emitting none consume nothing at all. That declaration is a different statement written for a different purpose and is independently held honest by `legality::refine_index_region`'s containment proof, so a row narrowed to make an obligation disappear has to contradict what the lowering emits. `rounds_binary32` is total over the emitted keys and panics on an unclassified one rather than answering `false`. Populations: 6 rounding families, 4 exact, and the three with no governed lowering — `tiler::softmax-f32@1`, `tiler::assemble-strict-affine@1`, `tiler::quantize-strict-affine@1` — named rather than skipped, their rows pinned by name elsewhere. `Contraction` and `Permutation` stay outside the core because they depend on an operation's structure rather than its rounding; `the_fold_bearing_families_are_exactly_the_reducing_ones` pins the second.
+
+**Watched failing.** Removing `NumericalDimension::Reassociation` from `REDUCTION` — a genuinely consumed dimension made to report unconsumed — produced, verbatim:
+
+```text
+thread 'policy::tests::an_arithmetic_family_claims_the_whole_arithmetic_core' panicked at crates/tiler-compiler/src/policy.rs:1687:21:
+tiler::strict-serial-sum-f32@1 emits a rounding binary32 operation and must consume numerics.reassociation: a row missing it now yields no obligation, and the artifact asserts `NotRequired` for a dimension the route genuinely relies on
+```
+
+```text
+thread 'an_unconsumed_honoured_dimension_is_packaged_as_not_required' panicked at crates/tiler-build/tests/custom_backend/main.rs:495:9:
+the packaged fold consumes numerics.reassociation, so `NotRequired` here is a false producer assertion the neutral artifact cannot re-check
+```
+
+Restored and re-run green: `2 tests run: 2 passed, 740 skipped` for the compiler pair and `1 test run: 1 passed, 87 skipped` for the artifact case.
+
+**No identity moved.** No pinned digest, golden, or artifact identity changed: the delta is three tests, one `#[cfg(test)]` accessor, and this record. `metal_plan.rs` still pins artifact identity `23c46a19…`, cache subject `e89c4d82…`, and 64,542 fixed content bytes, and `make full` gates green on them.
+
+**Scope added.** `implementation/build`, for `crates/tiler-build/tests/custom_backend/main.rs`. The artifact's disposition is *derived* by `tiler-artifact`'s builder from the obligations that arrive and `tiler-compiler` has no artifact edge, so no compiler-side test can carry a program to a packaged artifact; `custom_backend` is the non-Metal producer that already does. `tkt why` reports no conflict with either live sibling claim.
 
 ## Graph maintenance
 

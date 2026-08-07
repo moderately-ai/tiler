@@ -193,6 +193,20 @@ impl GovernedIndexAccess {
         &self.operation
     }
 
+    /// Returns the scalar operations this capability's lowering may emit.
+    ///
+    /// The union over shapes each row above declares, which
+    /// `crate::legality::refine_index_region` checks the emitted region against
+    /// by containment. Exposed under test so
+    /// `crate::policy`'s `an_arithmetic_family_claims_the_whole_arithmetic_core`
+    /// can read what a family's realization actually applies rather than
+    /// restating `crate::policy::operation_capabilities`' own rows back at
+    /// themselves.
+    #[cfg(test)]
+    pub(crate) fn emitted(&self) -> &[ScalarOpKey] {
+        &self.emitted
+    }
+
     /// Registers this capability on a composed builder.
     ///
     /// # Errors
