@@ -1,7 +1,7 @@
 ---
 id: bound-the-exact-rational-gcd-cost-in-certified-enclosures
 title: Bound the exact-rational gcd cost in certified enclosures
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [cut-the-decoder-layer-reference-evaluation-s-suite-wall-clock]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, numerics]
-claimed_from: todo
-assignee: agent-gcd
-lease_expires_at: 1786125787
 ---
 ## What was found, and where
 
@@ -114,3 +111,21 @@ cargo nextest run -p tiler-reference --test gcd_census_temp --no-capture
 ```
 
 The counters are a property of the operand population rather than of the implementation, so they read the same before and after the change — which is itself the check that the change did not alter what the workload computes.
+
+## Integrated 2026-08-07
+
+Merged at `591e5c5d`; the composed tree gates green with `make full` exit 0.
+
+**The bound is counted, not timed, and that was the right call.** 62.9 % of Stein iterations removed in the certified-exponential workload and 100 % in the reciprocal-square-root one, each replaced by one `trailing_zeros` and two shifts. An iteration count survives moving machines; a wall-clock number does not, and this is a coordination host with other agents building. The supporting timings (2.29× and 6.25×) are reported as such rather than as the result, and the worker states plainly that a clean measurement on the idle M3 Pro is still owed and that the counted bound does not depend on it.
+
+**Measured before built.** The census ran first, on the exact operands, and answered the question the ticket asked. It also **rejected two of the ticket's own three hypotheses on the measurement**: the symmetric dyadic-magnitude case at 480 calls and 0.066 % of iterations, and the word-sized-operand path at 0.51 % — each a branch paid on every call to remove work that is not there. Hypothesis 2 now attacks a 36.6 % residue rather than the whole profile and should be re-costed against that.
+
+**The correctness trap is handled and stated.** Both components are exact multiples of `2^exponent` — that is what makes it their common divisor — so the shift is the exact quotient *on the signed side too*, where `>>` would otherwise round toward negative infinity and disagree with the division it replaces. `reduction_divisor` is documented as identical to `Integer::gcd` at every input including the zero magnitude.
+
+**Identity proved rather than asserted:** a 664-point dump byte-identical at `sha256 d435436d…`, covering all 401 certified-exponential bit patterns, all 256 enclosure endpoints as exact rationals, and seven exact endpoint pairs. The change cannot move a value by construction — same divisor, same integer pair. Metal pins read at base and unmoved.
+
+**A finding from breaking things deliberately.** Two zero-handling rules turn out to be **mutually redundant**: breaking either alone fails nothing, and only breaking both fails. The worker's first reading had called the decoder's second zero rule dead code; tracing proved that wrong, so it left the site alone and the test comment records the redundancy rather than claiming the assertion pins one site. That is the right outcome — a deletion on the first reading would have removed a live rule.
+
+**No public surface moved.** Both new functions are module-private.
+
+**Released:** [`guard-the-dyadic-reduction-fast-path-against-silent-removal`](guard-the-dyadic-reduction-fast-path-against-silent-removal.md). The improvement is value-preserving by construction, so deleting the fast path passes every test; the census instrumentation is deliberately uncommitted. The worker identified that gap in its own work and reported it, having considered and rejected a runtime-blowup test and a timing assertion with reasons that stand.
