@@ -1,7 +1,7 @@
 ---
 id: pin-ticket-source-citations-against-the-tree-they-name
 title: Pin ticket source citations against the tree they name
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-pin-tick
-lease_expires_at: 1786142810
 ---
 ## Why this exists
 
@@ -75,3 +72,39 @@ The anchor is the literal text of that line, so the path resolves, the anchor is
 **Known gaps, stated rather than hidden.** Seven pinned citations use a short form whose basename is ambiguous (`lib.rs:34` has 42 candidates) and are counted, not resolved — guessing a path would invent a failure or hide one. Three cite dependency sources pinned by version (`objc2-metal-0.3.2/src/generated/MTLDevice.rs:238`) which no working-tree check can decide. Markdown link targets are not checked at all; AGENTS.md states that documentation links have no automated validator, and changing that is a separate decision.
 
 **Not done, and it needs Tom.** AGENTS.md's delta-rule paragraph tells a ticket-only change to "rerun `tkt lint`" and does not name `make citations`. Editing AGENTS.md is this ticket's explicit non-goal, so the sentence is unchanged and the coupling currently lives only in the `Makefile` comment. That paragraph should name the target.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`66db2178`** (worker commit `7e3a7367`). `check-citations.sh` at the repository root beside `deps.sh`, wired as `make citations` and as `make check`'s first prerequisite. `make full` exit 0 on the merged tree; 3,098 workspace tests, 1,080 release tests, shellcheck clean over both scripts. Runs in **0.46 s**.
+
+**The tree passes**: 269 pinned citations across 236 open ticket and comment files, 1,248 files read, 1,012 skipped as terminal.
+
+### The boundary is demonstrated by a permanent fixture, not asserted
+
+This ticket now carries a citation that **resolves and is false**: it claims `make check` runs the citation check *last, after the test target*, anchored on `` `Makefile "check: citations fmt build lint test"` ``. The anchor is verbatim; the claim is wrong — `citations` is prerequisite **#1**, and `make -n check` prints it first. **The check passes it.** Both the script header and the ticket say not to "fix" the sentence: it is the only standing evidence of what the check cannot do, and repairing it would delete the demonstration.
+
+### Design decisions worth knowing
+
+**A citation is a path *plus a pin*.** Bare paths go unchecked — 394 of them — because two legitimate populations live there: files a ticket asks someone to create, and files whose deletion a ticket records. `scripts/check_workspace.py`, deleted at `e197176f`, is still named accurately in ten tickets. Checking bare paths would have produced exactly the unsatisfiable condition this ticket was written to avoid.
+
+**Retired citations in dated corrections are handled by convention, not exemption** — write the retired line in prose, or as the bare `:789-810` suffix the house style already uses. Exercised the hard way: the worker's own first draft re-pinned a dead path, the check failed it, and rewriting the number into prose satisfied it without weakening anything.
+
+**Terminal status is read from `ticketsplease.toml`'s `category = "terminal"`** rather than hardcoding `done`/`closed`, and comment files inherit their parent's status.
+
+### Six failure modes, each perturbed separately
+
+Bad path; line past EOF; absent anchor; descending range; a citation **wrapped across two lines of prose** (parsed and failed, where a `grep` for the same span returns 0); and a zero-citation corpus, which reports `parsed ZERO citations…the matcher has stopped reaching its subject` and exits 1.
+
+### It found a live defect on its first real run
+
+`audit-dead-code-admissions-after-public-boundary-promotions` cited a file **deleted at `2d2a7bd7`**. Re-reading refuted two further Facts in the same paragraph: it claimed twelve admissions, its own log claimed eight, the tree has **seven**. Its reproduce command was itself line-oriented — `grep -B2 dead_code | grep '#!\[allow('` only sees a `dead_code` within two lines of its opening attribute — so its count was right by luck.
+
+### Two coordinator errors it corrected
+
+The brief's "**200–400 lines**" drift range was wrong in both directions: four citations moved forward by **+71 to +371**, and a fifth moved **backwards by 171**. `AGENTS.md` now states that drift is not one-directional, because a reader assuming citations only slide downward still lands in the wrong place.
+
+And `AGENTS.md`'s delta-rule paragraph named only `tkt lint` for a carried gate. Since `tickets/` is not in the gated set, the citation check would have been skipped by **exactly the deltas it exists to police**. It now names `make citations` with that reasoning stated.
+
+### Left as the worker placed it
+
+`check-citations.sh` sits at the repository root rather than under `scripts/`, deliberately: `e197176f` removed the Python gate and reintroducing that directory shape was avoided. Its `implementation/workspace` glob was added in the same commit, which is why `tkt guard` warned against the base config — resolved on merge.

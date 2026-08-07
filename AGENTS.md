@@ -19,7 +19,7 @@ Use grep, symbol search, `git log -S`, summaries, and excerpts to **locate** evi
 
 ### A ticket's stated Facts are stale until re-read at your own base
 
-Tickets are written against a tree that has since moved. Assume every Fact, count, and line number in one is wrong until you have re-read its source in full at the commit you are working from. On 2026-08-07 every ticket audited carried at least one false Fact; one had every line citation stale by 200–400 lines, and several would have led a worker to replace a false claim with a different false claim.
+Tickets are written against a tree that has since moved. Assume every Fact, count, and line number in one is wrong until you have re-read its source in full at the commit you are working from. On 2026-08-07 every ticket audited carried at least one false Fact; one had every line citation stale, and several would have led a worker to replace a false claim with a different false claim. Drift is not one-directional: on that ticket four citations moved forward by +71 to +371 lines and a fifth moved **backwards** by 171, so a reader who assumes citations only slide downward will still land in the wrong place.
 
 So a worker's **first** deliverable, before any edit, is a per-Fact verdict — verified, false, or imprecise — each with the file read and the evidence. Repair the ticket and report the repair; never work around a false Fact silently, and never restate one in new words. If repairing it changes what the ticket is for, stop and say so.
 
@@ -216,7 +216,7 @@ rustfmt.toml
 deps.sh
 ```
 
-Record the carry reasoning and rerun `tkt lint`; when uncertain, run `make full`.
+Record the carry reasoning and rerun `tkt lint` **and `make citations`**; when uncertain, run `make full`. Naming the citation check here is load-bearing: `tickets/` is not in the list above, so a ticket-only delta carries the gate, and a check named only in the `Makefile` would be skipped by exactly the deltas it exists to police.
 
 For redirected gates, inspect terminal log lines and use commit-unique filenames. Compound shell status and shared logs can misreport results.
 
