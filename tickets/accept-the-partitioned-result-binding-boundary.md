@@ -1,7 +1,7 @@
 ---
 id: accept-the-partitioned-result-binding-boundary
 title: Accept the partitioned result-binding boundary
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [bind-a-partitioned-output-through-index-refinement, accept-the-partitioned-write-ownership-proof-boundary]
@@ -35,3 +35,32 @@ No identity-domain step. `ResultBinding` is encoded into `IndexRefinementExecuta
 ## Decision
 
 _Parked for Tom._
+
+## Accepted — 2026-08-07
+
+**Tom accepted this boundary on 2026-08-07** in the coordination session, witnessed first-hand by the coordinator, without exclusion, under the standing condition that any deferred work sits on the board rather than in prose. That condition is discharged below against the board rather than asserted.
+
+### What is accepted
+
+**`ResultBinding` is one binding per output root, not one per semantic result.** The struct, its four fields, and its four accessors are byte-for-byte unchanged; what moved is the contract they state, which under ADR 0075 is a public boundary exactly as a signature is. A result written whole keeps exactly one binding — every realization the closed law vocabulary produces today. A partitioned result carries one binding per member, all sharing `result()` and `output_tensor()`, each with its own `write_access()` and `written_value()`, and a consumer needing one answer per result groups by `ResultBinding::result`.
+
+**`write_access` is accordingly no longer always the whole output's write** — total over the whole output at one binding, total over that member's declared partition at several, with the region's own `WriteOwnershipProofView` saying which and refinement admitting no root carrying neither.
+
+**`IndexRefinementVerificationError::ResultArity::region_outputs` counts distinct output tensors, not roots.** Its value is unchanged for every region that ever produced it.
+
+### The choice accepted, and the one rejected
+
+One binding per root rather than one binding carrying a set of accesses. The set shape is the more faithful description of what the region holds and was the named alternative; it was rejected **on evidence about readers rather than on taste** — no consumer anywhere in the workspace reads a `ResultBinding` field, the two `result_bindings()` methods are pass-throughs, and every other site is a test asserting `len() == 1`. The set shape would have changed a public type to serve no reader, while the repeat shape is what `bind_operands` already does for the identical many-to-one question on the operand side. Naming a single member was never available: a receipt naming one of several roots is a claim about a write the region does not make alone.
+
+Distinct output tensors as the arity population is accepted with it — two roots writing two genuinely different tensors are still two outputs and still disagree with one result; only roots over *one* tensor group.
+
+### Why no identity moved, which is load-bearing rather than incidental
+
+`ResultBinding` is encoded into `IndexRefinementExecutableCoverageIdentity`, which reaches `CoveredOccurrence`, kernel-program identity, and the artifact stage key. One record per root keeps that grammar self-delimiting under the existing record count, so a one-root result writes exactly the bytes it always wrote. The whole workspace suite was green with no pin recomputed, including the pinned explain digests, the Metal shader golden identity pairs, and the artifact/kernel-program stage-key agreement test. Three deliberate perturbations were each watched failing and reverted.
+
+No new receipt-side population limit was needed: the binding count is the region's root count, bounded by the region's own `MAX_OUTPUT_ROOTS`, unlike operand bindings whose alias expansion can exceed the region's ceiling.
+
+### Released work, verified on the board
+
+- [`realign-the-compiler-refinement-error-mirror-with-the-grouped-result-arity`](realign-the-compiler-refinement-error-mirror-with-the-grouped-result-arity.md) — the compiler-side mirror whose doc comment still described the old count. Reads `done`; it was serialized behind a live `implementation/compiler` claim when this node was filed and has since landed.
+- [`realign-the-result-side-display-strings-across-both-refinement-error-mirrors`](realign-the-result-side-display-strings-across-both-refinement-error-mirrors.md) — reads `todo` and remains open. Confirmed against the board at acceptance rather than assumed.
