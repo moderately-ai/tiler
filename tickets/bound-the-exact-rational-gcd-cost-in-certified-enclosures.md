@@ -1,7 +1,7 @@
 ---
 id: bound-the-exact-rational-gcd-cost-in-certified-enclosures
 title: Bound the exact-rational gcd cost in certified enclosures
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [cut-the-decoder-layer-reference-evaluation-s-suite-wall-clock]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: []
 paths: []
 tags: [performance, numerics]
+claimed_from: todo
+assignee: agent-gcd
+lease_expires_at: 1786125787
 ---
 ## What was found, and where
 

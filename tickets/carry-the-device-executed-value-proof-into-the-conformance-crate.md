@@ -1,7 +1,7 @@
 ---
 id: carry-the-device-executed-value-proof-into-the-conformance-crate
 title: Carry the device-executed value proof into the conformance crate
-status: todo
+status: in-progress
 priority: p1
 dependencies: [conform-the-bf16-vertical-end-to-end]
 related: [admit-the-conformance-crate-to-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access, publish-an-l3-contraction-cell-through-the-accepted-route, integrate-the-contraction-vertical-into-the-runtime, survey-what-belongs-in-the-conformance-crate]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance, implementation/runtime, implementation/work
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, conformance, runtime, migration]
+claimed_from: todo
+assignee: agent-value-proof
+lease_expires_at: 1786125786
 ---
 ## User-visible outcome
 

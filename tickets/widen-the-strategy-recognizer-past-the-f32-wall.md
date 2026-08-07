@@ -1,7 +1,7 @@
 ---
 id: widen-the-strategy-recognizer-past-the-f32-wall
 title: Widen the strategy recognizer past the f32 wall
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [conform-the-bf16-vertical-end-to-end, establish-bf16-optimizer-legality]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [bf16, dtype, blocker]
+claimed_from: todo
+assignee: agent-recognizer
+lease_expires_at: 1786125786
 ---
 ## The wall, and why it was unowned
 
