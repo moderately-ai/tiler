@@ -67,40 +67,45 @@ use tiler_ir::shape::Shape;
 /// **This ladder is not a sample; it is every program size the ordinary
 /// compilation path admits for this program family.** It is *not* the domain
 /// `DeterministicBudgets::governed`'s `semantic_operations` names. That budget
-/// is 62, and 62 is not reachable: a search bound below it stops this family
-/// first, and [`WALLS`] compiles at each point and records which bound refuses.
+/// is 62, and 62 is not reachable: a smaller bound stops this family first, and
+/// [`WALLS`] compiles at each point above and records which bound refuses.
 ///
 /// The derivation, measured rather than read off constants:
 ///
-/// - **2..=11 compiles.** Every point verifies, carries one coverage record per
+/// - **2..=32 compiles.** Every point verifies, carries one coverage record per
 ///   semantic operation, and retains a selected alternative.
-/// - **12..=62 refuses `NoFeasiblePlan`.** `region_expansions` (10,000) stops
-///   candidate growth before the whole-program region is reached, and every
-///   surviving singleton cover names an unimplemented region, so the portfolio
-///   is empty.
-/// - **63 refuses `BudgetExhausted`**, which is `semantic_operations = 62`
-///   itself — the only one of the two that is about program *size*.
+/// - **33..=62 refuses `BudgetExhausted`.** The recognized partition of a
+///   pointwise family is the whole program and nothing smaller is
+///   implementable, so the whole-program region is the only cover with a plan —
+///   and `region_members` (32) declares the largest region this profile forms.
+///   A thirty-three-operation chain needs a bigger one.
+/// - **63 refuses `BudgetExhausted`** on `semantic_operations = 62`, the one
+///   wall here that is about program size rather than region size.
 ///
-/// **Eleven was a wall on 2026-08-06 and is a ladder point now.** It refused
-/// `InvalidCompilerOutput` because the coverage-gap explain rule emitted one
-/// record per (cover, region) pair and cover enumeration reached about 2,300 of
-/// them against a single unimplemented singleton region, exhausting the explain
-/// writer's canonical-byte ceiling — a program-size limit no budget declared,
-/// filed and fixed as
-/// `refuse-nothing-legal-on-the-explain-detail-ceiling`. The rule now emits one
-/// record per unimplemented region carrying the count of covers it blocked, and
-/// the point this table was written to report is that the wall it removed was
-/// never about the program.
+/// **Twelve was a wall on 2026-08-06 and is a ladder point now, and so are the
+/// twenty after it.** 12..=62 refused `NoFeasiblePlan` because
+/// `region_expansions` (10,000) stopped candidate growth before the
+/// whole-program region was formed, leaving every surviving cover naming an
+/// unimplemented region. Growth reaches the whole-program set last, so a bound
+/// documented to cost an alternative cost the only plan;
+/// `region-expansion-exhaustion-loses-the-only-feasible-plan` made region
+/// formation retain *both* coverage extremes before growth starts, so the
+/// expansion bound now costs what it says it costs. The wall that remains is a
+/// different bound in a different class, and it is about how large a region may
+/// be rather than about where a search stopped.
 ///
-/// So the domain widened from seven points to ten, and it widened by three
-/// rather than by fifty-five because the budget that moved is not the budget
-/// that binds. Ten consecutive integers is what makes the second-difference fit
-/// in [`exact_quadratic`] a fit rather than an interpolation.
+/// So the domain widened from ten points to thirty-one, and it stopped at 32
+/// rather than 62 because the bound that binds now is `region_members`.
+/// Thirty-one consecutive integers is what makes the second-difference fit in
+/// [`exact_quadratic`] a fit rather than an interpolation.
 ///
 /// The generator emits one shared constant and a chain of multiplies, so the
 /// operation count is `1 + multiplies` and every integer in the domain is
 /// reachable.
-const OPERATIONS: &[usize] = &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const OPERATIONS: &[usize] = &[
+    2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+    28, 29, 30, 31, 32,
+];
 
 /// One refusal above the ladder, and the class that must raise it.
 struct Wall {
@@ -108,6 +113,15 @@ struct Wall {
     operations: usize,
     /// The class the compiler must refuse with.
     class: CompileFailureClass,
+    /// Whether the refusal is raised after a per-target trace exists.
+    ///
+    /// Every wall now carries one class, so the class alone no longer separates
+    /// them and this is what does. A refusal raised while planning one target
+    /// seals that target's trace and hands it to the caller; one raised while
+    /// verifying the request refuses before any target-qualified trace exists.
+    /// The two are different phases and a wall that moved between them would
+    /// otherwise pass unnoticed.
+    reaches_planning: bool,
     /// What that refusal is, in the terms of the bound that produces it.
     why: &'static str,
 }
@@ -127,35 +141,45 @@ struct Wall {
 /// a search budget widened, a program budget moved — fail loudly rather than
 /// pass as "something refused".
 ///
-/// **This table has fired twice, and both firings are the reason to keep it.**
-/// The 2026-08-06 run reported a probe that compiled where the governed budget
-/// was expected to refuse, which is what replaced its single-point predecessor.
-/// The run below it reported the same arm again at eleven operations, where an
-/// explain-ceiling entry stood: `refuse-nothing-legal-on-the-explain-detail-ceiling`
-/// removed the per-cover restatement that exhausted it, the probe compiled, and
-/// the row moved into [`OPERATIONS`]. An entry leaving this table because the
-/// defect behind it was fixed is the outcome it exists to produce.
+/// **This table has fired three times, and every firing is the reason to keep
+/// it.** The 2026-08-06 run reported a probe that compiled where the governed
+/// budget was expected to refuse, which is what replaced its single-point
+/// predecessor. The run below it reported the same arm at eleven operations,
+/// where an explain-ceiling entry stood:
+/// `refuse-nothing-legal-on-the-explain-detail-ceiling` removed the per-cover
+/// restatement that exhausted it and the row moved into [`OPERATIONS`]. The run
+/// below *that* reported both arms at once —
+/// `region-expansion-exhaustion-loses-the-only-feasible-plan` made the twelfth
+/// point compile *and* changed the sixty-second point's class from
+/// `NoFeasiblePlan` to `BudgetExhausted`, so the table said which of the two had
+/// happened at each point rather than that "something moved". An entry leaving
+/// this table because the defect behind it was fixed is the outcome it exists to
+/// produce.
 ///
 /// 62 is probed explicitly because it is the governed budget's own maximum: the
 /// largest program the profile admits by size is measured to refuse for a reason
-/// that has nothing to do with size.
+/// that has nothing to do with `semantic_operations`.
 const WALLS: &[Wall] = &[
     Wall {
-        operations: 12,
-        class: CompileFailureClass::NoFeasiblePlan,
-        why: "region_expansions (10,000) stops growth before the whole-program candidate, leaving \
-              a portfolio whose every cover names an unimplemented region",
+        operations: 33,
+        class: CompileFailureClass::BudgetExhausted,
+        reaches_planning: true,
+        why: "region_members (32) is the largest region this profile forms, and a pointwise \
+              family's only implementable cover is its whole-program region",
     },
     Wall {
         operations: 62,
-        class: CompileFailureClass::NoFeasiblePlan,
-        why: "the governed semantic_operations maximum, which the same expansion bound refuses \
-              long before its own budget would",
+        class: CompileFailureClass::BudgetExhausted,
+        reaches_planning: true,
+        why: "the governed semantic_operations maximum, which the region-size bound refuses long \
+              before its own budget would",
     },
     Wall {
         operations: 63,
         class: CompileFailureClass::BudgetExhausted,
-        why: "semantic_operations = 62, the one wall here that is about program size",
+        reaches_planning: false,
+        why: "semantic_operations = 62, the one wall here that is about program size and the one \
+              that refuses before any target-qualified trace exists",
     },
 ];
 
@@ -214,13 +238,16 @@ enum Perturbation {
     Fit,
     /// Expect the wrong class at the first wall, and watch the table refuse.
     ///
-    /// [`WALLS`]'s other arm — a probe that compiles where a refusal was
-    /// expected — has fired for real: it is what the 2026-08-06 run reported
-    /// when `semantic_operations` moved from 8 to 62, and it is why this table
-    /// exists. The class comparison is the arm that has never fired, so it is
-    /// the one that needs watching. Naming the wrong expected class leaves the
-    /// compiler untouched and moves only the harness's expectation, which is
-    /// what makes the refusal attributable to the comparison.
+    /// Both of [`WALLS`]'s arms have now fired for real. The compiled-where-a-
+    /// refusal-was-expected arm fired when `semantic_operations` moved from 8 to
+    /// 62, and again at eleven and twelve operations as two defects behind those
+    /// walls were fixed. The class comparison fired when
+    /// `region-expansion-exhaustion-loses-the-only-feasible-plan` moved the
+    /// sixty-two-operation refusal from `NoFeasiblePlan` to `BudgetExhausted`.
+    /// This mode keeps the second watchable between real firings: naming the
+    /// wrong expected class leaves the compiler untouched and moves only the
+    /// harness's expectation, which is what makes the refusal attributable to
+    /// the comparison.
     Wall,
 }
 
@@ -326,25 +353,42 @@ fn probe_the_walls(declaration: &BoundMetalCompileDeclaration, perturbation: Per
         // The perturbation moves only this harness's expectation, so a refusal
         // it produces is attributable to the comparison and to nothing else.
         let expected = if perturbation == Perturbation::Wall && index == 0 {
-            CompileFailureClass::BudgetExhausted
+            CompileFailureClass::NoFeasiblePlan
         } else {
             wall.class
         };
         let program = chain_program(wall.operations);
         match compile_once(&program, declaration) {
-            Err(refusal) if refusal.class == Some(expected) => {
+            Err(refusal)
+                if refusal.class == Some(expected) && refusal.traced == wall.reaches_planning =>
+            {
                 println!(
-                    "#   {} operations: CONFIRMED {expected:?} — {} [{}]",
-                    wall.operations, wall.why, refusal.summary
+                    "#   {} operations: CONFIRMED {expected:?} {} planning — {} [{}]",
+                    wall.operations,
+                    if wall.reaches_planning {
+                        "after"
+                    } else {
+                        "before"
+                    },
+                    wall.why,
+                    refusal.summary
                 );
             }
             Err(refusal) => {
                 eprintln!(
-                    "THE WALL CHANGED KIND at {} operations: this table expects {expected:?} and \
-                     the compiler refused with {}. The bound that binds here is no longer the one \
-                     the ladder's derivation names, so the recorded domain and every figure \
-                     derived from it are stale. Re-derive WALLS and rerun.",
-                    wall.operations, refusal.summary
+                    "THE WALL CHANGED KIND at {} operations: this table expects {expected:?} \
+                     raised {} planning, and the compiler refused with {} (trace {}). The bound \
+                     that binds here is no longer the one the ladder's derivation names, so the \
+                     recorded domain and every figure derived from it are stale. Re-derive WALLS \
+                     and rerun.",
+                    wall.operations,
+                    if wall.reaches_planning {
+                        "after"
+                    } else {
+                        "before"
+                    },
+                    refusal.summary,
+                    if refusal.traced { "present" } else { "absent" },
                 );
                 held = false;
             }
@@ -472,6 +516,13 @@ struct Compiled {
 struct Refusal {
     /// The compiler's classification, absent for a harness-raised refusal.
     class: Option<CompileFailureClass>,
+    /// Whether a sealed per-target trace travelled with the refusal.
+    ///
+    /// Which phase refused, read structurally: a request-verification refusal
+    /// precedes the trace boundary and carries none, and a planning refusal
+    /// carries the whole trace. [`WALLS`] compares it because its three entries
+    /// now share one class.
+    traced: bool,
     /// One short line: which boundary refused, with what class and trace size.
     summary: String,
     /// The summary and, where one exists, the complete rendered explain trace.
@@ -483,6 +534,7 @@ impl Refusal {
     fn harness(diagnosis: &str) -> Self {
         Self {
             class: None,
+            traced: false,
             summary: diagnosis.to_owned(),
             diagnosis: diagnosis.to_owned(),
         }
@@ -494,11 +546,13 @@ impl Refusal {
         summary: String,
         trace: Option<ExplainReport<'_>>,
     ) -> Self {
+        let traced = trace.is_some();
         let rendered = trace
             .map(|report| format!(" | {}", report.render().replace(['\n', '\t'], " ")))
             .unwrap_or_default();
         Self {
             class: Some(class),
+            traced,
             diagnosis: format!("{summary}{rendered}"),
             summary,
         }
@@ -650,14 +704,18 @@ fn chain_program(operations: usize) -> SemanticProgram {
 /// same run that uses this program also compiles it under [`probe_the_walls`]
 /// and requires the refusal, so this mode cannot silently stop testing what it
 /// says it tests: the wall would fail first, loudly, and say which one moved.
-/// The `NoFeasiblePlan` wall rather than the `BudgetExhausted` one because an
-/// infeasible target refuses a *verified* program, which is the arm this mode
-/// watches, where a budget refusal never reaches planning at all.
+///
+/// A wall that *reaches planning* rather than the `semantic_operations` one,
+/// because the arm this mode watches is a compilation that verified, planned,
+/// and reached no kernel program — where the program-size budget refuses the
+/// request before any target compiles at all. The class stopped selecting for
+/// that when the expansion defect was fixed and all three walls became
+/// `BudgetExhausted`; the phase never stopped selecting for it.
 fn unplannable_program() -> SemanticProgram {
     let wall = WALLS
         .iter()
-        .find(|wall| wall.class == CompileFailureClass::NoFeasiblePlan)
-        .expect("the wall table names a point no plan covers");
+        .find(|wall| wall.reaches_planning)
+        .expect("the wall table names a point that plans and covers nothing");
     chain_program(wall.operations)
 }
 
@@ -777,34 +835,43 @@ fn summarize(rows: &[Row]) -> bool {
         );
     }
 
-    let refusal = first_refusing_operation_count(program_fit);
+    print_refusal_point(program_fit, rows[0].operations, last.operations);
+    true
+}
+
+/// Writes the extrapolated refusal point and the two bounds on reading it.
+///
+/// Split out of [`summarize`] so each reads as one claim: that function decides
+/// whether the measured curve supports a fit at all, and this one states what
+/// the fit does and does not license once it does.
+#[allow(clippy::cast_precision_loss, reason = "operation counts are small")]
+fn print_refusal_point(fit: (f64, f64, f64), first: usize, last: usize) {
+    let refusal = first_refusing_operation_count(fit);
     println!("#");
     println!(
         "# EXTRAPOLATED refusal point: the fitted curve first exceeds the bound at n = {refusal} \
          operations ({} bytes at n = {refusal}, {} bytes at n = {}).",
-        evaluate(program_fit, refusal),
-        evaluate(program_fit, refusal - 1),
+        evaluate(fit, refusal),
+        evaluate(fit, refusal - 1),
         refusal - 1
     );
     println!(
-        "# THE FIT IS EXACT ON ITS DOMAIN AND THE DOMAIN IS {}..={} OPERATIONS. Every coefficient \
-         above is a property of this one program family: graph identity per operation depends on \
-         operation-key length, arity, result rank, and attribute width, and the per-record \
-         remainder depends on the region, the reached definitions, and the admission provenance. \
-         A different family moves all three coefficients, so this number is the order of \
-         magnitude at which the bound becomes binding, not a refusal a caller can rely on.",
-        rows[0].operations, last.operations
+        "# THE FIT IS EXACT ON ITS DOMAIN AND THE DOMAIN IS {first}..={last} OPERATIONS. Every \
+         coefficient above is a property of this one program family: graph identity per operation \
+         depends on operation-key length, arity, result rank, and attribute width, and the \
+         per-record remainder depends on the region, the reached definitions, and the admission \
+         provenance. A different family moves all three coefficients, so this number is the order \
+         of magnitude at which the bound becomes binding, not a refusal a caller can rely on."
     );
     println!(
         "# IT IS ALSO AN EXTRAPOLATION ACROSS THREE ORDERS OF MAGNITUDE, and the walls below say \
          why no wider ladder is available: the ordinary compilation path refuses this family at \
-         {} operations for reasons that are not program size, so the widest point any measurement \
-         can reach is {} and the refusal point above is {:.0}x beyond it.",
+         {} operations on the largest region it will form rather than on program size, so the \
+         widest point any measurement can reach is {last} and the refusal point above is {:.0}x \
+         beyond it.",
         WALLS[0].operations,
-        last.operations,
-        refusal as f64 / last.operations as f64
+        refusal as f64 / last as f64
     );
-    true
 }
 
 /// Names which encoding the measured coefficients say the tree carries.

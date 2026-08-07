@@ -514,7 +514,8 @@ pub(crate) enum RegionBudgetResource {
 }
 
 impl RegionBudgetResource {
-    const fn key(self) -> &'static str {
+    /// Returns the stable resource key.
+    pub(crate) const fn key(self) -> &'static str {
         match self {
             Self::Members => "region-members",
             Self::BoundaryOutputs => "region-boundary-outputs",
@@ -581,19 +582,17 @@ impl RegionFormationOutcome {
     }
 
     /// Returns every budget that stopped a growth path.
-    #[allow(
-        dead_code,
-        reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
-    )]
     pub(crate) fn budget_stops(&self) -> &[RegionBudgetStop] {
         &self.budget_stops
     }
 
     /// Returns the candidate covering every operation, when it was emitted.
     ///
-    /// A whole-graph set is trivially convex, so it is absent only when the
-    /// graph is disconnected, an operation is not provably pure, or a budget
-    /// stopped that growth path.
+    /// A whole-graph set is trivially convex and is formed before growth
+    /// starts, so it is absent only when the graph is disconnected, an
+    /// operation is not provably pure, or the region's own shape exceeds
+    /// `region_members`, `region_boundary_outputs`, or `region_live_values`.
+    /// No search bound can remove it.
     pub(crate) fn whole_program_candidate(&self) -> Option<&RegionCandidate> {
         self.candidates
             .iter()
@@ -1750,6 +1749,7 @@ fn form_over_graph(
             expansions: 0,
         };
         formation.retain_singleton_coverage()?;
+        formation.retain_whole_program_coverage()?;
         formation.grow()?;
         formation.finish()?
     };
@@ -1841,6 +1841,45 @@ impl Formation<'_> {
         Ok(())
     }
 
+    /// Emits the whole-program region before any growth budget may fire.
+    ///
+    /// Both extremes of the partition lattice are *coverage* rather than
+    /// alternatives, and [`crate::cover`] already treats them that way: it
+    /// retains the fully-materialized and the fused cover unconditionally and
+    /// bounds only the partitions discovered between them. That guarantee is
+    /// empty unless this stage hands it both extremes, because the fused cover
+    /// is assembled from a whole-program candidate. Growth reaches that
+    /// candidate last — it enumerates breadth-first over set size from the
+    /// lowest seed — so charging it against `region_expansions` and
+    /// `region_candidates_per_seed` made the one candidate every cover-level
+    /// guarantee rests on the first casualty of a truncated search, and for a
+    /// program whose only implementable cover is the fused one that cost the
+    /// plan rather than an alternative.
+    ///
+    /// Unlike singleton coverage a rejection here is a legal outcome rather
+    /// than a compiler defect. A whole-graph set is trivially convex, but it
+    /// can be disconnected, hold an operation this profile cannot prove pure,
+    /// or exceed a bound on one region's admissible *shape* —
+    /// `region_members`, `region_boundary_outputs`, `region_live_values`. None
+    /// of those three bounds a search, so a program they refuse is refused by a
+    /// declared property of the profile rather than by where enumeration
+    /// happened to stop; each is tallied exactly as growth tallies it.
+    fn retain_whole_program_coverage(&mut self) -> Result<(), RegionError> {
+        let node_count = self.graph.node_count();
+        // A one-node program's singleton already covers it, and forming the
+        // same set twice would mint a duplicate candidate rather than a second
+        // one. A zero-node graph has no region to form at all.
+        if node_count < 2 {
+            return Ok(());
+        }
+        let nodes: Vec<u32> = (0..node_count).collect();
+        match form_candidate(self.graph, self.budgets, self.numerical_contract, &nodes)? {
+            Ok(candidate) => self.candidates.push(candidate),
+            Err(rejection) => self.record_rejection(rejection),
+        }
+        Ok(())
+    }
+
     /// Grows multi-member regions from every seed in stable topological order.
     fn grow(&mut self) -> Result<(), RegionError> {
         for seed in 0..self.graph.node_count() {
@@ -1911,6 +1950,15 @@ impl Formation<'_> {
                 queue.push_back(next);
                 match formed {
                     Ok(candidate) => {
+                        // Whole-program coverage was retained before growth
+                        // started, so a grown set that reaches it is the same
+                        // candidate rather than a second one — emitting it
+                        // again would collide on its own label. It is not
+                        // charged against the per-seed bound either, because
+                        // coverage is not an alternative.
+                        if candidate.covers_whole_program() {
+                            continue;
+                        }
                         if emitted == seed_limit {
                             self.record_stop(
                                 RegionBudgetResource::CandidatesPerSeed,
@@ -2033,7 +2081,10 @@ fn form_candidate(
     }
     let shape = region_shape(graph, nodes)?;
     // Singleton coverage is unconditional, so a boundary or live-value budget
-    // bounds fused growth without ever removing the unfused plan.
+    // never removes the unfused plan. It can remove the fused one: these bound
+    // one region's admissible *shape* rather than a search, and a program whose
+    // only implementable cover is fused is refused by them rather than by where
+    // enumeration stopped.
     if nodes.len() > 1
         && let Some(rejection) = classify_shape(budgets, &shape)
     {
@@ -4279,19 +4330,34 @@ mod tests {
         assert_eq!(first_whole.occurrence(), second_whole.occurrence());
     }
 
+    /// Both extremes of the partition lattice survive every search bound, and
+    /// each bound that fires is reported as a typed stop.
+    ///
+    /// The two search bounds — `region_candidates_per_seed` and
+    /// `region_expansions` — bound which *discovered* partitions exist and can
+    /// remove neither the unfused nor the fused plan. The three shape bounds —
+    /// `region_members`, `region_boundary_outputs`, `region_live_values` — bound
+    /// one region's admissible shape and can remove the fused extreme, which is
+    /// a declared property of the profile rather than a place enumeration
+    /// stopped. Each arm below asserts which of the two it is.
     #[test]
-    fn budget_stops_report_bounded_search_loss_and_keep_singleton_coverage() {
+    fn budget_stops_report_bounded_search_loss_and_keep_both_coverage_extremes() {
         let program = serial_sum_program();
         let complete = oracle_legal_sets(&program);
+        let nodes = u32::try_from(program.operation_count()).unwrap();
 
         let mut budgets = DeterministicBudgets::governed();
         budgets.region_candidates_per_seed = 0;
         let outcome = form_with(&program, budgets);
         let emitted: BTreeSet<Vec<u32>> = member_sets(&outcome).into_iter().collect();
-        assert_eq!(emitted.len(), program.operation_count());
-        for member in 0..u32::try_from(program.operation_count()).unwrap() {
+        assert_eq!(emitted.len(), program.operation_count() + 1);
+        for member in 0..nodes {
             assert!(emitted.contains(&vec![member]));
         }
+        assert!(
+            emitted.contains(&(0..nodes).collect::<Vec<u32>>()),
+            "a search bound must not cost the fused extreme"
+        );
         assert!(emitted.len() < complete.len());
         assert!(
             outcome.budget_stops().iter().any(|stop| stop.resource
@@ -4308,6 +4374,10 @@ mod tests {
             member_sets(&outcome)
                 .iter()
                 .all(|members| members.len() <= 2)
+        );
+        assert!(
+            outcome.whole_program_candidate().is_none(),
+            "a shape bound below the program's size does refuse the fused region"
         );
         assert!(
             outcome
@@ -4327,9 +4397,13 @@ mod tests {
                     && stop.limit == 1
                     && stop.actual == 2)
         );
-        for member in 0..u32::try_from(program.operation_count()).unwrap() {
+        for member in 0..nodes {
             assert!(member_sets(&outcome).contains(&vec![member]));
         }
+        assert!(
+            outcome.whole_program_candidate().is_some(),
+            "an exhausted expansion budget must not cost the fused extreme"
+        );
 
         let mut budgets = DeterministicBudgets::governed();
         budgets.region_boundary_outputs = 0;

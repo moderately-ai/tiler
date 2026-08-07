@@ -2842,11 +2842,15 @@ mod tests {
     /// - `NoFeasiblePlan` — reached by
     ///   `target_outcomes_preserve_request_order_cardinality_and_profile_identity`
     ///   through a profile that declares no strict-`f32` behaviour.
-    /// - `BudgetExhausted` — reached only by a program that exceeds a
-    ///   deterministic budget. `RequestError::BudgetExceeded` is its sole
-    ///   source and the governed budgets admit every program this profile
-    ///   compiles, so producing one means building a program specifically to
-    ///   exceed them.
+    /// - `BudgetExhausted` — reached by a program that exceeds a deterministic
+    ///   budget, in either of the two ways one can be exceeded.
+    ///   `RequestError::BudgetExceeded` is still its sole carrier, and it is
+    ///   raised from two places: `check_program_budgets`, for a program whose
+    ///   *size* a bound refuses before any target compiles, and the empty
+    ///   portfolio, for a target whose *analysis* a bound truncated before it
+    ///   reached a plan. `tests/region_search_budget_coverage.rs` reaches the
+    ///   second from this surface with a thirty-three-operation chain, which
+    ///   needs a wider region than `region_members` admits.
     /// - `InvalidCompilerOutput` — **unreachable by construction from a valid
     ///   call, deliberately.** It reports that Tiler's own verifier refused
     ///   Tiler's own output, so reaching it from the public surface would mean
@@ -3131,9 +3135,14 @@ mod tests {
     /// forbids.
     ///
     /// It drives the internal request rather than [`compile_governed`] because
-    /// reaching a *post-request* failure needs a budget the governed profile
+    /// reaching a *post-request* failure needs a target the governed profile
     /// does not expose. That is a statement about the bounded profile, not
     /// about the mapping, and the mapping is what this test covers.
+    ///
+    /// The refusal is a disproved target predicate rather than an exhausted
+    /// budget, deliberately: `NoFeasiblePlan` is the class a hard target
+    /// rejection carries, and the predicate is the thing the caller could not
+    /// read before the trace travelled with the failure.
     #[test]
     fn a_target_failure_carries_its_complete_trace() {
         let program = semantic_program();
@@ -3141,16 +3150,16 @@ mod tests {
             &program,
             StrictF32NumericalContract::governed_flush_to_zero(),
         );
-        // No per-seed growth leaves only singleton candidates, which the
-        // bounded profile implements for no region, so every plan depends on a
-        // region that was never formed.
-        request.budgets.region_candidates_per_seed = 0;
+        // A single-element grid axis is a limit no plan for this program can
+        // satisfy, and the frontier disproves it per region.
+        request.target_profiles[0] =
+            crate::request::TargetProfile::governed_with_grid_axis_limit(1);
         let product =
             compile_internal(request).expect("target-local failure is retained as an outcome");
         let failure = CompileFailure::from(
             product.targets[0]
                 .failure()
-                .expect("a zero region budget has no complete plan")
+                .expect("a one-element grid axis admits no plan")
                 .clone(),
         );
 
@@ -3166,7 +3175,7 @@ mod tests {
         );
         assert!(
             rendered.contains("region.formation.v1"),
-            "the trace names the rule that refused: {rendered}",
+            "the trace names the stage whose candidates were judged: {rendered}",
         );
     }
 

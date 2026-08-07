@@ -16,23 +16,29 @@ evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.resea
 Region formation is now the deterministic `EnumerateRegionCandidates` stage
 over an arbitrary verified semantic DAG, not a graph-specific serial-`Sum`
 recognizer. It proposes every connected convex region up to the declared
-budgets: every operation's singleton is emitted unconditionally, larger regions
-are seeded from their minimum member so each connected set is generated exactly
-once, and convexity is decided when a set is emitted by re-reaching the region
-through its forward closure. Each candidate carries member operations, boundary
+budgets: both extremes of the partition lattice are emitted unconditionally
+before growth starts — every operation's singleton and the whole-program
+region — the regions between them are seeded from their minimum member so each
+connected set is generated exactly once, and convexity is decided when a set is
+emitted by re-reaching the region through its forward closure. Each candidate
+carries member operations, boundary
 inputs, retained outputs, an allowed-duplication policy, and separate
 region-content and region-occurrence identities: content canonicalizes the
 region's internal computation with members renumbered to region-local positions,
 while occurrence additionally pins the exact graph site in canonical
-coordinates. Five deterministic budgets (`region_members`,
-`region_boundary_outputs`, `region_live_values`, `region_candidates_per_seed`,
-`region_expansions`) bound *this* search, and every budget that fires is retained
-as a typed explain budget-stop, so a legal alternative lost to a bound is
-reported rather than silently dropped. Enumeration is validated against an
-independent exhaustive subset oracle that agrees set-for-set without budget
-pressure.
+coordinates. Five deterministic budgets bound this stage and they are **two
+kinds, not one**. `region_candidates_per_seed` and `region_expansions` bound the
+*search* between the two extremes, so exhausting either costs an alternative and
+never a plan. `region_members`, `region_boundary_outputs`, and
+`region_live_values` bound one region's admissible *shape*: they say how large a
+region may be, so a program whose only implementable cover needs a bigger one is
+refused by them, and that refusal is `BudgetExhausted` naming the bound rather
+than a target verdict. Every budget that fires is retained as a typed explain
+budget-stop, so a legal alternative lost to a bound is reported rather than
+silently dropped. Enumeration is validated against an independent exhaustive
+subset oracle that agrees set-for-set without budget pressure.
 
-Those five are region formation's own bounds, not the compilation's. Other stages carry their own, and one of them differs in kind rather than degree: a *search* budget stops one growth path while complete coverage survives, so what it costs is an alternative, whereas the [proof budget](optimizer.md#refinement-requires-discharged-index-domain-evidence) that bounds an index region's exhaustive access verification costs a *proof*: nothing disproves the subject's predicate, so the region stays valid analysis state with the predicate open, and the occurrence is refused rather than allowed into an executable frontier until the proof is discharged. Both are typed budget stops in the trace and they must not be read as the same finding.
+Those five are region formation's own bounds, not the compilation's. Other stages carry their own, and two of them differ in kind rather than degree. A *search* budget stops one growth path while both coverage extremes survive, so what it costs is an alternative. A region *shape* budget, as above, refuses a region rather than a search path, and can leave a program with no cover at all. And the [proof budget](optimizer.md#refinement-requires-discharged-index-domain-evidence) that bounds an index region's exhaustive access verification costs a *proof*: nothing disproves the subject's predicate, so the region stays valid analysis state with the predicate open, and the occurrence is refused rather than allowed into an executable frontier until the proof is discharged. All three are typed budget stops in the trace and they must not be read as the same finding.
 
 Enumeration only proposes candidates. It selects no cover, chooses no
 implementation, lowers no index region, plans nothing physical, and costs
