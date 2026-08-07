@@ -72,3 +72,25 @@ Delivering it needs the `v2 → v3` tagged encoding and the fifth `SemanticIdent
 ## Dispatch as one unit with `fold-the-shape-environment-into-semantic-identity`
 
 Not before the compiler and foundation scopes are free. [`resolve-semantic-shape-inference-over-symbolic-extents`](resolve-semantic-shape-inference-over-symbolic-extents.md) stays separate: keeping `ValueFact` on `Shape` means only inputs can be symbolic until it lands, which is a coherent boundary rather than a partial state.
+
+## Merged with the identity fold, 2026-08-07 — this ticket is now the combined unit
+
+[`fold-the-shape-environment-into-semantic-identity`](fold-the-shape-environment-into-semantic-identity.md) is **closed `superseded` into this one**, and its dependent re-pointed here. The two were mutually dependent — `fold` declared a dependency on this ticket, and the 2026-08-07 measurement established this ticket cannot be delivered without `fold`'s encoding step. `tkt link` refused the reciprocal edge as a **cycle**, which is the mechanical proof that neither can go first.
+
+They were left as two tickets after that finding, and the board went on offering this one as `ready` — so a worker could have claimed it and hit exactly the wall the last one measured. Merging removes the hazard rather than documenting it.
+
+### What the merged ticket owes, from `fold`'s own keys
+
+- **`tiler.semantic-graph.v2 → v3`**: a tagged extent encoding, replacing `encode_shape`'s eight untagged big-endian bytes per extent. Untagged-static beside tagged-symbolic is collision-ambiguous, which is why a hybrid is not an option.
+- **The fifth `SemanticIdentity` subject**, folding `ShapeEnvIdentity` — without it, two programs spelled identically over differently bound environments share an identity, which is the unkeyed symbolic program this ticket forbids shipping.
+- Every pinned identity recomputed. That obligation is `fold`'s and it **contradicts this ticket's original "must not change canonical bytes"** — the contradiction is resolved by landing them together, and the byte-stability requirement applies only to programs with no symbolic extent.
+
+### The pinned population, already enumerated
+
+79 literals across 16 `.rs` files, of which **exactly three move** on a semantic-graph encoding change — `ARTIFACT_IDENTITY`, `CACHE_SUBJECT` and `FIXED_CONTENT_BYTES` in `crates/tiler-build/src/metal_plan.rs` — because that fixture builds a `SemanticProgram` and the artifact preimage folds the graph identity, with the cache subject composing over it. `crates/tiler/src/route/tests.rs`'s `IDENTITY_DOMAIN` moves **additionally if the artifact domain steps**. The `index/law.rs` and `schedule/builder.rs` pins do **not** move, despite their fixtures building semantic programs.
+
+**Recompute all of them on the merged tree, never from a branch base** — two branches moved shared pins from different bases on 2026-08-07 and neither's values survived.
+
+### Dispatch conditions
+
+Not before `implementation/compiler`, `implementation/reference`, `implementation/artifact`, `implementation/frontend` and `contracts/foundation` are all free — that is a wide batch and it will need most of the board quiet. [`resolve-semantic-shape-inference-over-symbolic-extents`](resolve-semantic-shape-inference-over-symbolic-extents.md) stays separate: keeping `ValueFact` on `Shape` means only inputs can be symbolic until it lands, which is a coherent boundary rather than a partial state.

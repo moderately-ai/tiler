@@ -1,14 +1,16 @@
 ---
 id: fold-the-shape-environment-into-semantic-identity
 title: Fold the shape environment into semantic identity as a fifth subject
-status: todo
+status: closed
 priority: p1
-dependencies: [carry-a-sourced-shape-on-semantic-values]
+dependencies: []
 related: [carry-symbolic-extents-into-the-semantic-program, compose-the-complete-expansion-cache-subject]
 scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, identity, correctness]
+closed_reason: superseded
+closed_note: Merged into carry-a-sourced-shape-on-semantic-values; mutual dependency proved by tkt link refusing the reciprocal edge as a cycle. All keys carried over; dependent re-pointed.
 ---
 ## User-visible outcome
 
@@ -41,3 +43,11 @@ Two programs spelled identically over differently constrained or differently bou
 ## Public boundary
 
 The fifth accessor on `SemanticIdentity`, the identity domain advance, and the `docs/ir.md` sentence it corrects.
+
+## Superseded into `carry-a-sourced-shape-on-semantic-values`, 2026-08-07
+
+Closed `superseded` by the coordinator. **Its keys are not dropped** — the `tiler.semantic-graph.v2 → v3` tagged extent encoding, the fifth `SemanticIdentity` subject folding `ShapeEnvIdentity`, and the recompute-every-pin obligation are all carried verbatim into [`carry-a-sourced-shape-on-semantic-values`](carry-a-sourced-shape-on-semantic-values.md), which is now the combined unit.
+
+**Why merged rather than sequenced.** This ticket declared a dependency on `carry`; a worker on `carry` measured on 2026-08-07 that it cannot be delivered without *this* ticket's encoding step, because a symbolic extent has no encoding in `encode_shape` and an untagged-static/tagged-symbolic hybrid is collision-ambiguous while leaving `ShapeEnvIdentity` unfolded. The coordinator tried to add the reciprocal edge and **`tkt link` refused it as a dependency cycle** — mechanical proof that neither can go first.
+
+Leaving both open had a live cost: the board went on offering `carry` as `ready`, so a worker could have claimed it and hit the same wall the previous one had just measured. `construct-a-symbolic-region-as-a-semantic-program` was re-pointed at the combined ticket, so no dependent is orphaned.

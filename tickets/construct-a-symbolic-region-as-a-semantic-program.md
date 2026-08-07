@@ -3,7 +3,7 @@ id: construct-a-symbolic-region-as-a-semantic-program
 title: Construct a symbolic inline region as a real semantic program
 status: todo
 priority: p1
-dependencies: [resolve-semantic-shape-inference-over-symbolic-extents, fold-the-shape-environment-into-semantic-identity]
+dependencies: [resolve-semantic-shape-inference-over-symbolic-extents, carry-a-sourced-shape-on-semantic-values]
 related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-proc-macro-frontend]
 scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
