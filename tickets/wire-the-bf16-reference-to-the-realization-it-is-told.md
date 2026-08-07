@@ -1,7 +1,7 @@
 ---
 id: wire-the-bf16-reference-to-the-realization-it-is-told
 title: Wire the BF16 reference to the realization it is told
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [accept-the-bf16-subnormal-resolution-carrier, carry-a-bf16-subnormal-realization-the-reference-can-be-told, conform-the-bf16-vertical-end-to-end]
@@ -9,9 +9,6 @@ scopes: [implementation/reference, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reference, bf16]
-claimed_from: todo
-assignee: agent-bf16-wire
-lease_expires_at: 1786115582
 ---
 ## User-visible outcome
 
@@ -83,3 +80,17 @@ Base `61414b91`, branch `tkt/wire-the-bf16-reference-to-the-realization-it-is-to
 No capability checks that the conformance it was handed was *stated about its own format*. `from_realization` discards the subject and has no caller, and every conformance in the tree is `strict()` or a test's `new()`, so the window is unreachable today. It is recorded in the module header and in the second [Correctness and testing](../docs/correctness-and-testing.md#semantic-authority) paragraph, and closes at `from_realization`'s first caller.
 
 Coordinator note: [`accept-the-bf16-subnormal-resolution-carrier`](accept-the-bf16-subnormal-resolution-carrier.md) says that obligation is "Recorded on [`apply-the-declared-numerical-conformance-on-every-reference-evaluation-path`]". It is not — `grep -n subject` on that file returns two unrelated lines, and the ticket is `done`. Adding it there is outcome expansion on a closed node, so this branch cites the carrier's own decision section instead and leaves the graph repair to the coordinator.
+
+## Outcome — delivered 2026-08-07 at `8f0d4f5d`, merged as `a440c708`
+
+`<Bf16BinaryReference as ReferenceOperation>::evaluate` reads the two format-agnostic `SubnormalMode`s off `request.conformance()`, builds a `Bf16SubnormalRealization`, and calls `combine_under`. The binary32 appliers are not reached, the exact-rational arithmetic and its single rounding are untouched, `BF16_FACT_SUBNORMALS` is unchanged, and no mixed-width refusal was added — all four as the accepted arm requires. Neither `crates/tiler-ir/` nor `crates/tiler-compiler/` was touched.
+
+**Two removals the brief did not anticipate, and they are correct.** Wiring the link left `Bf16BinaryReference::combine` and `Bf16SubnormalRealization::preserving` reachable only from `#[cfg(test)]`, which the workspace's denied `dead_code` refuses in the lib build. The worker removed them rather than reaching for an `#[allow]`, on the ground that the preserving reading is now what the *strict* conformance resolves to, so a second spelling beside that route derives from nothing. The coordinator reviewed the diff and agrees: an `#[allow]` would have preserved a shorthand for a value the wiring now derives, which is the kind of vestigial path this pre-alpha repository removes rather than keeps.
+
+**Evidence.** `the_registered_capability_evaluates_under_the_conformance_it_is_told` drives all seven counterexamples under all four readings — 28 evaluations, counted — through `ReferenceEvaluator::under`, so the answers come out of the registered dispatch rather than from `combine_under` directly, which is the link that was missing. Each reading must produce its own answer *and* none of the other three's. Watched failing with `evaluate` reverted to a hard-coded preserving realization: 42 disagreements across all seven cases, with the preserving reading the only one still passing — the correct half. Restored green.
+
+**No identity moved, measured rather than asserted.** `FrozenReferenceRegistry::standard().canonical_identity()` was written at this branch's HEAD and at base `61414b91` from a detached worktree: 1,432,876 bytes and `sha256 8e67f70e…4c8d2f1` at both. Provider revision stays 7.
+
+**The doc exception is retired.** `docs/correctness-and-testing.md`'s "One registered family cannot yet follow that rule…" paragraph is replaced by "Every registered family now follows that rule…", plus a second paragraph naming what is still unchecked — that no capability verifies the conformance it was handed was stated about its own format. That window is unreachable today because every conformance in the tree is `strict()` or a test's `new()`, and closing it belongs to [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md).
+
+`make full` exit 0 on the branch and again on the merged tree: 2,951 workspace tests, 1,031 release numerical, `tkt lint`, shellcheck.
