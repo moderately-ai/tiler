@@ -25,15 +25,22 @@ use std::process::Command;
 
 /// Every workspace member, by package name.
 ///
-/// Twelve production crates plus the three prototype proof executables. A
-/// change to the workspace updates this list in the same commit — that is
-/// the intended failure, not an obstacle.
-const EXPECTED_MEMBERS: [&str; 15] = [
+/// Twelve production crates, one cross-layer conformance crate, and the three
+/// prototype proof executables. A change to the workspace updates this list in
+/// the same commit — that is the intended failure, not an obstacle.
+///
+/// `tiler-conformance` is counted apart from the production twelve rather than
+/// folded into them because it expresses no component: nothing depends on it,
+/// and it exists to execute the others and compare the result against the
+/// oracle. Counting it as production would make this comment claim a thirteenth
+/// layer that no dependency edge points at.
+const EXPECTED_MEMBERS: [&str; 16] = [
     "tiler",
     "tiler-artifact",
     "tiler-build",
     "tiler-cache",
     "tiler-compiler",
+    "tiler-conformance",
     "tiler-digest",
     "tiler-ir",
     "tiler-macros",

@@ -123,6 +123,7 @@ satisfies_dependents = false
 "implementation/cache" = ["crates/tiler-cache/**"]
 "implementation/build" = ["crates/tiler-build/**"]
 "implementation/frontend" = ["crates/tiler/**", "crates/tiler-macros/**", "crates/tiler-frontend-*/**"]
+"implementation/conformance" = ["crates/tiler-conformance/**"]
 "implementation/candle" = ["crates/tiler-candle/**", "prototypes/candle-*/**"]
 
 # Optionally map a scope to its owning crate so the Rust backend can expand
@@ -139,6 +140,7 @@ satisfies_dependents = false
 "implementation/runtime" = "tiler-runtime"
 "implementation/build" = "tiler-build"
 "implementation/frontend" = "tiler-macros"
+"implementation/conformance" = "tiler-conformance"
 
 # The Candle scope has no crate mapping until its owning crate is admitted, and that stays true now that a member occupies its globs: `prototypes/candle-metal-adapter` (`tiler-prototype-candle`) was admitted 2026-08-01 under `prototype-candle-metal-adapter`, and it is deliberately *not* mapped here. Nothing may depend on a prototype, so it has no reverse dependents to expand, and a mapping would have to be moved rather than added when `crates/tiler-candle` arrives -- which is exactly the "temporary prototype entry" that ticket forbids leaving behind. The Metal-AOT, runtime, cache, and build mappings now name their real owners, tiler-metal-aot, tiler-runtime, tiler-cache, and tiler-build. Each crate-admission ticket must atomically add the real workspace package and add or move its mapping here.
 #
@@ -151,6 +153,17 @@ satisfies_dependents = false
 # The runtime scope's globs still cover `prototypes/serial-sum-run/**` as well,
 # because the proof executable and the loader it drives are edited together;
 # only the reverse-dependency expansion moved off the prototype.
+#
+# The conformance scope maps to `tiler-conformance`, admitted 2026-08-07 under
+# `admit-the-conformance-crate-to-the-workspace` on Tom's decision that anything
+# long-term holding lives in a real crate rather than in `prototypes/`. Its
+# reverse-dependent set is empty and stays empty by design -- nothing depends on
+# a crate whose job is to execute the others and compare the result against the
+# oracle -- so the expansion this mapping enables adds nothing today. It is
+# still the real owner rather than a temporary entry, which is the difference
+# from the Candle case above: this mapping is never moved, and without it a
+# reader would have to establish the crate's absence from this table is
+# deliberate rather than the omission the comment above forbids.
 
 # Name a forked/external dependency (pinned via `git = … rev = …`) as a scope.
 # The guard flags a branch that bumps the pin (matched by `repo`) or edits an

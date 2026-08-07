@@ -5,8 +5,8 @@ status: in-progress
 priority: p1
 dependencies: []
 related: [decide-where-a-device-reaching-conformance-test-may-live, conform-the-bf16-vertical-end-to-end]
-scopes: [implementation/frontend]
-shared_scopes: [project/tickets]
+scopes: [implementation/frontend, implementation/conformance, implementation/workspace]
+shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [architecture, workspace, conformance]
 claimed_from: todo
