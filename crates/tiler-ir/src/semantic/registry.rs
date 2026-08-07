@@ -2452,6 +2452,16 @@ impl SemanticRegistryProvider for StandardSemantics {
                 IndexRealizationLaw::multiply_bf16(),
             ),
             (super::bf16::add_bf16_op(), IndexRealizationLaw::add_bf16()),
+            // The first registered row whose realization writes its output in
+            // *pieces*: one write root per operand, each total over its own
+            // contiguous partition of the concatenated axis, the partitions
+            // jointly disjoint and covering. It moves the sidecar — and therefore
+            // `FrozenIndexRealizationLawRegistry`'s identity — for the reason the
+            // rows above state.
+            (
+                super::concatenate::concatenate_f32_op(),
+                IndexRealizationLaw::concatenate_f32(),
+            ),
         ] {
             registrar.register_index_realization_law(operation, 1, law)?;
         }

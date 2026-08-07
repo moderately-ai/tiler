@@ -14,13 +14,14 @@ use crate::schedule::{
 };
 use crate::semantic::{
     AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE,
-    BroadcastAxisMapping, BroadcastAxisSource, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
-    CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, ContractionIndex,
-    ContractionIndexStructure, EncodedComponentRole, F32_CONSTANT_BITS_ATTRIBUTE,
-    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
-    RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind,
-    ResolvedValueType, SOFTMAX_REDUCED_AXES_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE,
-    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey,
+    BroadcastAxisMapping, BroadcastAxisSource, CONCATENATE_AXIS_ATTRIBUTE,
+    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
+    CanonicalValueView, ContractionIndex, ContractionIndexStructure, EncodedComponentRole,
+    F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes, REDUCTION_AXES_ATTRIBUTE,
+    REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+    ReindexForm, ReindexFormKind, ResolvedValueType, SOFTMAX_REDUCED_AXES_ATTRIBUTE,
+    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+    StrictAffineU4, TypeKey, concatenate_axis, concatenate_result_shape,
 };
 use crate::shape::{Axis, Extent, Shape};
 
@@ -206,6 +207,57 @@ pub enum IndexRealizationLaw {
         /// Attribute containing the single reduced axis, as a one-element sequence.
         axes_attribute: AttributeFieldId,
     },
+    /// Payload-preserving join of an ordered operand sequence along one axis,
+    /// realized as a partitioned write into one output.
+    ///
+    /// One write root per operand over the single output value. Root *k* iterates
+    /// its own dimension on the concatenated axis — extent the operand's own —
+    /// together with the dimensions the non-concatenated axes share, reads its
+    /// operand at those coordinates unchanged, and writes at `t + offset_k` on
+    /// the concatenated axis, where `offset_k` is the sum of the preceding
+    /// operands' extents there. The roots' rectangles tile the output, which the
+    /// joint partition obligation decides by interval reasoning.
+    ///
+    /// **Why several iteration domains and not one partitioned by coordinate.**
+    /// The write-domain contract admits a write domain that is any *subset* of
+    /// the region's parallel dimensions, and eliminated the sub-range annotation
+    /// that would have let one shared domain be cut by coordinate; the region's
+    /// parallel set is the union of its roots' domains. A concatenation of
+    /// unequally sized operands has no spelling under one shared domain at all,
+    /// because every root of one domain owns the same element count — which is
+    /// exactly why the pinned `[8, 0, 128]`-with-`[8, T, 128]` occurrence forced
+    /// that relaxation. This template therefore states the answer that contract
+    /// fixed rather than inventing a second one.
+    ///
+    /// **Why the non-concatenated axes share one dimension each.** The family
+    /// admits an occurrence only when every operand agrees on those axes, so one
+    /// dimension per such axis is the region's own statement of that agreement.
+    /// Declaring a private copy per root would put `n · (rank − 1)` dimensions
+    /// into the canonical identity that are pairwise equal by construction, which
+    /// is one meaning under several spellings.
+    ///
+    /// **The emitted scalar program is empty, deliberately.** Every result
+    /// element is an operand element unchanged, so the value written is the value
+    /// read and no scalar authority is reached — the same reason
+    /// [`Self::Reindex`] applies no scalar operation.
+    ///
+    /// **A zero-extent operand is a member with an empty rectangle, not a
+    /// coverage hole.** Its own dimension has extent zero, so its root visits no
+    /// point, writes no element, and contributes zero volume — which is what the
+    /// joint obligation's volume identity says about a root over an empty domain.
+    ///
+    /// **Draft boundary.** This variant, its `const` constructor, its tag-12
+    /// encoding, and the standard registration for `tiler::concatenate-f32@1` are
+    /// a labelled draft awaiting Tom's decision at
+    /// [`accept-the-partitioned-concatenate-realization-law`]. It is in use inside
+    /// `tiler-ir` meanwhile, exactly as the softmax's was; the label is what an
+    /// acceptance flips.
+    ///
+    /// [`accept-the-partitioned-concatenate-realization-law`]: ../../../../tickets/accept-the-partitioned-concatenate-realization-law.md
+    PartitionedConcatenate {
+        /// Attribute containing the concatenated axis.
+        axis_attribute: AttributeFieldId,
+    },
     /// Per-point decode of one governed compound strict-affine U4 value.
     StrictAffineU4Dequantize {
         /// Ordered logical codes component role.
@@ -248,6 +300,7 @@ impl IndexRealizationLaw {
             | Self::StagedStrictSerialSumThenPointwiseF32 { .. }
             | Self::StagedRootMeanSquareScaleF32 { .. }
             | Self::StagedSoftmaxF32 { .. }
+            | Self::PartitionedConcatenate { .. }
             | Self::StrictTensorContractionF32 { .. } => governs_result_arithmetic(subject),
         }
     }
@@ -328,6 +381,19 @@ impl IndexRealizationLaw {
     pub const fn broadcast_f32() -> Self {
         Self::Broadcast {
             mapping_attribute: BROADCAST_AXIS_MAPPING_ATTRIBUTE,
+        }
+    }
+
+    /// Standard concatenate-f32 law, as `tiler::concatenate-f32@1` registers it.
+    ///
+    /// Names that family's own axis identifier. It is record-local — the reindex
+    /// and broadcast records number their own single field the same way — so this
+    /// constructor is what ties the general template to the one family whose
+    /// record means this field.
+    #[must_use]
+    pub const fn concatenate_f32() -> Self {
+        Self::PartitionedConcatenate {
+            axis_attribute: CONCATENATE_AXIS_ATTRIBUTE,
         }
     }
 
@@ -477,6 +543,9 @@ impl IndexRealizationLaw {
                 Self::Broadcast { mapping_attribute } => {
                     realize_broadcast(&mut context, *mapping_attribute)?;
                 }
+                Self::PartitionedConcatenate { axis_attribute } => {
+                    realize_concatenate(&mut context, *axis_attribute)?;
+                }
                 Self::StrictTensorContractionF32 {
                     structure_attribute,
                 } => realize_contraction(&mut context, *structure_attribute)?,
@@ -608,6 +677,25 @@ impl IndexRealizationLaw {
                 // answer for its pair.
                 output.push(11);
                 output.extend_from_slice(&axes_attribute.get().to_be_bytes());
+            }
+            Self::PartitionedConcatenate { axis_attribute } => {
+                // Tag 12 is append-only. Tags 1..=11 and their payloads are
+                // unchanged, so every sidecar byte a law registry has ever
+                // encoded is byte-identical under this addition; only the row
+                // this variant newly occupies is added.
+                //
+                // Injectivity at this site. The first byte discriminates, so no
+                // other variant's encoding can be read as this one whatever
+                // follows — which is the whole of the separation from tags 4, 5,
+                // 6, 7, and 11, each of which writes the payload shape this one
+                // does: one fixed-width attribute identifier and nothing else.
+                // Within this tag that payload is a single injection on a fixed
+                // offset, so two rows differing in the axis identifier differ in
+                // the four bytes it owns. There is no second field, so no
+                // ordering question arises here of the kind tag 10 has to answer
+                // for its pair.
+                output.push(12);
+                output.extend_from_slice(&axis_attribute.get().to_be_bytes());
             }
         }
     }
@@ -1799,6 +1887,161 @@ fn realize_broadcast(
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
 }
+/// Emits the partitioned write realizing one concatenation.
+///
+/// The occurrence is re-derived rather than trusted: the axis attribute must
+/// produce exactly this result from exactly these operands, so a subject whose
+/// declared result disagrees with the family's own derivation is refused instead
+/// of realized as a different join.
+fn realize_concatenate(
+    context: &mut LawContext<'_>,
+    attribute: AttributeFieldId,
+) -> Result<(), IndexRealizationLawError> {
+    let [result] = context.subject.results() else {
+        return Err(unsupported("concatenate-result-arity"));
+    };
+    let result_type = result.value_type().clone();
+    let result_shape = result.shape().clone();
+    // Exactly the one field the law names, as the two staged templates demand of
+    // their own records: an occurrence carrying more than the axis would be
+    // realized while part of its identity went unread.
+    let [field] = context.subject.attributes().fields() else {
+        return Err(unsupported("concatenate-attributes"));
+    };
+    if field.id() != attribute {
+        return Err(unsupported("concatenate-attribute-key"));
+    }
+    let axis = concatenate_axis(field.value()).map_err(|_| unsupported("concatenate-axis"))?;
+    let inputs = context
+        .subject
+        .inputs()
+        .iter()
+        .map(|input| (input.value_type().clone(), input.shape().clone()))
+        .collect::<Vec<_>>();
+    let operands = context.subject.operands().to_vec();
+    let plan = ConcatenatePlan::derive(axis, &inputs, &operands, &result_shape)?;
+    emit_partitioned_concatenate(
+        context,
+        &plan,
+        &inputs,
+        &operands,
+        result_type,
+        result_shape,
+    )
+}
+
+/// The per-operand partition of one concatenation's concatenated axis.
+struct ConcatenatePlan {
+    /// Position of the concatenated axis in the result's axis order.
+    position: usize,
+    /// One `(extent, offset)` pair per *operand*, in operand order.
+    ///
+    /// Keyed by operand rather than by distinct input because operand order is
+    /// semantic and one input may be joined to itself: `concat(x, x)` has one
+    /// boundary and two partition members at two different offsets.
+    members: Vec<(Extent, u64)>,
+}
+
+impl ConcatenatePlan {
+    fn derive(
+        axis: Axis,
+        inputs: &[(ResolvedValueType, Shape)],
+        operands: &[usize],
+        result_shape: &Shape,
+    ) -> Result<Self, IndexRealizationLawError> {
+        let mut shapes = Vec::with_capacity(operands.len());
+        for operand in operands {
+            let (_, shape) = inputs
+                .get(*operand)
+                .ok_or_else(|| unsupported("concatenate-operand-binding"))?;
+            shapes.push(shape);
+        }
+        if concatenate_result_shape(axis, &shapes)
+            .map_err(|_| unsupported("concatenate-result-shape"))?
+            != *result_shape
+        {
+            return Err(unsupported("concatenate-result-shape"));
+        }
+        let position = axis_position(axis)?;
+        // Every prefix is bounded by the result extent the derivation above just
+        // proved representable, so this accumulation refuses under that same rule
+        // rather than under one of its own.
+        let mut offset = 0_u64;
+        let mut members = Vec::with_capacity(shapes.len());
+        for shape in shapes {
+            let extent = *shape
+                .extents()
+                .get(position)
+                .ok_or_else(|| unsupported("concatenate-result-shape"))?;
+            members.push((extent, offset));
+            offset = offset
+                .checked_add(extent.get())
+                .ok_or_else(|| unsupported("concatenate-result-shape"))?;
+        }
+        Ok(Self { position, members })
+    }
+}
+
+fn emit_partitioned_concatenate(
+    context: &mut LawContext<'_>,
+    plan: &ConcatenatePlan,
+    inputs: &[(ResolvedValueType, Shape)],
+    operands: &[usize],
+    result_type: ResolvedValueType,
+    result_shape: Shape,
+) -> Result<(), IndexRealizationLawError> {
+    let shared = declare_shared_concatenate_domain(context, &result_shape, plan.position)?;
+    let mut tensors = Vec::with_capacity(inputs.len());
+    for (value_type, shape) in inputs {
+        tensors.push(context.tensor(TensorRole::Input, value_type.clone(), shape.clone())?);
+    }
+    let output = context.tensor(TensorRole::Output, result_type, result_shape)?;
+    for (operand, (extent, offset)) in operands.iter().zip(&plan.members) {
+        let own = context.dimension(DomainRole::Parallel, *extent)?;
+        let mut domain = Vec::with_capacity(shared.len());
+        let mut read_coordinates = Vec::with_capacity(shared.len());
+        for slot in &shared {
+            let dimension = slot.unwrap_or(own);
+            domain.push(dimension);
+            read_coordinates.push(context.dimension_expr(dimension)?);
+        }
+        let displaced = context.linear_combination(
+            IndexInteger::from_u64(*offset),
+            &[(IndexInteger::from_u64(1), read_coordinates[plan.position])],
+        )?;
+        let mut write_coordinates = read_coordinates.clone();
+        write_coordinates[plan.position] = displaced;
+        let tensor = *tensors
+            .get(*operand)
+            .ok_or_else(|| unsupported("concatenate-operand-binding"))?;
+        let value = context.read(tensor, &domain, &read_coordinates)?;
+        let write = context.write(output, &domain, &write_coordinates)?;
+        context.output(write, value)?;
+    }
+    Ok(())
+}
+
+/// Declares one parallel dimension per *non*-concatenated axis, in axis order.
+///
+/// The concatenated axis's slot is left empty because each root supplies its own
+/// dimension there; every other slot is shared by every root, which is the
+/// region's statement of the extent agreement the family admits an occurrence on.
+fn declare_shared_concatenate_domain(
+    context: &mut LawContext<'_>,
+    result_shape: &Shape,
+    position: usize,
+) -> Result<Vec<Option<DimensionId>>, IndexRealizationLawError> {
+    let mut shared = Vec::with_capacity(result_shape.rank());
+    for (index, extent) in result_shape.extents().iter().enumerate() {
+        shared.push(if index == position {
+            None
+        } else {
+            Some(context.dimension(DomainRole::Parallel, *extent)?)
+        });
+    }
+    Ok(shared)
+}
+
 fn realize_contraction(
     context: &mut LawContext<'_>,
     attribute: AttributeFieldId,
@@ -2543,15 +2786,15 @@ fn reindex_operand_coordinates(
 mod tests {
     use super::*;
     use crate::index::{
-        FrozenScalarRegistry, NumericalContractIdentity, ScalarOperationKindRef,
-        ScalarOperationRef, ScalarValueDefinitionView, VerifiedScalarOperationId,
-        VerifiedScalarValueId,
+        FrozenScalarRegistry, JointPartitionProofView, NumericalContractIdentity,
+        ScalarOperationKindRef, ScalarOperationRef, ScalarValueDefinitionView,
+        VerifiedScalarOperationId, VerifiedScalarValueId, WriteOwnershipProofView,
     };
     use crate::semantic::{
         F32, InputKey, OperationAttributes, OutputKey, RMS_NORM_F32_QWEN3_EPS_BITS,
-        SemanticProgramBuilder, StrictAffineU8, dequantize_strict_affine_op,
-        rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
-        softmax_f32_axis_attribute, softmax_f32_op,
+        SemanticProgramBuilder, StrictAffineU8, concatenate_f32_axis_attribute, concatenate_f32_op,
+        dequantize_strict_affine_op, rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute,
+        rms_norm_f32_op, softmax_f32_axis_attribute, softmax_f32_op,
     };
 
     /// Domain separating this file's identity pins from every governed digest.
@@ -3798,6 +4041,268 @@ mod tests {
         let program = program.build().unwrap();
         let operation = program.operations().next().unwrap().id();
         IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap()
+    }
+
+    /// Derives one `tiler::concatenate-f32@1` occurrence's subject.
+    fn concatenate_subject(operands: &[&[u64]], axis: u32) -> IndexRefinementSubject {
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let values = operands
+            .iter()
+            .enumerate()
+            .map(|(position, dims)| {
+                let shape =
+                    Shape::try_new(dims.iter().copied().map(Extent::new).collect::<Vec<_>>())
+                        .expect("the test shape is canonical");
+                program
+                    .input_resolved(
+                        InputKey::new(format!("operand-{position}")).unwrap(),
+                        shape,
+                        F32::resolved_type(),
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            CONCATENATE_AXIS_ATTRIBUTE,
+            concatenate_f32_axis_attribute(Axis::new(axis)),
+        )])
+        .unwrap();
+        let result = program
+            .apply(concatenate_f32_op(), attributes, &values)
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("joined").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap()
+    }
+
+    /// The law's region is one output written by one root per operand.
+    ///
+    /// The middle operand is empty on the concatenated axis, which is the pinned
+    /// prefill shape's own case: it is a partition member with an empty rectangle
+    /// rather than a skipped operand, and the coverage arithmetic that admits the
+    /// set is the volume identity with a zero term in it.
+    #[test]
+    fn the_concatenate_law_realizes_one_root_per_operand_over_one_output() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let region = IndexRealizationLaw::concatenate_f32()
+            .realize(
+                &concatenate_subject(&[&[2, 3, 4], &[2, 0, 4], &[2, 5, 4]], 1),
+                &scalars,
+            )
+            .unwrap();
+
+        assert_eq!(region.outputs().len(), 3, "one write root per operand");
+        let written = region
+            .outputs()
+            .map(|root| region.access(root.access()).unwrap().tensor())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(written.len(), 1, "the three roots partition one output");
+        for root in region.outputs() {
+            assert!(
+                matches!(
+                    region
+                        .access(root.access())
+                        .unwrap()
+                        .write_ownership_proof(),
+                    Some(WriteOwnershipProofView::PartitionMember {
+                        joint: JointPartitionProofView::Interval
+                    })
+                ),
+                "every member owns its partition by interval reasoning"
+            );
+        }
+        assert_eq!(
+            region.scalar_operations().len(),
+            0,
+            "a concatenation applies no scalar operation, which is why its \
+             declared emitted set is empty"
+        );
+        assert_eq!(
+            region.dimensions().len(),
+            5,
+            "one shared dimension per non-concatenated axis plus one per operand"
+        );
+        assert_eq!(
+            region
+                .dimensions()
+                .filter(|dimension| dimension.extent().as_static() == Some(Extent::new(0)))
+                .count(),
+            1,
+            "the empty operand's own dimension, and only it, has extent zero"
+        );
+        assert_eq!(
+            region
+                .tensors()
+                .filter(|tensor| tensor.role() == TensorRole::Input)
+                .count(),
+            3
+        );
+    }
+
+    /// A value joined to itself is two members over one boundary.
+    ///
+    /// Operand order is semantic and the partition is keyed by operand rather
+    /// than by distinct input, so this is one input tensor read twice at two
+    /// different offsets — not one root, and not two boundaries.
+    #[test]
+    fn the_concatenate_law_partitions_by_operand_rather_than_by_input() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let value = program
+            .input_resolved(
+                InputKey::new("operand").unwrap(),
+                Shape::from_dims([3]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            CONCATENATE_AXIS_ATTRIBUTE,
+            concatenate_f32_axis_attribute(Axis::new(0)),
+        )])
+        .unwrap();
+        let result = program
+            .apply(concatenate_f32_op(), attributes, &[value, value])
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("joined").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            strict_contract(),
+        )
+        .unwrap();
+
+        let region = IndexRealizationLaw::concatenate_f32()
+            .realize(&subject, &scalars)
+            .unwrap();
+        assert_eq!(region.outputs().len(), 2);
+        assert_eq!(
+            region
+                .tensors()
+                .filter(|tensor| tensor.role() == TensorRole::Input)
+                .count(),
+            1,
+            "one distinct boundary, joined to itself"
+        );
+    }
+
+    /// The law refuses an occurrence outside its exact supported form.
+    ///
+    /// Three refusals, each on a subject a caller can actually build. The two
+    /// remaining rules — a re-derived result shape disagreeing with the declared
+    /// one, and an operand position outside the input boundaries — are
+    /// unreachable from a *verified* occurrence, because `derive` builds both
+    /// from the family's own inferencer; they are stated anyway because a law is
+    /// interpreted against a subject rather than against the inferencer that
+    /// produced it.
+    #[test]
+    fn the_concatenate_law_refuses_occurrences_outside_its_form() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+
+        // An occurrence carrying no attribute record at all.
+        assert_eq!(
+            IndexRealizationLaw::concatenate_f32()
+                .realize(&subject(StrictAffineU4::resolved_type()), &scalars)
+                .unwrap_err()
+                .rule(),
+            "concatenate-attributes"
+        );
+
+        // A law naming a field this record does not carry. Attribute identifiers
+        // are record-local, so this is the mistake the constructor exists to
+        // prevent rather than a hypothetical one.
+        assert_eq!(
+            IndexRealizationLaw::PartitionedConcatenate {
+                axis_attribute: AttributeFieldId::new(CONCATENATE_AXIS_ATTRIBUTE.get() + 1),
+            }
+            .realize(&concatenate_subject(&[&[3], &[5]], 0), &scalars)
+            .unwrap_err()
+            .rule(),
+            "concatenate-attribute-key"
+        );
+
+        // A record whose single field is numbered alike and means something else:
+        // the softmax's reduced-axes sequence is not a canonical `u32` axis.
+        assert_eq!(
+            IndexRealizationLaw::concatenate_f32()
+                .realize(&softmax_subject(&[3, 4], 1), &scalars)
+                .unwrap_err()
+                .rule(),
+            "concatenate-axis"
+        );
+    }
+
+    #[test]
+    fn the_concatenate_law_tag_is_append_only_and_distinct() {
+        let mut concatenate = Vec::new();
+        IndexRealizationLaw::concatenate_f32().encode(&mut concatenate);
+        assert_eq!(concatenate.first(), Some(&12));
+        // Tags 4, 5, 6, 7, and 11 write the same payload shape this one does —
+        // one fixed-width attribute identifier — so the discriminating first byte
+        // is the whole of the separation, and it is asserted rather than argued.
+        for old in [
+            IndexRealizationLaw::constant_f32(),
+            IndexRealizationLaw::constant_bf16(),
+            IndexRealizationLaw::multiply_f32(),
+            IndexRealizationLaw::add_f32(),
+            IndexRealizationLaw::multiply_bf16(),
+            IndexRealizationLaw::add_bf16(),
+            IndexRealizationLaw::PreciseSiluF32,
+            IndexRealizationLaw::strict_serial_sum_f32(),
+            IndexRealizationLaw::reindex_f32(),
+            IndexRealizationLaw::broadcast_f32(),
+            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::strict_affine_u4_dequantize(),
+            IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32(),
+            IndexRealizationLaw::staged_root_mean_square_scale_f32(),
+            IndexRealizationLaw::staged_softmax_f32(),
+        ] {
+            let mut encoded = Vec::new();
+            old.encode(&mut encoded);
+            assert_ne!(encoded, concatenate);
+            assert!((1..=11).contains(encoded.first().unwrap()));
+        }
+        // Its own payload separates two rows differing in the one field the
+        // template carries.
+        let mut moved_axis = Vec::new();
+        IndexRealizationLaw::PartitionedConcatenate {
+            axis_attribute: AttributeFieldId::new(CONCATENATE_AXIS_ATTRIBUTE.get() + 1),
+        }
+        .encode(&mut moved_axis);
+        assert_ne!(moved_axis, concatenate);
+        // The reindex's mapping identifier happens to be the same number, and
+        // that coincidence is not what separates the two rows: the tag is.
+        let mut reindex = Vec::new();
+        IndexRealizationLaw::reindex_f32().encode(&mut reindex);
+        assert_eq!(
+            REINDEX_MAPPING_ATTRIBUTE.get(),
+            CONCATENATE_AXIS_ATTRIBUTE.get(),
+            "the coincidence this assertion is about"
+        );
+        assert_ne!(reindex.first(), concatenate.first());
+    }
+
+    /// A single-region law answers the sequence API as a one-stage sequence.
+    #[test]
+    fn the_concatenate_law_realizes_a_one_stage_sequence() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let subject = concatenate_subject(&[&[3], &[5]], 0);
+        let sequence = IndexRealizationLaw::concatenate_f32()
+            .realize_sequence(&subject, &scalars)
+            .unwrap();
+        assert!(sequence.is_single_stage());
+        assert_eq!(
+            sequence.final_stage().canonical_identity(),
+            IndexRealizationLaw::concatenate_f32()
+                .realize(&subject, &scalars)
+                .unwrap()
+                .canonical_identity()
+        );
     }
 
     #[test]

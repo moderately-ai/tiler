@@ -28,15 +28,17 @@ use tiler_ir::index::{
 };
 use tiler_ir::semantic::{
     AttributeFieldId, BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
-    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
-    CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
-    F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAttributes, ProviderIdentity,
+    CONCATENATE_AXIS_ATTRIBUTE, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField,
+    CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, ContractionIndex,
+    ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS,
+    MIN_CONCATENATE_OPERANDS, OpKey, OperationAttributes, ProviderIdentity,
     REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE,
     RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType,
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
-    StrictAffineU4, TypeKey, add_f32_op, broadcast_f32_op, constant_f32_op,
-    dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op,
-    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    StrictAffineU4, TypeKey, add_f32_op, broadcast_f32_op, concatenate_axis, concatenate_f32_op,
+    concatenate_result_shape, constant_f32_op, dequantize_strict_affine_op, multiply_f32_op,
+    reindex_f32_op, rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
+    strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 
@@ -215,18 +217,36 @@ impl GovernedIndexAccess {
     }
 }
 
-/// Returns the ten shipped index-access capabilities in canonical family order.
+/// How many index-access capabilities the governed profile ships.
+///
+/// Ten fixed-signature families plus the concatenation's one registration per
+/// admitted operand arity. Named so a test can count the frozen registry against
+/// a number stated here rather than against whatever the list happens to hold.
+#[cfg(test)]
+pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 17;
+
+/// Returns the shipped index-access capabilities in canonical family order.
+///
+/// A `Vec` rather than a fixed-size array because the concatenation contributes
+/// one capability per admitted operand arity: [`resolve_index_access`] keys on
+/// the exact `(family, operation, signature)` triple and a `LoweringSignature`
+/// carries the exact operand type list, so a variadic family is one registration
+/// per arity rather than one registration. The count is stated by
+/// [`GOVERNED_INDEX_ACCESS_CAPABILITIES`] and asserted against the frozen
+/// registry.
+///
+/// [`resolve_index_access`]: FrozenLoweringCapabilityRegistry::resolve_index_access
 ///
 /// # Errors
 ///
 /// Returns [`GovernedRegistryError`] when a governed signature exceeds its
 /// governed structural bound.
 pub(crate) fn governed_index_access_capabilities()
--> Result<[GovernedIndexAccess; 10], GovernedRegistryError> {
+-> Result<Vec<GovernedIndexAccess>, GovernedRegistryError> {
     let f32_type = F32::resolved_type();
     let pointwise =
         || LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type.clone()]);
-    Ok([
+    let mut capabilities = vec![
         GovernedIndexAccess {
             provider: governed_provider("constant-f32"),
             operation: constant_f32_op(),
@@ -361,7 +381,29 @@ pub(crate) fn governed_index_access_capabilities()
             emitted: vec![strict_affine_u4_dequantize_scalar_op()],
             implementation: Arc::new(GovernedStrictAffineU4Dequantize),
         },
-    ])
+    ];
+    // One registration per admitted operand arity, and one *provider* per
+    // registration: the registry refuses a second signature under one
+    // `(family, operation, provider)` triple as a conflated key, so seven
+    // arities under one provider identity would not register at all.
+    for arity in MIN_CONCATENATE_OPERANDS..=MAX_CONCATENATE_OPERANDS {
+        let operands = vec![F32::resolved_type(); arity as usize];
+        capabilities.push(GovernedIndexAccess {
+            provider: governed_provider(&format!("concatenate-f32.arity-{arity}")),
+            operation: concatenate_f32_op(),
+            signature: LoweringSignature::new(operands, [F32::resolved_type()])?,
+            // Deliberately empty, for the reason the reindex row's is. A
+            // concatenation applies no scalar operation at all: every result
+            // element is an operand element unchanged, so the value written is
+            // the value read and the emitted region reaches no scalar authority.
+            // Declaring one anyway would make refinement's containment check
+            // pass over an operation the region never emits, which is the
+            // reverse of what the declaration is for.
+            emitted: Vec::new(),
+            implementation: Arc::new(GovernedConcatenateF32),
+        });
+    }
+    Ok(capabilities)
 }
 
 /// Returns the governed lowering provider identity for one family.
@@ -1954,6 +1996,128 @@ impl IndexAccessLoweringProvider for GovernedBroadcastF32 {
     }
 }
 
+/// Emits the partitioned write realizing one `tiler::concatenate-f32@1`
+/// occurrence.
+///
+/// One region with one write root per *operand* over the single output: root `k`
+/// iterates its own dimension on the concatenated axis, together with the
+/// dimensions the non-concatenated axes share, reads its operand there
+/// unchanged, and writes at `t + offset_k`. The joint partition obligation over
+/// the roots is what proves the output owned, and it is decided by interval
+/// reasoning because every rectangle is contiguous and every extent is static.
+///
+/// The write coordinate stays affine: `offset_k` is the sum of the preceding
+/// operands' extents on that axis, every extent a semantic occurrence can carry
+/// is a static one, and a linear combination carries a literal exact-integer
+/// constant already.
+struct GovernedConcatenateF32;
+
+impl IndexAccessLoweringProvider for GovernedConcatenateF32 {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let occurrence = context.occurrence();
+        let [result] = occurrence.results() else {
+            return Err(occurrence_error("concatenate-result-arity"));
+        };
+        // Exactly the one field this lowering reads. An occurrence carrying more
+        // would be lowered while part of its identity went unconsulted.
+        let [field] = occurrence.attributes().fields() else {
+            return Err(occurrence_error("concatenate-attributes"));
+        };
+        if field.id() != CONCATENATE_AXIS_ATTRIBUTE {
+            return Err(occurrence_error("concatenate-attribute-key"));
+        }
+        let axis =
+            concatenate_axis(field.value()).map_err(|_| occurrence_error("concatenate-axis"))?;
+        let result_type = result.value_type().clone();
+        let result_shape = result.shape().clone();
+        let inputs: Vec<_> = occurrence
+            .inputs()
+            .iter()
+            .map(|input| (input.value_type().clone(), input.shape().clone()))
+            .collect();
+        let operands = occurrence.operands().to_vec();
+
+        // The occurrence is re-derived rather than trusted: the axis must
+        // produce exactly this result from exactly these operands, or the region
+        // about to be emitted would realize a different join than the one
+        // requested.
+        let mut shapes = Vec::with_capacity(operands.len());
+        for operand in &operands {
+            let (_, shape) = inputs
+                .get(*operand)
+                .ok_or_else(|| occurrence_error("concatenate-operand-binding"))?;
+            shapes.push(shape);
+        }
+        if concatenate_result_shape(axis, &shapes)
+            .map_err(|_| occurrence_error("concatenate-result-shape"))?
+            != result_shape
+        {
+            return Err(occurrence_error("concatenate-result-shape"));
+        }
+        let position = usize::try_from(axis.get())
+            .ok()
+            .filter(|position| *position < result_shape.rank())
+            .ok_or_else(|| occurrence_error("concatenate-axis"))?;
+        // Every prefix is bounded by the result extent the derivation above just
+        // proved representable, so this accumulation refuses under that same rule
+        // rather than under one of its own.
+        let mut offset = 0_u64;
+        let mut members = Vec::with_capacity(shapes.len());
+        for shape in shapes {
+            let extent = *shape
+                .extents()
+                .get(position)
+                .ok_or_else(|| occurrence_error("concatenate-result-shape"))?;
+            members.push((extent, offset));
+            offset = offset
+                .checked_add(extent.get())
+                .ok_or_else(|| occurrence_error("concatenate-result-shape"))?;
+        }
+
+        // One shared parallel dimension per non-concatenated axis. The family
+        // admits an occurrence only when every operand agrees on those axes, so
+        // one dimension each is the region's own statement of that agreement;
+        // a private copy per root would put dimensions that are pairwise equal
+        // by construction into the canonical identity.
+        let mut shared = Vec::with_capacity(result_shape.rank());
+        for (index, extent) in result_shape.extents().iter().enumerate() {
+            shared.push(if index == position {
+                None
+            } else {
+                Some(context.dimension(DomainRole::Parallel, *extent)?)
+            });
+        }
+        let mut tensors = Vec::with_capacity(inputs.len());
+        for (value_type, shape) in &inputs {
+            tensors.push(context.input_tensor(value_type.clone(), shape.clone())?);
+        }
+        let output = context.output_tensor(result_type, result_shape)?;
+        for (operand, (extent, offset)) in operands.iter().zip(&members) {
+            let own = context.dimension(DomainRole::Parallel, *extent)?;
+            let mut domain = Vec::with_capacity(shared.len());
+            let mut read_coordinates = Vec::with_capacity(shared.len());
+            for slot in &shared {
+                let dimension = slot.unwrap_or(own);
+                domain.push(dimension);
+                read_coordinates.push(context.dimension_expr(dimension)?);
+            }
+            let displaced = context.linear_combination(
+                IndexInteger::from_u64(*offset),
+                &[(IndexInteger::from_u64(1), read_coordinates[position])],
+            )?;
+            let mut write_coordinates = read_coordinates.clone();
+            write_coordinates[position] = displaced;
+            let tensor = *tensors
+                .get(*operand)
+                .ok_or_else(|| occurrence_error("concatenate-operand-binding"))?;
+            let value = context.read(tensor, &domain, &read_coordinates)?;
+            let write = context.write(output, &domain, &write_coordinates)?;
+            context.output(write, value)?;
+        }
+        Ok(())
+    }
+}
+
 /// Declares one parallel dimension per axis of `shape`, in axis order.
 fn declare_parallel_domain(
     context: &mut IndexAccessLoweringContext<'_>,
@@ -2081,23 +2245,26 @@ mod tests {
     use crate::legality::{IndexRefinement, RefinementError, refine_index_region};
     use std::sync::Arc;
     use tiler_ir::index::{
-        DomainRole, IndexInteger, IndexRefinementSubject, NumericalContractIdentity,
-        ScalarAttributes, add_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
+        DomainRole, IndexInteger, IndexRefinementSubject, IndexRegionDiagnostic,
+        JointPartitionProofView, NumericalContractIdentity, ScalarAttributes,
+        WriteOwnershipProofView, add_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
         multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
     };
     use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
     use tiler_ir::semantic::{
         BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
-        CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue, ContractionIndex,
-        ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-        OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
+        CONCATENATE_AXIS_ATTRIBUTE, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField,
+        CanonicalValue, ContractionIndex, ContractionIndexStructure, F32,
+        F32_CONSTANT_BITS_ATTRIBUTE, InputKey, MAX_CONCATENATE_OPERANDS, MIN_CONCATENATE_OPERANDS,
+        OpKey, OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
         REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
         ReindexForm, ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
         STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgramBuilder, StrictAffineU4, TypeKey, U4,
-        add_f32_op, broadcast_f32_op, constant_f32_op, dequantize_strict_affine_op,
-        multiply_f32_op, reindex_f32_op, rms_norm_f32_eps_attribute, rms_norm_f32_op,
-        strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+        add_f32_op, broadcast_f32_op, concatenate_f32_axis_attribute, concatenate_f32_op,
+        constant_f32_op, dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op,
+        rms_norm_f32_eps_attribute, rms_norm_f32_op, strict_serial_sum_f32_op,
+        strict_tensor_contraction_f32_op,
     };
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2368,6 +2535,15 @@ mod tests {
         .unwrap()
     }
 
+    /// The concatenation's own one-field attribute record.
+    fn concatenate_attributes(axis: u32) -> OperationAttributes {
+        OperationAttributes::new([CanonicalField::new(
+            CONCATENATE_AXIS_ATTRIBUTE,
+            concatenate_f32_axis_attribute(Axis::new(axis)),
+        )])
+        .unwrap()
+    }
+
     fn axes_attributes(axes: &[u32]) -> OperationAttributes {
         OperationAttributes::new([CanonicalField::new(
             REDUCTION_AXES_ATTRIBUTE,
@@ -2544,6 +2720,397 @@ mod tests {
         assert!(
             refinement.single_region().is_none(),
             "no single-region view of a chain is offered"
+        );
+    }
+
+    /// One operand-shaped `[2, extent, 3]` boundary at a distinct value.
+    fn concatenate_operand(value: u32, extent: u64) -> OccurrenceOperand {
+        OccurrenceOperand::new(
+            OccurrenceValueId(value),
+            f32_type(),
+            Shape::from_dims([2, extent, 3]),
+        )
+    }
+
+    /// Every partition member owns its own piece under the joint obligation.
+    ///
+    /// Interval reasoning is asserted rather than merely the presence of a
+    /// proof: every member is a contiguous rectangle over static extents, so a
+    /// region that fell back to the joint enumeration would mean the placement
+    /// vocabulary stopped recognizing `t + offset`.
+    fn assert_members_own_their_partitions(refinement: &IndexRefinement) {
+        let region = refinement
+            .single_region()
+            .expect("a concatenation realizes one region");
+        for binding in refinement.result_bindings() {
+            assert_eq!(
+                binding.result(),
+                0,
+                "every member answers the one semantic result"
+            );
+            assert!(
+                matches!(
+                    region
+                        .access(binding.write_access())
+                        .unwrap()
+                        .write_ownership_proof(),
+                    Some(WriteOwnershipProofView::PartitionMember {
+                        joint: JointPartitionProofView::Interval
+                    })
+                ),
+                "member {binding:?} owns its partition by interval reasoning"
+            );
+        }
+    }
+
+    /// The family emits, verifies, and refines at every admitted operand arity.
+    ///
+    /// **Seven registrations are what the resolver's exact-signature key forces**
+    /// — `LoweringSignature` carries the exact operand type list, so two arities
+    /// of one operation are two signatures — and this walks all seven rather than
+    /// sampling, because a missing arity is a `MissingCapability` that no other
+    /// test would reach.
+    ///
+    /// The operand extents are `1, 2, 3, …` so the partition is *unequal* at
+    /// every arity: an equal-share partition is the case the shared-domain
+    /// contract could already express, and it would not exercise the sub-domain
+    /// relaxation this lowering rests on.
+    #[test]
+    fn the_governed_concatenate_lowering_refines_at_every_admitted_arity() {
+        for arity in MIN_CONCATENATE_OPERANDS..=MAX_CONCATENATE_OPERANDS {
+            let operands = (0..arity)
+                .map(|position| concatenate_operand(position, u64::from(position) + 1))
+                .collect::<Vec<_>>();
+            let joined = (1..=u64::from(arity)).sum::<u64>();
+            let refinement = refine(
+                concatenate_f32_op(),
+                operands,
+                vec![OccurrenceResult::new(
+                    f32_type(),
+                    Shape::from_dims([2, joined, 3]),
+                )],
+                concatenate_attributes(1),
+            );
+
+            assert_eq!(
+                refinement.content().stage_count(),
+                1,
+                "arity {arity}: a concatenation is one region, not a chain"
+            );
+            assert_eq!(
+                refinement.result_bindings().len(),
+                arity as usize,
+                "arity {arity}: one binding per partition member"
+            );
+            assert_eq!(
+                refinement.operand_bindings().len(),
+                arity as usize,
+                "arity {arity}: every operand is read exactly once"
+            );
+            assert!(
+                refinement
+                    .scalar_authority()
+                    .reached_operations()
+                    .is_empty(),
+                "arity {arity}: a concatenation applies no scalar operation, so the \
+                 region reaches no scalar authority and the declared emitted set is \
+                 empty for the reason the reindex row's is"
+            );
+            assert_members_own_their_partitions(&refinement);
+        }
+    }
+
+    /// The pinned prefill occurrence: an empty partition is not a coverage hole.
+    ///
+    /// `[8, 0, 128]` joined with `[8, T, 128]` on axis 1 is what binding an empty
+    /// cache produces, and the family admits it — the empty operand contributes
+    /// no coordinate but still agrees on rank and on every other axis. Its root
+    /// visits no point, writes no element, and contributes zero volume, so the
+    /// remaining member covers the boundary alone.
+    ///
+    /// `T` is a literal here because a semantic occurrence carries static extents
+    /// only; the symbolic analogue is fail-closed and filed as
+    /// `prove-partition-coverage-for-symbolic-extents`.
+    #[test]
+    fn the_pinned_prefill_concatenation_admits_its_zero_extent_operand() {
+        let refinement = refine(
+            concatenate_f32_op(),
+            vec![
+                OccurrenceOperand::new(
+                    OccurrenceValueId(0),
+                    f32_type(),
+                    Shape::from_dims([8, 0, 128]),
+                ),
+                OccurrenceOperand::new(
+                    OccurrenceValueId(1),
+                    f32_type(),
+                    Shape::from_dims([8, 5, 128]),
+                ),
+            ],
+            vec![OccurrenceResult::new(
+                f32_type(),
+                Shape::from_dims([8, 5, 128]),
+            )],
+            concatenate_attributes(1),
+        );
+
+        assert_eq!(
+            refinement.result_bindings().len(),
+            2,
+            "the empty operand is a partition member rather than a skipped one"
+        );
+        assert_members_own_their_partitions(&refinement);
+
+        // The empty member is present in the region and is empty: its own
+        // dimension has extent zero, which is what makes its rectangle empty and
+        // its contribution to the covered volume zero.
+        let region = refinement.single_region().unwrap();
+        assert_eq!(
+            region
+                .dimensions()
+                .filter(|dimension| dimension.extent().as_static() == Some(Extent::new(0)))
+                .count(),
+            1,
+            "exactly one zero-extent dimension, the empty operand's own"
+        );
+    }
+
+    /// The two boundaries of one input are two members at two offsets.
+    ///
+    /// Operand order is semantic and an occurrence may join a value to itself, so
+    /// the partition is keyed by operand rather than by distinct input. One input
+    /// tensor, two roots, two offsets.
+    #[test]
+    fn a_value_joined_to_itself_is_two_partition_members_over_one_boundary() {
+        let operand = concatenate_operand(0, 3);
+        let refinement = refine(
+            concatenate_f32_op(),
+            vec![operand.clone(), operand],
+            vec![OccurrenceResult::new(
+                f32_type(),
+                Shape::from_dims([2, 6, 3]),
+            )],
+            concatenate_attributes(1),
+        );
+        assert_eq!(refinement.result_bindings().len(), 2);
+        assert_members_own_their_partitions(&refinement);
+        let region = refinement.single_region().unwrap();
+        assert_eq!(
+            region
+                .tensors()
+                .filter(|tensor| tensor.role() == tiler_ir::index::TensorRole::Input)
+                .count(),
+            1,
+            "one distinct input boundary, read twice"
+        );
+    }
+
+    /// The governed concatenate emission with one partition member displaced.
+    ///
+    /// Only the second root's offset moves; every other emitted byte is what the
+    /// governed provider writes, so the refusal this produces observes the joint
+    /// ownership obligation and nothing else. Fixed at a rank-three occurrence on
+    /// axis one with two operands, which is the shape the perturbation test uses.
+    struct DisplacedConcatenatePartition {
+        offset: u64,
+    }
+
+    impl IndexAccessLoweringProvider for DisplacedConcatenatePartition {
+        fn lower(
+            &self,
+            context: &mut IndexAccessLoweringContext<'_>,
+        ) -> Result<(), LoweringEmitError> {
+            let occurrence = context.occurrence();
+            let [result] = occurrence.results() else {
+                return Err(super::occurrence_error("concatenate-test-arity"));
+            };
+            let result_shape = result.shape().clone();
+            let result_type = result.value_type().clone();
+            let inputs: Vec<_> = occurrence
+                .inputs()
+                .iter()
+                .map(|input| (input.value_type().clone(), input.shape().clone()))
+                .collect();
+            let operands = occurrence.operands().to_vec();
+            let rows = context.dimension(DomainRole::Parallel, result_shape.extents()[0])?;
+            let columns = context.dimension(DomainRole::Parallel, result_shape.extents()[2])?;
+            let mut tensors = Vec::with_capacity(inputs.len());
+            for (value_type, shape) in &inputs {
+                tensors.push(context.input_tensor(value_type.clone(), shape.clone())?);
+            }
+            let output = context.output_tensor(result_type, result_shape)?;
+            let mut offset = 0_u64;
+            for (member, operand) in operands.iter().enumerate() {
+                let (_, shape) = &inputs[*operand];
+                let own = context.dimension(DomainRole::Parallel, shape.extents()[1])?;
+                let domain = [rows, own, columns];
+                let read_coordinates = [
+                    context.dimension_expr(rows)?,
+                    context.dimension_expr(own)?,
+                    context.dimension_expr(columns)?,
+                ];
+                let displaced = context.linear_combination(
+                    IndexInteger::from_u64(if member == 1 { self.offset } else { offset }),
+                    &[(IndexInteger::from_u64(1), read_coordinates[1])],
+                )?;
+                let write_coordinates = [read_coordinates[0], displaced, read_coordinates[2]];
+                let value = context.read(tensors[*operand], &domain, &read_coordinates)?;
+                let write = context.write(output, &domain, &write_coordinates)?;
+                context.output(write, value)?;
+                offset = offset.saturating_add(shape.extents()[1].get());
+            }
+            Ok(())
+        }
+    }
+
+    /// Refines one two-operand concatenation through a substituted provider.
+    fn refine_substituted_concatenate(
+        name: &str,
+        implementation: Arc<dyn IndexAccessLoweringProvider>,
+        extents: [u64; 2],
+    ) -> RefinementError {
+        let scalars = governed_scalars().unwrap();
+        let mut lowerings = LoweringCapabilityRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        )
+        .unwrap();
+        lowerings
+            .register_index_access(
+                ProviderIdentity::new("test", name, 1).unwrap(),
+                concatenate_f32_op(),
+                LoweringSignature::new([f32_type(), f32_type()], [f32_type()]).unwrap(),
+                &[],
+                LoweringCapabilityRevision::new(1).unwrap(),
+                implementation,
+            )
+            .unwrap();
+        let lowerings = lowerings.freeze();
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let values = extents
+            .iter()
+            .enumerate()
+            .map(|(position, extent)| {
+                program
+                    .input_resolved(
+                        InputKey::new(format!("operand-{position}")).unwrap(),
+                        Shape::from_dims([2, *extent, 3]),
+                        f32_type(),
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let result = program
+            .apply(concatenate_f32_op(), concatenate_attributes(1), &values)
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("joined").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
+        let signature = LoweringSignature::new(
+            subject.signature().operands().iter().cloned(),
+            subject.signature().results().iter().cloned(),
+        )
+        .unwrap();
+        let capability = lowerings
+            .resolve_index_access(subject.operation(), &signature)
+            .unwrap();
+        refine_index_region(
+            &capability,
+            &subject,
+            &governed_realization_laws(&scalars),
+            &scalars,
+        )
+        .unwrap_err()
+    }
+
+    /// Moving one partition's offset is refused by the ownership proof.
+    ///
+    /// Watched failing in both directions the joint obligation can be broken
+    /// while every rectangle stays inside the boundary. Offsets `(0, 2)` over
+    /// extents `3` and `5` make the two members overlap on `[2, 3)`, and offsets
+    /// `(0, 4)` leave `[3, 4)` bare while the second member runs one element past
+    /// the boundary. The control is the governed offset `3`, which refines — so
+    /// what these observe is the displacement rather than the fixture.
+    #[test]
+    fn displacing_one_partition_offset_fails_the_ownership_proof() {
+        let overlapping = refine_substituted_concatenate(
+            "overlapping-concatenate-partition",
+            Arc::new(DisplacedConcatenatePartition { offset: 2 }),
+            [3, 5],
+        );
+        let RefinementError::Build { stage, diagnostics } = overlapping else {
+            panic!("an overlapping partition fails whole-region verification: {overlapping:?}")
+        };
+        assert_eq!(stage, 0);
+        assert!(
+            diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::OutputPartitionRangesOverlap { .. }
+            )),
+            "the joint obligation names the overlap: {diagnostics:?}"
+        );
+
+        let uncovered = refine_substituted_concatenate(
+            "uncovered-concatenate-partition",
+            Arc::new(DisplacedConcatenatePartition { offset: 4 }),
+            [3, 5],
+        );
+        assert!(
+            matches!(uncovered, RefinementError::Build { .. }),
+            "a partition leaving an element bare is refused: {uncovered:?}"
+        );
+
+        // The control: the governed offset over the same fixture refines.
+        let refinement = refine(
+            concatenate_f32_op(),
+            vec![concatenate_operand(0, 3), concatenate_operand(1, 5)],
+            vec![OccurrenceResult::new(
+                f32_type(),
+                Shape::from_dims([2, 8, 3]),
+            )],
+            concatenate_attributes(1),
+        );
+        assert_eq!(refinement.result_bindings().len(), 2);
+    }
+
+    /// The governed profile ships one capability per admitted concatenate arity.
+    #[test]
+    fn the_governed_registry_holds_one_capability_per_admitted_concatenate_arity() {
+        let scalars = governed_scalars().unwrap();
+        let registry = governed_lowering_capabilities(&scalars).unwrap();
+        assert_eq!(
+            registry.capability_count(),
+            super::GOVERNED_INDEX_ACCESS_CAPABILITIES
+        );
+        for arity in MIN_CONCATENATE_OPERANDS..=MAX_CONCATENATE_OPERANDS {
+            let signature =
+                LoweringSignature::new(vec![f32_type(); arity as usize], [f32_type()]).unwrap();
+            assert!(
+                registry
+                    .resolve_index_access(&concatenate_f32_op(), &signature)
+                    .is_ok(),
+                "arity {arity} resolves"
+            );
+        }
+        // One past the admitted maximum has no capability, and the family's own
+        // schema refuses that occurrence before a signature is ever built — so
+        // this is the resolver's half of a wall the registry does not open.
+        let beyond = LoweringSignature::new(
+            vec![f32_type(); MAX_CONCATENATE_OPERANDS as usize + 1],
+            [f32_type()],
+        )
+        .unwrap();
+        assert!(
+            registry
+                .resolve_index_access(&concatenate_f32_op(), &beyond)
+                .is_err()
         );
     }
 

@@ -803,15 +803,19 @@ mod tests {
     /// `tiler::concatenate-f32@1` is here for a different reason than the BF16
     /// three, and the difference is worth keeping. BF16 is unplanned because no
     /// arithmetic in this build realizes it. Concatenate is unplanned because
-    /// nothing *physical* realizes it — the family has no index-access lowering
-    /// and no kernel construct — and it consumes no numerical freedom for a
-    /// stronger reason than the BF16 rows do: it performs no arithmetic, so
-    /// there is no dimension a capability row could list. A row would be a claim
-    /// about a target that concatenating elements never asks of one. It does now
-    /// hold a `CoordinateRelation` fusion role, and that is not in tension with
-    /// its place here: a fusion role answers whether fusing an occurrence
-    /// preserves the numerical contract, which for a family performing no
-    /// arithmetic is answerable without any target being asked anything.
+    /// nothing *physical* realizes it — no kernel construct writes a partitioned
+    /// output and the request boundary refuses the family under `operation-set`
+    /// — and it consumes no numerical freedom for a stronger reason than the
+    /// BF16 rows do: it performs no arithmetic, so there is no dimension a
+    /// capability row could list. A row would be a claim about a target that
+    /// concatenating elements never asks of one. It now holds a
+    /// `CoordinateRelation` fusion role and a registered index-access lowering
+    /// with its realization law, and neither is in tension with its place here:
+    /// a fusion role answers whether fusing an occurrence preserves the
+    /// numerical contract, and a lowering answers what *logical* index work
+    /// realizes it. Both are answerable for a family performing no arithmetic
+    /// without any target being asked anything, which is exactly why neither
+    /// makes the family plannable.
     const UNPLANNED_OPERATIONS: &[&str] = &[
         "tiler::add-bf16@1",
         "tiler::concatenate-f32@1",
