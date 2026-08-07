@@ -22,6 +22,7 @@
 
 use std::sync::Arc;
 
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
     F32, OperationAttributes, ResolvedValueType, STRICT_AFFINE_CODES_ROLE,
     STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, StrictAffineU8, U4,
@@ -157,9 +158,12 @@ impl ReferenceOperation for StrictAffineOperation {
         reject_attributes(request.attributes())?;
         match self {
             Self::Assemble(profile) => assemble(profile, request.operands(), outputs),
-            Self::Quantize(profile) => {
-                quantize(profile, request.operands(), outputs, request.conformance())
-            }
+            Self::Quantize(profile) => quantize(
+                profile,
+                request.operands(),
+                outputs,
+                request.conformance_for(ArithmeticType::F32)?,
+            ),
             Self::Dequantize(profile) => dequantize(profile, request.operands(), outputs),
         }
     }

@@ -8,22 +8,32 @@
 //!
 //! Every capability registered here receives a
 //! [`ReferenceNumericalConformance`](crate::ReferenceNumericalConformance)
-//! through [`ReferenceEvaluationRequest::conformance`]. The two subnormal
-//! dimensions are functions on an *arithmetic operand* and on a *newly produced
-//! arithmetic result*, so a family reaches them exactly when it performs host
-//! binary32 arithmetic:
+//! through [`ReferenceEvaluationRequest::conformance_for`], naming its own
+//! arithmetic type. The two subnormal dimensions are functions on an *arithmetic
+//! operand* and on a *newly produced arithmetic result*, so a family reaches them
+//! exactly when it performs arithmetic — in **any** format, not only host
+//! binary32:
 //!
 //! - `tiler::multiply-f32@1`, `tiler::add-f32@1`, `tiler::strict-serial-sum-f32@1`,
-//!   and `tiler::strict-tensor-contraction-f32@1` apply it at every operand and
-//!   every produced value;
-//! - `tiler::silu-f32@1`, `tiler::rms-norm-f32@1`, and `tiler::softmax-f32@1`
-//!   apply it at each step of their pinned compositions, which their own
-//!   declared subnormal facts record as reachable;
-//! - `tiler::constant-f32@1` reproduces a declared payload and performs no
-//!   arithmetic, so it applies neither dimension — the same reason it does not
-//!   canonicalize a NaN payload;
-//! - the four structural families transport elements and the three BF16
-//!   capabilities compute in exact BF16 rationals, and each states its own
+//!   and `tiler::strict-tensor-contraction-f32@1` name
+//!   [`ArithmeticType::F32`](tiler_ir::schedule::ArithmeticType::F32) and apply it
+//!   at every operand and every produced value;
+//! - `tiler::silu-f32@1`, `tiler::rms-norm-f32@1`, and `tiler::softmax-f32@1` name
+//!   the same and apply it at each step of their pinned compositions, which their
+//!   own declared subnormal facts record as reachable;
+//! - `tiler::multiply-bf16@1` and `tiler::add-bf16@1` name
+//!   [`ArithmeticType::Bf16`](tiler_ir::schedule::ArithmeticType::Bf16) and realize
+//!   the same two declared dimensions over BF16's value set, because their
+//!   arithmetic is exact rational with one rounding rather than a host binary32
+//!   composition. **That third case is what a two-way division into "host binary32"
+//!   and "no arithmetic" had no room for**, and the subject is what separates it:
+//!   the dimensions are format-agnostic, the format is the capability's own, and
+//!   the agreement check is what stops one family's resolution reaching the other's
+//!   values;
+//! - `tiler::constant-f32@1` and `tiler::constant-bf16@1` reproduce a declared
+//!   payload and perform no arithmetic, so they apply neither dimension and read
+//!   nothing here — the same reason neither canonicalizes a NaN payload;
+//! - the four structural families transport elements, and each states its own
 //!   reason in its module.
 //!
 //! The list is exhaustive over what this provider registers, because a family
@@ -35,6 +45,7 @@
 
 use std::sync::Arc;
 
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
     CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS,
     MIN_CONCATENATE_OPERANDS, ProviderIdentity, TypeKey, add_f32_op, broadcast_f32_op,
@@ -283,7 +294,7 @@ impl ReferenceOperation for F32BinaryReference {
         if !attributes.fields().is_empty() {
             return Err(ReferenceOperationError::InvalidApplication);
         }
-        let conformance = request.conformance();
+        let conformance = request.conformance_for(ArithmeticType::F32)?;
         let result = match self {
             Self::Multiply => binary(left, right, conformance, |left, right| left * right)?,
             Self::Add => binary(left, right, conformance, |left, right| left + right)?,
@@ -305,6 +316,7 @@ impl ReferenceOperation for StrictSerialF32SumReference {
             return Err(ReferenceOperationError::InvalidApplication);
         };
         let axes = reduction_axes(request.attributes())?;
-        outputs.push(strict_sum(input, &axes, request.conformance())?)
+        let conformance = request.conformance_for(ArithmeticType::F32)?;
+        outputs.push(strict_sum(input, &axes, conformance)?)
     }
 }

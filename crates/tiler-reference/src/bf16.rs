@@ -72,7 +72,7 @@
 //! From the conformance the evaluation is already handed.
 //! `<Bf16BinaryReference as ReferenceOperation>::evaluate` reads the two
 //! *format-agnostic* [`SubnormalMode`]s off
-//! [`ReferenceEvaluationRequest::conformance`](crate::ReferenceEvaluationRequest::conformance)
+//! [`ReferenceEvaluationRequest::conformance_for`](crate::ReferenceEvaluationRequest::conformance_for)
 //! and builds a [`Bf16SubnormalRealization`] from them, so an evaluation performed
 //! under a flushing contract returns the flushing answer and one performed under
 //! [`ReferenceNumericalConformance::strict`](crate::ReferenceNumericalConformance::strict)
@@ -87,22 +87,27 @@
 //! subject is knowable at the site that applies the mode without being carried to
 //! it. Tom decided that on 2026-08-07, against the alternative of giving
 //! `NumericalRealization`'s two subnormal fields a subject: that alternative is an
-//! identity-domain migration for a field nothing reads, since
-//! [`ReferenceNumericalConformance::from_realization`](crate::ReferenceNumericalConformance::from_realization)
-//! has no caller, and it would have left `canonical_arithmetic_nan_bits` — which
-//! answered the same question the other way on 2026-08-06 — carrying its subject
-//! differently. A mixed-width *refusal* is deliberately absent for the same reason
-//! rather than an omission: `region_arithmetic_type` is a total function from a
-//! `ScalarProgram` to one `ArithmeticType`, so no constructible program could ever
-//! fire one. The reasoning is on
+//! identity-domain migration for something the schedule layer already derives, and
+//! it would have left `canonical_arithmetic_nan_bits` — which answered the same
+//! question the other way on 2026-08-06 — carrying its subject differently. A
+//! mixed-width *refusal* within one region is deliberately absent for a related
+//! reason rather than as an omission: `region_arithmetic_type` is a total function
+//! from a `ScalarProgram` to one `ArithmeticType`, so no constructible program
+//! could ever fire one. The reasoning is on
 //! `accept-the-bf16-subnormal-resolution-carrier`, and the declined alternative on
 //! `subject-the-numerical-realization-when-a-region-carries-two-arithmetic-types`,
 //! deferred against a named trigger.
 //!
-//! What this does **not** yet check is that the conformance it is handed was
-//! stated about BF16. Reaching that needs a conformance derived from another
-//! format's realization, which nothing in the tree constructs; the check belongs
-//! at `from_realization`'s first caller, where the subject is still discarded.
+//! **What this capability does check is that the conformance it was handed speaks
+//! about BF16.** `evaluate` reads it through
+//! [`ReferenceEvaluationRequest::conformance_for`](crate::ReferenceEvaluationRequest::conformance_for),
+//! naming [`ArithmeticType::Bf16`], so a conformance
+//! [`ReferenceNumericalConformance::from_realization`](crate::ReferenceNumericalConformance::from_realization)
+//! resolved for another format is a typed refusal rather than that format's rule
+//! applied to values it was never stated about. A conformance carrying no subject
+//! — everything [`ReferenceNumericalConformance::strict`](crate::ReferenceNumericalConformance::strict)
+//! and `new` produce — is still applied, because there is no disagreement to
+//! detect; that boundary is stated on `ConformanceSubject`.
 //!
 //! Every registered capability still answers the preserving reading under the
 //! strict contract, which is what this module computed before it could be told
@@ -123,7 +128,7 @@
 
 use std::sync::Arc;
 
-use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
+use tiler_ir::schedule::{ArithmeticType, FlushedZeroSign, SubnormalMode};
 use tiler_ir::semantic::accuracy::{ExactRational, ExactSign, UlpFormat};
 use tiler_ir::semantic::{
     AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, BF16_FACT_CANONICAL_NAN_BITS, Bf16,
@@ -955,13 +960,13 @@ impl ReferenceOperation for Bf16BinaryReference {
         if !request.attributes().fields().is_empty() {
             return Err(ReferenceOperationError::InvalidApplication);
         }
-        // The conformance states two subnormal dimensions and names no format; the
-        // format is this capability's own, fixed when it was constructed. So the
-        // two modes are read here and applied over BF16's value set, and the
-        // conformance's `f32` appliers are deliberately not reached — no value in
-        // this family is a binary32 one. The module header carries why the subject
-        // is supplied at this site rather than declared upstream.
-        let conformance = request.conformance();
+        // This capability's format is its own, fixed when it was constructed:
+        // every operand and result it admits is `tiler::bf16@1`. Naming it here is
+        // what refuses a conformance some other format resolved — the two modes
+        // are then read and applied over BF16's value set, and the conformance's
+        // `f32` appliers are deliberately not reached, because no value in this
+        // family is a binary32 one.
+        let conformance = request.conformance_for(ArithmeticType::Bf16)?;
         let realization = Bf16SubnormalRealization::new(
             conformance.input_subnormals(),
             conformance.result_subnormals(),

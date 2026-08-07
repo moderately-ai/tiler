@@ -54,6 +54,7 @@
 
 use std::sync::Arc;
 
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::accuracy::ExactRational;
 
 use super::accuracy::{CertifiedEnclosure, EnclosurePrecision, exp_enclosure};
@@ -88,7 +89,7 @@ impl ReferenceOperation for SiluF32Reference {
         if !request.attributes().fields().is_empty() {
             return Err(ReferenceOperationError::InvalidApplication);
         }
-        let conformance = request.conformance();
+        let conformance = request.conformance_for(ArithmeticType::F32)?;
         let elements = f32_elements(input)?;
         let shape = input.shape();
         let count = shape

@@ -104,6 +104,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
     CONTRACTION_F32_FACT_ACCUMULATOR_TYPE, CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
     CONTRACTION_F32_FACT_CANONICAL_NAN_BITS, CONTRACTION_F32_FACT_COMPUTATION_PRECISION,
@@ -402,7 +403,7 @@ impl ReferenceOperation for StrictTensorContractionF32Reference {
             left,
             right,
             request.iteration_step_allowance(),
-            request.conformance(),
+            request.conformance_for(ArithmeticType::F32)?,
         )
         .and_then(|tensor| outputs.push(tensor))
     }

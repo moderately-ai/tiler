@@ -20,12 +20,16 @@
 //! Neither population is evidence about a device. Nothing here executes anything
 //! on a GPU.
 
-use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
+use tiler_ir::schedule::{
+    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    NumericalRealization, SubnormalMode,
+};
 use tiler_ir::semantic::accuracy::{ExactRational, UlpFormatError};
 use tiler_ir::semantic::{
-    AttributeFieldId, Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CanonicalField, CanonicalValue,
-    CanonicalValueView, F32, F32Add, F32Constant, F32Multiply, InputKey, OperationAttributes,
-    OutputKey, SCALAR_TYPE_FACT_CLASS, SCALAR_TYPE_FACT_EXPONENT_BIAS,
+    AttributeFieldId, Bf16, Bf16Add, Bf16Constant, Bf16Multiply,
+    CANONICAL_BF16_ARITHMETIC_NAN_BITS, CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalField,
+    CanonicalValue, CanonicalValueView, F32, F32Add, F32Constant, F32Multiply, InputKey,
+    OperationAttributes, OutputKey, SCALAR_TYPE_FACT_CLASS, SCALAR_TYPE_FACT_EXPONENT_BIAS,
     SCALAR_TYPE_FACT_HAS_SUBNORMALS, SCALAR_TYPE_FACT_TRAILING_SIGNIFICAND_BITS,
     SCALAR_TYPE_FACT_WIDTH_BITS, SemanticProgramBuilder, TypeKey, arithmetic_bf16_facts,
     builtin_scalar_value_type_facts, canonical_bf16_bits,
@@ -40,10 +44,10 @@ use super::{
 use crate::evaluate::EvaluationRetention;
 use crate::registry::{ReferenceEvaluationRequest, ReferenceOutputs};
 use crate::{
-    FloatBitOrder, FrozenReferenceRegistry, InputBinding, ReferenceElement, ReferenceEvaluator,
-    ReferenceNumericalConformance, ReferenceOperation, ReferenceOperationError,
-    ReferenceValueError, ReferenceValueValidator, Tensor, TensorPayloadView,
-    UnsupportedBf16Declaration,
+    ConformanceSubject, EvaluationError, FloatBitOrder, FrozenReferenceRegistry, InputBinding,
+    ReferenceElement, ReferenceEvaluator, ReferenceNumericalConformance, ReferenceOperation,
+    ReferenceOperationError, ReferenceValueError, ReferenceValueValidator, Tensor,
+    TensorPayloadView, UnsupportedBf16Declaration,
 };
 
 /// Named BF16 encodings every witness below is written in terms of.
@@ -1145,6 +1149,15 @@ fn evaluate_under(
     case: &SubnormalCounterexample,
     conformance: ReferenceNumericalConformance,
 ) -> u16 {
+    let outputs = try_evaluate_under(case, conformance).expect("a pure-bf16 program evaluates");
+    bf16_bits(&outputs[0])[0]
+}
+
+/// Evaluates one counterexample as a program, retaining the typed failure.
+fn try_evaluate_under(
+    case: &SubnormalCounterexample,
+    conformance: ReferenceNumericalConformance,
+) -> Result<Vec<Tensor>, EvaluationError> {
     let mut graph = SemanticProgramBuilder::try_standard().unwrap();
     let left = Bf16Constant::apply(&mut graph, case.left).unwrap();
     let right = Bf16Constant::apply(&mut graph, case.right).unwrap();
@@ -1157,13 +1170,152 @@ fn evaluate_under(
         .output(OutputKey::new("result").unwrap(), result)
         .unwrap();
     let program = graph.build().unwrap();
-    let outputs = ReferenceEvaluator::under(
+    ReferenceEvaluator::under(
         FrozenReferenceRegistry::standard().expect("the governed reference profile builds"),
         conformance,
     )
     .evaluate(&program, &[])
-    .expect("a pure-bf16 program evaluates");
-    bf16_bits(&outputs[0])[0]
+}
+
+/// The declared realization a `bf16` region carrying one contract states.
+///
+/// Its canonical arithmetic NaN payload is `bf16`'s own, zero-extended into the
+/// `u32` field — which is what a `bf16` region declares and what the bridge checks
+/// the stated subject against.
+fn declared_bf16_realization(
+    input_subnormals: SubnormalMode,
+    result_subnormals: SubnormalMode,
+) -> NumericalRealization {
+    NumericalRealization::new(
+        "tiler.contract.bf16.test.v1",
+        u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+        input_subnormals,
+        result_subnormals,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
+    )
+}
+
+/// A declared realization reaches the evaluation performed under it.
+///
+/// The bridge's own path, end to end: a region's declared `NumericalRealization`
+/// resolving both dimensions to a sign-preserving flush is carried across by
+/// [`ReferenceNumericalConformance::from_realization`], handed to the whole
+/// evaluator, and dispatched to the registered `bf16` capability — which produces
+/// the *flushed* answer for every counterexample.
+///
+/// The preserving answer is asserted absent on every case where the two readings
+/// differ, so a route that dropped the declared realization and evaluated the
+/// strict reading fails here rather than agreeing for the wrong reason. The
+/// population that discriminates is counted, because the seven cases do not all
+/// separate the two readings and a corpus that stopped containing one that does
+/// must not still look green.
+#[test]
+fn a_declared_flushing_realization_reaches_the_evaluation_performed_under_it() {
+    let flush = SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
+    };
+    let conformance = ReferenceNumericalConformance::from_realization(
+        &declared_bf16_realization(flush, flush),
+        ArithmeticType::Bf16,
+    )
+    .expect("a strict bf16 realization bridges");
+    assert_eq!(
+        conformance.subject(),
+        ConformanceSubject::Arithmetic(ArithmeticType::Bf16),
+    );
+    let mut checked = 0_usize;
+    let mut discriminating = 0_usize;
+    let mut failures = Vec::new();
+    for case in subnormal_counterexamples() {
+        let actual = evaluate_under(&case, conformance);
+        if actual != case.both_flushed {
+            failures.push(format!(
+                "{}: expected {:#06x}, produced {actual:#06x}",
+                case.name, case.both_flushed
+            ));
+        }
+        if case.preserved != case.both_flushed {
+            discriminating += 1;
+            if actual == case.preserved {
+                failures.push(format!(
+                    "{}: returned the preserved answer {:#06x}",
+                    case.name, case.preserved
+                ));
+            }
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 7, "every counterexample reached the bridge");
+    assert_eq!(
+        discriminating, 7,
+        "every counterexample separates the two readings",
+    );
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// The `bf16` capability refuses a conformance another format's region resolved.
+///
+/// Reachable exactly because the bridge now carries a subject: an `f32` region's
+/// declared realization produces an `f32`-subjected conformance, and handing it to
+/// this family would apply binary32's resolution to values that are not binary32.
+/// Driven through the whole evaluator rather than through `checked_for`, so the
+/// refusal is observed where a real dispatch would raise it.
+#[test]
+fn the_bf16_capability_refuses_a_conformance_resolved_for_binary32() {
+    let f32_realization = NumericalRealization::new(
+        "tiler.contract.f32.test.v1",
+        CANONICAL_F32_ARITHMETIC_NAN_BITS,
+        SubnormalMode::Preserve,
+        SubnormalMode::Preserve,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
+    );
+    let conformance =
+        ReferenceNumericalConformance::from_realization(&f32_realization, ArithmeticType::F32)
+            .expect("a strict f32 realization bridges");
+    let mut refused = 0_usize;
+    for case in subnormal_counterexamples() {
+        let Err(EvaluationError::Operation { source, .. }) = try_evaluate_under(&case, conformance)
+        else {
+            panic!("{}: an f32-subjected conformance was applied", case.name);
+        };
+        assert_eq!(
+            source,
+            ReferenceOperationError::ConformanceSubject {
+                capability: ArithmeticType::Bf16,
+                stated: ArithmeticType::F32,
+            },
+            "{}: refused for the wrong reason",
+            case.name,
+        );
+        refused += 1;
+    }
+    assert_eq!(refused, 7, "every case reached the agreement check");
+    // The same realization bridged under its *own* subject is applied, so the
+    // refusal above is the subject disagreeing and not the bridge refusing every
+    // conformance it produces.
+    let bf16_conformance = ReferenceNumericalConformance::from_realization(
+        &declared_bf16_realization(SubnormalMode::Preserve, SubnormalMode::Preserve),
+        ArithmeticType::Bf16,
+    )
+    .expect("a strict bf16 realization bridges");
+    for case in subnormal_counterexamples() {
+        assert_eq!(
+            evaluate_under(&case, bf16_conformance),
+            case.preserved,
+            "{}: the bf16-subjected preserving reading",
+            case.name,
+        );
+    }
 }
 
 /// The three keys evaluate through the standard evaluator to exact bits.

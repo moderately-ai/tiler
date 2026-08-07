@@ -83,6 +83,7 @@
 
 use std::sync::Arc;
 
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{CanonicalValueView, F32, SOFTMAX_REDUCED_AXES_ATTRIBUTE};
 use tiler_ir::shape::{Axis, Shape};
 
@@ -125,7 +126,8 @@ impl ReferenceOperation for SoftmaxF32Reference {
             return Err(ReferenceOperationError::InvalidApplication);
         }
 
-        let mapped = softmax_dense(shape, axis, &values, request.conformance())?
+        let conformance = request.conformance_for(ArithmeticType::F32)?;
+        let mapped = softmax_dense(shape, axis, &values, conformance)?
             .into_iter()
             .map(f32_element)
             .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;

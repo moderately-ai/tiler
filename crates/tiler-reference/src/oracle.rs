@@ -26,6 +26,7 @@ use tiler_ir::index::{
     add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_f32_scalar_op,
     multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
+use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
     CanonicalField, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
     FrozenSemanticRegistry, ProviderIdentity, ResolvedValueType, TypeKey, U4,
@@ -183,15 +184,29 @@ impl<'a> ScalarReferenceRequest<'a> {
         self.attributes
     }
 
-    /// Returns the numerical contract this evaluation is performed under.
+    /// Returns the numerical contract this evaluation is performed under, when it
+    /// was stated about `arithmetic`.
     ///
     /// A scalar capability that performs floating-point arithmetic must consult
-    /// this. The refined region and the semantic evaluator answer the same
-    /// program, so one honouring the contract and the other ignoring it would
-    /// disagree on exactly the values the contract exists to decide.
-    #[must_use]
-    pub const fn conformance(self) -> ReferenceNumericalConformance {
-        self.conformance
+    /// this, naming the format its own arithmetic is in. The refined region and the
+    /// semantic evaluator answer the same program, so one honouring the contract
+    /// and the other ignoring it would disagree on exactly the values the contract
+    /// exists to decide — and the two oracles are told the same contract, so the
+    /// agreement check is the same one
+    /// [`ReferenceEvaluationRequest::conformance_for`] performs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReferenceOperationError::ConformanceSubject`] when the conformance
+    /// was resolved for a different arithmetic type.
+    ///
+    /// [`ReferenceEvaluationRequest::conformance_for`]: crate::ReferenceEvaluationRequest::conformance_for
+    /// [`ReferenceOperationError::ConformanceSubject`]: crate::ReferenceOperationError::ConformanceSubject
+    pub const fn conformance_for(
+        self,
+        arithmetic: ArithmeticType,
+    ) -> Result<ReferenceNumericalConformance, ReferenceOperationError> {
+        self.conformance.checked_for(arithmetic)
     }
 }
 
@@ -767,7 +782,7 @@ impl ScalarReferenceOperation for StandardScalarBinaryF32 {
         if !fields.is_empty() {
             return Err(ReferenceOperationError::InvalidApplication);
         }
-        let conformance = request.conformance();
+        let conformance = request.conformance_for(ArithmeticType::F32)?;
         let left = conformance.apply_to_operand(decode_scalar_f32(left)?);
         let right = conformance.apply_to_operand(decode_scalar_f32(right)?);
         let value = match self {
