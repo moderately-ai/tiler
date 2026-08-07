@@ -1131,6 +1131,19 @@ mod tests {
     /// answers what *logical* index work realizes it. Both are answerable for a
     /// family performing no arithmetic without any target being asked anything,
     /// which is exactly why neither makes the family plannable.
+    ///
+    /// `tiler::slice-f32@1` is here for the concatenate's reason rather than the
+    /// BF16 rows', and the entry sat unexplained until 2026-08-07. A selection
+    /// performs no arithmetic — every result element is an operand element
+    /// unchanged, which its registered `SLICE_FACT_VALUE_BEHAVIOUR` states in
+    /// canonical attribute bytes — so there is no dimension a capability row
+    /// could list, and a row would be a claim about a target that reading a
+    /// sub-region never asks of one. Nothing physical realizes it either: the
+    /// request boundary refuses the family under `operation-set` because the
+    /// region vocabulary cannot spell its access relation. It now holds a
+    /// `CoordinateRelation` fusion role in `crate::fusion_legality`, which is no
+    /// more in tension with its place here than the concatenate's role is, and
+    /// for the identical reason.
     const UNPLANNED_OPERATIONS: &[&str] = &[
         "tiler::add-bf16@1",
         "tiler::concatenate-f32@1",

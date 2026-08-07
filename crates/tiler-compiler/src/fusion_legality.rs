@@ -72,7 +72,7 @@ use tiler_ir::semantic::{
     CANONICAL_BF16_ARITHMETIC_NAN_BITS, CANONICAL_F32_ARITHMETIC_NAN_BITS, FrozenSemanticRegistry,
     OpKey, OperationEffect, ProviderIdentity, SemanticProgram, add_bf16_op, add_f32_op,
     broadcast_f32_op, concatenate_f32_op, constant_bf16_op, constant_f32_op, multiply_bf16_op,
-    multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, softmax_f32_op,
+    multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, slice_f32_op, softmax_f32_op,
     strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
@@ -437,6 +437,51 @@ impl FusionNumericalCapabilities {
             concatenate_f32_op(),
             FusionOperationRole::CoordinateRelation,
         );
+        // The sub-tensor selection is a fourth coordinate relation, and the
+        // classification is derived from what the derivation below actually asks
+        // rather than from the one property that makes this family unlike the
+        // other three.
+        //
+        // *Why a role at all.* Without one, `derive_member` returns `Ok(None)`
+        // and every region holding a selection resolves to no legality at all.
+        // That refusal is reachable rather than hypothetical: region formation
+        // holds no operation allowlist — `RegionGraph`'s construction admits
+        // every occurrence whose key the registry defines and reads only the
+        // definition's effect from it — so a program stating a selection does
+        // form candidates containing one. And the refusal has no premise behind
+        // it: the family declares `OperationEffect::Pure`, its inferencer
+        // refuses any operand whose resolved type is not `tiler::f32@1` and
+        // builds an `f32` result, its normative definition guarantees every
+        // result element is an operand element unchanged with every exceptional
+        // payload arriving as it left, and it carries no fold.
+        //
+        // *Why not `ValueSource`.* `FusionOperationRole::CoordinateRelation`'s
+        // own distinction decides it: a value source contributes a value the
+        // region did not otherwise have, while a coordinate relation contributes
+        // an access map over a value the region already has. Every element of a
+        // selection's result is an element of its single operand — which this
+        // family states in canonical attribute bytes rather than only in
+        // normative prose, `SLICE_FACT_VALUE_BEHAVIOUR` reading
+        // "none-every-result-element-is-an-operand-element-unchanged" and
+        // `SLICE_FACT_MAPPING_CLASS` reading
+        // "total-over-the-result-domain-and-injective-not-surjective-into-the-operand-domain".
+        // Counting it as a value source would make `region_structure` report one
+        // more independent value than the region holds.
+        //
+        // *Why not a seventh role, and this is where the family's own difference
+        // is answered.* A new variant must derive some obligation differently or
+        // fall outside the four structural buckets. The property that separates a
+        // selection from a reindex is that its map is *non-surjective*: at least
+        // one operand element is never read. That derives nothing differently
+        // here, because no obligation below reads a mapping class, an operand
+        // count, or how much of a source an access covers — every one is about
+        // rounding, order, purity, dtype homogeneity, or an exceptional value
+        // produced by arithmetic, and a selection produces none. Non-surjectivity
+        // is a semantic admission rule, which is where the family keeps it. A
+        // fifth `FusionRegionStructure` count would then move the content
+        // identity of every region this vocabulary can already encode, paid for
+        // no derivational difference.
+        roles.insert(slice_f32_op(), FusionOperationRole::CoordinateRelation);
         // The tensor contraction widens the prologue-carrying reduction rather
         // than taking a role of its own, and the classification is derived from
         // what the derivation below actually asks rather than from the family's
@@ -1523,6 +1568,7 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
     let reindex = reindex_f32_op();
     let broadcast = broadcast_f32_op();
     let concatenate = concatenate_f32_op();
+    let slice = slice_f32_op();
     let bf16_constant = constant_bf16_op();
     let bf16_add = add_bf16_op();
     let bf16_multiply = multiply_bf16_op();
@@ -1555,10 +1601,26 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
             // makes the whole candidate unknown, deferring every fused
             // candidate containing a concatenate for a reason the family's own
             // semantics refute.
+            //
+            // The selection is admitted by deciding the same transfer for its
+            // key, and the one thing that could have made the transfer fail is
+            // checked rather than passed over. The arm's argument is that
+            // "inserting a pure data movement between two adds cannot introduce
+            // a product to fuse"; a selection moves strictly *less* data than a
+            // reindex, because its map is injective and not surjective, and the
+            // argument turns on the movement introducing no operation rather
+            // than on its being total. A selection introduces no multiply, no
+            // add, and therefore no adjacency between them, so a region of adds
+            // with one inserted still holds no product. Declining to decide it
+            // costs the same as declining for the concatenate: under a
+            // contraction-permitting contract a member falling through returns
+            // `unrealized-contraction` below and `first_unknown` makes the whole
+            // candidate unknown.
             FusionOperationRole::CoordinateRelation
                 if member.reached.operation == reindex
                     || member.reached.operation == broadcast
-                    || member.reached.operation == concatenate => {}
+                    || member.reached.operation == concatenate
+                    || member.reached.operation == slice => {}
             FusionOperationRole::ElementwiseArithmetic => {
                 arithmetic_count = arithmetic_count.saturating_add(1);
                 all_add &= member.reached.operation == add || member.reached.operation == bf16_add;
@@ -2930,6 +2992,291 @@ mod concatenate_role_tests {
         // than the contract's normative guarantee, which is only available when
         // contraction is forbidden.
         let program = sequence_extension_program();
+        let budgets = DeterministicBudgets::governed();
+        let formation = form_region_candidates(&program, budgets, permitting).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region");
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            permitting,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("a permitting contract leaves the region legal, not {outcome:?}");
+        };
+        let derived = proof
+            .content()
+            .obligations()
+            .iter()
+            .find(|derived| derived.obligation() == FusionObligation::ArithmeticContraction)
+            .unwrap();
+        assert_eq!(derived.assessment(), ObligationAssessment::Discharged);
+        assert_eq!(derived.evidence(), FusionEvidenceClass::SoundProof);
+    }
+}
+
+#[cfg(test)]
+mod slice_role_tests {
+    use super::{
+        DerivedObligation, FusionEvidenceClass, FusionLegality, FusionNumericalCapabilities,
+        FusionObligation, FusionOperationRole, MemberDerivation, ObligationAssessment,
+        ReachedDefinition, derive_fusion_legality, derive_obligations,
+    };
+    use crate::region::form_region_candidates;
+    use crate::request::{DeterministicBudgets, NumericalPermission, StrictF32NumericalContract};
+    use tiler_ir::semantic::{
+        F32, F32Multiply, F32Slice, InputKey, OpKey, OutputKey, SemanticProgram,
+        SemanticProgramBuilder, SliceAxisSelection, SliceSelection, broadcast_f32_op,
+        concatenate_f32_op, multiply_f32_op, reindex_f32_op, slice_f32_op,
+    };
+    use tiler_ir::shape::{Extent, Shape};
+
+    /// The final-position projection: a gated logit tensor with one row selected.
+    ///
+    /// The selection is what the family exists for and the multiply is the
+    /// "another operation" the outcome names: `derive_fusion_legality` is skipped
+    /// below two members, so a region holding only a selection would leave the
+    /// interesting half — whether a non-surjective read disqualifies a
+    /// neighbour's evidence — unexercised.
+    fn selected_projection_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let logits = builder
+            .input::<F32>(InputKey::new("logits").unwrap(), Shape::from_dims([2, 4]))
+            .unwrap();
+        let gain = builder
+            .input::<F32>(InputKey::new("gain").unwrap(), Shape::from_dims([2, 4]))
+            .unwrap();
+        let scaled = F32Multiply::apply(&mut builder, logits, gain).unwrap();
+        let selection = SliceSelection::new([
+            SliceAxisSelection::WholeAxis,
+            SliceAxisSelection::Window {
+                offset: 3,
+                extent: Extent::new(1),
+            },
+        ])
+        .unwrap();
+        let selected = F32Slice::apply(&mut builder, &selection, scaled).unwrap();
+        builder
+            .output(OutputKey::new("selected").unwrap(), selected)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// The selection resolves to the coordinate-relation role.
+    ///
+    /// Asserting the role by name is what keeps a later change from quietly
+    /// reclassifying it as a value source, whose contract would make the
+    /// structural counts report a region as holding one more independent value
+    /// than it does. The three coordinate relations already registered are
+    /// asserted with it so the insertion is shown to have widened the map rather
+    /// than moved an entry.
+    #[test]
+    fn the_selection_resolves_to_the_coordinate_relation_role() {
+        let capabilities = FusionNumericalCapabilities::governed();
+        assert_eq!(
+            capabilities.classify(&slice_f32_op()),
+            Some(FusionOperationRole::CoordinateRelation)
+        );
+        for neighbour in [reindex_f32_op(), broadcast_f32_op(), concatenate_f32_op()] {
+            assert_eq!(
+                capabilities.classify(&neighbour),
+                Some(FusionOperationRole::CoordinateRelation),
+                "{neighbour}'s row moved",
+            );
+        }
+        assert_eq!(
+            capabilities.classify(&multiply_f32_op()),
+            Some(FusionOperationRole::ElementwiseArithmetic)
+        );
+        // The role is neither a reduction nor arithmetic, which is what makes the
+        // four reduction obligations vacuous for a region holding one rather than
+        // resting on a fold's normative definition.
+        assert!(!FusionOperationRole::CoordinateRelation.is_reduction());
+        assert!(!FusionOperationRole::CoordinateRelation.is_arithmetic());
+        assert!(!FusionOperationRole::CoordinateRelation.is_value_source());
+    }
+
+    /// A region holding a selection derives legality instead of failing closed.
+    ///
+    /// The perturbation is the same region with the role withdrawn: it returns
+    /// to `unsupported-operation-capability`, which is what makes the positive
+    /// result a property of the registered role rather than of the region.
+    ///
+    /// **The scope of the claim.** This is a derived legality for a formed
+    /// candidate. It is not a `VerifiedKernel` and not a device-verified result:
+    /// the request boundary still refuses a program stating this family under
+    /// `operation-set`, because the region vocabulary's `LogicalAccess` cannot
+    /// spell a selection's access relation, so this authority is driven directly
+    /// rather than through a compile.
+    #[test]
+    fn a_region_holding_a_selection_derives_legality_instead_of_failing_closed() {
+        let program = selected_projection_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region")
+            .clone();
+
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("a governed selection region is legal, not {outcome:?}");
+        };
+
+        let structure = proof.content().structure();
+        assert_eq!(structure.members, 2);
+        assert_eq!(structure.arithmetic, 1);
+        assert_eq!(structure.coordinate_relations, 1);
+        assert_eq!(structure.value_sources, 0);
+        assert_eq!(structure.reductions, 0);
+        assert_eq!(
+            structure.members,
+            structure.value_sources
+                + structure.arithmetic
+                + structure.reductions
+                + structure.coordinate_relations,
+            "the four role counts account for every member, and the selection is \
+             counted as the coordinate relation it is"
+        );
+
+        // Every one of the nine obligations is discharged, counted rather than
+        // filtered: a population assertion that named no obligation would pass
+        // over an empty list.
+        let obligations = proof.content().obligations();
+        assert_eq!(obligations.len(), 9);
+        assert!(
+            obligations
+                .iter()
+                .all(|derived| matches!(derived.assessment(), ObligationAssessment::Discharged)),
+            "{obligations:?}"
+        );
+        // The four reduction obligations are discharged *vacuously*: no member of
+        // this region carries a fold, so nothing in it raised the obligation.
+        // That is a different claim from a fold's obligations having been shown
+        // to hold, and the evidence class is what separates the two — a region
+        // with a real reduction carries `NormativeGuarantee` on the first two.
+        // Asserting it is what stops a later reduction-bearing member from
+        // silently inheriting the structural answer.
+        for obligation in [
+            FusionObligation::ReductionIdentityAndEmptyDomain,
+            FusionObligation::ReductionContributorOrder,
+            FusionObligation::ReductionReassociation,
+            FusionObligation::ReductionOperandPermutation,
+        ] {
+            let derived = obligations
+                .iter()
+                .find(|derived| derived.obligation() == obligation)
+                .unwrap();
+            assert_eq!(derived.evidence(), FusionEvidenceClass::SoundProof);
+        }
+        assert!(
+            proof
+                .reached_definitions()
+                .iter()
+                .any(|reached| reached.normative_definition().contains("slice-f32")),
+            "the proof does not bind the selection's reached definition",
+        );
+
+        let perturbed = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed_without(&slice_f32_op()),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Unknown(unknown) = perturbed else {
+            panic!("withdrawing the selection's role must fail closed, not {perturbed:?}");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::OperationCapabilitiesResolved
+        );
+        assert_eq!(unknown.reason(), "unsupported-operation-capability");
+    }
+
+    /// The contraction proof passes over a selection by its exact key.
+    ///
+    /// The arm is closed over keys rather than over the role, so the decision
+    /// that a non-surjective read introduces no multiply-plus-add adjacency has
+    /// to be stated for this key. The counterfactual is a coordinate relation the
+    /// arm does *not* name, which is what the selection would have reached had
+    /// the arm been left unextended: under a contraction-permitting contract it
+    /// returns `unrealized-contraction`, which `first_unknown` would make the
+    /// whole candidate's verdict.
+    #[test]
+    fn the_contraction_arm_reads_the_slice_key_rather_than_its_role() {
+        let permitting = StrictF32NumericalContract::governed_relaxed();
+        assert!(
+            !matches!(permitting.contraction, NumericalPermission::Forbidden),
+            "a contract forbidding contraction discharges the obligation on its \
+             own, which would make this perturbation vacuous"
+        );
+
+        let member = |role, operation| MemberDerivation {
+            role,
+            reached: ReachedDefinition {
+                operation,
+                normative_definition: String::new(),
+                effect_tag: 1,
+            },
+            pure: true,
+            homogeneous: true,
+        };
+        let contraction = |members: &[MemberDerivation]| -> DerivedObligation {
+            *derive_obligations(members, permitting)
+                .iter()
+                .find(|derived| derived.obligation() == FusionObligation::ArithmeticContraction)
+                .expect("the contraction obligation is always derived")
+        };
+
+        let extended = contraction(&[
+            member(FusionOperationRole::CoordinateRelation, slice_f32_op()),
+            member(
+                FusionOperationRole::ElementwiseArithmetic,
+                multiply_f32_op(),
+            ),
+        ]);
+        assert_eq!(extended.assessment(), ObligationAssessment::Discharged);
+        assert_eq!(extended.evidence(), FusionEvidenceClass::SoundProof);
+
+        let unextended = contraction(&[
+            member(
+                FusionOperationRole::CoordinateRelation,
+                OpKey::new("example", "unselected-relation", 1).unwrap(),
+            ),
+            member(
+                FusionOperationRole::ElementwiseArithmetic,
+                multiply_f32_op(),
+            ),
+        ]);
+        assert_eq!(
+            unextended.assessment(),
+            ObligationAssessment::Unknown {
+                reason: "unrealized-contraction"
+            }
+        );
+
+        // End to end under the same permitting contract: the region stays legal
+        // and its contraction obligation carries the structural proof rather
+        // than the contract's normative guarantee, which is only available when
+        // contraction is forbidden.
+        let program = selected_projection_program();
         let budgets = DeterministicBudgets::governed();
         let formation = form_region_candidates(&program, budgets, permitting).unwrap();
         let candidate = formation
