@@ -69,13 +69,50 @@ const REQUEST_SCHEMA_VERSION: u32 = 2;
 /// public-boundary decision rather than an implementation detail.
 pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = 4;
 
+/// Returns the arithmetic type one key's own contract scheme states.
+///
+/// This performs the complete IR-owned parse and canonicality check in each
+/// governed domain. A key under no governed domain, a malformed vector, or a
+/// noncanonical spelling answers `None` rather than being inferred from a
+/// textual prefix.
+///
+/// The two domains are mutually closed — `Bf16NumericalContractKey::try_from_str`
+/// refuses an `f32` key and the converse holds — so the order of the two attempts
+/// is presentation and not precedence, and no key can answer twice.
+pub(crate) fn contract_key_arithmetic(key: &str) -> Option<ArithmeticType> {
+    if F32NumericalContractKey::try_from_str(key).is_ok() {
+        Some(ArithmeticType::F32)
+    } else if Bf16NumericalContractKey::try_from_str(key).is_ok() {
+        Some(ArithmeticType::Bf16)
+    } else {
+        None
+    }
+}
+
+/// Returns the element width in bytes one governed contract key's width states.
+///
+/// **Derived from the registered scalar catalog, not written down here.** The
+/// key names an [`ArithmeticType`], that names a registered value identity, and
+/// that identity's descriptor states its width in bits — so a catalog row whose
+/// width moved would move this answer instead of leaving a literal disagreeing
+/// with it. A key under no governed domain, or a width the catalog describes with
+/// no whole-byte size, answers `None`, which is the fail-closed direction: a
+/// caller must report the quantity unknown rather than continue with a
+/// neighbour's width.
+pub(crate) fn contract_key_element_bytes(key: &str) -> Option<u64> {
+    let arithmetic = contract_key_arithmetic(key)?;
+    let facts = tiler_ir::numerics::registered_arithmetic_facts(arithmetic)?;
+    let (_, width_bits) = tiler_ir::numerics::registered_scalar_format(&facts)?;
+    (width_bits > 0 && width_bits.is_multiple_of(8)).then_some(width_bits / 8)
+}
+
 /// Returns whether one key was minted by the current `f32` contract scheme.
 ///
-/// This performs the complete IR-owned parse and canonicality check. A key
-/// under another domain, a malformed vector, or a noncanonical spelling is
-/// rejected rather than inferred from a textual prefix.
+/// Expressed through [`contract_key_arithmetic`] rather than beside it, so the
+/// two cannot come to disagree about which keys the `f32` domain admits.
+#[cfg(test)]
 pub(crate) fn is_f32_contract_key(key: &str) -> bool {
-    F32NumericalContractKey::try_from_str(key).is_ok()
+    matches!(contract_key_arithmetic(key), Some(ArithmeticType::F32))
 }
 
 /// Every distinct contract key this process has minted.
@@ -7102,6 +7139,52 @@ mod tests {
             crate::policy::UNKEYED_CONTRACT,
         ] {
             assert!(!is_f32_contract_key(refused), "{refused} was admitted");
+        }
+    }
+
+    /// A key names its own width, and its width names its own element size.
+    ///
+    /// **The `f32` answer is the pair's control.** Reporting two bytes for a BF16
+    /// key means nothing unless the binary32 key still reports four, because a
+    /// derivation that had simply stopped resolving would answer `None` for both
+    /// and pass a one-sided assertion by failing to be asked. And the refused
+    /// cases are what stop the width from being read off a textual prefix: each
+    /// is rejected by the IR-owned parse rather than admitted at some default.
+    #[test]
+    fn a_governed_contract_key_derives_its_own_width_and_element_size() {
+        let f32_key = StrictF32NumericalContract::governed().key;
+        let bf16_key = crate::session::NumericalContract::STRICT_BF16.key();
+        assert_ne!(f32_key, bf16_key);
+
+        assert_eq!(contract_key_arithmetic(f32_key), Some(ArithmeticType::F32));
+        assert_eq!(
+            contract_key_arithmetic(bf16_key),
+            Some(ArithmeticType::Bf16)
+        );
+        assert_eq!(contract_key_element_bytes(f32_key), Some(4));
+        assert_eq!(contract_key_element_bytes(bf16_key), Some(2));
+
+        // A key under no governed domain answers `None` on both, which is what
+        // makes an unregistered width report `Unknown` rather than continue at a
+        // neighbour's size.
+        for refused in [
+            "",
+            tiler_ir::schedule::F32_NUMERICAL_CONTRACT_KEY_DOMAIN,
+            tiler_ir::schedule::BF16_NUMERICAL_CONTRACT_KEY_DOMAIN,
+            "tiler.contract.f16.v2.0011",
+            "tiler.contract.bf16.v10.0011",
+            crate::policy::UNKEYED_CONTRACT,
+        ] {
+            assert_eq!(
+                contract_key_arithmetic(refused),
+                None,
+                "{refused} was admitted"
+            );
+            assert_eq!(
+                contract_key_element_bytes(refused),
+                None,
+                "{refused} was sized"
+            );
         }
     }
 

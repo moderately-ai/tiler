@@ -16,13 +16,22 @@
 //! BF16 program reaches a selected `PlanAlternative`, which
 //! `a_flush_accepting_bf16_contract_reaches_a_selected_plan` asserts.
 //!
+//! **It is now also evidence that a multi-occurrence BF16 region derives its own
+//! fusion legality.** `establish-bf16-optimizer-legality` gave the three
+//! registered BF16 families their own capability rows and keyed the
+//! conversion-boundary and exceptional-value obligations on the region's own
+//! width, so
+//! `a_multi_occurrence_bf16_program_derives_its_own_fusion_legality` asserts a
+//! fused BF16 plan where its predecessor asserted a refusal.
+//!
 //! **It is still not evidence that BF16 *executes*.** Nothing here dispatches:
-//! the run belongs to the conformance crate. And a BF16 region covering several
-//! occurrences stops one layer further on, at a fusion-legality authority still
-//! keyed by the `f32` operation set —
-//! `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` asserts
-//! that boundary rather than avoiding it, precisely so a reader cannot mistake
-//! one planned shape for general support.
+//! the run belongs to the conformance crate. And the fusion wall moved rather
+//! than vanished: a BF16 region under a contraction-*permitting* contract still
+//! stops, because nothing in this bounded profile establishes that a fused BF16
+//! body will not spend a permission the contract granted —
+//! `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall`
+//! asserts that boundary rather than avoiding it, precisely so a reader cannot
+//! mistake one planned shape for general support.
 //!
 //! # Why the profile is built here rather than imported
 //!
@@ -36,9 +45,10 @@
 //! test and is tracked separately.
 
 use tiler_compiler::session::{
-    CompileFailureClass, CompileRequest, NumericalContract, TargetCompileRefusal,
-    TargetDTypeRefusalDisposition, TargetNumericalDeclaredMeans, TargetNumericalHonouredBehaviour,
-    TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile, compile_governed,
+    CompileFailureClass, CompileRequest, NumericalContract, NumericalContractBuilder,
+    TargetCompileRefusal, TargetDTypeRefusalDisposition, TargetNumericalDeclaredMeans,
+    TargetNumericalHonouredBehaviour, TargetNumericalRefusalDisposition,
+    TargetNumericalRequirement, compile, compile_governed,
 };
 use tiler_compiler::target::{
     DTypeDispatchability, DeviceAddressWidth, IndexArithmeticSupport, ScalarArithmetic,
@@ -75,6 +85,14 @@ enum Bf16Rows {
     /// The subnormal tables plus every remaining dimension an admitted operation
     /// can consume, so a contract that accepts the flush has a complete answer.
     Complete,
+    /// [`Self::Complete`] with the BF16 contraction row declaring `Permitted`.
+    ///
+    /// The one row that differs, and it differs so a *contraction-permitting*
+    /// BF16 contract can resolve on this target at all. Without it the request
+    /// is refused at numerical resolution and never reaches fusion legality, so
+    /// the wall a permitting contract meets would be untestable from outside the
+    /// crate.
+    CompleteWithPermittedContraction,
     /// The dispatchability verdict alone, with every numerical row deleted.
     ///
     /// The perturbation subject: dispatch still succeeds, so the request reaches
@@ -117,14 +135,24 @@ fn bf16_subject() -> ScalarArithmetic {
 /// resolution, for one subject.
 ///
 /// The subnormal rows are excluded: they are the dimension under test and each
-/// caller below states its own table for them.
+/// caller below states its own table for them. `contraction` is the one
+/// parameterized row, because the wall a permitting BF16 contract meets is
+/// reachable only on a target that honours the permission it states.
 fn declare_strict_reshaping(
     builder: &mut TargetProfileBuilder,
     subject: &ScalarArithmetic,
     source: &TargetCompileProfileMeasurementSource,
+    contraction: NumericalPermission,
 ) {
+    builder
+        .declare_measured_contraction(
+            subject.clone(),
+            contraction,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
     for declare in [
-        TargetProfileBuilder::declare_measured_contraction,
         TargetProfileBuilder::declare_measured_reassociation,
         TargetProfileBuilder::declare_measured_permutation,
         TargetProfileBuilder::declare_measured_signed_zero,
@@ -199,7 +227,12 @@ fn profile(key: &str, rows: Bf16Rows) -> TargetProfile {
             source.clone(),
         )
         .unwrap();
-    declare_strict_reshaping(&mut builder, &f32_subject, &source);
+    declare_strict_reshaping(
+        &mut builder,
+        &f32_subject,
+        &source,
+        NumericalPermission::Forbidden,
+    );
     builder
         .declare_measured_dtype_dispatchability(
             F32::resolved_type(),
@@ -234,8 +267,20 @@ fn profile(key: &str, rows: Bf16Rows) -> TargetProfile {
                 source.clone(),
             )
             .unwrap();
-        if rows == Bf16Rows::Complete {
-            declare_strict_reshaping(&mut builder, &subject, &source);
+        match rows {
+            Bf16Rows::Complete => declare_strict_reshaping(
+                &mut builder,
+                &subject,
+                &source,
+                NumericalPermission::Forbidden,
+            ),
+            Bf16Rows::CompleteWithPermittedContraction => declare_strict_reshaping(
+                &mut builder,
+                &subject,
+                &source,
+                NumericalPermission::Permitted,
+            ),
+            Bf16Rows::MeasuredSubnormalsOnly | Bf16Rows::DispatchableWithoutNumerics => {}
         }
     }
     builder.build().unwrap()
@@ -393,12 +438,15 @@ fn removing_the_bf16_declaration_degrades_the_refusal_to_unknown() {
 ///
 /// **One occurrence, and the count is the subject rather than an accident.** A
 /// region covering two or more occurrences is put to `derive_fusion_legality`
-/// before any cover is enumerated, and that authority is still keyed by the
-/// `f32` operation set, so a multi-occurrence BF16 region is `Unknown` and every
-/// cover placing it is skipped —
-/// `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` is where
-/// that boundary is asserted. A single-occurrence region is never put to it, so
-/// this is the shape whose plan the widened recognizer can actually reach.
+/// before any cover is enumerated; a single-occurrence region is never put to it
+/// at all. So this fixture isolates what the *recognizer* reaches from what the
+/// legality authority decides, and it is what kept
+/// `a_flush_accepting_bf16_contract_reaches_a_selected_plan` a statement about
+/// the recognizer while the fusion wall stood.
+/// `a_multi_occurrence_bf16_program_derives_its_own_fusion_legality` is the
+/// multi-occurrence counterpart and
+/// `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall` is
+/// where that authority still refuses.
 fn bf16_single_operation_program() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let left = builder
@@ -429,8 +477,9 @@ fn bf16_single_operation_program() -> SemanticProgram {
 /// `a_strict_bf16_contract_is_refused_by_the_measured_sign_preserving_flush` for
 /// the profile's declared row,
 /// `an_f32_contract_does_not_answer_for_a_bf16_program` for the contract's own,
-/// and `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` for
-/// the layer this ticket deliberately did not widen.
+/// and `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall`
+/// for the fusion-legality layer, which now derives BF16 legality rather than
+/// failing closed and refuses only where the permission is unproved.
 #[test]
 fn a_flush_accepting_bf16_contract_reaches_a_selected_plan() {
     let batch = compile(CompileRequest::new(
@@ -462,30 +511,36 @@ fn a_flush_accepting_bf16_contract_reaches_a_selected_plan() {
     );
 }
 
-/// A BF16 region covering several occurrences stops at fusion legality.
+/// A BF16 region covering several occurrences derives its own fusion legality.
 ///
-/// **The remaining wall, asserted where it is rather than left to be
-/// discovered.** `FusionNumericalCapabilities::governed` maps the six `f32`
-/// operation keys to fusion roles and nothing else, so
-/// `derive_fusion_legality` resolves no capability for a `bf16` member and
-/// answers `Unknown`; every cover placing that region is then skipped and the
-/// selection has no complete plan. The refusal is `NoFeasiblePlan` rather than
-/// an unsupported capability because a target *was* consulted and every
-/// enumerated cover was ruled out.
+/// **The wall this test's predecessor asserted is gone, and the assertion is
+/// inverted rather than deleted.** It used to state `NoFeasiblePlan`:
+/// `FusionNumericalCapabilities::governed` mapped the `f32` operation keys and
+/// nothing else, so `derive_fusion_legality` resolved no capability for a `bf16`
+/// member, answered `Unknown`, and every cover placing that region was skipped.
+/// `establish-bf16-optimizer-legality` decided the three registered BF16
+/// families' roles from `tiler-ir`'s own `arithmetic_bf16_facts` and
+/// `constant_bf16_facts` records, and keyed the conversion-boundary and
+/// exceptional-value obligations on the region's own width, so this program's
+/// four occurrences now fuse into one region under a proof stated for `bf16`.
 ///
-/// Widening it means giving BF16 regions their own legality rather than
-/// inheriting binary32's, which
-/// [`establish-bf16-optimizer-legality`](../../../tickets/establish-bf16-optimizer-legality.md)
-/// owns and this file deliberately does not: reassociation error is bounded by
-/// the significand, and Finding 28 of the Apple numerical behaviour record
-/// measures a target whose contraction behaviour differs between `f16` and
-/// `bf16` — so a capability row copied from the `f32` set would be a legality
-/// claim nothing proved.
+/// **Nothing here was inherited from binary32, and the two withheld answers are
+/// why that is checkable.** Reassociation error is bounded by the significand —
+/// 8 bits at BF16 against binary32's 24 — and the four reduction obligations are
+/// discharged *vacuously* here rather than proved, because `tiler-ir` registers
+/// no BF16 family carrying a fold at all. And Finding 28 of the Apple numerical
+/// behaviour record measures a target whose contraction behaviour differs between
+/// `f16` and `bf16`, which is the target profile's authority to declare per
+/// subject and is what the `Bf16Rows::Complete` table above states; the
+/// obligation this authority discharges is the different question of whether
+/// *fusing* changes what the contract authorizes. The neighbour below is where a
+/// contract that grants the contraction permission still stops.
 ///
-/// The single-occurrence neighbour above is what keeps this about the *fusion*
-/// boundary rather than about BF16 being unplannable.
+/// The count is asserted because the fusion is the subject: a region covering one
+/// occurrence is never put to `derive_fusion_legality` at all, so a fixture that
+/// silently lost an operation would assert nothing about this boundary.
 #[test]
-fn a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall() {
+fn a_multi_occurrence_bf16_program_derives_its_own_fusion_legality() {
     let program = bf16_program();
     assert_eq!(
         program.operation_count(),
@@ -497,6 +552,165 @@ fn a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall() {
         NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
         TargetRequest::new([profile("test.bf16-fusion-wall.v1", Bf16Rows::Complete)]).unwrap(),
     ))
+    .expect("a planned bf16 request is a batch outcome");
+    let target = batch.targets().next().expect("one requested target");
+    let outcome = target.outcome();
+    let compilation = outcome
+        .as_ref()
+        .expect("a multi-occurrence bf16 region derives its own fusion legality");
+    assert_eq!(
+        compilation.resolved_numerical_contract_key(),
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16.key(),
+        "the plan is compiled under the bf16 contract the caller stated",
+    );
+    // The population, counted rather than described: the eight enumerated covers
+    // reduce to exactly one retained alternative, so `selected` answers about a
+    // set whose size is asserted rather than about whatever survived.
+    assert_eq!(
+        compilation.alternatives().len(),
+        1,
+        "the bf16 program's enumeration retained a different number of alternatives",
+    );
+    let selected = compilation
+        .selected()
+        .expect("a fused bf16 region reaches a selected plan alternative");
+    assert!(
+        selected.is_fused(),
+        "the four occurrences were planned as separate regions, so no fusion legality was spent",
+    );
+
+    // The trace names the width every proof in it was stated for. A compilation
+    // has exactly one arithmetic — `recognized_program_arithmetic` refuses a
+    // program whose values are two widths at once — and the resolved contract key
+    // renders its own domain, so a reader of this trace can tell which dtype the
+    // fusion-legality record above is about without a second annotation.
+    let rendered = compilation.explain().render();
+    assert!(
+        rendered.contains("tiler.contract.bf16.v1"),
+        "the trace does not name the bf16 contract its proofs were stated under",
+    );
+    assert!(
+        !rendered.contains("tiler.contract.f32.v2"),
+        "a bf16 compilation's trace names an f32 contract key",
+    );
+}
+
+/// The analytical element width is the region's own, not binary32's.
+///
+/// **A pair over two programs of the identical shape, because the number alone
+/// proves nothing.** `bf16_program` and `f32_program` declare the same `[2, 2]`
+/// input, the same constant/multiply/add chain, and the same single output, so
+/// their plans bind the same accesses over the same four iteration points. The
+/// only thing that differs is the width the governing contract states, and the
+/// reported memory-traffic bound differs by exactly the factor of two that width
+/// is: four elements at two bytes against four at four.
+///
+/// The component used to multiply by a literal `4` for every key its `f32` domain
+/// test admitted, which was a true answer while one domain existed; a BF16
+/// region's traffic would have been reported at twice its bytes the moment
+/// `tiler.contract.bf16.v1` was minted. The low bound is the assertion because it
+/// counts only owning writes, so it is the endpoint that does not move with the
+/// read count.
+#[test]
+fn the_analytical_element_width_is_derived_from_the_regions_own_dtype() {
+    let rendered = |program: &SemanticProgram, contract: NumericalContract, key: &str| -> String {
+        let batch = compile(CompileRequest::new(
+            program,
+            contract,
+            TargetRequest::new([profile(key, Bf16Rows::Complete)]).unwrap(),
+        ))
+        .expect("a planned request is a batch outcome");
+        let target = batch.targets().next().expect("one requested target");
+        let outcome = target.outcome();
+        outcome
+            .as_ref()
+            .expect("the program compiles on this profile")
+            .explain()
+            .render()
+    };
+
+    let bf16 = rendered(
+        &bf16_program(),
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16,
+        "test.bf16-element-width.v1",
+    );
+    let binary32 = rendered(
+        &f32_program(),
+        NumericalContract::STRICT_F32,
+        "test.f32-element-width.v1",
+    );
+
+    assert!(
+        bf16.contains("cost.memory-traffic.bounded.low:bytes=8"),
+        "a bf16 region's four elements are not being costed at two bytes each: {bf16}",
+    );
+    assert!(
+        binary32.contains("cost.memory-traffic.bounded.low:bytes=16"),
+        "the binary32 neighbour's width moved, so the pair proves nothing: {binary32}",
+    );
+
+    // The fail-closed direction, pinned rather than left implicit: a width the
+    // derivation declines to answer for makes the whole component `Unknown`, and
+    // an `Unknown` component is *omitted* from the reported terms and counted in
+    // `cost.unmodelled-components` instead. Two is the count with the width
+    // resolved — resource pressure and compile time — so a third would mean the
+    // traffic bound had silently become unmodelled rather than halved.
+    for trace in [&bf16, &binary32] {
+        assert!(
+            trace.contains("cost.unmodelled-components:count=2"),
+            "the memory-traffic bound went unmodelled rather than being derived: {trace}",
+        );
+    }
+}
+
+/// A contraction-permitting BF16 contract still stops at fusion legality.
+///
+/// **The wall re-founded on what survives, rather than removed with its
+/// predecessor.** The obligation that stops here is
+/// `fusion.arithmetic-contraction`, and it stops for a reason keyed to the
+/// *contract* rather than to the width: this program's region holds a multiply
+/// beside an add, so the closed same-family proof cannot rule out a
+/// multiply-plus-add adjacency, and a contract that *permits* contraction leaves
+/// the obligation `unrealized-contraction` because nothing in this bounded
+/// profile establishes that the emitted body will decline a permission it was
+/// granted. Every cover placing the region is then skipped and the selection has
+/// no complete plan, so the refusal is `NoFeasiblePlan` rather than an
+/// unsupported capability: a target *was* consulted and every enumerated cover
+/// was ruled out.
+///
+/// **This is the same wall an `f32` region meets under `RELAXED_F32`**, which is
+/// the point: BF16 legality is now derived by the same authority under the same
+/// rules rather than inherited or specially cased. The neighbour above is what
+/// keeps this about the *permission* rather than about BF16 being unfusable.
+///
+/// The profile's contraction row is `Permitted` here and `Forbidden` there, and
+/// that single row is what makes the pairing a perturbation: without it the
+/// request would be refused at numerical resolution and would never reach a
+/// legality derivation at all.
+#[test]
+fn a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall() {
+    let permitting = NumericalContractBuilder::strict_bf16()
+        .input_subnormals(SIGN_PRESERVING_FLUSH)
+        .result_subnormals(SIGN_PRESERVING_FLUSH)
+        .contraction(NumericalPermission::Permitted)
+        .build()
+        .expect("permitting contraction alone is a coherent bf16 vector");
+    assert_ne!(
+        permitting.key(),
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16.key(),
+        "the perturbed contract shares the accepted one's key, so nothing was perturbed",
+    );
+
+    let program = bf16_program();
+    let batch = compile(CompileRequest::new(
+        &program,
+        permitting,
+        TargetRequest::new([profile(
+            "test.bf16-contraction-wall.v1",
+            Bf16Rows::CompleteWithPermittedContraction,
+        )])
+        .unwrap(),
+    ))
     .expect("an enumeration that rules every cover out is a target outcome, not a request error");
     let target = batch.targets().next().expect("one requested target");
     let outcome = target.outcome();
@@ -507,6 +721,14 @@ fn a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall() {
         failure.class(),
         CompileFailureClass::NoFeasiblePlan,
         "the recognizer admitted the program and the enumeration ruled every cover out",
+    );
+    let explain = failure
+        .explain()
+        .expect("a refusal after the trace boundary carries its target-qualified trace");
+    let rendered = explain.render();
+    assert!(
+        rendered.contains("unrealized-contraction"),
+        "the refusal is not the contraction obligation's: {rendered}",
     );
 }
 

@@ -208,6 +208,19 @@ A proposed fusion region is legal only when all of the following hold.
 - Every fused scalar realization and opaque intrinsic refines each
   transcendental operation's effective reference, domain, accuracy, special-
   value, and subnormal contract.
+- Every obligation above is discharged for the arithmetic type the region's
+  governing contract states, and an answer established at one width is never
+  evidence at another.
+
+### Legality is per width, and is derived rather than inherited
+
+A numerical contract resolves its dimensions for exactly one arithmetic type, and a program whose values are two recognized widths at once is refused before planning, so every region put to the legality derivation has one width and the contract names it. Three of the obligations above read that width directly: the conversion boundary compares each member's operand and result encodings against the region's own dtype, the exceptional-value obligation compares the contract's canonical NaN payload against the one that width canonically produces, and the closed same-family contraction proof is keyed on exact operation keys rather than on operation roles.
+
+**Why the keying is a correctness requirement and not tidiness.** Reassociation error is bounded by the significand, which is 8 bits at `bf16` against binary32's 24, so a regrouping permitted under one width's error budget is not the same permission at another. And [the Apple numerical behaviour record](../research/apple-targets/numerical-behaviour.md)'s finding 28 measures a target whose *contraction* behaviour differs between `f16` and `bf16` in the strictest cell — under `safe` with `-ffp-contract=fast`, `f16` fuses a written multiply/add pair and `bf16` does not — so not even the target side agrees across widths, and a row transferred from a neighbouring width would be a legality claim nothing established.
+
+**What an unregistered width gets.** No fusion legality at all. An operation family with no registered capability resolves to `Unknown` and every cover placing its region is skipped, which is a refusal rather than a gap: the compiler declines to plan a fused realization it cannot state a proof for. Filling that in from the nearest registered width is exactly the substitution this section forbids.
+
+**What a per-width capability row does and does not assert.** A row states the operation's *fusion role* — whether it is a value source, elementwise arithmetic, an ordered reduction, or a coordinate relation — from which the obligations are derived. It asserts nothing about the operation's accuracy, and nothing about what a target delivers: whether a given profile honours a stated permission at a given width is that profile's declaration, keyed by subject, and is resolved before any region reaches this authority.
 
 Legality failure produces a structured split or fallback reason. An accuracy
 failure is hard infeasibility, never a cost penalty.

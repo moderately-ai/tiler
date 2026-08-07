@@ -533,18 +533,25 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // which that field documents as holding "only for owning
                 // writes" — read from the witness rather than inferred.
                 //
-                // **The element width is derived fail-closed.** `IndexRegion`
-                // carries no dtype; it carries `numerical.profile_key`, naming
-                // the governing contract. A key minted by the current `f32`
-                // contract scheme implies four bytes and anything else declines
-                // to answer, so a widened dtype vocabulary arrives under a
-                // different key domain, fails the prefix test, and reports
-                // `Unknown` instead of silently continuing to multiply by four.
+                // **The element width is derived from the region's own dtype,
+                // fail-closed.** `IndexRegion` carries no dtype; it carries
+                // `numerical.profile_key`, naming the governing contract, and a
+                // contract states its resolutions for exactly one
+                // `ArithmeticType`. So the key's own domain names the width, that
+                // width names a registered value identity, and that identity's
+                // catalog descriptor states its size — four bytes at `f32`, two
+                // at `bf16`. A key under no governed domain declines to answer and
+                // the whole component reports `Unknown`.
                 // This used to be a match against four literal contract keys;
                 // composition made that list unwritable — a caller resolves the
                 // dimensions directly, so there is no finite set of names to
-                // enumerate — and the domain prefix is what carries the same
-                // fail-closed claim over the whole space.
+                // enumerate — and the key domain is what carries the same
+                // fail-closed claim over the whole space. It then held the width
+                // itself at `4`, which was true while one domain existed and
+                // became a second width's answer the moment `tiler.contract.bf16.v1`
+                // was minted: a BF16 region's traffic would have been reported at
+                // twice its bytes. Deriving it removes the literal rather than
+                // adding a second one.
                 // Deliberately *not* inferred from
                 // `canonical_arithmetic_nan_bits` being 32 bits wide, which would
                 // read meaning out of a field's type and happen to be right for
@@ -564,12 +571,9 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                                     .iter()
                                     .try_fold(bounds, |(low, high), stage| {
                                         let region = &stage.region().index;
-                                        if !crate::request::is_f32_contract_key(
+                                        let width = crate::request::contract_key_element_bytes(
                                             region.numerical.profile_key,
-                                        ) {
-                                            return None;
-                                        }
-                                        let width = 4_u64;
+                                        )?;
                                         let points = element_count(&region.iteration_shape).ok()?;
                                         let bytes = points.checked_mul(width)?;
                                         let writes = u64::try_from(
