@@ -1,7 +1,7 @@
 ---
 id: route-the-realization-conformance-half-into-the-conformance-crate
 title: Route the realization-conformance half into the conformance crate
-status: todo
+status: in-progress
 priority: p2
 dependencies: [carry-the-device-executed-value-proof-into-the-conformance-crate]
 related: [retain-contraction-conformance-evidence, publish-an-l3-contraction-cell-through-the-accepted-route, survey-what-belongs-in-the-conformance-crate]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, conformance, contraction, migration]
+claimed_from: todo
+assignee: w-route-th
+lease_expires_at: 1786144902
 ---
 ## User-visible outcome
 

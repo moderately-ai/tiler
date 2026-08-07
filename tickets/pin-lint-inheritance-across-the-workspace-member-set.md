@@ -1,7 +1,7 @@
 ---
 id: pin-lint-inheritance-across-the-workspace-member-set
 title: Pin lint inheritance across the workspace member set
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
@@ -9,6 +9,9 @@ scopes: [implementation/workspace, implementation/frontend, implementation/runti
 shared_scopes: []
 paths: []
 tags: [lints, maintainability]
+claimed_from: todo
+assignee: w-pin-lint
+lease_expires_at: 1786144902
 ---
 ## What is still unheld
 
