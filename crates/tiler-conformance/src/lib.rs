@@ -13,14 +13,27 @@
 //! **Which layers one run crosses is the run's own claim, not this crate's.**
 //! This paragraph read "plans it through the compiler … packages and validates
 //! the artifact" when the crate was admitted, ahead of any content, and the
-//! first run does neither: `tiler_compiler`'s recognizer refuses every
-//! non-`f32` program under the rule `dtype-f32` before a subject is normalized,
-//! so nothing can produce the plan alternative the optimizer, the artifact
-//! envelope, and the runtime routing commit all consume. `bf16_vertical`
-//! records that boundary at the function a reader would expect a `compile()`
-//! call in, and states it again in its module header. A later run over an
-//! `f32` program crosses those layers; a claim that *this* crate always does
-//! would have been a claim about a member rather than about a run.
+//! BF16 run does neither.
+//!
+//! **Corrected 2026-08-07 as to *why* it does neither.** The reason given here
+//! was `tiler_compiler`'s recognizer, which "refuses every non-`f32` program
+//! under the rule `dtype-f32` before a subject is normalized".
+//! `widen-the-strategy-recognizer-past-the-f32-wall` retired that rule: the
+//! recognizer now derives a program's one arithmetic type and admits the widths
+//! this build can spell a per-point body in, BF16 among them. The boundary that
+//! survives is the **target profile's**. The authoritative macOS Apple9 ledger
+//! declares BF16 dispatchability and the two subnormal tables and nothing else,
+//! so a BF16 request clears the dimensions that were measured and is refused at
+//! numerical resolution on an undeclared one — and nothing can then produce the
+//! plan alternative the optimizer, the artifact envelope, and the runtime
+//! routing commit all consume. `bf16_vertical` records that boundary at the
+//! function a reader would expect a `compile()` call in, states it again in its
+//! module header, and — unlike every previous statement of it —
+//! `bf16_vertical::tests::the_request_boundary_stops_at_the_ledgers_undeclared_bf16_contraction_row`
+//! observes it, so the next time the reason moves a test says so. `serial_sum`'s
+//! `f32` runs do cross those layers, which is exactly why a claim that *this*
+//! crate always does would have been a claim about a member rather than about a
+//! run.
 //!
 //! The crate is admitted ahead of its first run deliberately. Admitting a
 //! workspace member fixes a dependency edge and a verifier-ownership boundary,

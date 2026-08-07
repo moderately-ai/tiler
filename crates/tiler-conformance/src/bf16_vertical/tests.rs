@@ -10,16 +10,23 @@
 
 use std::path::Path;
 
-use tiler_compiler::session::NumericalContract;
+use tiler_compiler::session::{
+    CompileFailureClass, CompileRequest, NumericalContract, TargetCompileRefusal,
+    TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
+};
+use tiler_compiler::target::TargetRequest;
 use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 use tiler_ir::program::StorageScalar;
+use tiler_ir::schedule::{ArithmeticType, NumericalPermission};
+use tiler_ir::semantic::{Bf16, InputKey};
 use tiler_metal::emit::emit_translation_unit;
 use tiler_reference::ReferenceNumericalConformance;
 
 use super::{
     Case, OperandStride, SCALE_BITS, corpus, declared_conformance, declared_contract,
     declared_expectations, declared_realization, emit_vertical, flush_moved_indices, operands,
-    pack, preserved_expectations, realization_of, reference_bits, region_under, unpack,
+    pack, preserved_expectations, realization_of, reference_bits, region_under, semantic_program,
+    unpack,
 };
 use crate::measurement::{measured_half, require_or_report};
 
@@ -214,6 +221,96 @@ fn the_oracle_and_the_region_are_told_one_contract() {
         )),
         preserved_expectations(),
         "the strict contract resolves to the preserving reading",
+    );
+}
+
+/// The request boundary stops at the ledger's undeclared BF16 contraction row.
+///
+/// **This vertical's reason for being hand-assembled, observed rather than
+/// asserted in a comment.** Until 2026-08-07 every statement of that reason
+/// named the recognizer's `dtype-f32` rule;
+/// `widen-the-strategy-recognizer-past-the-f32-wall` retired that rule, nothing
+/// checked the claim, and it outlived the rule across a landing. This is the
+/// check that would have caught it, and the one that catches the next move: it
+/// asks the *real*
+/// `compile()` for the *same* semantic program the oracle half evaluates, under
+/// the *same* [`declared_contract`], against the authoritative declaration's own
+/// profile.
+///
+/// **The dimension the rejection names is the load-bearing half.** A refusal
+/// alone would be satisfied by a target that could not do BF16 at all. This one
+/// names `Contraction` — so the flush-accepting contract cleared both measured
+/// subnormal dimensions and stopped on a row the ledger has not measured, at
+/// `Unknown` rather than `Unsupported`. That is a measurement boundary, and
+/// `a_strict_bf16_region_is_refused_on_the_measured_row` is its counterpart on
+/// the dimensions that *were* measured.
+///
+/// **`tiler-compiler` cannot run this check.**
+/// `the_measured_subnormal_rows_alone_leave_the_remaining_dimensions_unknown`
+/// asserts the same shape against a profile its own test file restates by hand,
+/// because `FIRST_MACOS_APPLE9` lives in `tiler-build`, which depends on the
+/// compiler. This crate depends on both, so widening the ledger's BF16 rows
+/// turns this red here rather than passing silently there.
+#[test]
+fn the_request_boundary_stops_at_the_ledgers_undeclared_bf16_contraction_row() {
+    let declaration = tiler_build::BoundMetalCompileDeclaration::first_macos_apple9()
+        .expect("the authoritative declaration assembles");
+    let key = InputKey::new("operand").expect("the input key is valid");
+    let elements = u64::try_from(corpus().len()).expect("the corpus length fits a u64");
+    let program = semantic_program(&key, elements);
+    let targets = TargetRequest::new([declaration.profile().clone()])
+        .expect("one declared profile is a singleton target request");
+
+    let batch = compile(CompileRequest::new(&program, declared_contract(), targets))
+        .expect("a target-local numerical refusal is a batch outcome, not a request error");
+    let target = batch.targets().next().expect("one requested target");
+    let outcome = target.outcome();
+    let failure = outcome
+        .as_ref()
+        .expect_err("the ledger declares no bf16 contraction row, so no plan is feasible");
+    assert_eq!(
+        failure.class(),
+        CompileFailureClass::NoFeasiblePlan,
+        "the request stopped somewhere other than the undeclared row",
+    );
+
+    let Some(TargetCompileRefusal::NumericalContract(refusal)) = failure.refusal() else {
+        panic!(
+            "the refusal is not the target's numerical-contract one: {:?}",
+            failure.refusal(),
+        );
+    };
+    assert_eq!(
+        refusal.target_profile(),
+        declaration.profile().profile_key(),
+        "the refusal names a profile other than the one this vertical is bound to",
+    );
+    let [rejection] = refusal.rejections() else {
+        panic!("one stated contract, one rejection");
+    };
+    assert_eq!(
+        rejection.contract_key(),
+        declared_contract().key(),
+        "the rejection names a contract other than the one this vertical declares",
+    );
+    let TargetNumericalRequirement::Contraction { subject, required } = rejection.requirement()
+    else {
+        panic!(
+            "the first undeclared consumable dimension is contraction, got {:?}",
+            rejection.requirement(),
+        );
+    };
+    assert_eq!(subject.arithmetic(), ArithmeticType::Bf16);
+    assert_eq!(
+        subject.resolved_type(),
+        &Bf16::resolved_type(),
+        "the unanswered question names the bf16 subject, not a substituted f32 one",
+    );
+    assert_eq!(*required, NumericalPermission::Forbidden);
+    assert_eq!(
+        *rejection.disposition(),
+        TargetNumericalRefusalDisposition::Unknown,
+        "an undeclared row is Unknown; a declared refusal would be a different boundary",
     );
 }
 

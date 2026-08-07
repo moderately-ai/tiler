@@ -13,9 +13,20 @@
 //! implementations of one declared contract arriving at the same bits, not one
 //! implementation checked against itself.
 //!
-//! Unlike `crate::bf16_vertical`, the compiler **is** in the path here: the
-//! recognizer's `dtype-f32` rule admits this program, so the portfolio, the plan
-//! alternatives, and their ABI are all crossed.
+//! Unlike `crate::bf16_vertical`, the compiler **is** in the path here, so the
+//! portfolio, the plan alternatives, and their ABI are all crossed.
+//!
+//! **Corrected 2026-08-07 as to why — the conclusion above is unchanged.** This
+//! read "the recognizer's `dtype-f32` rule admits this program", and that rule
+//! is retired: `widen-the-strategy-recognizer-past-the-f32-wall` replaced it
+//! with a derivation of the program's own arithmetic, which would admit
+//! `crate::bf16_vertical`'s program too, so the recognizer is no longer what
+//! separates the two verticals. The **target profile** is. `FIRST_MACOS_APPLE9`
+//! declares complete `f32` numerical rows and only the two measured BF16
+//! subnormal ones, so this program's `f32` contract resolves against declared
+//! rows where the BF16 one meets `Unknown` on the first undeclared consumable
+//! dimension and is refused before any plan exists. `crate::bf16_vertical`'s
+//! module header states that boundary and names the test that observes it.
 //!
 //! # The comparison is on exact bit patterns rather than an epsilon
 //!

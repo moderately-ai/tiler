@@ -16,26 +16,89 @@
 //!
 //! ## The compiler is not in the path, and that is a measurement boundary
 //!
-//! **Fact, at this commit.** `tiler_compiler`'s `select_supported_strategy`
-//! refuses every program carrying a non-`f32` value under the rule `dtype-f32`
-//! before a subject is normalized, so `compile()` cannot produce a plan for a
-//! BF16 semantic program at all —
-//! `crates/tiler-compiler/tests/bf16_numerical_contract.rs`'s
-//! `a_flush_accepting_bf16_contract_reaches_the_recognizer_dtype_wall` asserts
-//! exactly that, and
-//! `crates/tiler-compiler/src/pipeline/tests.rs`'s BF16 vertical records the
-//! same boundary in the same words. The consequence for this run is precise and
-//! is not a shortcut taken here: **the optimizer, the artifact envelope, and the
-//! runtime routing commit are not crossed**, because the only thing that could
-//! produce the `PlanAlternative` all three consume is the call that refuses.
-//! What is crossed is semantic construction, the oracle, the schedule and
-//! kernel vocabularies, `bfloat` emission, offline compilation, and device
-//! execution.
+//! > **The reason given here was retired and is struck. Corrected 2026-08-07.**
+//! > This section read that `tiler_compiler`'s `select_supported_strategy`
+//! > "refuses every program carrying a non-`f32` value under the rule
+//! > `dtype-f32` before a subject is normalized", and cited a compiler test by a
+//! > name that no longer exists.
+//! > `widen-the-strategy-recognizer-past-the-f32-wall` retired that rule:
+//! > recognition now derives the program's one arithmetic type and admits the
+//! > two widths this build can spell a per-point body in, refusing an
+//! > unspellable width under `dtype-recognized` and a mixed-width program under
+//! > `dtype-uniform`. This vertical's program clears both. The section also
+//! > asserted that the compiler's own BF16 vertical "records the same boundary
+//! > in the same words"; that cross-file agreement is not restated below,
+//! > because a claim that two files phrase one boundary alike breaks whenever
+//! > either is edited and cannot be checked from here. What is cited instead is
+//! > test names, which `cargo nextest list` resolves.
 //!
-//! Assembling the region through `tiler_ir`'s public builders is therefore the
-//! only route to a BF16 kernel that exists, and it is the same route the
-//! compiler's own BF16 vertical takes for the same stated reason. Nothing here
-//! may be read as evidence that a caller can *ask* for this program.
+//! **Fact, at this commit.** `compile()` still cannot produce a plan for this
+//! vertical, and the refusal is now the **target profile's** rather than the
+//! recognizer's. `BoundMetalCompileDeclaration::first_macos_apple9` declares
+//! BF16 dispatchability and the two subnormal tables and nothing else, so the
+//! flush-accepting contract this vertical states clears the dimensions that were
+//! measured and then meets an undeclared one. Asking for this vertical's own
+//! semantic program under [`declared_contract`] against that declaration's own
+//! profile returns a target-local `TargetCompileRefusal::NumericalContract` of
+//! class `NoFeasiblePlan`, whose single rejection names the requirement
+//! `Contraction` on the `bf16` subject at disposition `Unknown`.
+//! `tests::the_request_boundary_stops_at_the_ledgers_undeclared_bf16_contraction_row`
+//! is that observation, run rather than described — and the rejection naming
+//! *contraction* rather than a subnormal dimension is what shows the contract
+//! cleared the measured rows instead of failing on them.
+//!
+//! **Why the check belongs here rather than in the compiler.**
+//! `tiler-compiler`'s own
+//! `the_measured_subnormal_rows_alone_leave_the_remaining_dimensions_unknown`
+//! asserts the same shape, but against a profile its test file restates by hand:
+//! `FIRST_MACOS_APPLE9` lives in `tiler-build`, which depends on the compiler
+//! and therefore cannot be reached from its tests. This crate depends on both,
+//! so it is the first place the boundary can be asked of the authoritative
+//! ledger's own rows rather than of a transcription of them, and widening those
+//! rows is a red test here rather than a silent pass.
+//!
+//! The consequence for this run is precise and is not a shortcut taken here:
+//! **the optimizer, the artifact envelope, and the runtime routing commit are
+//! not crossed**, because the only thing that could produce the
+//! `PlanAlternative` all three consume is the call that refuses. What is crossed
+//! is semantic construction, the oracle, the schedule and kernel vocabularies,
+//! `bfloat` emission, offline compilation, and device execution.
+//!
+//! Assembling the region through `tiler_ir`'s public builders is therefore still
+//! the only route to a BF16 kernel that exists. Nothing here may be read as
+//! evidence that a caller can *ask* for this program.
+//!
+//! ## What is no longer a boundary, and what survives inside it
+//!
+//! Numerical resolution is the *first* refusal this vertical meets — BF16 is
+//! dispatchable on this row, so dtype dispatch admits it — and nothing
+//! downstream of that refusal is reached from this crate at all. But the two
+//! layers that used to refuse a
+//! BF16 program on their own no longer do, and stating that is what keeps this
+//! run from being read as evidence for walls that have fallen. In
+//! `crates/tiler-compiler/tests/bf16_numerical_contract.rs`, a
+//! single-occurrence BF16 program reaches a selected `PlanAlternative`
+//! (`a_flush_accepting_bf16_contract_reaches_a_selected_plan`) and a
+//! multi-occurrence BF16 region derives its own fusion legality and fuses
+//! (`a_multi_occurrence_bf16_program_derives_its_own_fusion_legality`).
+//!
+//! **Two boundaries survive inside that fusion, and neither is evidence that
+//! BF16 reductions are correct.** Naming them is required wherever the fusion is
+//! stated, or the correction overshoots in the opposite direction:
+//!
+//! - **Reassociation is withheld rather than proved.**
+//!   `BF16_FACT_REASSOCIATION_PERMITTED` is `false` and the question stays open
+//!   at the operation vocabulary, so a contract that *permits* regrouping leaves
+//!   the obligation `Unknown` — not required here is not the same as proved.
+//! - **The four reduction obligations discharge vacuously, over an empty
+//!   population.** `tiler-ir` registers no BF16 family carrying a fold at all,
+//!   so there is no BF16 contributor sequence for an identity, an empty domain,
+//!   an order, a regrouping, or a permutation to be about. Vacuous is not
+//!   correct.
+//!
+//! And the fusion wall moved rather than vanished:
+//! `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall` is
+//! where a contraction-permitting BF16 contract still stops.
 //!
 //! # Why the constants are `1.5` and `+0.0`
 //!
@@ -424,9 +487,12 @@ pub(crate) fn semantic_program(key: &InputKey, elements: u64) -> SemanticProgram
 
 /// Assembles the same computation as a verified BF16 scheduled region.
 ///
-/// Through `tiler_ir`'s public builders, because the compiler's recognizer
-/// refuses every non-`f32` program before a subject is normalized. The module
-/// header carries that boundary; it is restated here because this function is
+/// Through `tiler_ir`'s public builders, because `compile()` refuses this
+/// program at numerical resolution: the authoritative macOS Apple9 ledger
+/// declares no BF16 contraction row, so the contract's `Forbidden` requirement
+/// meets `Unknown` and no plan exists. **The recognizer is not what refuses**,
+/// and said so here until 2026-08-07. The module header carries the boundary and
+/// names the test that observes it; it is restated here because this function is
 /// the place a reader would otherwise expect a `compile()` call.
 pub(crate) fn scheduled_region(elements: u64) -> VerifiedScheduledRegion {
     region_under(elements, declared_realization())
