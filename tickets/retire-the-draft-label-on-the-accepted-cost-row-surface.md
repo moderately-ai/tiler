@@ -20,11 +20,17 @@ Remove the marker only. **Do not reword the surrounding rationale** — why the 
 
 **2. A dated measurement quoting a descriptor length that moved.** `docs/research/embedding/self-contained-embedding.md:67` quotes the canonical descriptor at **1,999 bytes**. The cost row's section moved it to **2,099**. The paragraph is a dated measurement and was correct at its commit, so the repair is **not** to overwrite the number: date it and state what moved it, the way the repository's other superseded measurements are handled. A reader reconciling an older record needs to see both values and the step between them.
 
-That length also feeds the envelope seven times over, which is why the fixed content moved 64,542 → 65,242. If the document draws any conclusion from the 1,999 figure rather than merely reporting it, say whether the conclusion survives the new value — that is the part a number swap would silently break.
+That length feeds the envelope seven times over, which is why the cost row's section moved the fixed content 64,542 → 65,242 — **and it has moved again since**, to 65,294, under the index-region `v10 → v11` step. Read the live figure rather than quoting either of those; the point of the repair is that the record carries the *ladder*, so add the step this ticket is about without asserting a total that a later step will falsify again.
+
+If the document draws any conclusion from the 1,999 figure rather than merely reporting it, say whether the conclusion survives the new value — that is the part a number swap would silently break.
 
 ## Explicitly not in scope
 
-No behaviour change, no signature change, no identity movement. The current pinned values are artifact identity `357f0676…`, cache subject `c626e43b…`, fixed content 65,242 bytes, descriptor length 2,099 — **if any of these moves, stop**, because this ticket cannot move them.
+No behaviour change, no signature change, no identity movement.
+
+**Read the current pinned values from `crates/tiler-build/src/metal_plan.rs` at your own base and hold *those* still — do not take them from this ticket.** This paragraph originally named `357f0676…` / `c626e43b…` / 65,242, which were current when it was filed on 2026-08-07 and were superseded hours later by the index-region `v10 → v11` step under [`bound-a-symbolic-index-coefficient-interval-from-its-declared-extent`](bound-a-symbolic-index-coefficient-interval-from-its-declared-extent.md). A worker holding this ticket's literal values would have stopped on a difference that was correct.
+
+The rule is what matters and it does not go stale: **this ticket moves no pin.** Record whatever the three read at your base, and if any differs after your change, stop — the change is wider than this ticket describes.
 
 Do not touch the measurement boundary the acceptance preserved: the sweep dispatched the tree at the balanced split, and `MEASURED_TREE_PARTICIPANT_CAP` landed after it. That bound stands and this ticket does not widen it.
 

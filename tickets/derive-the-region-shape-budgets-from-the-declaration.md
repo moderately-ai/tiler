@@ -1,7 +1,7 @@
 ---
 id: derive-the-region-shape-budgets-from-the-declaration
 title: Derive the region shape budgets from the declaration
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [size-the-region-shape-budgets-to-the-programs-the-profile-admits, rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets, correct-the-records-the-derived-region-shape-budgets-falsify]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [budgets, identity]
-claimed_from: todo
-assignee: agent-budgets
-lease_expires_at: 1786125055
 ---
 ## What to do
 
@@ -139,3 +136,21 @@ A budget is a property of the request rather than of an artifact's own bytes, an
 ### Checks
 
 All from the worktree, all exit 0: `cargo fmt`, `cargo check --workspace --all-targets --locked`, `cargo nextest run -p tiler-compiler --locked` (756 passed, 1 skipped), `cargo clippy -p tiler-compiler --all-targets --locked -- -D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-compiler --locked`, `cargo nextest run --workspace --locked` (2979 passed, 7 skipped), `cargo test --workspace --doc --locked`, `git diff --check`, `tkt lint`, `tkt guard`, and `make full`.
+
+## Integrated 2026-08-07
+
+Merged at `4eb78100` into `main` as `adf11867`; the composed tree gates green with `make full` exit 0 on a full rebuild after `cargo clean`.
+
+**The worker was killed at its own gating step**, after committing. Its work was recovered rather than redone: the branch carried a clean tree at a complete commit, and the coordinator gated at integration, which is where the gate is authoritative anyway.
+
+**The answer to the hard question was given rather than dodged**, which is what the brief demanded. Two of the three derivations *collapse onto the program-scoped bound* — `region_members` **is** `semantic_operations` and `region_live_values` **is** `semantic_values` — and the outcome says so out loud instead of inventing a tighter number to look like a bound. It then states why the fields are still encoded: region formation's attribution atom is a realization *stage* rather than an occurrence, and its live values include intermediates a staged law hands between stages, so both bounds still bind on a program whose families realize region sequences; and a budget set is a *request* field, so the governed profile's coincidence is a property of its declaration rather than of the fields. **Whether a field the governed profile can no longer fire deserves its slot in the request subject was explicitly not taken** — correctly, since that is the public-boundary question [`decide-whether-a-derived-budget-belongs-in-the-request-subject`](decide-whether-a-derived-budget-belongs-in-the-request-subject.md) owns.
+
+**The admission claim is proved rather than asserted.** The previously-refused population was reproduced first — `region_members` restored to 32, `chain_program(33)` refusing `BudgetExhausted` — and then the whole `33..=62` range compiles with the selected plan's stage coverage equal to one whole-program dispatch. That is admission and not a longer search: the plan is built from the whole-program candidate, which the constant rejected *at formation*, so no amount of searching could have produced it.
+
+**Each bound is still a bound.** All three are driven as admit/refuse pairs at region formation — deliberately, because two are the program-scoped bound itself, so a *program* large enough to reach them is refused for its size first and the region bound would never be observed. Each perturbation was watched failing before being trusted.
+
+**The one risk the decision named was measured, not argued.** Per-candidate cost was counted against a new `REGION_CANDIDATE_FORMATIONS` denominator — the node sets actually checked, rather than the emitted count, which would price every rejected set into the survivors. No material regression.
+
+`region_boundary_outputs` **narrowed**, 8 → 3, which is worth noting because a derivation is not always a widening: a candidate exporting four or more values needs four or more owning writes and is unspellable, since a scheduled region writes one owning tensor.
+
+**Released:** [`correct-the-records-the-derived-region-shape-budgets-falsify`](correct-the-records-the-derived-region-shape-budgets-falsify.md) and [`rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets`](rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets.md) — the identity-growth spike's `OPERATIONS` ladder stops at 32 and its `WALLS` table asserts a refusal at 33 that now compiles, which is the harness's designed non-zero exit.
