@@ -1,7 +1,7 @@
 ---
 id: register-the-softmax-realization-law
 title: Register the softmax realization law
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence, widen-the-staged-realization-law-to-the-registered-elementary-families, admit-the-softmax-family]
@@ -88,7 +88,7 @@ The normalization's own two stages were refactored onto (2) and (3). Both `reali
 
 ### The ratio the fold-with-epilogue acceptance asked for
 
-**Measurement**, over `crates/tiler-ir/src/index/law.rs` at commit `<COMMIT>`, counting code lines (blank lines, `//`, and `///` excluded) of the items the two fixed-chain variants' emission consists of:
+**Measurement**, over `crates/tiler-ir/src/index/law.rs` at commit `28c6e3807a618ef49213d9114856674c9157b451`, counting code lines (blank lines, `//`, and `///` excluded) of the items the two fixed-chain variants' emission consists of:
 
 | | code lines | items |
 | --- | ---: | ---: |
@@ -153,4 +153,4 @@ git diff --check
 tkt guard tkt/register-the-softmax-realization-law --format json
 ```
 
-Exact commit: `<COMMIT>`.
+Exact commit: `28c6e3807a618ef49213d9114856674c9157b451` — every code and ticket change is in it. `make full` was run on that commit and passed end to end (`2910 passed, 7 skipped`; release `1005 passed, 3 skipped`; `tkt lint` ok; shellcheck ok). The follow-up commit that fills this hash in and moves the status touches `tickets/` only, which is outside the gate-carry list, so the green gate carries; `tkt lint` was rerun on it.
