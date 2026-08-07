@@ -18,8 +18,47 @@
 //! IRs — that one operates on `VerifiedScheduledRegion` and this one on
 //! `VerifiedIndexRegion` — so this is a model mirrored, not a mechanism reused.
 //!
+//! # The retention contract
+//!
+//! **A published value may be read by more than one later stage, and its
+//! retention is recorded rather than implied.** The record is
+//! [`StagedIntermediate`]: one per *read*, each naming the producing stage, the
+//! reading stage, the two boundaries, and — on every record of the same published
+//! value — the last stage across which that value stays live
+//! ([`StagedIntermediate::retained_through`]). So an intermediate's lifetime is
+//! `producer..=retained_through`, and it is a checked fact of the chain rather
+//! than something a reader infers from stage order.
+//!
+//! It is *derived* from the declared readers, which is this module's own rule
+//! rather than an exception to it: a caller declares where each input boundary's
+//! value comes from and [`VerifiedIndexRegionSequence::try_new`] proves the
+//! result well formed, so the lifetime that follows from those declarations is
+//! computed and recorded rather than separately asserted. A separately declared
+//! span would be a second authority over one fact, and the two could disagree.
+//!
+//! Three rules bound it, and they are what keep the chain a chain:
+//!
+//! - a source names an **earlier** stage, never this one and never a later one,
+//!   so the reader graph is acyclic and every read follows its production;
+//! - a **non-final stage publishes exactly one value**, so "the value stage `p`
+//!   published" names one thing; a stage that hands two values on is a separate
+//!   capability this vocabulary does not have;
+//! - a published value has **at least one** reader, checked over the whole chain
+//!   rather than at the following stage, because a value read three stages later
+//!   is not unread at the stage in between.
+//!
+//! This is what the softmax needs and what the reduction-then-pass shape did not:
+//! `tiler::softmax-f32@1` publishes its exponentials, folds them to a denominator,
+//! and then reads *both* in its final pass. The alternative — letting a non-final
+//! stage hand several values on — reaches the same staging only by copying the
+//! exponentials through the folding stage verbatim, which puts a materialization
+//! that is no part of what the operation means into a region's canonical identity.
+//!
 //! The public surface here is a concrete draft pending Tom's review; see
-//! `tickets/accept-the-multi-region-index-realization-surface.md`.
+//! `tickets/accept-the-multi-region-index-realization-surface.md` for the
+//! originally accepted shape and
+//! `tickets/accept-the-multi-reader-index-realization-retention.md` for this
+//! widening.
 
 use core::fmt;
 use std::error::Error;
@@ -54,16 +93,32 @@ pub enum StagedInputSource {
     /// list operand binding walks, so an encoded compound operand names one
     /// position per component in its contract order.
     Occurrence(usize),
-    /// The value the named earlier stage handed on.
+    /// The value the named earlier stage published.
+    ///
+    /// Any earlier stage, not only the immediately preceding one: the ordinal is
+    /// what makes a value read several stages after it was produced expressible,
+    /// and it is load-bearing rather than derivable. Reading the same published
+    /// value at two boundaries — of one stage or of two — is two reads of one
+    /// value and is admitted; the module header states the retention contract
+    /// that follows.
     Intermediate(usize),
 }
 
-/// One value produced by a stage and consumed by the stage that follows it.
+/// One read of a value one stage published and a later stage consumes.
 ///
 /// Every field is a checked fact about the two regions, not a caller assertion:
 /// [`VerifiedIndexRegionSequence::try_new`] reads the producing output boundary
 /// and the consuming input boundary out of the regions themselves and refuses
 /// when they disagree.
+///
+/// **The record is per read, not per value.** A published value read by two
+/// stages — or twice by one — yields two records agreeing on [`Self::producer`],
+/// [`Self::producer_output`], [`Self::value_type`], [`Self::shape`], and
+/// [`Self::retained_through`], and differing in [`Self::consumer`] and
+/// [`Self::consumer_input`]. That granularity is not new: this record has always
+/// named one *consuming boundary*, and a chain in which every published value has
+/// one reader — which is every chain any registered law spells — yields exactly
+/// the records it always did.
 ///
 /// **Ownership.** An intermediate belongs to the sequence. It is neither an
 /// occurrence input nor an occurrence result: no [`StagedInputSource::Occurrence`]
@@ -71,17 +126,17 @@ pub enum StagedInputSource {
 /// never leave the sequence.
 ///
 /// **Lifetime.** It is created by [`Self::producer`] and dead after
-/// [`Self::consumer`], which is required to be the immediately following stage
-/// and the only stage that reads it. A value handed further down the chain would
-/// have to stay live across a stage that does not mention it, which the
-/// sequence deliberately cannot express rather than leaving the retention
-/// implied by stage order.
+/// [`Self::retained_through`], which is the last stage that reads it and is never
+/// earlier than [`Self::consumer`]. A value staying live across a stage that does
+/// not mention it is exactly what this record expresses, and the span is stated
+/// here rather than left to be inferred from stage order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StagedIntermediate {
     producer: usize,
     producer_output: VerifiedTensorId,
     consumer: usize,
     consumer_input: VerifiedTensorId,
+    retained_through: usize,
     value_type: ResolvedValueType,
     shape: Shape,
 }
@@ -97,7 +152,10 @@ impl StagedIntermediate {
     pub const fn producer_output(&self) -> VerifiedTensorId {
         self.producer_output
     }
-    /// Returns the ordered stage that consumes this value.
+    /// Returns the ordered stage this record's read happens at.
+    ///
+    /// One of possibly several readers; [`Self::retained_through`] is the last of
+    /// them and is what bounds the value's lifetime.
     #[must_use]
     pub const fn consumer(&self) -> usize {
         self.consumer
@@ -106,6 +164,16 @@ impl StagedIntermediate {
     #[must_use]
     pub const fn consumer_input(&self) -> VerifiedTensorId {
         self.consumer_input
+    }
+    /// Returns the last ordered stage across which this value stays live.
+    ///
+    /// The maximum [`Self::consumer`] over every read of the same published
+    /// value, so the value's lifetime is `producer()..=retained_through()`. It is
+    /// equal to [`Self::consumer`] exactly when this record is the value's last
+    /// read, and therefore on every record of a value with one reader.
+    #[must_use]
+    pub const fn retained_through(&self) -> usize {
+        self.retained_through
     }
     /// Returns the element type both boundaries agree on.
     #[must_use]
@@ -196,10 +264,10 @@ impl VerifiedIndexRegionSequence {
     ///
     /// Returns [`IndexRegionSequenceError`] when the stage population is outside
     /// its bound, a source list does not match its stage's input boundaries, a
-    /// handed value is never read or is read by a stage other than the one that
-    /// immediately follows its producer, a non-final stage does not produce
-    /// exactly the one value it hands on, or a producing and consuming boundary
-    /// disagree on element type or shape.
+    /// published value is never read or is claimed by a stage at or before the one
+    /// that published it, a non-final stage does not produce exactly the one value
+    /// it publishes, or a producing and consuming boundary disagree on element
+    /// type or shape.
     pub fn try_new(
         stages: Vec<VerifiedIndexRegion>,
         sources: Vec<Vec<StagedInputSource>>,
@@ -233,40 +301,66 @@ impl VerifiedIndexRegionSequence {
                 .collect::<Vec<_>>()
         };
 
-        let mut intermediates = Vec::with_capacity(stages.len().saturating_sub(1));
-        // The value the previous stage handed on, and the stage that produced
-        // it. `None` at the head of the chain, and cleared by the stage that
-        // consumes it so a second consumer finds nothing to bind.
-        let mut handoff: Option<(usize, VerifiedTensorId, ResolvedValueType, Shape)> = None;
+        // What each non-final stage publishes, collected before any source is
+        // read. A source names a producer by ordinal rather than by adjacency, so
+        // it must be answered against what that stage actually published rather
+        // than against whichever value happened to be in flight when the walk
+        // reached the reader.
+        let mut published: Vec<(VerifiedTensorId, ResolvedValueType, Shape)> =
+            Vec::with_capacity(stages.len().saturating_sub(1));
+        for (position, stage) in stages.iter().enumerate() {
+            if position + 1 == stages.len() {
+                break;
+            }
+            let mut outputs = stage
+                .tensors()
+                .filter(|tensor| tensor.role() == TensorRole::Output);
+            let Some(output) = outputs.next() else {
+                return Err(IndexRegionSequenceError::NotChained { stage: position });
+            };
+            if outputs.next().is_some() {
+                // Only the final stage's writes leave the sequence, and
+                // `Intermediate(p)` names one value, so a non-final stage
+                // publishing two has nothing coherent for a reader to name.
+                // Widening *that* is a separate capability from widening how many
+                // stages may read one value, and this vocabulary has only the
+                // second.
+                return Err(IndexRegionSequenceError::NotChained { stage: position });
+            }
+            let Some(shape) = output.shape().as_static().cloned() else {
+                return Err(IndexRegionSequenceError::SymbolicIntermediate {
+                    stage: position,
+                    slot: 0,
+                });
+            };
+            published.push((output.id(), output.value_type().clone(), shape));
+        }
 
+        let mut intermediates = Vec::new();
+        let mut reads = vec![0_usize; published.len()];
         for (position, stage) in stages.iter().enumerate() {
             let inputs = inputs_of(stage);
             let stage_sources = &sources[position];
             if stage_sources.len() != inputs.len() {
                 return Err(IndexRegionSequenceError::SourceArity { stage: position });
             }
-            let mut owed = handoff.take();
             for (slot, source) in stage_sources.iter().enumerate() {
                 let (tensor, value_type, shape) = &inputs[slot];
                 match source {
                     StagedInputSource::Occurrence(_) => {}
                     StagedInputSource::Intermediate(producer) => {
-                        let Some((owed_producer, owed_output, owed_type, owed_shape)) = &owed
+                        // A value is readable only after the stage that published
+                        // it. With adjacency gone this bound is what keeps the
+                        // reader graph acyclic, and it also rules out the final
+                        // stage as a producer, whose writes leave the sequence.
+                        let Some((owed_output, owed_type, owed_shape)) =
+                            published.get(*producer).filter(|_| *producer < position)
                         else {
-                            // Either nothing was handed on, or this stage already
-                            // consumed it. Both are the same defect: an
-                            // intermediate has exactly one reader.
                             return Err(IndexRegionSequenceError::UnavailableIntermediate {
                                 stage: position,
                                 slot,
                             });
                         };
-                        if producer != owed_producer {
-                            return Err(IndexRegionSequenceError::UnavailableIntermediate {
-                                stage: position,
-                                slot,
-                            });
-                        }
                         let Some(shape) = shape else {
                             return Err(IndexRegionSequenceError::SymbolicIntermediate {
                                 stage: position,
@@ -280,48 +374,39 @@ impl VerifiedIndexRegionSequence {
                             });
                         }
                         intermediates.push(StagedIntermediate {
-                            producer: *owed_producer,
+                            producer: *producer,
                             producer_output: *owed_output,
                             consumer: position,
                             consumer_input: *tensor,
+                            // Filled once every read is known: the span is a
+                            // property of the value, and no single read can see
+                            // it.
+                            retained_through: position,
                             value_type: value_type.clone(),
                             shape: shape.clone(),
                         });
-                        owed = None;
+                        reads[*producer] = reads[*producer].saturating_add(1);
                     }
                 }
             }
-            if owed.is_some() {
-                // A value published by the previous stage that this one never
-                // reads is staged with no consumer: a leak whose owner nothing
-                // downstream could name.
-                return Err(IndexRegionSequenceError::IntermediateNeverRead {
-                    producer: position.saturating_sub(1),
-                });
-            }
+        }
 
-            if position + 1 == stages.len() {
-                continue;
-            }
-            let mut outputs = stage
-                .tensors()
-                .filter(|tensor| tensor.role() == TensorRole::Output);
-            let Some(output) = outputs.next() else {
-                return Err(IndexRegionSequenceError::NotChained { stage: position });
-            };
-            if outputs.next().is_some() {
-                // Only the final stage's writes leave the sequence, and one
-                // handed value has one reader, so a non-final stage publishing
-                // two values has nothing coherent to hand on.
-                return Err(IndexRegionSequenceError::NotChained { stage: position });
-            }
-            let Some(shape) = output.shape().as_static().cloned() else {
-                return Err(IndexRegionSequenceError::SymbolicIntermediate {
-                    stage: position,
-                    slot: 0,
-                });
-            };
-            handoff = Some((position, output.id(), output.value_type().clone(), shape));
+        // Checked over the whole chain rather than at the following stage: a
+        // value read three stages later is not unread at the stage in between.
+        if let Some(producer) = reads.iter().position(|count| *count == 0) {
+            // A published value nothing reads is staged with no consumer: a leak
+            // whose owner nothing downstream could name.
+            return Err(IndexRegionSequenceError::IntermediateNeverRead { producer });
+        }
+
+        // The retention span, derived from the declared readers and then recorded
+        // on every record of the value it belongs to.
+        let mut retained = vec![0_usize; published.len()];
+        for read in &intermediates {
+            retained[read.producer] = retained[read.producer].max(read.consumer);
+        }
+        for read in &mut intermediates {
+            read.retained_through = retained[read.producer];
         }
 
         let identity = encode_sequence_identity(&stages, &sources);
@@ -405,6 +490,21 @@ impl VerifiedIndexRegionSequence {
 /// in order, so a truncated, extended, or reordered chain — and a chain whose
 /// stages are identical but whose inputs are sourced differently — each render
 /// distinct bytes.
+///
+/// **Injectivity over the widened source vocabulary, and why no byte moved to get
+/// it.** [`StagedInputSource::Intermediate`] now admits any earlier producer
+/// rather than only the immediately preceding stage, so the ordinal it carries is
+/// load-bearing where it used to be redundant — two chains over identical regions
+/// whose final stage reads a value published two stages back rather than one are
+/// different realizations and must not encode alike. They do not: the producer
+/// ordinal is written in full under tag `2`, exactly as it always was, and
+/// `push_len` is injective over the whole `usize` range rather than over the range
+/// the chain rules happened to admit. So this function is unchanged, and *because*
+/// it is unchanged every chain that was expressible before encodes byte for byte
+/// as it did — the admitted preimage set widened while the map did not. The
+/// widening is therefore identity-neutral by construction rather than by survey,
+/// and `the_landed_one_reader_chain_identities_are_unchanged_byte_for_byte` in
+/// [`super::law`] pins the claim over exact bytes anyway.
 fn encode_sequence_identity(
     stages: &[VerifiedIndexRegion],
     sources: &[Vec<StagedInputSource>],
@@ -456,11 +556,13 @@ pub enum IndexRegionSequenceError {
         /// Ordered stage whose source list disagreed.
         stage: usize,
     },
-    /// An input claims a handed value that is not available to it.
+    /// An input claims a published value that is not available to it.
     ///
-    /// Either nothing was handed on, the named producer is not the immediately
-    /// preceding stage, or this stage already consumed the one value it was
-    /// handed.
+    /// The named producer is not an earlier stage: it is this stage itself, a
+    /// later one, or an ordinal no stage occupies. Every earlier stage is
+    /// non-final and therefore published exactly one value, so that bound is the
+    /// whole of the condition — reading a value several stages after it was
+    /// published is admitted, and reading one before it exists is not.
     UnavailableIntermediate {
         /// Ordered consuming stage.
         stage: usize,
@@ -481,7 +583,10 @@ pub enum IndexRegionSequenceError {
         /// Ordered boundary position within that stage.
         slot: usize,
     },
-    /// A stage handed a value on that the following stage never read.
+    /// A stage published a value that no later stage reads.
+    ///
+    /// Checked over the whole chain, so a value first read several stages later
+    /// is not this refusal.
     IntermediateNeverRead {
         /// Ordered stage that published the unread value.
         producer: usize,
@@ -509,7 +614,7 @@ impl fmt::Display for IndexRegionSequenceError {
             Self::UnavailableIntermediate { stage, slot } => {
                 write!(
                     formatter,
-                    "stage {stage} input {slot} claims an unavailable handed value"
+                    "stage {stage} input {slot} claims a value no earlier stage published"
                 )
             }
             Self::IntermediateInterface { stage, slot } => {
@@ -525,7 +630,10 @@ impl fmt::Display for IndexRegionSequenceError {
                 )
             }
             Self::IntermediateNeverRead { producer } => {
-                write!(formatter, "stage {producer} handed a value nothing reads")
+                write!(
+                    formatter,
+                    "stage {producer} published a value no later stage reads"
+                )
             }
             Self::NotChained { stage } => {
                 write!(
@@ -543,14 +651,162 @@ impl Error for IndexRegionSequenceError {}
 mod tests {
     use super::*;
     use crate::index::{
-        DomainRole, FrozenScalarRegistry, IndexRegionBuilder, ScalarAttributes,
-        multiply_f32_scalar_op,
+        DomainRole, FrozenScalarRegistry, IndexRegionBuilder, ScalarAttributes, add_f32_scalar_op,
+        constant_f32_scalar_op, multiply_f32_scalar_op,
     };
-    use crate::semantic::F32;
+    use crate::semantic::{
+        CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, TypeKey,
+    };
     use crate::shape::{Extent, Shape};
 
     fn scalars() -> FrozenScalarRegistry {
         FrozenScalarRegistry::standard().expect("the standard scalar registry is coherent")
+    }
+
+    /// Emits `out[r] = fold(+, in[r, *])` over `[rows, columns]`.
+    ///
+    /// A real reduction rather than a pointwise stand-in, because the softmax's
+    /// staging is characterized by the *shapes* its stages hand across: a fold
+    /// publishes one value per row where the pass it feeds is one per point, and a
+    /// chain built from shape-preserving regions alone could not tell the two
+    /// apart.
+    fn row_fold_region(rows: u64, columns: u64) -> VerifiedIndexRegion {
+        let mut builder =
+            IndexRegionBuilder::new(scalars()).expect("the standard registry admits a builder");
+        let row = builder
+            .dimension(DomainRole::Parallel, Extent::new(rows))
+            .expect("the kept dimension");
+        let column = builder
+            .dimension(DomainRole::Reduction, Extent::new(columns))
+            .expect("the folded dimension");
+        let row_coordinate = builder.dimension_expr(row).expect("its induction variable");
+        let column_coordinate = builder
+            .dimension_expr(column)
+            .expect("its induction variable");
+        let input = builder
+            .tensor(
+                crate::index::TensorRole::Input,
+                F32::resolved_type(),
+                Shape::from_dims([rows, columns]),
+            )
+            .expect("the folded boundary");
+        let output = builder
+            .tensor(
+                crate::index::TensorRole::Output,
+                F32::resolved_type(),
+                Shape::from_dims([rows]),
+            )
+            .expect("the published boundary");
+        let contributor = builder
+            .read(input, &[row, column], &[row_coordinate, column_coordinate])
+            .expect("one contributor per point of the folded axis");
+        let seed = builder
+            .apply(
+                constant_f32_scalar_op(),
+                exact_f32_attributes(0.0_f32.to_bits()),
+                &[],
+            )
+            .expect("the governed constant applies")
+            .get(0)
+            .expect("a constant yields one result");
+        let folded = builder
+            .reduce(&[column], &[seed], &[contributor], |body| {
+                let state = body.state(0).expect("one state");
+                let value = body.contributor(0).expect("one contributor");
+                let accumulated = body
+                    .apply(
+                        add_f32_scalar_op(),
+                        ScalarAttributes::empty(),
+                        &[state, value],
+                    )?
+                    .get(0)
+                    .expect("the governed add yields one result");
+                body.yield_values(&[accumulated])
+            })
+            .expect("the fold builds")
+            .get(0)
+            .expect("a one-state fold yields one result");
+        let write = builder
+            .write(output, &[row], &[row_coordinate])
+            .expect("a complete write");
+        builder.output(write, folded).expect("an output root");
+        builder.build().expect("the fold region verifies")
+    }
+
+    /// Emits `out[r, c] = mul(full[r, c], per_row[r])` over `[rows, columns]`.
+    ///
+    /// Its boundary order is `(full, per row)`, which is the order its stage's
+    /// sources are declared in and therefore the order the chain binds them.
+    fn row_pointwise_region(rows: u64, columns: u64) -> VerifiedIndexRegion {
+        let mut builder =
+            IndexRegionBuilder::new(scalars()).expect("the standard registry admits a builder");
+        let row = builder
+            .dimension(DomainRole::Parallel, Extent::new(rows))
+            .expect("the row dimension");
+        let column = builder
+            .dimension(DomainRole::Parallel, Extent::new(columns))
+            .expect("the column dimension");
+        let row_coordinate = builder.dimension_expr(row).expect("its induction variable");
+        let column_coordinate = builder
+            .dimension_expr(column)
+            .expect("its induction variable");
+        let full = builder
+            .tensor(
+                crate::index::TensorRole::Input,
+                F32::resolved_type(),
+                Shape::from_dims([rows, columns]),
+            )
+            .expect("the per-point boundary");
+        let per_row = builder
+            .tensor(
+                crate::index::TensorRole::Input,
+                F32::resolved_type(),
+                Shape::from_dims([rows]),
+            )
+            .expect("the per-row boundary");
+        let output = builder
+            .tensor(
+                crate::index::TensorRole::Output,
+                F32::resolved_type(),
+                Shape::from_dims([rows, columns]),
+            )
+            .expect("the result boundary");
+        let element = builder
+            .read(full, &[row, column], &[row_coordinate, column_coordinate])
+            .expect("the per-point read");
+        let scale = builder
+            .read(per_row, &[row], &[row_coordinate])
+            .expect("the per-row read");
+        let product = builder
+            .apply(
+                multiply_f32_scalar_op(),
+                ScalarAttributes::empty(),
+                &[element, scale],
+            )
+            .expect("the governed multiply applies")
+            .get(0)
+            .expect("multiply yields one result");
+        let write = builder
+            .write(output, &[row, column], &[row_coordinate, column_coordinate])
+            .expect("a complete write");
+        builder.output(write, product).expect("an output root");
+        builder.build().expect("the pass region verifies")
+    }
+
+    /// Returns the governed constant's attribute record for one exact payload.
+    fn exact_f32_attributes(bits: u32) -> ScalarAttributes {
+        ScalarAttributes::new(
+            CanonicalValue::record([CanonicalField::new(
+                F32_CONSTANT_BITS_ATTRIBUTE,
+                CanonicalValue::float_bits(
+                    TypeKey::new("tiler", "f32", 1).expect("the governed f32 key is valid"),
+                    bits.to_be_bytes(),
+                )
+                .expect("an exact binary32 payload is canonical"),
+            )])
+            .expect("a one-field record is canonical"),
+        )
+        .expect("a canonical record is valid scalar attributes")
     }
 
     /// Emits `out[i] = mul(in[0][i], in[last][i])` over `[extent]`.
@@ -687,8 +943,8 @@ mod tests {
             ),
             Err(IndexRegionSequenceError::IntermediateNeverRead { producer: 0 })
         );
-        // Naming a producer that is not the immediately preceding stage keeps
-        // the value alive across a stage that never mentions it.
+        // An ordinal no stage occupies: only non-final stages publish, so a
+        // two-stage chain has exactly one producer to name.
         assert_eq!(
             VerifiedIndexRegionSequence::try_new(
                 vec![square(), consumer()],
@@ -702,19 +958,205 @@ mod tests {
             ),
             Err(IndexRegionSequenceError::UnavailableIntermediate { stage: 1, slot: 1 })
         );
-        // One handed value has one reader: a second claim finds nothing.
-        assert_eq!(
-            VerifiedIndexRegionSequence::try_new(
-                vec![square(), consumer()],
+    }
+
+    /// A value read at or before the stage that publishes it.
+    ///
+    /// **Separate from the out-of-range case, and the separation is the finding.**
+    /// A two-stage chain cannot exhibit this: naming stage one there is already
+    /// an ordinal no producer occupies, so an implementation with no ordering
+    /// bound at all still refuses it and the assertion proves nothing about the
+    /// bound. Three stages give both references a *live* producer whose element
+    /// type and shape agree — so the only thing standing between them and
+    /// acceptance is the rule that a value is readable strictly after it is
+    /// published, which is what keeps the reader graph acyclic now that adjacency
+    /// no longer does.
+    #[test]
+    fn a_value_read_at_or_before_its_producing_stage_refuses() {
+        // Self-reference: stage one claims its own published value. Forward
+        // reference: the head of the chain claims a value published later. The
+        // refusal is compared through `expect_err` rather than against an `Ok`
+        // pattern so a regression reports the refusal it produced instead of
+        // rendering three verified regions.
+        for (sources, expected) in [
+            (
                 vec![
                     vec![StagedInputSource::Occurrence(0)],
                     vec![
+                        StagedInputSource::Occurrence(1),
+                        StagedInputSource::Intermediate(1),
+                    ],
+                    vec![
                         StagedInputSource::Intermediate(0),
-                        StagedInputSource::Intermediate(0),
+                        StagedInputSource::Intermediate(1),
                     ],
                 ],
+                IndexRegionSequenceError::UnavailableIntermediate { stage: 1, slot: 1 },
             ),
-            Err(IndexRegionSequenceError::UnavailableIntermediate { stage: 1, slot: 1 })
+            (
+                vec![
+                    vec![StagedInputSource::Intermediate(1)],
+                    vec![
+                        StagedInputSource::Occurrence(0),
+                        StagedInputSource::Intermediate(0),
+                    ],
+                    vec![
+                        StagedInputSource::Occurrence(1),
+                        StagedInputSource::Intermediate(1),
+                    ],
+                ],
+                IndexRegionSequenceError::UnavailableIntermediate { stage: 0, slot: 0 },
+            ),
+        ] {
+            assert_eq!(
+                VerifiedIndexRegionSequence::try_new(
+                    vec![square(), consumer(), consumer()],
+                    sources,
+                )
+                .map(|_| ())
+                .expect_err("a value is readable only after the stage that published it"),
+                expected
+            );
+        }
+        // The same three regions and the same boundaries, wired forward: this is
+        // what the two chains above would have been had the bound not refused
+        // them, and it is admitted. Without it the refusals prove only that
+        // *something* about those chains was wrong.
+        let forward = VerifiedIndexRegionSequence::try_new(
+            vec![square(), consumer(), consumer()],
+            vec![
+                vec![StagedInputSource::Occurrence(0)],
+                vec![
+                    StagedInputSource::Occurrence(1),
+                    StagedInputSource::Intermediate(0),
+                ],
+                vec![
+                    StagedInputSource::Occurrence(2),
+                    StagedInputSource::Intermediate(1),
+                ],
+            ],
+        )
+        .expect("a strictly forward three-stage chain is well formed");
+        assert_eq!(forward.stage_count(), 3);
+    }
+
+    /// One published value read at two boundaries of one stage.
+    ///
+    /// **This is the refusal the retention widening removes, asserted as an
+    /// admission.** Before it, a second claim on a handed value found the slot
+    /// cleared and reported `UnavailableIntermediate`; a value with two readers
+    /// is now what the model expresses. The two records agree on everything about
+    /// the value and differ only in the boundary each read binds.
+    #[test]
+    fn one_published_value_read_twice_by_one_stage_chains() {
+        let sequence = VerifiedIndexRegionSequence::try_new(
+            vec![square(), consumer()],
+            vec![
+                vec![StagedInputSource::Occurrence(0)],
+                vec![
+                    StagedInputSource::Intermediate(0),
+                    StagedInputSource::Intermediate(0),
+                ],
+            ],
+        )
+        .expect("squaring the published value is two reads of one value");
+        let [first, second] = sequence.intermediates() else {
+            panic!("two boundaries reading one value are two records")
+        };
+        assert_eq!(first.producer(), second.producer());
+        assert_eq!(first.producer_output(), second.producer_output());
+        assert_eq!(first.consumer(), 1);
+        assert_eq!(second.consumer(), 1);
+        assert_ne!(first.consumer_input(), second.consumer_input());
+        assert_eq!(first.retained_through(), 1);
+        assert_eq!(second.retained_through(), 1);
+    }
+
+    /// The softmax's staging, expressible at the sequence layer.
+    ///
+    /// **This is the chain `tiler::softmax-f32@1` needs, and the one wall this
+    /// module was the second half of.** Its four stages are the pinned formula's:
+    /// `S0` folds the row maximum `m`; `S1` reads the scores and `m` and publishes
+    /// the exponentials `e`; `S2` folds `e` into the denominator `d`; and `S3`
+    /// reads `e` **again**, alongside `d`, and writes the row. `e` is the value
+    /// that survives a stage that produces something else, which is what every
+    /// one of the four stagings the ticket enumerated ran aground on.
+    ///
+    /// The regions here stand for those five steps in their *boundaries* — the
+    /// interfaces are where the chain checks anything — while the arithmetic they
+    /// carry is the fold and the product the other tests in this module use. The
+    /// law that emits the softmax's actual scalar programs is a separate piece of
+    /// work; what is proved here is that the shape it must produce is now
+    /// expressible and checked rather than refused.
+    #[test]
+    fn the_softmax_staging_publishing_the_exponentials_chains() {
+        let sequence = VerifiedIndexRegionSequence::try_new(
+            vec![
+                // S0: x[3,4] -> m[3]
+                row_fold_region(3, 4),
+                // S1: x[3,4], m[3] -> e[3,4]
+                row_pointwise_region(3, 4),
+                // S2: e[3,4] -> d[3]
+                row_fold_region(3, 4),
+                // S3: e[3,4], d[3] -> r[3,4]
+                row_pointwise_region(3, 4),
+            ],
+            vec![
+                vec![StagedInputSource::Occurrence(0)],
+                vec![
+                    StagedInputSource::Occurrence(0),
+                    StagedInputSource::Intermediate(0),
+                ],
+                vec![StagedInputSource::Intermediate(1)],
+                vec![
+                    StagedInputSource::Intermediate(1),
+                    StagedInputSource::Intermediate(2),
+                ],
+            ],
+        )
+        .expect("the exponentials survive the denominator's fold");
+
+        assert_eq!(sequence.stage_count(), 4);
+        // Four reads of three published values: `m` once, `e` twice, `d` once.
+        let reads = sequence
+            .intermediates()
+            .iter()
+            .map(|read| (read.producer(), read.consumer(), read.retained_through()))
+            .collect::<Vec<_>>();
+        assert_eq!(reads, [(0, 1, 1), (1, 2, 3), (1, 3, 3), (2, 3, 3)]);
+
+        // The retention claim, stated rather than inferred: `e` is published by
+        // stage one and stays live through stage three, across stage two — which
+        // reads it, and publishes something else entirely.
+        let exponentials = sequence
+            .intermediates()
+            .iter()
+            .filter(|read| read.producer() == 1)
+            .collect::<Vec<_>>();
+        assert_eq!(exponentials.len(), 2);
+        for read in &exponentials {
+            assert_eq!(read.retained_through(), 3);
+            assert_eq!(read.shape(), &Shape::from_dims([3, 4]));
+            assert_eq!(
+                read.producer_output(),
+                exponentials[0].producer_output(),
+                "both reads name the one boundary stage one published"
+            );
+        }
+        // The denominator is a different value of a different shape, so the two
+        // reads at stage three are not one value read twice.
+        let [denominator] = sequence
+            .intermediates()
+            .iter()
+            .filter(|read| read.producer() == 2)
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("the denominator has one reader")
+        };
+        assert_eq!(denominator.shape(), &Shape::from_dims([3]));
+        assert_ne!(
+            denominator.producer_output(),
+            exponentials[0].producer_output()
         );
     }
 
