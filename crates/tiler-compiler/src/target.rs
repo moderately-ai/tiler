@@ -5966,15 +5966,18 @@ mod tests {
     /// The shapes on which all three reduction strategies coexist, for one bound.
     ///
     /// A shape qualifies when both parallel strategies are expressible and a plan
-    /// is feasible. Both conditions are read from the code that decides them
-    /// rather than restated: `governed_partition` is what withholds the split and
-    /// the tree, and the grid-axis bound is what the prologue's one-invocation-
-    /// per-element launch is assessed against.
+    /// is feasible. Every condition is read from the code that decides it rather
+    /// than restated: `governed_partition` is what withholds the split,
+    /// `capped_tree_partition` is what withholds the tree — the two choose
+    /// different participant counts and are asked separately rather than one
+    /// standing in for the other — and the grid-axis bound is what the prologue's
+    /// one-invocation-per-element launch is assessed against.
     fn three_strategy_domain(grid_axis_bound: u64) -> Vec<(u64, u64)> {
         let mut domain = Vec::new();
         for rows in 1..=grid_axis_bound {
             for contributors in 1..=grid_axis_bound {
                 if crate::physical::governed_partition(contributors).is_some()
+                    && crate::physical::capped_tree_partition(contributors).is_some()
                     && rows * contributors <= grid_axis_bound
                 {
                     domain.push((rows, contributors));
@@ -6007,9 +6010,12 @@ mod tests {
     ///
     /// What this test still checks is worth keeping and is what its name now
     /// says: on *this* profile the derivation `4 <= contributors <=
-    /// rows * contributors <= bound` closes on `(1, 4)`, because
-    /// `governed_partition` withholds both parallel strategies below four
-    /// contributors. If the prototype baseline is ever widened — which is a
+    /// rows * contributors <= bound` closes on `(1, 4)`, because both partition
+    /// rules — `governed_partition` for the split and `capped_tree_partition`
+    /// for the tree — withhold their strategy below four contributors. The two
+    /// disagree about *which* participant count to take, never about which
+    /// extents admit one, so the floor in that derivation is one number and not
+    /// a coincidence. If the prototype baseline is ever widened — which is a
     /// product question about what a target-neutral guarantee should offer, not
     /// an authority question this ticket could answer — this fires.
     ///

@@ -5,13 +5,13 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [calibrate-the-reduction-partition-against-measured-alternatives, activate-measured-reduction-selection-from-a-target-cost-row]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/numerics, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, scheduling, reductions, measurement]
 claimed_from: todo
-assignee: agent-tree-cap
-lease_expires_at: 1786088941
+assignee: agent-tree-cap-r2
+lease_expires_at: 1786110579
 ---
 ## User-visible outcome
 
