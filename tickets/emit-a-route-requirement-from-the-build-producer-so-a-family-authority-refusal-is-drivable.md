@@ -8,9 +8,6 @@ related: [realize-parallel-reduction-strategies-on-metal, declare-a-required-gpu
 scopes: [implementation/build, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 tags: [implementation, artifacts, build, route-requirements, evidence-gap]
-claimed_from: todo
-assignee: agent-route-requirement
-lease_expires_at: 1785786692
 ---
 ## User-visible outcome
 

@@ -9,9 +9,6 @@ scopes: [implementation/cache, implementation/artifact, implementation/workspace
 shared_scopes: [project/tickets, implementation/cargo-lock, contracts/navigation]
 paths: []
 tags: [implementation, cache, concurrency, durability]
-claimed_from: todo
-assignee: agent-cache2
-lease_expires_at: 1785011688
 ---
 Implement the cross-process expansion cache protocol ADR 0050 accepts and `docs/research/cache/crash-and-race-protocol.md` specifies, in whichever component `decide-the-expansion-cache-owner-and-digest-authority` names.
 

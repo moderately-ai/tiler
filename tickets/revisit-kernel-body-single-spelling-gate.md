@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, verification]
-claimed_from: todo
-assignee: agent-ir2
-lease_expires_at: 1784999607
 ---
 The kernel verifier's final check is **derive-and-compare**: after the specific
 rules run (so diagnostics stay precise), it re-derives the canonical body from

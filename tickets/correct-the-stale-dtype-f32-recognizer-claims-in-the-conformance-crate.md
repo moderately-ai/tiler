@@ -4,7 +4,7 @@ title: Correct the stale dtype-f32 recognizer claims in the conformance crate
 status: todo
 priority: p2
 dependencies: []
-related: [widen-the-strategy-recognizer-past-the-f32-wall, conform-the-bf16-vertical-end-to-end]
+related: [widen-the-strategy-recognizer-past-the-f32-wall, conform-the-bf16-vertical-end-to-end, correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed]
 scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,10 +12,14 @@ tags: [documentation, bf16, dtype, correction]
 ---
 ## What is false
 
-**Fact, at the merge of `widen-the-strategy-recognizer-past-the-f32-wall`.** Two module comments in `crates/tiler-conformance` state a rule that no longer exists:
+> **"Two module comments" was an undercount and is struck. Corrected 2026-08-07.** There are **three** sites carrying a live `dtype-f32` claim, plus a fourth stale claim of a different kind. The two originally listed are accurate as to line and text; the list was incomplete, and a worker who satisfied it would have failed the closing condition.
+
+**Fact, verified 2026-08-07 by reading each file in full.** Four stale claims in `crates/tiler-conformance`, three of them the `dtype-f32` rule:
 
 - `crates/tiler-conformance/src/lib.rs:17` — "non-`f32` program under the rule `dtype-f32` before a subject is normalized".
 - `crates/tiler-conformance/src/bf16_vertical.rs:20` — "refuses every program carrying a non-`f32` value under the rule `dtype-f32`".
+- **`crates/tiler-conformance/src/serial_sum.rs:17`** — "the recognizer's `dtype-f32` rule admits this program, so the portfolio, the plan alternatives, and their ABI are all crossed". A live claim, unlisted until now. Note its *conclusion* is still true — the compiler is in this vertical's path — so this one needs its **reason** replaced, not its outcome.
+- **`crates/tiler-conformance/src/bf16_vertical.rs:26-27`** — asserts that `crates/tiler-compiler/src/pipeline/tests.rs`'s BF16 vertical "records the same boundary in the same words". It no longer does: `pipeline/tests.rs:3981-3988` now records the dtype rule as **removed**, citing `a_flush_accepting_bf16_contract_reaches_a_selected_plan`. This is a cross-file agreement claim, so correcting only one side re-breaks it.
 
 `select_supported_strategy` no longer carries a `dtype-f32` rule at all. It derives the program's one arithmetic type and admits the two widths this build spells a per-point body in, refusing a width it cannot spell under `dtype-recognized` and a mixed-width program under `dtype-uniform`.
 
@@ -23,9 +27,24 @@ tags: [documentation, bf16, dtype, correction]
 
 ## What is true now
 
-A single-occurrence BF16 program is recognized, planned, and reaches a selected `PlanAlternative`. A BF16 region covering *several* occurrences stops one layer further on, at `fusion_legality`, whose capability table is keyed by the `f32` operation set — `crates/tiler-compiler/tests/bf16_numerical_contract.rs`'s `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall` asserts that boundary, and `establish-bf16-optimizer-legality` owns widening it.
+> **This whole section was overtaken and is struck. Corrected 2026-08-07.** It read that a multi-occurrence BF16 region "stops one layer further on, at `fusion_legality`, whose capability table is keyed by the `f32` operation set", cited `a_multi_occurrence_bf16_program_stops_at_the_fusion_legality_wall`, and instructed the corrector to write that the vertical stays hand-assembled "for the *fusion* reason rather than the dtype one". **`establish-bf16-optimizer-legality` landed on 2026-08-07 and removed that wall**, so the section directed a worker to **replace one false claim with another** — the most dangerous defect found in this ticket. The cited test does not exist; it was renamed to `a_multi_occurrence_bf16_program_derives_its_own_fusion_legality` (`crates/tiler-compiler/tests/bf16_numerical_contract.rs:543`).
+>
+> **A second error, independent of the landing:** the section attributes the fixture `(x * 3.0) + (-0.0)` to this vertical. That is the **compiler's** fixture (`crates/tiler-compiler/src/pipeline/tests.rs:3991`). The conformance vertical is **`(x * 1.5) + 0.0`** (`crates/tiler-conformance/src/bf16_vertical.rs:6`, `SCALE_BITS = 0x3fc0` at `:120`, `BIAS_BITS = 0x0000` at `:122`), and `-0.0` is **deliberately rejected** there — `bf16_vertical.rs:51-53` explains that `fadd y, -0.0` is the IEEE identity and folds away, which would leave the `add` leg vacuous. Writing `-0.0` into this crate would contradict the reasoning the same file already gives.
 
-That distinction is what the corrected comments have to carry: the vertical's own `(x * 3.0) + (-0.0)` fixture is a four-occurrence chain, so it is still assembled through `tiler-ir`'s public builders — for the *fusion* reason rather than the dtype one.
+A single-occurrence BF16 program is recognized, planned, and reaches a selected `PlanAlternative`. A **multi-occurrence** BF16 region now **fuses**, under a proof carried at its own width. Two boundaries survive and must be named wherever the fusion is stated, or the correction overshoots in the opposite direction:
+
+- **Reassociation is withheld as `Unknown`** — not proved, merely not required.
+- **The four reduction obligations are discharged vacuously, over an empty population** — which is not evidence the reductions are correct, only that none were present.
+
+The surviving wall test, for citation in place of the dangling name, is `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall` (`bf16_numerical_contract.rs:691`).
+
+## The first task: establish why the BF16 vertical stays hand-assembled
+
+**This ticket no longer knows.** The dtype reason is gone and the fusion reason is gone with it, and nothing structural bars this crate from the request boundary — `crates/tiler-conformance/Cargo.toml` lists `tiler-compiler.workspace = true` as a **normal** dependency, and `serial_sum` already calls `compile()`.
+
+So establish the true reason before writing any replacement text, and if there is no longer a good one, **say so** — "this vertical could now go through `compile()` and should" is a legitimate and valuable outcome of this ticket, filed as its own ticket rather than done here.
+
+One **unverified** candidate, offered as a lead and not as an answer: the run binds `FIRST_MACOS_APPLE9`, whose BF16 rows are subnormals-only per `docs/dtype-support.md:140`, so a real `compile()` may refuse at numerical resolution. Verify or refute it; do not repeat it as fact.
 
 ## Why it is filed rather than fixed
 
@@ -33,10 +52,22 @@ That distinction is what the corrected comments have to carry: the vertical's ow
 
 ## Required evidence
 
-- Both comments state the boundary that exists, naming the rule that refuses and its owner.
-- The cited test name resolves, or the citation is replaced by one that does.
-- `cargo doc --no-deps` with warnings denied still passes for the crate.
+- All four sites state the boundary that exists, naming the rule that refuses and its owner.
+- Every test name cited anywhere under `crates/tiler-conformance/src/**` resolves against `cargo nextest list`.
+- `cargo nextest run -p tiler-conformance` passes, and `cargo clippy -p tiler-conformance --all-targets -- -D warnings` is clean.
+
+> **The evidence bullet below was unfireable and is replaced. Corrected 2026-08-07.** It read: "`cargo doc --no-deps` with warnings denied still passes for the crate." **That check cannot fail for three of the four sites.** Every module in this crate is `#[cfg(test)]` (`crates/tiler-conformance/src/lib.rs:155-172`), so rustdoc never compiles `bf16_vertical` or `serial_sum` and never reads their headers — verified empirically: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-conformance` emits only `index.html`, `all.html` and `sidebar-items.js`, with no module pages at all. It passes identically before and after any edit to those files. The crate's own header states the mechanism at `lib.rs:116-119`. This is the repository's recurring defect — a check that cannot say *no* — and it is why the `nextest`/`clippy` bullets above replace it.
+
+- `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-conformance` still passes — retained, but **only `lib.rs`'s own header is exercised by it**, and the report must say so rather than presenting it as covering the crate.
 
 ## Closes when
 
-No comment in `crates/tiler-conformance` claims a `dtype-f32` rule, and each cited test name exists.
+No comment in `crates/tiler-conformance` claims a `dtype-f32` rule **as current behaviour**, and each cited test name exists.
+
+**Classify per hit, not by count.** This crate's own idiom is to record retired text inside a dated correction — `lib.rs:13-14` and `bf16_vertical.rs:19` ("**Fact, at this commit.**") both do it — so a surviving `dtype-f32` mention is legitimate when its enclosing paragraph is a dated correction describing the gate as retired, and is a defect otherwise. Report the classification for each hit with its evidence. A bare count cannot tell the two apart, which is exactly how this ticket's sibling `correct-the-stale-dtype-f32-recognizer-claims-in-the-contract-documents` acquired an unsatisfiable closing condition; that ticket was repaired with this same rule and the wording is deliberately shared.
+
+Also closes on: the "first task" above answered — the true reason the BF16 vertical stays hand-assembled is established and cited, or its absence is reported and filed.
+
+## Out of scope — already filed
+
+`crates/tiler-compiler/src/session.rs:1729-1736` and `crates/tiler-compiler/src/pipeline/tests.rs:3990-4000` carry the same stale fusion wall, and `session.rs` cites the same dangling test name on a **public** constructor's doc comment. They are `implementation/compiler`, which this ticket does not hold. Filed as [`correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed`](correct-the-fusion-legality-wall-claims-left-in-the-compiler-after-bf16-legality-landed.md). **Do not touch them from this branch.**

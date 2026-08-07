@@ -9,9 +9,6 @@ scopes: [implementation/build, implementation/metal, contracts/navigation, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, target-profiles, metal, apple-targets]
-claimed_from: todo
-assignee: agent-bf16-profile-r2
-lease_expires_at: 1785705719
 ---
 ## User-visible outcome
 

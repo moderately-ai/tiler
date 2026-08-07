@@ -9,9 +9,6 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, metal, measurement]
-claimed_from: todo
-assignee: agent-apple
-lease_expires_at: 1784996387
 ---
 `spikes/apple-targets/numerical_probe.py` measures one deliberately narrow row so it can run in the repository gate in about eight seconds. `docs/research/apple-targets/numerical-behaviour.md` records the boundaries; this ticket owns closing the ones that are cheap and could change a conclusion.
 

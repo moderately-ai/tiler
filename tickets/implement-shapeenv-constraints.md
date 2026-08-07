@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, indexing, mature-product]
-claimed_from: todo
-assignee: agent-ir
-lease_expires_at: 1784995760
 ---
 `implement-shapeenv-core` landed the scoped symbol and typed root-binding half of the ShapeEnv authority. This is the other half the contract names, split out rather than stubbed.
 

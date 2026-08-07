@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, identity-domain, deferred]
-claimed_from: todo
-assignee: agent-recognizer
-lease_expires_at: 1786041779
 ---
 ## What is missing
 

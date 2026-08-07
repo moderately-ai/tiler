@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, decisions, graph-repair]
-claimed_from: todo
-assignee: agent-adr-questions
-lease_expires_at: 1785786696
 ---
 ## User-visible outcome
 

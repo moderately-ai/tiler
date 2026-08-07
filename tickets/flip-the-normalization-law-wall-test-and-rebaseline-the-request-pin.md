@@ -9,8 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-assignee: coordinator
-lease_expires_at: 1786040703
 ---
 ## User-visible outcome
 

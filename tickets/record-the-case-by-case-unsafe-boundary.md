@@ -9,9 +9,6 @@ scopes: [contracts/decisions, implementation/workspace]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [documentation, decisions, rust-api]
-claimed_from: todo
-assignee: agent-decisions
-lease_expires_at: 1784996298
 ---
 `AGENTS.md` states that unsafe code "remains forbidden unless an accepted decision changes that boundary". Tom changed it on 2026-07-25 and no accepted record says so, which is exactly the drift that sentence exists to prevent.
 

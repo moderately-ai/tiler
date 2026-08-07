@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/foundation, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, kv-cache, language-model]
-claimed_from: todo
-assignee: agent-additive
-lease_expires_at: 1785704070
 ---
 ## User-visible outcome
 
