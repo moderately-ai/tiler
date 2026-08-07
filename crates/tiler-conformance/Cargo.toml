@@ -22,8 +22,19 @@ doc = true
 # The set is the vertical a conformance run crosses: the shared IR a program is
 # built in, the compiler that plans it, the backend that lowers it, the offline
 # driver that compiles the result, the artifact layer that carries it, the
-# build-time orchestration that packages and caches it, the loader that
-# validates it, and the reference oracle it is compared against.
+# build-time orchestration that packages it, the expansion cache it is accepted
+# or published through, the loader that validates it, and the reference oracle it
+# is compared against.
+#
+# `tiler-cache` is a direct edge rather than a transitive one because
+# `src/publication.rs` names `ExpansionCache` to publish the envelopes the routed
+# half then reads back. `accept_or_publish_metal_plan` is the only public path
+# from a checked plan to a verified artifact, and it takes a cache; the
+# alternative -- assembling through `assemble_plan_artifact` directly -- would
+# require this crate to restate the Metal backend's own per-stage binding kinds,
+# zero-work dispatch policy, and launch preconditions, which is a backend fact
+# and not a conformance one. Crossing the real acceptance path is also what the
+# routed half is evidence about.
 #
 # `tiler` and `tiler-macros` are absent and must stay absent. The crate header
 # states why, and `crates/tiler/tests/dependency_direction.rs` is what enforces
@@ -32,6 +43,7 @@ doc = true
 [dependencies]
 tiler-artifact.workspace = true
 tiler-build.workspace = true
+tiler-cache.workspace = true
 tiler-compiler.workspace = true
 tiler-ir.workspace = true
 tiler-metal.workspace = true
