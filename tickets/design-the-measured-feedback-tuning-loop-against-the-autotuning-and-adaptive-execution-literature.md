@@ -14,7 +14,7 @@ tags: []
 
 The architecture of search-guided-by-measurement — where on-device timing enters compilation, how tuning results are stored with full environment identity and noise statistics, and what transfers across shapes — exists as a designed seam before anyone needs it, grounded in the autotuning literature and its database ancestor, adaptive query execution.
 
-## Why this exists, and why it is deferred
+## Why this exists, and why it was deferred until 2026-08-07
 
 > **The Fact below was false when written and is struck. Corrected 2026-08-07.** It read: "The analytic cost model does not exist yet (the 2026-08-05 audit: no cost/estimate/ranking type in `crates/`)". That audit rested on a grep anchored `^(pub )?`, which cannot match a `pub(crate)` declaration — and every cost and estimate type in this workspace is `pub(crate)`. `calibrate-device-cost-models` already cited `crates/tiler-compiler/src/component_cost.rs` as of **2026-07-28**, a week before the audit that reported the file's contents absent. The deferral was therefore correct in its *conclusion* — the tuning loop still had nothing settled to refine — and wrong in the reason it gave.
 
@@ -22,11 +22,11 @@ The architecture of search-guided-by-measurement — where on-device timing ente
 
 **Inference.** So the authority this loop would refine is not merely present but already taking device measurement into selection, which is this ticket's own subject matter. The design questions are now askable against something real rather than against a guess.
 
-## The literature-survey obligation (when fired)
+## The literature-survey obligation
 
 Preserve primary sources per the source-record discipline: **AutoTVM** and **Ansor** (hierarchical search + learned cost refinement), **OpenTuner**, the **Halide autoscheduler** papers, and — the deliberately-drawn database parallel — **adaptive query execution** literature (mid-execution replanning on observed cardinalities) and **parameterized plan caching**, whose transfer questions (when does a cached plan survive a parameter change?) are this system's shape-family transfer questions with twenty years of prior art. Statistical discipline for noisy GPU timings (warm-up, repetition, outlier policy) is part of the survey, and every measurement obligation routes to the designated measurement host per the coordination record.
 
-## What the record must decide or defer (when fired)
+## What the record must decide or defer
 
 Where measurement enters (offline calibration vs in-loop tuning vs post-hoc refinement); the tuning store's identity discipline — it is NOT the expansion cache (results carry environment rows and noise, entries are refutable rather than immutable) and the design must say exactly which of the cache's invariants (validation on hit, atomic publication) transfer and which invert; the transfer model across shapes; and the fail-closed story when measurements are unavailable (the analytic model answers, never a stale measurement silently).
 
@@ -34,9 +34,9 @@ Where measurement enters (offline calibration vs in-loop tuning vs post-hoc refi
 
 Any implementation; any timing collected before the trigger fires; committing a learned cost model (a later question the survey may scope).
 
-## Trigger
+## Trigger — fired, retained for provenance
 
-The first analytic cost-model landing in `crates/` (the `bootstrap-cost-model` thread reaching implementation), or `calibrate-device-cost-models` firing — whichever arrives first.
+The trigger was: the first analytic cost-model landing in `crates/` (the `bootstrap-cost-model` thread reaching implementation), or `calibrate-device-cost-models` firing — whichever arrives first. **The first disjunct fired on 2026-08-07** and the ticket is `todo`; the log entry below records the verification and the corrected recheck command. Nothing here is still waiting on a condition.
 
 ## Trigger check log
 

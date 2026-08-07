@@ -4,7 +4,7 @@ title: Retain canonical MSL and tool diagnostics under a debug expansion-cache e
 status: done
 priority: p3
 dependencies: []
-related: [retain-and-attribute-a-real-msl-failure-through-an-expansion, retain-succeeding-metal-stage-tool-output, state-a-debug-retention-from-the-inline-frontend]
+related: [retain-and-attribute-a-real-msl-failure-through-an-expansion, retain-succeeding-metal-stage-tool-output, emit-from-a-populated-retention-in-the-inline-expansion]
 scopes: [implementation/cache, implementation/build, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []

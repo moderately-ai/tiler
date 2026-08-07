@@ -1,6 +1,6 @@
 ---
-id: state-a-debug-retention-from-the-inline-frontend
-title: State a debug retention from the inline frontend
+id: emit-from-a-populated-retention-in-the-inline-expansion
+title: Emit from a populated retention in the inline expansion
 status: todo
 priority: p3
 dependencies: [retain-succeeding-metal-stage-tool-output]
@@ -16,7 +16,9 @@ tags: [implementation, frontend, diagnostics]
 
 ## User-visible outcome
 
-An inline expansion built under a debug configuration can show the diagnostics its offline tools produced, read from the cache entry the compilation resolved to rather than from a recompile.
+> **Retitled and re-scoped 2026-08-07, from "State a debug retention from the inline frontend".** The outcome below read: "An inline expansion built under a debug configuration can show the diagnostics its offline tools produced, read from the cache entry the compilation resolved to rather than from a recompile." The clause **"built under a debug configuration"** is the part that expired — it presumed a configuration selects retention, and the Metal backend has since made retention unconditional. The rest stands.
+
+An inline expansion can show the diagnostics its offline tools produced, read from the cache entry the compilation resolved to rather than from a recompile. **No configuration gates it**, because the producer retains on every publication; the only open question is what, if anything, the expansion emits from what it finds.
 
 ## Why this exists
 

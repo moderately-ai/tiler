@@ -27,7 +27,9 @@ tags: [documentation, bf16, dtype, correction]
 ## What is true now, stated precisely so a correction does not overshoot
 
 - A **single-occurrence** BF16 program is recognized, planned, and reaches a selected `PlanAlternative` under a contract of its own width on a profile that dispatches the dtype and honours the contract.
-- A BF16 region covering **several** occurrences is refused: `fusion_legality`'s capability table is keyed by the `f32` operation set, so the region's legality is `Unknown` and every cover placing it is ruled out. `establish-bf16-optimizer-legality` owns that.
+> **This bullet was true when written and is struck. Corrected 2026-08-07.** It read: "A BF16 region covering **several** occurrences is refused: `fusion_legality`'s capability table is keyed by the `f32` operation set, so the region's legality is `Unknown` and every cover placing it is ruled out. `establish-bf16-optimizer-legality` owns that." **That ticket landed on 2026-08-07** and the refusal is gone.
+
+- A BF16 region covering **several** occurrences now **fuses**, under a proof carried at its own width with every obligation derived. The four reduction obligations are discharged **vacuously over an empty population**, and reassociation is withheld as `Unknown` rather than proved — so the correction must state the fusion as reachable *and* name those two boundaries, or it overshoots in the opposite direction from the text it replaces.
 - Three governed index-access lowering capabilities were added, one per registered BF16 family, so "no lowering capability" is false.
 - Nothing here says BF16 *executes* end to end through `compile()`; that run is a separate ticket.
 

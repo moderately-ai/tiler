@@ -1,6 +1,6 @@
 ---
 id: pin-the-admitted-unsafe-sites-in-the-workspace-gate
-title: Decide whether the workspace gate pins admitted unsafe sites
+title: Pin the admitted unsafe sites in the workspace gate
 status: todo
 priority: p3
 dependencies: []
@@ -53,6 +53,25 @@ That is the hazard `AGENTS.md` states as **"a verdict is only as good as the che
 
 - **Review-only enforcement.** Permitted by ADR 0079, keeps the gate simple, and costs nothing to maintain. *Enables:* a new site is admitted by the same judgement ADR 0079 asks for — a human reading the diff that adds it, which is what "case by case" means. *Prevents:* nothing mechanically. A new allow, a moved one, a removed assertion, or a silently reworded `reason` relies entirely on diff review. **Two sites in one non-published prototype is the strongest available argument for this option, and the ticket currently hides it** by asking the question against an unstated and implicitly larger population.
 - **Mechanical inventory.** *Enables:* the admitted population becomes explicit and machine-checked; a moved-plus-added pair cannot net out; the check can be made to prove its own failure path. *Prevents:* nothing about correctness directly — it prevents an *unreviewed* change to the population. *Costs:* a source-scanning authority in the gate, whose parsing boundary must be documented (the zero-hit grep above is the proof that the boundary is not obvious), and whose pin must be updated in the same change as any site edit.
+
+## Decided 2026-08-07 — mechanical inventory. This is no longer a question.
+
+The ticket's title asked Tom to *decide whether*; its id has always said *pin*. It is settled as **mechanical inventory**, by the coordinator, and the ticket is now work rather than a decision. Three things carry it, none of which were available when the question was framed:
+
+- **The argument for review-only has expired with its premise.** The Recommendation below calls this "a close call Tom could reasonably decide either way" and rests that squarely on the population being "**two** sites in a prototype that AGENTS.md already says is rewritten or deleted". The population is four, half of them under `crates/`, and the deferral clause that said so is struck at the top of this ticket.
+- **Tom stated the governing policy on 2026-08-07**, deciding `decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`: named per-site allows, **never at the crate**, FFI memory management against Metal as the only admitted justification, and "the goal is to isolate the unsafe code as much as possible". A policy naming *which* sites are admitted is exactly what a path/signature/reason inventory enforces and what review-only cannot.
+- **This is a gate mechanism, not a public boundary.** Under AGENTS.md it is the coordinator's to settle. What still returns to Tom is unchanged and stated in the Activation trigger: any resulting workspace-gate or unsafe-policy *boundary*, and any admission of a fifth site.
+
+The Recommendation, its counter-argument, and the two options are kept below **unedited** — the reasoning is what makes the decision reviewable, and a reader needs to see which population each argument was made against.
+
+### What the work is, now that the posture is fixed
+
+Generalize `crates/tiler-conformance/src/bf16_vertical/tests.rs`'s `the_unsafe_site_population_is_the_two_named_ones` from crate-scoped to workspace-scoped, keeping the two properties that already make it sound: it walks files rather than grepping, and it carries a **file-count floor** so it cannot pass by scanning a shrunken tree. The pin is the `(package-relative path, item signature, reason)` triple, so a moved-plus-added pair cannot net out. Requirements that are not optional:
+
+- **Multi-line-aware matching.** The negative test for this is that a single-line matcher *fails* — verified twice on 2026-08-07, where a single-line `grep` for `allow(unsafe_code` returned three hits that were all prose in manifests and doc comments, and zero of the four real attributes.
+- **A doc-comment mention must not count.** `crates/tiler-conformance/src/lib.rs` carries one today; it is the live fixture for this.
+- **Declare and count the expected population**, so an empty inventory fails rather than passes.
+- **Run four mutations and watch each fail** — addition, move, removal, reason change — rather than asserting the check compiles.
 
 ## Recommendation
 
