@@ -47,18 +47,18 @@
 //! float type to borrow from, which is exactly why the rules had to be written
 //! down.
 //!
-//! # The binary32 conformance is not read here; a BF16 realization is
+//! # The binary32 appliers are not reached; a BF16 realization is built instead
 //!
 //! [`ReferenceNumericalConformance`](crate::ReferenceNumericalConformance)'s two
-//! dimensions are **binary32** functions — `apply_to_operand` and
+//! *appliers* are **binary32** functions — `apply_to_operand` and
 //! `apply_to_result` take and return `f32` — and this family performs no binary32
 //! arithmetic to apply them to. Its operands are exact rationals decoded from BF16
-//! encodings and its one rounding is over BF16's value set, so a binary32
-//! subnormal mode has no site here in either direction. That is unchanged, and
-//! widening the binary32 object to stand in for a BF16 one would apply a format's
-//! rule to values that are not in that format.
+//! encodings and its one rounding is over BF16's value set, so neither applier has
+//! a site here in either direction, and widening the binary32 object to stand in
+//! for a BF16 one would apply a format's rule to values that are not in that
+//! format.
 //!
-//! What this family can now be told is a subnormal realization **of its own**.
+//! What this family realizes instead is a subnormal realization **of its own**.
 //! [`Bf16SubnormalRealization`] carries ADR 0019's two independent dimensions over
 //! BF16's value set: the input dimension replaces a subnormal operand *encoding*
 //! before it is decoded, and the result dimension replaces a newly rounded
@@ -67,18 +67,46 @@
 //! exact-rational arithmetic or the single rounding between them, and neither is
 //! an approximation of a binary32 mode.
 //!
-//! # What still supplies no flushing realization, and why that is parked
+//! # Where the flushing realization comes from
 //!
-//! Every registered capability is constructed under
-//! [`Bf16SubnormalRealization::preserving`], which is what this module computed
-//! before it could be told anything, so no registered value changes. Which route
-//! supplies a flushing one is the open half: a BF16 capability could *derive* the
-//! format from its own construction and read the format-agnostic `SubnormalMode`
-//! off the conformance it is already handed, or the subject could be *declared* on
-//! `NumericalRealization`'s two fields. That fork is a public boundary parked for
-//! Tom on `carry-a-bf16-subnormal-realization-the-reference-can-be-told`; until it
-//! is resolved, a comparison against the macOS row finding 24 of the Apple
-//! numerical record measures flushing must state the realization by hand.
+//! From the conformance the evaluation is already handed.
+//! `<Bf16BinaryReference as ReferenceOperation>::evaluate` reads the two
+//! *format-agnostic* [`SubnormalMode`]s off
+//! [`ReferenceEvaluationRequest::conformance`](crate::ReferenceEvaluationRequest::conformance)
+//! and builds a [`Bf16SubnormalRealization`] from them, so an evaluation performed
+//! under a flushing contract returns the flushing answer and one performed under
+//! [`ReferenceNumericalConformance::strict`](crate::ReferenceNumericalConformance::strict)
+//! returns the preserving one. That is the whole wiring: the values themselves are
+//! still committed by [`Bf16Format::accept_operand`] and [`Bf16Format::commit`],
+//! and the appliers above are still not reached.
+//!
+//! **The format is supplied here, at the point of use, rather than declared on the
+//! realization.** A `SubnormalMode` names no format, and this capability's format
+//! is fixed by its own construction — every operand and result it admits is
+//! `tiler::bf16@1`, which [`bf16_elements`] refuses to reinterpret — so the
+//! subject is knowable at the site that applies the mode without being carried to
+//! it. Tom decided that on 2026-08-07, against the alternative of giving
+//! `NumericalRealization`'s two subnormal fields a subject: that alternative is an
+//! identity-domain migration for a field nothing reads, since
+//! [`ReferenceNumericalConformance::from_realization`](crate::ReferenceNumericalConformance::from_realization)
+//! has no caller, and it would have left `canonical_arithmetic_nan_bits` — which
+//! answered the same question the other way on 2026-08-06 — carrying its subject
+//! differently. A mixed-width *refusal* is deliberately absent for the same reason
+//! rather than an omission: `region_arithmetic_type` is a total function from a
+//! `ScalarProgram` to one `ArithmeticType`, so no constructible program could ever
+//! fire one. The reasoning is on
+//! `accept-the-bf16-subnormal-resolution-carrier`, and the declined alternative on
+//! `subject-the-numerical-realization-when-a-region-carries-two-arithmetic-types`,
+//! deferred against a named trigger.
+//!
+//! What this does **not** yet check is that the conformance it is handed was
+//! stated about BF16. Reaching that needs a conformance derived from another
+//! format's realization, which nothing in the tree constructs; the check belongs
+//! at `from_realization`'s first caller, where the subject is still discarded.
+//!
+//! Every registered capability still answers the preserving reading under the
+//! strict contract, which is what this module computed before it could be told
+//! anything, so no registered value moved.
 //!
 //! # The declared facts stay unconditional, deliberately
 //!
@@ -149,14 +177,18 @@ pub(crate) enum Bf16Value {
 /// ever reaches.
 ///
 /// The *vocabulary* is shared, though — [`SubnormalMode`] and [`FlushedZeroSign`]
-/// are the schedule's own, not a second spelling of them. What is not settled here
-/// is which format a given [`SubnormalMode`] speaks about, because nothing
-/// constructs a flushing one yet; see the module header.
+/// are the schedule's own, not a second spelling of them. A [`SubnormalMode`]
+/// names no format; which format one speaks about is decided at the site that
+/// applies it, which for this family is
+/// `<Bf16BinaryReference as ReferenceOperation>::evaluate`. See the module header
+/// for why the subject is derived there rather than declared upstream.
 ///
 /// Deliberately not `Default`, for [`ReferenceNumericalConformance`]'s reason: a
 /// realization is a statement about what the committed values *mean*, and
-/// [`Self::preserving`] is that statement written out rather than an absence of
-/// one.
+/// [`Self::new`] is that statement written out rather than an absence of one.
+/// There is no `preserving()` shorthand for the same reason there is no default:
+/// the preserving reading is now what the *strict* conformance resolves to, and a
+/// second spelling of it beside that route would be a value nothing derived.
 ///
 /// [`ReferenceNumericalConformance`]: crate::ReferenceNumericalConformance
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -180,16 +212,6 @@ impl Bf16SubnormalRealization {
             input_subnormals,
             result_subnormals,
         }
-    }
-
-    /// Both dimensions preserved: what this family realized before it could be told.
-    ///
-    /// Every registered BF16 capability is constructed under this, so naming it
-    /// changes no evaluated value. It is stated rather than left implicit so a
-    /// caller comparing against a flushing device can see it is comparing against
-    /// a *different* realization and not against "the BF16 reference".
-    pub(crate) const fn preserving() -> Self {
-        Self::new(SubnormalMode::Preserve, SubnormalMode::Preserve)
     }
 
     /// The declared treatment of subnormal BF16 operands.
@@ -853,22 +875,13 @@ impl Bf16BinaryReference {
         Self { format, arithmetic }
     }
 
-    /// Evaluates the elementwise arithmetic under the preserving realization.
+    /// Evaluates the elementwise arithmetic with the scalar broadcast the
+    /// operation's own inferencer admits, under one declared realization.
     ///
     /// The realization is a per-evaluation input rather than capability state
     /// because one registered capability serves every evaluator: a registry holds
     /// a single `Arc` per key, while the contract an evaluation is performed under
     /// is the caller's and varies between two evaluations of the same key.
-    pub(crate) fn combine(
-        &self,
-        left: &Tensor,
-        right: &Tensor,
-    ) -> Result<Tensor, ReferenceOperationError> {
-        self.combine_under(left, right, Bf16SubnormalRealization::preserving())
-    }
-
-    /// Evaluates the elementwise arithmetic with the scalar broadcast the
-    /// operation's own inferencer admits, under one declared realization.
     pub(crate) fn combine_under(
         &self,
         left: &Tensor,
@@ -942,7 +955,18 @@ impl ReferenceOperation for Bf16BinaryReference {
         if !request.attributes().fields().is_empty() {
             return Err(ReferenceOperationError::InvalidApplication);
         }
-        outputs.push(self.combine(left, right)?)
+        // The conformance states two subnormal dimensions and names no format; the
+        // format is this capability's own, fixed when it was constructed. So the
+        // two modes are read here and applied over BF16's value set, and the
+        // conformance's `f32` appliers are deliberately not reached — no value in
+        // this family is a binary32 one. The module header carries why the subject
+        // is supplied at this site rather than declared upstream.
+        let conformance = request.conformance();
+        let realization = Bf16SubnormalRealization::new(
+            conformance.input_subnormals(),
+            conformance.result_subnormals(),
+        );
+        outputs.push(self.combine_under(left, right, realization)?)
     }
 }
 

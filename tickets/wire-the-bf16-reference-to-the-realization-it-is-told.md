@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [accept-the-bf16-subnormal-resolution-carrier, carry-a-bf16-subnormal-realization-the-reference-can-be-told, conform-the-bf16-vertical-end-to-end]
-scopes: [implementation/reference]
+scopes: [implementation/reference, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reference, bf16]
@@ -57,3 +57,29 @@ The `bf16` module header also names the fork as parked and must be updated to re
 ## Closes when
 
 `ReferenceOperation::evaluate` applies the realization it is told, the flushing case is watched failing under the preserving link, the correctness-and-testing exception paragraph is retired, the module header states the resolved decision, and the package's checks pass.
+
+## Worker outcome — 2026-08-07, `agent-bf16-wire`
+
+Base `61414b91`, branch `tkt/wire-the-bf16-reference-to-the-realization-it-is-told`. Scope `contracts/numerics` added for `docs/correctness-and-testing.md`, per the section above.
+
+### The link
+
+`<Bf16BinaryReference as ReferenceOperation>::evaluate` now reads `request.conformance()`'s two format-agnostic `SubnormalMode`s, builds a `Bf16SubnormalRealization` from them, and calls `combine_under`. The `f32` appliers are not reached, the exact-rational arithmetic and its single rounding are untouched, `BF16_FACT_SUBNORMALS` is unchanged, no mixed-width refusal was added, and no `tiler-ir` or `tiler-compiler` file was touched.
+
+### Two superseded internal paths removed, because they became dead code
+
+`Bf16BinaryReference::combine` and `Bf16SubnormalRealization::preserving` were each reached from exactly one non-test site — `combine` from `evaluate`, `preserving` from `combine` — so wiring the link left both `pub(crate)` items with no caller outside `#[cfg(test)]`, which the workspace's denied `dead_code` refuses. They are removed rather than allowed: the preserving reading is now what the *strict* conformance resolves to, so a second spelling of it beside that route would be a value nothing derives. Their four test call sites take `combine_under(..., PRESERVING)`, where `PRESERVING` is a `const` in the test module spelling both modes out. The seven counterexample cases, their four hand-derived answers, and every `combine_under` assertion over them are unchanged; the one assertion that moved is `the_capability_evaluates_under_the_realization_it_is_given`'s "the registered path is the preserving one", which stopped being true — the registered path is now whatever the conformance states, which the new check below asserts.
+
+### Evidence
+
+`bf16::tests::the_registered_capability_evaluates_under_the_conformance_it_is_told` drives all seven counterexamples under all four readings — 28 evaluations, counted — through `ReferenceEvaluator::under`, so the answer comes out of `ReferenceOperation::evaluate` and the registered dispatch rather than out of `combine_under`. Each reading must produce its own hand-derived answer and none of the other three's.
+
+**Watched failing.** Reverting only the link — `evaluate` building `Bf16SubnormalRealization::new(SubnormalMode::Preserve, SubnormalMode::Preserve)` and ignoring the request — makes it fail on every reading but `preserved`, 42 recorded disagreements across all seven cases, each naming the other reading's answer it returned instead. Restored, the same filter passes. Both outputs are in the worker report.
+
+**No identity moved, measured rather than asserted.** `FrozenReferenceRegistry::standard().canonical_identity()` was written to a file at this branch's HEAD and at base `61414b91` by the same throwaway probe, in a detached worktree at the base commit: 1,432,876 bytes both times, `sha256 8e67f70e88e262b87c2417379257d259f960431364a86525fbf18b4044c8d2f1` both times. The probe was deleted and the worktree removed. The provider revision stays at 7 and `crates/tiler-reference/src/standard.rs` is not in the diff.
+
+### Left open, deliberately
+
+No capability checks that the conformance it was handed was *stated about its own format*. `from_realization` discards the subject and has no caller, and every conformance in the tree is `strict()` or a test's `new()`, so the window is unreachable today. It is recorded in the module header and in the second [Correctness and testing](../docs/correctness-and-testing.md#semantic-authority) paragraph, and closes at `from_realization`'s first caller.
+
+Coordinator note: [`accept-the-bf16-subnormal-resolution-carrier`](accept-the-bf16-subnormal-resolution-carrier.md) says that obligation is "Recorded on [`apply-the-declared-numerical-conformance-on-every-reference-evaluation-path`]". It is not — `grep -n subject` on that file returns two unrelated lines, and the ticket is `done`. Adding it there is outcome expansion on a closed node, so this branch cites the carrier's own decision section instead and leaves the graph repair to the coordinator.
