@@ -1,7 +1,7 @@
 ---
 id: repair-adr-0078s-budget-stop-and-unknown-gap-evidence
 title: Repair ADR 0078's budget-stop and Unknown-gap evidence
-status: todo
+status: in-progress
 priority: p3
 dependencies: [accept-adr-0109-fail-closed-on-unknown-index-domain-proof]
 related: [record-the-landed-physical-provider-seam-in-adrs-0078-and-0090]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, documentation, citations]
+claimed_from: todo
+assignee: w-adr0078-sol
+lease_expires_at: 1786223949
 ---
 ## User-visible outcome
 

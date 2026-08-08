@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-artifact-abis-hashing-site-count-with-its-own-governed-digest-section
 title: Reconcile the artifact ABI's hashing-site count with its own governed-digest section
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check, decide-whether-adr-0103-s-eight-domain-count-is-a-dated-record-or-a-stale-claim]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
+claimed_from: todo
+assignee: w-artifact-terra
+lease_expires_at: 1786223950
 ---
 `cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check` reconciled eight count sites against the true population of eighteen. Two more state the pre-repair inventory in a different vocabulary — *hashing sites* rather than *governed domains* — so a sweep looking for domain counts does not reach them, and they now contradict the document that carries one of them.
 
