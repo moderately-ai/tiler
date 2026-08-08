@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: []
 related: [admit-the-indirect-access-class-into-the-index-layer, admit-an-indirect-gather-family-for-tied-embedding-lookup, emit-the-indirect-gather-on-metal, accept-adr-0107-indirect-gather-semantic-family]
-scopes: [contracts/decisions]
+scopes: [contracts/decisions, contracts/foundation, contracts/navigation, implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, indexing, ir, gather, verification, needs-tom]
