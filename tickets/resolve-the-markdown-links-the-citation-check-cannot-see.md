@@ -17,13 +17,13 @@ lease_expires_at: 1786166309
 
 `check-citations.sh` validates **pinned** citations — a path with a line number or a quoted anchor. It does not validate **markdown links**, which are how every catalog, index and cross-reference in `docs/` is navigated.
 
-**Coordinator-verified by planting the failure.** Replacing a live ADR link in `docs/decisions/README.md` with `](9999-no-such-adr-…)` leaves `make citations` at **exit 0**, reporting `every pinned citation resolves`, with the citation count unchanged. The dangling link is counted among **`3255 bare path mention(s) carrying no line or anchor`** and never resolved.
+**Coordinator-verified by planting the failure.** Replacing a live ADR link in `docs/decisions/README.md` with `](9999-no-such-adr-…)` leaves `make citations` at **exit 0**, reporting `every pinned citation resolves`, with the citation count unchanged. ~~The dangling link is counted among **`3255 bare path mention(s) carrying no line or anchor`** and never resolved.~~ **FALSE — see the correction below; the target is never parsed at all.**
 
 Found by the worker repairing ADR 0107's catalog rows, which pointed *both* links in its new row at non-existent files and got byte-identical output. Its break test succeeded at showing the gate is blind here rather than at showing it works — and it said so plainly instead of recording a green run as evidence.
 
 ## Why this is p1 rather than housekeeping
 
-The population is **3,255 references**, and it includes the entry points `AGENTS.md` directs every reader to: *"For broad design work, start with `docs/README.md`; accepted decisions are indexed in `docs/decisions/README.md`."* A dangling row there is a reader sent nowhere from the document that exists to route them.
+~~The population is **3,255 references**~~ **(wrong population — the real link count is 5,945; see the correction below)**, and it includes the entry points `AGENTS.md` directs every reader to: *"For broad design work, start with `docs/README.md`; accepted decisions are indexed in `docs/decisions/README.md`."* A dangling row there is a reader sent nowhere from the document that exists to route them.
 
 It is also the exact defect class this repository keeps finding: the checker reports a clean verdict over a population it never examined, and a reader reasonably takes "citations green" to mean the document's references resolve. `AGENTS.md` is explicit that these catalogs have **no automated validator** — this closes the half of that gap that is mechanical.
 
