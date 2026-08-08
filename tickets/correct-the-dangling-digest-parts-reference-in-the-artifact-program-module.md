@@ -1,7 +1,7 @@
 ---
 id: correct-the-dangling-digest-parts-reference-in-the-artifact-program-module
 title: Correct the dangling digest parts reference in the artifact program module
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [repoint-tiler-digest-s-domain-separation-note-at-the-moved-union-check]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, digest]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786175075
 ---
 
 `crates/tiler-artifact/src/program/mod.rs` refers to a symbol that does not exist, in the crate that owns the re-export it is describing.
