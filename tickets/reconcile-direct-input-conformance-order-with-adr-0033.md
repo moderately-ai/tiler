@@ -1,7 +1,7 @@
 ---
 id: reconcile-direct-input-conformance-order-with-adr-0033
 title: Reconcile direct-input conformance ordering with ADR 0033
-status: in-progress
+status: done
 priority: p1
 dependencies: [enforce-resolved-encoded-value-binding-conformance, scope-first-quantized-lm-profile]
 related: [carry-semantic-enforcement-plans-through-program-and-artifact, implement-first-runtime-semantic-value-precondition-enforcement]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts, contracts/numerics, research/runtime, research/num
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, contract, validation, quantization]
-claimed_from: todo
-assignee: sol-conformance-order
-lease_expires_at: 1786224829
 ---
 
 ## User-visible outcome
