@@ -83,9 +83,43 @@ const STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
 /// The no-prefix obligation `docs/artifact-abi.md` records normatively spans
 /// every domain the workspace admits, because one algorithm hashes them all in
 /// one process. It is discharged across crates by construction rather than by a
-/// check neither crate could hold: this domain opens `tiler.ir.` and all eight
-/// of `tiler-artifact`'s open `tiler.artifact-`, so no prefix relation between
-/// the two sets is expressible.
+/// check neither crate could hold — `tiler-artifact` depends on `tiler-ir` and
+/// not the reverse, so neither crate can enumerate the union. This domain opens
+/// `tiler.ir.`, and every domain `tiler-artifact` admits opens `tiler.artifact`
+/// or `tiler.proof-sidecar.`, which is what that crate's
+/// `no_governed_domain_of_this_crate_prefixes_another` asserts over its whole
+/// admitted set rather than leaving to prose. Those runs diverge at the first
+/// byte after `tiler.` — `i` here against `a` or `p` there — and every one of
+/// them is longer than that byte, so neither side can prefix the other whatever
+/// follows.
+///
+/// **The other set is sized by its type and not by a number here.**
+/// `GovernedDomain` in `crates/tiler-artifact/src/domains.rs` is that
+/// population: it declares its list length as `variant_count` and matches
+/// wildcard-free, so a domain admitted there without being enumerated is a
+/// build error at the list rather than a paragraph here that has quietly
+/// stopped covering its subject. Where this prose and that enum disagree, the
+/// enum settles it. The path names the type rather than resolving as a link,
+/// because the module is crate-private and this crate does not depend on that
+/// one.
+///
+/// *Substituted 2026-08-08 by
+/// [`correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix`](../../../../tickets/correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix.md),
+/// and substituted rather than dated beside because the retired claim was never
+/// true at any commit* — the practice these records follow keeps a dated
+/// correction beside a claim that was true when written, and substitutes one
+/// that never was. The retired wording read "this domain opens `tiler.ir.` and
+/// all eight of `tiler-artifact`'s open `tiler.artifact-`". `git log -S` places
+/// its authoring at `d48a33af`, whose tree already declared eighteen governed
+/// domains in that crate and already spelled `ROUTE_REQUIREMENT_DOMAIN`
+/// `tiler.artifact.route-requirement.v1`, separating with a `.` and not a `-`.
+/// So the count was wrong on the commit that introduced it, and the hyphen was
+/// the error that mattered: a quantifier over `tiler.artifact-` never reaches
+/// the route-requirement domain, so the sentence did not range over the set
+/// whose disjointness it asserted. The conclusion held regardless, but its
+/// stated reasoning did not establish it. **Quoting the retired wording keeps
+/// it greppable**, so a later hit on `tiler.artifact-` in this file is evidence
+/// that the string is present, not that the claim stands.
 const COVERAGE_GRAPH_DIGEST_DOMAIN: &[u8] = b"tiler.ir.index-refinement-coverage-graph.v1\0";
 const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v2\0";
 #[cfg(test)]
@@ -1087,8 +1121,24 @@ impl IndexRefinementReceiptIdentity {
 /// graph identity is no longer recoverable from these bytes, which nothing in
 /// the workspace attempted. The restatement was the whole of kernel-program
 /// identity's quadratic term — one graph identity per record, one record per
-/// semantic operation — and folding it makes that curve linear; `encode_executable_coverage_identity`
-/// carries the derivation and `docs/artifact-abi.md` the measured constants.
+/// semantic operation — and folding it makes that curve linear;
+/// `encode_executable_coverage_identity` carries the derivation, and the
+/// measured constants are read from
+/// [the identity-growth spike](../../../../spikes/program-planning/identity-growth/README.md),
+/// whose results index records which compiler tree each retained ladder
+/// measured and the displacement between consecutive ones.
+///
+/// *Corrected 2026-08-08 by
+/// [`correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix`](../../../../tickets/correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix.md),
+/// and dated beside rather than substituted because it was true when written* —
+/// this sentence pointed at `docs/artifact-abi.md` for the measured constants,
+/// and that contract did carry them from this comment's authoring at `d48a33af`
+/// until `775d314f` on 2026-08-08, when it deliberately stopped carrying the
+/// fit as a live value and named the spike as the standing authority. Three
+/// spellings of one curve in four days, none pinned by a test, is the reasoning
+/// it recorded for the change; repointing here rather than restating a
+/// coefficient is the same reasoning applied to this comment. The derivation
+/// half of the sentence is unchanged.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IndexRefinementExecutableCoverageIdentity(Box<[u8]>);
 
