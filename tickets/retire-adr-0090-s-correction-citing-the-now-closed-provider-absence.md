@@ -1,7 +1,7 @@
 ---
 id: retire-adr-0090-s-correction-citing-the-now-closed-provider-absence
 title: Retire ADR 0090 s correction citing the now-closed provider absence
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [refresh-the-forkless-physical-provider-spike-against-the-landed-seam, record-the-landed-physical-provider-seam-in-adrs-0078-and-0090]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, documentation]
-claimed_from: todo
-assignee: w-terra-adr
-lease_expires_at: 1786201850
 ---
 
 ADR 0090 carries a dated correction citing an absence that has closed. It is the one unmet item in the spike ticket's "Closes when", left for a branch holding `contracts/decisions`.
