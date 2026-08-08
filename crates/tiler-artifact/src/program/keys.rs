@@ -103,6 +103,15 @@ pub const MAX_GOVERNED_KEY_BYTES: usize = 256;
 /// identity and takes `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES`, the exact
 /// constant that mints one; the 1,024 shared here admitted only a degenerate
 /// single-contributor reduction and refused every real one.
+///
+/// That last sentence is a measured claim, and its evidence is
+/// `tiler_conformance`'s
+/// `serial_sum::tests::the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor`,
+/// which compiles a serial `f32` sum at one and at two contributors and asserts
+/// the identity lands on either side of this constant. It is named here because
+/// nothing in *this* crate can check it: no `tiler-compiler` edge reaches here,
+/// for the reason stated above `[dependencies]` in the manifest, so the crate
+/// that owns the bound cannot compile a reduction to measure against it.
 pub const MAX_OPAQUE_IDENTITY_BYTES: usize = 1_024;
 /// Maximum byte length of a target-profile descriptor identity.
 ///
