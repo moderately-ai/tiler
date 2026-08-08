@@ -33,6 +33,7 @@ mod lowering;
 mod measured_cost;
 mod normalize;
 mod physical;
+pub mod physical_provider;
 mod pipeline;
 mod policy;
 mod program;

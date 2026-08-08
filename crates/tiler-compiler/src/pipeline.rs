@@ -618,11 +618,48 @@ impl From<SelectionError> for CompileError {
     }
 }
 
+/// Compiles against the physical authorities this build ships.
+///
+/// The governed spelling of [`compile_with_physical_providers`], which is the
+/// one production entry: a caller who installs nothing reaches that function
+/// with exactly the list this composes, so this is a test convenience over one
+/// path rather than a second one. It is `cfg(test)` for that reason — a
+/// production spelling would be a second entry answering one question, and the
+/// one thing this crate must not have is two ways to say which providers a
+/// compilation enumerated.
+#[cfg(test)]
 pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProduct, CompileError> {
+    compile_with_physical_providers(
+        request,
+        crate::physical_provider::InstalledPhysicalProviders::governed().providers(),
+    )
+}
+
+/// Compiles against a caller-composed physical-provider environment.
+///
+/// The one production entry that varies the physical authorities. Separate from
+/// [`compile`] rather than a defaulted parameter on it, so the governed path
+/// keeps a caller-free spelling and an entry that silently defaulted cannot make
+/// "nothing was installed" and "the installation was dropped" the same call.
+///
+/// The providers are borrowed for the compilation rather than carried on the
+/// request, for the reason [`PhysicalAuthorities`] documents: a provider is a
+/// borrowed statically linked implementation with no ownership the owned,
+/// comparable request model could express, and which implementations a build
+/// *offers* is bound where it is used — in each admitted implementation's
+/// provenance, and so in the plan identity — rather than in the request subject.
+///
+/// The opaque-call registry is empty and has no caller-supplied spelling. Out-of-crate
+/// opaque-call registration stays compiler-owned, so a provider reaching this
+/// entry may propose a body and never a call.
+pub(crate) fn compile_with_physical_providers(
+    request: CompilationRequest<'_>,
+    providers: Vec<&dyn crate::frontier::PhysicalImplementationProvider>,
+) -> Result<CompilationProduct, CompileError> {
     compile_configured(
         request,
         AlgebraicRuleConfiguration::all(),
-        &PhysicalAuthorities::governed(),
+        &PhysicalAuthorities::composed(providers, crate::call_registry::OpaqueCallRegistry::new()),
     )
 }
 

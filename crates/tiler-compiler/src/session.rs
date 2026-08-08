@@ -78,9 +78,10 @@ use tiler_ir::semantic::{ProviderIdentity, ResolvedValueType, SemanticProgram};
 use crate::capability::FrozenLoweringCapabilityRegistry;
 pub use crate::explain::VerifiedCompilationExplain;
 use crate::explain::VerifiedExplainTrace;
+use crate::physical_provider::InstalledPhysicalProviders;
 use crate::pipeline::{
     CompilationProduct, CompileError, NoFeasiblePlanError, ProgramAlternative,
-    ProgramAlternativeKind, TargetCompilationOutcome, compile as compile_internal,
+    ProgramAlternativeKind, TargetCompilationOutcome, compile_with_physical_providers,
 };
 use crate::program::KernelProgram;
 use crate::request::{
@@ -968,6 +969,38 @@ impl<'a> PlanAlternative<'a> {
             .map(SelectedCapability)
     }
 
+    /// Returns the physical providers whose implementations this plan selected.
+    ///
+    /// One entry per cover region, in canonical region-occurrence order, so a
+    /// plan that mixes an installed provider's specialization of one region with
+    /// the governed implementation of another says exactly that rather than
+    /// naming a single winner.
+    ///
+    /// **The identity is the host's, not the provider's claim.** It is read once
+    /// from the provider at enumeration and stamped by the frontier onto each
+    /// admitted implementation; a proposal carries no identity field to forge,
+    /// and an installed provider claiming the governed identity is refused
+    /// before any compilation runs
+    /// ([`crate::physical_provider::InstalledPhysicalProviders::installed`]).
+    ///
+    /// This is the *selected* half of the disclosure [ADR 0090] item 5 splits in
+    /// two. The offered half — the complete frozen environment this compilation
+    /// was given, including providers no retained plan chose — is
+    /// [`Compilation::offered_providers`]'s subject and is still lowering-only;
+    /// reading an installed provider's absence here as "never installed" is
+    /// exactly the conflation that split exists to prevent.
+    ///
+    /// [ADR 0090]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md
+    pub fn selected_physical_providers(
+        &self,
+    ) -> impl ExactSizeIterator<Item = SelectedImplementation<'_>> {
+        self.alternative
+            .plan
+            .selections()
+            .iter()
+            .map(SelectedImplementation)
+    }
+
     /// Returns this alternative's ABI construction inputs.
     ///
     /// This is what an artifact assembler needs beyond the kernels: the guard,
@@ -1066,6 +1099,46 @@ impl<'a> SelectedCapability<'a> {
     #[must_use]
     pub fn capability_revision(self) -> u32 {
         self.0.capability_revision().get()
+    }
+}
+
+/// One cover region's selected physical implementation, with its provenance.
+///
+/// A borrowed view rather than an owned record, for the reason
+/// [`PlanAlternative`] is one: the selection-level representation behind it is
+/// still moving, and this boundary commits to no field set of it.
+#[derive(Clone, Copy, Debug)]
+pub struct SelectedImplementation<'a>(&'a crate::selection::RegionSelection);
+
+impl<'a> SelectedImplementation<'a> {
+    /// Returns the identity of the provider whose proposal was admitted.
+    #[must_use]
+    pub fn provider(self) -> &'a ProviderIdentity {
+        self.0.implementation().provenance().provider()
+    }
+
+    /// Returns the provider's exact identity in bounded explain-subject form.
+    ///
+    /// The same rendering the explain trace carries, so a caller comparing what
+    /// it installed against what a trace names is comparing one string rather
+    /// than reconstructing one from parts.
+    #[must_use]
+    pub fn provider_explain_subject(self) -> &'a str {
+        self.0
+            .implementation()
+            .provenance()
+            .provider_explain_subject()
+    }
+
+    /// Returns the stable name of the admitted proposal's body kind.
+    ///
+    /// A stable code rather than the additive body enumeration, which stays
+    /// crate-private: three of its four variants have no out-of-crate spelling
+    /// to propose, so exporting the type would publish a vocabulary a caller
+    /// could read and never write.
+    #[must_use]
+    pub fn proposal_kind(self) -> &'static str {
+        self.0.implementation().provenance().kind().name()
     }
 }
 
@@ -2096,6 +2169,7 @@ pub struct CompileRequest<'a> {
     contracts: Vec<NumericalContract>,
     targets: TargetRequest,
     capabilities: InstalledCapabilities,
+    physical: InstalledPhysicalProviders<'a>,
 }
 
 impl<'a> CompileRequest<'a> {
@@ -2114,6 +2188,7 @@ impl<'a> CompileRequest<'a> {
             contracts: vec![contract],
             targets,
             capabilities: InstalledCapabilities::governed(),
+            physical: InstalledPhysicalProviders::governed(),
         }
     }
 
@@ -2174,6 +2249,7 @@ impl<'a> CompileRequest<'a> {
             contracts,
             targets,
             capabilities: InstalledCapabilities::governed(),
+            physical: InstalledPhysicalProviders::governed(),
         })
     }
 
@@ -2181,6 +2257,28 @@ impl<'a> CompileRequest<'a> {
     #[must_use]
     pub fn with_capabilities(mut self, capabilities: InstalledCapabilities) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// Installs the physical-implementation providers this compilation enumerates.
+    ///
+    /// **The asymmetry with [`Self::with_capabilities`] is the point and is not
+    /// an oversight.** An installed lowering registry *replaces* the governed
+    /// one, because exactly one authority may say what an occurrence means and
+    /// two claimants are a contradiction. An installed physical provider is
+    /// *added to* the governed one, because several correct implementations of
+    /// one verified region are alternatives the compiler retains side by side
+    /// and ranks on cost. Neither rule may be generalized to the other seam.
+    ///
+    /// Installation is not selection. A provider installed here is asked about
+    /// every region subject, and each body it proposes is re-verified, checked
+    /// against the request-subject binding, and decided feasible or not by this
+    /// host before it can compete. It may then lose on cost, which
+    /// [`PlanAlternative::selected_physical_providers`] is what tells apart from
+    /// never having been asked.
+    #[must_use]
+    pub fn with_physical_providers(mut self, physical: InstalledPhysicalProviders<'a>) -> Self {
+        self.physical = physical;
         self
     }
 }
@@ -2198,6 +2296,7 @@ pub fn compile(request: CompileRequest<'_>) -> Result<CompilationBatch, CompileF
         contracts,
         targets,
         capabilities,
+        physical,
     } = request;
     let stated: Vec<_> = contracts
         .iter()
@@ -2211,7 +2310,7 @@ pub fn compile(request: CompileRequest<'_>) -> Result<CompilationBatch, CompileF
     let expected_targets = targets.profiles().to_vec();
     internal.target_profiles = targets.into_profiles();
     internal.capabilities = capabilities.0;
-    let product = compile_internal(internal)?;
+    let product = compile_with_physical_providers(internal, physical.providers())?;
     into_compilation_batch(product, &expected_targets, &offered_providers)
         .map_err(CompileFailure::from)
 }
@@ -2634,8 +2733,9 @@ mod tests {
     use super::{
         CompilationRequest, CompileFailure, CompileFailureClass, CompileRequest, NumericalContract,
         StrictF32NumericalContract, TargetCompileRefusal, TargetNumericalRefusalDisposition,
-        TargetNumericalRequirement, compile, compile_governed, compile_internal,
+        TargetNumericalRequirement, compile, compile_governed,
     };
+    use crate::pipeline::compile as compile_internal;
     use crate::target::{TargetProfile, TargetRequest};
     use tiler_ir::program::abi::{ExprNode, TargetPropertyRequirementRelation};
     use tiler_ir::semantic::{
