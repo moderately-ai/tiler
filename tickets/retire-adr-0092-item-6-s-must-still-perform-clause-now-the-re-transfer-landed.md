@@ -1,7 +1,7 @@
 ---
 id: retire-adr-0092-item-6-s-must-still-perform-clause-now-the-re-transfer-landed
 title: Retire ADR 0092 item 6 s must-still-perform clause now the re-transfer landed
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [re-transfer-the-adr-0092-span-after-the-item-6-restatement-fork, correct-adr-0092-item-6-s-widening-restatement-trap-and-its-retired-sentence-shorthand]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, documentation, transfer]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786176329
 ---
 
 ADR 0092's item-6 correction note ends with a clause naming work that has since been done. It went stale **the moment the re-transfer merged**, which is what makes it worth a ticket rather than a shrug: the note predicted an obligation, the obligation was discharged, and nothing brought the two back into agreement. That is the same decay pattern this ADR has now produced three times.
