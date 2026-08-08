@@ -1,7 +1,7 @@
 ---
 id: floor-the-trybuild-compile-fail-fixture-populations
 title: Floor the trybuild compile-fail fixture populations
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-floor-the
+lease_expires_at: 1786162140
 ---
 ## Four compile-fail globs can silently match nothing
 

@@ -1,7 +1,7 @@
 ---
 id: carry-a-sourced-shape-on-semantic-values
 title: Carry a sourced shape on semantic values instead of a fixed shape
-status: todo
+status: in-progress
 priority: p1
 dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module]
 related: [carry-symbolic-extents-into-the-semantic-program]
@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, shapes, extents, semantic-graph, api]
 claimed_from: todo
 assignee: w-carry-a-s
-lease_expires_at: 1786160601
+lease_expires_at: 1786162139
 ---
 ## User-visible outcome
 

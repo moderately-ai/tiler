@@ -1,7 +1,7 @@
 ---
 id: repair-the-status-record-s-grammar-claim-and-its-failing-reproduction-line
 title: Repair the status record's grammar claim and its failing reproduction line
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-repair-th
+lease_expires_at: 1786162140
 ---
 ## A record whose own reproduction block fails on the line that carries its evidence
 
