@@ -1,7 +1,7 @@
 ---
 id: carry-a-sourced-shape-on-semantic-values
 title: Carry a sourced shape on semantic values instead of a fixed shape
-status: in-progress
+status: done
 priority: p1
 dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module]
 related: [carry-symbolic-extents-into-the-semantic-program]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, semantic-graph, api]
-claimed_from: todo
-assignee: w-carry-a-s
-lease_expires_at: 1786162139
 ---
 ## User-visible outcome
 
@@ -335,3 +332,47 @@ Filed as [`repair-the-records-the-sourced-semantic-shape-falsifies`](repair-the-
 ### Scope confirmation
 
 31 files, all inside `implementation/{ir,compiler,reference,artifact,frontend,build}`, `contracts/foundation`, and `project/tickets`. `crates/tiler-conformance/**` untouched — it reads only `.graph()` and its hex pins are `result_sha256` oracle values; the whole crate's tests pass unchanged. `contracts/artifacts` and `contracts/navigation` untouched.
+
+## Outcome — done, 2026-08-07. Delivered whole.
+
+Landed at merge **`1f6e93e3`** (worker commit `26157836`). **34 files, +1,620/−218.** `make full` exit 0; workspace tests 3,149 → **3,163**.
+
+**Three identity domains stepped**, not four: `semantic-graph.v2→v3`, `request-subject.v5→v6`, `program-alternative.v1→v2`. Held: `shape-env.v3`, artifact-program/envelope/manifest, index-realization-authority, and the obligation domain.
+
+### Two claims in the coordinator's own correction block were false
+
+- **"`docs/ir.md:858` — the canonical-identity statement"** is wrong. `:855` opens the *residual*-identity Fact; the canonical statement is at **`:869-870`**, **hard-wrapped across "root-binding\nprovenance"** — the exact false-negative trap the same block flagged for Fact 2 one paragraph earlier. Coordinator-verified.
+- **"index refinement receipt" is not a fourth cascade domain.** That site encodes `SemanticCapabilityAuthority` — `reached_definitions`, `admission_provenance`, `registry_snapshot` — not `SemanticIdentity`, and the same block said so two paragraphs earlier in its own "checked rather than assumed" line. Coordinator-verified. **The cascade is three domains.**
+
+Also imprecise: the artifact needing a subject newtype and a `v15→v16` step. `project_semantic` already carries **three of four** subjects, the registry snapshot being omitted under ADR 0072, so omitting a fifth needs no machinery — only the soundness argument. The resolution was right; its stated reason was weaker than the real one.
+
+### The collision probe failed first, and the replacement is the finding
+
+The initial probe — symbol against the value its environment pins — **survived** the "encode the determined value instead of the symbol" perturbation, because the two programs were separated by `SourcedExtent`'s tag alone. A test passing for the wrong reason, caught before it was trusted.
+
+The replacement, `two_symbols_in_one_environment_are_two_programs`, has both carrying the symbol tag and **sharing one environment** so their environment subjects are equal by construction — leaving only the symbol's own bytes able to separate them. That one dies under the perturbation. All 14 new tests were perturbed at their subject.
+
+### The pin hypothesis was incomplete by two
+
+| Pin | Movement |
+| --- | --- |
+| `ARTIFACT_IDENTITY` | `7a2bfe51…` → `e16ce926…` |
+| `CACHE_SUBJECT` | `8bdcde64…` → `287df982…` |
+| `FIXED_CONTENT_BYTES` | 65,294 → 65,308 |
+| **explain request qualifier** | `f99d1e5e…` → `940c09e0…` — **in no enumeration** |
+| **`DIFFERING_CARRIER_POSITIONS`** | 68 → 67 — **in no enumeration** |
+| `IDENTITY_DOMAIN`, `index/law.rs`, `schedule/builder.rs`, rest | unmoved |
+
+`IDENTITY_DOMAIN` staying put is **evidence for the artifact argument, not luck**. The `+14` bytes were verified with a temporary probe (7 extents × 2 occurrences of the graph identity in the envelope) rather than copied, and the arithmetic is recorded at the test. The `68 → 67` is one digest byte coinciding by chance — no structure moved.
+
+### The coupling is pinned three times, not assumed
+
+`normalize.rs`'s rebuild, `KernelProgramBuilder::new`, and `ArtifactProgramBuilder::new` each refuse a symbolic interface **by name, each stating its own reason**, with two dedicated tests whose accepted neighbours differ only in source kind. `contracts/artifacts` was never touched and `docs/artifact-abi.md`'s three-subject sentence stays true unedited — which is what kept this inside its seven scopes.
+
+### Owed onward
+
+`repair-the-records-the-sourced-semantic-shape-falsifies` filed — six documents across five scopes state things this landing made false, including ADR 0104's measured identity-growth ladder, which needs a **spike re-run rather than an edit**. Two pins cited there were already stale at base; flagged as pre-existing.
+
+Public surface is a **labelled draft under ADR 0075**, with one deliberate asymmetry: only `try_standard_with_shape_environment` exists, so a symbolic program over a custom registry is not constructible.
+
+**The next semantic-graph step is `remove-the-workload-shapes-from-the-concatenate-normative-definition`** — it goes `v3→v4`, must recompute **five** pins, and needs three more scopes than it declares. Recorded on that ticket.
