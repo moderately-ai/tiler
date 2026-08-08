@@ -35,3 +35,27 @@ Adding the missing chronology entry means the block's population changes. **Repo
 ## Closes when
 
 ADR 0107 has exactly one row, in its declared `catalog_group`, carrying its own `applies_to` and evidence, reading `accepted`; the chronology's population equals the ADR file count; and the counts are stated before and after.
+
+## Outcome
+
+All four defects verified at base `209013bdecda631f37d1aff7f2c575f8c19cca3e` before editing, by resolving every catalog row against the frontmatter of the ADR file behind it. Three verified as stated; defect 1 is true in substance with one imprecision.
+
+**Populations.** `ls docs/decisions/[0-9]*.md | wc -l` = **107** files. Topic rows **108 before → 107 after** (the duplicate removed). Chronology rows **106 before → 107 after** (the missing entry added). Both blocks now equal the file count. The chronology's 106 was a **stale** count — correct until 0107 landed uncatalogued — while the topics' 108 was **wrong when written**, because the duplicate row was never a correct state.
+
+**Defect 1 — verified, one imprecision.** The row at `docs/decisions/README.md:24` carried `contracts: [System architecture]; evidence: [Prototype crate layout and Rust MSRV]` under "Foundation, semantics, and extensions", against ADR 0107's `applies_to: ["tiler.contract.ir"]` and `catalog_group: "physical-planning-lowering"` — wrong group and wrong facts, as claimed. The imprecision: it is a **truncated** copy of the adjacent 0077 row, not a whole one. Contracts match 0077 exactly; 0077's evidence carries two records (`prototype-crate-layout-and-msrv`, `artifact-compatibility`) and the bogus row carried only the first.
+
+**Defect 2 — verified.** A second 0107 row at `:113`, with `contracts: [IR stack and invariants]; evidence: [Transformer operation and shape surface derivation]`, matching the frontmatter's `applies_to` and `evidence` exactly. It is the row worth keeping.
+
+**Defect 3 — verified.** Both rows read `— proposed`; frontmatter is `decision_status: "accepted"`, and the record's body carries "accepted by Tom on 2026-08-07, in the interactive orchestration session … Not relayed."
+
+**Defect 4 — verified.** The chronology ran 0001–0106 with no 0107 row.
+
+**A fifth defect, same class, found by reading the whole catalog.** Each topic group is ordered alphabetically by title — a rule that holds for all 106 non-0107 rows and is violated only by the two 0107 rows. The surviving row at `:113` sat after "Separate logical tensor access from storage addressing", not between 0097 "Admit a two-dimensional…" and 0100 "Admit the multi-round…". Repaired in the same edit, since the row was being rewritten regardless. Nothing else in the catalog is defective: a full resolution of all 107 rows against frontmatter found no other duplicate, missing, extra, mis-statused, misgrouped, mistitled, or mislinked row in either block.
+
+**Coverage of the marker blocks.** Four `BEGIN`/`END` pairs exist across three files — `docs/decisions/README.md` (`ADR TOPICS`, `ADR CHRONOLOGY`), `docs/research/README.md` (`RESEARCH CATALOG`), `spikes/README.md` (`EXPERIMENT CATALOG`). All four have already had `GENERATED` removed; no `BEGIN GENERATED` remains in any document. Only the two in this file are in scope here.
+
+**`make citations` does not cover these rows — established by deliberate break, not assumed.** Both links in the new row were pointed at non-existent files; `make citations` stayed green with byte-identical output, because catalog rows are plain markdown links and the script counts them among its `3246 bare path mention(s) carrying no line or anchor`. The 582 local links in this file were resolved by a separate one-off check, which reported the two dangling links and exited 1; the break was then reverted. The standing check on these rows is reading, exactly as [`../docs/document-metadata.md`](../docs/document-metadata.md) records.
+
+**Commands.** `tkt lint` → `ok: no problems found`. `make citations` → `956 pinned citation(s) resolved across 493 live … file(s)`. `git diff --check` → clean. `tkt guard --base 209013bd tkt/repair-adr-0107-s-duplicated-and-mislabelled-decision-catalog-rows` → `verdict: ok`.
+
+**Gate carry.** The delta touches `docs/decisions/README.md` and this ticket only — nothing under `crates/`, `prototypes/`, `Cargo.toml`, `Cargo.lock`, `.config/`, `Makefile`, `rust-toolchain.toml`, `rustfmt.toml`, or `deps.sh` — so it carries the latest green gate under the AGENTS.md delta rule, with `tkt lint` and `make citations` rerun.
