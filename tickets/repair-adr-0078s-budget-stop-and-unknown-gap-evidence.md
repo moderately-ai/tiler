@@ -1,7 +1,7 @@
 ---
 id: repair-adr-0078s-budget-stop-and-unknown-gap-evidence
 title: Repair ADR 0078's budget-stop and Unknown-gap evidence
-status: in-progress
+status: todo
 priority: p3
 dependencies: [reconcile-the-accepted-proof-budget-stop-rule-with-executable-refinement]
 related: [record-the-landed-physical-provider-seam-in-adrs-0078-and-0090]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, documentation, citations]
-claimed_from: todo
-assignee: w-terra-adr0078
-lease_expires_at: 1786211136
 ---
 ## User-visible outcome
 
