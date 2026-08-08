@@ -59,7 +59,7 @@ Filed as `decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-
 
 **Applied: option 1, the whole-span fence.** ```` ```text ```` opens immediately above `### Context` and ```` ``` ```` closes immediately below the last alternatives-considered paragraph. The whole span is fenced rather than the failing Context paragraph alone, following both siblings: being drafted for another directory is a property of the entire transfer, so a paragraph-only fence re-breaks on the next re-transfer or the next link added elsewhere in the span.
 
-**Measurement — the fence cost, counted before and after rather than estimated.** The cost here is nil, matching the runtime sibling at `91f67cc5` and *not* the concatenate record at `e96e6aaa`, where four retired line pins left the matcher.
+**Measurement — the fence cost, counted before and after rather than estimated.** The cost here is nil, matching the runtime sibling at `91f67cc5` and *not* the concatenate record at `e96e6aaa`. That record's own prose states its cost precisely, and it is worth quoting exactly because it is easy to restate wrongly: four retired line pins sat inside its span, but only **three** were being checked — the fourth, `:197`, was already skipped as an ambiguous partial path — so its `docs` population moved `702 → 700`, three pins out against one anchor in. "Four pins left the matcher" overstates it by one.
 
 | Population | Base `bdbeb2b5` | Fence only | Fence + this record's new prose |
 | --- | --- | --- | --- |
