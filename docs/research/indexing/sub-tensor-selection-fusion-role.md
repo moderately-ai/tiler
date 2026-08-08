@@ -119,6 +119,8 @@ The ticket's hypothesis was that the obligations would discharge "on the same or
 - **Any cost claim.** No schedule containing a selection has been measured at any shape.
 - **Whether a second dtype ever needs a selection.** A BF16 slice would be a second registered family under ADR 0091's directional-pair reading and is out of this record's subject entirely.
 
+**Corrected 2026-08-08 by [`correct-the-symbolic-coefficient-era-index-vocabulary-claims`](../../../tickets/correct-the-symbolic-coefficient-era-index-vocabulary-claims.md): the symbolic relation's trigger is no longer an `IndexNode` variant carrying `SourcedExtent` in a coordinate position. `SourcedExtent` remains divisor-only, but `SourcedIndexInteger` now carries a declared symbol in `LinearTermData::coefficient`, and the sourced builder expresses an addend as a `symbol * 1` term. The symbolic relation remains reserved and refused because `SliceAxisSelection::Window` stores a literal `u64` offset and `decode_axis` rejects `symbolic-window` before parsing its fields; no constructible semantic slice path supplies the addend. This fusion-role record still changes neither reservation.
+
 ## Reproducible checks
 
 Each is one command from the repository root, with the positive control that proves it can return something.

@@ -79,17 +79,20 @@
 //! reconsideration trigger this module recorded — a symbol reaching a
 //! coordinate position — and it has fired.
 //!
-//! **The refusal stands on the remaining gap alone, which is this layer's
-//! own.** A semantic occurrence's [`ValueFact`] carries a static [`Shape`], so
-//! a symbolic offset has nothing to name here: there is no bound symbol on a
-//! semantic value for a selection to resolve against. The literal-offset form
-//! is therefore still what this
-//! family delivers, [`SLICE_RELATION_SYMBOLIC_WINDOW`] is reserved and refused by
-//! name, and the trigger that remains is symbolic extents reaching a semantic
-//! value's shape. The refusal reserves a
-//! name, not a design — whether a symbolic offset arrives as an attribute symbol
-//! or as an index operand is left open, because F-24 contemplates the operand
-//! spelling for its own dynamic form.
+//! **The refusal stands at this layer's selection boundary.** A semantic
+//! [`ValueFact`] can already carry a sourced shape, but [`SliceAxisSelection`]
+//! has only a literal `u64` window offset and [`F32Slice`] accepts only a
+//! [`SliceSelection`]. [`decode_axis`] refuses `symbolic-window` before it
+//! parses any relation fields, so a bound symbol has no constructible selection
+//! path into inference. The literal-offset form is therefore still what this
+//! family delivers and [`SLICE_RELATION_SYMBOLIC_WINDOW`] remains reserved and
+//! refused by name.
+//!
+//! The refusal reserves a name, not a design — whether a symbolic offset arrives
+//! as an attribute source or as an index operand is left open, because F-24
+//! contemplates the operand spelling for its own dynamic form. Either spelling
+//! also needs an inference and bounds rule; the current rule later asks for a
+//! static operand shape, but no source-bearing selection reaches that question.
 //!
 //! # Where the family's claim is made, and the one degenerate case
 //!
@@ -120,11 +123,11 @@
 //! produce a *different tensor* for one program rather than a different
 //! diagnostic. Inheriting either silently would make a frontend's meaning depend
 //! on which specification its author had read, so the bound is a validated
-//! obligation here. Every extent a semantic occurrence can carry is static, so the
-//! obligation is discharged at construction; a symbolic extent would make it the
-//! typed host-side pre-dispatch requirement the shape-environment contract's
-//! three-outcome path already accepts, and that arrives with the symbolic offset
-//! rather than before it.
+//! obligation here. The current inferencer deliberately asks for a static operand
+//! shape before evaluating the literal offset and extent, so a sourced operand is
+//! refused with a typed source error. A future source-bearing selection must
+//! specify how its bounds and result shape are derived against the environment;
+//! that is separate from the current grammar refusal, which happens first.
 
 use std::error::Error;
 use std::fmt;
@@ -204,7 +207,8 @@ pub const SLICE_RELATION_WHOLE_AXIS: &str = "whole-axis";
 pub const SLICE_RELATION_WINDOW: &str = "window";
 /// Reserved name of the strided sub-range relation, refused until `RQ-OP-05` closes.
 pub const SLICE_RELATION_STRIDED_WINDOW: &str = "strided-window";
-/// Reserved name of the symbolic-offset relation, refused until the index vocabulary carries one.
+/// Reserved name of the symbolic-offset relation, refused by the current
+/// literal-only selection grammar.
 pub const SLICE_RELATION_SYMBOLIC_WINDOW: &str = "symbolic-window";
 
 /// Domain separator of a canonical slice selection encoding.
@@ -334,13 +338,13 @@ pub enum SliceSelectionError {
     /// the ABI question `Q-SHAPE-008` owns. Admitting an unsigned stride now
     /// would fix half of a schema whose other half is reserved.
     StridedSelectionUnsupported,
-    /// The selection states a symbolic offset, which the index vocabulary cannot carry.
+    /// The selection states a symbolic offset, which the current selection grammar
+    /// does not carry.
     ///
-    /// The literal-offset form is what this family delivers. A bound extent
-    /// symbol in a coordinate position is not expressible: `SourcedExtent` is the
-    /// only carrier of a possibly-symbolic extent and appears in no `IndexNode`
-    /// variant except the `FloorDiv` and `Modulo` divisors, and a semantic value
-    /// fact carries static extents besides.
+    /// The literal-offset form is what this family delivers. The index vocabulary
+    /// can express a bound symbolic addend in a coordinate, but
+    /// [`SliceAxisSelection::Window`] stores its offset as `u64` and this reserved
+    /// relation is refused before any source-bearing field could be decoded.
     SymbolicOffsetUnsupported,
     /// A window selects no coordinate.
     ///
@@ -466,7 +470,7 @@ impl fmt::Display for SliceSelectionError {
             ),
             Self::SymbolicOffsetUnsupported => write!(
                 formatter,
-                "{SLICE_RELATION_SYMBOLIC_WINDOW} is reserved and not admitted: this family selects at literal offsets, because no index-expression variant carries a bound extent symbol in a coordinate position and a semantic value fact carries static extents"
+                "{SLICE_RELATION_SYMBOLIC_WINDOW} is reserved and not admitted: this family selects at literal offsets, and its current selection grammar has no source-bearing offset field"
             ),
             Self::EmptyWindow { axis, offset } => write!(
                 formatter,
@@ -955,10 +959,10 @@ impl OperationInferencer for SliceF32 {
             ));
         }
         // A selection is bounded against the extent it slices and its result
-        // extent is arithmetic over the offset and length, so this rule needs
-        // the extent's value rather than a proof about it. That is the same
-        // ground `SymbolicOffsetUnsupported` already refuses a symbolic *offset*
-        // on, and a symbolic operand extent is declined by name here for it.
+        // extent is arithmetic over the literal offset and length, so this rule
+        // needs the extent's value rather than a proof about it. A symbolic
+        // selection is refused by its grammar above; independently, a sourced
+        // operand is declined here until the family has a bounds rule for it.
         let shape = selection
             .result_shape(request.static_operand_shape(0)?)
             .map_err(|error| rejection(&error))?;
