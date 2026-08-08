@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights
 title: Decide whether the proof payload limit admits the vocabulary-projection weights
-status: in-progress
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [route-the-realization-conformance-half-into-the-conformance-crate]
