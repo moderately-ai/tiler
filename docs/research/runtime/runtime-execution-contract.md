@@ -184,9 +184,14 @@ PreparedSelection + FallbackAuthority
   -> atomically revalidate volatile fingerprints
   -> consume FallbackAuthority
 RoutingCommitted
+  -> establish host conformance before result work:
+       unresolved direct-input host plan -> EnforcementCommit + scan
+       proof-elided or no host work -> no enforcement boundary
+HostConformanceReady
   -> allocate output, temporary, validation, and publication resources
 ResourcesAcquired
-  -> EnforcementCommit when residual enforcement begins, if any
+  -> EnforcementCommit when another unresolved enforcement begins, if no enforcement
+     began at the host scan
   -> encode canonical dependency-preserving stage order
 Encoding
   -> submit and register resource retention against exact completion receipts
@@ -207,9 +212,11 @@ fallback route.
 
 **The one disagreement this paragraph recorded is closed, and closed in this record's favour.** The landed `plan_dispatch` seam allocated program storage before the commit, which contradicted the rule above that preparation "must not allocate a program output, program temporary, validation record, private transaction result, or encode program work" — and the transition table's placement of "program allocation and enforcement setup" on the `routing committed to resources` row, whose fallback column reads `never`. [`reconcile-the-pre-commit-allocation-seam-with-adr-0051`](../../../tickets/reconcile-the-pre-commit-allocation-seam-with-adr-0051.md) moved the code rather than this contract, on Tom's direction of 2026-08-01: `RuntimeAdapter::plan_dispatch` now sizes and checks capacity while acquiring nothing, and `RuntimeAdapter::allocate_dispatch` — reachable only from the `RoutedDispatch` that `Preflight::commit` mints — takes the program storage and reports a `Failure` rather than a refusal. Preparation's permitted work is unchanged and was already correct in the code: building a library, a pipeline, or an interpreter image is backend-internal state an abandoned route discards.
 
-The transition table below therefore describes the implemented adapter seam on the `routing committed to resources` row as well as the modelled one, which was not true when this paragraph was written. What the row still models rather than implements is the enforcement setup beside the allocation.
+The transition table below therefore describes the implemented adapter seam on the post-conformance allocation row for routes with no unresolved host scan, which was not true when this paragraph was written. The selected direct-input host-conformance row remains modelled: it begins `EnforcementCommit` before program-result allocation, as ADR 0033 requires, and only its success reaches the implemented allocation seam. What the allocation row still models rather than implements is enforcement setup for non-host mechanisms.
 
-The runtime host-validation transitions below instead govern residual tensor-value semantic preconditions such as strict quantization's NaN rejection. Governed strict-affine `Quantize` now produces typed residual obligations, but no physical candidate, enforcement-plan carrier, artifact representation, or runtime checker consumes them yet, so the transitions remain an adopted contract rather than evidence of runtime enforcement. `implement-first-runtime-semantic-value-precondition-enforcement` owns the first complete runtime vertical after its producer, physical-candidate, carrier, and resolved-value conformance prerequisites. Checker capability and preparation must finish before `RoutingCommit`; the actual value scan begins only after one-way route commitment at `EnforcementCommit`, and no semantic failure can trigger fallback.
+The runtime host-validation transitions below govern unresolved tensor-value semantics. **Fact:** governed strict-affine `Quantize` produces typed residual obligations, but no physical candidate, enforcement-plan carrier, artifact representation, or runtime checker consumes them yet; that general producer fact remains independent of the first selected route. The first selected route instead concerns a direct encoded input whose type-derived `ValueConformanceSubject` has no `Quantize` or `Assemble` producer. Its checker capability, logical-view construction, observability/coherence path, physical carrier and element-width validity, hard limits, and exact protected first consumer must all be prepared before `RoutingCommit`; unresolved conformance begins only after the one-way commit at `EnforcementCommit`, and no semantic failure can trigger fallback.
+
+**Contract — the selected direct input has one enforcement plan per retained physical alternative.** The fused plan protects the fused contraction access that first reads decoded weight elements. The materializing plan protects the `Dequantize`/materialization stage that first reads encoded components and produces the F32 temporary. Both are stated over the same direct `ValueConformanceSubject`, but evidence is bound to the selected alternative and exact consumer; there is no route-global witness that authorizes whichever stage happens to execute. An alternative missing a complete checker, authoritative view, observability/coherence route, hard-limit disposition, or consumer binding is infeasible before costing. Fused and materializing enforcement costs stay separate, `Unknown` is never zero, and omitted enforcement cannot make an infeasible plan selectable.
 
 ### Transition contract
 
@@ -219,7 +226,8 @@ The runtime host-validation transitions below instead govern residual tensor-val
 | bound request to candidates | pure checked expressions, guards, typed live queries | applicability or capability miss; invariant/system error | yes only for the typed miss |
 | candidate to prepared selection | library/function/pipeline preparation, prepared-fact queries, launch and adapter-capability checks | typed candidate capability miss or fatal preparation error | yes only for capability miss |
 | prepared to routing committed | exact token/input/device revalidation; ownership transition | stale selection/invariant | no program work has begun, but fail closed rather than silently reroute |
-| routing committed to resources | program allocation and enforcement setup | allocation/resource error | never |
+| routing committed to host conformance | for the selected direct-input host plan, `EnforcementCommit` and its logical scan; no result allocation or result work | semantic/view/coherence error | never |
+| host conformance observed to resources | after success, program allocation and any remaining enforcement setup; routes with proof-elided or no host conformance enter here directly | allocation/resource error | never |
 | resources to in-flight | ABI packing, ordered encoding, submit, retention registration | encode/submit/adapter error | never, including after zero or partial stages encoded |
 | in-flight to validation observed | exact terminal success, coherence, record validation | completion/coherence/record/semantic error | never |
 | in-flight or validation to published | construct ordered dependency-carrying outputs; promote/copy private results | publication error | never |
@@ -353,10 +361,22 @@ an unsynchronized host.
 ### Host validation
 
 Host validation begins `EnforcementCommit` after routing. It observes the
-authoritative logical view only after its producer and coherence dependencies.
+authoritative logical view only after its origin/provenance and coherence
+dependencies; a direct binding has no in-program producer to wait for.
 A semantic miss returns `SemanticValidationError`; it cannot reroute. No result
 work begins before success unless the selected plan is explicitly
 transactional.
+
+For the selected direct encoded input, current `check_bound_value` behaviour is
+a host scan of every logical element, including U8 codes and zero points and the
+positive-normal F32 scale. A future U8 plan may proof-elide code and zero-point
+content reads only after physical carrier and element width are established and
+logical-view construction guarantees the declared scalar kind; that is an
+Inference, not current runtime support. Carrier and width faults are tested at
+representation/view construction, while presented-type and scalar-kind faults
+are tested at the conformance boundary. Success authorizes only the selected
+plan's exact first consumer; failure permits no allocation, result dispatch,
+publication, dependent effect, or fallback.
 
 ### Device pre-scan and transactional validation
 
