@@ -835,6 +835,15 @@ fn access_domain_shape<'a>(
 /// other. A subprogram whose stages disagree therefore has no single requirement
 /// and is refused here, before any target is asked. Stages that all require
 /// nothing carry `None`; stages that all require the same subject carry it once.
+///
+/// **The index-arithmetic requirement is refused on disagreement for the same
+/// reason, not peaked.** It is a capability rather than a quantity, so "the
+/// largest of them" is undefined: two stages needing different index arithmetics
+/// need *both*, and one requirement cannot say so. Every region derives the same
+/// value today, so the refusal is unreachable — which is exactly why it is
+/// written now. Inheriting stage zero's value silently would be correct only
+/// while the vocabulary has one variant, and the arm that notices a second one
+/// has to exist before it does, not after.
 fn subprogram_resources(stages: &[VerifiedScheduledRegion]) -> Option<ResourceRequirements> {
     let mut peak = stages.first()?.requirements();
     for stage in &stages[1..] {
@@ -843,6 +852,9 @@ fn subprogram_resources(stages: &[VerifiedScheduledRegion]) -> Option<ResourceRe
         peak.threads_per_workgroup = peak.threads_per_workgroup.max(stage.threads_per_workgroup);
         peak.local_memory_bytes = peak.local_memory_bytes.max(stage.local_memory_bytes);
         peak.requires_device_memory |= stage.requires_device_memory;
+        if peak.index_arithmetic != stage.index_arithmetic {
+            return None;
+        }
         peak.synchronization = match (peak.synchronization, stage.synchronization) {
             (None, other) | (other, None) => other,
             (Some(left), Some(right)) if left == right => Some(left),
@@ -4393,6 +4405,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
@@ -4894,6 +4907,7 @@ mod tests {
             threads_per_workgroup: 1,
             local_memory_bytes: 0,
             requires_device_memory: true,
+            index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
             synchronization: None,
             input_subnormals: contract.input_subnormals,
             result_subnormals: contract.result_subnormals,
@@ -5077,6 +5091,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
@@ -5192,6 +5207,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
@@ -5320,6 +5336,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,

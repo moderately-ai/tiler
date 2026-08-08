@@ -12,15 +12,14 @@ use tiler_ir::shape::{Axis, Shape};
 // semantic-occurrence binding, request-subject binding, and target feasibility.
 // The shared vocabulary is re-exported so existing `crate::physical::*`
 // importers continue to resolve.
-use tiler_ir::kernel::KernelType;
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion,
-    InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32Node,
-    ReductionTopology, RegionId, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy,
-    TensorRole,
+    ContractionAxisSource, ContributorOrder, ContributorPartition, ExecutionBinding,
+    IndexArithmetic, IndexRegion, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    PointwiseF32Expression, PointwiseF32Node, ReductionTopology, RegionId, ResourceRequirements,
+    ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
 };
 use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
@@ -3905,10 +3904,16 @@ pub(crate) fn target_profile_descriptor(target: &TargetProfile) -> &[u8] {
 /// needs. It is also carried **conditionally**, and that is what keeps the
 /// absence canonical: a region requiring no synchronization composes no
 /// requirement at all, so no predicate is resolved, no target fact is consulted,
-/// and no explain row exists to be a manufactured zero — exactly as
-/// `index_arithmetic_requirement` yields nothing for a value type with no
-/// arithmetic obligation, and as the retired barrier-count axis must never again
-/// yield `required 0`.
+/// and no explain row exists to be a manufactured zero — as the retired
+/// barrier-count axis must never again yield `required 0`.
+///
+/// The index-arithmetic requirement is carried the third way: **unconditionally
+/// and by value**. It is not conditional, because every region computes
+/// coordinates and so no region derives its absence; and it is not re-derived
+/// here, because `tiler_ir::schedule` already derived it from the region's own
+/// coordinate space. `index_arithmetic_requirement` therefore classifies a
+/// value this function received rather than deciding one, which is what keeps a
+/// single producer authority over a fact the verified program states.
 fn region_proposal(
     requirements: ResourceRequirements,
     arithmetic: ArithmeticType,
@@ -3954,8 +3959,7 @@ fn region_proposal(
                 CapabilityAxis::BufferBindings,
                 u64::from(requirements.buffer_bindings),
             ),
-            index_arithmetic_requirement(KernelType::Index)
-                .expect("the governed KIR index type has an arithmetic requirement"),
+            index_arithmetic_requirement(requirements.index_arithmetic),
             AxisRequirement::new(
                 CapabilityAxis::DeviceAddressSpace,
                 u64::from(requirements.requires_device_memory),
@@ -3987,26 +3991,22 @@ fn region_proposal(
     )
 }
 
-/// Derives the hard arithmetic requirement of one governed KIR value type.
+/// Maps one region's derived index arithmetic onto its capability axis.
 ///
-/// Exhaustive so a new KIR type is a build error until its target requirement
-/// is classified. Storage availability alone never satisfies this predicate.
+/// **It classifies rather than derives, and that is the change.** This used to
+/// take a [`tiler_ir::kernel::KernelType`] and re-run the index-role match
+/// itself, which made the
+/// compiler a second producer of a fact the verified schedule already states —
+/// exactly the second authority `declare-a-required-gpu-family-in-the-artifact`
+/// forbids for anything derivable from the verified program. The derivation now
+/// happens once, in `tiler_ir::schedule`, and reaches here as a value.
 ///
-/// Only the index role yields a requirement, and a type yielding `None` here is
-/// making the narrow claim that it needs no *index* arithmetic — not that it
-/// needs no target capability at all. `Bf16` is the case where the distinction
-/// bites: whether a target can compute in bfloat16 is a separate profile fact,
-/// resolved where that arithmetic is proposed, and answering it from this
-/// predicate would be reading a capability out of an axis that does not carry
-/// one.
-const fn index_arithmetic_requirement(value_type: KernelType) -> Option<AxisRequirement> {
-    match value_type {
-        KernelType::Index => Some(AxisRequirement::new(CapabilityAxis::IndexArithmeticU64, 1)),
-        KernelType::Bool
-        | KernelType::U8
-        | KernelType::F32
-        | KernelType::I32
-        | KernelType::Bf16 => None,
+/// Exhaustive so a variant added to [`IndexArithmetic`] is a build error until
+/// its axis bound is stated. Storage availability alone never satisfies this
+/// predicate.
+const fn index_arithmetic_requirement(index_arithmetic: IndexArithmetic) -> AxisRequirement {
+    match index_arithmetic {
+        IndexArithmetic::CompleteU64 => AxisRequirement::new(CapabilityAxis::IndexArithmeticU64, 1),
     }
 }
 

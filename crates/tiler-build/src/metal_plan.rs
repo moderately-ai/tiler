@@ -1500,10 +1500,26 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "e16ce9264f7f4fe65ee384ee6198bb2b9434383313a6ee25515e800fca308057";
+            "39e765637a7e014adac2b8a30788798758ca46584b558732c2bda41b7639ddda";
         const CACHE_SUBJECT: &str =
-            "287df9823c146b71cec7621b37cc4dbf2fd28095c9348f45c0cb3eebf348104b";
-        const FIXED_CONTENT_BYTES: usize = 65_308;
+            "7e00d9fa0ce90749e6f7d3d42e0f2aaabe5670e0359a0c20d1580a09bb967130";
+        // **65,313 at `tiler.artifact-program.v16`, and the five bytes are
+        // accounted for individually rather than accepted as a delta.** The
+        // derived index-arithmetic requirement is one tag byte, and this
+        // envelope writes it five times: once in the single entry row's own
+        // resource record, and once inside each of the four kernel identities
+        // the envelope embeds — the entry's framed stage key and one further
+        // copy in the manifest, and the kernel-program identity and its stage
+        // key in the program section. Every one of those records folds the
+        // kernel identity, which gained the byte at `tiler.kernel.v7`.
+        //
+        // **Measurement.** Located by byte-aligning this envelope against the
+        // one built at `209013bd`: 65,308 to 65,313, as manifest 41,113 to
+        // 41,116 and non-object sections 24,134 to 24,136, with each of the
+        // three manifest insertions confirmed to be the literal `0x01` tag.
+        // The point of the count is that it is *five* and not six: a sixth
+        // would mean one record encodes the requirement twice.
+        const FIXED_CONTENT_BYTES: usize = 65_313;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1534,6 +1550,28 @@ mod tests {
             "the standard Metal cache subject moved",
         );
         let published = accepted.decoded();
+
+        // **No backend route row is minted for the index-arithmetic
+        // requirement, and this is where that is checked rather than asserted in
+        // prose.** The requirement is derivable from the verified program, so
+        // `crates/tiler-artifact/src/program/requirement.rs`'s admission test
+        // excludes it: a row restating it would be a second producer authority
+        // that could contradict the dispatch record. The standard Metal path
+        // emits no *additional* backend feature either, so the correct
+        // population is zero and not one.
+        //
+        // Counted per variant rather than summed, so a second variant carrying
+        // rows could not be hidden by a first variant carrying none.
+        let variants = published.variants().count();
+        assert_eq!(variants, 1, "the standard Metal path publishes one variant");
+        for variant in published.variants() {
+            assert!(
+                variant.route_requirements().is_empty(),
+                "the standard Metal path mints no live-device route row; found {:?}",
+                variant.route_requirements(),
+            );
+        }
+
         let envelope = published
             .re_encode()
             .expect("the published envelope re-encodes");

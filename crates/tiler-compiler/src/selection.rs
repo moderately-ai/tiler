@@ -1941,6 +1941,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 input_subnormals: realization.input_subnormals,
                 result_subnormals: realization.result_subnormals,

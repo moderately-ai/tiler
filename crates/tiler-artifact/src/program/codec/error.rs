@@ -80,6 +80,8 @@ pub(crate) enum TagSubject {
     NumericalPermission,
     /// An exceptional-value assumption and the provenance that supports it.
     ExceptionalValueAssumption,
+    /// The index arithmetic one entry's dispatch record requires of a device.
+    IndexArithmetic,
     /// The availability phase of a root fact or deferred predicate.
     AvailabilityPhase,
     /// The directional relation of a target-property requirement.

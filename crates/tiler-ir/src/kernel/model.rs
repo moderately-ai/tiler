@@ -15,9 +15,10 @@
 use crate::identity::{push_len, push_slice};
 use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
-    CanonicalScheduledRegionIdentity, ExceptionalValueAssumption, FlushedZeroSign,
-    NumericalPermission, NumericalRealization, RegionId, ResourceRequirements, SubnormalFreedom,
-    SubnormalMode, SynchronizationSubject, TensorRole, ValueDomainProvenance,
+    CanonicalScheduledRegionIdentity, ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic,
+    NumericalPermission, NumericalRealization, REGION_INDEX_ARITHMETIC, RegionId,
+    ResourceRequirements, SubnormalFreedom, SubnormalMode, SynchronizationSubject, TensorRole,
+    ValueDomainProvenance,
 };
 use crate::semantic::EncodedComponentRole;
 
@@ -63,7 +64,18 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 /// their earlier values and new variants receive appended tags. These changes
 /// advance the domain rather than letting an earlier reader interpret the
 /// kernel incompletely.
-const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v6\0";
+///
+/// `v7` gives every kernel's fixed resource-requirement record its derived
+/// index-arithmetic requirement, written between the device-memory flag and the
+/// synchronization record. The tag lands *inside* the fixed record rather than
+/// after it, so a v6 reader handed v7 bytes would consume the index-arithmetic
+/// tag where the synchronization presence byte belongs and lose framing for
+/// every field after it — and every kernel ever encoded maps to different bytes
+/// now, which is what a cache or artifact holding a v6 identity must miss on
+/// rather than match. Appending would not have avoided the step either: the
+/// requirement is a fact about the kernel a v6 identity could not state, so two
+/// kernels differing only in it were one subject.
+const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v7\0";
 
 /// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
 const LENGTH_BYTES: usize = size_of::<u64>();
@@ -133,6 +145,52 @@ impl KernelType {
         }
     }
 }
+
+impl IndexArithmetic {
+    /// Derives the index arithmetic one governed KIR value type requires.
+    ///
+    /// Exhaustive and wildcard-free, so a widened [`KernelType`] is an `E0004`
+    /// here — in the module that declares it — rather than a type silently
+    /// inheriting whichever answer it resembles.
+    ///
+    /// Only the index role yields a requirement, and a type answering `None` is
+    /// making the narrow claim that it needs no *index* arithmetic, not that it
+    /// needs no target capability at all. [`KernelType::Bf16`] is where the
+    /// distinction bites: whether a target can compute in bfloat16 is a separate
+    /// profile fact resolved where that arithmetic is proposed, and answering it
+    /// from this classifier would read a capability out of a vocabulary that
+    /// does not carry one.
+    #[must_use]
+    pub const fn of(value_type: KernelType) -> Option<Self> {
+        match value_type {
+            KernelType::Index => Some(Self::CompleteU64),
+            KernelType::Bool
+            | KernelType::U8
+            | KernelType::F32
+            | KernelType::I32
+            | KernelType::Bf16 => None,
+        }
+    }
+}
+
+/// Compiles only while the region-level constant and the KIR index role agree.
+///
+/// The scheduled-region layer states its coordinate arithmetic as a constant of
+/// its own `u64` coordinate space, and this layer derives the same requirement
+/// from the type that arithmetic is actually performed at. Two derivations of
+/// one fact are two authorities unless something compares them, and this is the
+/// comparison: it lives here because this is the only module that can see both,
+/// and it is a `const` assertion rather than a test so a lowering that changed
+/// the index role without changing the region constant cannot reach a test run.
+const _: () = {
+    assert!(
+        matches!(
+            IndexArithmetic::of(KernelType::Index),
+            Some(REGION_INDEX_ARITHMETIC)
+        ),
+        "the KIR index role and the scheduled region's coordinate arithmetic must agree",
+    );
+};
 
 /// A governed memory visibility and lifetime domain.
 ///
@@ -1587,6 +1645,19 @@ fn push_permission(bytes: &mut Vec<u8>, permission: NumericalPermission) {
     });
 }
 
+/// Writes the governed tag of one index-arithmetic requirement.
+///
+/// Written as an exhaustive match rather than read from the discriminant, so a
+/// variant added to [`IndexArithmetic`] is a build error here instead of a
+/// silent renumbering of every kernel identity already derived. `0x01` is the
+/// first value of a new table rather than a reused one: no earlier tag table
+/// covers this vocabulary.
+fn push_index_arithmetic(bytes: &mut Vec<u8>, index_arithmetic: IndexArithmetic) {
+    bytes.push(match index_arithmetic {
+        IndexArithmetic::CompleteU64 => 0x01,
+    });
+}
+
 fn push_exceptional_assumption(bytes: &mut Vec<u8>, assumption: ExceptionalValueAssumption) {
     match assumption {
         ExceptionalValueAssumption::MakeNoAssumption => bytes.push(0x01),
@@ -1643,6 +1714,7 @@ fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
     bytes.extend_from_slice(&requirements.threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&requirements.local_memory_bytes.to_be_bytes());
     bytes.push(u8::from(requirements.requires_device_memory));
+    push_index_arithmetic(bytes, requirements.index_arithmetic);
     push_synchronization(bytes, requirements.synchronization);
     push_subnormal(bytes, requirements.input_subnormals);
     push_subnormal(bytes, requirements.result_subnormals);
@@ -2021,8 +2093,9 @@ fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
     size_of_val(&requirements.buffer_bindings)
         .saturating_add(size_of_val(&requirements.threads_per_workgroup))
         .saturating_add(size_of_val(&requirements.local_memory_bytes))
-        // The device-memory flag, two subnormal modes, and four permissions.
-        .saturating_add(7)
+        // The device-memory flag, the index-arithmetic tag, two subnormal
+        // modes, and four permissions.
+        .saturating_add(8)
         .saturating_add(synchronization_encoded_len(requirements.synchronization))
         .saturating_add(exceptional_assumption_encoded_len(
             requirements.nan_assumptions,

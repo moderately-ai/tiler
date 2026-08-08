@@ -1139,6 +1139,29 @@ pub struct ScheduledRegion {
     pub schedule: KernelSchedule,
 }
 
+/// The index arithmetic one region's coordinate computation requires of a target.
+///
+/// **Nominal, not a width.** A raw `64` would state that a target can *spell* a
+/// 64-bit integer, and a spellable type is a language fact:
+/// `separate-metal-launch-index-from-index-and-address-width` already eliminated
+/// deriving arithmetic support from one. What a region actually needs is
+/// complete *operation* support over the governed KIR index family — the
+/// addition, multiplication, division, and modulo its coordinate maps perform —
+/// and that is a capability a target either has or does not. Naming it leaves no
+/// room for a consumer to read a width and conclude a capability.
+///
+/// **An ADR 0074 convention 5b type, deliberately exhaustive.** It carries no
+/// `#[non_exhaustive]`: a backend maps every variant to its own live-device
+/// vocabulary as a total function, so a variant added here must stop that
+/// backend's build rather than reach a wildcard that would answer for an
+/// arithmetic it has never been asked about. Answering "supported" for an
+/// unrecognized requirement is the silently-wrong fast path.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum IndexArithmetic {
+    /// Complete support for the governed unsigned-64 KIR index operation family.
+    CompleteU64,
+}
+
 /// Exact or proven resource requirements derived from a verified schedule.
 ///
 /// These feed a separate phased target-feasibility assessment; deriving them is
@@ -1167,6 +1190,23 @@ pub struct ResourceRequirements {
     pub local_memory_bytes: u64,
     /// Whether the region requires a device address space.
     pub requires_device_memory: bool,
+    /// The index arithmetic the region's coordinate computation requires.
+    ///
+    /// Not an `Option`, and the contrast with [`Self::synchronization`] beside
+    /// it is the whole reason. A region with no synchronization point is
+    /// reachable and derives `None`, so that absence is a fact some region
+    /// states. Every scheduled region computes coordinates — an
+    /// [`IndexRegion`] is a bounded coordinate space and its accesses are
+    /// coordinate maps — so a region requiring no index arithmetic does not
+    /// exist, and an `Option` would add an absence nothing can derive. It would
+    /// also let a producer encode that absence and skip the device comparison
+    /// entirely, which is the fast path this record exists to close.
+    ///
+    /// One value per region rather than one per operation: a target either
+    /// supports the governed index family completely or does not, so counting
+    /// the additions a region performs would be the barrier-count capacity
+    /// `replace-or-justify-the-barrier-count-axis` retired.
+    pub index_arithmetic: IndexArithmetic,
     /// The synchronization realization the region's schedule requires, if any.
     ///
     /// `None` is the canonical absence a schedule with no synchronization point
@@ -1654,6 +1694,24 @@ pub fn contributor_count(axes: &[Axis], access: &LogicalAccess) -> Result<u64, C
         .ok_or(ContributorError::Overflow)
 }
 
+/// The index arithmetic every scheduled region's coordinate space requires.
+///
+/// A constant of *this* IR level rather than a value read from the kernel it
+/// lowers to, because the fact belongs here: a [`ScheduledRegion`]'s coordinate
+/// space is unsigned-64 throughout — [`Shape`] extents, [`element_count`],
+/// [`KernelSchedule::work_items`], and [`LaunchPlan::grid_threads`] are all
+/// `u64` — so every region's coordinate maps compute over the whole `u64` range
+/// and none of them can require less. Reading the requirement out of
+/// [`crate::kernel::KernelType`] instead would make the schedule layer depend on
+/// its own lowering to state a property of its own coordinates.
+///
+/// The two levels are held together where they meet rather than by inspection:
+/// `crate::kernel::model` asserts at compile time that this constant is exactly
+/// what [`IndexArithmetic::of`] derives for the governed KIR index role, so a
+/// lowering that changed the index type without changing this would stop the
+/// build.
+pub(crate) const REGION_INDEX_ARITHMETIC: IndexArithmetic = IndexArithmetic::CompleteU64;
+
 /// Derives the resource requirements of a verified region.
 ///
 /// Bindings follow the region's access count; the launch fixes the thread
@@ -1679,6 +1737,7 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
         threads_per_workgroup: region.schedule.threads_per_workgroup,
         local_memory_bytes: cooperative_local_memory_bytes(&region.schedule.reduction).unwrap_or(0),
         requires_device_memory: true,
+        index_arithmetic: REGION_INDEX_ARITHMETIC,
         synchronization: cooperative_synchronization_requirement(&region.schedule.reduction),
         input_subnormals: region.index.numerical.input_subnormals,
         result_subnormals: region.index.numerical.result_subnormals,
