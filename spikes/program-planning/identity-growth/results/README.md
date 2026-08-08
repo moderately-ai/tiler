@@ -2,7 +2,7 @@
 
 Each `growth.tsv` here is evidence about the tree it was produced on and **none of them is regenerated when a later one lands**. That is deliberate — a rerun on today's compiler would measure today's encoding, so overwriting an older file would destroy the only record of the encoding it read — but it means a reader comparing two files is comparing two trees, and the columns move for reasons that are not the curve. This file says which regime each belongs to so the comparison is possible at all. The spike's own [`README.md`](../README.md) carries the current reading; the newest file below is the one it reports.
 
-Only the newest result describes the compilation path as it stands. **The three oldest state a reachable domain of 2..=32 that no longer holds, and byte columns that no longer reproduce.** Read them as history, not as current figures.
+Only the newest result describes the compilation path as it stands. **The four oldest state a reachable domain that stops at or below 32 operations and no longer holds; and every file but the newest carries byte columns that no longer reproduce** — the two `3530n + 723` files joined that set on 2026-08-08 when the semantic graph domain stepped to `v3`. Read them all as history, not as current figures.
 
 | Result | Ladder | What stopped it | Program-identity fit | What moved into it |
 | --- | --- | --- | --- | --- |
@@ -11,7 +11,8 @@ Only the newest result describes the compilation path as it stands. **The three 
 | [`2026-08-06-post-explain-ceiling-…`](2026-08-06-post-explain-ceiling-apple-m4-max-macos27.0-26A5388g/growth.tsv) | 2..=11, 10 points | `region_expansions`, `NoFeasiblePlan` at 12 | `3525n + 727` — linear | `refuse-nothing-legal-on-the-explain-detail-ceiling`; the eleventh point stopped refusing |
 | [`2026-08-07-post-coverage-extremes-…`](2026-08-07-post-coverage-extremes-apple-m4-max-macos27.0-26A5388g/growth.tsv) | 2..=32, 31 points | `region_members = 32`, `BudgetExhausted` at 33 | `3525n + 727` — linear | `region-expansion-exhaustion-loses-the-only-feasible-plan`; 12..=32 stopped refusing |
 | [`2026-08-07-post-derived-region-budgets-…`](2026-08-07-post-derived-region-budgets-apple-m4-max-macos27.0-26A5388g/growth.tsv) | 2..=62, 61 points | `semantic_operations = 62`, `BudgetExhausted` at 63 | `3530n + 723` — linear | `derive-the-region-shape-budgets-from-the-declaration`, which dissolved the 33..=62 wall; and the index-refinement encoding step described below |
-| [`2026-08-07-post-restored-planning-wall-…`](2026-08-07-post-restored-planning-wall-apple-m4-max-macos27.0-26A5388g/growth.tsv) | **2..=62, 61 points** | **`semantic_operations = 62`**, `BudgetExhausted` at 63 | **`3530n + 723`** — linear, **every byte column identical to its predecessor** | nothing in the encoding; `restore-a-planning-phase-refusal-to-the-identity-growth-harness` added a second wall entry and a control, and this file is the first whose wall section carries a refusal raised *after* planning |
+| [`2026-08-07-post-restored-planning-wall-…`](2026-08-07-post-restored-planning-wall-apple-m4-max-macos27.0-26A5388g/growth.tsv) | 2..=62, 61 points | `semantic_operations = 62`, `BudgetExhausted` at 63 | `3530n + 723` — linear, **every byte column identical to its predecessor** | nothing in the encoding; `restore-a-planning-phase-refusal-to-the-identity-growth-harness` added a second wall entry and a control, and this file is the first whose wall section carries a refusal raised *after* planning |
+| [`2026-08-08-post-sourced-semantic-shape-…`](2026-08-08-post-sourced-semantic-shape-apple-m4-max-macos27.0-26A5388g/growth.tsv) | **2..=62, 61 points** | **`semantic_operations = 62`**, `BudgetExhausted` at 63 | **`3531n + 724`** — linear, quadratic coefficient exactly zero | the semantic graph domain's `v2 → v3` step, described below: a semantic value's shape became a `SourcedShape` and every extent is now tagged |
 
 ## The two regimes, and what separates them
 
@@ -27,11 +28,24 @@ Only the newest result describes the compilation path as it stands. **The three 
 
 **So the older files are stale in two independent ways** — a domain that was truncated by a bound since dissolved, and byte columns from an earlier index-region encoding. Neither is a defect in them.
 
-## The last two files are one regime, and that is itself a measurement
+## The fourth and fifth files are one regime, and that is itself a measurement
 
-**Measurement, 2026-08-07.** The newest file was produced on base `25e76d5d`, six commits past the `cee4fe1a` its predecessor names — commits touching `tiler-compiler`, `tiler-ir` and `tiler-build`, including a widened elementary recognizer, BF16 fusion legality, and a staged family admitted over a materialized intermediate. **All nine structural columns are identical at all sixty-one points**, checked column by column rather than by fit: `requested`, `operations`, `coverage_records`, `stages`, `alternatives`, `graph_bytes`, `program_bytes`, `widest_alternative_bytes`, `coverage_bytes`. `compile_ms` is not compared and is not evidence.
+**Measurement, 2026-08-07.** The `post-restored-planning-wall` file was produced on base `25e76d5d`, six commits past the `cee4fe1a` its predecessor names — commits touching `tiler-compiler`, `tiler-ir` and `tiler-build`, including a widened elementary recognizer, BF16 fusion legality, and a staged family admitted over a materialized intermediate. **All nine structural columns are identical at all sixty-one points**, checked column by column rather than by fit: `requested`, `operations`, `coverage_records`, `stages`, `alternatives`, `graph_bytes`, `program_bytes`, `widest_alternative_bytes`, `coverage_bytes`. `compile_ms` is not compared and is not evidence.
 
-So `3530n + 723` is a statement about two trees rather than one, and the spike README's whole verdict — the refusal point, the margins, the embedding-ceiling crossing — carries to this base unchanged. A separate file is retained anyway because its *wall section* differs: it is the first that probes a refusal raised after planning, and the first that compiles a control.
+So `3530n + 723` is a statement about two trees rather than one, and the spike README's verdict as of those two — the refusal point, the margins, the embedding-ceiling crossing — carried across them unchanged. A separate file was retained anyway because its *wall section* differs: it is the first that probes a refusal raised after planning, and the first that compiles a control.
+
+## The sixth file breaks that regime, and the graph column is where it breaks
+
+**Measurement, 2026-08-08, base `cc667626`, same host and the repository toolchain pin.** Compared against `post-restored-planning-wall` over all sixty-one shared points, column by column rather than by fit:
+
+- `requested`, `operations`, `coverage_records`, `stages`, `alternatives` — **identical** at every point.
+- `graph_bytes` is larger by exactly **`n`**: one byte per operation, with the constant unmoved at 149. The fit goes `134n + 149` → `135n + 149`.
+- `program_bytes` and `widest_alternative_bytes` are each larger by exactly **`n + 1`**, and the two deltas are equal at every point. The fit goes `3530n + 723` → `3531n + 724`.
+- `coverage_bytes` is **identical at every point** — the one column that did not move.
+
+**Inference — the graph column moved because extents are now tagged, and `coverage_bytes` staying put is ADR 0104's fold read off the data.** [`carry-a-sourced-shape-on-semantic-values`](../../../../tickets/carry-a-sourced-shape-on-semantic-values.md) landed the sourced semantic shape on 2026-08-07 and stepped `tiler.semantic-graph.v2` to `v3`, writing every extent through `SourcedShape::encode`, which prepends a source tag where the retired `encode_shape` wrote eight untagged big-endian bytes. This family's generator emits one shared rank-0 constant and a chain of multiplies over a fixed rank-1 extent, so one tagged extent per operation result is one byte per operation — which is the measured `graph_bytes` delta exactly. That the *coverage* section did not move at all is the fold working: a coverage record names the graph by fixed-width digest rather than restating it, so a graph that grew by `n` bytes propagates none of that growth into the `n` records that reference it. Under the pre-fold encoding the same step would have cost `n` bytes in each of `n` records.
+
+**The bound on that inference, stated rather than implied.** 268 commits separate the two bases and 41 of them touch `crates/`, so this is not a bisection. What narrows it is that exactly one of those 41 touches `crates/tiler-ir/src/semantic/identity.rs` or `crates/tiler-ir/src/shape/` — `26157836`, the landing named above — and the graph identity is minted by the first from types owned by the second. The residual `+1` on `program_bytes` beyond the graph's `+n` is *not* attributed here: it is a constant, so it is not the per-extent tag, and the two other commits touching `crates/tiler-ir/src/semantic/` (`cf9578ee`, `4f1245bc`) and the one touching `crates/tiler-ir/src/program/model.rs` (`4f1245bc`) are candidates no measurement here separates.
 
 ## Why none of them is regenerated
 
