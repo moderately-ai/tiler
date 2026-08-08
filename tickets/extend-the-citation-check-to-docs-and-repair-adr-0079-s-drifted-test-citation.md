@@ -1,7 +1,7 @@
 ---
 id: extend-the-citation-check-to-docs-and-repair-adr-0079-s-drifted-test-citation
 title: Extend the citation check to docs and repair ADR 0079's drifted test citation
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [pin-ticket-source-citations-against-the-tree-they-name, keep-the-citation-checker-s-anchor-path-exercised-and-its-boundary-fixture-live]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-docs-cit
-lease_expires_at: 1786159836
 ---
 ## The gap, found by the drift it failed to catch
 
@@ -38,3 +35,35 @@ Read `check-citations.sh` in full first; do not reimplement what it already does
 ## Closes when
 
 ADR 0079's citation resolves and is anchored on the symbol; `make citations` covers `docs/**` and `tickets/**` with separately reported counts; the run fails when either population is empty; and every failure the extension surfaces is either repaired or filed.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`623c84fc`**, published only after its two blockers landed with it. `make full` exit 0 on the merged tree, 1,091 release tests.
+
+**Coverage went from 245 ticket citations to 923 across 494 live files** — 263 ticket, 655 docs, 5 fixture, with the two populations counted and floored separately so neither can collapse into the other.
+
+### `main` was held red rather than pushed and fixed forward
+
+The extension surfaced 3 real failures in `docs/research/**`, outside its own scope. The branch was merged **locally** and `origin/main` deliberately left 9 commits behind while the two repairs were dispatched and landed. `make citations` went 3 → 1 → 0; the gate ran once on the complete set.
+
+### The coordinator's brief was false on the load-bearing point
+
+I wrote that a docs tree "has no status, so it is checked unconditionally, as the fixture is". **Documents carry kind-specific status facets and three ADRs are `superseded`** — checking docs unconditionally would have demanded superseded ADRs match today's tree, which is precisely the unsatisfiable condition this ticket family exists to avoid.
+
+The worker defined terminal as **`superseded` only** — the one value in `docs/document-metadata.md` meaning *replaced*, read as `decision_status` on a decision and `disposition` on a research record. Accepted, complete, rejected and informational stay checked, each still being the standing account of its own conclusion. **`implementation_status` is deliberately never consulted**, because the metadata contract calls it a retained high-water mark rather than a live mirror. Retired extents stay writable through the existing bare-path rule, so nothing new was needed for the dated-correction convention.
+
+### ADR 0074: one caught failure, five real ones
+
+The extension flagged one drifted `freeze` citation. Reading the sentence found **all five had drifted** — and four of them still landed *inside* their files, so they resolved silently against unrelated code (723→877, 1021→1960, 826→1115, 412→581). The fifth named a file the terminal had moved out of and pointed past the end of a 142-line file. All five now pin the terminal's own signature, so they break if a terminal stops consuming `self` — the property the Fact actually asserts, rather than a line number that happens to exist.
+
+### A checker gap fixed on merit
+
+Ten upstream-tree citations were spelled as those projects spell them. The script already skipped that category with a stated rationale; its recognizer was version-pinned-path-only. A path is now external when it has a `/` **and its leading segment is a component of no tracked path** — deliberately over components rather than root entries, because `codec/encode.rs` and `semantic/identity.rs` name inner directories, and a root-entry test would call every unresolvable partial path external and silently stop reporting the drift this check exists for. A bare filename is never external, for the same reason.
+
+### Its own first drafts added four failures
+
+The worker's initial versions of the two repair tickets quoted the broken citations in prose, adding four new failures. Fixed by adopting the bare-path-plus-prose-extent convention, with the reason recorded in each. Both repair workers were briefed on that trap and both avoided it, verifying their counts fell by exactly the expected amount with nothing new.
+
+### Demonstrations
+
+Bad path, past-EOF line, and absent anchor each fail by name in the docs population; both population floors fail on an empty corpus; and a **false-but-resolving** anchor still passes, preserving the boundary. The floor demos ran in an isolated fixture repo against a byte-identical script copy, so the real corpus was never edited to make a floor fire — and the superseded skip is what emptied the docs population, proving both mechanisms at once.

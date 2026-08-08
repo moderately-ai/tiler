@@ -1,7 +1,7 @@
 ---
 id: give-the-two-runtime-record-external-citations-their-provenance
 title: Give the two runtime-record external citations their provenance
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [extend-the-citation-check-to-docs-and-repair-adr-0079-s-drifted-test-citation]
@@ -9,9 +9,6 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-give-the-
-lease_expires_at: 1786161552
 ---
 ## What the docs citation check surfaced
 
