@@ -1,7 +1,7 @@
 ---
 id: correct-the-no-bf16-backend-vertical-clause-in-the-status-record
 title: Correct the no-BF16-backend-vertical clause in the status record
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786178177
 ---
 ## The clause the 2026-08-05 correction did not reach
 

@@ -1,7 +1,7 @@
 ---
 id: size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them
 title: Size the metal AOT ALL arrays whose count coupling does not rescue them
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [size-the-four-hand-written-metal-all-arrays-from-their-types]
@@ -9,6 +9,9 @@ scopes: [implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [enumeration, tests]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786178177
 ---
 
 The paired counterparts of the four `ALL` arrays just repaired in `tiler-metal`. **A coupling that looks like it guards these does not**, which is why this is p1 rather than a mechanical follow-up.
