@@ -1,7 +1,7 @@
 ---
 id: remove-the-workload-shapes-from-the-concatenate-normative-definition
 title: Remove the workload shapes from the concatenate normative definition
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786188969
 ---
 ## A pinned-workload shape reaches canonical operation identity
 

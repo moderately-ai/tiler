@@ -1,7 +1,7 @@
 ---
 id: complete-the-runtime-product-bullet-s-device-execution-retention-claim
 title: Complete the runtime product bullet s device execution retention claim
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786188969
 ---
 
 `docs/status.md`'s runtime-product bullet says device-execution code "is retained in `prototypes/serial-sum-run`". That was complete when written and is not now.
