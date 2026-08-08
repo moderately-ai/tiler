@@ -204,7 +204,7 @@ pub(crate) const ENVELOPE_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.envel
 /// under a superseded artifact domain can never equal one taken under the
 /// current domain.
 ///
-/// It is a fourth domain rather than a reuse of [`MANIFEST_DIGEST_DOMAIN`]
+/// It is a separate domain rather than a reuse of [`MANIFEST_DIGEST_DOMAIN`]
 /// because the two name different subjects: that one covers the manifest bytes
 /// this digest is written *into*, and a shared domain would let the two be
 /// confused by anything that ever compares them out of position.
