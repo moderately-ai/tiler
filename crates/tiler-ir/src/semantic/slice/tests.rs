@@ -428,9 +428,10 @@ fn the_two_reserved_relations_are_refused_under_their_own_rules() {
         "slice.selection.symbolic-offset-unsupported"
     );
     let message = refusal_message(&[16, 128], symbolic);
-    assert!(
-        message.contains("literal offsets") && message.contains("bound extent symbol"),
-        "the refusal states the delivered half and the missing one: {message}"
+    assert_eq!(
+        message,
+        "symbolic-window is reserved and not admitted: this family selects at literal offsets, and its current selection grammar has no source-bearing offset field",
+        "the refusal states the literal form and the selection-schema boundary exactly"
     );
 
     // Both are decided before the record's field shape, so a reserved relation

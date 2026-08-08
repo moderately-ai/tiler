@@ -435,6 +435,8 @@ These are prerequisites, not duplicates, and the ladder does not restate them:
 - **Quantized values.** Milestone 2Q owns the quantized-value vertical proof that L7 needs.
 - **Numerical contracts per family.** [Numerical semantics](numerical-semantics.md) and the [operation conformance matrix](research/numerics/operation-conformance-matrix.md) own what each family's contract must answer.
 
+**Corrected 2026-08-08 by [`correct-the-symbolic-coefficient-era-index-vocabulary-claims`](../tickets/correct-the-symbolic-coefficient-era-index-vocabulary-claims.md): the sub-tensor-selection hand-off and its support-matrix row both treated the symbolic form as owing an index-vocabulary widening. That was true before the symbolic-coefficient landing and is false now. `IndexRegionBuilder::sourced_linear_combination` accepts a `SourcedIndexInteger` addend and `LinearTermData::coefficient` retains it in a coordinate expression, so `t + C` is expressible at the index layer; a symbolic addend normalizes to `C * 1`, while the stored constant remains exact. The literal slice remains the only admitted form because its semantic selection grammar is literal-only: `SliceAxisSelection::Window` stores `offset: u64`, and `decode_axis` refuses `symbolic-window` before it parses relation fields. A source-bearing selection therefore needs its own semantic schema, identity, inference, and bounds decision; the existing general shape-inference work is not that selection path. The rotary-table trigger remains unmet at that semantic-family boundary, and the strided trigger is unchanged.
+
 ### Explicitly deferred, with reconsideration triggers
 
 Recorded so that absence is a tracked position rather than an oversight. None has a reserved seam; each would be new architectural work.

@@ -70,12 +70,15 @@ grep -n 'pub enum ExtentTerm' -A 8 crates/tiler-ir/src/shape/env/constraint.rs
 #    ExtentTerm leaves; no leaf nests another relation, so the check reaches the
 #    admitted additive form without mistaking it for a general expression tree.
 
-# 3. No coordinate expression carries an extent symbol. IndexNode has five
-#    variants; SourcedExtent appears only as a FloorDiv or Modulo divisor, and
-#    LinearCombination's constant is a literal IndexInteger.
+# 3. A coordinate expression can carry a declared symbol as a coefficient or
+#    addend. Its stored LinearCombination constant remains exact because a
+#    symbolic addend normalizes to a `symbol * 1` term.
 grep -n 'enum IndexNode' -A 25 crates/tiler-ir/src/index/model.rs
-#    Positive control: that same read does find SourcedExtent, in the divisor
-#    position, so a search for a symbol-carrying node is not returning nothing.
+grep -n 'pub fn sourced_linear_combination' -A 115 crates/tiler-ir/src/index/builder.rs
+#    Positive control: the same read finds SourcedIndexInteger on
+#    LinearTermData::coefficient and the sourced constructor's symbolic-addend
+#    branch, so the population includes the coordinate position rather than
+#    only the SourcedExtent divisors.
 
 # 4. One value has at most one writer, and an externally bound input is never
 #    written. `definitions` returns MultipleWriters, ExternalValueWritten, and
@@ -91,6 +94,8 @@ grep -rn 'ShapeExpr' crates/
 #    returns nine files, so the tree is searchable and the empty result above is
 #    an absence rather than a broken invocation.
 ```
+
+**Corrected 2026-08-08 by [`correct-the-symbolic-coefficient-era-index-vocabulary-claims`](../../../tickets/correct-the-symbolic-coefficient-era-index-vocabulary-claims.md): check 3's former headline, "No coordinate expression carries an extent symbol", was false after the coefficient landing. `SourcedExtent` still occurs only in divisor fields, but the conclusion had ceased to follow: `SourcedIndexInteger` carries a declared symbol in `LinearTermData::coefficient`, and the sourced builder turns a symbolic addend into a term with coefficient one. This record's concatenate conclusion is unchanged because its offsets are literal; the slice family's separate blocker is instead its literal-only selection grammar, which refuses `symbolic-window` before any source-bearing offset can reach inference.
 
 ## The elimination
 
