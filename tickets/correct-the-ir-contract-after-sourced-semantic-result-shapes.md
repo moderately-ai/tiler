@@ -1,7 +1,7 @@
 ---
 id: correct-the-ir-contract-after-sourced-semantic-result-shapes
 title: Correct the IR contract after sourced semantic result shapes
-status: todo
+status: in-progress
 priority: p1
 dependencies: [correct-the-symbolic-coefficient-era-index-vocabulary-claims]
 related: [resolve-semantic-shape-inference-over-symbolic-extents]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, shapes, correction]
+claimed_from: todo
+assignee: w-sol-foundation
+lease_expires_at: 1786210891
 ---
 ## Why this exists
 

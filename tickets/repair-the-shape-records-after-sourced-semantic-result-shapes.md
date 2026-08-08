@@ -1,7 +1,7 @@
 ---
 id: repair-the-shape-records-after-sourced-semantic-result-shapes
 title: Repair the shape records after sourced semantic result shapes
-status: todo
+status: in-progress
 priority: p1
 dependencies: [correct-the-symbolic-coefficient-era-index-vocabulary-claims]
 related: [repair-the-records-the-sourced-semantic-shape-falsifies]
@@ -9,6 +9,9 @@ scopes: [research/shapes]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, shapes, correction]
+claimed_from: todo
+assignee: w-terra-shapes
+lease_expires_at: 1786210891
 ---
 ## Why this exists
 
