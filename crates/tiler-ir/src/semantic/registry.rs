@@ -3950,6 +3950,97 @@ mod tests {
         );
     }
 
+    /// Returns the first shape-spelled bracketed run in one definition's text.
+    ///
+    /// A run is shape-spelled when its comma-separated tokens are each either a
+    /// run of digits or one uppercase letter standing for an extent symbol, and
+    /// at least one token is numeric. `[8, 0, 128]` and `[8, T, 128]` match; a
+    /// bracketed citation or a prose aside does not, because a lowercase letter
+    /// or any other character disqualifies its token.
+    fn shape_spelled_run(text: &str) -> Option<&str> {
+        let mut opened: Option<usize> = None;
+        for (index, byte) in text.bytes().enumerate() {
+            match byte {
+                b'[' => opened = Some(index),
+                b']' => {
+                    let Some(start) = opened.take() else { continue };
+                    let inner = &text[start + 1..index];
+                    let mut numeric = false;
+                    let admitted = inner.split(',').map(str::trim).all(|token| {
+                        if !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_digit()) {
+                            numeric = true;
+                            return true;
+                        }
+                        token.len() == 1 && token.bytes().all(|byte| byte.is_ascii_uppercase())
+                    });
+                    if admitted && numeric {
+                        return Some(&text[start..=index]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// No registered normative definition names a concrete tensor shape.
+    ///
+    /// A definition's bytes are folded verbatim into identity — both
+    /// [`encode_operation_definition`] and [`encode_type_definition`]
+    /// `push_slice` the text — so an illustration written at one workload's
+    /// extents makes that workload's dimensions part of a governed family's
+    /// registered meaning, and retuning the workload would rewrite the family's
+    /// identity. Every family states its rules over its operands instead. This
+    /// holds the whole registry to that rather than one family at a time, so a
+    /// family added later inherits the check instead of needing its own.
+    ///
+    /// **What it reads, and what it therefore cannot claim.** The bracketed
+    /// spelling this crate's prose uses for a shape, per [`shape_spelled_run`].
+    /// A shape written `(8, 0, 128)` or `8x128` passes here, so this guards the
+    /// established spelling rather than proving that no definition mentions
+    /// extents at all.
+    ///
+    /// **Why there is no population floor here, which is a finding rather than
+    /// an omission.** The convention for a population a type cannot size is to
+    /// assert a floor so that "nothing ran" cannot look green. A floor was
+    /// written here and then removed, because it is a guard that cannot fail:
+    /// [`FrozenSemanticRegistry::standard`] is all-or-nothing. Dropping the
+    /// `reindex`, `broadcast`, `concatenate`, and `slice` registrations to
+    /// shrink the population does not yield a small registry — `freeze` refuses
+    /// with `IndexRealizationLawWithoutOperation { operation: … "reindex-f32" }`
+    /// because the realization laws registered alongside them no longer name a
+    /// registered operation. There is no reachable state in which this scan sees
+    /// a standard registry with fewer families, so construction is the
+    /// population guard and a floor beside it would only look like one.
+    #[test]
+    fn no_registered_normative_definition_names_a_concrete_shape() {
+        let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
+
+        for definition in registry.operation_definitions() {
+            let text = definition.normative_definition().as_str();
+            assert!(
+                shape_spelled_run(text).is_none(),
+                "the normative definition of {:?} names the concrete shape `{}`. Its bytes reach \
+                 identity, so a workload's extents written here become part of the family's \
+                 registered meaning and retuning that workload rewrites this operation's \
+                 identity. State the rule over the operands and leave the illustration in a doc \
+                 comment, which is not encoded. Full text: {text}",
+                definition.key(),
+                shape_spelled_run(text).unwrap_or_default(),
+            );
+        }
+        for definition in registry.value_type_definitions() {
+            let text = definition.normative_definition().as_str();
+            assert!(
+                shape_spelled_run(text).is_none(),
+                "the normative definition of {:?} names the concrete shape `{}`, which reaches \
+                 identity exactly as an operation's does. Full text: {text}",
+                definition.key(),
+                shape_spelled_run(text).unwrap_or_default(),
+            );
+        }
+    }
+
     #[test]
     fn governed_constant_rejects_every_non_binary32_payload() {
         fn rejection_code(error: &RegistryError) -> &str {

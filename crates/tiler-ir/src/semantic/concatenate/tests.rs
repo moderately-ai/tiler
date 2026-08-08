@@ -486,8 +486,10 @@ fn the_normative_reference_states_the_zero_extent_rule_and_the_extent_refusal() 
          inherited from whatever the empty case happens to do: {reference}"
     );
     assert!(
-        reference.contains("[8, 0, 128] with [8, T, 128]"),
-        "and it is stated at the shape the pinned prefill reaches: {reference}"
+        reference.contains("yields that other operand's extent on the concatenated axis"),
+        "and it is stated over the operands rather than at one workload's extents: the \
+         illustration at the pinned prefill shape lives in `concatenate_result_shape`'s doc \
+         comment, which is not encoded, because this text is: {reference}"
     );
     assert!(
         reference.contains("refused rather than saturated or wrapped"),
