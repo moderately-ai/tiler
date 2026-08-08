@@ -1,7 +1,7 @@
 ---
 id: pin-the-serial-sum-kernel-identitys-crossing-of-the-opaque-identity-bound
 title: Pin the serial sum kernel identity's crossing of the opaque identity bound
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi, bound-the-backend-entry-key-by-the-identity-it-carries, correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance, implementation/artifact, implementation/met
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, testing]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786179385
 ---
 
 The argument that changed `BackendEntryKey`'s bound is asserted by nothing, and the one test that looks as though it asserts it compares a fabricated byte vector against a constant. Filed by [`date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi`](date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi.md), which regenerated the figures in `docs/artifact-abi.md` and could not add the assertion because `crates/**` is outside its scope.
