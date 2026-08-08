@@ -64,7 +64,8 @@ metal.workspace = true
 # one lint. The workspace sets `unsafe_code = "forbid"`, which cannot be relaxed
 # by an inner attribute at any scope; this crate sets `deny` instead so the two
 # functions that must reach `MTLBuffer` storage can carry narrow, reasoned
-# `#[allow(unsafe_code)]` attributes. Every other member keeps `forbid`.
+# `#[allow(unsafe_code)]` attributes. `prototypes/serial-sum-run` is the other
+# checked `deny` exception; the remaining fourteen members keep `forbid`.
 #
 # **Decided by Tom on 2026-08-07** and recorded on
 # `decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`.
@@ -89,11 +90,11 @@ metal.workspace = true
 #   foreign API forces it.
 #
 # This crate's population is **two**, named in `src/device_buffer.rs`'s header.
-# `crates/tiler/tests/workspace_unsafe_sites.rs` walks every Rust source under
-# every declared workspace member and pins this pair's paths, complete item
-# signatures, and exact reasons beside the prototype pair. A third site, a
-# move, a removal, or a reason change is therefore a red test rather than an
-# absorbed edit.
+# `crates/tiler/tests/workspace_unsafe_sites.rs` cross-checks the explicit member
+# list against Cargo's actual workspace packages, enumerates their targets and
+# source-loading edges, and pins this pair's paths, complete item signatures,
+# and exact reasons beside the prototype pair. A third site, a move, a removal,
+# or a reason change is therefore a red test rather than an absorbed edit.
 #
 # The level moved with the first site that needed it rather than as a standalone
 # relaxation: a level moved with no site under it would be a relaxation for
@@ -101,13 +102,13 @@ metal.workspace = true
 #
 # **Restating the table has its own cost, and it is checked rather than
 # trusted.** A lint added, tightened, or removed in `[workspace.lints]` reaches
-# every other member through inheritance and does not reach this one.
+# the fourteen inheriting members and neither checked `deny` exception.
 # `src/lints.rs` reads both manifests and fails unless they differ by exactly
 # the one level above — so drift is a red test here, and matching the tables by
-# weakening a lint fails the same way. What it does not cover is the
-# workspace-wide half: a third member dropping `[lints] workspace = true`, and
-# `prototypes/serial-sum-run`'s identical divergence, still have no check of any
-# kind, which ADR 0079 records under its Consequences.
+# weakening a lint fails the same way. The workspace-wide inheritance test
+# holds the exception set to exactly these two and requires each to name an
+# in-member table check; the prototype runs this same reader through its
+# `tests/lint_table.rs` adapter. ADR 0079 records the combined boundary.
 [lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"

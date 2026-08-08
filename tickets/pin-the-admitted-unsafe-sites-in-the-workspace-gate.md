@@ -5,7 +5,7 @@ status: in-progress
 priority: p3
 dependencies: []
 related: [record-the-case-by-case-unsafe-boundary, prototype-metal-runtime-execution]
-scopes: [implementation/workspace, contracts/navigation, contracts/decisions, implementation/frontend, implementation/conformance, implementation/runtime, contracts/foundation]
+scopes: [implementation/workspace, implementation/cargo-lock, contracts/navigation, contracts/decisions, implementation/frontend, implementation/conformance, implementation/runtime, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, workspace, gate, rust-api, deferred]
@@ -138,14 +138,17 @@ Reactivate before admitting the first production unsafe site, or when the admitt
 
 Implemented the mechanical-inventory decision without changing ADR 0079's
 policy or admitting another site. `crates/tiler/tests/workspace_unsafe_sites.rs`
-derives all sixteen member roots from the root manifest, requires every member
-to contribute a Rust source, and reports 422 source files against a floor of
-400. It lexically removes line comments, nested block comments, strings, raw
-strings, and character literals before examining attributes, so the live doc
-comment and synthetic prose fixtures do not enter the population. It accepts
-only a direct per-item `#[allow(...)]` with the whole `unsafe_code` lint name
-and one ordinary literal `reason`, reads the following complete function
-signature through its body brace, and reports unsupported attribute/meta/item
+cross-checks the sixteen explicit member roots against Cargo's actual metadata
+package set, requires every package to contribute source, enumerates all 63
+distinct target roots regardless of extension, and reports 422 source files
+against a floor of 400. It follows canonically contained literal `include!` and
+source-file-root `#[path]` edges with cycle-safe deduplication. It lexically removes
+line comments, nested block comments, strings, raw strings, and character
+literals before examining attributes, so the live doc comment and synthetic
+prose fixtures do not enter the population. It accepts only a direct
+source-file-root-function `#[allow(...)]` with the whole `unsafe_code` lint name and
+one ordinary literal `reason`, reads the following complete function signature
+through its body brace, and reports unsupported attribute/meta/item/source-load
 forms or unclosed lexical constructs rather than skipping them.
 
 The exact pin is four `(workspace-relative path, complete normalized item
@@ -159,7 +162,7 @@ the lint-level authority; this inventory neither copies nor relaxes them.
 The clean focused run printed:
 
 ```text
-unsafe-site census: 422 Rust source file(s) across 16 member(s); 4 admitted site(s): [("crates/tiler-conformance/src/device_buffer.rs", "pub(crate) fn write_bytes(buffer: &Buffer, bytes: &[u8])"), ("crates/tiler-conformance/src/device_buffer.rs", "pub(crate) fn read_bytes(buffer: &Buffer, len: usize) -> Vec<u8>"), ("prototypes/serial-sum-run/src/buffer.rs", "pub fn write_f32(buffer: &Buffer, values: &[f32])"), ("prototypes/serial-sum-run/src/buffer.rs", "pub fn read_f32(buffer: &Buffer, count: usize) -> Vec<f32>")]
+unsafe-site census: 422 source file(s), 63 Cargo target(s), and 16 package(s); 4 admitted site(s): [("crates/tiler-conformance/src/device_buffer.rs", "pub(crate) fn write_bytes(buffer: &Buffer, bytes: &[u8])"), ("crates/tiler-conformance/src/device_buffer.rs", "pub(crate) fn read_bytes(buffer: &Buffer, len: usize) -> Vec<u8>"), ("prototypes/serial-sum-run/src/buffer.rs", "pub fn write_f32(buffer: &Buffer, values: &[f32])"), ("prototypes/serial-sum-run/src/buffer.rs", "pub fn read_f32(buffer: &Buffer, count: usize) -> Vec<f32>")]
 ```
 
 That clean run reaches all four live attributes, all of which wrap. The
@@ -201,8 +204,71 @@ The added mapped scopes reflect the paths the audited implementation actually
 needed: `implementation/frontend` owns the facade integration test,
 `implementation/conformance` owns removal of the superseded local test and its
 references, `implementation/runtime` owns the prototype manifest correction,
-and `contracts/foundation` owns the architecture correction. The original
-`implementation/workspace` and `contracts/decisions` scopes own the root lint
-comment and ADR closure. `contracts/navigation` remains declared from the
-claimed ticket, but the full navigation read found no catalog row whose current
-meaning changed, so no navigation file was edited.
+`contracts/foundation` owns the architecture correction, and
+`implementation/cargo-lock` owns the direct test-dependency edge recorded in
+the lockfile. The original `implementation/workspace` and
+`contracts/decisions` scopes own the root lint comment and ADR closure.
+`contracts/navigation` remains declared from the claimed ticket, but the full
+navigation read found no catalog row whose current meaning changed, so no
+navigation file was edited.
+
+### Review amendment, 2026-08-08
+
+Independent review of `1baf7cdf` found two population escapes and two identity
+gaps. The original literal-member/`.rs` walk was correct for the current
+422/16/4 census but not authoritative over what Cargo can compile: an implicit
+in-tree path member, non-`.rs` target, literal or generated include, and
+`#[path]` source could all carry an unseen permission. A `macro_rules!`
+template invoked twice was one lexical pin but two compiled permissions, and a
+same-signature/reason function moved beneath an inline module retained the old
+path/signature/reason key. The three conformance-manifest sentences saying
+every other member inherited and no workspace check existed were stale too.
+
+The amendment uses `cargo metadata --locked --no-deps`, already used by
+`workspace_population.rs`, because it is the only current source-truthful
+authority for Cargo's actual workspace membership and target roots. It resolves
+manifests but builds or runs no target, so invoking it from this integration
+test is not recursive. `Cargo.lock` cannot substitute: it records resolved
+packages, not which are workspace members or which source path each target
+compiles. The explicit roots and metadata roots must agree exactly; every
+target must be unique, readable, and canonically inside its owning package.
+
+Literal local `include!` and source-file-root `#[path]` files are followed inside the
+governed package roots. The visited set terminates cycles and canonicalizes
+aliases; any permission found through those forms is refused because the same
+lexical file may be loaded more than once. Computed/`OUT_DIR` includes, nested
+`#[path]`, target roots outside their owner, and visible permissions within
+`macro_rules!` or another token-generating invocation fail closed. Current
+permission pins admit source-file-root functions only; their file paths carry
+the current out-of-line module identity. Deeper inline module/impl/function
+sites are rejected until a reviewed semantic-path identity is designed. This
+narrows the scanner's supported identity, not ADR 0079's policy, and admits no
+new site.
+
+Each escape was applied to the live prototype, compiled successfully, refused
+by the inventory with exit 101, and restored:
+
+```text
+unsafe-sites.prototypes/serial-sum-run/src/hidden.inc: `pub(super) fn hidden_included_site() -> u8` carries a permission in a source reached through include!/#[path] (["prototypes/serial-sum-run/src/buffer.rs:25 via include!", "prototypes/serial-sum-run/src/buffer.rs:26 via include!"]); nonstandard loads can duplicate semantic sites and are outside the file-root pin boundary
+unsafe-sites.prototypes/serial-sum-run/src/hidden.inc: `pub(super) fn hidden_path_site() -> u8` carries a permission in a source reached through include!/#[path] (["prototypes/serial-sum-run/src/buffer.rs:25 via #[path]"]); nonstandard loads can duplicate semantic sites and are outside the file-root pin boundary
+unsafe-site census: explicit root members and cargo metadata workspace packages differ; implicit/metadata-only: ["prototypes/serial-sum-run/hidden-member"]; explicit-only: []
+unsafe-sites.prototypes/serial-sum-run/tests/hidden.inc: `fn hidden_non_rs_target_site() -> u8` admits unsafe_code and is not pinned; ADR 0079 makes a new site a new decision
+unsafe-sites.prototypes/serial-sum-run/src/buffer.rs:25: computed include! is unsupported; generated or OUT_DIR sources cannot be inventoried
+unsafe-site census: Cargo target root /Users/tsanterre/workspace/github.com/moderately-ai/.worktrees/tiler/pin-the-admitted-unsafe-sites-in-the-workspace-gate/edit/hidden-outside.inc escapes owning package /Users/tsanterre/workspace/github.com/moderately-ai/.worktrees/tiler/pin-the-admitted-unsafe-sites-in-the-workspace-gate/edit/prototypes/serial-sum-run
+unsafe-sites.prototypes/serial-sum-run/src/buffer.rs:29: unsafe-code permission appears inside a token-generating macro context; expansion multiplicity has no admitted pin identity
+unsafe-sites.prototypes/serial-sum-run/src/buffer.rs:38: nested permission is outside the file-root pin boundary; module, impl, and function semantic paths are unsupported
+```
+
+The include probe loaded the same file from two modules, the macro probe
+invoked one template in two modules, the implicit member appeared as the
+seventeenth `workspace_members` entry, the non-`.rs` target appeared as the
+64th target, the generated probe used a real temporary build script and
+`OUT_DIR`, and the semantic-move probe re-exported the nested function under
+its original public name.
+
+The restored focused scanner run passed all eleven tests and printed the clean
+422-source/63-target/16-package/four-pin census. The final `make full` passed:
+workspace check and Clippy with warnings denied, 3,240 nextest tests with eight
+skipped, workspace doc-tests, rustdoc with warnings denied, 1,116 release
+numerical tests with three skipped, ticket lint, and shellcheck. The separate
+citation gate resolved 932 pinned citations and 6,219 local links.

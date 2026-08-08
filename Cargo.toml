@@ -47,6 +47,7 @@ num-traits = "0.2.19"
 # `deny` instead, and neither is this one. Bytes are identical by specification
 # and pinned by test.
 sha2 = "0.11.0"
+serde_json = "1.0.151"
 # `tiler` sorts here and is deliberately absent. It is the consumer-facing
 # facade, so nothing in this workspace may depend on it, and an entry here would
 # only make that edge easy to add by accident.
@@ -135,13 +136,15 @@ opt-level = 1
 #   tables drift without either.
 #
 # The per-site half is held separately by
-# `crates/tiler/tests/workspace_unsafe_sites.rs`. It derives these member roots,
-# walks every Rust source under them, and pins the four admitted permissions by
-# workspace-relative path, complete item signature, and exact reason. Its lexer
-# discards comments and strings, recognizes wrapped direct attributes, and
-# fails closed on permission syntax outside its stated boundary. The compiler
-# and the three checks above remain the lint-level authority; that test does not
-# restate their tables.
+# `crates/tiler/tests/workspace_unsafe_sites.rs`. It cross-checks the explicit
+# member roots above against Cargo's actual metadata package set, enumerates all
+# metadata target roots, walks the member source trees, and follows literal
+# local source-loading attributes/macros before pinning the four admitted
+# permissions by workspace-relative path, complete item signature, and exact
+# reason. Its lexer discards comments and strings, recognizes wrapped direct
+# attributes, and fails closed on unsupported permission or source-loading
+# syntax. The compiler and the three checks above remain the lint-level
+# authority; that test does not restate their tables.
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"

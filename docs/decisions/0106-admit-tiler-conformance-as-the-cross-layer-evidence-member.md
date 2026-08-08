@@ -109,10 +109,12 @@ The admission deliberately did not pre-authorize a weaker level. Admitting a nam
 population in this crate is unchanged. The conformance-local token count named
 above was removed when `crates/tiler/tests/workspace_unsafe_sites.rs`
 superseded it with one workspace-wide inventory. That test derives every
-member root and pins this pair together with the prototype pair by exact path,
-complete item signature, and reason, so an addition, move, removal, or reason
-change is now a red test. ADR 0079 records the scanner's boundary and the
-review obligations it deliberately does not mechanize.
+actual Cargo package and target root, cross-checks the explicit member list,
+and pins this pair together with the prototype pair by exact path, complete
+item signature, and reason, so an implicit member, hidden source, addition,
+move, removal, or reason change is now a red test. ADR 0079 records the
+scanner's fail-closed source-loading/expansion boundary and the review
+obligations it deliberately does not mechanize.
 
 ## Consequences
 

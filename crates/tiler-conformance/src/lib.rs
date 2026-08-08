@@ -132,19 +132,20 @@
 //! oracle comparison, evidence attribution — contains none and does not need
 //! any: `device_buffer` exposes a byte interface, so every width,
 //! stride, and element count stays in safe code where it can be perturbed.
-//! `crates/tiler/tests/workspace_unsafe_sites.rs` walks every declared member's
-//! Rust sources and pins all four workspace permissions by path, complete item
-//! signature, and exact reason, including this crate's pair.
+//! `crates/tiler/tests/workspace_unsafe_sites.rs` cross-checks Cargo's actual
+//! package/target population against the explicit members, follows supported
+//! local source loads, and pins all four workspace permissions by path,
+//! complete item signature, and exact reason, including this crate's pair.
 //!
 //! **Not inheriting has a second cost, and it is also checked.** A member that
 //! cannot inherit one entry of the workspace lint table has to restate all of
 //! it, and a restatement drifts: a lint added, tightened, or removed
-//! workspace-wide reaches every other member and not this one. `lints` reads
-//! both manifests and fails unless they differ by exactly that one level. The
-//! workspace-wide half of the property — a third member dropping inheritance,
-//! or `prototypes/serial-sum-run`'s identical divergence — is not held by it or
-//! by anything else, and its header states so rather than leaving a reader to
-//! assume the coverage is wider than it is.
+//! workspace-wide reaches the fourteen inheriting members and neither checked
+//! exception. `lints` reads both manifests and fails unless they differ by
+//! exactly that one level; the prototype runs the same reader. The
+//! workspace-wide inheritance test holds the exception set to these two and
+//! requires both checks, so a third uninherited member or either table drifting
+//! is a red test.
 //!
 //! # Modules
 //!

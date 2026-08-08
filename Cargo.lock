@@ -1701,6 +1701,7 @@ dependencies = [
 name = "tiler"
 version = "0.0.0"
 dependencies = [
+ "serde_json",
  "tiler-artifact",
  "tiler-ir",
  "tiler-macros",

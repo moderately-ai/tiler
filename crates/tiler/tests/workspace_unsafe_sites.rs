@@ -5,7 +5,7 @@
 //! two members that must reach Metal buffer storage restate it as `deny`, so an
 //! unsafe operation there still needs a local lint permission. This test holds
 //! the other half: the exact `(workspace-relative path, item signature,
-//! reason)` of every permission.
+//! reason)` of every permission at a source-file-root function.
 //!
 //! # Why this is a workspace test
 //!
@@ -18,7 +18,17 @@
 //!
 //! # Parsing boundary
 //!
-//! This is a deliberately narrow Rust lexer, not a Rust parser. It recognizes
+//! Cargo already exposes the actual workspace packages and target roots, so
+//! this test invokes `cargo metadata --locked --no-deps` just as
+//! `workspace_population.rs` does. That subcommand resolves manifests but
+//! never compiles or runs a target, so it does not recurse into this test. A
+//! `Cargo.lock` read alone would not be source-truthful: it does not identify
+//! workspace membership or target source paths. The explicit root-member list
+//! and metadata package roots must agree exactly, closing Cargo's implicit
+//! in-tree path-member rule, and every metadata target root must remain inside
+//! its owning package.
+//!
+//! The source side is a deliberately narrow Rust lexer, not a Rust parser. It recognizes
 //! line comments, nested block comments, ordinary and raw strings, character
 //! literals, identifiers, and balanced delimiters. Comments and strings are
 //! discarded before attributes are examined, so prose and the live doc-comment
@@ -27,24 +37,36 @@
 //! list contains the whole lint name and one ordinary string-literal `reason`.
 //! The following item must be a function, and its complete signature is read
 //! through the top-level body brace, so wrapped attributes and wrapped
-//! signatures are one site.
+//! signatures are one site. The initial census includes every `.rs` file under
+//! every actual package plus every metadata target root regardless of its
+//! extension. Literal local `include!` and `#[path]` sources are resolved
+//! canonically inside the governed package roots and visited once, so cycles
+//! terminate and aliases cannot escape; a permission in either nonstandard
+//! loading form is refused because one lexical file can be expanded into more
+//! than one semantic site. Computed includes — including `OUT_DIR` generation
+//! — and unsupported path forms fail rather than disappearing.
 //!
 //! Everything outside that boundary fails closed. An inner attribute, a
 //! `cfg_attr`, another attribute form that contains the lint token, a
-//! non-literal reason, an admitted module or implementation, an unclosed
-//! comment/string/delimiter, or the lint token anywhere outside a recognized
-//! direct allow is an error naming the file and line. ADR 0079 permits a
-//! function or module in principle, but the current population contains
-//! functions only; teaching this check another item form belongs in the same
-//! reviewed change that admits one.
+//! non-literal reason, a permission within `macro_rules!` or another visible
+//! token-generating invocation, a nested module/implementation/function site,
+//! an unclosed comment/string/delimiter, or the lint token anywhere outside a
+//! recognized direct allow is an error naming the file and line. ADR 0079
+//! permits a function or module in principle, but the current population
+//! contains source-file-root functions only; teaching this check a deeper semantic-path or
+//! expansion identity belongs in the same reviewed change that admits one.
 //!
 //! Only permissions are inventoried. The compiler remains the authority that
 //! makes an unsafe operation without one fail: the workspace-wide lint checks
 //! keep every member at `forbid` or `deny`, and this test does not restate that
 //! table.
 
+use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use serde_json::Value;
 
 /// One exact permission admitted under ADR 0079.
 #[derive(Clone, Copy, Debug)]
@@ -120,6 +142,13 @@ const RUST_SOURCE_FILE_FLOOR: usize = 400;
 /// narrow read of the `members` array stops early.
 const MEMBER_POPULATION_FLOOR: usize = 12;
 
+/// The smallest Cargo target population metadata may report.
+///
+/// The audited amendment base has 63 distinct target roots. The exact paths
+/// are always enumerated and duplicate roots are refused; this floor catches a
+/// truncated metadata read without becoming a second target manifest.
+const TARGET_POPULATION_FLOOR: usize = 50;
+
 /// One found site's exact item and reason, keyed by path and signature.
 type Sites = BTreeMap<(String, String), String>;
 
@@ -128,6 +157,23 @@ type Sites = BTreeMap<(String, String), String>;
 struct Scan {
     sites: Sites,
     errors: Vec<String>,
+    loads: Vec<SourceLoad>,
+}
+
+/// Cargo's actual governed source roots.
+#[derive(Debug)]
+struct WorkspacePopulation {
+    member_roots: Vec<PathBuf>,
+    target_roots: Vec<PathBuf>,
+    target_count: usize,
+}
+
+/// One literal compiler source-loading edge found in a source file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SourceLoad {
+    kind: &'static str,
+    literal: String,
+    line: usize,
 }
 
 /// A lexed Rust token with the source location used by diagnostics.
@@ -148,30 +194,24 @@ enum TokenKind {
 #[test]
 fn the_workspace_unsafe_sites_are_exactly_the_four_admitted_ones() {
     let root = workspace_root();
-    let members = workspace_members(&root);
-    assert!(
-        members.len() >= MEMBER_POPULATION_FLOOR,
-        "unsafe-site census: the root manifest yielded {} member(s), below the floor of \
-         {MEMBER_POPULATION_FLOOR}; a scan over a collapsed member set cannot say no",
-        members.len(),
-    );
-
-    let sources = workspace_sources(&root, &members);
+    let population = workspace_population(&root)
+        .unwrap_or_else(|error| panic!("unsafe-site source population failed:\n{error}"));
+    let sources = workspace_sources(&population.member_roots, &population.target_roots);
     assert!(
         sources.len() >= RUST_SOURCE_FILE_FLOOR,
         "unsafe-site census: found {} Rust source file(s) across {} member(s), below the floor \
          of {RUST_SOURCE_FILE_FLOOR}; a shrunken walk cannot report a clean inventory",
         sources.len(),
-        members.len(),
+        population.member_roots.len(),
     );
 
-    let scan = scan_files(&root, &sources);
+    let (scan, source_count) = scan_files(&root, &population.member_roots, &sources);
     let violations = validate_pins(scan, &ADMITTED_SITES);
     eprintln!(
-        "unsafe-site census: {} Rust source file(s) across {} member(s); {} admitted site(s): \
-         {:?}",
-        sources.len(),
-        members.len(),
+        "unsafe-site census: {source_count} source file(s), {} Cargo target(s), and {} package(s); \
+         {} admitted site(s): {:?}",
+        population.target_count,
+        population.member_roots.len(),
         ADMITTED_SITES.len(),
         ADMITTED_SITES
             .iter()
@@ -306,6 +346,103 @@ fn unsupported_permission_syntax_fails_closed() {
     );
 }
 
+#[test]
+fn the_same_pin_moved_into_a_module_is_refused() {
+    let source = format!(
+        "mod moved {{\n{}\n}}\n",
+        planted_site("write", "admitted reason")
+    );
+    let scan = scan_text("crates/planted/src/lib.rs", &source);
+    assert!(
+        scan.errors
+            .iter()
+            .any(|error| error.contains("nested permission is outside the file-root pin boundary")),
+        "nested-move failure: {:?}",
+        scan.errors,
+    );
+    assert!(
+        scan.sites.is_empty(),
+        "a nested site was inventoried: {:?}",
+        scan.sites
+    );
+}
+
+#[test]
+fn a_permission_in_a_macro_template_is_refused_before_expansion_multiplies_it() {
+    let source = concat!(
+        "macro_rules! emit_site {\n",
+        "    ($module:ident) => {\n",
+        "        mod $module {\n",
+        "            #[allow(unsafe_code, reason = \"template reason\")]\n",
+        "            pub fn write(buffer: &Buffer) {}\n",
+        "        }\n",
+        "    };\n",
+        "}\n",
+        "emit_site!(first);\n",
+        "emit_site!(second);\n",
+    );
+    let scan = scan_text("crates/planted/src/lib.rs", source);
+    assert!(
+        scan.errors.iter().any(|error| error
+            .contains("unsafe-code permission appears inside a token-generating macro context")),
+        "macro-template failure: {:?}",
+        scan.errors,
+    );
+    assert!(
+        scan.sites.is_empty(),
+        "a macro template became one lexical site"
+    );
+}
+
+#[test]
+fn literal_source_loads_are_reported_and_computed_includes_fail_closed() {
+    let literal = scan_text(
+        "crates/planted/src/lib.rs",
+        "include!(\"hidden.inc\");\n#[path = \"module.inc\"]\nmod hidden;\n",
+    );
+    assert!(literal.errors.is_empty(), "{:?}", literal.errors);
+    assert_eq!(
+        literal.loads,
+        [
+            SourceLoad {
+                kind: "include!",
+                literal: "hidden.inc".to_owned(),
+                line: 1,
+            },
+            SourceLoad {
+                kind: "#[path]",
+                literal: "module.inc".to_owned(),
+                line: 2,
+            },
+        ],
+    );
+
+    let generated = scan_text(
+        "crates/planted/src/lib.rs",
+        "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+    );
+    assert!(
+        generated.errors.iter().any(|error| error.contains(
+            "computed include! is unsupported; generated or OUT_DIR sources cannot be inventoried"
+        )),
+        "computed-include failure: {:?}",
+        generated.errors,
+    );
+
+    let nested_path = scan_text(
+        "crates/planted/src/lib.rs",
+        "mod nested {\n    #[path = \"hidden.inc\"]\n    mod hidden;\n}\n",
+    );
+    assert!(
+        nested_path
+            .errors
+            .iter()
+            .any(|error| error.contains("nested #[path] resolution is unsupported")),
+        "nested-path failure: {:?}",
+        nested_path.errors,
+    );
+}
+
 /// One synthetic direct permission.
 fn planted_site(item: &str, reason: &str) -> String {
     format!(
@@ -343,12 +480,184 @@ fn workspace_root() -> PathBuf {
     root
 }
 
-/// The member paths declared by the root manifest.
+/// Cargo's actual workspace packages and target roots, cross-checked against
+/// the explicit root-member list.
+fn workspace_population(root: &Path) -> Result<WorkspacePopulation, String> {
+    let canonical_root = root.canonicalize().map_err(|error| {
+        format!(
+            "unsafe-sites.{}: workspace root is not canonical: {error}",
+            root.display()
+        )
+    })?;
+    let explicit_paths = explicit_member_paths(root);
+    let mut explicit_roots = BTreeSet::new();
+    for member in &explicit_paths {
+        let directory = root.join(member);
+        let canonical = directory.canonicalize().map_err(|error| {
+            format!(
+                "unsafe-sites.{}: explicit workspace member `{member}` is not a readable \
+                 directory: {error}",
+                root.join("Cargo.toml").display(),
+            )
+        })?;
+        if !canonical.starts_with(&canonical_root) {
+            return Err(format!(
+                "unsafe-sites.{}: explicit workspace member `{member}` resolves outside the \
+                 workspace root",
+                root.join("Cargo.toml").display(),
+            ));
+        }
+        if !explicit_roots.insert(canonical) {
+            return Err(format!(
+                "unsafe-sites.{}: explicit workspace member paths alias one directory",
+                root.join("Cargo.toml").display(),
+            ));
+        }
+    }
+
+    // This is the repository's existing workspace-population authority. Cargo
+    // metadata resolves manifests only; it does not build a target and cannot
+    // recursively run this integration test.
+    let output = Command::new(env!("CARGO"))
+        .args(["metadata", "--locked", "--no-deps", "--format-version", "1"])
+        .current_dir(&canonical_root)
+        .output()
+        .map_err(|error| format!("unsafe-site census: cargo metadata could not run: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "unsafe-site census: cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+    let metadata: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!("unsafe-site census: cargo metadata emitted invalid JSON: {error}")
+    })?;
+    let metadata_root = metadata_string(&metadata, "workspace_root", "metadata root")?;
+    let metadata_root = Path::new(metadata_root).canonicalize().map_err(|error| {
+        format!("unsafe-site census: metadata workspace root is not canonical: {error}")
+    })?;
+    if metadata_root != canonical_root {
+        return Err(format!(
+            "unsafe-site census: cargo metadata described workspace root {}, expected {}",
+            metadata_root.display(),
+            canonical_root.display(),
+        ));
+    }
+
+    let member_ids: BTreeSet<&str> = metadata_array(&metadata, "workspace_members", "metadata")?
+        .iter()
+        .map(|id| {
+            id.as_str().ok_or_else(|| {
+                "unsafe-site census: a workspace member ID is not a string".to_owned()
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    if member_ids.len() < MEMBER_POPULATION_FLOOR {
+        return Err(format!(
+            "unsafe-site census: cargo metadata yielded {} package(s), below the floor of \
+             {MEMBER_POPULATION_FLOOR}",
+            member_ids.len(),
+        ));
+    }
+
+    let mut actual_roots = BTreeSet::new();
+    let mut target_roots = BTreeSet::new();
+    let mut target_count = 0_usize;
+    for package in metadata_array(&metadata, "packages", "metadata")? {
+        let id = metadata_string(package, "id", "package")?;
+        if !member_ids.contains(id) {
+            continue;
+        }
+        let manifest = Path::new(metadata_string(package, "manifest_path", id)?);
+        let package_root = manifest
+            .parent()
+            .ok_or_else(|| format!("unsafe-site census: {id} has no manifest parent"))?
+            .canonicalize()
+            .map_err(|error| {
+                format!("unsafe-site census: {id}'s manifest root is not canonical: {error}")
+            })?;
+        if !package_root.starts_with(&canonical_root) {
+            return Err(format!(
+                "unsafe-site census: workspace package {id} lives outside the workspace root at {}",
+                package_root.display(),
+            ));
+        }
+        actual_roots.insert(package_root.clone());
+
+        let targets = metadata_array(package, "targets", id)?;
+        if targets.is_empty() {
+            return Err(format!(
+                "unsafe-site census: workspace package {id} has no Cargo targets"
+            ));
+        }
+        for target in targets {
+            target_count += 1;
+            let path = Path::new(metadata_string(target, "src_path", "Cargo target")?);
+            let canonical = path.canonicalize().map_err(|error| {
+                format!(
+                    "unsafe-site census: Cargo target root {} is not a readable file: {error}",
+                    path.display(),
+                )
+            })?;
+            if !canonical.starts_with(&package_root) {
+                return Err(format!(
+                    "unsafe-site census: Cargo target root {} escapes owning package {}",
+                    canonical.display(),
+                    package_root.display(),
+                ));
+            }
+            if !target_roots.insert(canonical.clone()) {
+                return Err(format!(
+                    "unsafe-site census: Cargo target root {} is compiled as more than one \
+                     target; permission identity would be ambiguous",
+                    canonical.display(),
+                ));
+            }
+        }
+    }
+    if actual_roots.len() != member_ids.len() {
+        return Err(format!(
+            "unsafe-site census: cargo metadata named {} workspace member ID(s) but {} package \
+             object(s) resolved",
+            member_ids.len(),
+            actual_roots.len(),
+        ));
+    }
+
+    let metadata_only: Vec<String> = actual_roots
+        .difference(&explicit_roots)
+        .map(|path| relative_display(&canonical_root, path))
+        .collect();
+    let explicit_only: Vec<String> = explicit_roots
+        .difference(&actual_roots)
+        .map(|path| relative_display(&canonical_root, path))
+        .collect();
+    if !metadata_only.is_empty() || !explicit_only.is_empty() {
+        return Err(format!(
+            "unsafe-site census: explicit root members and cargo metadata workspace packages \
+             differ; implicit/metadata-only: {metadata_only:?}; explicit-only: {explicit_only:?}",
+        ));
+    }
+    if target_count < TARGET_POPULATION_FLOOR {
+        return Err(format!(
+            "unsafe-site census: cargo metadata yielded {target_count} target(s), below the \
+             floor of {TARGET_POPULATION_FLOOR}",
+        ));
+    }
+
+    Ok(WorkspacePopulation {
+        member_roots: actual_roots.into_iter().collect(),
+        target_roots: target_roots.into_iter().collect(),
+        target_count,
+    })
+}
+
+/// The member paths declared literally by the root manifest.
 ///
 /// This narrow parser intentionally recognizes only the table-and-array form
-/// the repository uses. A dotted key or non-string array entry fails instead
-/// of silently shrinking the source population.
-fn workspace_members(root: &Path) -> Vec<String> {
+/// the repository uses. Cargo metadata is cross-checked against it, so an
+/// implicit path member cannot hide behind the parser's literal boundary.
+fn explicit_member_paths(root: &Path) -> Vec<String> {
     let manifest = root.join("Cargo.toml");
     let text = read(&manifest);
     let lines: Vec<&str> = text.lines().collect();
@@ -405,27 +714,49 @@ fn workspace_members(root: &Path) -> Vec<String> {
     );
 }
 
-/// Collects every Rust source beneath every declared member.
-fn workspace_sources(root: &Path, members: &[String]) -> Vec<PathBuf> {
-    let mut all = Vec::new();
-    for member in members {
-        let directory = root.join(member);
-        assert!(
-            directory.is_dir(),
-            "workspace member `{member}` is not a directory, so its unsafe sites cannot be read",
-        );
+/// Collects every Rust source beneath every actual member plus every Cargo
+/// target root, including target roots whose extension is not `.rs`.
+fn workspace_sources(member_roots: &[PathBuf], target_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut all = target_roots.to_vec();
+    for directory in member_roots {
         let mut sources = Vec::new();
-        collect_rust_sources(&directory, &mut sources);
+        collect_rust_sources(directory, &mut sources);
         assert!(
             !sources.is_empty(),
-            "workspace member `{member}` contributes no Rust source file; a member omitted from \
+            "workspace member `{}` contributes no Rust source file; a member omitted from \
              the walk would otherwise look safely empty",
+            directory.display(),
         );
         all.extend(sources);
     }
     all.sort();
     all.dedup();
     all
+}
+
+/// One required string property from metadata JSON.
+fn metadata_string<'a>(value: &'a Value, key: &str, owner: &str) -> Result<&'a str, String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("unsafe-site census: {owner} has no string `{key}`"))
+}
+
+/// One required array property from metadata JSON.
+fn metadata_array<'a>(value: &'a Value, key: &str, owner: &str) -> Result<&'a [Value], String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .ok_or_else(|| format!("unsafe-site census: {owner} has no array `{key}`"))
+}
+
+/// A stable workspace-relative display path.
+fn relative_display(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// Recursively collects Rust source and rejects symlinks at the scan boundary.
@@ -454,18 +785,37 @@ fn collect_rust_sources(directory: &Path, into: &mut Vec<PathBuf>) {
     }
 }
 
-/// Scans every source path.
-fn scan_files(root: &Path, sources: &[PathBuf]) -> Scan {
+/// Scans every initial source and follows literal local source-loading edges.
+fn scan_files(root: &Path, member_roots: &[PathBuf], sources: &[PathBuf]) -> (Scan, usize) {
     let mut whole = Scan::default();
-    for source in sources {
+    let mut queue: VecDeque<PathBuf> = sources.iter().cloned().collect();
+    let mut seen = BTreeSet::new();
+    let mut nonstandard_loaders: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+
+    while let Some(source) = queue.pop_front() {
+        if !seen.insert(source.clone()) {
+            continue;
+        }
         let relative = source
             .strip_prefix(root)
             .expect("a member source lies under the workspace root")
             .to_string_lossy()
             .replace('\\', "/");
-        let text = read(source);
+        let text = read(&source);
         let scan = scan_text(&relative, &text);
         whole.errors.extend(scan.errors);
+        for load in scan.loads {
+            match resolve_source_load(root, member_roots, &source, &load) {
+                Ok(loaded) => {
+                    nonstandard_loaders
+                        .entry(loaded.clone())
+                        .or_default()
+                        .push(format!("{relative}:{} via {}", load.line, load.kind));
+                    queue.push_back(loaded);
+                }
+                Err(error) => whole.errors.push(error),
+            }
+        }
         for (key, reason) in scan.sites {
             if whole.sites.insert(key.clone(), reason).is_some() {
                 whole.errors.push(format!(
@@ -475,7 +825,70 @@ fn scan_files(root: &Path, sources: &[PathBuf]) -> Scan {
             }
         }
     }
-    whole
+
+    for (loaded, loaders) in nonstandard_loaders {
+        let relative = relative_display(root, &loaded);
+        for ((path, item), _) in whole
+            .sites
+            .iter()
+            .filter(|((path, _), _)| path == &relative)
+        {
+            whole.errors.push(format!(
+                "unsafe-sites.{path}: `{item}` carries a permission in a source reached through \
+                 include!/#[path] ({loaders:?}); nonstandard loads can duplicate semantic sites \
+                 and are outside the file-root pin boundary",
+            ));
+        }
+    }
+    (whole, seen.len())
+}
+
+/// Resolves one literal source-loading edge and keeps it inside a governed
+/// workspace package. Canonicalization collapses aliases; the queue's visited
+/// set terminates cycles.
+fn resolve_source_load(
+    root: &Path,
+    member_roots: &[PathBuf],
+    source: &Path,
+    load: &SourceLoad,
+) -> Result<PathBuf, String> {
+    let candidate = source
+        .parent()
+        .expect("a source file has a parent")
+        .join(&load.literal);
+    let canonical = candidate.canonicalize().map_err(|error| {
+        format!(
+            "unsafe-sites.{}:{}: {} source `{}` is not a readable file: {error}",
+            relative_display(root, source),
+            load.line,
+            load.kind,
+            load.literal,
+        )
+    })?;
+    if !canonical.is_file() {
+        return Err(format!(
+            "unsafe-sites.{}:{}: {} source `{}` is not a file",
+            relative_display(root, source),
+            load.line,
+            load.kind,
+            load.literal,
+        ));
+    }
+    if !member_roots
+        .iter()
+        .any(|member| canonical.starts_with(member))
+    {
+        return Err(format!(
+            "unsafe-sites.{}:{}: {} source `{}` resolves outside every governed workspace \
+             package to {}",
+            relative_display(root, source),
+            load.line,
+            load.kind,
+            load.literal,
+            canonical.display(),
+        ));
+    }
+    Ok(canonical)
 }
 
 /// Scans one Rust source file for direct unsafe-code permissions.
@@ -486,15 +899,40 @@ fn scan_text(path: &str, source: &str) -> Scan {
             return Scan {
                 sites: Sites::new(),
                 errors: vec![error],
+                loads: Vec::new(),
             };
         }
     };
     let mut scan = Scan::default();
     let mut accounted = BTreeSet::new();
+    let macro_spans = token_generating_spans(&tokens);
+    let depths = curly_depths(path, &tokens, &mut scan.errors);
+    let (loads, load_errors) = source_loads(path, &tokens, &macro_spans, &depths);
+    scan.loads = loads;
+    scan.errors.extend(load_errors);
+
+    for (start, end) in &macro_spans {
+        let occurrences: Vec<usize> = (*start..=*end)
+            .filter(|position| ident(&tokens[*position], "unsafe_code"))
+            .collect();
+        if let Some(position) = occurrences.first() {
+            scan.errors.push(format!(
+                "unsafe-sites.{path}:{}: unsafe-code permission appears inside a \
+                 token-generating macro context; expansion multiplicity has no admitted pin \
+                 identity",
+                tokens[*position].line,
+            ));
+        }
+        accounted.extend(occurrences);
+    }
     let mut index = 0;
 
     while index < tokens.len() {
         if !punct(&tokens[index], "#") {
+            index += 1;
+            continue;
+        }
+        if inside_span(index, &macro_spans) {
             index += 1;
             continue;
         }
@@ -544,6 +982,15 @@ fn scan_text(path: &str, source: &str) -> Scan {
             index = end + 1;
             continue;
         }
+        if depths.get(index).copied().unwrap_or(0) != 0 {
+            scan.errors.push(format!(
+                "unsafe-sites.{path}:{}: nested permission is outside the file-root pin \
+                 boundary; module, impl, and function semantic paths are unsupported",
+                tokens[index].line,
+            ));
+            index = end + 1;
+            continue;
+        }
 
         let reason = match direct_allow_reason(path, &tokens, open, end) {
             Ok(reason) => reason,
@@ -580,6 +1027,210 @@ fn scan_text(path: &str, source: &str) -> Scan {
         }
     }
     scan
+}
+
+/// Token-tree spans whose contents can be emitted zero, one, or many times.
+///
+/// Direct `include!` is excluded: it has its own literal source-loading
+/// boundary. Every other visible macro invocation is a token-generating
+/// context, and `macro_rules! name { ... }` needs its named-definition shape
+/// recognized separately.
+fn token_generating_spans(tokens: &[Token]) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    for index in 0..tokens.len() {
+        if ident(&tokens[index], "macro_rules")
+            && tokens.get(index + 1).is_some_and(|token| punct(token, "!"))
+            && tokens
+                .get(index + 2)
+                .is_some_and(|token| identifier_text(token).is_some())
+            && tokens.get(index + 3).is_some_and(is_open_delimiter)
+        {
+            if let Some(end) = matching_delimiter(tokens, index + 3) {
+                spans.push((index, end));
+            }
+            continue;
+        }
+        if !punct(&tokens[index], "!") || !tokens.get(index + 1).is_some_and(is_open_delimiter) {
+            continue;
+        }
+        if index > 0 && punct(&tokens[index - 1], "#") {
+            continue;
+        }
+        let name = index
+            .checked_sub(1)
+            .and_then(|position| identifier_text(&tokens[position]));
+        if name == Some("include") {
+            continue;
+        }
+        if let Some(end) = matching_delimiter(tokens, index + 1) {
+            spans.push((index, end));
+        }
+    }
+    spans.sort_unstable();
+    spans
+}
+
+/// Literal local files loaded by compiler source-loading syntax and errors for
+/// forms whose resulting source population cannot be enumerated here.
+fn source_loads(
+    path: &str,
+    tokens: &[Token],
+    macro_spans: &[(usize, usize)],
+    depths: &[usize],
+) -> (Vec<SourceLoad>, Vec<String>) {
+    let mut loads = Vec::new();
+    let mut errors = Vec::new();
+
+    for index in 0..tokens.len() {
+        if ident(&tokens[index], "include")
+            && tokens.get(index + 1).is_some_and(|token| punct(token, "!"))
+            && tokens.get(index + 2).is_some_and(is_open_delimiter)
+        {
+            let line = tokens[index].line;
+            if inside_span(index, macro_spans) {
+                errors.push(format!(
+                    "unsafe-sites.{path}:{line}: include! inside a token-generating macro \
+                     context has expansion-dependent source identity",
+                ));
+                continue;
+            }
+            let open = index + 2;
+            let Some(end) = matching_delimiter(tokens, open) else {
+                errors.push(format!(
+                    "unsafe-sites.{path}:{line}: include! source expression never closes",
+                ));
+                continue;
+            };
+            match &tokens[open + 1..end] {
+                [
+                    Token {
+                        kind: TokenKind::StringLiteral(literal),
+                        ..
+                    },
+                ] if !literal.contains('\\') => loads.push(SourceLoad {
+                    kind: "include!",
+                    literal: literal.clone(),
+                    line,
+                }),
+                [
+                    Token {
+                        kind: TokenKind::StringLiteral(_),
+                        ..
+                    },
+                ] => errors.push(format!(
+                    "unsafe-sites.{path}:{line}: escaped include! paths are unsupported because \
+                     their filesystem identity is not literal",
+                )),
+                _ => errors.push(format!(
+                    "unsafe-sites.{path}:{line}: computed include! is unsupported; generated or \
+                     OUT_DIR sources cannot be inventoried",
+                )),
+            }
+        }
+
+        if !punct(&tokens[index], "#") {
+            continue;
+        }
+        let open = index + 1;
+        if !tokens.get(open).is_some_and(|token| punct(token, "[")) {
+            continue;
+        }
+        let Some(end) = matching_delimiter(tokens, open) else {
+            continue;
+        };
+        let occurrences: Vec<usize> = (open + 1..end)
+            .filter(|position| ident(&tokens[*position], "path"))
+            .collect();
+        if occurrences.is_empty() {
+            continue;
+        }
+        let line = tokens[index].line;
+        if inside_span(index, macro_spans) {
+            errors.push(format!(
+                "unsafe-sites.{path}:{line}: #[path] inside a token-generating macro context \
+                 has expansion-dependent source identity",
+            ));
+            continue;
+        }
+        if depths.get(index).copied().unwrap_or(0) != 0 {
+            errors.push(format!(
+                "unsafe-sites.{path}:{line}: nested #[path] resolution is unsupported; its \
+                 compiler-relative module directory is not a literal source-file parent",
+            ));
+            continue;
+        }
+        match &tokens[open + 1..end] {
+            [
+                path_token,
+                equals,
+                Token {
+                    kind: TokenKind::StringLiteral(literal),
+                    ..
+                },
+            ] if ident(path_token, "path") && punct(equals, "=") && !literal.contains('\\') => {
+                loads.push(SourceLoad {
+                    kind: "#[path]",
+                    literal: literal.clone(),
+                    line,
+                });
+            }
+            [
+                path_token,
+                equals,
+                Token {
+                    kind: TokenKind::StringLiteral(_),
+                    ..
+                },
+            ] if ident(path_token, "path") && punct(equals, "=") => errors.push(format!(
+                "unsafe-sites.{path}:{line}: escaped #[path] values are unsupported because \
+                 their filesystem identity is not literal",
+            )),
+            _ => errors.push(format!(
+                "unsafe-sites.{path}:{line}: a source-loading `path` appears outside supported \
+                 literal #[path = \"...\"] syntax",
+            )),
+        }
+    }
+    (loads, errors)
+}
+
+/// Curly-brace depth before every token, with unmatched braces reported.
+fn curly_depths(path: &str, tokens: &[Token], errors: &mut Vec<String>) -> Vec<usize> {
+    let mut depths = Vec::with_capacity(tokens.len());
+    let mut depth = 0_usize;
+    for token in tokens {
+        depths.push(depth);
+        if punct(token, "{") {
+            depth += 1;
+        } else if punct(token, "}") {
+            if depth == 0 {
+                errors.push(format!(
+                    "unsafe-sites.{path}:{}: unmatched `}}` in source",
+                    token.line,
+                ));
+            } else {
+                depth -= 1;
+            }
+        }
+    }
+    if depth != 0 {
+        errors.push(format!(
+            "unsafe-sites.{path}: source ends with {depth} unclosed `{{` delimiter(s)",
+        ));
+    }
+    depths
+}
+
+/// Whether one token position lies in any closed token-generating span.
+fn inside_span(position: usize, spans: &[(usize, usize)]) -> bool {
+    spans
+        .iter()
+        .any(|(start, end)| *start <= position && position <= *end)
+}
+
+/// Whether one token opens a balanced token tree.
+fn is_open_delimiter(token: &Token) -> bool {
+    matches!(punct_text(token), Some("(" | "[" | "{"))
 }
 
 /// Reads the reason from one supported direct allow attribute.
