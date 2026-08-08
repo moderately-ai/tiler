@@ -76,3 +76,32 @@ Measured rather than predicted: with `StorageScalar::U32` appended at tag `0x04`
 ## Closes when
 
 The carrier question is answered with its consequence stated, the answer is implemented, an index operand's stored type is checked at the bind boundary, and a value of the wrong stored type refuses by name rather than being reinterpreted.
+
+## Coordinator verification and the redispatch conditions, 2026-08-07
+
+Merged at `435bd0d5`'s successor. **No code landed and that was correct** — the honest landing is one commit spanning six scopes or none, and three of them were undeclared.
+
+### Everything material re-verified independently
+
+- **`KernelType` has no `U32`.** `crates/tiler-ir/src/kernel/model.rs`, `enum KernelType`: `Bool`, `U8`, `Index`, `F32`, `I32`, `Bf16`. Confirmed by reading.
+- **The two widening tripwires are real and sit where reported.** `crates/tiler-artifact/src/program/codec/tests.rs`, `UNASSIGNED_CARRIER = 0x04` and `UNASSIGNED_ACCESS = 0x07` — precisely the tags an appended `StorageScalar::U32` and `KernelType::U32` claim. A landing must retarget both; they are doing exactly the job they were written for.
+- **All three out-of-scope sites exist** at the named functions: `physical.rs`'s `index_arithmetic_requirement`, `tiler-metal`'s `msl_type`, and `boundary.rs`'s `every_storage_carrier_has_a_representable_alignment`.
+- **The pinned-identity measurement stands**: appending `U32` at `0x04` moved **no golden, pin, or identity test** across 2,213 tests in five packages. Empirical, bounded to that base.
+
+### The blocker is real and not routable around
+
+`natural_access_type` is a width-exact 1:1 map into `KernelType`. Pairing a token-ID carrier with `I32` would read it **signed** at the one operation whose out-of-range behaviour reads out of bounds — the defect ADR 0107 exists to prevent, since gather bounds are a semantic precondition never clamped and never wrapped. So `KernelType::U32` is required, and with it `implementation/compiler` and `implementation/metal`.
+
+### The `msl_type` question is decided here, not escalated
+
+The worker asked whether `msl_type(KernelType::U32)` should spell `uint` or refuse by name, noting the BF16 precedent may not transfer since BF16 refused for absent *numerics* and a `u32` index carrier has none to be absent.
+
+**Refuse by name.** It eliminates under AGENTS.md rather than surviving as a genuine fork: no index-layer access class exists, so nothing can produce a kernel holding a `U32`-typed value, and emitting `uint` would be an unexercised path asserting a backend capability nothing demonstrates. AGENTS.md prefers typed, explainable failure over a silently wrong fast path, and requires maturity claims to track demonstrated support. The refusal's `reason` must name **what lifts it** — the first backend consumer producing a `U32`-typed kernel value — so it reads as a stated boundary rather than an omission. This differs from BF16's ground and the comment should say so rather than citing the precedent as if it transferred.
+
+### Release trigger for redispatch
+
+**All six scopes free simultaneously**: `implementation/ir`, `implementation/artifact`, `implementation/frontend`, `contracts/artifacts`, `implementation/compiler`, `implementation/metal`. Add the last two to this ticket at redispatch — scheduling metadata under AGENTS.md, and explained here.
+
+Recheck with `tkt claims` plus a scope scan of live `tkt/` branches. At the time of writing, `implementation/compiler` was held by an exclusive claim on `answer-input-element-counts-as-the-declared-tensors-own-count` and `implementation/metal` was free but undeclared.
+
+The redispatch brief must carry: the corrected `StorageScalar` Fact (**three** variants at `enum StorageScalar`, not two — the ticket's own repro command was self-falsifying, printing `Bf16` inside its own `-A 6` window), the append-not-move finding for both tag encoders, the two tripwires to retarget, and the `msl_type` decision above.
