@@ -1,7 +1,7 @@
 ---
 id: decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span
 title: Decide how the link check reads a retained byte-identical drafted ADR span
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [repair-the-two-dangling-adr-links-in-the-conversion-pair-record, repair-the-eight-dangling-links-in-the-runtime-route-answer-record, resolve-the-markdown-links-the-citation-check-cannot-see]
