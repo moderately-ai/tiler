@@ -1,7 +1,7 @@
 ---
 id: correct-the-region-shape-budget-sites-outside-the-corrections-scopes
 title: Correct the two region-shape budget sites outside the corrections ticket's scopes
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [correct-the-records-the-derived-region-shape-budgets-falsify, derive-the-region-shape-budgets-from-the-declaration]
@@ -9,6 +9,9 @@ scopes: [research/region-search, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, budgets]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786177034
 ---
 ## User-visible outcome
 
