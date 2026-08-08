@@ -128,36 +128,50 @@ fn reseal(bytes: &mut [u8]) {
 /// property is checkable rather than assumed, and a new domain that violates it
 /// fails a test instead of silently merging two subjects.
 ///
-/// **This test covers the envelope's four domains and not every domain the
+/// **This test covers the envelope's seven domains and not every domain the
 /// workspace admits.** The property is global: one algorithm hashes the
-/// envelope, the proof sidecar, and the shared IR's layered identities in one
-/// process, so a domain added to any of them could collide with one in another,
-/// and a check confined to four would report separation it had not established.
-/// `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another`
-/// checks the union of this crate's eight and is the authority for the property;
-/// this test is the envelope-local half. `tiler-ir`'s coverage-graph domain
-/// opens `tiler.ir.` where all eight of these open `tiler.artifact-`, so no
-/// prefix relation between the two crates' sets is expressible; that argument is
-/// what stands in for a check neither crate can hold, since neither depends on
-/// the other. A fifth envelope domain must be added to **both** checks here, and
-/// `docs/artifact-abi.md` records the union obligation normatively.
+/// envelope, the proof sidecar, the artifact program's identity encoding, and
+/// the shared IR's layered identities in one process, so a domain added to any of
+/// them could collide with one in another, and a check confined to the envelope
+/// would report separation it had not established.
+/// `crate::domains::no_governed_domain_of_this_crate_prefixes_another` checks the
+/// union of this crate's eighteen and is the authority for the property; this
+/// test is the envelope-local half. `tiler-ir`'s coverage-graph domain opens
+/// `tiler.ir.` where every domain of this crate opens `tiler.artifact` or
+/// `tiler.proof-sidecar.`, so no prefix relation between the two crates' sets is
+/// expressible; that argument is what stands in for a check neither crate can
+/// hold, since neither depends on the other, and `crate::domains` asserts its
+/// premise rather than only stating it.
+///
+/// **The population is derived rather than listed.** It is
+/// `GovernedDomain::of(DomainContainer::Envelope)`, so an envelope domain added
+/// to the crate's enumeration appears here without this test being edited, and
+/// one added to the crate and *not* enumerated is caught by that module's source
+/// census. The previous shape — a hand-written array beside a hand-written count
+/// — is exactly what let the manifest framing tag and both payload domains be
+/// admitted with nothing failing.
 ///
 /// It lives beside the codec rather than with the algorithm because a domain
 /// belongs to the authority that decides what it names: `tiler-digest` owns the
 /// algorithm and deliberately knows none of the domains it is called with.
 #[test]
 fn no_governed_domain_is_a_prefix_of_another() {
-    let domains = [
-        MANIFEST_DIGEST_DOMAIN,
-        SECTION_DIGEST_DOMAIN,
-        ENVELOPE_DIGEST_DOMAIN,
-        IDENTITY_DIGEST_DOMAIN,
-    ];
+    let domains = crate::domains::GovernedDomain::of(crate::domains::DomainContainer::Envelope);
+    assert_eq!(
+        domains.len(),
+        crate::domains::DomainContainer::ENVELOPE,
+        "the envelope's derived domain population is {:?}",
+        domains
+            .iter()
+            .map(|domain| String::from_utf8_lossy(domain.bytes()).into_owned())
+            .collect::<Vec<_>>(),
+    );
     for (index, left) in domains.iter().enumerate() {
         for right in domains.iter().skip(index + 1) {
             assert!(
-                !left.starts_with(right) && !right.starts_with(left),
-                "one governed digest domain prefixes another",
+                !left.bytes().starts_with(right.bytes())
+                    && !right.bytes().starts_with(left.bytes()),
+                "one governed digest domain prefixes another: {left:?} against {right:?}",
             );
         }
     }
@@ -1101,9 +1115,9 @@ fn the_manifest_declares_its_identity_by_digest_and_carries_no_preimage() {
         declared.as_bytes(),
         "the manifest ends with the digest of the identity it declares",
     );
-    // A digest under a different domain is a different value, which is what the
-    // fourth governed domain buys: the manifest digest already covers these very
-    // bytes, so the two must not be one subject.
+    // A digest under a different domain is a different value, which is what a
+    // separate `identity-digest` domain buys: the manifest digest already covers
+    // these very bytes, so the two must not be one subject.
     assert_ne!(
         declared.as_bytes(),
         DigestAlgorithm::GOVERNED

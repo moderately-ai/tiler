@@ -518,6 +518,15 @@ pub use model::{
     ProofNumericalIdentity, ProofPayloadRef, ProofReferenceIdentity, ProofSemanticSubject,
     ProofSubjectError, VerifiedProofSidecar,
 };
+// This container's four governed domains, reachable under test so
+// `crate::domains` can hold the no-prefix check over the crate's whole set. Two
+// are digest arguments and two are framing tags opening a canonical byte run;
+// `docs/artifact-abi.md` names all four under "The sidecar's four governed
+// domains".
+#[cfg(test)]
+pub(crate) use codec::{
+    IDENTITY_DOMAIN, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, PAYLOAD_DIGEST_DOMAIN,
+};
 
 /// Maximum proof cases admitted by one sidecar.
 pub const MAX_PROOF_CASES: usize = 256;

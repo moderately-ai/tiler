@@ -154,9 +154,9 @@ use tiler_digest::DigestAlgorithm;
 use tiler_ir::identity::{push_len, push_slice};
 
 /// Versioned domain tag opening the canonical payload-metadata bytes.
-pub(super) const PAYLOAD_METADATA_DOMAIN: &[u8] = b"tiler.artifact-envelope.payload-metadata.v1\0";
+pub(crate) const PAYLOAD_METADATA_DOMAIN: &[u8] = b"tiler.artifact-envelope.payload-metadata.v1\0";
 /// Domain separator of one carried payload's compilation identity.
-pub(super) const PAYLOAD_IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-envelope.payload-identity.v1\0";
+pub(crate) const PAYLOAD_IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-envelope.payload-identity.v1\0";
 /// Payload-metadata schema version this build writes and reads.
 pub(super) const PAYLOAD_METADATA_SCHEMA: (u16, u16) = (1, 0);
 

@@ -36,6 +36,15 @@
 //! artifact, an artifact never names a sidecar, and an artifact decodes,
 //! validates, and dispatches with no sidecar present.
 
+// The crate's governed domain separators, enumerated from a type so the
+// no-prefix obligation `docs/artifact-abi.md` states is checked over the whole
+// admitted set rather than over whichever subset a hand-written list still names.
+// Crate-level rather than inside either container because the property is global:
+// one algorithm hashes both containers and the program identity encoding in one
+// process, so a domain added to any of them could merge two subjects.
+#[cfg(test)]
+mod domains;
+
 /// Public target-neutral artifact program model, verifier, and identity.
 pub mod program;
 /// The separate, versioned proof-case evidence sidecar.

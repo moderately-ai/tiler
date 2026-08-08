@@ -34,9 +34,8 @@ use crate::program::{DIGEST_BYTES, DigestAlgorithm, VerifiedArtifactProgram};
 
 use super::builder::{BoundInterface, ProofDirection, ProofInterfaceError, verify_cases};
 use super::codec::{
-    CANONICAL_ENCODING, HEADER_BYTES, IDENTITY_DOMAIN, MAGIC, MANIFEST_DIGEST_DOMAIN,
-    MANIFEST_DOMAIN, PAYLOAD_DIGEST_DOMAIN, ProofFailureClass, ProofOrderedSubject, SIDECAR_FORMAT,
-    derive_identity,
+    CANONICAL_ENCODING, HEADER_BYTES, IDENTITY_DOMAIN, MAGIC, MANIFEST_DOMAIN,
+    PAYLOAD_DIGEST_DOMAIN, ProofFailureClass, ProofOrderedSubject, SIDECAR_FORMAT, derive_identity,
 };
 use super::model::{ProofCaseData, ProofSidecarData, ProofSubjects};
 use super::{
@@ -454,32 +453,11 @@ fn a_different_artifact_changes_the_identity() {
     assert_ne!(left.canonical_identity(), right.canonical_identity());
 }
 
-#[test]
-fn no_governed_domain_of_either_container_prefixes_another() {
-    // The property is global rather than per-module: a digest domain separates
-    // subjects only when no admitted domain is a prefix of another, and the
-    // sidecar's domains and the envelope's live in one process and are hashed
-    // by one algorithm. Checking the union here is what keeps a domain added to
-    // either container from silently merging with one in the other.
-    let domains: [&[u8]; 8] = [
-        crate::program::ENVELOPE_DIGEST_DOMAIN,
-        crate::program::IDENTITY_DIGEST_DOMAIN,
-        crate::program::MANIFEST_DIGEST_DOMAIN,
-        crate::program::SECTION_DIGEST_DOMAIN,
-        MANIFEST_DOMAIN,
-        MANIFEST_DIGEST_DOMAIN,
-        PAYLOAD_DIGEST_DOMAIN,
-        IDENTITY_DOMAIN,
-    ];
-    for (index, left) in domains.iter().enumerate() {
-        for right in domains.iter().skip(index + 1) {
-            assert!(
-                !left.starts_with(right) && !right.starts_with(left),
-                "one governed digest domain prefixes another",
-            );
-        }
-    }
-}
+// The union no-prefix check moved to `crate::domains`, which enumerates every
+// governed domain the crate admits from a type rather than from a hand-written
+// list of eight. The list here covered 8 of the crate's 11 container domains and
+// none of its 7 program-identity domains, and its `[&[u8]; 8]` length literal is
+// what let those be added with nothing failing.
 
 #[test]
 fn the_sidecar_magic_is_not_the_envelope_magic() {

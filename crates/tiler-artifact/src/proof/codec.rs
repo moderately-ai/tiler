@@ -65,18 +65,18 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 pub(super) const MANIFEST_SCHEMA: (u16, u16) = (1, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
-pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.proof-sidecar.manifest.v1\0";
+pub(crate) const MANIFEST_DOMAIN: &[u8] = b"tiler.proof-sidecar.manifest.v1\0";
 /// Domain separator of the manifest digest carried in the framing header.
-pub(super) const MANIFEST_DIGEST_DOMAIN: &[u8] = b"tiler.proof-sidecar.manifest-digest.v1\0";
+pub(crate) const MANIFEST_DIGEST_DOMAIN: &[u8] = b"tiler.proof-sidecar.manifest-digest.v1\0";
 /// Domain separator of one framed payload's exact-content digest.
 ///
 /// The pre-image is the separator, the payload's canonical ordinal, and then
 /// its exact bytes. Binding the ordinal is what makes the digest a standalone
 /// address of *this slot's* content: without it, two slots holding equal bytes
 /// would share one address and a swap between them would be invisible.
-pub(super) const PAYLOAD_DIGEST_DOMAIN: &[u8] = b"tiler.proof-sidecar.payload-digest.v1\0";
+pub(crate) const PAYLOAD_DIGEST_DOMAIN: &[u8] = b"tiler.proof-sidecar.payload-digest.v1\0";
 /// Versioned domain tag opening the canonical sidecar identity bytes.
-pub(super) const IDENTITY_DOMAIN: &[u8] = b"tiler.proof-sidecar.identity.v1\0";
+pub(crate) const IDENTITY_DOMAIN: &[u8] = b"tiler.proof-sidecar.identity.v1\0";
 
 /// Maximum UTF-8 byte length of one encoded text run.
 const MAX_TEXT_BYTES: usize = 4 * 1024;

@@ -247,7 +247,12 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// comparing generated output against a reference, so a cache holding one must
 /// miss for the other, and the domain step is what makes the old subject
 /// incomparable with the complete one rather than merely unlikely to collide.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v16\0";
+///
+/// Crate-visible because [`RecordedArtifactProgramIdentity::from_bytes`] admits
+/// bytes by `starts_with` on this separator, so a governed domain that prefixed
+/// it would let another subject's bytes be accepted as an artifact identity.
+/// `crate::domains` enumerates it and checks that no such domain exists.
+pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v16\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -282,8 +287,9 @@ pub(super) const ARTIFACT_DOMAIN_LABEL: &str = {
 /// row, which is why it carries its own separator instead of relying on
 /// [`ARTIFACT_DOMAIN`] — and why that domain does not step with it, as the note
 /// there records.
-pub(super) const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v3\0";
-const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
+pub(crate) const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v3\0";
+/// Versioned domain separator of one carried payload descriptor's canonical key.
+pub(crate) const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
 ///
 /// `v2` for the same change that took [`ARTIFACT_DOMAIN`] to `v3`: this record's
@@ -291,8 +297,9 @@ const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// there because a provider key is also compared to its siblings on its own —
 /// `encode_identity` sorts and deduplicates these keys — so the record needs to
 /// be self-describing rather than relying on the enclosing domain.
-const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v2\0";
-const DEFERRED_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.deferred.v2\0";
+pub(crate) const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v2\0";
+/// Versioned domain separator of one deferred predicate's canonical key.
+pub(crate) const DEFERRED_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.deferred.v2\0";
 
 /// Width of the canonical length prefix [`push_len`] writes.
 ///
