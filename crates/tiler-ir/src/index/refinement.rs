@@ -1106,7 +1106,7 @@ impl IndexRefinementReceiptIdentity {
 /// construct this type from bytes or independently supplied fields.
 ///
 /// The operation key, ordered signature, host-canonical attributes, and operand
-/// and result boundary shapes are not re-encoded: `tiler.semantic-graph.v2`
+/// and result boundary shapes are not re-encoded: `tiler.semantic-graph.v3`
 /// already writes each of them for every operation in canonical traversal
 /// order, and [`IndexRefinementSubject::derive`] fixes the retained occurrence
 /// to that same canonical ordinal. Encoding them a second time would restate
@@ -1139,6 +1139,34 @@ impl IndexRefinementReceiptIdentity {
 /// it recorded for the change; repointing here rather than restating a
 /// coefficient is the same reasoning applied to this comment. The derivation
 /// half of the sentence is unchanged.
+///
+/// *Corrected 2026-08-08 by
+/// [`step-the-coverage-identity-comment-s-stale-semantic-graph-domain`](../../../../tickets/step-the-coverage-identity-comment-s-stale-semantic-graph-domain.md),
+/// and dated beside rather than substituted because it was true when written* —
+/// the not-re-encoded paragraph above named the graph domain
+/// `tiler.semantic-graph.v2`, and
+/// `GRAPH_DOMAIN` in `crates/tiler-ir/src/semantic/identity.rs` did read that
+/// from this comment's authoring at `6d143a01` on 2026-08-04 until `26157836`
+/// on 2026-08-07, when
+/// [`carry-a-sourced-shape-on-semantic-values`](../../../../tickets/carry-a-sourced-shape-on-semantic-values.md)
+/// stepped it to `v3` and began writing every extent through
+/// `SourcedShape::encode`. **Only the spelling moved.** `compute_graph_identity`
+/// under `v3` still writes the operation key and host-canonical attributes via
+/// `encode_operation`, the ordered operand and result signature, and each
+/// result's boundary shape, once per operation in canonical traversal order; the
+/// step changed how an extent is spelled and not which of these the graph
+/// covers, so the delegation this paragraph rests on is unchanged and the
+/// sentence needed its domain corrected rather than its claim withdrawn.
+/// **The retired spelling `tiler.semantic-graph.v2` is quoted here and so stays
+/// greppable**, which means a later hit on it in this file lands inside this
+/// note rather than on a live claim.
+///
+/// [ADR 0104](../../../../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md)
+/// quotes the retired sentence verbatim while rejecting an alternative, and
+/// carries a note of its own recording that this comment "still says `v2`" and
+/// that the stale text was therefore here rather than there. That note is what
+/// this correction makes stale; repairing it is `contracts/decisions` and not
+/// this scope, so it is reported rather than fixed in passing.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IndexRefinementExecutableCoverageIdentity(Box<[u8]>);
 
