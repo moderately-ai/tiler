@@ -1,7 +1,7 @@
 ---
 id: verify-and-file-the-remaining-maturity-audit-leads
 title: Verify and file the remaining maturity-audit leads
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-verify-an
+lease_expires_at: 1786164387
 ---
 ## Six leads from the 2026-08-07 maturity audit, verified to differing degrees
 

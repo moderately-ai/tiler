@@ -1,7 +1,7 @@
 ---
 id: pin-the-sdk-provenance-the-xcrun-reproduce-forms-silently-rebase
 title: Pin the SDK provenance the xcrun reproduce forms silently rebase
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-pin-the-s
+lease_expires_at: 1786164387
 ---
 ## A reproduce form that records "whatever is installed" rather than a version
 
