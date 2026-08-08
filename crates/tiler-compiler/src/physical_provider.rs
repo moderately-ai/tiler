@@ -267,6 +267,30 @@ impl<'providers> InstalledPhysicalProviders<'providers> {
         providers.extend_from_slice(&self.installed);
         providers
     }
+
+    /// The identities of exactly the providers [`Self::providers`] enumerates.
+    ///
+    /// Positionally the same list, which is what makes
+    /// [`crate::session::Compilation::offered_physical_providers`] a *reading*
+    /// of the environment the frontier was actually given rather than a second
+    /// derivation of it. The installed identities are the ones resolved at
+    /// installation, so a provider whose `provenance` answers differently on a
+    /// later call cannot make the compilation report a name it was not
+    /// installed under.
+    ///
+    /// **A different subject from [`Self::identities`], and the difference is
+    /// the whole point of the offered half.** That accessor answers what the
+    /// *caller* installed, so its empty answer means "I installed nothing";
+    /// this one answers what the *compilation* was offered, and is never empty
+    /// because the governed provider is always asked. Reading the first as the
+    /// second would make a compilation look as though it enumerated no physical
+    /// authority at all.
+    pub(crate) fn offered_identities(&self) -> Vec<ProviderIdentity> {
+        let mut offered: Vec<ProviderIdentity> = Vec::with_capacity(self.identities.len() + 1);
+        offered.push(GovernedPhysicalProvider::identity());
+        offered.extend(self.identities.iter().cloned());
+        offered
+    }
 }
 
 impl Default for InstalledPhysicalProviders<'_> {
@@ -380,6 +404,43 @@ mod tests {
         .expect("two distinct identities install");
         assert_eq!(installed.providers().len(), 3);
         assert_eq!(installed.identities().len(), 2);
+    }
+
+    /// **The offered identities are exactly the enumerated providers' own, in
+    /// the same positions.**
+    ///
+    /// The two lists are built by separate code, so nothing but this test stops
+    /// them drifting — and a drift would be silent in the worst direction: a
+    /// compilation would report an environment the frontier did not enumerate,
+    /// which is the conflation the offered half exists to remove. Each identity
+    /// is read back off the provider it is claimed to name rather than compared
+    /// against a restated literal, so a rename of Tiler's own provider cannot
+    /// leave this guarding a name nothing produces.
+    #[test]
+    fn the_offered_identities_name_exactly_the_enumerated_providers() {
+        let first = named("first", 1);
+        let second = named("second", 1);
+        for environment in [
+            InstalledPhysicalProviders::governed(),
+            InstalledPhysicalProviders::installed([
+                &first as &dyn PhysicalImplementationProvider,
+                &second,
+            ])
+            .expect("two distinct identities install"),
+        ] {
+            let enumerated: Vec<ProviderIdentity> = environment
+                .providers()
+                .iter()
+                .map(|provider| {
+                    provider
+                        .provenance()
+                        .expect("every enumerated provider renders its provenance")
+                        .provider()
+                        .clone()
+                })
+                .collect();
+            assert_eq!(environment.offered_identities(), enumerated);
+        }
     }
 
     /// **One identity installed twice is a refusal, never a replacement.**

@@ -323,6 +323,165 @@ fn selected_provider_identities(compilation: &Compilation) -> BTreeSet<String> {
         .collect()
 }
 
+/// What a caller can conclude about one provider from one compilation.
+///
+/// Named as three verdicts rather than left as two booleans at each assertion,
+/// because the property under test is that all three stay *distinct*: a reading
+/// that collapses any pair is exactly the conflation ADR 0090 item 5's split
+/// exists to remove, and a collapse is visible here as two cases producing one
+/// verdict.
+#[derive(Debug, Eq, PartialEq)]
+enum Disclosure {
+    /// Absent from both sets: this compilation was never given the provider.
+    NeverInstalled,
+    /// Offered and in no retained plan: consulted, and contributed nothing.
+    OfferedAndNotSelected,
+    /// Offered and in a retained plan: consulted, and won.
+    OfferedAndSelected,
+}
+
+/// Classifies one provider identity against one compilation's two sets.
+fn disclosure(compilation: &Compilation, identity: &ProviderIdentity) -> Disclosure {
+    let offered = compilation.offered_physical_providers().contains(identity);
+    let selected = selected_provider_identities(compilation).contains(&identity.to_string());
+    match (offered, selected) {
+        (false, false) => Disclosure::NeverInstalled,
+        (true, false) => Disclosure::OfferedAndNotSelected,
+        (true, true) => Disclosure::OfferedAndSelected,
+        (false, true) => panic!("{identity} reached a retained plan without being offered"),
+    }
+}
+
+/// **A provider that was consulted and contributed nothing is distinguishable
+/// from one that was never installed.**
+///
+/// This is the disclosure ADR 0090 item 5 splits in two, read from outside the
+/// crate. One provider — `acme.silent.1`, which is asked about every region
+/// subject and proposes nothing — is compiled twice under environments that
+/// differ *only* in whether it is installed, so the two verdicts cannot come
+/// from anything else. A third provider that does win supplies the positive
+/// control, without which "not selected" would be satisfied by a seam that
+/// selected nothing at all.
+///
+/// **The negative control is the collapse itself.** The selected half alone
+/// gives `acme.silent.1` the same answer in both compilations, which is the
+/// state before the offered half existed; the assertion below observes the two
+/// readings disagreeing, so a change that reduced the offered set to the
+/// selected one would fail here rather than quietly restore the conflation.
+#[test]
+fn a_consulted_provider_that_won_nothing_is_not_reported_as_never_installed() {
+    let program = semantic_program();
+    let profile = acme_profile("test.acme-disclosure.v1", 256);
+
+    let silent_identity = ProviderIdentity::new("acme", "silent", 1).unwrap();
+    let silent = SilentProvider(silent_identity.clone());
+    let winning_identity = ProviderIdentity::new("acme", "wide-workgroup", 1).unwrap();
+    let winning = AcmeProvider::new("wide-workgroup", 1, Specialization::Workgroup(32));
+
+    let without = compile_with(&program, &profile, &InstalledPhysicalProviders::governed())
+        .expect("the governed environment compiles this program");
+    let with = compile_with(
+        &program,
+        &profile,
+        &InstalledPhysicalProviders::installed([
+            &silent as &dyn PhysicalImplementationProvider,
+            &winning,
+        ])
+        .expect("two distinct identities install"),
+    )
+    .expect("installing a silent provider beside a winning one still compiles");
+
+    assert_eq!(
+        disclosure(&without, &silent_identity),
+        Disclosure::NeverInstalled,
+    );
+    assert_eq!(
+        disclosure(&with, &silent_identity),
+        Disclosure::OfferedAndNotSelected,
+    );
+    assert_eq!(
+        disclosure(&with, &winning_identity),
+        Disclosure::OfferedAndSelected,
+        "the positive control never won, so 'not selected' above proves nothing",
+    );
+
+    // The collapse this test exists to make observable: reading only the
+    // selected half gives the two compilations one answer for `acme.silent.1`,
+    // while reading both gives two. If the offered set were ever derived from
+    // the selected one, these would agree and the assertion would fail.
+    let selected_only = |compilation: &Compilation| {
+        selected_provider_identities(compilation).contains(&silent_identity.to_string())
+    };
+    assert_eq!(selected_only(&without), selected_only(&with));
+    assert_ne!(
+        disclosure(&without, &silent_identity),
+        disclosure(&with, &silent_identity),
+    );
+}
+
+/// **The offered physical environment is never empty, and installing adds to it
+/// rather than replacing it.**
+///
+/// The governed provider is always asked, so an empty answer would be a defect
+/// rather than an environment — which is what separates this accessor from
+/// `InstalledPhysicalProviders::identities`, whose empty answer is the ordinary
+/// "the caller installed nothing". The counts are read from the compilation
+/// rather than restated, so a second governed provider would move them here
+/// instead of leaving this asserting a number nothing produces.
+#[test]
+fn the_offered_physical_environment_always_names_the_governed_provider() {
+    let program = semantic_program();
+    let profile = acme_profile("test.acme-offered-floor.v1", 256);
+    let governed_identity =
+        ProviderIdentity::new("tiler", "prototype-serial-sum-physical", 1).unwrap();
+
+    let governed = compile_with(&program, &profile, &InstalledPhysicalProviders::governed())
+        .expect("the governed environment compiles this program");
+    let baseline = governed.offered_physical_providers().len();
+    assert!(
+        baseline > 0,
+        "a compilation reported enumerating no physical provider at all",
+    );
+    assert!(
+        governed
+            .offered_physical_providers()
+            .contains(&governed_identity),
+        "the governed physical provider is missing from its own compilation's environment: {:?}",
+        governed.offered_physical_providers(),
+    );
+
+    let silent = SilentProvider(ProviderIdentity::new("acme", "silent", 1).unwrap());
+    let composed = compile_with(
+        &program,
+        &profile,
+        &InstalledPhysicalProviders::installed([&silent as &dyn PhysicalImplementationProvider])
+            .expect("one identity installs"),
+    )
+    .expect("installing one provider still compiles");
+    assert_eq!(
+        composed.offered_physical_providers().len(),
+        baseline + 1,
+        "installing one provider did not add exactly one offered identity: {:?}",
+        composed.offered_physical_providers(),
+    );
+    assert!(
+        composed
+            .offered_physical_providers()
+            .contains(&governed_identity),
+        "installing a provider displaced the governed one from the offered environment",
+    );
+
+    // The two environments answer different questions, and the offered one is
+    // the compilation's rather than the caller's: a lowering identity is not a
+    // physical one, so neither set may leak into the other.
+    for identity in composed.offered_physical_providers() {
+        assert!(
+            !composed.offered_providers().contains(identity),
+            "{identity} appears in both offered environments",
+        );
+    }
+}
+
 /// **An installed provider reaches the frontier, is re-verified, and its
 /// implementations are retained beside the governed provider's.**
 ///
