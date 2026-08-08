@@ -2,8 +2,16 @@
 //!
 //! A law is registered by the same semantic-provider transaction that defines
 //! an operation. It is data, not a verdict callback: the verifier interprets it
-//! without exposing the candidate region, builds the expected canonical region,
-//! and compares the two only after both have passed ordinary structural checks.
+//! without exposing the candidate, builds the expected canonical region
+//! *sequence*, and compares the two only after both have passed ordinary
+//! structural checks.
+//!
+//! The compared value is the sequence identity, not one region's. A law whose
+//! realization is a single region answers a one-stage sequence whose identity is
+//! that region's identity byte for byte, so the comparison this module drives is
+//! the same one it always drove for those laws; a law whose realization is a
+//! chain is compared whole, and stages that are individually correct but ordered
+//! or wired differently render a different sequence identity.
 
 use core::fmt;
 use std::error::Error;
@@ -447,10 +455,11 @@ impl IndexRealizationLaw {
 
     /// Standard staged strict-serial-sum-then-multiply-f32 law.
     ///
-    /// A constructor for the governed spelling of the staged form, one of the two
-    /// of this law's ten variants whose realization is a region *sequence*; the
-    /// other eight are single-region, and `realizes_region_sequence` decides which
-    /// is which in one match. No standard operation carries this row: the
+    /// A constructor for the governed spelling of the staged form, one of the
+    /// three of this law's twelve variants whose realization is a region
+    /// *sequence*; the other nine are single-region, and
+    /// `realizes_region_sequence` decides which is which in one match over the
+    /// closed enum. No standard operation carries this row: the
     /// normalization, which is the family this shape was derived for, needs a fold
     /// prologue, an epilogue, and a ternary pass that this form does not express
     /// and carries [`Self::staged_root_mean_square_scale_f32`] instead. So the
@@ -502,10 +511,25 @@ impl IndexRealizationLaw {
 
     /// Whether this law's realization is an ordered sequence of regions.
     ///
-    /// Asked *before* any interface checking, so a caller offering one region
+    /// A total match over the closed variant set, so the answer is decided by
+    /// the variant alone and needs no subject, no scalar authority, and no
+    /// realization.
+    ///
+    /// [`ResolvedIndexRealization::verify`](super::ResolvedIndexRealization::verify)
+    /// asks it *before* any interface checking, so a caller offering one region
     /// for a staged law is told that rather than being told its lone region's
     /// boundaries disagree with the occurrence — which is true, but names the
-    /// symptom instead of the mismatch.
+    /// symptom instead of the mismatch. That ordering is `verify`'s alone:
+    /// [`ResolvedIndexRealization::verify_sequence`](super::ResolvedIndexRealization::verify_sequence)
+    /// never asks it, because a sequence candidate needs no such pre-check — a
+    /// stage-count disagreement is what the whole-realization comparison is for.
+    ///
+    /// The predicate's other callers are the two public queries that project it,
+    /// [`FrozenIndexRealizationLawRegistry::family_realizes_region_sequence`](super::FrozenIndexRealizationLawRegistry::family_realizes_region_sequence)
+    /// and
+    /// [`ResolvedIndexRealization::realizes_region_sequence`](super::ResolvedIndexRealization::realizes_region_sequence).
+    /// Those check no interfaces at all: they answer the registered law's shape
+    /// so a consumer can classify an occurrence before paying for a realization.
     pub(crate) const fn realizes_region_sequence(&self) -> bool {
         matches!(
             self,
@@ -3127,9 +3151,12 @@ mod tests {
     /// A staged law cannot answer the single-region realization API.
     ///
     /// Answering one of its stages would be a truncated realization wearing the
-    /// shape of a complete one, and the single-region `verify` path — the one
-    /// the compiler drives today — would then compare a candidate against a
-    /// fragment.
+    /// shape of a complete one, and the single-region `verify` path would then
+    /// compare a candidate against a fragment. `verify` is not the path the
+    /// compiler takes — `refine_index_region` in `tiler-compiler` drives
+    /// `verify_sequence`, and the only calls to `verify` in that crate are in
+    /// its own tests — but it is public, so a consumer can reach it and this
+    /// refusal is what it meets.
     #[test]
     fn a_staged_law_refuses_the_single_region_realization() {
         let scalars = FrozenScalarRegistry::standard().unwrap();
