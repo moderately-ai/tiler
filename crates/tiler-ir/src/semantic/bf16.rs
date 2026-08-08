@@ -524,18 +524,11 @@ impl OperationInferencer for BinaryBf16 {
                 "a bf16 binary operation admits no implicit promotion; an operand of another type is not converted to tiler::bf16@1",
             ));
         }
-        let left = operands[0].shape();
-        let right = operands[1].shape();
-        let shape = if left.rank() == 0 {
-            right.clone()
-        } else if right.rank() == 0 || left == right {
-            left.clone()
-        } else {
-            return Err(op_error(
-                "bf16.binary.shape",
-                "operand shapes must match or one operand must be scalar",
-            ));
-        };
+        // The same body the `f32` family resolves its identical sentence
+        // through. Two copies would be two authorities over one rule, and the
+        // symbolic widening is exactly the kind of change that lands on one copy
+        // and not the other.
+        let shape = super::registry::elementwise_binary_shape("bf16.binary", request)?;
         outputs.try_push(ValueFact::new(expected, shape))
     }
 }

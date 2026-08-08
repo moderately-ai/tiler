@@ -95,7 +95,11 @@ fn result_shape(operand: &[u64], form: &ReindexForm) -> Shape {
         panic!("a reindex has one result");
     };
     assert_eq!(result.resolved_type(), &F32::resolved_type());
-    result.shape().clone()
+    result
+        .shape()
+        .as_static()
+        .expect("this family infers a literal boundary")
+        .clone()
 }
 
 // --- Every admitted form, at the pinned workload's own extents ---------------

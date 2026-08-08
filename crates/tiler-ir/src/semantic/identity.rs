@@ -302,7 +302,7 @@ pub(super) fn operation_canonical_work_bytes(
                         .map(|fact| {
                             RESULT_INDEX_BYTES
                                 .saturating_add(fact.resolved_type().encoded_len())
-                                .saturating_add(SourcedShape::static_encoded_len(fact.shape()))
+                                .saturating_add(fact.shape().encoded_len())
                         })
                         .fold(0_usize, usize::saturating_add),
                 ),

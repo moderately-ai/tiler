@@ -901,8 +901,13 @@ impl OperationInferencer for BroadcastF32 {
                 "a broadcast operand must be f32".to_owned(),
             ));
         }
+        // A broadcast mapping relates a source extent to a declared result
+        // extent, so deciding it needs the extents themselves. Widening it to a
+        // symbolic source is a separate rule with its own proof obligation, and
+        // until that rule exists the operand is declined by name rather than
+        // compared by spelling.
         let shape = mapping
-            .result_shape(operand.shape())
+            .result_shape(request.static_operand_shape(0)?)
             .map_err(|error| mapping_rejection(&error))?;
         outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
     }

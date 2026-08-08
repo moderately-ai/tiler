@@ -954,8 +954,13 @@ impl OperationInferencer for SliceF32 {
                 "a slice operand must be f32".to_owned(),
             ));
         }
+        // A selection is bounded against the extent it slices and its result
+        // extent is arithmetic over the offset and length, so this rule needs
+        // the extent's value rather than a proof about it. That is the same
+        // ground `SymbolicOffsetUnsupported` already refuses a symbolic *offset*
+        // on, and a symbolic operand extent is declined by name here for it.
         let shape = selection
-            .result_shape(operand.shape())
+            .result_shape(request.static_operand_shape(0)?)
             .map_err(|error| rejection(&error))?;
         outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
     }

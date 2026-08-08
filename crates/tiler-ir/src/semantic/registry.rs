@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::identity::{push_len, push_slice};
 use crate::index::IndexRealizationLaw;
-use crate::shape::Axis;
+use crate::shape::{Axis, ExtentDisagreement, ExtentSourceError, ExtentSources, SourcedShape};
 
 use super::bf16::register_standard_bf16;
 use super::broadcast::register_standard_broadcast;
@@ -1654,6 +1654,13 @@ impl FrozenSemanticRegistry {
 
     /// Validates one application and derives all ordered result facts.
     ///
+    /// Every symbolic operand is refused, because no environment is supplied to
+    /// resolve one in. That is the right answer rather than a limitation: a
+    /// program that declares no shape environment has no symbolic value to apply
+    /// an operation to, so this is the whole contract for such a program. A
+    /// caller that does hold an environment uses
+    /// [`Self::infer_operation_with_extent_sources`].
+    ///
     /// # Errors
     ///
     /// Returns [`RegistryError`] for missing authority, invalid operand/result
@@ -1663,6 +1670,32 @@ impl FrozenSemanticRegistry {
         key: &OpKey,
         operands: &[ValueFact],
         attributes: &OperationAttributes,
+    ) -> Result<Vec<ValueFact>, RegistryError> {
+        self.infer_operation_with_extent_sources(key, operands, attributes, None)
+    }
+
+    /// Validates one application against the environment its symbols resolve in.
+    ///
+    /// Beside [`Self::infer_operation`] rather than replacing it, on the same
+    /// ground `SemanticProgramBuilder::try_standard_with_shape_environment` sits
+    /// beside `try_standard`: a caller with no environment should not have to
+    /// name one, and the two share a single body so no rule can be widened for
+    /// one entry point and forgotten for the other.
+    ///
+    /// The environment is *offered*, never applied. Whether a family consults it
+    /// is that family's own decision, and one that does not consult it refuses a
+    /// symbolic operand by name rather than comparing spellings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] for missing authority, invalid operand/result
+    /// types, or semantic inference rejection.
+    pub fn infer_operation_with_extent_sources(
+        &self,
+        key: &OpKey,
+        operands: &[ValueFact],
+        attributes: &OperationAttributes,
+        extent_sources: Option<&ExtentSources>,
     ) -> Result<Vec<ValueFact>, RegistryError> {
         let registered = self.0.operations.get(key).ok_or_else(|| {
             RegistryError::UnregisteredOperationAuthority {
@@ -1681,7 +1714,7 @@ impl FrozenSemanticRegistry {
         }
         let results = registered
             .definition
-            .infer(operands, attributes)
+            .infer(operands, attributes, extent_sources)
             .map_err(|source| operation_rejection(key, registered, source))?;
         if results.is_empty() {
             return Err(RegistryError::OperationProducedNoResults {
@@ -2614,20 +2647,109 @@ impl OperationInferencer for BinaryF32 {
         {
             return Err(op_error("binary.type", "both operands must be f32"));
         }
-        let left = operands[0].shape();
-        let right = operands[1].shape();
-        let shape = if left.rank() == 0 {
-            right.clone()
-        } else if right.rank() == 0 || left == right {
-            left.clone()
-        } else {
-            return Err(op_error(
-                "binary.shape",
-                "operand shapes must match or one operand must be scalar",
-            ));
-        };
+        let shape = elementwise_binary_shape("binary", request)?;
         outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
     }
+}
+
+/// Derives the governed elementwise result boundary for a two-operand family.
+///
+/// The one implementation of "operand shapes must match or one operand must be
+/// scalar" for every elementwise family in this profile. `f32` and `bf16` state
+/// the same sentence, so they resolve it through the same body: two copies would
+/// be two authorities, and the first widening applied to one of them would make
+/// the profile disagree with itself about what a shape is.
+///
+/// **Scalar broadcast is decided on rank alone and is therefore unchanged by
+/// symbolic extents.** A rank-zero operand has no axis to compare, so the branch
+/// never reaches an extent, never reaches the environment, and admits exactly
+/// the applications it admitted before symbols existed. This is stated rather
+/// than left to be inferred because the rule *was* reviewed against the symbolic
+/// case and found to need nothing.
+///
+/// **A rank disagreement stays a rank disagreement.** Ranks are fixed and
+/// structural, so a rank mismatch is refused as the family's own shape
+/// diagnostic and never reported as a not-proved extent pair. There is no
+/// constraint a caller could add to an environment that would make a rank-one
+/// operand rank-two, so reporting it as an environment failure would send that
+/// caller somewhere it cannot fix anything.
+///
+/// **Equal ranks are decided axis for axis, and every pair naming a symbol goes
+/// through [`ExtentSources::proves_equal`] and nothing else.** No syntactic
+/// symbol-identity shortcut sits beside it: the environment is the authority,
+/// and a spelling comparison would disagree with it the first time a constraint
+/// forced two differently spelled symbols together. An absent environment proves
+/// nothing about a symbol, so such a pair is refused rather than assumed.
+///
+/// **A pair of two literals is compared directly, and that is not a second
+/// authority.** `proves_equal` over two literals *is* equality of their
+/// determined values — read its body — so the two agree by construction rather
+/// than by convention. Comparing here is what lets a literal-only program answer
+/// without an environment it never declared, and what lets the refusal say
+/// *these are two different sizes* instead of *not proved*: a caller changes a
+/// shape to fix the first and constrains an environment to fix the second, so
+/// collapsing them would tell a caller to do the wrong thing.
+///
+/// The result names the **left** operand's own boundary, exactly as the fixed
+/// rule did. Naming the left operand's symbol rather than minting a fresh one is
+/// what puts the result and its operands in one equality class by construction;
+/// re-spelling a proved-equal axis from the other side would produce a boundary
+/// neither operand wrote.
+///
+/// # Errors
+///
+/// Returns a family-attributed `<family>.shape` diagnostic for a rank
+/// disagreement between two non-scalar operands and for an unequal pair of
+/// literal extents, and a host diagnostic preserving
+/// [`ExtentSourceError::ExtentsNotProvedEqual`] for the outermost axis naming a
+/// symbol the environment does not prove equal to its counterpart.
+pub(crate) fn elementwise_binary_shape(
+    family: &str,
+    request: OperationInferenceRequest<'_>,
+) -> Result<SourcedShape, OperationInferenceError> {
+    let operands = request.operands();
+    let left = operands[0].shape();
+    let right = operands[1].shape();
+    if left.rank() == 0 {
+        return Ok(right.clone());
+    }
+    if right.rank() == 0 {
+        return Ok(left.clone());
+    }
+    if left.rank() != right.rank() {
+        return Err(mismatched_shape_error(family));
+    }
+    for (axis, (left, right)) in left.extents().zip(right.extents()).enumerate() {
+        if let (Some(left), Some(right)) = (left.as_static(), right.as_static()) {
+            if left == right {
+                continue;
+            }
+            return Err(mismatched_shape_error(family));
+        }
+        if request
+            .extent_sources()
+            .is_some_and(|sources| sources.proves_equal(&left, &right))
+        {
+            continue;
+        }
+        let axis = Axis::new(u32::try_from(axis).expect("a bounded rank fits the axis space"));
+        return Err(OperationInferenceError::from_extent_source(
+            ExtentSourceError::ExtentsNotProvedEqual(Box::new(ExtentDisagreement {
+                axis,
+                left,
+                right,
+            })),
+        ));
+    }
+    Ok(left.clone())
+}
+
+/// Returns the governed elementwise shape refusal, attributed to its family.
+fn mismatched_shape_error(family: &str) -> OperationInferenceError {
+    op_error(
+        &format!("{family}.shape"),
+        "operand shapes must match or one operand must be scalar",
+    )
 }
 
 struct StrictSerialSumF32;
@@ -2652,6 +2774,12 @@ impl OperationInferencer for StrictSerialSumF32 {
                 "Sum requires exactly the axes attribute",
             ));
         }
+        // The strict serial reduction decides its result over literal extents
+        // only. Dropping an axis would need no proof, but the axis *range* check
+        // below and every consumer of this family's result are written against a
+        // fixed boundary, so the symbolic case is declined by name rather than
+        // half-answered.
+        let subject = request.static_operand_shape(0)?;
         let Some(CanonicalValueView::Sequence(values)) = attributes
             .get(REDUCTION_AXES_ATTRIBUTE)
             .map(CanonicalValue::view)
@@ -2674,7 +2802,7 @@ impl OperationInferencer for StrictSerialSumF32 {
                     .map_err(|_| op_error("sum.axes.width", "Sum axis exceeds u32"))?,
             );
             if usize::try_from(logical_axis.get())
-                .map_or(true, |position| position >= operands[0].shape().rank())
+                .map_or(true, |position| position >= subject.rank())
             {
                 return Err(op_error("sum.axes.range", "Sum axis is out of range"));
             }
@@ -2691,7 +2819,7 @@ impl OperationInferencer for StrictSerialSumF32 {
         }
         outputs.try_push(ValueFact::new(
             F32::resolved_type(),
-            operands[0].shape().without_axes(&reduced_axes),
+            subject.without_axes(&reduced_axes),
         ))
     }
 }

@@ -7,8 +7,6 @@
 
 use std::sync::Arc;
 
-use crate::shape::Shape;
-
 use super::{
     AttributeFieldId, CanonicalField, CanonicalValue, EncodedComponentDeclaration,
     EncodedComponentRole, EncodedComponentShape, EncodedNumericContract, F32,
@@ -482,7 +480,10 @@ impl OperationInferencer for AssembleStrictAffine {
             codes.resolved_type(),
             "strict-affine.assemble.zero-point",
         )?;
-        outputs.try_push(ValueFact::new(result_type, codes.shape().clone()))
+        outputs.try_push(ValueFact::new(
+            result_type,
+            request.static_operand_shape(0)?.clone(),
+        ))
     }
 }
 
@@ -519,7 +520,10 @@ impl OperationInferencer for QuantizeStrictAffine {
             zero_point.resolved_type(),
             "strict-affine.quantize.zero-point",
         )?;
-        outputs.try_push(ValueFact::new(result_type, expressed.shape().clone()))
+        outputs.try_push(ValueFact::new(
+            result_type,
+            request.static_operand_shape(0)?.clone(),
+        ))
     }
 }
 
@@ -548,7 +552,7 @@ impl OperationInferencer for DequantizeStrictAffine {
         }
         outputs.try_push(ValueFact::new(
             F32::resolved_type(),
-            encoded.shape().clone(),
+            request.static_operand_shape(0)?.clone(),
         ))
     }
 }
@@ -591,7 +595,11 @@ fn require_scalar_type(
     if value.resolved_type() != expected {
         return Err(op_error(code, "operand has the wrong resolved value type"));
     }
-    if value.shape() != &Shape::new([]) {
+    // Rank, not shape equality. Rank is fixed whatever an extent's source is,
+    // and a rank-zero boundary has no extent to be symbolic — the normalization
+    // invariant makes every rank-zero `SourcedShape` the static empty one — so
+    // this refuses exactly what it refused before and cannot admit a symbol.
+    if value.shape().rank() != 0 {
         return Err(op_error(code, "parameter operand must be rank-zero"));
     }
     Ok(())
@@ -623,6 +631,7 @@ mod tests {
         RegistryError, SemanticPreconditionStatus, SemanticPredicateIdentity, SemanticProgram,
         SemanticProgramBuilder,
     };
+    use crate::shape::Shape;
 
     #[test]
     fn standard_registry_admits_only_the_two_complete_strict_affine_contracts() {
@@ -730,7 +739,7 @@ mod tests {
             assembled[0].resolved_type(),
             &StrictAffineU4::resolved_type()
         );
-        assert_eq!(assembled[0].shape(), &tensor);
+        assert_eq!(assembled[0].shape().as_static(), Some(&tensor));
 
         let dequantized = registry
             .infer_operation(

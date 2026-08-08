@@ -22,7 +22,8 @@ pub use evidence::{Rank, ShapeEvidence, ShapeExpectation, StaticShape};
 // or mint a second constant-or-symbol enum, which is the defect the type's own
 // documentation exists to prevent.
 pub use sourced::{
-    EXTENT_PHASE_CEILING, ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape,
+    EXTENT_PHASE_CEILING, ExtentDisagreement, ExtentSourceError, ExtentSources, SourcedExtent,
+    SourcedShape,
 };
 
 // The `ShapeEnv` authority is re-exported flat here rather than published as a

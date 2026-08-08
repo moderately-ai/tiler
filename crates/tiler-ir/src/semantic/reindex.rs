@@ -1183,8 +1183,13 @@ impl OperationInferencer for ReindexF32 {
                 "a reindex operand must be f32".to_owned(),
             ));
         }
+        // A reindex form splits, merges, or permutes extents, so it computes
+        // over extent *values* rather than comparing them. `SourcedExtent` is
+        // deliberately not an expression tree — a composed extent is a relation
+        // in the environment — so a symbolic operand has no result boundary this
+        // rule could state, and is declined by name.
         let shape = form
-            .result_shape(operand.shape())
+            .result_shape(request.static_operand_shape(0)?)
             .map_err(|error| form_rejection(&error))?;
         outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
     }
