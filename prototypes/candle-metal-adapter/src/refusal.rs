@@ -30,6 +30,8 @@
 use std::fmt;
 
 use candle_core::DType;
+use tiler_metal::direct_requirement::MetalIndexArithmeticRefusal;
+use tiler_metal::synchronization_requirement::MetalSynchronizationRefusal;
 use tiler_runtime::load::TargetCompatibility;
 
 /// The numerical realization a delivered result was produced under.
@@ -532,6 +534,59 @@ pub enum RouteRefusal {
         /// What the Metal binding reported.
         detail: String,
     },
+    /// This backend does not realize the synchronization the entry's program needs.
+    ///
+    /// **A derived requirement, with no artifact row behind it and no device
+    /// behind it either.** `crates/tiler-artifact/src/program/requirement.rs`
+    /// admits a backend-feature row only for something "not already derivable
+    /// from its verified program", and a cooperative tile's synchronization
+    /// subject is derived by `cooperative_synchronization_requirement` — so it
+    /// travels on the entry's `ResourceRequirements` exactly as
+    /// `local_memory_bytes` does, and a row restating it would be a second
+    /// authority a producer could contradict.
+    /// `tiler_metal::synchronization_requirement` owns the comparison, so no MSL
+    /// barrier spelling reaches this consumer or the neutral layers under it.
+    ///
+    /// No observation stands behind this, so no device change repairs it: what a
+    /// delivered envelope requiring an unrealizable subject means is that the
+    /// producer built for a backend this is not.
+    SynchronizationUnrealizable {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// The owning comparison's own account, carried whole.
+        ///
+        /// Whole rather than flattened to a string, because the variant names the
+        /// repair — an unadmitted kind, an unspellable scope or ordering, and a
+        /// barrier Metal declines are four different things to go and change.
+        cause: MetalSynchronizationRefusal,
+    },
+    /// This device does not carry the index arithmetic the entry's program needs.
+    ///
+    /// The device-dependent sibling of [`Self::SynchronizationUnrealizable`], and
+    /// derived for the same reason: every scheduled region derives its index
+    /// arithmetic from its own coordinate space, so the requirement travels on
+    /// `ResourceRequirements` and `tiler_metal::direct_requirement` owns the
+    /// Apple-family comparison.
+    ///
+    /// **Not the `tiler.metal.route-requirement.minimum-gpu-family` row.** That
+    /// row is a live-device *route requirement* the artifact carries and
+    /// [`RuntimeAdapter::observe_live_device`] reports on; this is a fact the
+    /// verified program already states, which is why
+    /// `tiler_metal::direct_requirement`'s module documentation is headed "Why
+    /// this is not a route requirement". The two are answered from the same
+    /// device observation and are not the same obligation.
+    ///
+    /// [`RuntimeAdapter::observe_live_device`]: tiler_runtime::adapter::RuntimeAdapter::observe_live_device
+    IndexArithmeticUnsupported {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// The owning comparison's own account, carried whole.
+        ///
+        /// It names the arithmetic, the family that carries it, and whether the
+        /// device answered — which is what separates "wrong device" from
+        /// "vocabulary does not reach the floor" from "adapter never asked".
+        cause: MetalIndexArithmeticRefusal,
+    },
     /// The device refused pipeline state for a function it did publish.
     PipelineRejected {
         /// Position of the entry in the route's execution order.
@@ -693,6 +748,16 @@ impl fmt::Display for RouteRefusal {
             } => write!(
                 formatter,
                 "candle-metal.payload: entry {entry}'s library publishes no {symbol:?}: {detail}",
+            ),
+            Self::SynchronizationUnrealizable { entry, cause } => write!(
+                formatter,
+                "candle-metal.derived-requirement: entry {entry} needs a synchronization this \
+                 backend does not realize, and no device answers for it: {cause}",
+            ),
+            Self::IndexArithmeticUnsupported { entry, cause } => write!(
+                formatter,
+                "candle-metal.derived-requirement: entry {entry} needs index arithmetic this bound \
+                 device does not establish: {cause}",
             ),
             Self::PipelineRejected {
                 entry,
@@ -897,10 +962,17 @@ impl std::error::Error for DispatchFailure {}
 #[cfg(test)]
 mod tests {
     use super::{
-        DeliveredPath, FallbackAvailability, Realization, ReflectedBinding, ReflectedBindingClass,
+        DeliveredPath, FallbackAvailability, MetalIndexArithmeticRefusal,
+        MetalSynchronizationRefusal, Realization, ReflectedBinding, ReflectedBindingClass,
         RouteRefusal, TensorRefusal, fallback_availability,
     };
     use candle_core::DType;
+    use tiler_ir::schedule::{
+        FencedSpaces, IndexArithmetic, MemoryOrdering, SynchronizationKind, SynchronizationScope,
+        SynchronizationSubject,
+    };
+    use tiler_metal::applicability::MetalGpuFamily;
+    use tiler_metal::direct_requirement::AppleFamilyFloor;
 
     /// A strictly ordered request has no Candle fallback, and a free-order one does.
     ///
@@ -1008,6 +1080,30 @@ mod tests {
                 entry: 0,
                 symbol: "tiler_kernel".to_owned(),
                 detail: "absent".to_owned(),
+            },
+            RouteRefusal::SynchronizationUnrealizable {
+                entry: 0,
+                cause: MetalSynchronizationRefusal::UnadmittedKind {
+                    required: SynchronizationSubject {
+                        kind: SynchronizationKind::Atomic,
+                        execution_scope: SynchronizationScope::Workgroup,
+                        visibility_scope: SynchronizationScope::Workgroup,
+                        fenced_spaces: FencedSpaces {
+                            workgroup: true,
+                            device: false,
+                        },
+                        ordering: MemoryOrdering::AcquireRelease,
+                    },
+                    kind: SynchronizationKind::Atomic,
+                },
+            },
+            RouteRefusal::IndexArithmeticUnsupported {
+                entry: 0,
+                cause: MetalIndexArithmeticRefusal::UndecidableBelowVocabulary {
+                    required: IndexArithmetic::CompleteU64,
+                    floor: AppleFamilyFloor::Apple3,
+                    lowest_observable: MetalGpuFamily::Apple5,
+                },
             },
             RouteRefusal::PipelineRejected {
                 entry: 0,
