@@ -1,7 +1,7 @@
 ---
 id: correct-static-valuefact-premises-in-semantic-family-comments
 title: Correct static-ValueFact premises in semantic family comments
-status: todo
+status: in-progress
 priority: p2
 dependencies: [repair-the-shape-records-after-sourced-semantic-result-shapes]
 related: [correct-the-slice-normative-definition-and-recompute-compiler-identities]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, shapes, correction]
+claimed_from: todo
+assignee: w-terra-static-valuefact
+lease_expires_at: 1786211727
 ---
 
 Two correctness-bearing IR comments outside the research/navigation repair
