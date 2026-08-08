@@ -1,7 +1,7 @@
 ---
 id: correct-the-opaque-identity-bound-attributed-to-the-wrong-authority-in-keys-rs
 title: Correct the opaque identity bound attributed to the wrong authority in keys.rs
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786184079
 ---
 
 A module doc attributes a bound to the wrong authority. **The notable part is the direction: the contract document is right and the crate doc is stale**, which inverts the usual assumption that source outranks prose — so this was not findable by trusting the code over the contract.
