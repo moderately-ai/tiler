@@ -1,7 +1,7 @@
 ---
 id: remove-the-workload-shapes-from-the-concatenate-normative-definition
 title: Remove the workload shapes from the concatenate normative definition
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786188969
 ---
 ## Worker per-Fact audit, 2026-08-08, at base `aae3da245c79314b09f442342b22b8458b8558e1`
 
