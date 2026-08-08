@@ -7000,8 +7000,8 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
 /// The tree's width is the measured cap's choice, and the split's is not.
 ///
 /// **What this pins.** `single_workgroup_tree_region` reads
-/// `capped_tree_partition` — the largest admissible participant count not
-/// exceeding the measured 256 — while `split_reduction_regions` keeps
+/// `capped_tree_partition` — the admissible participant count nearest the
+/// measured 256 — while `split_reduction_regions` keeps
 /// `governed_partition`'s balanced exact split. At 8,192 contributors those are
 /// 256 participants folding 32 each against 128 folding 64, so the assertion
 /// separates the two rules rather than restating one of them. The count is read
@@ -7014,14 +7014,16 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
 /// did not take the capped participant count", left 128 against right 256 —
 /// the balanced choice arriving where the capped one belongs.
 ///
-/// **The decline set is pinned beside it, because the cap must not narrow the
-/// domain.** A cap that refused where the balanced rule admitted would withhold
-/// a legal alternative on a cost heuristic. The two rules agree about which
-/// extents admit a participant count across every contributor count below
+/// **The decline set is pinned beside it, because the width rule must not narrow
+/// the domain.** A rule that refused where the balanced one admitted would
+/// withhold a legal alternative on a cost heuristic. The two rules agree about
+/// which extents admit a participant count across every contributor count below
 /// 4,096 — 3,530 of them admit one — and both that population and the number
 /// of counts at which the two *choices* diverge are asserted, so neither a loop
-/// that ran over nothing nor a cap that quietly became the balanced rule again
-/// can look green.
+/// that ran over nothing nor a width rule that quietly became the balanced rule
+/// again can look green. The width *window* the rule may choose within is
+/// asserted here and its lower edge is the subject of
+/// [`the_tree_widens_toward_the_cap_rather_than_truncating_at_it`].
 #[test]
 fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs() {
     const CONTRIBUTORS: u64 = 8_192;
@@ -7093,9 +7095,12 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
             assert!(capped.covers(contributors));
             assert!(capped.partitions >= 2);
             assert!(capped.contributors_per_partition >= 2);
+            // The window the rule may choose within: never wider than 509, which
+            // is what `2 * cap - 2` allows and what keeps the preference inside
+            // every width authority downstream.
             assert!(
-                capped.partitions <= crate::physical::MEASURED_TREE_PARTICIPANT_CAP,
-                "{contributors} contributors exceeded the cap with a divisor at or below it"
+                capped.partitions <= 2 * crate::physical::MEASURED_TREE_PARTICIPANT_CAP - 2,
+                "{contributors} contributors chose a width outside the rule's window"
             );
             if capped != governed.expect("the domains agree") {
                 differing += 1;
@@ -7104,7 +7109,7 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
     }
     assert_eq!(admitted, 3_530, "the admitting population moved");
     assert_eq!(
-        differing, 2_561,
+        differing, 2_350,
         "the population separating the two rules moved"
     );
 
@@ -7137,6 +7142,167 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
     );
     // A prime count admits nothing, in this branch as in the other.
     assert_eq!(crate::physical::capped_tree_partition(65_537), None);
+}
+
+/// The tree's width rule bounds the *downward* direction, and pays nothing for it
+/// where the calibration measured.
+///
+/// **Why this test exists at all.** `MEASURED_TREE_PARTICIPANT_CAP` is measured
+/// in one direction only. Every shape the calibration swept has a power-of-two
+/// contributor count, and on a power of two "the largest admissible count not
+/// exceeding 256" is identically `min(256, contributors / 2)` — the widest count
+/// the cap admits — so no measured cell could tell that formulation apart from
+/// "the admissible count nearest 256". Where the divisor lattice is sparse they
+/// part company sharply: at 514 (`2 * 257`) the only admissible count at or below
+/// the cap is **2**, and the truncating formulation took it.
+///
+/// **The three properties asserted, and why each is separate.**
+///
+/// 1. *Agreement where the evidence is.* The seven contributor counts the
+///    calibration swept keep the exact widths its leave-one-out selection scored,
+///    so the 1.008 held-out regret is preserved rather than re-argued. Asserted
+///    as a table so a rule that drifted at one shape cannot hide behind six.
+/// 2. *The window.* A width above the cap is taken only when it is nearer to the
+///    cap than every admissible width below, which forces it under `2 * 256 - 2`.
+///    509 is the arithmetic consequence, not a tuned constant, and it is what
+///    keeps the preference inside `MAX_COOPERATIVE_PARTICIPANTS` and inside every
+///    workgroup width a profile here declares.
+/// 3. *The alternative that would not have property 2.* Taking the wider of this
+///    rule and `governed_partition` — the obvious candidate, and identical to
+///    this rule on all seven measured counts — chooses 4,099 participants at
+///    8,198 contributors, which `workgroup_tree_tile` cannot represent. The tree
+///    would be *withdrawn* at a count where it is offered today, so a cost
+///    preference would have decided feasibility. Asserted through the region
+///    builder rather than the partition function, because the withdrawal is only
+///    visible there.
+///
+/// **Populations are counted so nothing can pass by being empty**: below 4,096
+/// there are 3,530 admitting counts and exactly 1,061 at which the chosen width
+/// exceeds the cap, and the widest width reached across the whole sweep is
+/// asserted exactly rather than bounded. Every one of the 1,061 is a widening
+/// against the truncating rule, because a count below 4,096 cannot reach the
+/// above-cap fallback branch at all — the smallest count with no divisor at or
+/// below the cap is `257 * 257`.
+///
+/// **Watched failing.** Reverting `capped_tree_partition` to return `below`
+/// without the search above the cap fails with "514 contributors truncated at the
+/// cap instead of widening toward it", left 2 against right 257.
+#[test]
+fn the_tree_widens_toward_the_cap_rather_than_truncating_at_it() {
+    // The count whose only admissible widths are 2 and an unrepresentable 4,099,
+    // which is what separates this rule from the wider-of-the-two candidate.
+    const SPARSE: u64 = 8_198;
+    let cap = crate::physical::MEASURED_TREE_PARTICIPANT_CAP;
+    let width = |contributors: u64| {
+        crate::physical::capped_tree_partition(contributors).map(|partition| {
+            assert!(partition.covers(contributors));
+            partition.partitions
+        })
+    };
+
+    // 1. The calibration's own seven contributor counts, unmoved. Two shapes of
+    //    the seven share 8,192, which is why the count appears twice: the sweep
+    //    scored it as two cells and the rule owes both the same width.
+    for (contributors, participants) in [
+        (16_u64, 8_u64),
+        (32, 16),
+        (2_048, 256),
+        (4_096, 256),
+        (8_192, 256),
+        (8_192, 256),
+        (16_384, 256),
+    ] {
+        assert_eq!(
+            width(contributors),
+            Some(participants),
+            "the rule moved a width the calibration scored at {contributors} contributors"
+        );
+    }
+
+    // The count the two formulations part company at, and the first one at which
+    // an admissible width sits above the cap while everything below it is 2.
+    assert_eq!(
+        width(514),
+        Some(257),
+        "514 contributors truncated at the cap instead of widening toward it"
+    );
+    assert_eq!(
+        crate::physical::capped_tree_partition(514)
+            .expect("514 admits a partition")
+            .contributors_per_partition,
+        2
+    );
+    // The fallback branch is untouched: nothing at or below the cap divides
+    // 257 * 257, and the smallest admissible count is still what it takes.
+    assert_eq!(width(257 * 257), Some(257));
+
+    // 2. The window, over a named population, with both the widened set and the
+    //    direction of every move counted.
+    let mut admitted = 0_u32;
+    let mut widened = 0_u32;
+    let mut widest = 0_u64;
+    for contributors in 0..4_096_u64 {
+        let Some(chosen) = width(contributors) else {
+            continue;
+        };
+        admitted += 1;
+        widest = widest.max(chosen);
+        if chosen > cap {
+            widened += 1;
+            // Taken only because nothing at or below the cap is nearer to it.
+            let below = (2..=cap.min(contributors / 2))
+                .rev()
+                .find(|candidate| contributors.is_multiple_of(*candidate));
+            let below = below.expect("a width above the cap needs one below to be nearer than");
+            assert!(
+                chosen - cap < cap - below,
+                "{contributors} contributors took {chosen} over the nearer {below}"
+            );
+            assert!(
+                chosen <= 2 * cap - 2,
+                "{contributors} contributors chose {chosen}, outside the window the tie-break allows"
+            );
+        }
+    }
+    assert_eq!(admitted, 3_530, "the admitting population moved");
+    assert_eq!(widened, 1_061, "the widened population moved");
+    assert_eq!(widest, 509, "the widest reachable width moved");
+
+    // 3. The candidate this rule is *not*, and the reason. Both rules agree at
+    //    8,198 that a partition exists; they disagree about which, and only one
+    //    of the two answers survives the tile.
+    let balanced = crate::physical::governed_partition(SPARSE)
+        .expect("8,198 contributors admit a balanced exact split");
+    assert_eq!(balanced.partitions, 4_099);
+    assert_eq!(
+        width(SPARSE),
+        Some(2),
+        "the rule left the representable width"
+    );
+    assert!(
+        tiler_ir::schedule::workgroup_tree_tile(balanced.partitions).is_none(),
+        "8,198 was chosen because the balanced width is unrepresentable; it no longer is"
+    );
+    assert!(tiler_ir::schedule::workgroup_tree_tile(2).is_some());
+    // And the tree really is still offered there, which is the property the
+    // wider-of-the-two candidate would have cost.
+    let (_, request) = tree_request(
+        Shape::from_dims([1, SPARSE]),
+        TargetProfile::workgroup_tree_target_for_test(
+            1_024,
+            1_024,
+            Some(crate::target::SynchronizationSupport::Realized),
+        ),
+    );
+    let (region, members) = crate::physical::single_workgroup_tree_region(
+        &request,
+        request.sole_output(),
+        crate::physical::RegionWrite::ProgramOutput,
+    )
+    .expect("the tree is offered at a count whose only sub-cap width is two");
+    assert_eq!(region.schedule.threads_per_workgroup, 2);
+    crate::physical::verify_schedule(region, members, &request)
+        .expect("the two-participant tree region verifies");
 }
 
 /// Assembles the three verified regions of one request's split program.
