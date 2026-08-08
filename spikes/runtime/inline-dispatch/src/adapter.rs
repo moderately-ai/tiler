@@ -7,7 +7,8 @@
 //!
 //! Nothing here names an internal Tiler crate. Every type below is reached
 //! through `tiler::value`, `tiler::runtime`, or `tiler::artifact`, which is the
-//! property the facade exists to have: a consumer declares one dependency.
+//! property the facade exists to have: an inline-frontend consumer declares one
+//! dependency.
 //!
 //! # Every comparison stays with the loader
 //!
