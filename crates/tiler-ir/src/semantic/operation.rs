@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::identity::push_len;
-use crate::shape::{Shape, SourcedShape};
+use crate::shape::{ExtentSourceError, ExtentSources, Shape, SourcedShape};
 
 use super::handles::{GraphId, OperationId, OperationIndex, ValueId, ValueIndex};
 use super::interface::InputIndex;
@@ -994,16 +994,20 @@ pub enum OperationEffect {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValueFact {
     pub(super) resolved_type: ResolvedValueType,
-    pub(super) shape: Shape,
+    pub(super) shape: SourcedShape,
 }
 
 impl ValueFact {
     /// Creates one complete semantic value fact.
+    ///
+    /// Accepts a [`Shape`] as readily as a [`SourcedShape`], so a rule that only
+    /// ever produces literal extents states its result exactly as it did before
+    /// symbolic operands existed and acquires no case it does not have.
     #[must_use]
-    pub const fn new(resolved_type: ResolvedValueType, shape: Shape) -> Self {
+    pub fn new(resolved_type: ResolvedValueType, shape: impl Into<SourcedShape>) -> Self {
         Self {
             resolved_type,
-            shape,
+            shape: shape.into(),
         }
     }
 
@@ -1013,9 +1017,16 @@ impl ValueFact {
         &self.resolved_type
     }
 
-    /// Returns the statically verified shape.
+    /// Returns the verified shape and where each extent's value comes from.
+    ///
+    /// Total over both source kinds rather than paired with an optional
+    /// symbolic accessor, exactly as
+    /// [`ValueRef::shape`](super::operation::ValueRef::shape) is. A rule that
+    /// decides shapes only over literals reads
+    /// [`OperationInferenceRequest::static_operand_shape`] instead of narrowing
+    /// this itself, so its refusal is named and cannot be forgotten.
     #[must_use]
-    pub const fn shape(&self) -> &Shape {
+    pub const fn shape(&self) -> &SourcedShape {
         &self.shape
     }
 }
@@ -1026,10 +1037,38 @@ pub struct OperationInferenceError {
     code: ProviderDiagnosticCode,
     message: String,
     contract_failure: Option<Arc<ProviderDiagnosticError>>,
+    extent_source: Option<Arc<ExtentSourceError>>,
     secondary: Option<Arc<OperationInferenceError>>,
 }
 
 impl OperationInferenceError {
+    /// Creates a refusal that preserves a typed shape-environment failure.
+    ///
+    /// The code and the message are host-owned rather than provider-chosen,
+    /// because the failure class is the host's: a provider that could spell this
+    /// one itself could spell two refusals that mean one thing. What the
+    /// provider supplies is the [`ExtentSourceError`] it obtained by asking the
+    /// environment, and that value survives the crossing — a builder recovers it
+    /// through [`Self::extent_source`] and reports it as a typed extent failure
+    /// rather than as an opaque provider rejection, which is the whole reason a
+    /// caller can tell "these are different sizes" from "this environment does
+    /// not prove they are the same".
+    #[must_use]
+    pub fn from_extent_source(error: ExtentSourceError) -> Self {
+        Self {
+            code: provider_diagnostic_code("tiler.shape.extent-source"),
+            message: error.to_string(),
+            contract_failure: None,
+            extent_source: Some(Arc::new(error)),
+            secondary: None,
+        }
+    }
+
+    /// Returns the typed shape-environment failure this refusal preserves.
+    #[must_use]
+    pub fn extent_source(&self) -> Option<&ExtentSourceError> {
+        self.extent_source.as_deref()
+    }
     /// Creates a provider-attributed rejection.
     ///
     /// # Errors
@@ -1048,6 +1087,7 @@ impl OperationInferenceError {
             code,
             message: message.into_owned(),
             contract_failure: None,
+            extent_source: None,
             secondary: None,
         })
     }
@@ -1099,16 +1139,27 @@ impl From<ProviderDiagnosticError> for OperationInferenceError {
             code: provider_diagnostic_code("tiler.provider.invalid-diagnostic"),
             message: format!("provider produced an invalid diagnostic: {source}"),
             contract_failure: Some(Arc::new(source)),
+            extent_source: None,
             secondary: None,
         }
     }
 }
 
 impl Error for OperationInferenceError {
+    /// Returns whichever causal failure produced this refusal.
+    ///
+    /// At most one is ever set: a malformed provider diagnostic and a typed
+    /// extent failure arrive through different constructors, and neither
+    /// constructs the other.
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.contract_failure
             .as_deref()
             .map(|source| source as &(dyn Error + 'static))
+            .or_else(|| {
+                self.extent_source
+                    .as_deref()
+                    .map(|source| source as &(dyn Error + 'static))
+            })
     }
 }
 
@@ -1235,13 +1286,19 @@ pub(super) fn validate_provider_diagnostic_message(
 pub struct OperationInferenceRequest<'a> {
     operands: &'a [ValueFact],
     attributes: &'a OperationAttributes,
+    extent_sources: Option<&'a ExtentSources>,
 }
 
 impl<'a> OperationInferenceRequest<'a> {
-    fn new(operands: &'a [ValueFact], attributes: &'a OperationAttributes) -> Self {
+    fn new(
+        operands: &'a [ValueFact],
+        attributes: &'a OperationAttributes,
+        extent_sources: Option<&'a ExtentSources>,
+    ) -> Self {
         Self {
             operands,
             attributes,
+            extent_sources,
         }
     }
 
@@ -1256,6 +1313,75 @@ impl<'a> OperationInferenceRequest<'a> {
     pub const fn attributes(self) -> &'a OperationAttributes {
         self.attributes
     }
+
+    /// Returns the environment every symbolic operand extent resolves in.
+    ///
+    /// `None` where the applying program declares no environment, which is the
+    /// same answer as "nothing about a symbol is provable here": a program with
+    /// no environment has no symbolic operand either, so a rule reading this
+    /// never has to decide whether absence means *unconstrained*.
+    ///
+    /// This is the **only** authority over whether two symbolic extents are one
+    /// extent. A rule that compared spellings beside it would disagree the first
+    /// time a constraint forced two differently spelled symbols together, and it
+    /// would disagree in the admitting direction, which is the direction that
+    /// produces a wrong program rather than a refused one.
+    #[must_use]
+    pub const fn extent_sources(self) -> Option<&'a ExtentSources> {
+        self.extent_sources
+    }
+
+    /// Returns one operand's fixed shape, refusing a symbolic extent by name.
+    ///
+    /// The single entry point for a rule that decides shapes over literal
+    /// extents only. Refusing here rather than letting the rule compare
+    /// [`SourcedShape`]s structurally is the difference between a family that
+    /// has *declined* the symbolic question and one that has silently answered
+    /// it: two occurrences of one symbol compare equal by spelling, so a
+    /// structural comparison would look like a proof without ever consulting
+    /// [`Self::extent_sources`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a host diagnostic preserving
+    /// [`ExtentSourceError::SymbolicExtentUnsupported`] for the outermost
+    /// symbolic axis, and a host diagnostic for an operand position this
+    /// application does not have.
+    pub fn static_operand_shape(
+        self,
+        operand: usize,
+    ) -> Result<&'a Shape, OperationInferenceError> {
+        let Some(fact) = self.operands.get(operand) else {
+            return Err(host_inference_error(
+                "tiler.schema.operand-position",
+                "inference requested an operand position this application does not have",
+            ));
+        };
+        static_shape_of(&fact.shape)
+    }
+}
+
+/// Returns the fixed shape, naming the outermost symbolic axis when there is one.
+///
+/// One definition of the refusal, shared by every literal-only rule, so the
+/// diagnostic a caller sees does not depend on which family declined.
+fn static_shape_of(shape: &SourcedShape) -> Result<&Shape, OperationInferenceError> {
+    if let Some(shape) = shape.as_static() {
+        return Ok(shape);
+    }
+    let (axis, symbol) = shape
+        .extents()
+        .enumerate()
+        .find_map(|(axis, extent)| {
+            let axis = u32::try_from(axis).expect("a bounded rank fits the axis space");
+            extent
+                .symbol()
+                .map(|symbol| (crate::shape::Axis::new(axis), symbol.clone()))
+        })
+        .expect("a non-static sourced boundary holds at least one symbol");
+    Err(OperationInferenceError::from_extent_source(
+        ExtentSourceError::SymbolicExtentUnsupported { axis, symbol },
+    ))
 }
 
 /// Host-owned bounded writer for ordered operation-inference results.
@@ -1531,11 +1657,12 @@ impl OperationDefinition {
         &self,
         operands: &[ValueFact],
         attributes: &OperationAttributes,
+        extent_sources: Option<&ExtentSources>,
     ) -> Result<Vec<ValueFact>, OperationInferenceError> {
         self.schema.validate_inputs(operands, attributes)?;
         let canonical = self.schema.normalize_attributes(attributes)?;
         let resolved = self.schema.resolved_attributes(&canonical)?;
-        let request = OperationInferenceRequest::new(operands, &resolved);
+        let request = OperationInferenceRequest::new(operands, &resolved, extent_sources);
         let mut outputs = OperationInferenceOutputs::new(&self.schema);
         let callback = self.inferencer.infer(request, &mut outputs);
         let results = outputs.finish(callback)?;
@@ -2078,7 +2205,7 @@ mod tests {
         let operands = vec![test_fact(), test_fact()];
         assert_eq!(
             definition
-                .infer(&operands, &OperationAttributes::empty())
+                .infer(&operands, &OperationAttributes::empty(), None)
                 .unwrap(),
             operands
         );
@@ -2090,7 +2217,7 @@ mod tests {
                     let operand = [test_fact()];
                     assert_eq!(
                         definition
-                            .infer(&operand, &OperationAttributes::empty())
+                            .infer(&operand, &OperationAttributes::empty(), None)
                             .unwrap(),
                         operand
                     );

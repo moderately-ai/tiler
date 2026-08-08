@@ -55,7 +55,11 @@ fn result_shape(operands: &[&[u64]], axis: Axis) -> Shape {
         panic!("a concatenation has one result");
     };
     assert_eq!(result.resolved_type(), &F32::resolved_type());
-    result.shape().clone()
+    result
+        .shape()
+        .as_static()
+        .expect("this family infers a literal boundary")
+        .clone()
 }
 
 // --- The result extent, at the pinned workload's own shapes ------------------
@@ -108,7 +112,10 @@ fn the_variadic_arity_joins_every_admitted_operand_count() {
         let [result] = results.as_slice() else {
             panic!("a concatenation has one result");
         };
-        assert_eq!(result.shape(), &shape(&[3 * u64::from(arity), 2]));
+        assert_eq!(
+            result.shape().as_static(),
+            Some(&shape(&[3 * u64::from(arity), 2]))
+        );
     }
 }
 

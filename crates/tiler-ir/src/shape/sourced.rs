@@ -37,12 +37,12 @@
 //! Every claim below about "a consumer" is stated once here rather than
 //! duplicated into each layer, which would then have to be kept in step.
 //!
-//! An *inferred* semantic result shape is still a [`Shape`]: shape inference
-//! over symbolic operands is a separate delivery, so a symbolic value cannot be
-//! an operation operand yet and only a program input may name a symbol. That is
-//! a boundary rather than a partial state — every representable program is
-//! constructible, verifiable, and identifiable — and it is what
-//! `resolve-semantic-shape-inference-over-symbolic-extents` moves.
+//! An *inferred* semantic result shape is a [`SourcedShape`] too. A symbolic
+//! value may be an operation operand, and the frozen semantic authority decides
+//! whether two symbolic operands are one shape by asking this module's
+//! [`ExtentSources::proves_equal`] rather than by comparing spellings. A family
+//! that has not been taught the question refuses a symbolic operand by name
+//! instead of answering it structurally.
 //!
 //! # What this module owns, and what it deliberately does not
 //!
@@ -152,11 +152,14 @@
 //! reported as unprovable by the consuming verifier rather than approximated,
 //! and an extent the environment does not determine is never enumerated.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::program::abi::AvailabilityPhase;
 
-use super::{Extent, ExtentInterval, Shape, ShapeEnv, ShapeEnvIdentity, ShapeError, ShapeSymbol};
+use super::{
+    Axis, Extent, ExtentInterval, Shape, ShapeEnv, ShapeEnvIdentity, ShapeError, ShapeSymbol,
+};
 
 /// The last availability phase a sourced extent may be read from.
 ///
@@ -247,6 +250,20 @@ impl SourcedExtent {
         match self {
             Self::Static(_) => 1 + 8,
             Self::Symbol(symbol) => 1 + symbol.encoded_len(),
+        }
+    }
+}
+
+impl std::fmt::Display for SourcedExtent {
+    /// Renders what the extent *names*, never what an environment resolves it to.
+    ///
+    /// A literal writes its integer, matching [`Shape`]'s own rendering, and a
+    /// symbol writes its scoped name. A refusal that named a resolved value
+    /// would tell a reader the environment had fixed something it may not have.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Static(extent) => write!(formatter, "{}", extent.get()),
+            Self::Symbol(symbol) => write!(formatter, "{symbol}"),
         }
     }
 }
@@ -376,15 +393,65 @@ impl SourcedShape {
         extents_encoded_len(self.extents())
     }
 
-    /// Returns the length [`Self::encode`] appends for a wholly literal shape.
+    /// Returns this boundary with the named logical axes removed.
     ///
-    /// A consumer's canonical-work accounting reserves an inferred boundary's
-    /// bytes before the boundary itself exists, and an inferred boundary is
-    /// always literal. This answers that question through the same framing
-    /// [`Self::encoded_len`] uses rather than restating it, and without
-    /// materializing the [`Self::Static`] it would describe.
-    pub(crate) fn static_encoded_len(shape: &Shape) -> usize {
-        extents_encoded_len(shape.extents().iter().copied().map(SourcedExtent::Static))
+    /// The total-view counterpart of [`Shape::without_axes`], and it needs no
+    /// environment: dropping an axis asks nothing about the extents that remain,
+    /// so a symbolic boundary answers it exactly as a literal one does. As
+    /// there, callers validate axis range and uniqueness where their own
+    /// contract depends on those.
+    ///
+    /// Renormalizing, so a boundary whose only symbolic axes were removed comes
+    /// back as [`Self::Static`] and a rank-collapsing reduction has one
+    /// spelling — the same invariant every other constructor holds.
+    ///
+    /// # Panics
+    ///
+    /// Never for a boundary this vocabulary can hold: the result is never longer
+    /// than the input, and the input's rank was admitted when it was
+    /// constructed. A panic here would be a broken normalization invariant
+    /// rather than an input a caller can reach.
+    #[must_use]
+    pub fn without_axes(&self, axes: &[Axis]) -> Self {
+        let reduced: BTreeSet<usize> = axes
+            .iter()
+            .filter_map(|axis| usize::try_from(axis.get()).ok())
+            .collect();
+        let retained: Vec<SourcedExtent> = self
+            .extents()
+            .enumerate()
+            .filter_map(|(index, extent)| (!reduced.contains(&index)).then_some(extent))
+            .collect();
+        Self::sourced(retained).expect("removing axes cannot exceed an admitted rank")
+    }
+}
+
+impl From<Shape> for SourcedShape {
+    /// Lifts a fixed shape into the total view.
+    ///
+    /// The one spelling for "this boundary was written wholly literally", so a
+    /// caller holding a [`Shape`] never reaches for the enum variant directly
+    /// and the normalization invariant holds by construction.
+    fn from(shape: Shape) -> Self {
+        Self::Static(shape)
+    }
+}
+
+impl std::fmt::Display for SourcedShape {
+    /// Renders the ordered extents the boundary names, bracketed as [`Shape`] is.
+    ///
+    /// Delegating to [`SourcedExtent`]'s rendering rather than restating it is
+    /// what keeps a literal axis reading identically whether the boundary is
+    /// [`Self::Static`] or a normalized [`Self::Sourced`].
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("[")?;
+        for (index, extent) in self.extents().enumerate() {
+            if index != 0 {
+                formatter.write_str(", ")?;
+            }
+            write!(formatter, "{extent}")?;
+        }
+        formatter.write_str("]")
     }
 }
 
@@ -452,6 +519,43 @@ pub enum ExtentSourceError {
         /// The symbol the rejected divisor named.
         symbol: ShapeSymbol,
     },
+    /// The environment does not prove two extents required to agree are equal.
+    ///
+    /// Raised where a rule says two boundaries must be *one shape* and at least
+    /// one axis pair names a symbol, so `==` on the spelling decides nothing.
+    /// The proof comes from [`ExtentSources::proves_equal`], which is one-sided:
+    /// this variant therefore means *not proved*, never *proved different*. The
+    /// distinction is the reason it is separate from a consuming layer's own
+    /// shape-mismatch diagnostic — a caller retries a not-proved pair by
+    /// constraining the environment, and cannot retry two different sizes at
+    /// all.
+    ///
+    /// A rank disagreement is **not** reported here. Ranks are fixed and
+    /// structural, so a rank mismatch is decided without asking the environment
+    /// and stays the consuming rule's own refusal; only an axis-for-axis
+    /// comparison over equal ranks can reach this.
+    ///
+    /// Boxed because this enum travels inside several `Result` error types and
+    /// a `SourcedExtent` is as wide as the `ShapeSymbol` it may name. Carrying
+    /// two of them inline made this the widest variant by a factor of two and
+    /// widened every `Result` that transitively holds one, which is a cost paid
+    /// on the success path of every such call. One allocation on a refusal is
+    /// the cheaper side of that trade.
+    ExtentsNotProvedEqual(Box<ExtentDisagreement>),
+    /// A symbolic extent reached a rule that decides shapes only over literals.
+    ///
+    /// Distinct from every variant above: the environment was not asked and
+    /// nothing about it failed. The rule itself has no answer for a boundary
+    /// whose extent is bound later, and refusing by name is what keeps it from
+    /// answering structurally — two occurrences of one symbol compare equal by
+    /// spelling, which would make an unreviewed rule *look* like it had proved
+    /// something.
+    SymbolicExtentUnsupported {
+        /// Zero-based axis naming the symbol the rule cannot resolve.
+        axis: Axis,
+        /// The symbol that axis named.
+        symbol: ShapeSymbol,
+    },
 }
 
 impl std::fmt::Display for ExtentSourceError {
@@ -459,7 +563,7 @@ impl std::fmt::Display for ExtentSourceError {
         match self {
             Self::UndeclaredSymbol { symbol } => write!(
                 formatter,
-                "index-extent.undeclared-symbol: {symbol} is not declared by this region's shape environment"
+                "sourced-extent.undeclared-symbol: {symbol} is not declared by this program's shape environment"
             ),
             Self::SourceTooLate {
                 symbol,
@@ -467,17 +571,50 @@ impl std::fmt::Display for ExtentSourceError {
                 ceiling,
             } => write!(
                 formatter,
-                "index-extent.source-too-late: {symbol} is available at {available}, after {ceiling}"
+                "sourced-extent.source-too-late: {symbol} is available at {available}, after {ceiling}"
             ),
             Self::DivisorNotProvedPositive { symbol } => write!(
                 formatter,
-                "index-extent.divisor-not-proved-positive: this region's shape environment does not require {symbol} to be at least one"
+                "sourced-extent.divisor-not-proved-positive: this program's shape environment does not require {symbol} to be at least one"
+            ),
+            Self::ExtentsNotProvedEqual(disagreement) => write!(
+                formatter,
+                "sourced-extent.not-proved-equal: this program's shape environment does not prove that {} and {} are one extent at axis {}",
+                disagreement.left,
+                disagreement.right,
+                disagreement.axis.get()
+            ),
+            Self::SymbolicExtentUnsupported { axis, symbol } => write!(
+                formatter,
+                "sourced-extent.symbolic-extent-unsupported: this rule decides shapes over literal extents only, and axis {} names {symbol}",
+                axis.get()
             ),
         }
     }
 }
 
 impl std::error::Error for ExtentSourceError {}
+
+/// Two extents a rule required to be one extent, and the axis they sit on.
+///
+/// Its own type rather than three fields on
+/// [`ExtentSourceError::ExtentsNotProvedEqual`], so that variant can be boxed
+/// without the boxing showing up as three separate indirections at every
+/// construction and match site.
+///
+/// The extents are recorded as the rule *asked* about them — left operand's
+/// then right operand's, at that axis — so a caller reading the pair sees the
+/// comparison that was actually performed rather than one reconstructed
+/// afterwards.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExtentDisagreement {
+    /// Zero-based axis whose two extents were not proved equal.
+    pub axis: Axis,
+    /// The extent the left boundary names at that axis.
+    pub left: SourcedExtent,
+    /// The extent the right boundary names at that axis.
+    pub right: SourcedExtent,
+}
 
 /// One program's binding of sourced extents to a single shape environment.
 ///

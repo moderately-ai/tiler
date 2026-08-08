@@ -440,8 +440,8 @@ fn the_activation_preserves_its_operand_shape() {
     };
     assert_eq!(result.resolved_type(), &F32::resolved_type());
     assert_eq!(
-        result.shape(),
-        &Shape::try_from_dims([4, 3]).expect("bounded")
+        result.shape().as_static(),
+        Some(&Shape::try_from_dims([4, 3]).expect("bounded"))
     );
 }
 

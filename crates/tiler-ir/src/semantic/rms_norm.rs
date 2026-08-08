@@ -570,7 +570,19 @@ impl OperationInferencer for RmsNormF32 {
         // shape. Accepting the narrow shape here would be implicit broadcasting
         // under another name, and it would put the broadcast's own access
         // relation inside an operation whose identity does not carry one.
-        if weight.shape() != input.shape() {
+        //
+        // A symbolic operand is declined by name before this comparison rather
+        // than compared through it. Two `SourcedShape`s naming one symbol are
+        // structurally equal, so leaving the comparison total would make this
+        // rule *look* like it had proved a same-shape obligation it never asked
+        // the environment about — and it would keep looking right until a
+        // constraint forced two differently spelled symbols together, at which
+        // point it would refuse a program the environment proves legal. The
+        // environment is the only authority over symbolic extent equality, and
+        // this family has not been given a rule that consults it.
+        let input = request.static_operand_shape(0)?;
+        let weight = request.static_operand_shape(1)?;
+        if weight != input {
             return Err(op_error(
                 "rms-norm.f32.weight-shape",
                 "the binary32 RMS normalization admits no implicit broadcasting; the weight \
@@ -586,14 +598,14 @@ impl OperationInferencer for RmsNormF32 {
                  attributes",
             ));
         }
-        let axis = reduced_axis(&request, input.shape().rank())?;
+        let axis = reduced_axis(&request, input.rank())?;
         eps_payload(&request)?;
         // Shape-preserving: the normalization divides each element of a row by
         // that row's root mean square, so the reduced axis is folded over and
         // then restored. A contract that dropped the axis would be a mean, which
         // this family deliberately does not admit.
         let _ = axis;
-        outputs.try_push(ValueFact::new(expected, input.shape().clone()))
+        outputs.try_push(ValueFact::new(expected, input.clone()))
     }
 }
 

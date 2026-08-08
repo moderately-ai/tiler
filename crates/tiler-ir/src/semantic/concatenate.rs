@@ -515,7 +515,14 @@ impl OperationInferencer for ConcatenateF32 {
                 ));
             }
         }
-        let shapes: Vec<&Shape> = operands.iter().map(ValueFact::shape).collect();
+        // Concatenation *sums* the extents on its axis and requires equality on
+        // every other, so it needs arithmetic over extents rather than a proof
+        // of equality. `SourcedExtent` is deliberately not an expression tree —
+        // a composed extent is a relation in the environment — so this family
+        // has no rule for a symbolic operand yet and declines by name.
+        let shapes: Vec<&Shape> = (0..operands.len())
+            .map(|position| request.static_operand_shape(position))
+            .collect::<Result<_, _>>()?;
         let shape = concatenate_result_shape(axis, &shapes).map_err(|error| rejection(&error))?;
         outputs.try_push(ValueFact::new(expected, shape))
     }

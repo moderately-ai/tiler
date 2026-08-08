@@ -1041,20 +1041,25 @@ impl OperationInferencer for StrictTensorContractionF32 {
             ));
         }
 
-        // Extent agreement, through the accepted three-outcome path. Every
-        // extent an occurrence can carry is a static `Extent`, so the outcome is
-        // proved or disproved here and the unresolved arm — a typed host-side
-        // pre-dispatch requirement — is unreachable until a semantic value fact
-        // can carry a symbolic extent. A disproof names both observed sources,
-        // because equality does not erase source identity: reporting one of them
-        // would tell a caller half of what it needs to fix the program.
+        // Extent agreement, through the accepted three-outcome path. A semantic
+        // value fact can now carry a symbolic extent, and this family declines
+        // one by name: binding a contraction index to an extent asserts that
+        // every occurrence of that index takes one value, which over symbols is
+        // an equality-class proof rather than the `Extent` comparison below, and
+        // the unresolved arm — a typed host-side pre-dispatch requirement — is
+        // the accepted shape of that widening rather than something this rule
+        // may improvise. So every extent reaching the comparison is a static
+        // `Extent` and the outcome is proved or disproved here. A disproof names
+        // both observed sources, because equality does not erase source
+        // identity: reporting one of them would tell a caller half of what it
+        // needs to fix the program.
         //
         // Zipped rather than indexed by position: the operand-count refusal
         // above is what puts an index in range, and a check whose absence turns
         // a refusal into a panic is a worse check than one that cannot.
         let mut bindings: BTreeMap<ContractionIndex, ExtentBinding> = BTreeMap::new();
-        for (position, (tuple, operand)) in structure.operands().zip(operands).enumerate() {
-            let shape = operand.shape();
+        for (position, (tuple, _)) in structure.operands().zip(operands).enumerate() {
+            let shape = request.static_operand_shape(position)?;
             if shape.rank() != tuple.len() {
                 return Err(op_error(
                     "contraction.rank",

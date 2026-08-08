@@ -77,7 +77,11 @@ fn result_shape(source: &[u64], index: &[u64], axis: u32) -> Shape {
         &F32::resolved_type(),
         "a gather result is binary32"
     );
-    result.shape().clone()
+    result
+        .shape()
+        .as_static()
+        .expect("this family infers a literal boundary")
+        .clone()
 }
 
 /// The pinned occurrence infers the shape the workload derivation states.

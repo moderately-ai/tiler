@@ -285,7 +285,10 @@ fn the_admitted_profile_infers_its_result_shape_from_the_structure() {
         panic!("a contraction has one result");
     };
     assert_eq!(result.resolved_type(), &F32::resolved_type());
-    assert_eq!(result.shape(), &Shape::from_dims([128, 3072]));
+    assert_eq!(
+        result.shape().as_static(),
+        Some(&Shape::from_dims([128, 3072]))
+    );
 }
 
 #[test]
@@ -569,7 +572,10 @@ fn an_empty_contracted_domain_is_refused_because_the_fold_is_unseeded() {
         workload_structure().canonical_value().clone(),
     )
     .expect("an empty free extent produces an empty result");
-    assert_eq!(results[0].shape(), &Shape::from_dims([0, 3072]));
+    assert_eq!(
+        results[0].shape().as_static(),
+        Some(&Shape::from_dims([0, 3072]))
+    );
 }
 
 // --- The numerical signature ------------------------------------------------
@@ -930,13 +936,13 @@ fn the_grouped_query_repetition_index_is_free_in_one_operand_and_the_output() {
     )
     .expect("the C1 prefill score contraction is admitted");
     assert_eq!(
-        results[0].shape(),
-        &Shape::from_dims([
+        results[0].shape().as_static(),
+        Some(&Shape::from_dims([
             C1_GROUPS,
             C1_REPEATS,
             C1_QUERY_POSITIONS,
             C1_QUERY_POSITIONS
-        ])
+        ]))
     );
 
     // The broadcast spelling is what `r` avoids: a key operand carrying the
@@ -965,8 +971,13 @@ fn both_attention_structures_infer_their_c1_result_shapes() {
     )
     .expect("the C1 prefill value contraction is admitted");
     assert_eq!(
-        results[0].shape(),
-        &Shape::from_dims([C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM])
+        results[0].shape().as_static(),
+        Some(&Shape::from_dims([
+            C1_GROUPS,
+            C1_REPEATS,
+            C1_QUERY_POSITIONS,
+            C1_HEAD_DIM
+        ]))
     );
 
     // Both structures reach the same admission through the authoring facade a
@@ -1175,8 +1186,13 @@ fn both_attention_structures_agree_their_shared_extents_or_name_both_sources() {
         )
         .unwrap_or_else(|error| panic!("S = {context} is admitted: {error}"));
         assert_eq!(
-            results[0].shape(),
-            &Shape::from_dims([C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+            results[0].shape().as_static(),
+            Some(&Shape::from_dims([
+                C1_GROUPS,
+                C1_REPEATS,
+                C1_QUERY_POSITIONS,
+                C1_HEAD_DIM
+            ])),
             "the contracted extent leaves the result shape, whatever S is"
         );
     }
@@ -1227,8 +1243,8 @@ fn the_value_structure_refuses_a_zero_context_length() {
     )
     .expect("an empty free extent produces an empty result");
     assert_eq!(
-        results[0].shape(),
-        &Shape::from_dims([C1_GROUPS, C1_REPEATS, 0, C1_HEAD_DIM])
+        results[0].shape().as_static(),
+        Some(&Shape::from_dims([C1_GROUPS, C1_REPEATS, 0, C1_HEAD_DIM]))
     );
     // And the score structure refuses a zero head dimension for the same reason,
     // so the refusal is the family's rather than one structure's.

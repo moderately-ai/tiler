@@ -197,7 +197,7 @@ pub enum BuildError {
         /// Arena entity kind that exhausted its identifier space.
         entity: EntityKind,
     },
-    /// A sourced input extent named a symbol this program cannot resolve.
+    /// This program's shape environment cannot support a sourced extent's use.
     ///
     /// A program resolves every symbolic extent against exactly one
     /// environment, fixed at construction. A symbol that environment does not
@@ -205,21 +205,19 @@ pub enum BuildError {
     /// no meaning here, and one whose binding arrives after
     /// [`EXTENT_PHASE_CEILING`](crate::shape::EXTENT_PHASE_CEILING) arrives too
     /// late for a shape that must be evaluable before any device work begins.
+    ///
+    /// It is also how an operation refuses over extents, and that is deliberate
+    /// rather than a reuse of convenience. A rule that requires two operand
+    /// extents to be one extent, or that decides shapes over literals only, is
+    /// asking this environment a question and reporting the environment's
+    /// answer; a caller acts on it by declaring or constraining a symbol. That
+    /// is a different action from the one
+    /// [`Self::SemanticRegistry`] calls for, which is where a *structural*
+    /// shape disagreement — two different sizes, or two different ranks —
+    /// arrives, and the two stay separable for exactly that reason.
     ExtentSource(ExtentSourceError),
     /// The shape vocabulary cannot represent the normalized sourced boundary.
     ShapeVocabulary(ShapeError),
-    /// A value whose shape names a symbol was used as an operation operand.
-    ///
-    /// Result shapes are inferred by the frozen semantic authority through
-    /// [`ValueFact`](super::operation::ValueFact), which carries a fixed
-    /// [`Shape`]; inference over symbolic operands is a separate delivery. Until
-    /// it lands a symbolic extent reaches a program *input* and nothing
-    /// downstream of one, which is a refusal rather than a shape this layer
-    /// would have to guess.
-    SymbolicOperandUnsupported {
-        /// Role the rejected value occupied.
-        role: ValueRole,
-    },
 }
 
 impl fmt::Display for BuildError {
@@ -275,10 +273,6 @@ impl fmt::Display for BuildError {
             Self::TooManyEntities { entity } => write!(formatter, "too many {entity} entities"),
             Self::ExtentSource(error) => error.fmt(formatter),
             Self::ShapeVocabulary(error) => error.fmt(formatter),
-            Self::SymbolicOperandUnsupported { role } => write!(
-                formatter,
-                "{role} has a symbolic extent, which semantic shape inference does not yet accept"
-            ),
         }
     }
 }

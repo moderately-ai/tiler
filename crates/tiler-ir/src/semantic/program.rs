@@ -35,7 +35,7 @@ use super::precondition::{
     initialize_obligation_identities, obligation_identity_total_encoded_len,
 };
 use super::registry::{
-    FrozenSemanticRegistry, SemanticAdmissionProvenanceIdentity,
+    FrozenSemanticRegistry, RegistryError, SemanticAdmissionProvenanceIdentity,
     SemanticDefinitionProjectionIdentity, SemanticRegistrySnapshotIdentity,
 };
 use super::shape_evidence::{SameShape, ShapeWitness, ShapedValue};
@@ -753,13 +753,25 @@ impl SemanticProgramBuilder {
         operands: &[ValueId],
     ) -> Result<ShapedValue<T, E>, BuildError> {
         self.apply_typed_single_checked(key, attributes, operands, |fact| {
-            if E::matches(fact.shape()) {
+            // Rust-side evidence states a shape fixed when the consumer was
+            // compiled, so an inferred boundary naming a symbol is *refused*
+            // rather than answered negatively: answering either way would claim
+            // something the environment has not fixed. This is the same
+            // discrimination `refine` draws over an input boundary.
+            let Some(actual) = fact.shape().as_static() else {
+                return Err(BuildError::ShapeRefinement(
+                    ShapeRefineError::SymbolicShape {
+                        expected: E::expectation(),
+                    },
+                ));
+            };
+            if E::matches(actual) {
                 Ok(())
             } else {
                 Err(BuildError::ShapeRefinement(
                     ShapeRefineError::EvidenceMismatch {
                         expected: E::expectation(),
-                        actual: fact.shape().clone(),
+                        actual: actual.clone(),
                     },
                 ))
             }
@@ -1041,38 +1053,31 @@ impl SemanticProgramBuilder {
                 )
             })
             .collect::<Result<_, _>>()?;
+        // The operand's own boundary reaches the frozen authority intact,
+        // symbols and all. Substituting a value the environment merely
+        // determines would encode a program nobody wrote, and narrowing to the
+        // literal case here would decide on the operation's behalf a question
+        // the operation's own rule owns.
         let operand_facts: Vec<_> = operand_indices
             .iter()
-            .enumerate()
-            .map(|(position, index)| {
+            .map(|index| {
                 let value = &self.values[index.as_usize()];
-                // Refused here rather than at `build`, and refused rather than
-                // specialized: an operand naming a symbol has no fixed shape to
-                // hand the frozen authority, and substituting one the
-                // environment merely determines would encode a program nobody
-                // wrote.
-                let shape = value.shape.as_static().ok_or_else(|| {
-                    BuildError::SymbolicOperandUnsupported {
-                        role: ValueRole::OperationOperand {
-                            index: u32::try_from(position)
-                                .expect("operand count was bounded above"),
-                        },
-                    }
-                })?;
-                Ok(ValueFact::new(
-                    value.resolved_type.as_ref().clone(),
-                    shape.clone(),
-                ))
+                ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
             })
-            .collect::<Result<_, BuildError>>()?;
+            .collect();
         let attributes = self
             .semantic_registry
             .normalize_operation_attributes(&key, attributes)
             .map_err(BuildError::SemanticRegistry)?;
         let inferred = self
             .semantic_registry
-            .infer_operation(&key, &operand_facts, &attributes)
-            .map_err(BuildError::SemanticRegistry)?;
+            .infer_operation_with_extent_sources(
+                &key,
+                &operand_facts,
+                &attributes,
+                self.extent_sources.as_ref(),
+            )
+            .map_err(extent_aware_registry_error)?;
         for fact in &inferred {
             validate_rank(fact.shape().rank())?;
         }
@@ -1114,7 +1119,7 @@ impl SemanticProgramBuilder {
                     operation: operation_index,
                     result_index,
                 },
-                shape: SourcedShape::from_shape(fact.shape),
+                shape: fact.shape,
                 resolved_type: Arc::new(fact.resolved_type),
             });
             result_indices.push(value_index);
@@ -1632,28 +1637,24 @@ impl SemanticProgramBuilder {
     }
 
     fn operation_contract_holds(&self, operation: &OperationData) -> bool {
-        // A retained operand is literal by construction: `push_operation`
-        // refuses a symbolic one before the operation exists. A sourced shape
-        // here is therefore a broken invariant, and reporting the contract
-        // unheld is the conservative answer this predicate already gives every
-        // other way an operation can fail to reproduce.
-        let Some(operand_facts) = operation
+        // Reproduced against the operand's own boundary and this draft's own
+        // environment, which is what makes the check a re-derivation rather than
+        // a weaker restatement: narrowing to the literal case here would report
+        // every symbolic operation's contract unheld, and supplying no
+        // environment would report it unheld for a different reason.
+        let operand_facts: Vec<_> = operation
             .operands
             .iter()
             .map(|operand| {
                 let value = &self.values[operand.as_usize()];
-                value.shape.as_static().map(|shape| {
-                    ValueFact::new(value.resolved_type.as_ref().clone(), shape.clone())
-                })
+                ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
             })
-            .collect::<Option<Vec<_>>>()
-        else {
-            return false;
-        };
-        let Ok(expected) = self.semantic_registry.infer_operation(
+            .collect();
+        let Ok(expected) = self.semantic_registry.infer_operation_with_extent_sources(
             &operation.key,
             &operand_facts,
             &operation.attributes,
+            self.extent_sources.as_ref(),
         ) else {
             return false;
         };
@@ -1670,10 +1671,34 @@ impl SemanticProgramBuilder {
                 .zip(expected)
                 .all(|(actual, expected)| {
                     let actual = &self.values[actual.as_usize()];
-                    actual.shape.as_static() == Some(&expected.shape)
+                    actual.shape == expected.shape
                         && actual.resolved_type.as_ref() == &expected.resolved_type
                 })
     }
+}
+
+/// Reports a registry rejection as the typed extent failure that caused it.
+///
+/// The frozen authority's rejection channel is a stable *provider* diagnostic —
+/// a code and a message — because a provider may not mint host types. A refusal
+/// that came from asking this program's shape environment is not a provider's
+/// opinion, though: it is a host answer that the provider merely relayed, and it
+/// carries the two extents and the axis as data. Recovering it here is what lets
+/// a caller tell "these are two different sizes", which arrives as
+/// [`BuildError::SemanticRegistry`], from "this environment does not prove they
+/// are the same", which arrives as [`BuildError::ExtentSource`] and is answered
+/// by constraining the environment rather than by changing a shape.
+///
+/// Nothing is re-derived: the pair reported is the pair the rule actually asked
+/// about. A builder that recomputed a likely-looking pair could name an axis the
+/// rule never compared.
+fn extent_aware_registry_error(error: RegistryError) -> BuildError {
+    if let RegistryError::RejectedOperationApplication(rejection) = &error
+        && let Some(extent_source) = rejection.source_error().extent_source()
+    {
+        return BuildError::ExtentSource(extent_source.clone());
+    }
+    BuildError::SemanticRegistry(error)
 }
 
 fn validate_rank(rank: usize) -> Result<(), BuildError> {
@@ -1711,14 +1736,14 @@ mod tests {
         ProviderDiagnosticCode, ProviderIdentity, QuantSchemeKey, RegistryError,
         SemanticGraphIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
         SemanticRegistryRegistrar, StrictSerialF32Sum, TypeArguments, TypeDefinitionFacts, TypeKey,
-        U4, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op,
+        U4, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op, multiply_f32_op,
     };
     use super::*;
     use crate::program::abi::AvailabilityPhase;
     use crate::shape::{
-        Axis, BindingSource, EXTENT_PHASE_CEILING, Extent, ExtentRelation, ExtentSourceError,
-        ExtentTerm, FactProvenance, RootBinding, SemanticInputConstraint, Shape, ShapeEnvBuilder,
-        ShapeSymbol, StaticShape, SymbolScope,
+        Axis, BindingSource, EXTENT_PHASE_CEILING, Extent, ExtentDisagreement, ExtentRelation,
+        ExtentSourceError, ExtentTerm, FactProvenance, RootBinding, SemanticInputConstraint, Shape,
+        ShapeEnvBuilder, ShapeSymbol, StaticShape, SymbolScope,
     };
 
     #[test]
@@ -1969,22 +1994,281 @@ mod tests {
         );
     }
 
+    /// A two-symbolic-input draft, so an elementwise pair is statable.
+    ///
+    /// Returns the builder and the two values, both `f32[<extent>]` over the
+    /// supplied environment, so every fixture below differs from its neighbour
+    /// in the extents alone.
+    fn symbolic_pair(
+        environment: Arc<ShapeEnv>,
+        left: SourcedExtent,
+        right: SourcedExtent,
+    ) -> (SemanticProgramBuilder, Value<F32>, Value<F32>) {
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+        let a = builder
+            .input_sourced::<F32>(input_key("rows"), vec![left])
+            .expect("the left input is admitted");
+        let b = builder
+            .input_sourced::<F32>(input_key("cols"), vec![right])
+            .expect("the right input is admitted");
+        (builder, a, b)
+    }
+
+    /// Commits the draft and returns the ordered extents of its one output.
+    ///
+    /// Read from the *committed* program rather than the draft, so the boundary
+    /// asserted is the one identity is derived over and not an intermediate a
+    /// later compaction could change.
+    fn committed_result_extents(
+        mut builder: SemanticProgramBuilder,
+        value: Value<F32>,
+    ) -> Vec<SourcedExtent> {
+        builder.output(output_key("out"), value).unwrap();
+        let program = builder.build().expect("the symbolic program verifies");
+        let output = program
+            .outputs()
+            .next()
+            .expect("the program has one output");
+        program
+            .shape(output.value())
+            .expect("the output value is local")
+            .extents()
+            .collect()
+    }
+
+    /// The environment relating `m` to `n`, or leaving them unrelated.
+    fn two_symbol_env_with(relations: &[ExtentRelation]) -> Arc<ShapeEnv> {
+        let mut draft = ShapeEnvBuilder::new();
+        for (name, axis) in [("n", 0), ("m", 1)] {
+            let declared = sym(name);
+            draft.declare(declared.clone()).unwrap();
+            draft
+                .bind(&declared, axis_binding("rows", axis, EXTENT_PHASE_CEILING))
+                .unwrap();
+        }
+        for relation in relations {
+            draft
+                .require(SemanticInputConstraint::new(
+                    relation.clone(),
+                    FactProvenance::FrontendRequired,
+                ))
+                .unwrap();
+        }
+        Arc::new(draft.build().unwrap())
+    }
+
+    /// `f32[n] * f32[n]` applies, and the proof route is asserted, not the outcome.
+    ///
+    /// The outcome alone would also be produced by an encoder that compared the
+    /// two boundaries' *spelling*, which is the one thing this must not be. So
+    /// the environment is interrogated directly first — it relates nothing, and
+    /// determines nothing, and still proves the pair equal — which leaves the
+    /// equality class as the only route that could have admitted the operation.
     #[test]
-    fn a_symbolic_value_is_refused_as_an_operation_operand() {
+    fn one_symbol_against_itself_applies_by_the_environments_own_proof() {
+        let environment = env();
+        let n = SourcedExtent::Symbol(sym("n"));
+        let sources = ExtentSources::new(Arc::clone(&environment));
+        assert_eq!(
+            sources.determined(&n),
+            None,
+            "no value is known for n, so a common determined value cannot be the route",
+        );
+        assert!(
+            sources.proves_equal(&n, &n),
+            "the equality class is what proves it, and it does so with no value known",
+        );
+
+        let (mut builder, a, b) = symbolic_pair(environment, n.clone(), n.clone());
+        let product = multiply(&mut builder, a, b).expect("one symbol against itself is one shape");
+        assert_eq!(
+            committed_result_extents(builder, product),
+            vec![n],
+            "the result names the operand's own symbol rather than a fresh one, so the \
+             result and its operands share an equality class by construction",
+        );
+    }
+
+    /// `f32[n] * f32[m]` refuses, and the same pair applies once `m == n` is stated.
+    ///
+    /// The two halves differ in the environment alone — same symbols, same
+    /// spelling, same operation — so the acceptance is evidence about the
+    /// environment rather than about how the extents are written.
+    #[test]
+    fn two_symbols_refuse_unrelated_and_apply_once_the_environment_relates_them() {
+        let n = SourcedExtent::Symbol(sym("n"));
+        let m = SourcedExtent::Symbol(sym("m"));
+
+        let (mut builder, a, b) = symbolic_pair(two_symbol_env_with(&[]), n.clone(), m.clone());
+        assert_eq!(
+            multiply(&mut builder, a, b),
+            Err(BuildError::ExtentSource(
+                ExtentSourceError::ExtentsNotProvedEqual(Box::new(ExtentDisagreement {
+                    axis: Axis::new(0),
+                    left: n.clone(),
+                    right: m.clone(),
+                }))
+            )),
+            "nothing forces n and m together, so the pair is not proved equal — and the \
+             refusal names both extents and the axis rather than reporting a size mismatch",
+        );
+
+        let related = two_symbol_env_with(&[ExtentRelation::equal(
+            ExtentTerm::Symbol(sym("m")),
+            ExtentTerm::Symbol(sym("n")),
+        )]);
+        let (mut builder, a, b) = symbolic_pair(related, n, m);
+        assert!(
+            multiply(&mut builder, a, b).is_ok(),
+            "the neighbour differing only in what the environment states applies",
+        );
+    }
+
+    /// A bounded symbol is not a determined one, and only the determined one applies.
+    ///
+    /// `f32[n] * f32[4]` has no equality class to reach — a symbol and a literal
+    /// are never in one — so the only available route is a common determined
+    /// value, and an interval that merely *contains* four is not one.
+    #[test]
+    fn a_symbol_against_a_literal_needs_a_determined_value_and_not_a_bound() {
+        let n = SourcedExtent::Symbol(sym("n"));
+        let four = SourcedExtent::Static(Extent::new(4));
+
+        let bounded = env_over(
+            "rows",
+            0,
+            EXTENT_PHASE_CEILING,
+            &[ExtentRelation::interval(ExtentTerm::Symbol(sym("n")), 1, 8).unwrap()],
+        );
+        let sources = ExtentSources::new(Arc::clone(&bounded));
+        assert_eq!(
+            sources.determined(&n),
+            None,
+            "a one-to-eight interval admits more than one value, so nothing is determined",
+        );
+        let (mut builder, a, b) = symbolic_pair(bounded, n.clone(), four.clone());
+        assert_eq!(
+            multiply(&mut builder, a, b),
+            Err(BuildError::ExtentSource(
+                ExtentSourceError::ExtentsNotProvedEqual(Box::new(ExtentDisagreement {
+                    axis: Axis::new(0),
+                    left: n.clone(),
+                    right: four.clone(),
+                }))
+            )),
+            "a bound is not a proof of equality, and refusing is not a claim that they differ",
+        );
+
+        let determined = env_over(
+            "rows",
+            0,
+            EXTENT_PHASE_CEILING,
+            &[ExtentRelation::interval(ExtentTerm::Symbol(sym("n")), 4, 4).unwrap()],
+        );
+        assert_eq!(
+            ExtentSources::new(Arc::clone(&determined)).determined(&n),
+            Some(Extent::new(4)),
+            "the neighbour really does pin n, so the acceptance below is not vacuous",
+        );
+        let (mut builder, a, b) = symbolic_pair(determined, n.clone(), four);
+        let product = multiply(&mut builder, a, b).expect("a common determined value proves it");
+        assert_eq!(
+            committed_result_extents(builder, product),
+            vec![n],
+            "the result still names the left operand's symbol rather than the value the \
+             environment happens to pin it to",
+        );
+    }
+
+    /// A rank disagreement stays a rank disagreement, symbolic or not.
+    ///
+    /// The symbolic path must not absorb it: a caller answers a not-proved pair
+    /// by constraining the environment, and there is no constraint that makes a
+    /// rank-one operand rank-two.
+    #[test]
+    fn a_symbolic_rank_mismatch_is_reported_as_a_shape_mismatch_and_not_as_an_extent_failure() {
+        let environment = two_symbol_env_with(&[]);
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+        let a = builder
+            .input_sourced::<F32>(input_key("rows"), vec![SourcedExtent::Symbol(sym("n"))])
+            .unwrap();
+        let b = builder
+            .input_sourced::<F32>(
+                input_key("cols"),
+                vec![
+                    SourcedExtent::Symbol(sym("n")),
+                    SourcedExtent::Symbol(sym("m")),
+                ],
+            )
+            .unwrap();
+        let error = multiply(&mut builder, a, b).expect_err("rank one against rank two refuses");
+        let BuildError::SemanticRegistry(RegistryError::RejectedOperationApplication(rejection)) =
+            &error
+        else {
+            panic!("a rank disagreement is a provider-attributed shape rejection, not {error}");
+        };
+        assert_eq!(rejection.source_error().code().as_str(), "binary.shape");
+        assert_eq!(
+            rejection.source_error().extent_source(),
+            None,
+            "no extent pair was ever compared, so none is reported",
+        );
+    }
+
+    /// Scalar broadcast is decided on rank, so a symbolic operand changes nothing.
+    ///
+    /// Stated as a fixture rather than left for a reader to infer: the rule was
+    /// reviewed against the symbolic case and needed nothing, and a rank-zero
+    /// operand reaches no extent and therefore no environment query at all.
+    #[test]
+    fn a_scalar_broadcasts_against_a_symbolic_operand_without_consulting_the_environment() {
+        let n = SourcedExtent::Symbol(sym("n"));
+        for scalar_on_left in [false, true] {
+            let mut builder =
+                SemanticProgramBuilder::try_standard_with_shape_environment(env()).unwrap();
+            let symbolic = builder
+                .input_sourced::<F32>(input_key("rows"), vec![n.clone()])
+                .unwrap();
+            let scalar = constant(&mut builder, 2.0).unwrap();
+            let (left, right) = if scalar_on_left {
+                (scalar, symbolic)
+            } else {
+                (symbolic, scalar)
+            };
+            let product = multiply(&mut builder, left, right)
+                .expect("a rank-zero operand broadcasts whatever the other operand's source kind");
+            assert_eq!(
+                committed_result_extents(builder, product),
+                vec![n.clone()],
+                "the result is the non-scalar operand's own boundary, symbol included",
+            );
+        }
+    }
+
+    /// A family that decides shapes over literals only declines by name.
+    ///
+    /// The refusal is a *typed extent* failure and not a shape mismatch: the
+    /// operand is not the wrong size, it is a size the rule has no way to read.
+    /// Paired with its literal neighbour, so a refusal that started firing for
+    /// an unrelated reason would take the neighbour with it.
+    #[test]
+    fn a_literal_only_family_declines_a_symbolic_operand_by_name() {
         let mut builder =
             SemanticProgramBuilder::try_standard_with_shape_environment(env()).unwrap();
         let symbolic = builder
             .input_sourced::<F32>(input_key("rows"), vec![SourcedExtent::Symbol(sym("n"))])
-            .expect("the symbolic input is admitted");
-        let scalar = constant(&mut builder, 2.0).unwrap();
-        assert!(
-            matches!(
-                multiply(&mut builder, symbolic, scalar),
-                Err(BuildError::SymbolicOperandUnsupported {
-                    role: ValueRole::OperationOperand { index: 0 },
-                }),
-            ),
-            "shape inference over symbolic operands is a separate delivery, so this refuses",
+            .unwrap();
+        assert_eq!(
+            sum(&mut builder, symbolic, [Axis::new(0)]),
+            Err(BuildError::ExtentSource(
+                ExtentSourceError::SymbolicExtentUnsupported {
+                    axis: Axis::new(0),
+                    symbol: sym("n"),
+                }
+            )),
+            "the strict serial reduction names the axis and the symbol it cannot read",
         );
 
         let mut neighbour =
@@ -1994,11 +2278,44 @@ mod tests {
                 input_key("rows"),
                 vec![SourcedExtent::Static(Extent::new(4))],
             )
-            .expect("the literal input is admitted");
-        let scalar = constant(&mut neighbour, 2.0).unwrap();
+            .unwrap();
         assert!(
-            multiply(&mut neighbour, literal, scalar).is_ok(),
+            sum(&mut neighbour, literal, [Axis::new(0)]).is_ok(),
             "the neighbour differing only in the operand's source kind applies",
+        );
+    }
+
+    /// Rust-side static evidence refuses an inferred symbolic boundary.
+    ///
+    /// `apply_shaped_single` states a shape fixed when the consumer compiled, so
+    /// an inferred boundary naming a symbol is refused rather than answered
+    /// negatively — the same discrimination `refine` draws over an input.
+    #[test]
+    fn static_evidence_refuses_an_inferred_symbolic_result() {
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(env()).unwrap();
+        let symbolic = builder
+            .input_sourced::<F32>(input_key("rows"), vec![SourcedExtent::Symbol(sym("n"))])
+            .unwrap();
+        let scalar = constant(&mut builder, 2.0).unwrap();
+        // Reached through the crate-internal shaped facade, because the public
+        // one takes `ShapedValue` operands and a symbolic value cannot be
+        // refined into one. The refusal being unreachable from the public
+        // surface today is the reason it is stated here rather than left as an
+        // arm nothing exercises.
+        let applied = builder.apply_shaped_single::<F32, StaticShape<1, { [4] }>>(
+            multiply_f32_op(),
+            OperationAttributes::empty(),
+            &[symbolic.erase(), scalar.erase()],
+        );
+        assert!(
+            matches!(
+                applied,
+                Err(BuildError::ShapeRefinement(
+                    ShapeRefineError::SymbolicShape { .. }
+                )),
+            ),
+            "evidence fixed when the consumer compiled cannot match an extent bound later",
         );
     }
 

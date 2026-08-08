@@ -715,8 +715,17 @@ impl OperationInferencer for SoftmaxF32 {
         // reduced axis is folded over twice and then restored. A contract that
         // dropped the axis would be a reduction, which this family deliberately
         // does not admit.
-        let _axis = reduced_axis(&request, input.shape().rank())?;
-        outputs.try_push(ValueFact::new(expected, input.shape().clone()))
+        //
+        // A symbolic operand is declined by name rather than carried through.
+        // The *shape* rule would survive one — the result is the operand's own
+        // boundary, whatever its extents are — but this family's normative
+        // definition, its reference evaluation, and its numerical conformance
+        // are all stated over a fixed reduced extent, and admitting a boundary
+        // none of them can evaluate would move the refusal downstream to a place
+        // that has no name for it.
+        let input = request.static_operand_shape(0)?;
+        let _axis = reduced_axis(&request, input.rank())?;
+        outputs.try_push(ValueFact::new(expected, input.clone()))
     }
 }
 

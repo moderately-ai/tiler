@@ -112,7 +112,11 @@ fn result_shape(operand: &[u64], mapping: &BroadcastAxisMapping) -> Shape {
         panic!("a broadcast has one result");
     };
     assert_eq!(result.resolved_type(), &F32::resolved_type());
-    result.shape().clone()
+    result
+        .shape()
+        .as_static()
+        .expect("this family infers a literal boundary")
+        .clone()
 }
 
 // --- Every occurrence class the pinned workload contains ---------------------

@@ -373,7 +373,10 @@ fn bf16_arithmetic_over_two_bf16_operands_infers_a_bf16_result() {
         .expect("a pure bf16 application is admitted");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].resolved_type(), &Bf16::resolved_type());
-        assert_eq!(results[0].shape(), &Shape::try_from_dims([4, 8]).unwrap());
+        assert_eq!(
+            results[0].shape().as_static(),
+            Shape::try_from_dims([4, 8]).as_ref().ok()
+        );
     }
 }
 
@@ -385,7 +388,10 @@ fn a_scalar_bf16_operand_broadcasts_against_a_shaped_one() {
         &OperationAttributes::empty(),
     )
     .expect("a scalar operand broadcasts");
-    assert_eq!(results[0].shape(), &Shape::try_from_dims([4, 8]).unwrap());
+    assert_eq!(
+        results[0].shape().as_static(),
+        Shape::try_from_dims([4, 8]).as_ref().ok()
+    );
 
     let results = infer(
         &multiply_bf16_op(),
@@ -393,7 +399,10 @@ fn a_scalar_bf16_operand_broadcasts_against_a_shaped_one() {
         &OperationAttributes::empty(),
     )
     .expect("a scalar operand broadcasts");
-    assert_eq!(results[0].shape(), &Shape::try_from_dims([4, 8]).unwrap());
+    assert_eq!(
+        results[0].shape().as_static(),
+        Shape::try_from_dims([4, 8]).as_ref().ok()
+    );
 }
 
 #[test]

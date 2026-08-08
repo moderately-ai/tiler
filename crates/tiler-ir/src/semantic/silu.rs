@@ -447,7 +447,11 @@ impl OperationInferencer for SiluF32 {
                  type is not converted to tiler::f32@1",
             ));
         }
-        let shape = operands[0].shape().clone();
+        // Shape-preserving, so the rule itself would survive a symbolic operand;
+        // the family's reference evaluation and numerical conformance are stated
+        // over a fixed boundary, so it is declined by name here rather than
+        // admitted into a program nothing downstream can evaluate.
+        let shape = request.static_operand_shape(0)?.clone();
         outputs.try_push(ValueFact::new(expected, shape))
     }
 }

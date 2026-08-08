@@ -5,7 +5,9 @@ use crate::semantic::{
     SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, SILU_F32_EXPONENTIAL_ULP_TOLERANCE, add_f32_op,
     constant_f32_op, rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
 };
-use crate::shape::Shape;
+use crate::shape::{
+    Extent, ExtentSourceError, Shape, ShapeSymbol, SourcedExtent, SourcedShape, SymbolScope,
+};
 
 fn registry() -> FrozenSemanticRegistry {
     FrozenSemanticRegistry::standard().expect("the standard registry builds")
@@ -20,6 +22,14 @@ fn operand(resolved_type: ResolvedValueType, dims: &[u64]) -> ValueFact {
 
 fn f32_operand(dims: &[u64]) -> ValueFact {
     operand(F32::resolved_type(), dims)
+}
+
+/// A binary32 operand whose boundary may name a declared symbol.
+fn symbolic_f32_operand(extents: &[SourcedExtent]) -> ValueFact {
+    ValueFact::new(
+        F32::resolved_type(),
+        SourcedShape::sourced(extents.to_vec()).expect("a test boundary is bounded"),
+    )
 }
 
 /// The governed single-axis attribute a well-formed occurrence carries.
@@ -426,7 +436,10 @@ fn a_zero_length_reduced_axis_infers_a_zero_length_result() {
         panic!("the softmax has one result");
     };
     assert_eq!(result.shape(), operands[0].shape());
-    assert_eq!(result.shape().element_count(), Some(0));
+    assert_eq!(
+        result.shape().as_static().and_then(Shape::element_count),
+        Some(0)
+    );
 }
 
 /// Each malformed axis refuses by the rule it violated, and the rules are distinct.
@@ -485,46 +498,56 @@ fn the_structural_rules_refuse_by_name() {
 // The symbolic-extent boundary
 // ---------------------------------------------------------------------------
 
-/// No refusal for an unbounded symbolic extent ships, because none could fire.
+/// A symbolic reduced extent is refused by name, and every literal one infers.
 ///
-/// **The boundary is a property of the shape vocabulary rather than a policy this
-/// key chose.** `crate::shape::Extent` is a `u64` newtype and `Shape` is a vector
-/// of them, so a semantic [`ValueFact`] cannot carry a symbolic extent at all: the
-/// L3′ derivation's rule — "a softmax whose reduced axis is a symbol with no
-/// proved upper bound refuses rather than compiling a generic program" — has
-/// nothing to refuse here, and writing the check would ship a check that can never
-/// say no.
+/// **This replaces a test whose premise the tree has since falsified.** It used
+/// to assert that no symbolic refusal *could* fire, on the ground that a
+/// [`ValueFact`] carried a fixed `Shape` and so had nothing symbolic to refuse.
+/// A fact now carries a [`SourcedShape`](crate::shape::SourcedShape), so the
+/// case is reachable and the family answers it: this key decides shapes over
+/// literal extents only and declines a symbolic operand rather than carrying one
+/// into a program its normative definition, reference evaluation, and numerical
+/// conformance are not stated over.
 ///
-/// Every distinct `S` is therefore a separate compiled artifact *by construction*.
-/// The symbolic vocabulary that does exist —
-/// `tiler_ir::shape::SourcedExtent` and `ExtentInterval::states_no_upper_bound` —
-/// now sits beside `Shape` in this very module rather than inside the index
-/// layer, and its reachability is no longer what stops a [`ValueFact`] carrying a
-/// symbol: only [`ValueFact`]'s own static [`Shape`] is. Carrying it into semantic
-/// values is owned by `carry-a-sourced-shape-on-semantic-values` and
-/// `resolve-semantic-shape-inference-over-symbolic-extents`. This test is the
-/// evidence for that claim rather than a comment asserting it.
+/// The refusal is a *typed extent* failure rather than a family shape
+/// diagnostic, which is the discrimination that matters: the operand is not the
+/// wrong size, it is a size this rule has no way to read.
 #[test]
-fn the_reduced_extent_is_always_literal_so_no_symbolic_refusal_can_fire() {
+fn a_symbolic_reduced_extent_is_refused_and_every_literal_one_infers() {
     // The reduced extent this workload grows is exercised at the static values a
     // program can actually state, and each is an ordinary literal extent.
     for extent in [1_u64, 10, 128, 8192] {
         let operands = [f32_operand(&[2, extent])];
         let results = infer(&operands, &attributes(1)).expect("a literal extent infers");
-        assert_eq!(results[0].shape().extents()[1].get(), extent);
+        assert_eq!(
+            results[0]
+                .shape()
+                .as_static()
+                .expect("a literal occurrence infers a literal boundary")
+                .extents()[1]
+                .get(),
+            extent
+        );
     }
-    // The observable consequence of "an extent is a magnitude and not a symbol":
-    // two shapes built from the same dimensions are *equal*, so nothing can carry
-    // a distinct symbolic identity behind an equal extent. If `Extent` gained a
-    // symbol case, two occurrences of one growing `S` could be equal in magnitude
-    // and unequal in identity, and this assertion is what that would break.
-    let left = Shape::try_from_dims([2_u64, 8192]).expect("a bounded shape");
-    let right = Shape::try_from_dims([2_u64, 8192]).expect("a bounded shape");
-    assert_eq!(left, right);
-    assert_eq!(left.element_count(), Some(16_384));
-    // And two *different* reduced extents are two different shapes, which is the
-    // "every distinct S is a separate compiled artifact" property stated where a
-    // reader can check it.
-    let other = Shape::try_from_dims([2_u64, 8193]).expect("a bounded shape");
-    assert_ne!(left, other);
+
+    // The neighbour differing only in the reduced extent's source kind. Nothing
+    // else about the occurrence moves, so the refusal is attributable to the
+    // symbol and to nothing else.
+    let symbol = ShapeSymbol::new(SymbolScope::new("tiler.test/0").unwrap(), "s").unwrap();
+    let symbolic = symbolic_f32_operand(&[
+        SourcedExtent::Static(Extent::new(2)),
+        SourcedExtent::Symbol(symbol.clone()),
+    ]);
+    let error = infer(&[symbolic], &attributes(1)).expect_err("a symbolic extent is refused");
+    let RegistryError::RejectedOperationApplication(rejection) = error else {
+        panic!("a softmax refusal is a provider-attributed rejection");
+    };
+    assert_eq!(
+        rejection.source_error().extent_source(),
+        Some(&ExtentSourceError::SymbolicExtentUnsupported {
+            axis: Axis::new(1),
+            symbol,
+        }),
+        "the refusal names the axis and the symbol it could not read",
+    );
 }

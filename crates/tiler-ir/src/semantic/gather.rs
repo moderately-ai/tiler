@@ -603,8 +603,17 @@ impl OperationInferencer for GatherF32 {
         if index.resolved_type() != &gather_index_resolved_type() {
             return Err(rejection(&GatherError::UnadmittedIndexType));
         }
-        let (_, shape) = gather_result_shape(axis, source.shape(), index.shape())
-            .map_err(|error| rejection(&error))?;
+        // A gather splices the index boundary into the source boundary at the
+        // gathered axis and bounds every index against the gathered extent.
+        // Both are facts about the extents themselves rather than about their
+        // equality, so a symbolic operand is declined by name rather than
+        // spliced on spelling.
+        let (_, shape) = gather_result_shape(
+            axis,
+            request.static_operand_shape(0)?,
+            request.static_operand_shape(1)?,
+        )
+        .map_err(|error| rejection(&error))?;
         outputs.try_push(ValueFact::new(f32_type, shape))
     }
 }

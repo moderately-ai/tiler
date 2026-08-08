@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::identity::{push_len, push_slice};
-use crate::shape::Shape;
+use crate::shape::SourcedShape;
 
 use super::handles::{OperationId, OperationIndex, ValueId, ValueIndex};
 use super::operation::OpKey;
@@ -15,7 +15,15 @@ use super::types::{ResolvedValueType, TypeIdentityError, TypeKey};
 pub const MAX_OPERATION_SEMANTIC_PRECONDITIONS: usize = 1_024;
 /// Maximum aggregate canonical bytes cached for one program's residual obligations.
 pub const MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES: usize = 16 * 1024 * 1024;
-const OBLIGATION_DOMAIN: &[u8] = b"tiler.semantic-precondition-obligation.v1\0";
+// `v2`: a subject boundary is written through `SourcedShape::encode`, which
+// tags each extent with its source kind. `v1` wrote eight untagged big-endian
+// bytes per extent, which had nowhere to put a symbol, and a subject may now
+// name one because an operation family may admit a symbolic operand. The tag is
+// unconditional, so a wholly literal subject's bytes move even though its
+// meaning does not — the same step `tiler.semantic-graph.v2` took to `v3`, for
+// the same reason. `carry-a-sourced-shape-on-semantic-values` deferred this
+// step to the ticket that admitted symbolic operands, and this is it.
+const OBLIGATION_DOMAIN: &[u8] = b"tiler.semantic-precondition-obligation.v2\0";
 const LENGTH_BYTES: usize = std::mem::size_of::<u64>();
 
 /// Returns the governed predicate which rejects logical NaN values.
@@ -453,7 +461,7 @@ pub(super) enum StaticAssessment {
 pub(super) fn assess_static_precondition(
     declaration: &SemanticPreconditionDeclaration,
     subject_type: &ResolvedValueType,
-    subject_shape: &Shape,
+    subject_shape: &SourcedShape,
     evidence: Option<StaticValueEvidence>,
 ) -> StaticAssessment {
     if declaration.view != SemanticLogicalView::WholeValue {
@@ -501,7 +509,7 @@ pub struct SemanticPreconditionDisproof {
     subject: ValueId,
     view: SemanticLogicalView,
     resolved_type: Arc<ResolvedValueType>,
-    shape: Shape,
+    shape: SourcedShape,
 }
 
 impl SemanticPreconditionDisproof {
@@ -511,7 +519,7 @@ impl SemanticPreconditionDisproof {
         declaration_ordinal: SemanticPreconditionOrdinal,
         subject: ValueId,
         resolved_type: Arc<ResolvedValueType>,
-        shape: Shape,
+        shape: SourcedShape,
     ) -> Self {
         Self {
             operation,
@@ -569,7 +577,7 @@ impl SemanticPreconditionDisproof {
 
     /// Returns the exact logical subject shape.
     #[must_use]
-    pub const fn shape(&self) -> &Shape {
+    pub const fn shape(&self) -> &SourcedShape {
         &self.shape
     }
 }
@@ -761,7 +769,7 @@ fn compute_obligation_identity(
         declaration,
         subject_coordinate: program.canonical_value_ids[data.subject.as_usize()],
         resolved_type: &subject.resolved_type,
-        shape: static_subject_shape(subject),
+        shape: &subject.shape,
     })
 }
 
@@ -774,7 +782,7 @@ struct ObligationIdentityParts<'a> {
     declaration: &'a SemanticPreconditionDeclaration,
     subject_coordinate: u64,
     resolved_type: &'a ResolvedValueType,
-    shape: &'a Shape,
+    shape: &'a SourcedShape,
 }
 
 fn encode_obligation_identity(
@@ -796,10 +804,7 @@ fn encode_obligation_identity(
     parts.declaration.encode(&mut bytes);
     bytes.extend_from_slice(&parts.subject_coordinate.to_be_bytes());
     parts.resolved_type.encode(&mut bytes);
-    push_len(&mut bytes, parts.shape.rank());
-    for extent in parts.shape.extents() {
-        bytes.extend_from_slice(&extent.get().to_be_bytes());
-    }
+    parts.shape.encode(&mut bytes);
     debug_assert_eq!(bytes.len(), encoded_len);
     SemanticPreconditionObligationIdentity(bytes)
 }
@@ -823,23 +828,8 @@ fn obligation_identity_encoded_len(
         program.reached_definitions.as_bytes().len(),
         declaration,
         &subject.resolved_type,
-        static_subject_shape(subject),
+        &subject.shape,
     )
-}
-
-/// Returns a precondition subject's fixed shape.
-///
-/// A subject is always an operation *operand*, and `SemanticProgramBuilder`
-/// refuses a symbolic operand before the operation exists, so this position
-/// cannot hold one. That is why the encoding below stays untagged and
-/// `OBLIGATION_DOMAIN` does not move with `tiler.semantic-graph.v3`: nothing an
-/// obligation identity can encode has changed. Admitting symbolic operands must
-/// step this domain, and this is the site that says so.
-fn static_subject_shape(subject: &super::operation::ValueData) -> &Shape {
-    subject
-        .shape
-        .as_static()
-        .expect("a semantic precondition subject is an operand, which is always literal")
 }
 
 fn obligation_identity_parts_encoded_len(
@@ -847,7 +837,7 @@ fn obligation_identity_parts_encoded_len(
     reached_definitions_len: usize,
     declaration: &SemanticPreconditionDeclaration,
     resolved_type: &ResolvedValueType,
-    shape: &Shape,
+    shape: &SourcedShape,
 ) -> usize {
     OBLIGATION_DOMAIN
         .len()
@@ -860,14 +850,14 @@ fn obligation_identity_parts_encoded_len(
         .saturating_add(declaration.encoded_len())
         .saturating_add(std::mem::size_of::<u64>())
         .saturating_add(resolved_type.encoded_len())
-        .saturating_add(LENGTH_BYTES)
-        .saturating_add(shape.rank().saturating_mul(std::mem::size_of::<u64>()))
+        .saturating_add(shape.encoded_len())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::semantic::{OperationArity, OperationSchema, OperationSchemaError};
+    use crate::shape::{Shape, ShapeSymbol, SourcedExtent, SymbolScope};
 
     fn declaration(code: &str) -> SemanticPreconditionDeclaration {
         SemanticPreconditionDeclaration::new(
@@ -963,7 +953,7 @@ mod tests {
                     index: ValueIndex::from_verified_len(0),
                 },
                 Arc::new(F32::resolved_type()),
-                Shape::new([]),
+                SourcedShape::from(Shape::new([])),
             )
         }
 
@@ -982,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn obligation_encoder_is_independently_sensitive_to_every_v1_occurrence_field() {
+    fn obligation_encoder_is_independently_sensitive_to_every_v2_occurrence_field() {
         fn encoded(parts: ObligationIdentityParts<'_>) -> Vec<u8> {
             encode_obligation_identity(parts).as_bytes().to_vec()
         }
@@ -996,8 +986,17 @@ mod tests {
         );
         let base_type = F32::resolved_type();
         let changed_type = super::super::quantization::U4::resolved_type();
-        let scalar = Shape::new([]);
-        let vector = Shape::from_dims([1]);
+        let scalar = SourcedShape::from(Shape::new([]));
+        let vector = SourcedShape::from(Shape::from_dims([1]));
+        // The probe the two literal boundaries above cannot make. They differ in
+        // rank, so an encoder that dropped the source tag would still separate
+        // them; this pair differs only in whether one extent is a literal or a
+        // symbol, which is exactly what `tiler.semantic-precondition-obligation.v2`
+        // exists to keep apart.
+        let symbolic = SourcedShape::sourced(vec![SourcedExtent::Symbol(
+            ShapeSymbol::new(SymbolScope::new("tiler.test/0").unwrap(), "n").unwrap(),
+        )])
+        .expect("a one-symbol boundary is bounded");
         let base_parts = ObligationIdentityParts {
             graph: b"graph-a",
             reached_definitions: b"definitions-a",
@@ -1040,6 +1039,10 @@ mod tests {
             }),
             encoded(ObligationIdentityParts {
                 shape: &vector,
+                ..base_parts
+            }),
+            encoded(ObligationIdentityParts {
+                shape: &symbolic,
                 ..base_parts
             }),
         ] {
