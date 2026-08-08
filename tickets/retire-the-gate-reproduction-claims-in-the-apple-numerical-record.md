@@ -1,7 +1,7 @@
 ---
 id: retire-the-gate-reproduction-claims-in-the-apple-numerical-record
 title: Retire the gate-reproduction claims in the Apple numerical behaviour record
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, evidence, gate]
-claimed_from: todo
-assignee: w-retire-th
-lease_expires_at: 1786165341
 ---
 ## The record corrects the claim once and then makes it twenty-two more times
 
@@ -50,3 +47,32 @@ Verified 2026-08-07 at base `7c371155` by `verify-and-file-the-remaining-maturit
 ## Closes when
 
 No passage in the record asserts that any gate runs, compares, or reproduces this harness; the Status block and the provenance paragraph agree; the two unrelated gate senses are intact; every retained measurement is unchanged; and `make citations` is green.
+
+## Outcome — done, 2026-08-08
+
+Landed at merge `a62f8caa` (worker commit `ef468fef`). One file, +27/−19, carries the green gate.
+
+### The population classification was wrong twice, and both were mine to pass on
+
+I briefed "32 occurrences, two of which use *gate* in an unrelated sense". Both figures are wrong:
+
+- **One of the 32 is not the word at all** — it is the substring inside **`aggregate`**. Coordinator-confirmed: exactly one such occurrence. There are **31** real uses.
+- **"Two lines in an unrelated sense" undercounts.** There are **three lines carrying five occurrences** — two ticket-dependency uses and three in a precondition-gate sense. And the ticket attributed the dependency sense to "finding 13's iOS row"; **neither site is in finding 13**. The *sense* was right, the *location* wrong.
+
+I passed that classification through from the filing worker without checking it. A sweep built on it would have missed three occurrences and hunted in the wrong finding.
+
+Final classification: **24 stale claims swept, 2 correct accounts kept verbatim, 5 unrelated sense untouched, 1 substring artifact.**
+
+### Every swept sentence had a true claim underneath, and each was kept
+
+The covering record is still "the set a default run compares" and the exhaustive one still is not; the guard tests are still portable and need no toolchain; a divergence still fails a test by name and kernel; the probe is still a one-off leg outside the harness matrix. Two anonymous "the gate checks" references now **name the actual tests**, verified by reading them.
+
+Verified byte-identical to base: every `### N.` finding heading, every table row, and the frontmatter. The measurements were never in question — only the claim that anything runs them.
+
+### A measurement that replaces an assertion
+
+Running the harness today gives **165 passed, 1 skipped in 56.14s**, and the skip declines on **fifteen differing environment fields** — `xcode-select -p` now Xcode-beta, `metalfe-32023.921` against the pinned `32023.883`, all three SDK versions and builds, and both registry IDs. So **a run today exercises the harness's whole portable half and re-verifies not one retained value.** That is now its own dated Measurement rather than a claim.
+
+### Flagged for the parallel ticket
+
+The `contracts/decisions` half of this defect landed separately at `7291350f`. If it inherited the same population claim, its worker would have hit the same three-lines-not-two discrepancy — it did not, having worked from ADR text rather than this record's count.

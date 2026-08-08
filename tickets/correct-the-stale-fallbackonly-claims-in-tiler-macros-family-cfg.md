@@ -1,7 +1,7 @@
 ---
 id: correct-the-stale-fallbackonly-claims-in-tiler-macros-family-cfg
 title: Correct the stale FallbackOnly claims in tiler-macros family_cfg
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-correct-t
-lease_expires_at: 1786165341
 ---
 ## Two comments in `crates/tiler-macros/src/family_cfg.rs` assert an absence the crate refutes
 
@@ -62,3 +59,31 @@ Both sites state what the crate does at this base, the `dead_code` allowance is 
 **Measurement — commands run in the ticket worktree with `CARGO_TARGET_DIR=./target`.** `cargo fmt --check`, `git diff --check`, `cargo check --workspace --all-targets`, `cargo clippy -p tiler-macros -p tiler --all-targets -- -D warnings`, and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-macros -p tiler` all exit 0. `cargo nextest run -p tiler-macros -p tiler` reports 219 passed, 1 skipped; the skip is `delivery::tests::every_emitted_shape_compiles_as_the_five_target_matrix_says`, `#[ignore]`d at this base for cross-target `rust-std` components `deps.sh` does not install. `cargo test --workspace --doc` passes. `tkt lint` reports no problems. The delivering claim above is exercised rather than only read: `tiler::facade facade_reexport_contract` compiles `tests/facade/pass/deliver_compiles_embeds_and_routes.rs` as an out-of-tree crate, and it passed in that run.
 
 **Boundary.** This corrects comments only; no behaviour changed, so no test was added or removed and the facade fixture counts floored in the `Makefile` are untouched at 10 pass and 9 fail. The claims are scoped to this base — they describe the one measured macOS declaration, and a second measured declaration would widen which families build.
+
+## Outcome — done, 2026-08-08
+
+Landed at merge **`e7dcc4af`** (worker commit `f87927e5`). `make full` exit 0, 1,091 release tests.
+
+### The allowance and its reason were tested separately, and the answers differed
+
+**The allowance is still needed** — established by deleting it and running `cargo check -p tiler-macros`, which reports `constant MAP_VERSION is never used`, same under `--all-targets`. Only the test module reads it, so the non-test lib build has no reader and Clippy denies warnings in the gate. Restored from backup.
+
+**Its reason was false.** Split three ways on audit: "nothing reads it during an expansion yet" is **true**; "so no expansion embeds a predicate at all" is **false**; and "the slice that first compiles a selected family is what makes it an identity input" is a **falsified prediction** — the slice landed and did not make it one.
+
+That is the distinction the filer flagged and it held: a dead-code allowance can be correct while its justification has rotted, and deleting on the strength of the rotted reason would have broken the build.
+
+### Four branches, not one
+
+`FallbackOnly` where there is no `deliver` statement, no backend compiler, or no predicate embedded; `deliver macos;` compiles and embeds `all(target_os = "macos", target_abi = "")` plus a `not(any(…))` catch-all; an unmeasured family is refused by equality against `first_macos_apple9`, so `deliver ios;` refuses while `deliver macos;` builds; and a family-scoped toolchain failure embeds the predicate a **second** way, on a retained `compile_error!`.
+
+The adjacent ground "the frontend computes no artifact identity" was also corrected — `RouteFacts` embeds `artifact.canonical_identity()`. `MAP_VERSION` is still not an identity input, but **because the map renders the `#[cfg]` after the bytes exist**, not because no identity exists.
+
+### Two siblings, same trap
+
+`binding.rs`'s `dead_code` reason on `BoundRegion::environment` rested on the identical false premise — re-grounded on the absent call rather than deleted, since nothing calls the constructor. And `delivery.rs` linked `crate::aot::delivered_plan`, which **exists nowhere in `crates/`**; the function is `deliver`.
+
+### `make citations` caught the ticket citing its own deleted text
+
+The ticket's pinned anchor quoted the passage being removed, so the check failed. Re-anchored as a plain quote labelled "as found at base `209013bd`" — the convention for retired extents. A neat demonstration that the checker covers ticket citations of code the ticket itself is changing.
+
+Fifth ticket this week whose `shared_scopes` was `[]` against a brief granting it.
