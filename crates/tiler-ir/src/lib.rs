@@ -44,6 +44,13 @@
 
 mod convenience;
 
+/// Every identity domain spelling this crate declares, pinned to exact bytes.
+///
+/// Crate-level rather than beside any one encoder because the population is the
+/// crate's own sources: several of these domains are inline literals that no
+/// constant names, so no module owns the list and no type can size it.
+#[cfg(test)]
+mod domains;
 /// Counted enumerations shared by this crate's exhaustive-injectivity tests.
 #[cfg(test)]
 mod exhaustive_injectivity;
