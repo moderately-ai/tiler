@@ -10,13 +10,37 @@
 # makes -- that is what happened on 2026-08-07, when a claim about an
 # obligation class named the right file and the right symbol and described
 # behaviour the code does not have. This checker would have passed it, and it
-# passes the deliberately wrong citation kept as a live fixture in
-# `tickets/pin-ticket-source-citations-against-the-tree-they-name.md`.
+# passes the deliberately wrong sentence carried in the built-in fixture below.
 #
 # AGENTS.md carries the control that actually governs this: a ticket's stated
 # Facts are stale until re-read at your own base, and a worker's first
 # deliverable is a per-Fact verdict. This script is the cheap mechanical floor
 # underneath that obligation, never a substitute for it.
+#
+# THE BUILT-IN FIXTURE, AND WHY IT IS NOT A TICKET
+#
+# That demonstration used to live in a ticket. On 2026-08-07 the ticket was
+# recorded `done`; terminal tickets are skipped by design; and the fixture went
+# inert in the same motion -- taking every anchor-form citation on the tree with
+# it, because they all lived in that one file. Nothing failed, because a code
+# path that runs zero times reports no failures.
+#
+# So the fixture belongs to this script now. It is written to a temporary file
+# that is always the first member of the checked population. It has no
+# frontmatter, no `status`, and no id in the work graph, so no ticket transition
+# can reach it and `tkt` does not know it exists. Switching it off means editing
+# this file -- the same edit that would have to delete the floors below, in one
+# diff, in front of the one reviewer who is already looking at the checker.
+#
+# PER-FORM POPULATION FLOORS
+#
+# Every form this script supports is counted, and a count of zero fails the run
+# naming the starved form: line-only, anchor-only, line+anchor, an anchor that
+# matches only once whitespace is collapsed, and a code span assembled across a
+# line break in prose. The fixture supplies one citation of each, so a zero
+# means the *matcher* stopped recognising that form -- corpus drift cannot
+# produce one. Drift is not a defect; a matcher that has stopped reaching its
+# subject is, and without a floor it is indistinguishable from a clean run.
 #
 # WHAT COUNTS AS A CITATION
 #
@@ -32,8 +56,10 @@
 # do not resolve for two legitimate reasons: a file the ticket is asking
 # someone to create, and a file whose deletion the ticket is recording.
 # `scripts/check_workspace.py` is the standing example -- deleted at `e197176f`
-# when the Python gate became the Makefile, still named in ten tickets that are
-# accurately describing history. Demanding those resolve would be an
+# when the Python gate became the Makefile, still named by the terminal tickets
+# that record that history: 32 of the 33 files `grep -rl
+# 'scripts/check_workspace.py' tickets/` returns are terminal as of 2026-08-07,
+# and the population only grows. Demanding those resolve would be an
 # unsatisfiable condition. A line number or an anchor is different in kind: it
 # is a claim about what a file contains *now*, so it is checkable now. The
 # census prints how many bare paths were skipped, so the exclusion is counted
@@ -96,8 +122,40 @@ fi
 # tested against the filesystem. The index lives outside the repository so a
 # killed run cannot leave an untracked file for someone else to stage.
 indexfile=$(mktemp)
-trap 'rm -f "$indexfile"' EXIT INT TERM
+fixture=$(mktemp)
+trap 'rm -f "$indexfile" "$fixture"' EXIT INT TERM
 git ls-files >|"$indexfile"
+
+# The fixture, quoted heredoc so backticks and `$` reach the file intact. Every
+# citation below resolves against this tree and each one is the only guaranteed
+# instance of its form; the closing paragraph resolves and is false, which is
+# the boundary demonstration. If a subject moves, repair the subject -- never
+# the assertion, and never the false sentence.
+cat >|"$fixture" <<'FIXTURE'
+# Built-in fixture
+
+Written by check-citations.sh on every run, checked before anything under
+tickets/. It carries no frontmatter and no `status`, so nothing in the work
+graph can move it out of the population.
+
+Line-only form: `AGENTS.md:1`.
+
+Line-and-anchor form: `ticketsplease.toml:1 "schema_version = 1"`.
+
+Anchor that matches only after whitespace is collapsed, because the construct
+wraps in the source it names: `AGENTS.md "origin/main...main # 0 0"`.
+
+A citation whose code span straddles a line break in prose, which a
+line-oriented matcher loses in silence: `AGENTS.md
+"Priorities: **correctness, long-term maintainability, then performance**."`
+
+**Deliberately false, retained as the boundary demonstration -- do not "fix"
+it.** `make check` runs the citation check **last**, after the test target
+(`Makefile "check: citations fmt build lint test"`). The anchor is verbatim, so
+the citation resolves and this file passes; the sentence is wrong all the same,
+because `citations` is prerequisite #1 and runs before `fmt`. Green means the
+citations point somewhere. It has never meant the prose around them is true.
+FIXTURE
 
 # Ticket files first, then comment files: a comment inherits the status of its
 # parent ticket, so the parent must have been read by the time it is reached.
@@ -117,7 +175,20 @@ for f in tickets/*.comments/*.md; do
 	fi
 done
 
-awk -v terminal="$terminal" -v verbose="$verbose" -v indexfile="$indexfile" '
+# The fixture leads, so its forms are counted even when a later population is
+# empty. Populations are appended here and classified by path inside awk rather
+# than assumed to be tickets, which is what keeps `tickets/**` from being the
+# only thing this script can read. A second population -- `docs/**`, say -- is
+# an append here, a branch in role_of(), a branch in decide() stating how its
+# status is determined (a docs tree has none, so it is checked unconditionally,
+# as the fixture is), and its own line in the census.
+set -- "$fixture" "$@"
+
+# The program below is one single-quoted shell word, so it must contain no
+# apostrophe anywhere -- prose included. An apostrophe closes the quote and awk
+# then reports a missing function from somewhere unrelated, which reads as a
+# logic bug rather than a quoting one.
+awk -v terminal="$terminal" -v verbose="$verbose" -v indexfile="$indexfile" -v fixture="$fixture" '
 function slurp(path,   line, s) {
 	if (path in content) return content[path]
 	s = ""
@@ -167,6 +238,9 @@ function qualifies(p) {
 }
 
 BEGIN {
+	# The fixture lives at a temporary path; report it by what it is.
+	FIXTURE_LABEL = "<built-in fixture>"
+
 	n_terminal = split(terminal, tstates, " ")
 	for (i = 1; i <= n_terminal; i++)
 		if (tstates[i] != "") is_terminal[tstates[i]] = 1
@@ -193,11 +267,20 @@ BEGIN {
 	PATHRE_LOOSE = "[A-Za-z0-9_][A-Za-z0-9_./-]*"
 }
 
+# The population is a list of paths; what a path *is* decides how its status is
+# read and which counter it feeds. Everything downstream reads `role` rather
+# than re-testing FILENAME, so a new population is named once, here.
+function role_of(path) {
+	if (path == fixture) return "fixture"
+	if (path ~ /\.comments\//) return "comment"
+	return "ticket"
+}
+
 FNR == 1 {
 	end_file()
-	ticket = FILENAME
-	files_read++
-	if (ticket ~ /\.comments\//) comments_read++
+	role = role_of(FILENAME)
+	ticket = (role == "fixture") ? FIXTURE_LABEL : FILENAME
+	files_read[role]++
 	status = ""
 	in_fence = 0
 	in_frontmatter = 0
@@ -205,6 +288,7 @@ FNR == 1 {
 	skip_file = 0
 	in_span = 0
 	span = ""
+	span_wrapped = 0
 }
 
 {
@@ -212,8 +296,9 @@ FNR == 1 {
 
 	if (in_frontmatter) {
 		# `nextfile` abandons a terminal ticket at its frontmatter instead of
-		# reading its body: 1012 of the 1248 files here are terminal, and they
-		# are most of the ~10 MB.
+		# reading its body: 1023 of the 1259 files here are terminal, and they
+		# are most of the ~10 MB. The report prints both numbers, so a reader
+		# never has to trust this one.
 		if ($0 == "---") { in_frontmatter = 0; decide(); if (skip_file) nextfile; next }
 		if ($0 ~ /^status:[ \t]*/) {
 			status = $0
@@ -238,7 +323,11 @@ END { end_file(); report() }
 
 function decide(   parent) {
 	decided = 1
-	if (ticket ~ /\.comments\//) {
+	# The fixture holds no status, which is the point: a ticket transition has
+	# nothing to act on, so it cannot remove the only guaranteed instance of
+	# each citation form. It is never terminal and never skipped.
+	if (role == "fixture") return
+	if (role == "comment") {
 		parent = ticket
 		sub(/\.comments\/.*$/, ".md", parent)
 		if (!(parent in status_of)) {
@@ -264,25 +353,28 @@ function decide(   parent) {
 		return
 	}
 	files_checked++
-	if (ticket ~ /\.comments\//) comments_checked++
+	if (role == "comment") comments_checked++
 }
 
 # Walk one line, toggling in/out of inline code spans. Spans are handed to
 # classify() as they close, so a span that wraps across lines is assembled
-# rather than lost -- 67 non-fence lines in tickets/ currently end mid-span,
-# and a line-oriented matcher silently misses every citation inside them.
+# rather than lost -- non-fence lines in tickets/ routinely end mid-span, and a
+# line-oriented matcher silently misses every citation inside them. The report
+# line named `spanned` counts how many citations this recovered, and the floor
+# under it makes a recovery of zero fail instead of reading as a clean run.
 function scan_line(line,   n, parts, i) {
 	n = split(line, parts, "`")
 	for (i = 1; i <= n; i++) {
 		if (in_span) span = span parts[i]
 		if (i < n) {
-			if (in_span) { classify(span); span = ""; in_span = 0 }
-			else { in_span = 1; span = "" }
+			if (in_span) { classify(span, span_wrapped); span = ""; in_span = 0 }
+			else { in_span = 1; span = ""; span_wrapped = 0 }
 		}
 	}
 	# The newline inside a wrapped span reads as a space, as it does in
-	# Markdown.
-	if (in_span) span = span " "
+	# Markdown. The flag rides along so the assembly path can be counted and
+	# floored: it is the one branch here whose failure is pure silence.
+	if (in_span) { span = span " "; span_wrapped = 1 }
 }
 
 function end_file() {
@@ -294,7 +386,7 @@ function end_file() {
 	ticket = ""
 }
 
-function classify(t,   path, pin, anchor, form, ln, lo, hi, resolved, hay) {
+function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, hay) {
 	sub(/^[ \t]+/, "", t)
 	sub(/[ \t]+$/, "", t)
 	if (t == "") return
@@ -327,6 +419,8 @@ function classify(t,   path, pin, anchor, form, ln, lo, hi, resolved, hay) {
 	if (form == "both") cit_both++
 	else if (form == "anchor") cit_anchor++
 	else cit_line++
+	if (wrapped) spanned++
+	if (role == "fixture") fixture_citations++
 
 	resolved = path
 	if (!exists(path)) {
@@ -385,18 +479,34 @@ function classify(t,   path, pin, anchor, form, ln, lo, hi, resolved, hay) {
 	}
 }
 
-function report() {
-	printf "\ncitations: %d pinned citation(s) resolved across %d open ticket/comment file(s)\n", checked + 0, files_checked + 0
+# One population floor. A form parsed zero times is a branch this run never
+# executed, and a branch that never executes cannot say no -- so it reports
+# clean whatever the tree looks like. `example` names the fixture citation that
+# should have fed this counter, because the useful question on a zero is "which
+# guaranteed instance stopped being recognised", not "is the corpus thin".
+function form_floor(n, form, example) {
+	if (n + 0 > 0) return 0
+	printf "\nUNEXERCISED  %s: parsed 0 times, so nothing exercised that path.\n", form
+	printf "             The built-in fixture carries %s, which should have fed it.\n", example
+	return 1
+}
+
+function report(   starved) {
+	printf "\ncitations: %d pinned citation(s) resolved across %d open ticket/comment file(s) and the built-in fixture\n", checked + 0, files_checked + 0
 	printf "  population   %d file(s) read (%d ticket, %d comment), %d skipped as terminal (%s)\n", \
-		files_read + 0, files_read - comments_read, comments_read + 0, files_terminal + 0, terminal
+		files_read["ticket"] + files_read["comment"], files_read["ticket"] + 0, files_read["comment"] + 0, files_terminal + 0, terminal
 	printf "  comments     %d checked, inheriting the status of their parent ticket\n", comments_checked + 0
+	printf "  fixture      %d citation(s) from %s, which holds no status for a ticket transition to change\n", \
+		fixture_citations + 0, FIXTURE_LABEL
 	printf "  forms        %d line-only, %d anchor-only, %d line+anchor\n", \
 		cit_line + 0, cit_anchor + 0, cit_both + 0
 	printf "  partial path %d resolved by unique suffix, %d skipped as ambiguous, %d skipped as external crate source\n", \
 		partial_resolved + 0, ambiguous + 0, external + 0
 	printf "  not checked  %d bare path mention(s) carrying no line or anchor\n", bare_paths + 0
-	if (anchor_wrapped)
-		printf "  wrapped      %d anchor(s) matched only after collapsing whitespace\n", anchor_wrapped
+	# Printed unconditionally, both of them: these two counters are floored
+	# below, so a zero is a failure and must be visible rather than omitted.
+	printf "  wrapped      %d anchor(s) matched only after collapsing whitespace\n", anchor_wrapped + 0
+	printf "  spanned      %d citation(s) assembled across a line break in prose\n", spanned + 0
 	if (unterminated)
 		printf "  parse warn   %d file(s) ended inside an unclosed code span, so citations in them may have been missed:%s\n", \
 			unterminated, unterminated_files
@@ -405,11 +515,21 @@ function report() {
 		printf "\ncheck-citations: parsed ZERO citations. A run that examines nothing cannot report a clean result -- the matcher has stopped reaching its subject.\n"
 		exit 1
 	}
+
+	starved = form_floor(cit_line, "the line-only form (`path:LINE`)", "`AGENTS.md:1`")
+	starved += form_floor(cit_anchor, "the anchor-only form (`path \"anchor\"`)", "`Makefile \"check: citations fmt build lint test\"`")
+	starved += form_floor(cit_both, "the line+anchor form (`path:LINE \"anchor\"`)", "`ticketsplease.toml:1 \"schema_version = 1\"`")
+	starved += form_floor(anchor_wrapped, "the whitespace-collapsing anchor fallback", "`AGENTS.md \"origin/main...main # 0 0\"`, whose subject wraps in the source")
+	starved += form_floor(spanned, "code-span assembly across a line break", "a citation whose backticks straddle two lines of prose")
+
+	if (starved > 0)
+		printf "\ncheck-citations: %d citation form(s) were parsed ZERO times. The fixture supplies one of each, so this is the matcher losing a form, not the ticket corpus drifting -- and an unexercised branch reports no failures no matter what the tree contains.\n", starved
 	if (failures > 0) {
 		printf "\ncheck-citations: %d citation(s) do not resolve against this tree.\n", failures
 		printf "Repair the citation by re-reading the source at your own base. Prefer a quoted anchor over a bare line number: `path.rs \"distinctive phrase\"`.\n"
-		exit 1
 	}
+	if (starved > 0 || failures > 0) exit 1
+
 	printf "\ncheck-citations: every pinned citation resolves. This says the citations point somewhere; it does NOT say the tickets are true.\n"
 }
 ' "$@"
