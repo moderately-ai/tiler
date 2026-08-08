@@ -130,6 +130,16 @@ For overlapping live claims, inspect scope declarations on the owning branch and
 
 A concise brief should name the role, exact base and path, edit permissions, scopes, authorities, outcome, non-goals, checks, stop conditions, public boundaries, and required evidence. Cite brief assertions; wrong context propagates quickly.
 
+### Route subagent models by change risk
+
+Choose the worker and reviewer model from the consequences of being wrong, not from a standing experiment or a desire to distribute turns evenly.
+
+- Use the strongest reasoning model available (currently Sol) for accepted ADRs and contracts, public-boundary decisions, identity or schema evolution, numerics, cross-layer correctness, ambiguous authority, broad population audits, and work whose failure could silently admit or misidentify a program.
+- Use the balanced model (currently Terra) for tightly bounded implementation, localized tests, mechanical censuses, and prose repairs whose authority, affected population, and failure condition are already explicit. If its first source audit exposes an identity consequence, public-boundary choice, conflicting authority, or materially wider population, stop and reassign or review with the stronger model.
+- Select independent review by the same risk test. A bounded Terra change does not automatically need Sol review; identity-, authority-, and boundary-sensitive changes do. Model diversity is useful when it supplies a genuinely independent derivation, not as a permanent bake-off.
+
+Model choice never substitutes for the reading, source-first Fact audit, subject perturbation, exact-base review, or gates required below. Record a non-obvious routing choice in the brief so a later coordinator can reproduce why that model was appropriate.
+
 **The coordinator reads before briefing, and reads again before merging.** A brief is the highest-leverage place to inject a false claim, because every worker receiving it treats it as settled. Three coordinator-authored claims went wrong on 2026-08-07: a rewritten obligation class that the code discharges differently, an enumeration command that miscounted by matching the false positive it was written to exclude, and pin values already superseded when the brief shipped.
 
 Before briefing:
