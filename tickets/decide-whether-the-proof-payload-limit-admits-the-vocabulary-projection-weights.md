@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights
 title: Decide whether the proof payload limit admits the vocabulary-projection weights
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [route-the-realization-conformance-half-into-the-conformance-crate]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-decide-wh
+lease_expires_at: 1786159357
 ---
 ## The hard stop, measured
 

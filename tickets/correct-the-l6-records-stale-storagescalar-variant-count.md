@@ -1,7 +1,7 @@
 ---
 id: correct-the-l6-records-stale-storagescalar-variant-count
 title: Correct the L6 record's stale StorageScalar variant count
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-a-storage-carrier-for-integer-program-inputs]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: []
 paths: []
 tags: [documentation, dtype]
+claimed_from: todo
+assignee: w-correct-t
+lease_expires_at: 1786159357
 ---
 ## User-visible outcome
 

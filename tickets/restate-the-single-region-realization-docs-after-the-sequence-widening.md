@@ -1,7 +1,7 @@
 ---
 id: restate-the-single-region-realization-docs-after-the-sequence-widening
 title: Restate the single-region realization docs after the sequence widening
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-restate-t
+lease_expires_at: 1786159357
 ---
 ## User-visible outcome
 
