@@ -1,7 +1,7 @@
 ---
 id: restate-the-tree-width-rule-outside-the-compiler-crate
 title: Restate the tree width rule outside the compiler crate
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [bound-the-tree-cap-s-unmeasured-downward-direction, measure-the-tree-width-excursion-past-the-cap]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer, contracts/numerics, implementation/conformance, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, documentation]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786172921
 ---
 ## What is stale, and why it could not be fixed in place
 

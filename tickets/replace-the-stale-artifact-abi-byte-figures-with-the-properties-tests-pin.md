@@ -1,7 +1,7 @@
 ---
 id: replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin
 title: Replace the stale artifact ABI byte figures with the properties tests pin
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, abi, identity, documentation]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786172921
 ---
 
 `docs/artifact-abi.md` carries byte figures that no test asserts and that the `v15 -> v16` identity step moved. Two of them point **past the end of the structure they index**, so a reader following them lands nowhere. This is the sibling of [the dtype-support repair](recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix.md), which resolved the same defect class in `contracts/navigation`; that ticket's route and its argument should be read before starting here.

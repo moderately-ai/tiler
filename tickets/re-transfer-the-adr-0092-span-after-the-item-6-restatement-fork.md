@@ -1,7 +1,7 @@
 ---
 id: re-transfer-the-adr-0092-span-after-the-item-6-restatement-fork
 title: Re-transfer the ADR 0092 span after the item 6 restatement fork
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [correct-adr-0092-item-6-s-widening-restatement-trap-and-its-retired-sentence-shorthand, decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span]
@@ -9,6 +9,9 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, documentation, transfer]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786172921
 ---
 
 `docs/research/runtime/backend-scoped-route-requirement-answers.md` retains a byte-identical transferred copy of ADR 0092's decision span. The item-6 restatement landed in the ADR and **forked that copy**. Under the convention stated beside the span, the repair lands in the ADR first and the span is then re-transferred from it — so this ticket is the second half of a repair that is currently incomplete.
