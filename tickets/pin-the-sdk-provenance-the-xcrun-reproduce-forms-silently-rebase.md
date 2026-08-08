@@ -1,7 +1,7 @@
 ---
 id: pin-the-sdk-provenance-the-xcrun-reproduce-forms-silently-rebase
 title: Pin the SDK provenance the xcrun reproduce forms silently rebase
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-pin-the-s
-lease_expires_at: 1786164387
 ---
 ## A reproduce form that records "whatever is installed" rather than a version
 
@@ -48,3 +45,37 @@ Every `$(xcrun …)` citation carries an explicit SDK provenance or is rooted at
 **The `$(xcrun …)` form was never checked by anything.** `check-citations.sh`'s `PATHRE_LOOSE` requires a leading `[A-Za-z0-9_]`, so a span opening `$(` is not parsed as a citation and is silently dropped. Demonstrated rather than asserted: with the old form restored and its line number corrupted to `:99999` against a 1530-line header, `./check-citations.sh` exits **0**. The version-rooted form is parsed — line-only citations 1058 → 1060, `rooted outside this tree` 15 → 17, and `--verbose` names both — and re-rooting one at a tracked component (`docs/System/…`) fails with `no file in the tree is or ends with`, exit 1. Both probes were reverted.
 
 **Scope.** `contracts/navigation` needed no edit: `docs/status.md:24` and `:27` name SDK 26.5 build `25F70` inside dated measurement records that also state the OS build separately, carry no `$(xcrun …)` form, and are correct as written. The three ledger sites are `research/target-profiles`, which this ticket does not hold; work stopped rather than reaching and the remainder is [`pin-the-sdk-provenance-on-the-compile-profile-ledger-reproduce-block`](pin-the-sdk-provenance-on-the-compile-profile-ledger-reproduce-block.md).
+
+## Outcome — done, 2026-08-07
+
+Landed at merge `58cfe3d9` (worker commit `a050b0b5`). Three files, `docs/` + `tickets/` only, carries the green gate.
+
+### This ticket's premise was false, and the falsity changed the answer
+
+I said six citations share one form. **Only two do.** Three name a **different header entirely** (`MTLComputeCommandEncoder.h`, `MTLComputePipeline.h`) inside a fenced reproduce block on a different record, and one is a `grep` command carrying **no line pin at all**. One uniform treatment would have broken something either way.
+
+### The decisive fact neither I nor the finding worker had
+
+**The `$(xcrun …)` form was never checked by anything.** `check-citations.sh`'s loose path pattern requires a leading alphanumeric, so a span opening `$(` is dropped before classification — all six contributed **zero to every counter**.
+
+Demonstrated rather than reasoned: restoring the old form with a deliberately absurd `:99999` against a 1,530-line header leaves `make citations` at **exit 0, "every pinned citation resolves"**, with the counters dropping by exactly one. So the drift I filed as latent was not merely unchecked — it was invisible.
+
+### Two options taken, because the population is two populations
+
+**A line pin is a claim about what a file contains at a version**, so the two pinned citations are now rooted at `MacOSX26.5.sdk/…`, matching the `metal-0.33.0/src/device.rs:74-82` spelling that already sits **one clause away in the same sentence**. **A reproduction is worth having because it runs on the reader's host**, so the `grep` command keeps `$(xcrun …)`; rooting it at a fixed SDK would destroy its only value. What it resolves to here is stated in the measurement boundary instead.
+
+The tiebreak for rooting over prose-only: prose leaves the citation permanently invisible to the checker, while rooting makes it **parse and then skip as external, with the skip counted and named** — the checker's own counted-rather-than-silent principle.
+
+Option 3 declined, agreeing with the finding worker: the 26.5 read is a dated host-bound measurement, and re-basing would assert a fresh read as the record's provenance.
+
+### Verified per citation, and labelled per AGENTS.md
+
+`MTLGPUFamilyApple1 = 1001` through `Apple10 = 1010` occupy lines **233-242 in both** SDK 26.5 and 27.0 — so both pinned citations still hold here. The headers are **not the same file** (1,530 lines against 1,551), so the agreement is luck. The 26.5 read is labelled a **host-specific observation** and the 27.0 agreement a **second host-specific observation, explicitly not a portable guarantee**.
+
+`docs/status.md` needed **no edit** — its two mentions are dated measurement records stating OS and SDK builds separately, carrying no `$(xcrun …)` form. So `contracts/navigation` was declared and correctly unused.
+
+### Stopped rather than reached
+
+The three ledger citations are `research/target-profiles`, not held. Filed as `pin-the-sdk-provenance-on-the-compile-profile-ledger-reproduce-block` with the transferred argument and an explicit *"do not re-base the environment table"* — and the note that those three are the **least** defective of the six, since that ledger already declares the SDK build in its environment table and already byte-compares the header across both installed SDKs.
+
+Four anchor-reach demonstrations, each broken, watched failing, and reverted.
