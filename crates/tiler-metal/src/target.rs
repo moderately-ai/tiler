@@ -118,7 +118,12 @@ pub enum MslLanguageVersion {
 
 impl MslLanguageVersion {
     /// Every semantic MSL revision this emission vocabulary names.
-    pub const ALL: [Self; 12] = [
+    ///
+    /// The declared length is `variant_count`, so a standard added to the enum
+    /// and not to this list is an array-length error at this declaration. The
+    /// exhaustive matches below close themselves, but an array is a
+    /// hand-written list and `rustc` has nothing to say about a short one.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [
         Self::Metal1_0,
         Self::Metal1_1,
         Self::Metal1_2,
@@ -221,7 +226,11 @@ pub enum MetalPlatform {
 
 impl MetalPlatform {
     /// Every artifact family this emission vocabulary names.
-    pub const ALL: [Self; 10] = [
+    ///
+    /// The declared length is `variant_count`, so a family added to the enum
+    /// and not to this list is an array-length error at this declaration
+    /// rather than a correspondence test that fails somewhere else.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [
         Self::MacOs,
         Self::IOsDevice,
         Self::IOsSimulator,
@@ -409,7 +418,13 @@ impl MetalFloatArithmeticType {
     ///
     /// The order is the derived one, so it agrees with the `Ord` a `BTreeSet`
     /// of these uses and with the order emission reports them in.
-    pub const ALL: [Self; 3] = [Self::F32, Self::F16, Self::Bf16];
+    ///
+    /// The declared length is `variant_count`, so a type added to the enum and
+    /// not to this list is an array-length error at this declaration. That
+    /// matters beyond the list itself: [`Self::COUNT`] sizes the
+    /// [`MetalSubnormalArithmeticFacts`] slot array, so a short `ALL` would
+    /// leave the new type with no slot to state a fact in.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [Self::F32, Self::F16, Self::Bf16];
 
     /// How many arithmetic types this vocabulary names.
     pub const COUNT: usize = Self::ALL.len();
