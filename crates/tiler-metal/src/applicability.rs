@@ -228,23 +228,26 @@ impl MetalGpuFamily {
     }
 }
 
-/// Compiles only while [`MetalGpuFamily::ALL`] names every family, in order.
+/// Compiles only while [`MetalGpuFamily::ALL`] ascends, lowest family first.
 ///
-/// The length half is the check that can say no about a *population*: every
-/// other site that has to know about a family is an exhaustive match, which
-/// `rustc` closes on its own, but an array is a hand-written list and a family
-/// left out of it is a device silently never probed for that family. `ALL`'s
-/// declared length is `variant_count`, so the omission is an array-length
-/// mismatch at the declaration rather than a test nobody re-runs.
+/// **Completeness is not asserted here, because it cannot be.** It is delivered
+/// by the declaration: `ALL`'s length is written as `variant_count`, so a family
+/// added to the enum and left out of the list is an array-length `E0308` at the
+/// declaration itself. That is the check that can say no about a *population* —
+/// every other site that has to know about a family is an exhaustive match,
+/// which `rustc` closes on its own, but an array is a hand-written list and a
+/// family left out of it is a device silently never probed for that family. An
+/// `assert!` restating the declared length would compare `variant_count` against
+/// itself and could never fail; one stood here, and a reader who mistook it for
+/// the guard would look for a const-eval failure rather than for the type of
+/// `ALL`. The same sizing carries [`MetalHostPredicate::ALL`] and the three
+/// vocabularies in [`crate::target`], none of which needs an assertion either.
 ///
-/// The order half compares Apple's own enumerators rather than this type's
-/// derived `Ord`, because `Ord` follows declaration order and would agree with
-/// a misordered `ALL` for exactly the reason that made it wrong.
+/// The order half is a real check and is what remains: it compares Apple's own
+/// enumerators rather than this type's derived `Ord`, because `Ord` follows
+/// declaration order and would agree with a misordered `ALL` for exactly the
+/// reason that made it wrong.
 const _: () = {
-    assert!(
-        MetalGpuFamily::ALL.len() == core::mem::variant_count::<MetalGpuFamily>(),
-        "MetalGpuFamily::ALL must name every family this vocabulary declares",
-    );
     let mut index = 1;
     while index < MetalGpuFamily::ALL.len() {
         assert!(
@@ -402,7 +405,15 @@ pub enum MetalHostPredicate {
 
 impl MetalHostPredicate {
     /// Every predicate a policy evaluates, in evaluation order.
-    pub const ALL: [Self; 7] = [
+    ///
+    /// The declared length is `variant_count`, and this list needs that more
+    /// than its siblings do rather than less: no code reads it — it is cited by
+    /// [`evaluate_metal_host_applicability`] as the stated evaluation order and
+    /// by `crate::applicability_tests` as the population its cases enumerate —
+    /// so nothing else would notice a predicate left out of it. [`Self::COUNT`]
+    /// is what those tests count against, and a short `ALL` would shrink the
+    /// expected population to match the cases that were written.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [
         Self::OsFamily,
         Self::OsVersion,
         Self::OsBuild,

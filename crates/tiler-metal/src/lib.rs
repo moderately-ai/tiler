@@ -1,10 +1,15 @@
-// `variant_count` is the one mechanism that makes
-// `applicability::MetalGpuFamily::ALL` fail the build when a family is added to
-// the enum and not to the list. Every other site that has to know about a family
-// is an exhaustive `match`, which `rustc` already closes; a hand-written array
-// has no such check, and an under-populated `ALL` is exactly the silently
-// unprobed device this crate's applicability policy exists to refuse. The
-// assertion that consumes it is beside `ALL` in `applicability.rs`.
+// `variant_count` is the one mechanism that makes an `ALL` array fail the build
+// when a variant is added to its enum and not to the list. Every other site that
+// has to know about a variant is an exhaustive `match`, which `rustc` already
+// closes; a hand-written array has no such check, and an under-populated `ALL`
+// is exactly the silently unprobed device this crate's applicability policy
+// exists to refuse. Five declarations are sized by it:
+// `applicability::MetalGpuFamily::ALL` and `applicability::MetalHostPredicate::ALL`,
+// and `target::MslLanguageVersion::ALL`, `target::MetalPlatform::ALL`, and
+// `target::MetalFloatArithmeticType::ALL`. The `BinaryOp` population in
+// `tests::every_binary_construct_has_a_metal_realization` uses it for the same
+// reason from the other direction: that vocabulary is `#[non_exhaustive]` and
+// owned by another crate, so no match here can be closed on its behalf.
 #![feature(variant_count)]
 //! Pure structured-kernel-to-Metal-source lowering for Tiler.
 //!
