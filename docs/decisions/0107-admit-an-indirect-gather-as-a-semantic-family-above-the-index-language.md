@@ -19,7 +19,7 @@ ticket: "admit-an-indirect-gather-family-for-tied-embedding-lookup"
 
 **What was accepted, stated so it is not over-read.** The family is admitted as a semantic operation and as nothing below it, and the acceptance covers precisely that: a **registered, reference-evaluated, unplannable** family is a legitimate delivered state rather than a half-landing to be finished. The index-expression vocabulary stays unchanged, which is the record's substance and not a deferral inside it.
 
-**What acceptance did not commit to.** Not the public boundary: under [ADR 0075](0075-approve-public-boundaries-by-change-category.md) the key, the gathered-axis attribute, `GatherAxis`, `GatherError`, and `gather_result_shape` remain a **labelled draft** until their exact included and excluded surface is separately accepted. Not the index-layer question, which [`admit-the-indirect-access-class-into-the-index-layer`](../../tickets/admit-the-indirect-access-class-into-the-index-layer.md) holds as a decision in its own right.
+**What acceptance did not commit to.** Not the public boundary: under [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md) the key, the gathered-axis attribute, `GatherAxis`, `GatherError`, and `gather_result_shape` remain a **labelled draft** until their exact included and excluded surface is separately accepted. Not the index-layer question, which [`admit-the-indirect-access-class-into-the-index-layer`](../../tickets/admit-the-indirect-access-class-into-the-index-layer.md) holds as a decision in its own right.
 
 **The counterpoint accepted alongside it.** A registered family that no program can plan is a trap for a reader who reasonably takes registration to imply reachability — records are read less often than registries. That risk was stated and accepted; the mitigation is that the fail-closed boundary is tested rather than asserted, with `classify` returning `None` so no region derives legality, and six perturbations each firing their own gate.
 
@@ -115,7 +115,7 @@ below zero, because a signed index raises negative indexing — a second convent
 the primary authorities diverge on. Refusing the type refuses the question;
 admitting the type and rejecting negative values would answer it silently.
 
-Under [ADR 0075](0075-treat-a-tested-public-boundary-as-a-labelled-draft.md) the
+Under [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md) the
 key, the attribute, and the vocabulary above are a **labelled draft** until Tom
 accepts their exact included and excluded surface.
 
