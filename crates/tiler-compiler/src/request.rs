@@ -1907,44 +1907,81 @@ impl NormalizedOutput {
     /// that names an ordinal this output never loads gets a refusal instead of
     /// another tensor's size.
     ///
-    /// **The arms do not yet agree about what they count, and the divergence is
-    /// recorded here rather than papered over.** `Contraction` and `Staged`
-    /// answer the operand tensor's own count; the two single-shape arms answer
-    /// the region's iteration domain. Those coincide for a dense read, because
-    /// a dense read binds the region's domain to the tensor's shape, and they
-    /// diverge exactly for a widening structural read — `a * broadcast(w)` over
-    /// a `[2]` weight answers `4` for an ordinal holding two elements.
-    /// [`answer-input-element-counts-as-the-declared-tensors-own-count`](../../../tickets/answer-input-element-counts-as-the-declared-tensors-own-count.md)
-    /// owns settling it; this accessor's gate is about *which* ordinals answer
-    /// and deliberately moves no count.
+    /// **The count is the declared tensor's own, never the iteration domain of
+    /// a region that reads it.** Its consumer binds
+    /// `TensorRole::Input { ordinal }`, which names the buffer the ABI binds at
+    /// that ordinal, so a count taken from the reading region would scale a call
+    /// by an iteration space rather than by the tensor the caller passed. The
+    /// two coincide for a dense read — [`plan_elementwise`] refuses a leaf at
+    /// any shape but the region's — and diverge exactly for a widening
+    /// structural read: `a * broadcast(w)` over a `[2]` weight iterates `[2, 2]`
+    /// and must still answer `2` for the ordinal `w` occupies.
     ///
-    /// **The two single-shape arms ask [`Self::reads_declared_input`] rather
-    /// than the declared arity, and that is a per-read truth rather than a
-    /// per-program one.** `input_keys` is the whole program's declaration list,
-    /// so a bound on its length says nothing about which of those inputs this
-    /// output's walk reached; the premise that every declared input of a reduced
-    /// program is read at the contributor domain held only while every walk had
-    /// to read every declared input. Since a walk may read a subset, an output
-    /// iterating one domain would otherwise volunteer its own count for an
-    /// ordinal only a sibling loads, and
+    /// So every arm derives from an *operand* shape. `Contraction` reads its
+    /// per-ordinal operand counts and `Staged` its operand run, both of which
+    /// are declared operands' own extents. The three arms holding elementwise
+    /// read lists ask [`read_tensor_elements`] per read, which answers a
+    /// structural read from the relation's own operand shape and declines a
+    /// relation it cannot size.
+    ///
+    /// **The read lists are the gate, not the declared arity, and that is a
+    /// per-read truth rather than a per-program one.** `input_keys` is the whole
+    /// program's declaration list, so a bound on its length says nothing about
+    /// which of those inputs this output's walk reached; the premise that every
+    /// declared input of a reduced program is read at the contributor domain
+    /// held only while every walk had to read every declared input. Since a walk
+    /// may read a subset, an output iterating one domain would otherwise
+    /// volunteer its own count for an ordinal only a sibling loads, and
     /// [`NormalizedProgram::agreed_input_elements_at`] would read that
     /// volunteered count as a disagreement and refuse a call the reading output
-    /// sizes exactly. The two siblings on this type,
-    /// [`Self::max_input_elements`] and [`Self::reads_declared_input`], already
-    /// read the recognized read lists; this is the third.
+    /// sizes exactly. [`Self::reads_declared_input`] states the same fact for
+    /// the callers that need only the predicate, and the two must keep agreeing
+    /// about which ordinals a walk reached.
+    ///
+    /// **Agreement or nothing wherever one ordinal has several reads**, for the
+    /// reason [`NormalizedProgram::agreed_input_elements_at`] states: a half
+    /// that reads the ordinal and cannot size it must refuse rather than be
+    /// overruled by a half that can. Whether a half *reads* the ordinal is asked
+    /// separately from what it answers, so an unsizable read is a `Some(None)`
+    /// the fold sees rather than an abstention it drops.
+    ///
+    /// The disagreement is unreachable for the relations recognized today: every
+    /// route above resolves to the shape the program declared the ordinal at, so
+    /// the answer is a function of the ordinal alone. That is exhaustive finite
+    /// evidence over five arms and three admitted access maps rather than a
+    /// proof about relations not yet spelled, which is why the fold stays.
+    /// `every_arm_answers_the_declared_tensors_own_count` is what says so, and
+    /// says no when an arm reintroduces a domain.
     pub(crate) fn input_elements_at(&self, ordinal: InputOrdinal) -> Option<u64> {
         let ordinal = ordinal.get();
         match self {
-            // The contributor domain: the one shape a prologue region governs,
-            // and the domain a prologue-less fold's own contributor read
-            // addresses. Which declared inputs those regions read is the
-            // recognized read lists' answer, which is what the gate asks.
-            Self::SerialSum(normalized) => self
-                .reads_declared_input(ordinal)
-                .then_some(normalized.input_elements),
-            Self::Pointwise(normalized) => self
-                .reads_declared_input(ordinal)
-                .then_some(normalized.elements),
+            // A prologue region's reads address declared tensors from the
+            // contributor domain; a prologue-less fold's own contributor read
+            // addresses the declared tensor directly, and `input_shape` is that
+            // operand's own shape rather than a domain standing in for it. The
+            // two sources are mutually exclusive — `prologue_reads` is inhabited
+            // exactly when `contributor_input` is `None` — and are folded
+            // together anyway so neither has to restate the exclusion.
+            Self::SerialSum(normalized) => agreed(
+                normalized
+                    .prologue_reads
+                    .iter()
+                    .filter(|(read, _)| *read == ordinal)
+                    .map(|(_, map)| read_tensor_elements(map, normalized.input_elements))
+                    .chain(
+                        (normalized.contributor_input == Some(ordinal))
+                            .then_some(Some(normalized.input_elements)),
+                    ),
+            )
+            .flatten(),
+            Self::Pointwise(normalized) => agreed(
+                normalized
+                    .reads
+                    .iter()
+                    .filter(|(read, _)| *read == ordinal)
+                    .map(|(_, map)| read_tensor_elements(map, normalized.elements)),
+            )
+            .flatten(),
             // A contraction's region binds one access per declared input
             // ordinal, so the operand run is both the read list and the count
             // list and no separate gate is needed.
@@ -1952,26 +1989,35 @@ impl NormalizedOutput {
                 .ok()
                 .and_then(|ordinal| normalized.input_elements.get(ordinal).copied()),
             // A chain reads a declared input from its producer, from its
-            // epilogue, or from both — and the two read it at different domains
-            // whenever the producer folds. Agreement or nothing, for the reason
-            // [`NormalizedProgram::agreed_input_elements_at`] states: this count
-            // scales a call over the tensor bound to the ordinal, and answering
-            // with either side would size a call against a domain one of the two
-            // regions does not iterate. Neither half answering is the arm's own
-            // spelling of "this chain does not read that ordinal".
-            Self::Epilogue(chain) => {
-                let produced = chain.producer.input_elements_at(InputOrdinal::new(ordinal));
-                let consumed = chain
-                    .reads
-                    .iter()
-                    .any(|(read, _)| *read == BoundaryRead::Input(ordinal))
-                    .then_some(chain.elements);
-                match (produced, consumed) {
-                    (Some(produced), Some(consumed)) if produced != consumed => None,
-                    (Some(elements), _) | (None, Some(elements)) => Some(elements),
-                    (None, None) => None,
-                }
-            }
+            // epilogue, or from both. Whether each half reads it is asked before
+            // what it answers, so a half that reads the ordinal without being
+            // able to size it contributes a `None` the fold compares rather than
+            // an absence it cannot tell from silence. Neither half reading is
+            // the arm's own spelling of "this chain does not read that ordinal".
+            Self::Epilogue(chain) => agreed(
+                chain
+                    .producer
+                    .reads_declared_input(ordinal)
+                    .then(|| chain.producer.input_elements_at(InputOrdinal::new(ordinal)))
+                    .into_iter()
+                    .chain(
+                        chain
+                            .reads
+                            .iter()
+                            .any(|(read, _)| *read == BoundaryRead::Input(ordinal))
+                            .then(|| {
+                                agreed(
+                                    chain
+                                        .reads
+                                        .iter()
+                                        .filter(|(read, _)| *read == BoundaryRead::Input(ordinal))
+                                        .map(|(_, map)| read_tensor_elements(map, chain.elements)),
+                                )
+                                .flatten()
+                            }),
+                    ),
+            )
+            .flatten(),
             // The operand run is the occurrence's read list, so an operand
             // binding a declared input answers that operand tensor's own count
             // and the staged operand answers nothing — its count sizes a
@@ -1980,9 +2026,9 @@ impl NormalizedOutput {
             // Agreement or nothing, over the occurrence's own operands *and* its
             // producer's answer, for the reason the chain arm above and
             // [`NormalizedProgram::agreed_input_elements_at`] both state: two
-            // operand positions reading one tensor at different extents, or a
-            // producer reading it at a domain the occurrence does not, give a
-            // work-scaling caller no single answer.
+            // claimants that cannot name one extent for a tensor give a
+            // work-scaling caller no single answer, and the producer is asked
+            // only when it reads the ordinal so its silence costs nothing.
             Self::Staged(normalized) => agreed(
                 normalized
                     .declared_operands()
@@ -2054,30 +2100,68 @@ impl NormalizedOutput {
     }
 
     /// Returns the largest declared input element count this output reads.
+    ///
+    /// **Declared tensors' own counts, on the same basis
+    /// [`Self::input_elements_at`] states**, so the two accessors cannot
+    /// disagree about what a "declared input element count" is. A widening read
+    /// used to make this report the reading region's domain, which is the
+    /// iteration space rather than any tensor the ABI binds.
+    ///
+    /// **A read whose relation [`read_tensor_elements`] declines contributes the
+    /// reading region's domain rather than refusing**, and the asymmetry with
+    /// [`Self::input_elements_at`] is deliberate: this feeds structural cost
+    /// estimates alone — [`NormalizedProgram::max_input_elements`] records the
+    /// caller — and a maximum that refused would turn an estimate into a
+    /// feasibility gate. The substitute is an estimate and not a bound: it is
+    /// exact for a bijection and an overestimate for a replication, and a
+    /// relation added to the vocabulary could sit either side of it. It is
+    /// unreachable for the three maps recognized today.
     pub(crate) fn max_input_elements(&self) -> u64 {
         match self {
-            Self::SerialSum(normalized) => normalized.input_elements,
-            Self::Pointwise(normalized) => normalized.elements,
+            // Same two sources the reading arm folds, and for the same reason:
+            // a prologue region's reads, or a prologue-less fold's own
+            // contributor read of the declared tensor.
+            Self::SerialSum(normalized) => normalized
+                .prologue_reads
+                .iter()
+                .map(|(_, map)| {
+                    read_tensor_elements(map, normalized.input_elements)
+                        .unwrap_or(normalized.input_elements)
+                })
+                .chain(
+                    normalized
+                        .contributor_input
+                        .map(|_| normalized.input_elements),
+                )
+                .max()
+                .unwrap_or_default(),
+            Self::Pointwise(normalized) => normalized
+                .reads
+                .iter()
+                .map(|(_, map)| {
+                    read_tensor_elements(map, normalized.elements).unwrap_or(normalized.elements)
+                })
+                .max()
+                .unwrap_or_default(),
             Self::Contraction(normalized) => normalized
                 .input_elements
                 .iter()
                 .copied()
                 .max()
                 .unwrap_or_default(),
-            // The epilogue's own domain counts only when it actually reads a
-            // declared input: a chain whose epilogue reads only the staged value
-            // reads no declared input at that domain, and reporting one would
-            // overstate what this output reads.
+            // The epilogue's declared-input reads only: a chain whose epilogue
+            // reads only the staged value reads no declared input there, and
+            // reporting its domain would overstate what this output reads.
             Self::Epilogue(chain) => chain.producer.max_input_elements().max(
-                if chain
+                chain
                     .reads
                     .iter()
-                    .any(|(read, _)| matches!(read, BoundaryRead::Input(_)))
-                {
-                    chain.elements
-                } else {
-                    0
-                },
+                    .filter(|(read, _)| read.declared_ordinal().is_some())
+                    .map(|(_, map)| {
+                        read_tensor_elements(map, chain.elements).unwrap_or(chain.elements)
+                    })
+                    .max()
+                    .unwrap_or_default(),
             ),
             // The declared-input operands only, and the producer's own answer
             // beside them: a staged operand's count is a materialization edge's
@@ -2273,13 +2357,25 @@ impl NormalizedProgram {
     /// recognized output that *reads* it agrees on the count.
     ///
     /// **Agreement or nothing, because the caller is sizing work.** The count
-    /// scales a call over the tensor bound to that ordinal, and two outputs may
-    /// read one declared input at different domains — a reduction reads it at
-    /// its contributor shape while an elementwise sibling reads it at its own.
-    /// Answering with either one would size a call against a tensor the region
-    /// does not iterate, which is the confidently-wrong verdict a work-scaling
-    /// resolution exists to prevent. A disagreement therefore yields `None` and
-    /// the caller refuses, exactly as it does for an ordinal no input occupies.
+    /// scales a call over the tensor bound to that ordinal, and answering from
+    /// whichever output claimed first would let one claimant's number stand for
+    /// a tensor another claimant sizes differently — the confidently-wrong
+    /// verdict a work-scaling resolution exists to prevent. A disagreement
+    /// therefore yields `None` and the caller refuses, exactly as it does for an
+    /// ordinal no input occupies.
+    ///
+    /// **Defence in depth rather than a live gate, and the distinction is worth
+    /// stating.** Two outputs used to read one declared input at different
+    /// domains — a reduction at its contributor shape, an elementwise sibling at
+    /// its own — and this fold is what refused the pair. Since
+    /// [`NormalizedOutput::input_elements_at`] answers the declared tensor's own
+    /// count on every arm, that count is a function of the ordinal alone and no
+    /// recognizable program reaches the refusal. The fold stays because the
+    /// property it enforces is one an added arm or access relation could break,
+    /// and a wrong work count is not a failure a later stage catches.
+    /// `every_arm_answers_the_declared_tensors_own_count` records the reasoning
+    /// and `a_bound_ordinal_resolves_from_the_output_that_reads_it` records the
+    /// perturbation that makes this fold refuse again.
     ///
     /// **The fold ranges over the reading outputs, and it has to.** An output
     /// that never loads the ordinal has nothing to say about it, but [`agreed`]
@@ -2321,10 +2417,13 @@ impl NormalizedProgram {
 
     /// Returns the largest declared input element count over every output.
     ///
-    /// The size of the widest thing a plan for this request could stage, which
-    /// is what a structural cost estimate wants. Deliberately a maximum rather
-    /// than an agreement: a cost may be an upper bound over the whole request,
-    /// and a cost that refused would turn an estimate into a feasibility gate.
+    /// A structural proxy for the widest thing a plan for this request could
+    /// stage, which is what `GovernedPhysicalProvider::propose`'s cost estimate
+    /// wants. Deliberately a maximum rather than an agreement: a cost may be an
+    /// upper bound over the whole request, and a cost that refused would turn an
+    /// estimate into a feasibility gate. That one caller is the whole reason
+    /// [`NormalizedOutput::max_input_elements`] substitutes a domain for a
+    /// relation it cannot size instead of declining.
     pub(crate) fn max_input_elements(&self) -> u64 {
         self.outputs
             .iter()
@@ -2384,6 +2483,45 @@ impl NormalizedProgram {
             panic!("the fixture declares one output");
         };
         output.serial_sum_mut()
+    }
+}
+
+/// Returns the element count of the tensor one recognized elementwise read
+/// addresses, given the domain of the region performing it.
+///
+/// **The tensor's own count, which is what separates it from the domain.** An
+/// elementwise region's read list carries a relation per read, and a widening
+/// one addresses fewer elements than the region iterates: `broadcast(w)` over a
+/// `[2]` weight into a `[2, 2]` domain reads two elements four times. Callers
+/// sizing a call over the buffer the ABI binds want the two, so the count is
+/// taken from the relation rather than from the region.
+///
+/// A dense read answers the domain because the recognizer made them equal:
+/// [`plan_elementwise`] refuses an elementwise leaf whose shape is not the
+/// region's, so the domain *is* that tensor's count rather than standing in for
+/// it. A structural read answers its operand shape, and
+/// [`recognize_structural_read`] admits a structural occurrence only over a
+/// value this walk reads — a declared input or the staged value — so that
+/// operand shape is the declared tensor's own.
+///
+/// **The wildcard declines rather than guesses.** [`LogicalAccess`] is
+/// `#[non_exhaustive]`, so a relation added upstream reaches it; naming a count
+/// for a relation whose operand extent is unknown is exactly the confidently
+/// wrong work count a refusal exists to prevent. The named arms are the ones
+/// that would be reached first and are listed so a reader can see which
+/// relations are being declined on purpose.
+fn read_tensor_elements(map: &LogicalAccess, domain_elements: u64) -> Option<u64> {
+    match map {
+        LogicalAccess::LinearIdentity => Some(domain_elements),
+        LogicalAccess::ReindexBijection { operand_shape, .. }
+        | LogicalAccess::BroadcastReplication { operand_shape, .. } => {
+            tiler_ir::schedule::element_count(operand_shape).ok()
+        }
+        LogicalAccess::ScalarBroadcast
+        | LogicalAccess::PackedU4LsbZeroTail { .. }
+        | LogicalAccess::ReductionContributor { .. }
+        | LogicalAccess::ContractionOperand { .. }
+        | _ => None,
     }
 }
 
@@ -8062,6 +8200,290 @@ mod tests {
             panic!("a normalization output recognizes as a staged family")
         };
         assert!(crate::physical::staged_plan(&control).is_some());
+    }
+
+    /// One fixture of [`every_arm_answers_the_declared_tensors_own_count`] and
+    /// everything asserted about it.
+    ///
+    /// Named rather than a tuple so each column reads as the claim it is: the
+    /// rows carry six columns each, and in a positional literal an exchanged
+    /// pair of `u64`s looks like a passing row.
+    struct CountRow {
+        label: &'static str,
+        /// The arm the fixture must reach, so a row whose recognition moved
+        /// stops standing for the arm it names.
+        arm: &'static str,
+        output: NormalizedOutput,
+        /// The iteration domain the widening read is *not* answered at, or
+        /// `None` where the row has no widening read — for the two arms that
+        /// hold no elementwise read list, and for the bare fold whose one read
+        /// is dense.
+        domain: Option<u64>,
+        /// The count each declared ordinal must resolve to, in declaration
+        /// order. Its length is the declared arity.
+        counts: &'static [Option<u64>],
+        max: u64,
+    }
+
+    /// Every arm of [`NormalizedOutput::input_elements_at`] answers the declared
+    /// tensor's own element count, and none answers a reading region's domain.
+    ///
+    /// **The two numbers coincide unless a read widens, so most rows carry a
+    /// widening one.** A `[2]` weight broadcast into a `[2, 2]` region iterates
+    /// four points and holds two elements; an arm answering `4` would scale an
+    /// opaque call by the iteration space rather than by the buffer
+    /// [`TensorRole::Input`] binds at that ordinal, which is the confidently
+    /// wrong work count [`crate::call_declaration::WorkScaling`] exists to
+    /// prevent. Each row therefore states the domain beside the counts and
+    /// refuses to run if they are equal, so a row that had no widening to get
+    /// wrong cannot pass for one that did.
+    ///
+    /// **The rows are counted against the arms.** "Every arm" is the claim, so
+    /// the population is asserted to reach all five rather than described as
+    /// doing so; a variant added without a row fails here rather than shipping
+    /// unexamined. [`NormalizedOutput::reads_declared_input`] is asserted beside
+    /// every count because the two are separate statements of which ordinals a
+    /// walk reached, and
+    /// [`NormalizedProgram::agreed_input_elements_at`] refuses when they drift.
+    ///
+    /// **Watched failing once each, every perturbation on the subject rather
+    /// than on an assertion, and each quoted by the row that caught it:**
+    ///
+    /// - Restoring [`NormalizedOutput::input_elements_at`]'s pointwise arm to
+    ///   `normalized.elements`, the reading region's domain it answered before:
+    ///   *a sole widened pointwise read: ordinal 0 is not the declared tensor's
+    ///   own count — left `Some(4)`, right `Some(2)`*.
+    /// - Restoring [`NormalizedOutput::max_input_elements`]'s pointwise arm to
+    ///   the same domain, perturbed alone so the count rows still pass: *a sole
+    ///   widened pointwise read: the largest declared input count this output
+    ///   reads — left `4`, right `2`*. The two arms are perturbed separately
+    ///   because together the first fires and hides the second.
+    /// - Restoring the serial-sum arm to `normalized.input_elements`: *a widened
+    ///   read in a fold's prologue: ordinal 0 — left `Some(4)`, right
+    ///   `Some(2)`*.
+    /// - Restoring the epilogue arm's consumed half to `chain.elements`: *a
+    ///   widened read in a chain's epilogue: ordinal 1 — left `Some(4)`, right
+    ///   `Some(2)`*.
+    /// - Dropping the serial-sum arm's `contributor_input` term, which is the
+    ///   one read no read list describes: *a prologue-less fold's own
+    ///   contributor read: ordinal 0 — left `None`, right `Some(6)`*.
+    /// - Answering [`read_tensor_elements`]'s structural arms with
+    ///   `domain_elements` instead of the operand shape, which is the single
+    ///   statement the three widening rows share: the first of them fires, *a
+    ///   sole widened pointwise read: ordinal 0 — left `Some(4)`, right
+    ///   `Some(2)`*, and each later row fires in turn once its predecessor is
+    ///   admitted.
+    #[test]
+    fn every_arm_answers_the_declared_tensors_own_count() {
+        // A `[2]` operand replicated across a leading axis into `[2, 2]`: the
+        // read addresses two elements over a domain of four, which is the whole
+        // difference these rows are about.
+        let widen = |builder: &mut SemanticProgramBuilder,
+                     operand: tiler_ir::semantic::Value<F32>| {
+            let mapping = tiler_ir::semantic::BroadcastAxisMapping::new(
+                [Extent::new(2), Extent::new(2)],
+                [
+                    tiler_ir::semantic::BroadcastAxisSource::Replicate,
+                    tiler_ir::semantic::BroadcastAxisSource::FromOperand(Axis::new(0)),
+                ],
+            )
+            .expect("one replicated axis over a rank-one operand is an admitted relation");
+            tiler_ir::semantic::F32Broadcast::apply(builder, &mapping, operand)
+                .expect("the standard registry admits the broadcast family")
+        };
+        let weight = |builder: &mut SemanticProgramBuilder| {
+            builder
+                .input::<F32>(InputKey::new("w").unwrap(), Shape::from_dims([2]))
+                .unwrap()
+        };
+
+        // `w + w` over the widened read alone: one declared input, read only
+        // through the relation, so this is the row where the maximum moves too.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let w = weight(&mut builder);
+        let widened = widen(&mut builder, w);
+        let root = F32Add::apply(&mut builder, widened, widened).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let sole_widened_read = builder.build().unwrap();
+
+        // `a * broadcast(w)`: the widened read beside a dense one, so the two
+        // ordinals must answer different counts from one region.
+        let mixed_program = |folded: bool| {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let w = weight(&mut builder);
+            let a = builder
+                .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+                .unwrap();
+            let widened = widen(&mut builder, w);
+            let scaled = F32Multiply::apply(&mut builder, a, widened).unwrap();
+            let root = if folded {
+                StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(1)]).unwrap()
+            } else {
+                scaled
+            };
+            builder
+                .output(OutputKey::new("result").unwrap(), root)
+                .unwrap();
+            builder.build().unwrap()
+        };
+
+        // `sum(a, axis 1)`: no prologue, so the fold's own contributor read is
+        // the one access no read list describes. Nothing widens here, and the
+        // row is what keeps that term live.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let a = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let root = StrictSerialF32Sum::apply(&mut builder, a, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let bare_fold = builder.build().unwrap();
+
+        // `sum(a, axis 2) * broadcast(w)`: the producer folds ordinal `0` at its
+        // own twelve-element shape and the epilogue widens ordinal `1` over a
+        // four-point domain, so one chain carries both halves.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let a = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2, 3]))
+            .unwrap();
+        let w = weight(&mut builder);
+        let reduced = StrictSerialF32Sum::apply(&mut builder, a, [Axis::new(2)]).unwrap();
+        let widened = widen(&mut builder, w);
+        let root = F32Multiply::apply(&mut builder, reduced, widened).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let widened_epilogue = builder.build().unwrap();
+
+        let arm = |output: &NormalizedOutput| match output {
+            NormalizedOutput::SerialSum(_) => "serial-sum",
+            NormalizedOutput::Pointwise(_) => "pointwise",
+            NormalizedOutput::Contraction(_) => "contraction",
+            NormalizedOutput::Epilogue(_) => "epilogue",
+            NormalizedOutput::Staged(_) => "staged",
+        };
+        let rows: [CountRow; 7] = [
+            CountRow {
+                label: "a sole widened pointwise read",
+                arm: "pointwise",
+                output: recognize(&sole_widened_read)
+                    .expect("a widened read is an elementwise region"),
+                domain: Some(4),
+                counts: &[Some(2)],
+                max: 2,
+            },
+            CountRow {
+                label: "a widened pointwise read beside a dense one",
+                arm: "pointwise",
+                output: recognize(&mixed_program(false))
+                    .expect("a widened read is an elementwise region"),
+                domain: Some(4),
+                counts: &[Some(2), Some(4)],
+                max: 4,
+            },
+            CountRow {
+                label: "a widened read in a fold's prologue",
+                arm: "serial-sum",
+                output: recognize(&mixed_program(true))
+                    .expect("a widened prologue read is recognized"),
+                domain: Some(4),
+                counts: &[Some(2), Some(4)],
+                max: 4,
+            },
+            CountRow {
+                label: "a prologue-less fold's own contributor read",
+                arm: "serial-sum",
+                output: recognize(&bare_fold).expect("a fold over a declared input is recognized"),
+                domain: None,
+                counts: &[Some(6)],
+                max: 6,
+            },
+            CountRow {
+                label: "a widened read in a chain's epilogue",
+                arm: "epilogue",
+                output: recognize(&widened_epilogue)
+                    .expect("a widened epilogue read is recognized"),
+                domain: Some(4),
+                counts: &[Some(12), Some(2)],
+                max: 12,
+            },
+            CountRow {
+                label: "a contraction's two operands",
+                arm: "contraction",
+                output: recognize(&contraction_program(false))
+                    .expect("a binary contraction is recognized"),
+                domain: None,
+                counts: &[Some(6), Some(12)],
+                max: 12,
+            },
+            CountRow {
+                label: "a staged family's operand run",
+                arm: "staged",
+                output: recognize(&normalization_program(false, 1.0e-6_f32.to_bits()))
+                    .expect("a normalization is recognized"),
+                domain: None,
+                counts: &[Some(4), Some(4)],
+                max: 4,
+            },
+        ];
+        let reached: BTreeSet<&str> = rows.iter().map(|row| row.arm).collect();
+        assert_eq!(
+            reached.len(),
+            5,
+            "the rows reach {reached:?}, which is not every arm of the accessor",
+        );
+
+        for CountRow {
+            label,
+            arm: expected_arm,
+            output,
+            domain,
+            counts,
+            max,
+        } in rows
+        {
+            assert_eq!(
+                arm(&output),
+                expected_arm,
+                "{label}: the fixture recognized as another arm, so the row proves nothing about \
+                 the one it names",
+            );
+            if let Some(domain) = domain {
+                assert!(
+                    counts.iter().any(|count| *count != Some(domain)),
+                    "{label}: every count equals the domain of {domain}, so this row cannot \
+                     observe the difference it exists for",
+                );
+            }
+            for (ordinal, expected) in counts.iter().enumerate() {
+                let ordinal = u32::try_from(ordinal).expect("the fixtures declare few inputs");
+                assert_eq!(
+                    output.input_elements_at(InputOrdinal::new(ordinal)),
+                    *expected,
+                    "{label}: ordinal {ordinal} is not the declared tensor's own count",
+                );
+                assert_eq!(
+                    output.reads_declared_input(ordinal),
+                    expected.is_some(),
+                    "{label}: ordinal {ordinal} — the predicate and the count disagree about what \
+                     this walk reads",
+                );
+            }
+            let past = u32::try_from(counts.len()).expect("the fixtures declare few inputs");
+            assert_eq!(
+                output.input_elements_at(InputOrdinal::new(past)),
+                None,
+                "{label}: an ordinal past the declaration produced a count",
+            );
+            assert_eq!(
+                output.max_input_elements(),
+                max,
+                "{label}: the largest declared input count this output reads",
+            );
+        }
     }
 
     /// The two shapes a staged operand still refuses, each by its own name.

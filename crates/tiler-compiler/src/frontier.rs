@@ -2668,13 +2668,18 @@ fn resolve_work_items(
                 // call's binding names the tensor role rather than a particular
                 // tensor. `TensorRole::Output` carries no ordinal at all, so with
                 // several declared outputs nothing on the binding says which
-                // published tensor it means; and two outputs may read one
-                // declared input at different domains, a reduction at its
-                // contributor shape and an elementwise sibling at its own.
-                // Answering with one of them would size a call against a tensor
-                // the caller did not name, which is the confidently-wrong verdict
-                // `WorkScaling` exists to prevent, so a disagreement refuses by
-                // the same route an unoccupied ordinal does.
+                // published tensor it means. Answering from one claimant would
+                // size a call against a tensor the caller did not name, which is
+                // the confidently-wrong verdict `WorkScaling` exists to prevent,
+                // so a disagreement refuses by the same route an unoccupied
+                // ordinal does.
+                //
+                // The two agreements are not in the same state. Several declared
+                // outputs of different extents are ordinary, so the output fold
+                // refuses live programs; the input fold is defence in depth since
+                // `NormalizedOutput::input_elements_at` began answering the
+                // declared tensor's own count on every arm, which
+                // `NormalizedProgram::agreed_input_elements_at` states in full.
                 TensorRole::Input { ordinal } => request
                     .normalized()
                     .agreed_input_elements_at(*ordinal)
@@ -4656,22 +4661,21 @@ mod tests {
     /// iterates `[2, 2]`, so declared input `0` is read by two regions that
     /// iterate different domains while declared input `1` is read only by the
     /// widening one. A binding names the tensor *role*, so nothing on it says
-    /// which of the two regions a call over ordinal `0` means.
+    /// which of the two regions a call over ordinal `0` means — and the two
+    /// must therefore answer one count for it without being told which region
+    /// the caller had in mind.
     ///
     /// The widening read is what makes the two domains differ at all: a dense
     /// read binds its region's domain to the tensor's own shape, so two outputs
-    /// reading one input densely always agree.
+    /// reading one input densely have nothing to differ about.
     ///
-    /// **Measurement boundary.** The disagreement this fixture presents is
-    /// between two *domains*, `2` and `4`, and declared input `0` holds two
-    /// elements in both — the pointwise arm of
-    /// `NormalizedOutput::input_elements_at` answers the reading region's
-    /// domain rather than the tensor's own count for a widening read. That is a
-    /// separate defect, owned by
-    /// `answer-input-element-counts-as-the-declared-tensors-own-count`, and
-    /// settling it will make these two outputs agree — so that ticket has to
-    /// re-found this refusal on a fixture whose disagreement survives, not just
-    /// re-run it.
+    /// This is the widest divergence the recognized program space presents, and
+    /// it is now an *admission* rather than a refusal: both regions size ordinal
+    /// `0` by the two elements `w` holds, which is what
+    /// `NormalizedOutput::input_elements_at` answers on every arm. The fixture
+    /// stays because it is the one program where an arm reading a domain would
+    /// still be caught — see
+    /// `a_bound_ordinal_resolves_from_the_output_that_reads_it`.
     fn shared_input_two_domain_request() -> VerifiedTargetRequest {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let weight = builder
@@ -4720,35 +4724,51 @@ mod tests {
     /// sizes exactly was refused as `UnknownParameter`.
     ///
     /// **Three perturbations: two authorities carry the admission and one
-    /// carries the refusal.** Watched failing once each before the restoration:
+    /// carries the refusal.** Watched failing once each before the restoration,
+    /// and re-watched on the current subject:
     ///
-    /// - Dropping the `reads_declared_input` gate from the serial-sum and
-    ///   pointwise arms of `NormalizedOutput::input_elements_at`, back to
-    ///   `(ordinal < normalized.input_keys.len()).then_some(…)`, made the
-    ///   epilogue fixture's ordinal `1` report `Err(UnknownParameter)` instead
-    ///   of `Ok(2)`: the fold half volunteered its six-element contributor
-    ///   domain for an input it never reads, and the chain arm read the two
-    ///   halves as a disagreement. The disjoint fixture is deliberately *not*
-    ///   what observes this, and that is the point of having both — the
-    ///   program-scoped filter below already excludes a non-reading output
-    ///   there, so nothing asks the arm.
+    /// - Dropping the chain arm's `chain.producer.reads_declared_input(ordinal)`
+    ///   gate from `NormalizedOutput::input_elements_at`, so the producer is
+    ///   asked about an ordinal it never folds, made the epilogue fixture's
+    ///   ordinal `1` report `Err(UnknownParameter("y"))` instead of `Ok(2)`: the
+    ///   fold half's `None` is a value the arm's agreement compares rather than
+    ///   an abstention. The disjoint fixture is deliberately *not* what observes
+    ///   this, and that is the point of having both — the program-scoped filter
+    ///   below already excludes a non-reading output there, so nothing asks the
+    ///   arm. The same gate lives on each half of each arm, which is why the
+    ///   perturbation names one rather than the shape they share.
     /// - Dropping the `reads_declared_input` filter from
     ///   `NormalizedProgram::agreed_input_elements_at` made the disjoint
-    ///   fixture's two assertions report `Err(UnknownParameter)` instead of
-    ///   `Ok(6)` and `Ok(4)`: a silent output's `None` is a value the agreement
-    ///   fold compares rather than an abstention.
-    /// - Replacing that fold's agreement with the first reading claimant's
-    ///   answer made the shared fixture's ordinal `0` report `Ok(2)` instead of
-    ///   `Err(UnknownParameter)` — which is the widening overshooting into the
-    ///   confidently-wrong verdict, and the reason the refusing neighbour is
-    ///   here rather than only the two admissions.
+    ///   fixture's first assertion report `Err(UnknownParameter("x"))` instead
+    ///   of `Ok(6)`: the same conflation of silence with disagreement, one level
+    ///   up.
+    /// - Restoring the pointwise arm of `NormalizedOutput::input_elements_at`
+    ///   to `normalized.elements` — the reading region's domain — made the
+    ///   shared fixture's widening output answer `Some(4)` for ordinal `0`
+    ///   instead of `Some(2)`, which the per-output assertion below reports.
+    ///   Suppressing that assertion and rerunning showed the consequence it
+    ///   guards: `resolve("x", &shared)` reported `Err(UnknownParameter("x"))`
+    ///   instead of `Ok(2)`, because the program-scoped fold read the
+    ///   volunteered domain against its sibling's `2` as a disagreement. That
+    ///   second run is the live evidence that the agreement fold still
+    ///   discriminates.
     ///
-    /// The last fixture is the neighbour that must keep refusing, and it pairs
-    /// the two findings on one program: ordinal `0` is read by two regions at
-    /// two domains and has no single count, while ordinal `1` is read by
-    /// exactly one of them and resolves. A fix that answered from the first
-    /// claimant rather than requiring agreement would size a call against a
-    /// domain the other region does not iterate, and this says no to it.
+    /// **The last fixture used to refuse and now admits, and the change is the
+    /// finding rather than a relaxation.** Ordinal `0` is read by two regions
+    /// at two domains, `2` and `4`, and `w` holds two elements in both;
+    /// answering `4` scaled an opaque call by an iteration space instead of by
+    /// the buffer `TensorRole::Input { ordinal: 0 }` binds. Every arm now
+    /// derives from a declared operand's own shape, so the count is a function
+    /// of the ordinal alone and no recognizable program makes the reading
+    /// outputs disagree — the last perturbation above is what still observes
+    /// the fold refusing, and `NormalizedProgram::agreed_input_elements_at`
+    /// records why it stays. The refusal a *live* program still reaches is the
+    /// unoccupied ordinal asserted on the disjoint fixture.
+    ///
+    /// The per-output counts are asserted beside the resolution because the
+    /// program-scoped fold would report one number for two arms that agreed on
+    /// the wrong one, and the two domains are asserted beside them so the row
+    /// cannot pass by the widening having quietly disappeared.
     #[test]
     fn a_bound_ordinal_resolves_from_the_output_that_reads_it() {
         use super::{WorkResolutionError, WorkScaling, resolve_work_items};
@@ -4819,24 +4839,37 @@ mod tests {
         assert_eq!(
             resolve("x", &chained),
             Ok(6),
-            "the fold reads ordinal 0 at its contributor domain",
+            "the fold reads ordinal 0, which holds six elements",
         );
         assert_eq!(
             resolve("y", &chained),
             Ok(2),
-            "the epilogue reads ordinal 1 at its published domain",
+            "the epilogue reads ordinal 1, which holds two elements",
         );
 
         let shared = shared_input_two_domain_request();
+        let [dense, widening] = shared.normalized().outputs() else {
+            panic!("the shared fixture must present two recognized outputs to differ")
+        };
+        // The two domains, so the widening is asserted to still be present: the
+        // dense reader iterates the two elements `w` holds and the widening one
+        // iterates four points over the same tensor.
         assert_eq!(
-            shared.normalized().outputs().len(),
-            2,
-            "the shared fixture must present two recognized outputs to disagree",
+            (dense.output_elements(), widening.output_elements()),
+            (2, 4),
+            "the fixture's two regions no longer iterate different domains",
         );
+        for output in [dense, widening] {
+            assert_eq!(
+                output.input_elements_at(InputOrdinal::FIRST),
+                Some(2),
+                "both regions size ordinal 0 by the two elements `w` holds",
+            );
+        }
         assert_eq!(
             resolve("x", &shared),
-            Err(WorkResolutionError::UnknownParameter("x")),
-            "one declared input read at two domains has no single count",
+            Ok(2),
+            "one declared input read at two domains resolves to its own count",
         );
         assert_eq!(
             resolve("y", &shared),
