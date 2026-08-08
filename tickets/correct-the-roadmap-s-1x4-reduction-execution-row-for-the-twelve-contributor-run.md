@@ -1,7 +1,7 @@
 ---
 id: correct-the-roadmap-s-1x4-reduction-execution-row-for-the-twelve-contributor-run
 title: Correct the roadmap's 1x4 reduction execution row for the twelve-contributor run
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reductions, documentation]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786179385
 ---
 ## The stale sentence, and what falsifies it
 

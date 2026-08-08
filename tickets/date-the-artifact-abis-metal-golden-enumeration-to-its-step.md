@@ -1,7 +1,7 @@
 ---
 id: date-the-artifact-abis-metal-golden-enumeration-to-its-step
 title: Date the artifact ABI's Metal golden enumeration to the step it records
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, identity, goldens]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786179385
 ---
 ## A historical Fact reads as a standing one, and the obvious repair would be false
 
