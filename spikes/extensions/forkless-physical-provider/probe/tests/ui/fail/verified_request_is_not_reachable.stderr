@@ -1,0 +1,10 @@
+error[E0624]: method `request` is private
+  --> tests/ui/fail/verified_request_is_not_reachable.rs:17:21
+   |
+17 |     let _ = context.request();
+   |                     ^^^^^^^ private method
+   |
+  ::: $TILER_COMPILER/src/frontier.rs
+   |
+   |     pub(crate) const fn request(&self) -> &VerifiedTargetRequest {
+   |     ------------------------------------------------------------ private method defined here

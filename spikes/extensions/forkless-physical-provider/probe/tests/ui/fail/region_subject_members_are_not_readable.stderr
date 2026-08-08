@@ -1,0 +1,10 @@
+error[E0624]: method `semantic_members` is private
+  --> tests/ui/fail/region_subject_members_are_not_readable.rs:12:21
+   |
+12 |     let _ = subject.semantic_members();
+   |                     ^^^^^^^^^^^^^^^^ private method
+   |
+  ::: $TILER_COMPILER/src/frontier.rs
+   |
+   |     pub(crate) fn semantic_members(&self) -> &[SemanticStage] {
+   |     --------------------------------------------------------- private method defined here

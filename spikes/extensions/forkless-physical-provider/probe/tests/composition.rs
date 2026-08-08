@@ -1,17 +1,34 @@
-//! What a separately authored provider can and cannot reach today.
+//! What a separately authored provider can and cannot do, from outside the
+//! workspace that defines the seam.
 //!
-//! Each test is one claim. Together they bound the answer from both sides: the
-//! compile path is reachable from outside the workspace, the proposal body is
-//! constructible, verifiable, and emittable through stock `tiler-metal` — and
-//! the frontier that would admit it as an alternative is reachable by nobody
-//! outside `tiler-compiler`. The compile-fail half of that second statement is
-//! in `ui.rs`, because a missing item is evidence only when the compiler says
-//! so.
+//! Each test is one claim. Together they bound the answer from both sides: an
+//! out-of-tree provider is installable, is asked about every region subject, is
+//! re-verified rather than believed, is retained *beside* the governed provider
+//! rather than in place of it, and its body emits through stock `tiler-metal`
+//! unchanged — while the five subjects the host reserves stay unreachable, which
+//! is `ui.rs`'s half of the answer because an absent API is evidence only when
+//! the compiler says it is absent.
+//!
+//! What this file deliberately does not restate is the in-tree integration
+//! evidence at `crates/tiler-compiler/tests/external_physical_provider.rs`:
+//! determinism under an installed provider, the every-subject enumeration
+//! count, and the hard-feasibility refusal against a declared workgroup capacity
+//! are measured there, against a fabricated profile that this probe has no
+//! reason to duplicate. What only this workspace can say is that the same
+//! provider source compiles and runs against `tiler-compiler` resolved as an
+//! ordinary path dependency of a *different* workspace, with its own lockfile.
 
-use acme_provider::PointwiseSubject;
-use tiler_compiler::session::{NumericalContract, compile_governed};
+use acme_provider::{AcmeProvider, Specialization};
+use tiler_compiler::physical_provider::{
+    InstalledPhysicalProviders, PhysicalImplementationProvider, PhysicalProviderInstallationError,
+};
+use tiler_compiler::session::{
+    Compilation, CompileFailureClass, CompileRequest, NumericalContract, compile,
+};
+use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::kernel::lower_scheduled_region;
-use tiler_ir::schedule::{ScheduledRegionBuilder, ScheduledRegionDiagnostic};
+use tiler_ir::schedule::ScheduledRegionBuilder;
+use tiler_ir::semantic::{ProviderIdentity, SemanticProgram};
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::target::{
     LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
@@ -20,6 +37,15 @@ use tiler_metal::target::{
 };
 
 use composition_probe::{COLUMNS, ROWS, serial_sum_program};
+
+/// Tiler's own governed physical provider, spelled out.
+///
+/// The boundary does not export it — that is deliberate, and it is why the
+/// forged-identity claim below has to write it down. Every other use of it here
+/// is a *presence* check on a compilation's own output, so a rename of the
+/// governed provider turns this constant into a failing assertion rather than
+/// into a silently weaker one.
+const GOVERNED_PHYSICAL_PROVIDER: (&str, &str, u32) = ("tiler", "prototype-serial-sum-physical", 1);
 
 /// The Apple row's measured facts, restated here because a provider crate that
 /// reuses stock emission must supply them; they are not Tiler's to imply.
@@ -43,15 +69,58 @@ fn target_facts() -> MetalTargetFacts {
     )
 }
 
+fn governed_identity() -> ProviderIdentity {
+    let (namespace, name, revision) = GOVERNED_PHYSICAL_PROVIDER;
+    ProviderIdentity::new(namespace, name, revision).expect("the governed identity is well formed")
+}
+
+/// Compiles the shared program against the governed profile and one environment.
+fn compile_with(
+    program: &SemanticProgram,
+    providers: &InstalledPhysicalProviders<'_>,
+) -> Result<Compilation, CompileFailureClass> {
+    let request = CompileRequest::new(
+        program,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+        TargetRequest::new([TargetProfile::governed()]).expect("one profile is a valid request"),
+    )
+    .with_physical_providers(providers.clone());
+    let mut batch = match compile(request) {
+        Ok(batch) => batch.into_targets(),
+        Err(failure) => return Err(failure.class()),
+    };
+    let (_, outcome) = batch
+        .pop()
+        .expect("one requested profile produces one result")
+        .into_parts();
+    outcome.map_err(|failure| failure.class())
+}
+
+/// Every physical provider identity any retained alternative selected.
+fn selected_provider_identities(compilation: &Compilation) -> Vec<ProviderIdentity> {
+    let mut identities: Vec<ProviderIdentity> = compilation
+        .alternatives()
+        .flat_map(|alternative| {
+            alternative
+                .selected_physical_providers()
+                .map(|selected| selected.provider().clone())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    identities.sort_by_key(ToString::to_string);
+    identities.dedup();
+    identities
+}
+
 /// Claim 1 — the public compile path is reachable from outside the workspace.
 ///
-/// The control the negative results depend on. Without it, every "the custom
-/// provider contributed nothing" observation below would be indistinguishable
-/// from a probe that never compiled anything.
+/// The control every negative result below depends on. Without it, an
+/// observation that the custom provider contributed nothing would be
+/// indistinguishable from a probe that never compiled anything.
 #[test]
-fn governed_compile_path_is_reachable_from_an_out_of_tree_crate() {
+fn the_governed_compile_path_is_reachable_from_an_out_of_tree_crate() {
     let program = serial_sum_program(ROWS, COLUMNS);
-    let compilation = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32)
+    let compilation = compile_with(&program, &InstalledPhysicalProviders::governed())
         .expect("the governed program compiles under the flushing contract");
     assert_eq!(
         compilation.target_profile_key(),
@@ -61,158 +130,212 @@ fn governed_compile_path_is_reachable_from_an_out_of_tree_crate() {
         compilation.selected().is_some(),
         "a compiled program has a selected plan",
     );
-    // Measured, not assumed: for this shape the portfolio's non-dominated set
-    // is the single fused alternative. Recorded because it is the reason the
-    // ticket's "registration order does not pick the winner" demonstration is
-    // out of reach from here — which alternative wins is decided by structural
-    // cost domination inside `select_physical_plans`, and the public surface
-    // reports only the surviving set.
-    let fused: Vec<bool> = compilation
-        .alternatives()
-        .map(|alternative| alternative.is_fused())
-        .collect();
-    assert_eq!(fused, [true]);
+    assert_eq!(
+        selected_provider_identities(&compilation),
+        [governed_identity()],
+        "the governed environment selects exactly the governed physical provider",
+    );
 }
 
-/// Claim 2 — no physical provider is nameable at the public boundary.
+/// Claim 2 — an out-of-tree provider reaches a retained plan, additively.
 ///
-/// `Compilation::offered_providers` is the only provider set the public surface
-/// reports, and it is populated from the *lowering* capability registry
-/// (`crates/tiler-compiler/src/session.rs:1443`). The governed physical
-/// provider's own identity, `tiler/prototype-serial-sum-physical`, does not
-/// appear in it — so the boundary neither accepts a physical provider nor
-/// discloses the one it uses. A third party cannot register, and cannot observe
-/// that it failed to.
+/// This is the claim the operation-extension contract names as the rung above
+/// an in-package integration test, and its three assertions are separable on
+/// purpose. The provider is *reachable* — its identity appears at all; its
+/// bodies are *admitted* — they survived whole-region verification, the
+/// request-subject binding, and the feasibility decision; and they are
+/// *additive* — the governed implementations are still there. Dropping any one
+/// would leave a seam that looked installed and was not.
 #[test]
-fn public_surface_names_no_physical_provider() {
+fn an_out_of_tree_provider_reaches_a_retained_plan_beside_the_governed_one() {
     let program = serial_sum_program(ROWS, COLUMNS);
-    let compilation = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32)
-        .expect("the governed program compiles under the flushing contract");
-    let offered: Vec<String> = compilation
-        .offered_providers()
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-    assert!(
-        !offered.is_empty(),
-        "the governed lowering providers are disclosed",
+    let governed_only = compile_with(&program, &InstalledPhysicalProviders::governed())
+        .expect("the governed environment compiles this program");
+    let governed_alternatives = governed_only.alternatives().len();
+
+    let specialized = AcmeProvider::new(Specialization::WideWorkgroup);
+    let environment =
+        InstalledPhysicalProviders::installed(
+            [&specialized as &dyn PhysicalImplementationProvider],
+        )
+        .expect("one identity installs");
+    assert_eq!(
+        environment.identities(),
+        [acme_provider::identity()],
+        "the installed set reports the caller's provider and only it",
+    );
+
+    let composed = compile_with(&program, &environment)
+        .expect("installing a partial provider does not refuse the compilation");
+    // Set equality rather than two `contains` checks. `contains` would stay
+    // green if a third physical provider appeared in this compilation's plans,
+    // and a provider nobody installed reaching a retained plan is exactly the
+    // kind of change this claim exists to notice. The identities sort
+    // `acme::…` before `tiler::…`.
+    let retained = selected_provider_identities(&composed);
+    assert_eq!(
+        retained,
+        [acme_provider::identity(), governed_identity()],
+        "the composed environment must retain the installed provider and the \
+         governed one, and nothing else",
     );
     assert!(
-        !offered
-            .iter()
-            .any(|provider| provider.contains(acme_provider::NAMESPACE)),
-        "the separately authored provider is absent: {offered:?}",
+        composed.alternatives().len() > governed_alternatives,
+        "the specialization was not retained as an additional alternative: {} against {governed_alternatives}",
+        composed.alternatives().len(),
     );
+
+    // Every name a plan carries is one the host stamped. The provider proposed
+    // a body, an applicability predicate, and a cost, and nothing else; there is
+    // no identity field on a proposal for it to have filled in.
+    let selected = composed.selected().expect("a retained plan is selected");
     assert!(
-        !offered
-            .iter()
-            .any(|provider| provider.contains("prototype-serial-sum-physical")),
-        "even the governed physical provider is not disclosed here: {offered:?}",
+        selected.selected_physical_providers().len() > 0,
+        "the selected plan records no physical provenance at all",
     );
+    for implementation in selected.selected_physical_providers() {
+        assert!(
+            retained.contains(implementation.provider()),
+            "the selected plan names a provider no enumeration offered",
+        );
+        assert_eq!(implementation.proposal_kind(), "scheduled-kernel");
+    }
 }
 
-/// Claim 3 — the specialized body is constructible and intrinsically verifies.
+/// Claim 3 — the provider is offered the host's own spelling of each subject.
 ///
-/// `ScheduledRegionBuilder::from_region(..).build()` is the exact call the
-/// frontier makes on a provider's body before admitting it
-/// (`crates/tiler-compiler/src/physical.rs:652`), so this exercises the real
-/// verifier rather than a spike-local imitation. What it does *not* exercise is
-/// the request-subject binding and the feasibility assessment either side of
-/// it, both of which are private.
+/// The specialization path exists only because the host hands back a baseline;
+/// a seam that stated none of it would admit only providers that had
+/// reimplemented this crate's normalization. So this pins both halves: a
+/// baseline was offered, and the body proposed for it differs from it in the
+/// one axis this provider specializes and in nothing else.
 #[test]
-fn specialized_body_is_constructible_and_intrinsically_verifies() {
-    let subject = PointwiseSubject::spike_default();
-    let baseline =
-        ScheduledRegionBuilder::from_region(acme_provider::governed_shaped_region(subject))
+fn the_provider_specializes_the_hosts_own_baseline_in_one_axis() {
+    let program = serial_sum_program(ROWS, COLUMNS);
+    let specialized = AcmeProvider::new(Specialization::WideWorkgroup);
+    compile_with(
+        &program,
+        &InstalledPhysicalProviders::installed([
+            &specialized as &dyn PhysicalImplementationProvider
+        ])
+        .expect("one identity installs"),
+    )
+    .expect("the composed environment compiles");
+
+    let exchanged = specialized.exchanged();
+    assert!(
+        !exchanged.is_empty(),
+        "no subject offered a baseline, so the specialization path is unreachable",
+    );
+    for exchange in exchanged {
+        assert_eq!(
+            exchange.baseline.index, exchange.proposed.index,
+            "the specialization reached the index region the subject binding compares",
+        );
+        assert_eq!(
+            exchange.proposed.schedule.threads_per_workgroup,
+            acme_provider::SPECIALIZED_THREADS_PER_WORKGROUP,
+        );
+        // The whole difference, pinned to the two fields the intrinsic verifier
+        // requires to agree. Without this the claim above would hold for a body
+        // that differed in some second way nothing here names.
+        let mut normalized = exchange.proposed.clone();
+        normalized.schedule.threads_per_workgroup =
+            exchange.baseline.schedule.threads_per_workgroup;
+        normalized.schedule.launch.threads_per_workgroup =
+            exchange.baseline.schedule.launch.threads_per_workgroup;
+        assert_eq!(exchange.baseline, normalized);
+
+        let baseline = ScheduledRegionBuilder::from_region(exchange.baseline.clone())
             .build()
-            .expect("the governed-shaped body verifies");
-    let specialized =
-        ScheduledRegionBuilder::from_region(acme_provider::specialized_region(subject))
+            .expect("the host's own baseline verifies");
+        let proposed = ScheduledRegionBuilder::from_region(exchange.proposed.clone())
             .build()
             .expect("the specialized body verifies");
-
-    assert_eq!(baseline.region().schedule.threads_per_workgroup, 1);
-    assert_eq!(
-        specialized.region().schedule.threads_per_workgroup,
-        acme_provider::SPECIALIZED_THREADS_PER_WORKGROUP,
-    );
-    assert_ne!(
-        baseline.canonical_identity(),
-        specialized.canonical_identity(),
-        "the workgroup width is folded into canonical identity, so the two are \
-         additive alternatives rather than one implementation twice",
-    );
-    assert_eq!(
-        baseline.region().index,
-        specialized.region().index,
-        "the specialization is confined to the schedule; the index region the \
-         request-subject binding compares is unchanged",
-    );
+        assert_ne!(
+            baseline.canonical_identity(),
+            proposed.canonical_identity(),
+            "the workgroup width is folded into canonical identity, so the two are \
+             additive alternatives rather than one implementation twice",
+        );
+    }
 }
 
 /// Claim 4 — the specialized body reuses stock Metal emission unchanged.
 ///
-/// The provider crate does not depend on `tiler-metal` at all: the probe lowers
-/// its region with `tiler_ir::kernel::lower_scheduled_region` and emits with
-/// `tiler_metal::emit::emit_translation_unit`, both public. So the reuse the
-/// ticket asks about is available — no interface prevents a custom physical
-/// provider from reusing standard emission, because emission consumes verified
-/// kernels and knows nothing about who proposed them.
+/// `acme-provider` does not depend on `tiler-metal` at all: the probe lowers the
+/// body that actually reached the frontier with `tiler_ir::kernel::
+/// lower_scheduled_region` and emits it with `tiler_metal::emit::
+/// emit_translation_unit`, both public. So the reuse the spike asks about is
+/// available — no interface prevents a custom physical provider from reusing
+/// standard emission, because emission consumes verified kernels and knows
+/// nothing about who proposed them.
 ///
 /// It also records two boundaries of that reuse. Launch geometry is not part of
 /// the emitted body, so the specialization is invisible in the statements and
-/// would have to be carried by the dispatch that runs the kernel. But the
-/// entry-point symbol *is* identity-derived, and the scheduled-region identity
-/// the symbol folds includes the workgroup width — so two alternatives of one
-/// region emit distinct entry points from identical bodies, and a translation
-/// unit holding both would not collide.
+/// would have to be carried by the dispatch. But the entry-point symbol *is*
+/// identity-derived, and the identity folds the workgroup width — so two
+/// alternatives of one region emit distinct entry points from identical bodies,
+/// and a translation unit holding both would not collide.
 #[test]
-fn specialized_body_reuses_stock_metal_emission() {
-    let subject = PointwiseSubject::spike_default();
-    let baseline = lower_scheduled_region(
-        &ScheduledRegionBuilder::from_region(acme_provider::governed_shaped_region(subject))
-            .build()
-            .expect("the governed-shaped body verifies"),
+fn the_specialized_body_reuses_stock_metal_emission() {
+    let program = serial_sum_program(ROWS, COLUMNS);
+    let specialized = AcmeProvider::new(Specialization::WideWorkgroup);
+    compile_with(
+        &program,
+        &InstalledPhysicalProviders::installed([
+            &specialized as &dyn PhysicalImplementationProvider
+        ])
+        .expect("one identity installs"),
     )
-    .expect("the governed-shaped body refines to structured kernel IR");
-    let specialized = lower_scheduled_region(
-        &ScheduledRegionBuilder::from_region(acme_provider::specialized_region(subject))
-            .build()
-            .expect("the specialized body verifies"),
-    )
-    .expect("the specialized body refines to structured kernel IR");
+    .expect("the composed environment compiles");
 
     let target = target_facts();
     let emission = MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt);
-    let unit = emit_translation_unit(&[&specialized], &target, emission)
-        .expect("the specialized kernel emits through stock tiler-metal");
-    let entry = &unit.entry_points()[0];
-    assert!(
-        unit.source()
-            .contains(&format!("kernel void {}(", entry.symbol())),
-        "stock emission produced the entry point",
-    );
-    assert!(
-        unit.unstated_subnormal_arithmetic().is_empty(),
-        "every arithmetic type this unit used has a stated fact",
-    );
-    unit.require_declared_realization()
-        .expect("the flushing realization this provider declares is what Apple f32 delivers");
+    let exchanged = specialized.exchanged();
+    assert!(!exchanged.is_empty(), "nothing was proposed to emit");
+    for exchange in exchanged {
+        let lowered = |region| {
+            lower_scheduled_region(
+                &ScheduledRegionBuilder::from_region(region)
+                    .build()
+                    .expect("the body verifies"),
+            )
+            .expect("the body refines to structured kernel IR")
+        };
+        let proposed = lowered(exchange.proposed);
+        let baseline = lowered(exchange.baseline);
 
-    let baseline_unit = emit_translation_unit(&[&baseline], &target, emission)
-        .expect("the governed-shaped kernel emits through stock tiler-metal");
-    assert_ne!(
-        baseline_unit.entry_points()[0].symbol(),
-        entry.symbol(),
-        "the entry symbol is derived from an identity the workgroup width \
-         participates in, so the two alternatives do not collide",
-    );
-    assert_eq!(
-        without_identity_digests(unit.source()),
-        without_identity_digests(baseline_unit.source()),
-        "with identity-derived names elided the two bodies are the same: launch \
-         geometry is carried by the dispatch, not by the emitted statements",
-    );
+        let unit = emit_translation_unit(&[&proposed], &target, emission)
+            .expect("the specialized kernel emits through stock tiler-metal");
+        let entry = &unit.entry_points()[0];
+        assert!(
+            unit.source()
+                .contains(&format!("kernel void {}(", entry.symbol())),
+            "stock emission produced the entry point",
+        );
+        assert!(
+            unit.unstated_subnormal_arithmetic().is_empty(),
+            "every arithmetic type this unit used has a stated fact",
+        );
+        unit.require_declared_realization()
+            .expect("the realization the compiler resolved is what Apple f32 delivers");
+
+        let baseline_unit = emit_translation_unit(&[&baseline], &target, emission)
+            .expect("the governed-shaped kernel emits through stock tiler-metal");
+        assert_ne!(
+            baseline_unit.entry_points()[0].symbol(),
+            entry.symbol(),
+            "the entry symbol is derived from an identity the workgroup width \
+             participates in, so the two alternatives do not collide",
+        );
+        assert_eq!(
+            without_identity_digests(unit.source()),
+            without_identity_digests(baseline_unit.source()),
+            "with identity-derived names elided the two bodies are the same: launch \
+             geometry is carried by the dispatch, not by the emitted statements",
+        );
+    }
 }
 
 /// Replaces every 16-hex-digit identity digest with a fixed placeholder.
@@ -246,45 +369,135 @@ fn flush_digest_run(output: &mut String, run: &mut String) {
     run.clear();
 }
 
-/// Claim 5 — a malformed body is rejected by that same verifier.
+/// Claim 5 — a trusted provider is not a believed one.
 ///
-/// The perturbation is one field: `launch.grid_threads` one short of the
-/// iteration domain. The failure is a typed `LaunchCoverage` diagnostic, and it
-/// is the diagnostic the compiler maps onto `PhysicalError::Intrinsic`
-/// (`crates/tiler-compiler/src/physical.rs:684`) when a provider's body fails
-/// verification. Nothing about the perturbation is detectable by inspecting the
-/// provider's identity or cost: only re-verifying the body finds it.
+/// Two independent structural rules, perturbed separately so each shows which
+/// assertion is load-bearing: a zero-thread workgroup and a grid one thread
+/// short of its iteration domain. Both are bodies the host's own intrinsic
+/// verifier refuses, and both must fail the whole compilation closed as invalid
+/// compiler output — reporting a provider whose IR is wrong as "this provider
+/// had nothing to offer" would make a defect indistinguishable from silence.
 #[test]
-fn malformed_body_is_rejected_by_the_same_intrinsic_verifier() {
-    let subject = PointwiseSubject::spike_default();
-    let error =
-        ScheduledRegionBuilder::from_region(acme_provider::malformed_specialized_region(subject))
-            .build()
-            .expect_err("a launch plan that does not cover the domain must not verify");
-    assert_eq!(
-        error.diagnostics(),
-        [ScheduledRegionDiagnostic::LaunchCoverage],
-    );
-    assert_eq!(error.diagnostics()[0].rule(), "launch-coverage");
+fn a_structurally_invalid_body_fails_the_compilation_closed() {
+    let program = serial_sum_program(ROWS, COLUMNS);
+    for (label, specialization) in [
+        ("zero-thread workgroup", Specialization::ZeroThreadWorkgroup),
+        ("undercovered grid", Specialization::UndercoveredGrid),
+    ] {
+        let malformed = AcmeProvider::new(specialization);
+        // Matched rather than `expect_err`, because the success value is a whole
+        // compilation and printing it would bury the failure this test reports.
+        let Err(class) = compile_with(
+            &program,
+            &InstalledPhysicalProviders::installed([
+                &malformed as &dyn PhysicalImplementationProvider
+            ])
+            .expect("one identity installs"),
+        ) else {
+            panic!("{label}: a structurally invalid body compiled");
+        };
+        assert!(
+            matches!(class, CompileFailureClass::InvalidCompilerOutput),
+            "{label} was reported as {class:?} rather than invalid compiler output",
+        );
+    }
 }
 
-/// Claim 6 — the perturbation is detected because of the check, not by accident.
+/// Claim 6 — the *offered* provider set is still lowering-only.
 ///
-/// The control for claim 5. If `malformed_specialized_region` differed from
-/// `specialized_region` in some way the verifier happened to reject for another
-/// reason, claim 5 would still be green and would still prove nothing about
-/// launch coverage. This pins the difference to the single perturbed field.
+/// The one absence this spike still records, and it is a narrower one than the
+/// two it retired. `Compilation::offered_providers` is the complete frozen
+/// environment a compilation was given, including authorities no retained plan
+/// chose; `PlanAlternative::selected_physical_providers` is what a plan
+/// actually used. Only the second half discloses physical providers, so an
+/// installed provider that reached no retained plan is *invisible* here — a
+/// caller cannot tell its registration failing to take effect from its provider
+/// losing on cost, which is exactly the conflation splitting the disclosure in
+/// two exists to prevent.
+///
+/// `InstalledPhysicalProviders::identities` is the caller's own record of what
+/// it installed and closes half the gap; what has no reading is the
+/// compilation's own account of the environment it ran under. Recorded as a
+/// measured absence rather than argued for: whether the offered half should
+/// grow a physical row is ADR 0090 item 5's subject and not this spike's.
 #[test]
-fn only_the_perturbed_field_differs() {
-    let subject = PointwiseSubject::spike_default();
-    let good = acme_provider::specialized_region(subject);
-    let bad = acme_provider::malformed_specialized_region(subject);
-    assert_eq!(good.index, bad.index);
-    assert_eq!(
-        good.schedule.launch.grid_threads,
-        bad.schedule.launch.grid_threads + 1,
+fn the_offered_provider_set_is_still_lowering_only() {
+    let program = serial_sum_program(ROWS, COLUMNS);
+    let specialized = AcmeProvider::new(Specialization::WideWorkgroup);
+    let composed = compile_with(
+        &program,
+        &InstalledPhysicalProviders::installed([
+            &specialized as &dyn PhysicalImplementationProvider
+        ])
+        .expect("one identity installs"),
+    )
+    .expect("the composed environment compiles");
+
+    let offered = composed.offered_providers();
+    assert!(
+        !offered.is_empty(),
+        "the governed lowering providers are disclosed, so an empty answer here \
+         would make the two assertions below vacuous",
     );
-    let mut normalized = bad;
-    normalized.schedule.launch.grid_threads = good.schedule.launch.grid_threads;
-    assert_eq!(good, normalized);
+    assert!(
+        !offered.contains(&acme_provider::identity()),
+        "the installed physical provider is not disclosed by the offered half: {offered:?}",
+    );
+    assert!(
+        !offered.contains(&governed_identity()),
+        "not even the governed physical provider is disclosed there: {offered:?}",
+    );
+    // The control that makes this an *absence of a physical row* rather than a
+    // compilation that selected nothing: the same provider is named by the
+    // selected half of the same compilation.
+    assert!(
+        selected_provider_identities(&composed).contains(&acme_provider::identity()),
+        "the provider missing from the offered half did reach a retained plan",
+    );
+}
+
+/// Claim 7 — installation refuses a forged or repeated identity.
+///
+/// Both are refused at installation, before any compilation runs, so a forged
+/// identity never reaches a plan's provenance to be compared against. The
+/// revision pair is what stops the duplicate check degrading into the weaker
+/// namespace-and-name one: two revisions of one provider are two identities and
+/// both install.
+#[test]
+fn installation_refuses_a_forged_or_repeated_identity() {
+    let first = AcmeProvider::new(Specialization::WideWorkgroup);
+    let repeated = AcmeProvider::new(Specialization::UndercoveredGrid);
+    let error = InstalledPhysicalProviders::installed([
+        &first as &dyn PhysicalImplementationProvider,
+        &repeated,
+    ])
+    .expect_err("one identity installed twice is refused");
+    assert!(matches!(
+        error,
+        PhysicalProviderInstallationError::DuplicateIdentity { .. }
+    ));
+    assert!(error.to_string().contains("duplicate-identity"));
+
+    let revised = AcmeProvider::named(
+        acme_provider::NAME,
+        acme_provider::REVISION + 1,
+        Specialization::WideWorkgroup,
+    );
+    InstalledPhysicalProviders::installed([
+        &first as &dyn PhysicalImplementationProvider,
+        &revised,
+    ])
+    .expect("two revisions of one provider are two identities");
+
+    let (namespace, name, revision) = GOVERNED_PHYSICAL_PROVIDER;
+    let impostor = AcmeProvider::impersonating(namespace, name, revision);
+    let forged =
+        InstalledPhysicalProviders::installed([&impostor as &dyn PhysicalImplementationProvider])
+            .expect_err("claiming the governed identity is refused");
+    match forged {
+        PhysicalProviderInstallationError::GovernedIdentity { identity } => {
+            assert_eq!(identity, governed_identity());
+        }
+        other => panic!("the governed-identity collision was reported as {other:?}"),
+    }
 }
