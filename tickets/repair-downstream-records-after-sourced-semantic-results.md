@@ -46,6 +46,42 @@ not authority: the worker must read all three records, the complete current
 construction/refusal sites, and the relevant tickets before editing, and must
 repair this ticket first if any characterization or population is false.
 
+## Per-Fact audit at `7f0a73bfd3289bbb61336b2433fc87b495ffa737`
+
+- **Flash premise — false.** Its anchor `the growing context axis is a symbolic
+  extent` says `ValueFact` is static and every delivery link is `todo`.
+  `pub(super) shape: SourcedShape` in `semantic/operation.rs` and the
+  `symbols and all` comment in `SemanticProgramBuilder::push_operation` refute
+  the former; `resolve-semantic-shape-inference-over-symbolic-extents` is
+  `awaiting-decision`, while the frontend-construction and compiler-request
+  tickets are `todo`.
+- **Complete-model premise — false in its mechanism; conclusion re-derived.**
+  Its anchor `The count survives because the C1 row's shapes are inferred
+  results` retains fixed `ValueFact`, `BuildError::SymbolicOperandUnsupported`,
+  and `in-progress`. The cited conclusion remains conditional on the actual
+  family and frontend boundaries: `static_operand_shape` in Contraction,
+  Softmax, and Broadcast, together with literal broadcast attributes; identity
+  writes both input and result `SourcedShape`s through `shape.encode(&mut
+  bytes);`.
+- **Numerics test-name premise — false as a current-source claim.** The old
+  `the_reduced_extent_is_always_literal_so_no_symbolic_refusal_can_fire` text
+  remains retired prose, but the source test is now
+  `a_symbolic_reduced_extent_is_refused_and_every_literal_one_infers` and
+  exercises Softmax's `static_operand_shape` refusal. Its two further live
+  premises, `The growing symbolic extent was *not* reached` and `it turned out
+  to be unreachable rather than hard`, are the same false general-carriage
+  claim and are counted separately below.
+- **Census — verified.** The completed shape repair names these three records
+  as the research half of its six-record remainder census.
+
+## Live correction population
+
+Five sites need dated correction: the Flash growing-context paragraph; the
+Complete-model C1-count correction; and the Numerics symbolic-refusal block,
+capability-table row, and ladder conclusion. Historical premises remain as
+dated text; the preserved conclusions must name their family, frontend,
+broadcast, artifact, or identity ground rather than general result carriage.
+
 ## Outcome
 
 - Date each retired premise beside the claim that used it. State that
