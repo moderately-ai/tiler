@@ -1,7 +1,7 @@
 ---
 id: step-the-coverage-identity-comment-s-stale-semantic-graph-domain
 title: Step the coverage identity comment s stale semantic graph domain
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [repair-the-records-the-sourced-semantic-shape-falsifies, pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786182058
 ---
 
 A doc comment names a semantic-graph domain that has since stepped. **The interesting part is where the repair must land**: an accepted ADR quotes this comment verbatim, so the ADR is faithful and the source is what drifted.
