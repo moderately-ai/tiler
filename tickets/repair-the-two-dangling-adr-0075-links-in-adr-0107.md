@@ -6,7 +6,7 @@ priority: p1
 dependencies: []
 related: []
 scopes: [contracts/decisions]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: []
 ---
