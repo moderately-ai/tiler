@@ -17,6 +17,8 @@
 //! every host in `make full`, and the measured half runs wherever the Apple
 //! toolchain and a Metal device are.
 
+use tiler_artifact::program::{BackendEntryKey, MAX_OPAQUE_IDENTITY_BYTES};
+use tiler_build::BoundMetalCompileDeclaration;
 use tiler_compiler::session::NumericalContract;
 use tiler_ir::schedule::ContributorPartition;
 use tiler_metal::applicability::MetalHostPredicate;
@@ -722,6 +724,121 @@ fn a_flush_only_contract_retains_no_parallel_strategy() {
             "a contract granting no regrouping must retain no parallel strategy",
         );
     }
+}
+
+/// The widest canonical kernel identity the selected plan carries at one shape.
+///
+/// Returned as bytes rather than a length because the crossing case also has to
+/// reach the artifact layer's own constructor with the value it measured, and a
+/// length cannot. The widest is the right reduction over a multi-stage plan: an
+/// artifact carries *each* entry's identity as its own `BackendEntryKey`, so the
+/// bound is crossed as soon as any one of them crosses it.
+fn widest_kernel_identity(declaration: &BoundMetalCompileDeclaration, columns: u64) -> Vec<u8> {
+    let program = serial_sum_program(ROWS, columns);
+    let compilation = compile_under(
+        declaration,
+        &program,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+    )
+    .unwrap_or_else(|cause| {
+        panic!("a flush-only contract must compile a {ROWS}-by-{columns} serial sum: {cause}")
+    });
+    let selected = compilation
+        .selected()
+        .expect("the portfolio retained a selected plan");
+    let kernels = selected.kernels();
+    let widest = kernels
+        .iter()
+        .map(|kernel| kernel.canonical_identity().as_bytes())
+        .max_by_key(|identity| identity.len())
+        .expect("a selected plan with no kernel has no identity to bound")
+        .to_vec();
+    eprintln!(
+        "serial sum identity: [{ROWS}, {columns}] reducing axis 1 — {} kernel(s), widest canonical \
+         identity {} byte(s), against MAX_OPAQUE_IDENTITY_BYTES {MAX_OPAQUE_IDENTITY_BYTES}",
+        kernels.len(),
+        widest.len(),
+    );
+    widest
+}
+
+/// A real reduction's canonical kernel identity crosses the artifact layer's
+/// shared opaque-identity bound at the *second* contributor.
+///
+/// **The two-sided inequality is the entire argument `BackendEntryKey`'s bound
+/// was moved on**, and it is asserted here because nothing asserted it anywhere.
+/// Reducing one contributor the identity fits under
+/// [`MAX_OPAQUE_IDENTITY_BYTES`]; reducing two it does not. So the shared bound
+/// admitted exactly the degenerate reduction and refused every real one, which
+/// is why `BackendEntryKey` now takes `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES`
+/// — the bound of the authority that mints the value. Either half alone is
+/// satisfied by an identity that stopped growing with the program, so both
+/// directions are asserted.
+///
+/// **No length is pinned, deliberately.** The identity's constant offset moves
+/// whenever its encoding steps: the two-contributor case measured 1,121 bytes on
+/// 2026-07-25 and 1,309 on 2026-08-08, both dated in
+/// [Artifact ABI](../../../../docs/artifact-abi.md)'s "Governed budgets" table
+/// together with the construction that regenerates them. A literal here would
+/// decay into a claim about a tree that has moved — which is exactly how
+/// `an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it` in
+/// `crates/tiler-artifact/src/program/tests.rs` came to call a fabricated vector
+/// measured. The *crossing* is what the bound rests on, and it survives the
+/// offset moving.
+///
+/// **Here rather than beside the constant**, and the reason is structural.
+/// `crates/tiler-artifact/Cargo.toml` carries no `tiler-compiler` edge by
+/// design: `tiler-runtime`'s `the_consumer_links_no_compiler_emitter_or_build_provider`
+/// walks `Cargo.lock`, which merges normal and development edges per package, so
+/// even a development edge would put the compiler into the consumer's closure and
+/// breach ADR 0081 item 2. The crate that owns the bound can therefore never
+/// compile a real reduction to compare against it; this crate already depends on
+/// both sides.
+///
+/// **The route is stated because two exist and they differ in reachability.**
+/// This uses [`compile_under`] — `tiler_compiler::session::compile` against
+/// `BoundMetalCompileDeclaration::first_macos_apple9()` — and not
+/// `compile_governed`, which the 2026-07-25 sweep used and which at this tree
+/// refuses several of that sweep's shapes as `NoFeasiblePlan` before a plan
+/// composes. Both admit the two shapes here, and where both admit a shape they
+/// agree on the identity exactly.
+#[test]
+fn the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor() {
+    let declaration = declaration().expect("the authoritative declaration assembles");
+
+    let degenerate = widest_kernel_identity(&declaration, 1);
+    assert!(
+        degenerate.len() < MAX_OPAQUE_IDENTITY_BYTES,
+        "the one-contributor reduction's canonical kernel identity is {} byte(s) and the shared \
+         bound is {MAX_OPAQUE_IDENTITY_BYTES}; the bound was moved on this being the one case it \
+         did admit, so a degenerate reduction above it makes that argument false",
+        degenerate.len(),
+    );
+
+    let real = widest_kernel_identity(&declaration, 2);
+    assert!(
+        real.len() > MAX_OPAQUE_IDENTITY_BYTES,
+        "the two-contributor reduction's canonical kernel identity is {} byte(s) and the shared \
+         bound is {MAX_OPAQUE_IDENTITY_BYTES}, which admits it; the bound was moved on it \
+         refusing every reduction of two or more contributors",
+        real.len(),
+    );
+
+    // The other half of the reconciliation, and the statement the artifact
+    // crate's fabricated vector was standing in for: the bound that *does* apply
+    // to this subject admits the value its authority actually minted. It says no
+    // for an empty identity or one past `MAX_KERNEL_IDENTITY_BYTES`, neither of
+    // which this shape reaches — so the two inequalities above are what carry
+    // this case, and this is the constructor they are about.
+    BackendEntryKey::from_bytes(&real)
+        .expect("a real reduction's kernel identity is a legal backend entry key");
+
+    eprintln!(
+        "serial sum identity: {} byte(s) at one contributor and {} at two, crossing the shared \
+         {MAX_OPAQUE_IDENTITY_BYTES}-byte bound between them",
+        degenerate.len(),
+        real.len(),
+    );
 }
 
 /// This host does not earn the right to offer the declared profile, and the

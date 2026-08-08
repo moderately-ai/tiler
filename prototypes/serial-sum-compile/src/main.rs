@@ -165,9 +165,18 @@ const ROWS: u64 = 1;
 ///
 /// It was one until `bound-the-backend-entry-key-by-the-identity-it-carries`,
 /// because the artifact layer bounded a `BackendEntryKey` at 1,024 bytes while
-/// the canonical kernel identity this producer hands it measures 1,121 bytes for
-/// any reduction with two or more contributors. The bound is now `tiler-ir`'s
-/// own for that value, so the runner's two paths carry the same program.
+/// the canonical kernel identity this producer hands it exceeded that bound for
+/// any reduction with two or more contributors — 1,121 bytes as measured on the
+/// 2026-07-25 tree that ticket closed on. The bound is now `tiler-ir`'s own for
+/// that value, so the runner's two paths carry the same program.
+///
+/// **That figure is the closure's, not this tree's**, and it is left as one
+/// deliberately: the identity's constant offset moves whenever its encoding
+/// steps, and the same reduction measured 1,309 bytes on 2026-08-08. What holds
+/// across the moves is that the identity crosses the shared bound at the second
+/// contributor, which `tiler-conformance`'s
+/// `serial_sum::tests::the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor`
+/// asserts from both sides.
 const COLUMNS: u64 = 3;
 
 /// The reduction classes the proof covers, as `(name, reduced extent)`.

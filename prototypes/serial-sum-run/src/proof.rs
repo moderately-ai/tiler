@@ -822,10 +822,15 @@ struct DeclaredInterface {
 /// extents did not agree until
 /// `bound-the-backend-entry-key-by-the-identity-it-carries`, because the
 /// artifact layer bounded a `BackendEntryKey` at 1,024 bytes while a
-/// two-or-more-contributor serial sum's kernel identity measures 1,121, so the
-/// producer could package only the degenerate single-contributor reduction and
-/// this path ran a `4x1` against the direct path's `4x3`. Nothing here changed
-/// when that closed, which is what reading rather than asserting bought.
+/// two-or-more-contributor serial sum's kernel identity exceeded it — 1,121
+/// bytes on the 2026-07-25 tree that ticket closed on — so the producer could
+/// package only the degenerate single-contributor reduction and this path ran a
+/// `4x1` against the direct path's `4x3`. Nothing here changed when that closed,
+/// which is what reading rather than asserting bought. The 1,121 is that tree's
+/// reading and not this one's: the same reduction measured 1,309 bytes on
+/// 2026-08-08, and what survives the offset moving is the crossing at the second
+/// contributor, asserted by `tiler-conformance`'s
+/// `serial_sum::tests::the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor`.
 ///
 /// **No input count is expected here**, deliberately. This function reads what
 /// the artifact declares and refuses only what it cannot represent; which
@@ -5665,11 +5670,16 @@ mod tests {
     ///
     /// **One, and now by choice.** It was one under duress: a `BackendEntryKey`
     /// was bounded at `MAX_OPAQUE_IDENTITY_BYTES` = 1,024 while the canonical
-    /// kernel identity of a serial sum with two or more contributors measures
-    /// 1,121 bytes, so an entry keyed on it did not construct.
+    /// kernel identity of a serial sum with two or more contributors exceeded
+    /// it — 1,121 bytes on the 2026-07-25 tree, 1,309 on 2026-08-08 — so an
+    /// entry keyed on it did not construct.
     /// `bound-the-backend-entry-key-by-the-identity-it-carries` closed that by
     /// bounding the key at `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES`, and
-    /// any reduced extent constructs now.
+    /// any reduced extent constructs now. Neither figure is a claim about a
+    /// third tree; what holds across them is the crossing at the second
+    /// contributor, which `tiler-conformance`'s
+    /// `serial_sum::tests::the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor`
+    /// asserts.
     ///
     /// It stays one because the cases that use it — the fail-closed probes, the
     /// multi-stage pairing, and the partial window — assert refusal classes,
