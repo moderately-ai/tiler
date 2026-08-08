@@ -1,7 +1,7 @@
 ---
 id: derive-the-payload-carrying-enum-populations-in-the-injectivity-module
 title: Derive the payload-carrying enum populations in the injectivity module
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: sol-injectivity-enums
+lease_expires_at: 1786224830
 ---
 ## Two populations are hand-written literals in a module that says none are
 
