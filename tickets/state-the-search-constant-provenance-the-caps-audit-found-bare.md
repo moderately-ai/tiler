@@ -22,4 +22,4 @@ The audit's counted table: 43 bare production constants and nine bare search-bud
 
 ## Closes when
 
-The ALL constant derives from variant_count; each bare bound carries its classification sentence (derived / stated-with-owner); the exhaustiveness-fact asymmetry is either closed or stated at the two silent layers.
+~~The ALL constant derives from variant_count~~ **— struck 2026-08-08: `MetalHostPredicate::ALL` was landed by `size-the-four-hand-written-metal-all-arrays-from-their-types` in `crates/tiler-metal/`, a crate this ticket does not scope, and the metal-AOT counterparts landed the same day. This clause named completed work in the section governing closure; the outcome section was amended when the first half landed and this one was missed.** Each bare bound carries its classification sentence (derived / stated-with-owner); the exhaustiveness-fact asymmetry is either closed or stated at the two silent layers.
