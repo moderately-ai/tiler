@@ -27,12 +27,15 @@
 //!
 //! **Every removal is named and every scanned entry is accounted for.**
 //! [`CollectionReport::removed`] lists each removed entry individually with the
-//! bytes it occupied, and [`CollectionReport::accounts_for_every_entry`] is the
-//! structural form of the rule: the dispositions partition the scan exactly, so
-//! an entry cannot leave the cache without appearing in the report that removed
-//! it. Reaching a bound without satisfying it is
-//! [`CollectionOutcome::BoundNotReached`] carrying what is left, never a quiet
-//! stop.
+//! bytes it occupied, and [`CollectionReport::accounts_for_every_entry`] states
+//! that the five dispositions are disjoint and total over the selection — a
+//! statement about the loop below, which its own documentation bounds, and not
+//! evidence that nothing left unreported. That evidence needs the entry files
+//! themselves, so it is taken where they can be read: the tests observe the
+//! namespace on both sides of every collection and require the entries that
+//! disappeared to be exactly the keys the report named. Reaching a bound without
+//! satisfying it is [`CollectionOutcome::BoundNotReached`] carrying what is
+//! left, never a quiet stop.
 //!
 //! # Accounting is separate from collection, and disposable
 //!
@@ -709,12 +712,30 @@ impl CollectionReport {
 
     /// True when every selected entry has exactly one recorded disposition.
     ///
-    /// The mechanical form of the rule that nothing leaves without being named:
-    /// a selected entry is removed, contended, superseded, already absent, or
-    /// failed, and those five are disjoint and total over the selection. A
-    /// collection that dropped an entry it did not report would break this
-    /// equality, which is why the tests assert it on every collection they make
-    /// rather than only checking a removal count.
+    /// A selected entry is removed, contended, superseded, already absent, or
+    /// failed, and those five are disjoint and total over the selection.
+    ///
+    /// # What it can and cannot fail on
+    ///
+    /// **It is a statement about this module's shape, not about the
+    /// filesystem.** The step behind [`ExpansionCache::collect`] sets
+    /// [`Self::selected`] to the length of the selection and then walks that
+    /// same vector once,
+    /// incrementing exactly one of the five counters per element, so both sides
+    /// of the equality are one loop's iteration count. No filesystem state, no
+    /// lock contention, no concurrent republication, and no unreadable entry can
+    /// make it false; the only thing that can is a disposition arm here that
+    /// records nothing, which is a defect in this file rather than an input.
+    ///
+    /// It therefore does **not** establish that nothing left the cache
+    /// unreported. That claim is about a population this report does not
+    /// contain — the entry files actually present before and after — and it is
+    /// checked where that population is obtainable: `expansion::tests`'
+    /// `collect_checked` reads the namespace on both sides of every collection
+    /// it makes and requires the difference to be exactly the keys
+    /// [`Self::removed`] names, and the collecting child in `expansion::harness`
+    /// checks the selection against the scan and the stated bound inside the
+    /// process that performed it.
     #[must_use]
     pub fn accounts_for_every_entry(&self) -> bool {
         self.removed.len() as u64
