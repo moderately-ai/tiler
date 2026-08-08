@@ -615,6 +615,11 @@ pub use realization::{
 };
 #[cfg(test)]
 pub(crate) use requirement::ROUTE_REQUIREMENT_DOMAIN;
+pub use requirement::{
+    BackendFeatureRequirement, MAX_ROUTE_FEATURE_PAYLOAD_BYTES, RouteRequirement,
+    RouteRequirementError, RouteRequirementSubject, RouteResourceDimension,
+    RouteResourceRequirement,
+};
 // The one shared scalar-arithmetic policy vocabulary, named by re-export rather
 // than restated. `tiler-compiler` names the same types the same way, so the
 // dimension set, the behaviour spaces, the means, the locus, and the structured
@@ -624,11 +629,12 @@ pub(crate) use requirement::ROUTE_REQUIREMENT_DOMAIN;
 // [`BufferAccess`] does: a public method whose types its callers cannot spell is
 // unusable, and `tiler-runtime`'s dependency closure is fixed at
 // `[tiler-artifact]` under ADR 0081.
-pub use requirement::{
-    BackendFeatureRequirement, MAX_ROUTE_FEATURE_PAYLOAD_BYTES, RouteRequirement,
-    RouteRequirementError, RouteRequirementSubject, RouteResourceDimension,
-    RouteResourceRequirement,
-};
+//
+// Reattached 2026-08-08. This block sat above `pub use requirement::{…}` from
+// `8bfcd432`, the commit that wrote it, so it never annotated the item it
+// describes: the route-requirement types name no dimension set, behaviour
+// space, means, or locus. Nothing was removed from the requirement re-export —
+// it never carried a rationale of its own.
 pub use tiler_ir::numerics::{
     BehaviourSpace, CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole,
     DIMENSION_COUNT, DimensionBehaviour, ExecutionEnvironmentIdentity, FactAuthority,
@@ -645,9 +651,21 @@ pub use tiler_ir::numerics::{
 // callers cannot spell would be unusable from a closure ADR 0081 item 2 fixes at
 // `[tiler-artifact]`.
 //
-// [`DecodedNumerical`]'s accessors already returned four of them, which is the
-// same gap one layer down; it is closed here rather than left for the next
-// reader to rediscover.
+// [`DecodedNumerical`]'s accessors already returned three of them —
+// `SubnormalMode`, `NumericalPermission`, and `ExceptionalValueAssumption` —
+// which is the same gap one layer down; it is closed here rather than left for
+// the next reader to rediscover. They are named rather than counted because a
+// bare number is what went wrong here, and a name can be checked against the
+// accessor list without re-deriving one.
+//
+// Corrected 2026-08-08. That sentence read "already returned four of them" from
+// `002b1d63`, the commit that wrote it, and was wrong there too: at that commit
+// `DecodedNumerical` carried the same ten accessors it carries now, returning
+// those three re-exported types plus `&str` and `u32`, which are not among
+// them. No reading of it yields four. The retired wording is quoted so the
+// correction is legible, which also keeps it greppable — a later hit on
+// "returned four of them" finds this note, and proves the string is present,
+// not that the claim stands.
 pub use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
     MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,
