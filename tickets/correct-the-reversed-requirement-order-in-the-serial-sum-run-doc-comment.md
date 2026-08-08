@@ -1,7 +1,7 @@
 ---
 id: correct-the-reversed-requirement-order-in-the-serial-sum-run-doc-comment
 title: Correct the reversed requirement order in the serial sum run doc comment
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786188969
 ---
 
 A doc comment states the reverse of what its own function does — and it is the **origin** of a false claim that propagated into two tickets and a coordinator brief before anyone read the code.
