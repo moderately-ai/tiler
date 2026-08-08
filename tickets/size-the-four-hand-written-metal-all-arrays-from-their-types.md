@@ -1,7 +1,7 @@
 ---
 id: size-the-four-hand-written-metal-all-arrays-from-their-types
 title: Size the four hand-written metal ALL arrays from their types
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check]
@@ -9,9 +9,6 @@ scopes: [implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [enumeration, tests, identity]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786174857
 ---
 
 Four `ALL` arrays over enums carry hand-written lengths. Adding a variant without adding it to `ALL` **compiles**, so the population silently stops covering its domain while every check over it stays green.
