@@ -78,7 +78,7 @@ use crate::frontier::{
     AdmittedImplementation, BoundaryOwnership, FrontierRegionSubject, ImplementationFrontier,
 };
 use crate::region::{RegionFormationOutcome, RegionOccurrenceIdentity};
-use crate::request::{DeterministicBudgets, TargetProfile};
+use crate::request::{BudgetResource, DeterministicBudgets, TargetProfile};
 use crate::target::feasibility::ResolvedPredicate;
 use crate::target::honourability::HonouredDimension;
 
@@ -98,11 +98,21 @@ pub(crate) enum PlanBudgetResource {
 }
 
 impl PlanBudgetResource {
-    /// Returns the stable resource key.
-    pub(crate) const fn key(self) -> &'static str {
+    /// Returns this budget's resource in the shared refusal vocabulary.
+    ///
+    /// Total and wildcard-free, so a plan budget added above must decide how a
+    /// caller names it before this crate compiles.
+    pub(crate) const fn resource(self) -> BudgetResource {
         match self {
-            Self::Combinations => "physical-plan-combinations",
+            Self::Combinations => BudgetResource::PhysicalPlanCombinations,
         }
+    }
+
+    /// Returns the stable resource key.
+    ///
+    /// Delegated rather than tabulated a second time.
+    pub(crate) const fn key(self) -> &'static str {
+        self.resource().key()
     }
 }
 

@@ -29,7 +29,9 @@
 //! that is the property this file depends on and the reason a *chain* of adds
 //! would not reproduce it.
 
-use tiler_compiler::session::{CompileFailureClass, NumericalContract, compile_governed};
+use tiler_compiler::session::{
+    BudgetRefusal, BudgetResource, CompileFailureClass, NumericalContract, compile_governed,
+};
 use tiler_ir::semantic::{
     F32, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
 };
@@ -164,13 +166,56 @@ fn the_population_the_member_bound_refused_compiles_as_one_whole_program_region(
 /// bound — and never `NoFeasiblePlan`, which the public surface documents as "a
 /// hard target rejection, never an exhausted analysis budget".
 ///
-/// Which resource was exhausted is deliberately not asserted here: the public
-/// failure carries the class alone, and
-/// `carry-the-exhausted-resource-through-the-budget-refusal` owns widening it.
+/// **The refusal names the resource, its limit, and the demand**, which is what
+/// `carry-the-exhausted-resource-through-the-budget-refusal` widened it to do.
+/// This file previously asserted the class alone and recorded that the caller
+/// had to read `check_program_budgets` to learn which of the five program-scoped
+/// budgets had refused. All three values are pinned rather than only the
+/// resource, because a refusal naming a budget without the numbers still leaves
+/// a caller unable to tell how far past the bound it is.
+///
+/// The bound is [`BudgetRefusal::Bounding`], and that is a claim about this
+/// route rather than about the class: `check_program_budgets` finished counting
+/// the program's occurrences before comparing them, so `actual` is that exact
+/// count and no wider search reaches a plan. A search stop reports the same
+/// class with [`BudgetRefusal::Truncated`] and a demand that is only a lower
+/// bound; `crate::pipeline::tests` drives that half, because the public surface
+/// admits no caller-stated budget set to reach it through.
 #[test]
-fn a_chain_past_the_program_size_bound_refuses_as_an_exhausted_budget() {
+fn a_chain_past_the_program_size_bound_names_the_budget_it_exhausted() {
     let program = chain_program(63);
     let failure = compile_governed(&program, CONTRACT)
         .expect_err("sixty-three occurrences exceed the governed operation budget");
-    assert_eq!(failure.class(), CompileFailureClass::BudgetExhausted);
+    assert_eq!(
+        failure.class(),
+        CompileFailureClass::BudgetExhausted {
+            resource: BudgetResource::SemanticOperations,
+            limit: 62,
+            actual: 63,
+        },
+        "the refusal names the exhausted budget, its limit, and the demand",
+    );
+
+    // The class is still not `NoFeasiblePlan`, which the public surface
+    // documents as "a hard target rejection, never an exhausted analysis
+    // budget". Carrying a payload must not let the two blur: no target was
+    // consulted here at all.
+    assert!(!matches!(
+        failure.class(),
+        CompileFailureClass::NoFeasiblePlan
+    ));
+
+    // And what the demand *means* travels with it, so a caller reading `63`
+    // knows it is the program's own count rather than a floor on a space the
+    // compiler stopped exploring.
+    let CompileFailureClass::BudgetExhausted { resource, .. } = failure.class() else {
+        panic!("the class was asserted above");
+    };
+    assert_eq!(resource.refusal(), BudgetRefusal::Bounding);
+    assert_eq!(resource.key(), "semantic-operations");
+
+    // A refusal raised before a target-qualified trace exists has no explain
+    // report, which is what makes the typed fields the only route here rather
+    // than a convenience beside the trace.
+    assert!(failure.explain().is_none());
 }

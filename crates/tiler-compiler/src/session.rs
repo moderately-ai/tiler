@@ -84,6 +84,10 @@ use crate::pipeline::{
     ProgramAlternativeKind, TargetCompilationOutcome, compile_with_physical_providers,
 };
 use crate::program::KernelProgram;
+/// The budget vocabulary a [`CompileFailureClass::BudgetExhausted`] refusal
+/// names. Defined beside the deterministic budgets themselves and re-exported
+/// here because `session` is the one module a caller reads a refusal through.
+pub use crate::request::{BudgetRefusal, BudgetResource};
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, ContractRejection,
     DTypeDispatchRefusalDisposition, ExceptionalValueDimensionKind, LoweringProviderIdentity,
@@ -156,8 +160,34 @@ pub enum CompileFailureClass {
     ///
     /// This is a hard target rejection, never an exhausted analysis budget.
     NoFeasiblePlan,
-    /// A deterministic search or proof budget stopped the compilation.
-    BudgetExhausted,
+    /// A deterministic budget stopped the compilation.
+    ///
+    /// **This is not [`Self::NoFeasiblePlan`] and must not be read as one.**
+    /// That class says a requested target profile disproved every plan; this
+    /// one says a bound *this build* declares refused a demand, and nothing was
+    /// proved about the program. Which of the two a budget refusal is within
+    /// itself — a bound no further search escapes, or a search stopped before
+    /// it finished — is [`BudgetResource::refusal`], and the same answer decides
+    /// whether `actual` is an exact quantity or a lower bound.
+    ///
+    /// The three fields are the refusal's own, carried rather than re-derived,
+    /// so a caller names the exhausted resource without reading compiler source.
+    /// A refusal raised before a target-qualified trace exists carries no
+    /// [`CompileFailure::explain`] report by construction, and every
+    /// program-scoped budget refuses there, so for those these fields are the
+    /// only route rather than a convenience beside the trace.
+    BudgetExhausted {
+        /// Which budget refused.
+        resource: BudgetResource,
+        /// The declared limit that budget carries in this build.
+        limit: u64,
+        /// The demand the limit refused.
+        ///
+        /// Exact or a lower bound according to [`BudgetResource::refusal`];
+        /// reading it as a required size regardless is wrong in the silent
+        /// direction for the five search bounds.
+        actual: u64,
+    },
     /// The compiler produced output its own verifier refused.
     ///
     /// This is always a defect in Tiler rather than in the caller's program,
@@ -1368,7 +1398,35 @@ fn class_of(error: CompileError) -> CompileFailureClass {
         CompileError::UnsupportedCapability(cause) => CompileFailureClass::UnsupportedCapability {
             rule: rule_of(&cause),
         },
-        CompileError::BudgetExhausted(_) => CompileFailureClass::BudgetExhausted,
+        // Destructured rather than classified from the wrapper, because the
+        // fields a caller acts on live on the inner error and this boundary is
+        // where they were dropped. The wrapper keeps carrying the whole
+        // `RequestError` so `Error::source` still yields it with its own type,
+        // which convention 1 requires; the cost is that the payload type admits
+        // a variant the one construction site never puts there.
+        //
+        // `From<RequestError>` routes `BudgetExceeded` to this variant and
+        // nothing else, so the `else` arm is unreachable — and it is written
+        // rather than unwrapped because a wrapper holding some other request
+        // refusal would be Tiler mislabelling its own error, which is what
+        // `InvalidCompilerOutput` reports. Inventing a resource, or panicking,
+        // would each be worse: one is a silently wrong attribution and the
+        // other refuses to report at all.
+        CompileError::BudgetExhausted(cause) => {
+            let RequestError::BudgetExceeded {
+                resource,
+                limit,
+                actual,
+            } = cause
+            else {
+                return CompileFailureClass::InvalidCompilerOutput;
+            };
+            CompileFailureClass::BudgetExhausted {
+                resource,
+                limit,
+                actual,
+            }
+        }
         CompileError::NoFeasiblePlan(_) => CompileFailureClass::NoFeasiblePlan,
         CompileError::InvalidCompilerOutput(_) => CompileFailureClass::InvalidCompilerOutput,
     }
@@ -1394,7 +1452,11 @@ const fn rule_of(error: &RequestError) -> &'static str {
         RequestError::NoApplicableNumericalContract { .. } => {
             "compile.request.numerics.inapplicable"
         }
-        RequestError::BudgetExceeded { resource, .. } => resource,
+        // Reachable only if a budget refusal is ever wrapped as a request or
+        // capability refusal, which `From<RequestError>` does not do. It stays
+        // because `rule_of` is total over `RequestError` and the key exists;
+        // `class_of` reports this refusal through its own typed fields instead.
+        RequestError::BudgetExceeded { resource, .. } => resource.key(),
         RequestError::UnsupportedCapability { rule, .. } => rule,
         // The refusing authority's own stable code, so the two findings it
         // distinguishes — no installed realization, and an installed one that
@@ -2731,9 +2793,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        CompilationRequest, CompileFailure, CompileFailureClass, CompileRequest, NumericalContract,
-        StrictF32NumericalContract, TargetCompileRefusal, TargetNumericalRefusalDisposition,
-        TargetNumericalRequirement, compile, compile_governed,
+        BudgetResource, CompilationRequest, CompileFailure, CompileFailureClass, CompileRequest,
+        NumericalContract, StrictF32NumericalContract, TargetCompileRefusal,
+        TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile, compile_governed,
     };
     use crate::pipeline::compile as compile_internal;
     use crate::target::{TargetProfile, TargetRequest};
@@ -3746,7 +3808,11 @@ mod tests {
             CompileFailureClass::InvalidRequest { rule: "any" },
             CompileFailureClass::UnsupportedCapability { rule: "any" },
             CompileFailureClass::NoFeasiblePlan,
-            CompileFailureClass::BudgetExhausted,
+            CompileFailureClass::BudgetExhausted {
+                resource: BudgetResource::SemanticOperations,
+                limit: 1,
+                actual: 2,
+            },
             CompileFailureClass::InvalidCompilerOutput,
         ];
         for (index, left) in classes.iter().enumerate() {
@@ -3754,6 +3820,31 @@ mod tests {
                 assert_ne!(left, right, "two failure classes compare equal");
             }
         }
+
+        // `BudgetExhausted` is the one class whose payload a caller may compare
+        // rather than only read, so its fields must participate in equality: a
+        // refusal on one budget must not equal a refusal on another, and the two
+        // quantities must separate two refusals on the same budget. Without
+        // this, carrying the fields would still let a consumer treat every
+        // budget refusal as one value, which is the collapse the class exists to
+        // avoid one level down.
+        let exhausted = |resource, limit, actual| CompileFailureClass::BudgetExhausted {
+            resource,
+            limit,
+            actual,
+        };
+        assert_ne!(
+            exhausted(BudgetResource::SemanticOperations, 62, 63),
+            exhausted(BudgetResource::SemanticValues, 62, 63),
+        );
+        assert_ne!(
+            exhausted(BudgetResource::SemanticOperations, 62, 63),
+            exhausted(BudgetResource::SemanticOperations, 62, 64),
+        );
+        assert_ne!(
+            exhausted(BudgetResource::SemanticOperations, 62, 63),
+            exhausted(BudgetResource::SemanticOperations, 61, 63),
+        );
 
         // The two that were one class carry the same rule key and are still
         // distinct, which is the whole point of splitting them: a caller must

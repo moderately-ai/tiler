@@ -219,7 +219,8 @@ use tiler_build::{
 };
 use tiler_cache::expansion::{ExpansionCache, Resolution};
 use tiler_compiler::session::{
-    CompileFailure, CompileFailureClass, CompileRequest, TargetCompileFailure, compile,
+    BudgetRefusal, CompileFailure, CompileFailureClass, CompileRequest, TargetCompileFailure,
+    compile,
 };
 use tiler_compiler::target::{TargetRequest, TargetRequestError};
 use tiler_ir::schedule::ArithmeticType;
@@ -531,12 +532,43 @@ fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
              honour, try smaller extents, or state `fallback-only` to expand with the semantic \
              fallback on every target"
         ),
-        CompileFailureClass::BudgetExhausted => format!(
-            "the compiler stopped searching for a plan {scope} because a deterministic search \
-             budget was exhausted; this is a fact about the region's size rather than about its \
-             correctness, so a smaller region compiles and `fallback-only` expands without \
-             compiling at all"
-        ),
+        // The resource, its bound, and the demand, because a consumer told only
+        // that "a budget" was exhausted has to read compiler source to learn
+        // which one — the reading these fields exist to remove.
+        //
+        // The two halves are split on `refusal()` rather than merged, and the
+        // text this replaced was the merged form: it said the compiler "stopped
+        // searching", which is true of a truncating stop and false of every
+        // budget a macro expansion can actually reach. A bounding refusal is a
+        // fact about the region's declared size that no further search escapes,
+        // so "write a smaller region" is the right action; a truncating one
+        // stopped a search a wider bound might finish, where that same advice
+        // sends a consumer to change a region that was not the problem.
+        CompileFailureClass::BudgetExhausted {
+            resource,
+            limit,
+            actual,
+        } => {
+            let refused = format!(
+                "the deterministic budget `{}` refused this region, so it has no plan {scope}: \
+                 the limit is {limit} and the demand was {actual}",
+                resource.key()
+            );
+            match resource.refusal() {
+                BudgetRefusal::Bounding => format!(
+                    "{refused}. That is a fact about the region's size rather than about its \
+                     correctness, and no amount of further search reaches a plan under this \
+                     bound, so a smaller region compiles and `fallback-only` expands without \
+                     compiling at all"
+                ),
+                BudgetRefusal::Truncated => format!(
+                    "{refused}, which is a lower bound on the space the search did not reach \
+                     rather than a size this region requires. The search stopped before it \
+                     finished, so this is a fact about how far the compiler looked rather than \
+                     about the region; `fallback-only` expands without compiling at all"
+                ),
+            }
+        }
         CompileFailureClass::InvalidRequest { rule } => format!(
             "`tiler::tensor!` built a compile request the compiler refused as malformed \
              (`{rule}`), so this region has no plan {scope}; this is a defect in `tiler-macros`, \

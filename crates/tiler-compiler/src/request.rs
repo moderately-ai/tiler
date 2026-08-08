@@ -801,6 +801,203 @@ impl NumericalContractPreference {
     }
 }
 
+/// What a budget refusal says about the space on the far side of the bound.
+///
+/// A caller acting on an exhausted budget needs to know whether the compiler
+/// finished measuring the quantity it refused or stopped counting partway, and
+/// the two imply different actions. The distinction is not a nicety: the demand
+/// a truncating stop reports is a *lower bound* on what it did not explore, so
+/// reading it as a required size would be wrong in the silent direction.
+///
+/// # Not `#[non_exhaustive]`
+///
+/// ADR 0074 convention 5a marks a public enum whose variant set is a
+/// bounded-profile placeholder. This is not one: a bound either finished
+/// measuring its subject or it did not, and there is no third answer for a
+/// later budget to occupy. Marking it would oblige every out-of-crate consumer
+/// to carry a wildcard arm over a closed two-way split, which is the cost 5a
+/// exists to avoid paying for nothing.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum BudgetRefusal {
+    /// The budget bounds a quantity the compiler measured, and the limit
+    /// refused that exact quantity.
+    ///
+    /// The reported demand is a number computed in full and then compared
+    /// against the limit — a submitted program's own counts, or a refused
+    /// region candidate's members, retained outputs, or live values. Where one
+    /// resource refused several candidates, it is the largest of those exact
+    /// counts.
+    ///
+    /// No additional search reaches a plan under this limit, so the caller's
+    /// action is to widen the bound or to submit a smaller program.
+    Bounding,
+    /// The budget stopped a search before that search finished.
+    ///
+    /// The reported demand is the first demand the limit refused, which is a
+    /// lower bound on the space left unexplored rather than that space's size.
+    /// A wider limit may reach a plan this compilation never saw, and may
+    /// equally find nothing.
+    Truncated,
+}
+
+/// Which deterministic budget refused a compilation.
+///
+/// Four authorities raise a budget refusal and each owns its own stop record.
+/// They are named here as plain text because every one of them is crate-private
+/// and a public doc cannot link a private item: `request::check_program_budgets`
+/// refuses a submitted program's own size before any target is consulted, and
+/// `region::RegionBudgetResource`, `cover::CoverBudgetResource`, and
+/// `selection::PlanBudgetResource` bound the three searches that run once one
+/// has been. Those records stay distinct because their surrounding
+/// data differs — a plan stop also names the cover whose enumeration it
+/// stopped. This is the single vocabulary they all name a resource in, so a
+/// caller reads one closed set rather than four, and each authority maps into
+/// it through a total `const fn` that a new internal budget must extend before
+/// it compiles.
+///
+/// [`Self::key`] is the stable diagnostic key, and it is the sole authority for
+/// these strings: the per-authority accessors delegate here rather than
+/// repeating a table that could drift.
+///
+/// # Which of these a public caller can actually observe
+///
+/// Only the five program-scoped resources today. The other eight are raised by
+/// the three searches, which reach a caller only through an empty portfolio,
+/// and `crate::session`'s reachability note records why that route is currently
+/// unreachable from the public surface: the region-shape bounds are now the
+/// same formulas as the program-scoped bounds they derive from, so a program
+/// large enough to truncate a search is refused for its size first. Reaching it
+/// needs a caller-stated budget set, which the public surface does not admit.
+/// The vocabulary is nevertheless complete, because the mapping into it must be
+/// total over what the compiler can raise and reachability is a property of the
+/// budgets a request carries rather than of this type.
+///
+/// # Why `#[non_exhaustive]`
+///
+/// ADR 0074 convention 5's clause test asks what an out-of-crate wildcard arm
+/// would have to do. No consumer outside this crate maps this vocabulary onto a
+/// derived value it must get right per variant, and none matches it to decide
+/// what it supports; a consumer renders it, forwards it, or classifies it
+/// partially. That is clause 5a, so the attribute applies and a later budget
+/// lands additively.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum BudgetResource {
+    /// Values a submitted program may declare and produce.
+    SemanticValues,
+    /// Semantic occurrences a submitted program may declare.
+    SemanticOperations,
+    /// Dispatch regions the widest plan for a submitted program may assemble.
+    Regions,
+    /// Host expression nodes the widest plan for a submitted program may spell.
+    HostExpressionNodes,
+    /// Buffers the widest plan for a submitted program may bind.
+    Buffers,
+    /// Semantic occurrences admitted in one region candidate.
+    RegionMembers,
+    /// Retained boundary outputs admitted for one region candidate.
+    RegionBoundaryOutputs,
+    /// Boundary and member-result values live across one region candidate.
+    RegionLiveValues,
+    /// Grown candidates admitted for one seed occurrence.
+    RegionCandidatesPerSeed,
+    /// Candidate expansion attempts admitted for one compilation request.
+    RegionExpansions,
+    /// Distinct legal complete covers retained for one enumeration request.
+    RegionCovers,
+    /// Partition-search expansion attempts for one enumeration request.
+    RegionCoverExpansions,
+    /// Complete-plan combinations admitted for one cover source.
+    PhysicalPlanCombinations,
+}
+
+impl BudgetResource {
+    /// Every budget resource, sized from the type.
+    ///
+    /// `variant_count` is what makes a widened vocabulary a build error here
+    /// rather than a census that silently shrinks while still reporting no
+    /// duplicate key. A hand-written length would be satisfied by a list that
+    /// had stopped covering its own enum.
+    ///
+    /// Test-only, so the nightly feature it needs stays out of a normal build.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; std::mem::variant_count::<Self>()] = [
+        Self::SemanticValues,
+        Self::SemanticOperations,
+        Self::Regions,
+        Self::HostExpressionNodes,
+        Self::Buffers,
+        Self::RegionMembers,
+        Self::RegionBoundaryOutputs,
+        Self::RegionLiveValues,
+        Self::RegionCandidatesPerSeed,
+        Self::RegionExpansions,
+        Self::RegionCovers,
+        Self::RegionCoverExpansions,
+        Self::PhysicalPlanCombinations,
+    ];
+
+    /// Returns the stable diagnostic key of this budget.
+    ///
+    /// The key is meaning rather than presentation: it is the rule key a
+    /// request refusal reports, the resource key an explain record carries, and
+    /// part of the reason code a failure detail spells, so it is compared. ADR
+    /// 0074 convention 2's correction is what decides the spelling — `key` is
+    /// reserved for a stable semantic key and `label` for a presentation digest.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::SemanticValues => "semantic-values",
+            Self::SemanticOperations => "semantic-operations",
+            Self::Regions => "regions",
+            Self::HostExpressionNodes => "host-expression-nodes",
+            Self::Buffers => "buffers",
+            Self::RegionMembers => "region-members",
+            Self::RegionBoundaryOutputs => "region-boundary-outputs",
+            Self::RegionLiveValues => "region-live-values",
+            Self::RegionCandidatesPerSeed => "region-candidates-per-seed",
+            Self::RegionExpansions => "region-expansions",
+            Self::RegionCovers => "region-covers",
+            Self::RegionCoverExpansions => "region-cover-expansions",
+            Self::PhysicalPlanCombinations => "physical-plan-combinations",
+        }
+    }
+
+    /// Returns what a refusal on this budget says about the space beyond it.
+    ///
+    /// The split is the one `DeterministicBudgets` already draws in prose and is
+    /// derived from where each stop is recorded. The five program-scoped bounds
+    /// and the three region-*shape* bounds compare a demand the compiler has
+    /// finished computing — a program's counts, a candidate's members, retained
+    /// outputs, or live values — so their demand is exact. The five search
+    /// bounds stop an enumeration at the first demand they refuse, and all three
+    /// stop records say so in their own documentation: the value is "a lower
+    /// bound on the unexplored space rather than its size".
+    ///
+    /// This is the answer a `&'static str` resource could not give. A caller
+    /// holding a key has no way to learn whether the number beside it is a size
+    /// or a floor without reading compiler source, which is the reading this
+    /// whole surface exists to remove.
+    #[must_use]
+    pub const fn refusal(self) -> BudgetRefusal {
+        match self {
+            Self::SemanticValues
+            | Self::SemanticOperations
+            | Self::Regions
+            | Self::HostExpressionNodes
+            | Self::Buffers
+            | Self::RegionMembers
+            | Self::RegionBoundaryOutputs
+            | Self::RegionLiveValues => BudgetRefusal::Bounding,
+            Self::RegionCandidatesPerSeed
+            | Self::RegionExpansions
+            | Self::RegionCovers
+            | Self::RegionCoverExpansions
+            | Self::PhysicalPlanCombinations => BudgetRefusal::Truncated,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DeterministicBudgets {
     pub(crate) semantic_values: u32,
@@ -4100,10 +4297,21 @@ pub(crate) enum RequestError {
     UnrepresentableNumericalDimension {
         cause: UnrepresentableDimension,
     },
+    /// A deterministic budget refused a demand.
+    ///
+    /// The sole carrier of every budget refusal the compiler raises, from all
+    /// four authorities. `limit` and `actual` are `u64` because the internal
+    /// stop records are: the two search budgets `DeterministicBudgets` declares
+    /// as `u64` cannot be narrowed to `u32` without reporting a saturated
+    /// number as though it were the declared bound, and a `usize` demand would
+    /// make the width of a public refusal a property of the host.
+    ///
+    /// Whether `actual` is the exact demand or a lower bound is not uniform
+    /// across the vocabulary and is read from [`BudgetResource::refusal`].
     BudgetExceeded {
-        resource: &'static str,
-        limit: u32,
-        actual: usize,
+        resource: BudgetResource,
+        limit: u64,
+        actual: u64,
     },
     UnsupportedCapability {
         phase: &'static str,
@@ -4211,7 +4419,8 @@ impl fmt::Display for RequestError {
                 actual,
             } => write!(
                 formatter,
-                "compile.budget.{resource}: {actual} exceeds deterministic limit {limit}"
+                "compile.budget.{}: {actual} exceeds deterministic limit {limit}",
+                resource.key()
             ),
             Self::UnsupportedCapability { phase, rule } => {
                 write!(
@@ -4626,12 +4835,12 @@ fn check_program_budgets(
     budgets: DeterministicBudgets,
 ) -> Result<(), RequestError> {
     check_budget(
-        "semantic-values",
+        BudgetResource::SemanticValues,
         budgets.semantic_values,
         program.value_count(),
     )?;
     check_budget(
-        "semantic-operations",
+        BudgetResource::SemanticOperations,
         budgets.semantic_operations,
         program.operation_count(),
     )?;
@@ -4661,7 +4870,7 @@ fn check_program_budgets(
     // four, which is exactly the request the boundary admitted and assembly then
     // refused.
     check_budget(
-        "regions",
+        BudgetResource::Regions,
         budgets.regions,
         program.output_count().saturating_mul(4),
     )?;
@@ -4679,7 +4888,7 @@ fn check_program_budgets(
     // one-input chain declares seven, because an upper bound over every
     // reachable plan cannot also be each plan's exact count.
     check_budget(
-        "host-expression-nodes",
+        BudgetResource::HostExpressionNodes,
         budgets.host_expression_nodes,
         program
             .input_count()
@@ -4702,7 +4911,7 @@ fn check_program_budgets(
     // which under-reported the epilogue's staged read by one for every output —
     // one declared input reaches five values, not four.
     check_budget(
-        "buffers",
+        BudgetResource::Buffers,
         budgets.buffers,
         program
             .input_count()
@@ -7294,8 +7503,13 @@ fn normalize_contraction(
     })
 }
 
-fn check_budget(resource: &'static str, limit: u32, actual: usize) -> Result<(), RequestError> {
-    if u64::try_from(actual).map_or(true, |actual| actual > u64::from(limit)) {
+fn check_budget(resource: BudgetResource, limit: u32, actual: usize) -> Result<(), RequestError> {
+    let limit = u64::from(limit);
+    // Saturating, on the same ground as the four `count` helpers this crate
+    // already carries: no supported target has a `usize` wider than `u64`, and a
+    // count that did not fit would exceed every budget this profile declares.
+    let actual = u64::try_from(actual).unwrap_or(u64::MAX);
+    if actual > limit {
         return Err(RequestError::BudgetExceeded {
             resource,
             limit,
@@ -10510,7 +10724,7 @@ mod tests {
         assert_eq!(
             verify_planned_request(request),
             Err(RequestError::BudgetExceeded {
-                resource: "semantic-operations",
+                resource: BudgetResource::SemanticOperations,
                 limit: 4,
                 actual: 5,
             })
@@ -10604,6 +10818,135 @@ mod tests {
     /// promise. `verify_program` still refuses the layer's *shape* at the
     /// recognizer under a rule this widening deliberately does not touch, so an
     /// admitted probe here is evidence about size and about nothing else.
+    /// Every budget resource carries its own stable key.
+    ///
+    /// A duplicate would make two budgets indistinguishable everywhere the key
+    /// is what travels — the rule key of a request refusal, the resource key of
+    /// an explain record, the reason code of a failure detail — so a caller told
+    /// which budget refused would be told the wrong one, silently.
+    ///
+    /// The population is sized by `variant_count` rather than written out, so a
+    /// budget added to the vocabulary and not to `ALL` fails the build here
+    /// rather than shrinking the set this test checks while it still reports no
+    /// duplicate. The census is printed for the same reason: "nothing ran" must
+    /// not be able to look green.
+    #[test]
+    fn every_budget_resource_key_is_distinct() {
+        let keys: BTreeSet<&'static str> = BudgetResource::ALL
+            .iter()
+            .map(|resource| resource.key())
+            .collect();
+        assert_eq!(
+            keys.len(),
+            BudgetResource::ALL.len(),
+            "two budget resources share a stable key: {keys:?}",
+        );
+        assert_eq!(
+            BudgetResource::ALL.len(),
+            13,
+            "the vocabulary changed size; every dependent claim about it needs re-reading",
+        );
+    }
+
+    /// The three internal stop vocabularies map onto the shared one injectively.
+    ///
+    /// Each `resource()` is exhaustive, so `rustc` already proves it total. What
+    /// it cannot prove is that two internal budgets do not land on one public
+    /// row, which would report a region stop as a cover stop or the reverse.
+    ///
+    /// [`crate::cover::CoverBudgetResource::Refusals`] is deliberately absent
+    /// from the image: it refuses no compilation, and its `None` is what keeps
+    /// that exclusion typed rather than an inequality at the consuming site.
+    #[test]
+    fn the_stop_vocabularies_map_onto_distinct_shared_resources() {
+        let region = [
+            crate::region::RegionBudgetResource::Members,
+            crate::region::RegionBudgetResource::BoundaryOutputs,
+            crate::region::RegionBudgetResource::LiveValues,
+            crate::region::RegionBudgetResource::CandidatesPerSeed,
+            crate::region::RegionBudgetResource::Expansions,
+        ];
+        let mut image: Vec<BudgetResource> = region.iter().map(|stop| stop.resource()).collect();
+        image.extend(
+            [
+                crate::cover::CoverBudgetResource::Covers,
+                crate::cover::CoverBudgetResource::Expansions,
+                crate::cover::CoverBudgetResource::Refusals,
+            ]
+            .iter()
+            .filter_map(|stop| stop.truncating_resource()),
+        );
+        image.push(crate::selection::PlanBudgetResource::Combinations.resource());
+
+        let distinct: BTreeSet<BudgetResource> = image.iter().copied().collect();
+        assert_eq!(
+            distinct.len(),
+            image.len(),
+            "two stops share one row: {image:?}"
+        );
+        assert_eq!(
+            image.len(),
+            8,
+            "five region stops, two cover stops, one plan stop"
+        );
+        assert!(
+            crate::cover::CoverBudgetResource::Refusals
+                .truncating_resource()
+                .is_none(),
+            "the explanation budget refuses no compilation and holds no row",
+        );
+
+        // Every one of the eight is a search or shape stop reached after a
+        // target is consulted, and the five program-scoped rows are exactly the
+        // ones no stop vocabulary maps onto.
+        for resource in BudgetResource::ALL {
+            let program_scoped = matches!(
+                resource,
+                BudgetResource::SemanticValues
+                    | BudgetResource::SemanticOperations
+                    | BudgetResource::Regions
+                    | BudgetResource::HostExpressionNodes
+                    | BudgetResource::Buffers
+            );
+            assert_eq!(
+                program_scoped,
+                !distinct.contains(&resource),
+                "{resource:?} is claimed by both a stop vocabulary and the request boundary",
+            );
+        }
+    }
+
+    /// A refusal's demand is exact exactly when the bound is not a search bound.
+    ///
+    /// The split is not decorative: `actual` is a size for one half and a lower
+    /// bound for the other, and a caller reading a floor as a requirement would
+    /// shrink a program that was never too large. Pinning both directions is
+    /// what stops a budget added later from defaulting into whichever answer
+    /// happens to be listed first.
+    #[test]
+    fn only_the_search_bounds_report_a_truncated_demand() {
+        for resource in BudgetResource::ALL {
+            let searching = matches!(
+                resource,
+                BudgetResource::RegionCandidatesPerSeed
+                    | BudgetResource::RegionExpansions
+                    | BudgetResource::RegionCovers
+                    | BudgetResource::RegionCoverExpansions
+                    | BudgetResource::PhysicalPlanCombinations
+            );
+            let expected = if searching {
+                BudgetRefusal::Truncated
+            } else {
+                BudgetRefusal::Bounding
+            };
+            assert_eq!(
+                resource.refusal(),
+                expected,
+                "{resource:?} reports the wrong kind of demand",
+            );
+        }
+    }
+
     #[test]
     fn each_widened_budget_refuses_the_program_one_step_past_it() {
         let governed = DeterministicBudgets::governed();
@@ -10629,7 +10972,7 @@ mod tests {
             )
             .err(),
             Some(RequestError::BudgetExceeded {
-                resource: "semantic-values",
+                resource: BudgetResource::SemanticValues,
                 limit: 80,
                 actual: 81,
             }),
@@ -10643,7 +10986,7 @@ mod tests {
             )
             .err(),
             Some(RequestError::BudgetExceeded {
-                resource: "semantic-operations",
+                resource: BudgetResource::SemanticOperations,
                 limit: 62,
                 actual: 63,
             }),
@@ -10662,7 +11005,7 @@ mod tests {
             )
             .err(),
             Some(RequestError::BudgetExceeded {
-                resource: "regions",
+                resource: BudgetResource::Regions,
                 limit: 12,
                 actual: 16,
             }),
@@ -10676,7 +11019,7 @@ mod tests {
             )
             .err(),
             Some(RequestError::BudgetExceeded {
-                resource: "host-expression-nodes",
+                resource: BudgetResource::HostExpressionNodes,
                 limit: 51,
                 actual: 53,
             }),
@@ -10702,7 +11045,7 @@ mod tests {
             )
             .err(),
             Some(RequestError::BudgetExceeded {
-                resource: "buffers",
+                resource: BudgetResource::Buffers,
                 limit: 30,
                 actual: 31,
             }),

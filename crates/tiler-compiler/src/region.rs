@@ -66,7 +66,7 @@ use crate::explain::{
     ExplainWriter, FactValue, PredicateAssessment, RejectionClass, ResourceKey, RuleRef,
     SubjectKey, SubjectKind,
 };
-use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
+use crate::request::{BudgetResource, DeterministicBudgets, StrictF32NumericalContract};
 
 /// Stable identity of the region-formation stage rule.
 pub(crate) const REGION_FORMATION_RULE: &str = "region.formation.v1";
@@ -514,15 +514,26 @@ pub(crate) enum RegionBudgetResource {
 }
 
 impl RegionBudgetResource {
-    /// Returns the stable resource key.
-    pub(crate) const fn key(self) -> &'static str {
+    /// Returns this budget's resource in the shared refusal vocabulary.
+    ///
+    /// Total and wildcard-free, so a region budget added above must decide how
+    /// a caller names it before this crate compiles.
+    pub(crate) const fn resource(self) -> BudgetResource {
         match self {
-            Self::Members => "region-members",
-            Self::BoundaryOutputs => "region-boundary-outputs",
-            Self::LiveValues => "region-live-values",
-            Self::CandidatesPerSeed => "region-candidates-per-seed",
-            Self::Expansions => "region-expansions",
+            Self::Members => BudgetResource::RegionMembers,
+            Self::BoundaryOutputs => BudgetResource::RegionBoundaryOutputs,
+            Self::LiveValues => BudgetResource::RegionLiveValues,
+            Self::CandidatesPerSeed => BudgetResource::RegionCandidatesPerSeed,
+            Self::Expansions => BudgetResource::RegionExpansions,
         }
+    }
+
+    /// Returns the stable resource key.
+    ///
+    /// Delegated rather than tabulated a second time, so the key a formation
+    /// explain record carries and the key its refusal reports cannot disagree.
+    pub(crate) const fn key(self) -> &'static str {
+        self.resource().key()
     }
 }
 
