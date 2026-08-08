@@ -21,11 +21,18 @@
 //! an empty list does, and "nothing ran" then looks exactly like "nothing
 //! collided". Two things hold the enumerations below honest:
 //!
-//! - every array over a plain enum is sized by
-//!   [`variant_count`](std::mem::variant_count), so a widened vocabulary is a
-//!   build error here rather than a population that quietly shrinks; and
-//! - every test asserts the population it walked, so a domain that changed size
-//!   fails and has to be restated deliberately.
+//! - every array over a fieldless enum is sized by
+//!   [`variant_count`](std::mem::variant_count), while an array over a
+//!   payload-carrying enum is sized by an exhaustive outer-arm census that sums
+//!   each arm's inhabitant count, so adding an outer variant or widening a named
+//!   payload makes its array declaration a build error;
+//! - the `FencedSpaces` boolean product is sized from one exhaustive,
+//!   type-checked array of its fields, so adding a field requires extending the
+//!   census and extending it changes the product automatically;
+//!   and
+//! - each injectivity test consuming these enumerations asserts the population
+//!   it walked, so a domain that changed size fails and has to be restated
+//!   deliberately.
 //!
 //! # Why the vocabularies are enumerated here rather than at each encoder
 //!
@@ -39,11 +46,10 @@
 //!
 //! `tiler-artifact` cannot reach this module — it is `cfg(test)` and crate
 //! private — so it enumerates the subject a second time. That is safe rather
-//! than a second chance to under-count, and the `variant_count` sizing is why:
-//! neither list can silently stop covering the vocabulary, so the two cannot
-//! silently disagree about how large the domain is. Making this module reachable
+//! than a second chance to under-count when that copy applies the same
+//! fieldless-enum, payload, and field-census guards. Making this module reachable
 //! would mean a public test-support surface, which is Tom's call and buys
-//! nothing the guard does not already give.
+//! nothing those independent guards do not already give.
 
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -55,8 +61,33 @@ use crate::schedule::{
     SynchronizationKind, SynchronizationScope, SynchronizationSubject, ValueDomainProvenance,
 };
 
+/// Defines one payload-carrying enum's inhabitant count from its outer shape.
+///
+/// The match makes the listed arms exhaustive over the outer enum. The same
+/// contribution expressions are then summed, so adding an arm both repairs the
+/// match and grows the population; no second count can drift from it.
+macro_rules! exhaustive_enum_population {
+    ($name:ident: $ty:ty { $($pattern:pat => $contribution:expr),+ $(,)? }) => {
+        const $name: usize = {
+            const fn contribution(value: $ty) -> usize {
+                match value {
+                    $($pattern => $contribution),+
+                }
+            }
+
+            let _ = contribution;
+            0 $(+ $contribution)+
+        };
+    };
+}
+
+exhaustive_enum_population!(SUBNORMAL_MODE_POPULATION: SubnormalMode {
+    SubnormalMode::Preserve => 1,
+    SubnormalMode::FlushToZero { zero_sign: _ } => variant_count::<FlushedZeroSign>(),
+});
+
 /// Every subnormal treatment an arithmetic dimension can declare.
-pub(crate) const SUBNORMAL_MODES: [SubnormalMode; 3] = [
+pub(crate) const SUBNORMAL_MODES: [SubnormalMode; SUBNORMAL_MODE_POPULATION] = [
     SubnormalMode::Preserve,
     SubnormalMode::FlushToZero {
         zero_sign: FlushedZeroSign::PreservesSign,
@@ -72,8 +103,15 @@ pub(crate) const PERMISSIONS: [NumericalPermission; variant_count::<NumericalPer
     NumericalPermission::Permitted,
 ];
 
+exhaustive_enum_population!(EXCEPTIONAL_ASSUMPTION_POPULATION: ExceptionalValueAssumption {
+    ExceptionalValueAssumption::MakeNoAssumption => 1,
+    ExceptionalValueAssumption::AssumeAbsent { provenance: _ } =>
+        variant_count::<ValueDomainProvenance>(),
+});
+
 /// Every exceptional-value assumption, over every evidence class.
-pub(crate) const EXCEPTIONAL_ASSUMPTIONS: [ExceptionalValueAssumption; 4] = [
+pub(crate) const EXCEPTIONAL_ASSUMPTIONS: [ExceptionalValueAssumption;
+    EXCEPTIONAL_ASSUMPTION_POPULATION] = [
     ExceptionalValueAssumption::MakeNoAssumption,
     ExceptionalValueAssumption::AssumeAbsent {
         provenance: ValueDomainProvenance::CompilerProven,
@@ -121,13 +159,28 @@ const ORDERINGS: [MemoryOrdering; variant_count::<MemoryOrdering>()] = [
     MemoryOrdering::SequentiallyConsistent,
 ];
 
+/// Returns the number of bools in one exhaustive field census.
+const fn bool_field_count<const N: usize>(_: [bool; N]) -> usize {
+    N
+}
+
+/// The independent boolean fields carried by [`FencedSpaces`].
+///
+/// The exhaustive destructure makes a new field a build error here, at the
+/// population mechanism. Passing the fields through one bool array both checks
+/// their types and derives the count from that same list, so extending the
+/// census cannot leave a terminal cardinality behind.
+const FENCED_SPACE_FIELD_COUNT: usize = {
+    let FencedSpaces { workgroup, device } = FencedSpaces::NONE;
+    bool_field_count([workgroup, device])
+};
+
 /// Every fence a point can name.
 ///
-/// `FencedSpaces` is a struct, so `variant_count` does not apply; this is
-/// instead the product of `bool`'s two inhabitants over its two fields, which is
-/// exhaustive by the type's own definition. A third flag would leave this list
-/// at four entries, and [`SUBJECT_POPULATION`]'s assertion is what would fail.
-const FENCES: [FencedSpaces; 4] = [
+/// `FencedSpaces` is a struct, so `variant_count` does not apply. Each field in
+/// the exhaustive census above is boolean, making the inhabitant count two to
+/// the power of the field count.
+const FENCES: [FencedSpaces; 1 << FENCED_SPACE_FIELD_COUNT] = [
     FencedSpaces {
         workgroup: false,
         device: false,
