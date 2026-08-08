@@ -1,7 +1,7 @@
 ---
 id: replace-four-assertions-that-cannot-fail-in-the-cache-and-spike-harnesses
 title: Replace four assertions that cannot fail in the cache and spike harnesses
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-replace-f
-lease_expires_at: 1786161224
 ---
 ## Four assertions with no falsifying input
 

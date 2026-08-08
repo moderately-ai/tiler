@@ -1,16 +1,13 @@
 ---
 id: separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ
 title: Separate the tree and split groupings at a contributor count where their partitions differ
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies, raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells, calibrate-and-activate-parallel-reduction-selection, establish-an-upper-bound-authority-for-the-metal-grid-axis-row, bound-the-tree-cap-s-unmeasured-downward-direction, complete-the-tree-cap-audit-sweep-inside-the-compiler-crate]
 scopes: [implementation/runtime, implementation/conformance, contracts/numerics]
 shared_scopes: [project/tickets]
 tags: [numerics, reductions, evidence-gap]
-claimed_from: todo
-assignee: w-separate-
-lease_expires_at: 1786161224
 ---
 ## The activation trigger fired on 2026-08-07; this is now open work
 
