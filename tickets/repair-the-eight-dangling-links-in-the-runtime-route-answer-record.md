@@ -1,7 +1,7 @@
 ---
 id: repair-the-eight-dangling-links-in-the-runtime-route-answer-record
 title: Repair the eight dangling links in the runtime route answer record
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786167946
 ---
 ## The premise below is false: these are not wrong relative paths
 
