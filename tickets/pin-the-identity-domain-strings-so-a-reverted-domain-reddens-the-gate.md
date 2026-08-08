@@ -1,7 +1,7 @@
 ---
 id: pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate
 title: Pin the identity domain strings so a reverted domain reddens the gate
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [resolve-semantic-shape-inference-over-symbolic-extents, size-the-four-hand-written-metal-all-arrays-from-their-types]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, tests, versioning]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786174857
 ---
 
 **No test asserted the three identity domain strings this ticket names.** A domain with no digest golden folding it can be reverted, mistyped, or left un-stepped and the full gate stays green. Identity domains are this repository's core versioning mechanism, so the one thing that must not drift silently was the thing nothing checked.
