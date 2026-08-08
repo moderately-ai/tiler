@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [answer-per-ordinal-element-counts-only-for-ordinals-an-output-reads]
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [defect]
 claimed_from: todo
