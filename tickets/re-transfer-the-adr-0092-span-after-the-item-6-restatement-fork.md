@@ -1,7 +1,7 @@
 ---
 id: re-transfer-the-adr-0092-span-after-the-item-6-restatement-fork
 title: Re-transfer the ADR 0092 span after the item 6 restatement fork
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [correct-adr-0092-item-6-s-widening-restatement-trap-and-its-retired-sentence-shorthand, decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span]
@@ -9,9 +9,6 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, documentation, transfer]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786172921
 ---
 
 `docs/research/runtime/backend-scoped-route-requirement-answers.md` retains a byte-identical transferred copy of ADR 0092's decision span. The item-6 restatement landed in the ADR and **forked that copy**. Under the convention stated beside the span, the repair lands in the ADR first and the span is then re-transferred from it — so this ticket is the second half of a repair that is currently incomplete.
@@ -30,6 +27,6 @@ The span re-transferred from ADR 0092 so the two are byte-identical again, verif
 
 **Do not repair the span in place.** Editing inside the span is what forks the transfer, and the convention beside it says so directly. The whole point of the two-step is that the ADR is the authority and the span follows.
 
-**The span is fenced.** It was wrapped in a ```` ```text ```` fence at merge `91f67cc5` under `decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span`, because its relative links are spelled for `docs/decisions/` and do not resolve from the record. Read that ticket before touching the region. Your re-transfer must preserve the fence and must not re-root any link inside it — a re-transfer that quietly repointed the span's links would undo a settled decision and reopen a question three workers converged on.
+**The span is fenced.** It was wrapped in a a `text` code fence fence at merge `91f67cc5` under `decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span`, because its relative links are spelled for `docs/decisions/` and do not resolve from the record. Read that ticket before touching the region. Your re-transfer must preserve the fence and must not re-root any link inside it — a re-transfer that quietly repointed the span's links would undo a settled decision and reopen a question three workers converged on.
 
 Confirm afterwards that `./check-citations.sh` still reports zero failures and that the fence still closes where it did — break a link *after* the closing fence and confirm it is still caught, which is the perturbation that proved the fence's extent the first time.
