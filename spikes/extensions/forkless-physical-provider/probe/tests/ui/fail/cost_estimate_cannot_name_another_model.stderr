@@ -1,0 +1,15 @@
+error[E0624]: associated function `new` is private
+  --> tests/ui/fail/cost_estimate_cannot_name_another_model.rs:16:35
+   |
+16 |       let _ = PhysicalCostEstimate::new("acme.cost.my-own.v1", 1, 4, 0);
+   |                                     ^^^ private associated function
+   |
+  ::: $TILER_COMPILER/src/frontier.rs
+   |
+   | /     pub(crate) const fn new(
+   | |         model_key: &'static str,
+   | |         dispatch_count: u32,
+   | |         launched_threads: u64,
+   | |         temporary_bytes: u64,
+   | |     ) -> Self {
+   | |_____________- private associated function defined here

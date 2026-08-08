@@ -1,0 +1,11 @@
+error[E0603]: module `frontier` is private
+  --> tests/ui/fail/frontier_enumeration_is_not_reachable.rs:15:21
+   |
+15 | use tiler_compiler::frontier::enumerate_frontier;
+   |                     ^^^^^^^^ private module
+   |
+note: the module `frontier` is defined here
+  --> $TILER_COMPILER/src/lib.rs
+   |
+   | mod frontier;
+   | ^^^^^^^^^^^^

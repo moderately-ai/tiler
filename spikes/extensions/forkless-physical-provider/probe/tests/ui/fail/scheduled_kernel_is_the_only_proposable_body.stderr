@@ -1,0 +1,28 @@
+error[E0603]: module `frontier` is private
+  --> tests/ui/fail/scheduled_kernel_is_the_only_proposable_body.rs:16:21
+   |
+16 | use tiler_compiler::frontier::ProposalBody;
+   |                     ^^^^^^^^  ------------ enum `ProposalBody` is not publicly re-exported
+   |                     |
+   |                     private module
+   |
+note: the module `frontier` is defined here
+  --> $TILER_COMPILER/src/lib.rs
+   |
+   | mod frontier;
+   | ^^^^^^^^^^^^
+
+error[E0624]: associated function `new` is private
+  --> tests/ui/fail/scheduled_kernel_is_the_only_proposable_body.rs:21:37
+   |
+21 |       let _ = ImplementationProposal::new;
+   |                                       ^^^ private associated function
+   |
+  ::: $TILER_COMPILER/src/frontier.rs
+   |
+   | /     pub(crate) const fn new(
+   | |         body: ProposalBody,
+   | |         applicability: TargetApplicability,
+   | |         declared_cost: PhysicalCostEstimate,
+   | |     ) -> Self {
+   | |_____________- private associated function defined here

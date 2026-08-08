@@ -4,54 +4,60 @@
 //! This crate is the spike's stand-in for a third party that wants to
 //! contribute **one** specialized Metal implementation of a region Tiler
 //! already implements, without forking `tiler-compiler` and without replacing
-//! `tiler-metal`. It deliberately depends on `tiler-compiler` and `tiler-ir`
-//! exactly as an out-of-tree crate would: by path, with no feature flag, no
-//! `#[path]` include, and no access to any private module.
+//! `tiler-metal`. It depends on `tiler-compiler` and `tiler-ir` exactly as an
+//! out-of-tree crate would: by path, with no feature flag, no `#[path]`
+//! include, and no access to any private module. Its workspace is not the
+//! repository's, so the dependency graph it compiles against is resolved by its
+//! own lockfile rather than by the one that builds `tiler-compiler`'s tests.
 //!
-//! # What it can express
+//! # What it implements
 //!
-//! Everything a proposal *body* is made of is publicly constructible from
-//! `tiler_ir::schedule`, so the specialized implementation below is a real
-//! [`ScheduledRegion`] and not a sketch. Its specialization is the workgroup
+//! The whole of [`PhysicalImplementationProvider`], reached through
+//! `tiler_compiler::physical_provider`. The specialization is the workgroup
 //! width: [`SPECIALIZED_THREADS_PER_WORKGROUP`] threads per workgroup instead
-//! of the governed provider's one
-//! (`crates/tiler-compiler/src/physical.rs:495`, `linear_schedule`). That axis
-//! is free under the intrinsic verifier, which requires only that
-//! `schedule.threads_per_workgroup` equal `schedule.launch.threads_per_workgroup`
-//! and be non-zero (`crates/tiler-ir/src/schedule/builder.rs:288`), and it is
-//! folded into `CanonicalScheduledRegionIdentity`
-//! (`crates/tiler-ir/src/schedule/model.rs:892`), so the two implementations of
-//! one region are distinct rather than duplicates.
+//! of the governed provider's one. That axis is free under the intrinsic
+//! verifier, which requires only that `schedule.threads_per_workgroup` equal
+//! `schedule.launch.threads_per_workgroup` and be non-zero, and it is folded
+//! into the canonical scheduled-region identity, so the two implementations of
+//! one region are distinct alternatives rather than one implementation twice.
 //!
-//! # What it cannot express
+//! # Where the body comes from, and why that is not a detail
 //!
-//! It cannot implement `tiler_compiler::frontier::PhysicalImplementationProvider`,
-//! because `frontier` is a private module and every item a provider would name
-//! is `pub(crate)` inside it. Nor could an implementation be installed if the
-//! trait were public: `tiler_compiler::session::CompileRequest` has no
-//! physical-provider field, and the provider array is a hardcoded one-element
-//! literal at `crates/tiler-compiler/src/pipeline/planning.rs:171`. The
-//! `probe` crate holds the compile-fail evidence for both statements.
+//! It is [`ImplementationContext::baseline`] — this host's own spelling of the
+//! region subject — cloned and perturbed in exactly one field. Nothing here
+//! builds a scheduled region from scratch any more, and the change is the whole
+//! reason this crate is now short. The request-subject binding compares a
+//! proposed region's identity, iteration shape, scalar program, semantic
+//! members, and access map against the compiler's own normalization, so a
+//! hand-built body has to reproduce all five; the two earlier revisions of this
+//! crate did, and both stopped compiling when `tiler-ir` moved underneath them.
+//! Specializing the host's spelling is the operation the landed seam supports,
+//! and it is also the one a third party can keep working.
 //!
-//! So this crate stops at the proposal body, its identity, and its cost — the
-//! three things the trait's `propose` would return — and the probe drives them
-//! as far as the public surface reaches.
+//! # What it deliberately does not state
+//!
+//! Provider identity on a proposal, exact resource requirements, the boundary
+//! contract, hard feasibility, and cost-model attribution. There is no public
+//! spelling for any of them: the host derives all five. The probe's compile-fail
+//! fixtures are where that absence is recorded as evidence rather than as a
+//! sentence.
 
-use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExceptionalValueAssumption,
-    ExecutionBinding, FlushedZeroSign, IndexRegion, InputOrdinal, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
-    RegionId, ScalarProgram, ScheduledRegion, SubnormalMode, TailPolicy, TensorRole,
+use std::cell::RefCell;
+
+use tiler_compiler::physical_provider::{
+    DeclinedStrategy, ImplementationContext, ImplementationProposal,
+    PhysicalImplementationProvider, PhysicalProviderProvenance, PhysicalProviderProvenanceError,
+    ProviderOffer, StrategyDeclineCause, TargetApplicability,
 };
+use tiler_ir::schedule::ScheduledRegion;
 use tiler_ir::semantic::ProviderIdentity;
-use tiler_ir::shape::Shape;
 
 /// Namespace of this separately authored provider.
 ///
 /// Deliberately not `tiler`: provider provenance is a versioned identity
 /// separated from semantic meaning (ADR 0072), so a third party's proposals
-/// must be attributable to the third party.
+/// must be attributable to the third party. Installation refuses the governed
+/// namespace outright, which the probe exercises.
 pub const NAMESPACE: &str = "acme";
 
 /// Name of this separately authored provider.
@@ -60,10 +66,12 @@ pub const NAME: &str = "simdgroup-pointwise-metal";
 /// Output-affecting revision of this provider.
 ///
 /// Output-affecting in the literal sense the identity contract means: bumping
-/// it must accompany a change to the bytes this crate proposes. It is `3`
-/// rather than `1` so a reader cannot mistake it for the governed provider's
-/// revision (`crates/tiler-compiler/src/frontier.rs:2029`) by coincidence.
-pub const REVISION: u32 = 3;
+/// it must accompany a change to the bytes this crate proposes. It moved from
+/// `3` to `4` when the body stopped being hand-built and became the host's
+/// baseline specialized in one field, which changes those bytes. It has never
+/// been `1`, so a reader cannot mistake it for the governed provider's revision
+/// by coincidence.
+pub const REVISION: u32 = 4;
 
 /// The workgroup width this provider specializes on.
 ///
@@ -73,11 +81,12 @@ pub const REVISION: u32 = 3;
 /// a genuine physical difference rather than a re-spelling.
 pub const SPECIALIZED_THREADS_PER_WORKGROUP: u32 = 32;
 
-/// The numerical realization key this provider proposes under.
-const REALIZATION_KEY: &str = "acme.spike.flush-subnormals-f32";
+/// The stable name this provider declines a withheld strategy under.
+pub const WIDE_WORKGROUP_STRATEGY: &str = "acme.wide-workgroup";
 
-/// The canonical arithmetic NaN bit pattern the realization pins.
-const CANONICAL_NAN_BITS: u32 = 0x7fc0_0000;
+/// The decline rule this provider names when a subject has no single-dispatch
+/// baseline to specialize.
+pub const NO_BASELINE_RULE: &str = "acme.no-single-dispatch-baseline";
 
 /// Returns this provider's identity.
 ///
@@ -91,216 +100,155 @@ pub fn identity() -> ProviderIdentity {
         .expect("the spike provider identity is well formed")
 }
 
-/// The pointwise region subject this provider offers an implementation of.
+/// How this provider perturbs the host's baseline region.
 ///
-/// It mirrors what `ImplementationContext::request()` would expose: the
-/// iteration extent and the scale/bias constants of the normalized pointwise
-/// program. The real context type is `pub(crate)` in a private module, so the
-/// spike restates the three values rather than pretending to receive it.
+/// Two of the three are deliberately invalid. A provider is *trusted* native
+/// code, so the interesting question is not whether a correct body is accepted
+/// but whether an incorrect one is believed, and that has to be asked with a
+/// body the host must refuse.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PointwiseSubject {
-    /// Element count of the one-dimensional iteration domain.
-    pub elements: u64,
-    /// Bit pattern of the `f32` scale constant.
-    pub scale_bits: u32,
-    /// Bit pattern of the `f32` bias constant.
-    pub bias_bits: u32,
+pub enum Specialization {
+    /// A wider workgroup, which the intrinsic verifier leaves free.
+    WideWorkgroup,
+    /// A zero-thread workgroup: structurally invalid IR, not an expensive plan.
+    ZeroThreadWorkgroup,
+    /// A grid one thread short of the iteration domain, which is the launch
+    /// coverage rule rather than a target limit.
+    UndercoveredGrid,
 }
 
-impl PointwiseSubject {
-    /// The subject the probe drives, matching the bounded profile's shape.
+/// A separately authored provider that specializes one schedule axis.
+///
+/// It retains the baselines it read and the bodies it proposed, in the order the
+/// enumeration asked for them, so the probe can state claims about what actually
+/// reached the frontier rather than about what this crate intended to send.
+pub struct AcmeProvider {
+    identity: ProviderIdentity,
+    specialization: Specialization,
+    exchanged: RefCell<Vec<Exchange>>,
+}
+
+/// One baseline this provider was offered and the body it proposed for it.
+#[derive(Clone, Debug)]
+pub struct Exchange {
+    /// The host's own spelling of the region subject.
+    pub baseline: ScheduledRegion,
+    /// The specialized body this provider proposed for it.
+    pub proposed: ScheduledRegion,
+}
+
+impl AcmeProvider {
+    /// Builds a provider under this crate's own identity.
     #[must_use]
-    pub const fn spike_default() -> Self {
+    pub fn new(specialization: Specialization) -> Self {
+        Self::named(NAME, REVISION, specialization)
+    }
+
+    /// Builds a provider under a stated name and revision.
+    ///
+    /// Present so the probe can install two providers, and two revisions of one
+    /// provider, without a second implementation of `propose` that could drift
+    /// from this one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` and `revision` do not form a canonical provider
+    /// identity, which is a defect in the caller rather than a reachable input.
+    #[must_use]
+    pub fn named(name: &str, revision: u32, specialization: Specialization) -> Self {
         Self {
-            elements: 256,
-            scale_bits: 0x3f80_0000,
-            bias_bits: 0,
+            identity: ProviderIdentity::new(NAMESPACE, name, revision)
+                .expect("the spike provider identity is well formed"),
+            specialization,
+            exchanged: RefCell::new(Vec::new()),
         }
     }
-}
 
-/// Builds the implementation the governed provider would offer for `subject`.
-///
-/// Present as the *contrast*, not as a copy for its own sake: a specialization
-/// claim is only meaningful beside the baseline it specializes, and the two
-/// must differ in exactly one axis for the identity comparison in the probe to
-/// mean what it says.
-#[must_use]
-pub fn governed_shaped_region(subject: PointwiseSubject) -> ScheduledRegion {
-    region(subject, 1, subject.elements)
-}
+    /// Builds a provider claiming an arbitrary namespace, name, and revision.
+    ///
+    /// The one constructor that can spell Tiler's own governed identity, which
+    /// is what the probe's forged-identity claim needs and what installation
+    /// refuses.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the three components do not form a canonical provider identity.
+    #[must_use]
+    pub fn impersonating(namespace: &str, name: &str, revision: u32) -> Self {
+        Self {
+            identity: ProviderIdentity::new(namespace, name, revision)
+                .expect("the impersonated identity is well formed"),
+            specialization: Specialization::WideWorkgroup,
+            exchanged: RefCell::new(Vec::new()),
+        }
+    }
 
-/// Builds this provider's specialized implementation of `subject`.
-///
-/// Identical index region, identical scalar program, identical numerical
-/// realization; a wider workgroup. That is the whole difference, and it is the
-/// difference the request-subject binding permits: the binding compares the
-/// region id, iteration shape, scalar program, semantic members, and access map
-/// (`crates/tiler-compiler/src/physical.rs:700`) and says nothing about
-/// `KernelSchedule`.
-#[must_use]
-pub fn specialized_region(subject: PointwiseSubject) -> ScheduledRegion {
-    region(subject, SPECIALIZED_THREADS_PER_WORKGROUP, subject.elements)
-}
+    /// Returns the baselines read and the bodies proposed, in enumeration order.
+    #[must_use]
+    pub fn exchanged(&self) -> Vec<Exchange> {
+        self.exchanged.borrow().clone()
+    }
 
-/// Builds a deliberately malformed variant of the specialized implementation.
-///
-/// The perturbation is a launch plan that does not cover the iteration domain:
-/// `launch.grid_threads` is one short. Chosen over a malformed *body* the
-/// builder could not even hold, because the interesting question is whether a
-/// provider that returns a structurally plausible region is believed, and the
-/// answer must be that the host's verifier rejects it.
-#[must_use]
-pub fn malformed_specialized_region(subject: PointwiseSubject) -> ScheduledRegion {
-    region(
-        subject,
-        SPECIALIZED_THREADS_PER_WORKGROUP,
-        subject.elements.saturating_sub(1),
-    )
-}
-
-/// The structural cost estimate this provider would declare.
-///
-/// Returned as plain numbers because `PhysicalCostEstimate` is `pub(crate)` in
-/// a private module, and the governed cost-model key it must be attributed to
-/// (`tiler.cost.structural.v1`) is a private constant with no public spelling:
-/// a proposal attributing its estimate to any other key is a hard
-/// `FrontierError::MalformedCostProvenance`
-/// (`crates/tiler-compiler/src/frontier.rs:1470`).
-#[must_use]
-pub const fn declared_cost(subject: PointwiseSubject) -> (u32, u64, u64) {
-    (1, subject.elements, 0)
-}
-
-fn region(
-    subject: PointwiseSubject,
-    threads_per_workgroup: u32,
-    grid_threads: u64,
-) -> ScheduledRegion {
-    ScheduledRegion {
-        index: IndexRegion {
-            id: RegionId::new(0),
-            iteration_shape: Shape::from_dims([subject.elements]),
-            accesses: vec![
-                Access {
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                    component_role: None,
-                    mode: AccessMode::Read,
-                    map: LogicalAccess::LinearIdentity,
-                    bounds: BoundsWitnessId::new(0),
-                    ownership: None,
-                },
-                Access {
-                    tensor: TensorRole::Output,
-                    component_role: None,
-                    mode: AccessMode::Write,
-                    map: LogicalAccess::LinearIdentity,
-                    bounds: BoundsWitnessId::new(1),
-                    ownership: Some(OwnershipWitnessId::new(0)),
-                },
-            ],
-            bounds_proofs: vec![
-                BoundsProof {
-                    id: BoundsWitnessId::new(0),
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                    component_role: None,
-                    kind: BoundsProofKind::LinearRange {
-                        element_count: subject.elements,
-                    },
-                },
-                BoundsProof {
-                    id: BoundsWitnessId::new(1),
-                    tensor: TensorRole::Output,
-                    component_role: None,
-                    kind: BoundsProofKind::LinearRange {
-                        element_count: subject.elements,
-                    },
-                },
-            ],
-            ownership_proof: OwnershipProof {
-                id: OwnershipWitnessId::new(0),
-                tensor: TensorRole::Output,
-                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
-                    output_count: subject.elements,
-                },
-            },
-            scalar_program: ScalarProgram::PointwiseF32(scale_bias_expression(
-                subject.scale_bits,
-                subject.bias_bits,
-            )),
-            numerical: realization(),
-        },
-        schedule: KernelSchedule {
-            binding: ExecutionBinding::GlobalLinearInvocation,
-            work_items: subject.elements,
-            threads_per_workgroup,
-            tail: TailPolicy::Exact,
-            output_owner: OwnershipWitnessId::new(0),
-            reduction: ReductionTopology::None,
-            launch: LaunchPlan {
-                grid_threads,
-                threads_per_workgroup,
-                zero_work_skips_dispatch: true,
-            },
-        },
+    fn specialize(&self, baseline: &ScheduledRegion) -> ScheduledRegion {
+        let mut region = baseline.clone();
+        match self.specialization {
+            Specialization::WideWorkgroup => {
+                region.schedule.threads_per_workgroup = SPECIALIZED_THREADS_PER_WORKGROUP;
+                region.schedule.launch.threads_per_workgroup = SPECIALIZED_THREADS_PER_WORKGROUP;
+            }
+            Specialization::ZeroThreadWorkgroup => {
+                region.schedule.threads_per_workgroup = 0;
+                region.schedule.launch.threads_per_workgroup = 0;
+            }
+            Specialization::UndercoveredGrid => {
+                region.schedule.launch.grid_threads =
+                    region.schedule.launch.grid_threads.saturating_sub(1);
+            }
+        }
+        region
     }
 }
 
-/// The scale-then-bias expression the normalized pointwise subject denotes.
-///
-/// Spelled the same way the compiler spells it
-/// (`crates/tiler-compiler/src/physical.rs:517`), because the request-subject
-/// binding compares the expression for structural equality against its own
-/// construction and rejects an algebraically similar one.
-fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
-    let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression
-        .input(InputOrdinal::FIRST)
-        .expect("the fixed expression has exactly one input");
-    let scale = expression
-        .constant(scale_bits)
-        .expect("the fixed expression is within the node limit");
-    let product = expression
-        .multiply(input, scale)
-        .expect("the fixed expression is within the node limit");
-    let bias = expression
-        .constant(bias_bits)
-        .expect("the fixed expression is within the node limit");
-    let root = expression
-        .add(product, bias)
-        .expect("the fixed expression is within the node limit");
-    expression
-        .build(root)
-        .expect("the fixed expression is well formed")
-}
+impl PhysicalImplementationProvider for AcmeProvider {
+    fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+        PhysicalProviderProvenance::new(self.identity.clone())
+    }
 
-/// The numerical realization this provider proposes under.
-///
-/// Flushing on both subnormal dimensions and every reshaping freedom refused,
-/// which is what Apple hardware measurably delivers for `f32`. The compiler
-/// would compare this against the request's resolved contract
-/// (`crates/tiler-compiler/src/physical.rs:655`); that comparison is one of the
-/// gates this spike cannot reach, so the realization is stated here rather than
-/// derived from a request.
-fn realization() -> NumericalRealization {
-    NumericalRealization::new(
-        REALIZATION_KEY,
-        CANONICAL_NAN_BITS,
-        SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::PreservesSign,
-        },
-        SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::PreservesSign,
-        },
-        NumericalPermission::Forbidden,
-        NumericalPermission::Forbidden,
-        NumericalPermission::Forbidden,
-        NumericalPermission::Forbidden,
-        ExceptionalValueAssumption::MakeNoAssumption,
-        ExceptionalValueAssumption::MakeNoAssumption,
-    )
+    fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+        let Some(baseline) = context.baseline() else {
+            // Silence and a named decline are different answers, and this is
+            // the second: the strategy applied and this subject admitted no
+            // shape for it. A subject whose cover made it a published-and-
+            // consumed region has no single-dispatch baseline, and there is no
+            // public spelling of a two-dispatch body to propose instead.
+            return ProviderOffer::default().decline(DeclinedStrategy::new(
+                WIDE_WORKGROUP_STRATEGY,
+                StrategyDeclineCause::NoAdmissibleShape {
+                    rule: NO_BASELINE_RULE,
+                    // `try_from` rather than `as`: the count is a `usize` and
+                    // the cause carries a `u64`, and a saturating conversion
+                    // states what an unrepresentable count would mean instead
+                    // of wrapping one silently.
+                    extent: u64::try_from(context.subject().covered_occurrences())
+                        .unwrap_or(u64::MAX),
+                },
+            ));
+        };
+        let proposed = self.specialize(baseline.region());
+        self.exchanged.borrow_mut().push(Exchange {
+            baseline: baseline.region().clone(),
+            proposed: proposed.clone(),
+        });
+        ProviderOffer::proposing(vec![ImplementationProposal::scheduled_kernel(
+            proposed,
+            // The key comes from the request rather than from a constant of
+            // this crate's own, so a profile rename fails to compile here
+            // instead of making every proposal silently inapplicable.
+            TargetApplicability::for_targets([context.target_profile().profile_key().clone()]),
+            // The host's own estimate for the region this specializes. A wider
+            // workgroup changes no structural dimension, so inventing a lower
+            // number would win a comparison that measured nothing.
+            baseline.cost(),
+        )])
+    }
 }

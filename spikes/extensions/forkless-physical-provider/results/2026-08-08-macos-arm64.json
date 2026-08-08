@@ -1,0 +1,221 @@
+{
+  "schema": "tiler-forkless-physical-provider/v1",
+  "recorded": "2026-08-08",
+  "ticket": "refresh-the-forkless-physical-provider-spike-against-the-landed-seam",
+  "supersedes": "2026-07-31-macos-arm64.json",
+  "question": "Can a separately authored, statically linked crate outside this workspace contribute one specialized Metal physical implementation alongside the governed provider without forking tiler-compiler and without replacing tiler-metal?",
+  "answer": "Yes, at the commit recorded below, with a stated boundary. The two blockers the 2026-07-31 run recorded were both removed by the installable physical-provider seam. The retained compile-fail evidence no longer pins the seam's absence; it pins the five subjects the host reserves from a provider.",
+  "answer_relation_to_prior_run": "This overturns the prior falsification. The 2026-07-31 result is not withdrawn: it remains a correct dated observation about commit 7b1e3a7e, and the two blockers it recorded are exactly the two the landing had to remove.",
+  "procedure": "cargo nextest run --workspace, from spikes/extensions/forkless-physical-provider/",
+  "subject_commit": "cb62784c7d8b63aa2e73c9ac490101b748abc0ec",
+  "subject_commit_note": "The commit of crates/ that the run compiled against. The spike's own refresh commit is later and touches no crate, so the subject is unchanged by it.",
+  "toolchain": {
+    "channel": "nightly-2026-07-19",
+    "rustc_version": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)",
+    "rustc_commit_hash": "eff8269f797067c30555e77f160ec84c0ed15cd9",
+    "cargo_version": "cargo 1.99.0-nightly (3efb1f477 2026-07-17)",
+    "edition": "2024",
+    "host": "aarch64-apple-darwin",
+    "operating_system": "macOS 27.0 (26A5388g)",
+    "unchanged_since": "2026-07-31-macos-arm64.json — same channel, same rustc commit hash, same cargo, same host and OS build, so no diagnostic rendering moved for a toolchain reason"
+  },
+  "resolved_blockers": [
+    {
+      "id": "frontier-module-private",
+      "recorded": "2026-07-31",
+      "was": "The nine items a PhysicalImplementationProvider implementation must name were pub(crate) inside a private mod frontier, and the governed cost-model key had no public spelling.",
+      "now": "tiler_compiler::physical_provider publicly re-exports the trait, both method signatures, and the constructors a propose body needs, and publishes GOVERNED_PHYSICAL_COST_MODEL_KEY as a reading surface. mod frontier stays private; the enumeration entry point behind it is a reserved subject rather than a blocker.",
+      "evidence": "probe/tests/ui/pass/provider_vocabulary_is_publicly_reachable.rs, which names every item and compiles",
+      "retired_fixture": "probe/tests/ui/fail/frontier_provider_vocabulary_is_private.rs"
+    },
+    {
+      "id": "no-installation-seam",
+      "recorded": "2026-07-31",
+      "was": "CompileRequest carried no physical-provider field and the provider array was a hardcoded one-element literal, so a public frontier would still have left a provider uninstallable.",
+      "now": "CompileRequest::with_physical_providers takes an InstalledPhysicalProviders, whose providers() places the governed provider first and the caller's after it. Installing adds; there is no removal spelling.",
+      "evidence": "probe/tests/ui/pass/both_installation_seams_exist.rs and probe/tests/composition.rs::an_out_of_tree_provider_reaches_a_retained_plan_beside_the_governed_one",
+      "retired_fixture": "probe/tests/ui/fail/no_physical_provider_installation_seam.rs"
+    },
+    {
+      "id": "provider-inputs-private",
+      "recorded": "2026-07-31",
+      "was": "Recorded as a blocker: request, region, physical, and pipeline are private modules, so 'the provider seam's transitive closure is private, not just its entry point'.",
+      "now": "All four modules are still private and none of them is needed. ImplementationContext supplies the target profile, the resolved numerical realization, the region subject, and the host's own baseline spelling of it, which is what a provider specializes. The blocker framing was superseded rather than the visibility.",
+      "evidence": "acme-provider/src/lib.rs reads only ImplementationContext and proposes a clone of context.baseline()",
+      "retired_fixture": "probe/tests/ui/fail/provider_inputs_are_private.rs",
+      "note": "That fixture also carried a third stale citation of its own: pipeline::compile no longer exists, and the 2026-08-08 mismatch reported error[E0432] 'no compile in pipeline' beside the four module gates."
+    }
+  ],
+  "reserved_subjects": [
+    {
+      "id": "verified-request-not-reachable",
+      "subject": "ImplementationContext::request",
+      "diagnostic": "error[E0624]: method `request` is private",
+      "why": "A provider that could re-derive the host's normalization could disagree with it, and the request-subject binding must have one answer.",
+      "evidence": "probe/tests/ui/fail/verified_request_is_not_reachable.rs",
+      "also_pinned_in_tree": "compile_fail,E0624 doctest on crates/tiler-compiler/src/physical_provider.rs"
+    },
+    {
+      "id": "cost-attribution-reserved",
+      "subject": "PhysicalCostEstimate::new",
+      "diagnostic": "error[E0624]: associated function `new` is private",
+      "why": "Attributing an estimate to a model of the provider's own has no public spelling, which is what stops two incomparable numbers being ranked. PhysicalCostEstimate::structural is the only reachable constructor and already carries the governed key.",
+      "evidence": "probe/tests/ui/fail/cost_estimate_cannot_name_another_model.rs",
+      "also_pinned_in_tree": "compile_fail,E0624 doctest on crates/tiler-compiler/src/physical_provider.rs"
+    },
+    {
+      "id": "region-subject-members-reserved",
+      "subject": "FrontierRegionSubject::semantic_members",
+      "diagnostic": "error[E0624]: method `semantic_members` is private",
+      "why": "A member is a graph-local authoring coordinate, so exporting the ordinals would put an authoring accident into a provider's decision and, through a decline cause, into the trace. covered_occurrences is the count, and it is public.",
+      "evidence": "probe/tests/ui/fail/region_subject_members_are_not_readable.rs",
+      "also_pinned_in_tree": "compile_fail,E0624 doctest on crates/tiler-compiler/src/physical_provider.rs"
+    },
+    {
+      "id": "enumeration-not-reachable",
+      "subject": "tiler_compiler::frontier::enumerate_frontier",
+      "diagnostic": "error[E0603]: module `frontier` is private",
+      "why": "Installing a provider and running the frontier are different rights. The re-verification the seam rests on happens inside enumerate_frontier, so a caller that could invoke it directly would admit a body outside a compilation's own authorities.",
+      "evidence": "probe/tests/ui/fail/frontier_enumeration_is_not_reachable.rs",
+      "also_pinned_in_tree": "compile_fail,E0603 doctest on crates/tiler-compiler/src/physical_provider.rs"
+    },
+    {
+      "id": "one-proposable-body",
+      "subject": "ProposalBody and ImplementationProposal::new",
+      "diagnostic": "error[E0603]: module `frontier` is private, and error[E0624]: associated function `new` is private",
+      "why": "ImplementationProposal::scheduled_kernel is the one body an installed provider may propose. A kernel subprogram states per-stage attribution in a coordinate this boundary does not export, an opaque call is admitted by naming a compiler-owned registration, and the view variant is a reserved seam whose purpose is to reject.",
+      "evidence": "probe/tests/ui/fail/scheduled_kernel_is_the_only_proposable_body.rs",
+      "also_pinned_in_tree": "none — the restriction is stated in prose on ImplementationProposal::scheduled_kernel and this fixture is the only check over it"
+    }
+  ],
+  "claims": [
+    {
+      "id": "public-compile-path-reachable-out-of-tree",
+      "statement": "An out-of-workspace crate reaches the real compile path through tiler_compiler::session::compile and receives a selected plan under the governed profile.",
+      "outcome": "reachable",
+      "observed": {
+        "target_profile_key": "tiler.prototype-target-neutral-baseline.v1",
+        "selected_physical_providers_across_alternatives": ["tiler::prototype-serial-sum-physical@1"]
+      },
+      "case": "probe/tests/composition.rs::the_governed_compile_path_is_reachable_from_an_out_of_tree_crate"
+    },
+    {
+      "id": "out-of-tree-provider-is-retained-additively",
+      "statement": "A provider defined in a separate workspace, installed through CompileRequest::with_physical_providers, has its bodies re-verified, admitted, and retained beside the governed provider's, and the resulting plan names it as the authority for the region it implemented.",
+      "outcome": "retained",
+      "observed": {
+        "alternatives_governed_only": 1,
+        "alternatives_with_the_provider_installed": 2,
+        "selected_physical_providers_across_alternatives": [
+          "acme::simdgroup-pointwise-metal@4",
+          "tiler::prototype-serial-sum-physical@1"
+        ],
+        "physical_selections_on_the_selected_plan": 1,
+        "proposal_kind": "scheduled-kernel",
+        "installed_identities_reported_by_the_environment": ["acme::simdgroup-pointwise-metal@4"]
+      },
+      "case": "probe/tests/composition.rs::an_out_of_tree_provider_reaches_a_retained_plan_beside_the_governed_one",
+      "rung": "This is the measurement docs/operation-extensions.md names as the tested-guarantee bar for the physical-provider row: a provider written outside the defining crate's own governed set, driven through the ordinary compile path, with the resulting plan naming it. The 2026-08-08 in-tree evidence reached the same surface from a separate compilation unit inside the defining package; this reaches it from a separate workspace with its own lockfile."
+    },
+    {
+      "id": "specialization-is-of-the-hosts-own-baseline",
+      "statement": "ImplementationContext::baseline offers this host's single-dispatch spelling of each subject, and the provider proposes that region with the workgroup width changed and nothing else. The index region the request-subject binding compares is byte-identical between the two, and the canonical scheduled-region identities differ.",
+      "outcome": "one-axis specialization confirmed",
+      "observed": {
+        "subjects_offering_a_baseline": 3,
+        "baseline_threads_per_workgroup": 1,
+        "proposed_threads_per_workgroup": 32
+      },
+      "case": "probe/tests/composition.rs::the_provider_specializes_the_hosts_own_baseline_in_one_axis"
+    },
+    {
+      "id": "stock-metal-emission-is-reusable-unchanged",
+      "statement": "The provider crate does not depend on tiler-metal. The probe lowers the bodies that actually reached the frontier with tiler_ir::kernel::lower_scheduled_region and emits them with tiler_metal::emit::emit_translation_unit, both public, and the emitted units pass require_declared_realization against the measured Apple facts under the realization the compiler resolved.",
+      "outcome": "reusable",
+      "case": "probe/tests/composition.rs::the_specialized_body_reuses_stock_metal_emission",
+      "unchanged_from": "2026-07-31, where the same claim was measured over a hand-built region instead of a proposed one"
+    },
+    {
+      "id": "alternatives-do-not-collide-at-the-artifact-boundary",
+      "statement": "The specialized and baseline bodies emit byte-identical kernel bodies under distinct entry-point symbols, because the symbol is derived from an identity the workgroup width participates in. Launch geometry is carried by the dispatch, not by the emitted statements.",
+      "outcome": "distinct symbols, identical bodies modulo identity digests",
+      "case": "probe/tests/composition.rs::the_specialized_body_reuses_stock_metal_emission"
+    },
+    {
+      "id": "malformed-body-fails-the-compilation-closed",
+      "statement": "A proposed body with a zero-thread workgroup, and separately one whose launch grid is one thread short of the iteration domain, each fail the whole compilation with CompileFailureClass::InvalidCompilerOutput. A trusted provider is not a believed one, and a provider whose IR is wrong is a fault rather than a provider with nothing to offer.",
+      "outcome": "rejected, twice, on independently perturbed rules",
+      "case": "probe/tests/composition.rs::a_structurally_invalid_body_fails_the_compilation_closed"
+    },
+    {
+      "id": "installation-refuses-forged-and-repeated-identities",
+      "statement": "Installing one identity twice is PhysicalProviderInstallationError::DuplicateIdentity; installing two revisions of one provider succeeds, so the check is on the whole identity rather than on namespace and name; and an installed provider claiming tiler::prototype-serial-sum-physical@1 is GovernedIdentity. All three are decided at installation, before any compilation runs.",
+      "outcome": "refused",
+      "case": "probe/tests/composition.rs::installation_refuses_a_forged_or_repeated_identity"
+    },
+    {
+      "id": "offered-provider-set-is-still-lowering-only",
+      "statement": "Compilation::offered_providers is populated from the lowering capability registry. Neither the installed physical provider nor the governed physical provider appears in it, while the same compilation's PlanAlternative::selected_physical_providers names both. So a caller reading only the offered half cannot tell a registration that failed to take effect from a provider that lost on cost.",
+      "outcome": "measured absence, narrower than the two the 2026-07-31 run recorded",
+      "case": "probe/tests/composition.rs::the_offered_provider_set_is_still_lowering_only",
+      "boundary": "Whether the offered half should grow a physical row is ADR 0090 item 5's subject. This records the state, and argues for no change to it."
+    }
+  ],
+  "not_measured_here": [
+    {
+      "id": "determinism-under-an-installed-provider",
+      "reason": "Measured in crates/tiler-compiler/tests/external_physical_provider.rs::an_installed_provider_leaves_selection_deterministic. Restating it out of tree would duplicate rather than strengthen: the frontier's canonical ordering is a property of the compiler, not of the caller's workspace."
+    },
+    {
+      "id": "hard-feasibility-refusal-against-a-declared-capacity",
+      "reason": "Measured in crates/tiler-compiler/tests/external_physical_provider.rs::a_specialization_beyond_the_targets_capacity_is_refused_rather_than_costed, which fabricates a profile whose workgroup capacity is a compile-time declared fact. This probe deliberately compiles against Tiler's own governed profile, which answers that capacity through a prepared-entry query, so the same specialization resolves as a deferred predicate here and produces no hard rejection to observe."
+    },
+    {
+      "id": "two-providers-cost-estimates-compared",
+      "reason": "The specialization declares the baseline's own estimate, so neither dominates and both are retained. Whether two providers' independently computed structural estimates rank sensibly against each other is still unmeasured; the seam makes it constructible, and nothing here exercises it."
+    },
+    {
+      "id": "runtime-behaviour",
+      "reason": "Nothing here allocates a device, invokes xcrun, or dispatches. The emission claims are about source text and entry-point symbols."
+    }
+  ],
+  "falsification_runs": [
+    {
+      "id": "control-goldens-are-checkout-independent",
+      "procedure": "Copy crates/ and this spike outside the repository, rewrite the three tiler-* path dependencies in Cargo.toml and probe/Cargo.toml to absolute paths under the copy, supply a root manifest with the prototype members removed, and rerun the whole suite.",
+      "observed": "8 tests run: 8 passed, 0 skipped. The .stderr goldens normalize the dependency path to $TILER_COMPILER, so they are not tied to this checkout — which is what the explicit `path` keys in probe/Cargo.toml exist for.",
+      "date": "2026-08-08"
+    },
+    {
+      "id": "verified-request-check-can-say-no",
+      "procedure": "In that copy, make mod request public and ImplementationContext::request public, and rerun.",
+      "observed": "test tests/ui/fail/verified_request_is_not_reachable.rs [should fail to compile] ... mismatch — the E0624 was replaced by `error: type request::VerifiedTargetRequest is private` at a different span. 1 of 8 tests failed; the other four fail fixtures and all three pass fixtures were unaffected.",
+      "date": "2026-08-08"
+    },
+    {
+      "id": "cost-attribution-check-can-say-no",
+      "procedure": "In that copy, make PhysicalCostEstimate::new public, and rerun.",
+      "observed": "test tests/ui/fail/cost_estimate_cannot_name_another_model.rs [should fail to compile] ... error / Expected test case to fail to compile, but it succeeded. 1 of 8 tests failed; nothing else moved.",
+      "date": "2026-08-08"
+    },
+    {
+      "id": "region-subject-members-check-can-say-no",
+      "procedure": "In that copy, make mod region public and FrontierRegionSubject::semantic_members public, and rerun.",
+      "observed": "test tests/ui/fail/region_subject_members_are_not_readable.rs [should fail to compile] ... mismatch — the E0624 was replaced by `error: type region::SemanticStage is private`. 1 of 8 tests failed; nothing else moved.",
+      "date": "2026-08-08"
+    },
+    {
+      "id": "enumeration-check-can-say-no",
+      "procedure": "In that copy, make mod frontier public, and rerun.",
+      "observed": "test tests/ui/fail/frontier_enumeration_is_not_reachable.rs ... mismatch — the module gate E0603 became `error[E0603]: function enumerate_frontier is private`, which is the item gate behind it. 2 of 8 tests failed: this fixture and the E0603 half of scheduled_kernel_is_the_only_proposable_body, because publishing the module opens one boundary that both read. The E0624 half of that second fixture has its own perturbation below.",
+      "date": "2026-08-08"
+    },
+    {
+      "id": "proposal-body-check-can-say-no",
+      "procedure": "In that copy, make ImplementationProposal::new public — leaving mod frontier private — and rerun.",
+      "observed": "test tests/ui/fail/scheduled_kernel_is_the_only_proposable_body.rs ... mismatch — the E0624 disappeared from the actual output, leaving only the ProposalBody E0603. 1 of 8 tests failed, so the fixture's two properties are separately load-bearing.",
+      "date": "2026-08-08"
+    }
+  ],
+  "measurement_boundary": "Facts about one compiler, one host, and one commit. The .stderr goldens are the rendering of a diagnostic, not a stability guarantee: a later rustc may reword E0603 or E0624 without any change to Tiler, and the E0624 goldens additionally quote the signature of the private item, so a signature edit in tiler-compiler moves them. A red trybuild run means the recorded boundary has moved and must be re-decided, never that a golden should be blessed to make it green. The claim each golden pins was predicted before the run and verified against the generated file — the error code and the item it names; the exact rendering was generated rather than hand-written, and the falsification runs above are what establish that each can still say no."
+}
