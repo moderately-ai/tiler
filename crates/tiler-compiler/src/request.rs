@@ -4882,14 +4882,16 @@ fn resolve_numerical_contract(
 ///   the elementwise walk *names* the value a folding family produced instead of
 ///   stopping at it, the producer is recognized as its own shape, and the cover
 ///   search places the materialization edge between them. What is still refused
-///   under `operation-set` is a chain one boundary deeper — a walk that reaches a
-///   *second, different* folded value — and that is a rule about chain depth
-///   rather than about ordinals, because each of those regions would read one
-///   intermediate. [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md)
-///   owns it, together with [`recognize_staged_family`]'s `staged-operand-depth`,
-///   which states the same rule for the operand walk. The neighbouring refusal
-///   that *is* about the unordinalled role is [`record_leaf`]'s: one staged value
-///   read twice by one walk.
+///   under `operation-set` is a walk that reaches a *second, different* folded
+///   value, and that is a rule about chain **width** rather than depth: the two
+///   folds would feed one region two `TensorRole::Intermediate` reads, which is
+///   the same unordinalled-role fact [`record_leaf`] refuses for one staged value
+///   read twice.
+///   [`admit-a-scheduled-region-that-reads-two-materialization-edges`](../../../tickets/admit-a-scheduled-region-that-reads-two-materialization-edges.md)
+///   owns the region vocabulary underneath both. The chain-*depth* rule is
+///   [`recognize_staged_family`]'s `staged-operand-depth`, stated once at
+///   [`StagedOperandAdmission`], which also names the third folded-value wall —
+///   a fold whose prologue is itself a chain — and its separate owner.
 /// - **A staged family reading a materialized intermediate is admitted**, which
 ///   is where the last of this rule's rows moved.
 ///   [`admit-a-staged-family-that-reads-a-materialized-intermediate`](../../../tickets/admit-a-staged-family-that-reads-a-materialized-intermediate.md)
@@ -5451,13 +5453,26 @@ enum ElementwiseRefusal {
     ///
     /// Raised only for a walk that has no staged value yet: a walk that already
     /// reads one and reaches a second has nothing to attribute the second read
-    /// to, so it is refused rather than reported as another boundary.
+    /// to, so it is refused rather than reported as another boundary. That is a
+    /// bound on how many edges reach *one* region and not on how deep the chain
+    /// is; [`StagedOperandAdmission`] states the depth rule and separates the
+    /// two.
     Folded(ValueId),
 }
 
 impl From<ElementwiseRefusal> for RequestError {
     /// Flattens a discovered materialization boundary into the rule a caller
     /// with no epilogue to build reports for it.
+    ///
+    /// **This is where a fold's chained prologue is refused, and it is a third
+    /// wall rather than either of the two above.** [`recognize_reduction`]'s
+    /// contributor walk is the only caller that reaches it with a `Folded`
+    /// finding, and it discards the finding because [`NormalizedSerialSum`]
+    /// carries no producer field to hang the boundary on — so `sum(sum(x) * 2.0)`
+    /// reports `operation-set` here rather than reaching
+    /// [`StagedOperandAdmission`]'s guard, which never runs for it.
+    /// [`name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`](../../../tickets/name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set.md)
+    /// owns the rule name.
     fn from(refusal: ElementwiseRefusal) -> Self {
         match refusal {
             ElementwiseRefusal::Refused(error) => error,
@@ -5873,15 +5888,20 @@ fn plan_elementwise(
             // an unrecognizable operation: no `PointwiseF32Node` spells a sum
             // over a contributor sequence, and none ever will, because the
             // expression is a per-point body. Naming the value lets the epilogue
-            // recognizer read it as the tensor an earlier region staged. A walk
-            // that already reads one staged value reports the ordinary rule
-            // instead, and that is the chain-depth rule rather than the
-            // unordinalled-role one: naming a second, *different* folded value
-            // would make the recognized chain two materialization boundaries
-            // deep, which is
-            // `admit-a-recognized-chain-more-than-one-materialization-boundary-deep`'s.
-            // The unordinalled-role refusal is `record_leaf`'s, for one staged
-            // value read twice.
+            // recognizer read it as the tensor an earlier region staged.
+            //
+            // **A walk that already reads one staged value reports the ordinary
+            // rule instead, and that is a rule about chain *width* rather than
+            // depth.** Naming a second, *different* folded value —
+            // `sum(a, 1) * sum(b, 1)` — would give this one region two
+            // `TensorRole::Intermediate` reads, and that role carries no ordinal,
+            // so nothing would say which edge each access binds. The walk is
+            // still one materialization boundary deep. It is the same
+            // unordinalled-role fact `record_leaf` refuses for one staged value
+            // read *twice*, and its region-vocabulary owner is
+            // `admit-a-scheduled-region-that-reads-two-materialization-edges`.
+            // The depth rule is `StagedOperandAdmission`'s, which states where it
+            // sits and what it is not.
             if leaves.staged.is_none() && materializes_its_result(&operation, laws) {
                 return Err(ElementwiseRefusal::Folded(value));
             }
@@ -6702,10 +6722,11 @@ fn materializes_its_result(
 /// one.
 ///
 /// **The producer is at the far side of an edge, so it places none of its own**
-/// — [`StagedOperandAdmission::NoEdge`] below — and that is the "one
-/// materialization boundary deep" rule [`recognize_epilogue`] already states,
-/// applied to the staged family's operand for the same reason. Widening it is
-/// [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md)'s.
+/// — [`StagedOperandAdmission::NoEdge`] below. This is the only site that hands
+/// that value, and of the three arms only the staged one can place an edge at
+/// all, so the whole depth rule is reachable from here.
+/// [`StagedOperandAdmission`] is where it is stated, including the measured
+/// reason it stays and the two neighbouring folded-value walls it is not.
 fn recognize_epilogue_producer(
     program: &SemanticProgram,
     staged: ValueId,
@@ -6737,11 +6758,60 @@ fn recognize_epilogue_producer(
 
 /// Whether one staged occurrence may place a materialization edge of its own.
 ///
+/// **This is the single statement of the recognized chain's depth rule**, and
+/// every other site that mentions depth points here rather than restating it.
+///
 /// **A depth counter would be the wrong shape.** What bounds the recognized
 /// chain is not a number of levels but a rule about *sides*: a recognized shape
 /// admits at most one edge of its own, and a shape reached across an edge admits
 /// none. Two variants say exactly that, and a reader can refute the rule by
 /// checking the two call sites rather than by reasoning about arithmetic.
+///
+/// # The rule has one guard, and two neighbours that are not it
+///
+/// The `NoEdge` arm of [`recognize_staged_family`]'s operand walk —
+/// `staged-operand-depth` — is the whole of it. [`recognize_epilogue_producer`]
+/// is the one function reached across an edge and the only site that ever passes
+/// `NoEdge`, and of the three shapes it recognizes only the staged one can place
+/// an edge at all: [`normalize_contraction`] refuses a non-declared operand under
+/// `contraction-operands`, and [`recognize_reduction`]'s contributor walk reads
+/// declared inputs by construction.
+///
+/// Two neighbouring refusals also fire on a folded value and state *different*
+/// rules. Reading either as this one is what would make a widener delete the
+/// wrong guard, so each is named with the shape that separates it:
+///
+/// - [`plan_elementwise`]'s `leaves.staged.is_none()` guard refuses one walk
+///   that reaches a *second, different* folded value — `sum(a, 1) * sum(b, 1)`.
+///   That is one region reading two materialization edges, which is a rule about
+///   chain *width*: the walk is still one boundary deep, and what it lacks is the
+///   ordinal [`TensorRole::Intermediate`] does not carry.
+///   [`admit-a-scheduled-region-that-reads-two-materialization-edges`](../../../tickets/admit-a-scheduled-region-that-reads-two-materialization-edges.md)
+///   owns the region vocabulary and
+///   [`admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region`](../../../tickets/admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region.md)
+///   owns the one-value-twice spelling of it.
+/// - `From<ElementwiseRefusal>`'s flattening refuses a fold whose *prologue*
+///   reaches a folded value — `sum(sum(x) * 2.0)`. That one is about depth, but
+///   the wall is structural rather than this guard's: [`NormalizedSerialSum`]
+///   carries no producer field for the boundary to hang on, so the discovery is
+///   discarded before any admission is consulted.
+///   [`name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`](../../../tickets/name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set.md)
+///   owns the rule name it currently shares with the vocabulary refusal.
+///
+/// # Why `NoEdge` stays, measured rather than argued
+///
+/// Widening is
+/// [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md)'s,
+/// and it measured that the widening buys no program today. Every program this
+/// guard refuses contains a staged occurrence whose operand is an edge, and
+/// [`crate::physical::staged_plan`] has no region for one: its only law arm
+/// destructures two [`BoundaryRead::Input`] operands, so such an occurrence is
+/// [`crate::physical::RegionVocabularyWall::StagedFamilyUnspellable`] however
+/// deep the chain around it is. Handing `OneEdge` here therefore recognizes the
+/// chain — the nested shape is well formed, and only the assertion of the
+/// refusal itself moves — and then refuses it as a target rejection instead of a
+/// named program property. `crates/tiler-compiler/tests/recognized_chain_depth_boundary.rs`
+/// holds the measurement and the trigger that reopens it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StagedOperandAdmission {
     /// One operand may be a value another region materializes.
@@ -6803,10 +6873,10 @@ enum StagedOperandAdmission {
 ///   [`record_leaf`] refuses for an epilogue's leaves.
 /// - `staged-operand-depth` for a staged operand of an occurrence that is
 ///   *itself* at the far side of an edge. That is a recognized chain more than
-///   one materialization boundary deep, which is the rule
-///   [`recognize_epilogue`] already states for its own producer and which
-///   [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md)
-///   owns widening.
+///   one materialization boundary deep, and it is the one guard the depth rule
+///   has; [`StagedOperandAdmission`] states the rule, the measured reason it
+///   stays, and the neighbouring refusals that are about chain width and about a
+///   fold's chained prologue instead.
 /// - `staged-attributes` for an attribute record the canonical encoder cannot
 ///   write. The record is part of the occurrence's meaning, so a subject that
 ///   could not carry it whole must refuse rather than bind a partial one.
@@ -8523,9 +8593,8 @@ mod tests {
     /// - *An occurrence already at the far side of an edge reading its own.*
     ///   `rms_norm(matmul(a, b), a) * a` makes the normalization an epilogue
     ///   chain's producer, so admitting its operand edge would be a recognized
-    ///   chain two materialization boundaries deep. `staged-operand-depth`, whose
-    ///   owner is
-    ///   [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md).
+    ///   chain two materialization boundaries deep. `staged-operand-depth`, the
+    ///   depth rule's one guard, stated at [`StagedOperandAdmission`].
     ///
     /// Each was watched failing before it was restored: with the
     /// `producer.is_some()` guard deleted the first program is recognized with
@@ -8533,6 +8602,17 @@ mod tests {
     /// `StagedOperandAdmission::NoEdge` guard deleted the second is recognized as
     /// a two-boundary chain — both admissions no region vocabulary here can
     /// spell.
+    ///
+    /// **The second perturbation was rerun on 2026-08-08 and its cost measured**,
+    /// because "no region vocabulary can spell it" is a claim about a stage this
+    /// assertion cannot see. Handing `recognize_epilogue_producer`'s call site
+    /// `OneEdge` recognizes the program as
+    /// `Epilogue { producer: Staged { producer: Some(Contraction), operand_reads:
+    /// [Staged, Input(0)] } }` — a well-formed nesting — and this row is the
+    /// *only* one of the crate's 784 tests that moves. End to end the program
+    /// then refuses `NoFeasiblePlan` rather than compiling.
+    /// `crates/tiler-compiler/tests/recognized_chain_depth_boundary.rs` holds
+    /// that measurement and the trigger that reopens it.
     #[test]
     fn a_staged_operand_still_refuses_a_second_edge_and_a_deeper_chain() {
         assert_eq!(
@@ -9572,15 +9652,24 @@ mod tests {
         // open: a fold whose *contributors* are another fold's result. The chain
         // the recognizer admits is one materialization boundary deep, and a
         // prologue reading a staged value would make it two, so it is refused
-        // rather than silently flattened. The rule is about chain depth rather
-        // than about ordinals — each of the two regions reads one intermediate —
-        // and its owner is
-        // `admit-a-recognized-chain-more-than-one-materialization-boundary-deep`,
-        // with `name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`
-        // owning the rule name this refusal currently shares. The accepted
-        // neighbour is the same fold over the same scaling of the *declared
-        // input*, so the difference between them is exactly where the scaled
-        // value comes from.
+        // rather than silently flattened.
+        //
+        // **Which of the three folded-value walls refuses it was measured, not
+        // read off the shape.** It is `From<ElementwiseRefusal>`'s flattening:
+        // `NormalizedSerialSum` carries no producer field, so the discovery is
+        // discarded before any admission runs.
+        // `StagedOperandAdmission`'s `staged-operand-depth` guard is never
+        // consulted for this program, and `plan_elementwise`'s
+        // `leaves.staged.is_none()` condition is *true* here, so that guard does
+        // not fire either. Watched on 2026-08-08: renaming this arm's rule to a
+        // probe string made this row report the probe, while renaming the
+        // `leaves.staged.is_none()` arm's left it reporting `operation-set`.
+        // `name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`
+        // owns the rule name this refusal currently shares.
+        //
+        // The accepted neighbour is the same fold over the same scaling of the
+        // *declared input*, so the difference between them is exactly where the
+        // scaled value comes from.
         let folded_prologue = |nested: bool| {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
             let input = builder
