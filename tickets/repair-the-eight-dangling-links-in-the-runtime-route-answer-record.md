@@ -1,7 +1,7 @@
 ---
 id: repair-the-eight-dangling-links-in-the-runtime-route-answer-record
 title: Repair the eight dangling links in the runtime route answer record
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786167946
 ---
 ## What is broken
 

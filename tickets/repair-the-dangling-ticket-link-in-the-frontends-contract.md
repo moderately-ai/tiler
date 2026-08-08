@@ -1,7 +1,7 @@
 ---
 id: repair-the-dangling-ticket-link-in-the-frontends-contract
 title: Repair the dangling ticket link in the frontends contract
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786167947
 ---
 ## What is broken
 
