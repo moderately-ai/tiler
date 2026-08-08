@@ -1,7 +1,7 @@
 ---
 id: correct-the-roadmap-s-milestone-0b-inline-composition-claim
 title: Correct the roadmap's Milestone 0B inline-composition claim
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-roadmap0b
+lease_expires_at: 1786163600
 ---
 ## The roadmap asserts an absence the tree refutes
 
