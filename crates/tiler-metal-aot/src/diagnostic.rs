@@ -21,16 +21,15 @@ impl CompileStage {
     /// A caller that names both stages — retaining what each wrote, say — reads
     /// them from here rather than writing the pair out again, so the order and
     /// the membership are stated once.
-    pub const ALL: [Self; 2] = {
-        // A guard, not a computation. An array literal would keep compiling with
-        // one stage missing the day a variant lands, and a caller iterating it
-        // would silently stop visiting the new stage; this match goes
-        // non-exhaustive instead, which is the same completeness the matches
-        // below rely on.
-        match Self::Metal {
-            Self::Metal | Self::Metallib => [Self::Metal, Self::Metallib],
-        }
-    };
+    ///
+    /// The declared length is `variant_count`, so a stage added to the enum and
+    /// not to this list is an array-length error at this declaration. The
+    /// length is what has to carry that guarantee: an exhaustive `match` wrapped
+    /// around the literal does go non-exhaustive when a stage lands, but it
+    /// constrains the pattern rather than the array, so widening the alternation
+    /// silences it while the short literal still compiles and a caller iterating
+    /// `ALL` still never visits the new stage.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [Self::Metal, Self::Metallib];
 
     /// Returns the offline tool name for this stage.
     #[must_use]

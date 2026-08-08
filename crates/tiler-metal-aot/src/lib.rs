@@ -1,3 +1,15 @@
+// `variant_count` is the one mechanism that makes an `ALL` array fail the build
+// when a variant is added to its enum and not to the list. Every other site that
+// has to know about a variant is an exhaustive `match`, which `rustc` already
+// closes — but closing those is what an author does *first*, and once they are
+// closed a short `ALL` compiles and every test passes. Each `COUNT` here is
+// `Self::ALL.len()`, so a short `ALL` shrinks the population the sized checks
+// count against while still reporting success, and the cross-crate equality
+// between two `COUNT`s in `tiler_metal::target_correspondence` cannot see one
+// that never grew. Four declarations are sized by it: `input::AppleSdk::ALL`,
+// `input::ApplePlatform::ALL`, `input::MslVersion::ALL`, and
+// `diagnostic::CompileStage::ALL`.
+#![feature(variant_count)]
 //! Bounded offline Apple Metal AOT compiler driver for Tiler.
 //!
 //! This crate owns one bounded responsibility: invoke Apple's offline `xcrun
