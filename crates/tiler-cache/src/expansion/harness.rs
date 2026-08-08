@@ -221,13 +221,28 @@ fn harness_collector_child() {
     for _ in 0..rounds {
         let line = match cache.collect(&bound) {
             Ok(report) => {
-                // The disposition partition is asserted *inside* the collecting
-                // process, on every round, so a collection that lost track of a
-                // selected entry fails where it happened rather than being
-                // inferred later from a total.
-                assert!(
-                    report.accounts_for_every_entry(),
-                    "a collection must account for every entry it selected",
+                // Asserted *inside* the collecting process, on every round, so a
+                // collection that lost track of a candidate fails where it
+                // happened rather than being inferred later from a total.
+                //
+                // Grounded in the scan and the stated bound rather than in the
+                // loop that filled the report. `selected` and the five
+                // dispositions are both produced by one pass over one vector, so
+                // their equality holds whatever this child met on disk; what the
+                // scan saw and what the bound retains are two independent
+                // quantities, and under an entry ceiling with neither a byte nor
+                // an age ceiling the selection is exactly the overage. A
+                // selector that stopped a candidate short — or took one the
+                // bound did not require — fails here.
+                assert_eq!(
+                    report.selected(),
+                    report
+                        .accounting()
+                        .entry_count()
+                        .saturating_sub(max_entries),
+                    "a collection under an entry ceiling of {max_entries} must select \
+                     every entry over it, and the scan saw {}",
+                    report.accounting().entry_count(),
                 );
                 format!(
                     "ok\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
@@ -1533,26 +1548,35 @@ fn collection_races_active_processes_at_one_eight_and_thirty_two() {
 /// The name crosses a process boundary as text. A phase whose name did not parse
 /// would arm nothing, and the child would exit cleanly — which
 /// [`a_writer_killed_at_any_phase_leaves_a_recoverable_cache`] would catch, but
-/// only by reporting a confusing failure. This catches it directly. The `match`
-/// is exhaustive with no wildcard, so a phase added without a name fails to
-/// compile.
+/// only by reporting a confusing failure. This catches it directly.
+///
+/// # Why the completeness half is a distinctness check
+///
+/// "Every phase is a listed kill point" cannot be asserted by asking the list
+/// whether it contains what the list just yielded; that is true of any list. It
+/// is instead established in two pieces, neither of which the list supplies for
+/// itself. [`Phase::KILL_POINTS`] is *declared* at
+/// [`mem::variant_count::<Phase>()`](std::mem::variant_count), so a phase added
+/// to the enum and not to the list is an array-length build error rather than a
+/// silently unmeasured phase. That length alone would still be satisfied by a
+/// list that repeated one phase and omitted another, so the pairwise
+/// distinctness below is what closes it: a list of `variant_count` distinct
+/// variants is the whole variant set.
 #[test]
 fn every_phase_name_round_trips() {
     for phase in Phase::KILL_POINTS {
         assert_eq!(Phase::parse(phase.as_str()), Some(phase), "{phase:?}");
-        let listed = match phase {
-            Phase::AfterLock
-            | Phase::AfterRecheck
-            | Phase::AfterTempCreate
-            | Phase::MidWrite
-            | Phase::AfterWrite
-            | Phase::AfterTempValidation
-            | Phase::AfterFileSync
-            | Phase::AfterRename
-            | Phase::AfterDirectorySync => Phase::KILL_POINTS.contains(&phase),
-        };
-        assert!(listed, "{phase:?} is not a listed kill point");
     }
+    let mut distinct = Phase::KILL_POINTS.to_vec();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        Phase::KILL_POINTS.len(),
+        "a phase is listed twice, so the kill points are one short of the enum \
+         and a phase is measured by nothing: {:?}",
+        Phase::KILL_POINTS,
+    );
     assert_eq!(Phase::parse("no-such-phase"), None);
 }
 

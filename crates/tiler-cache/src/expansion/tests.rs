@@ -24,6 +24,7 @@
 //! that are not an artifact and observing the artifact layer's own typed
 //! refusal.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -35,7 +36,8 @@ use tiler_artifact::program::{ArtifactCodecFailure, DIGEST_BYTES, DigestAlgorith
 
 use super::bundle::{self, BundleRejection, BundleSection};
 use super::collect::{
-    CollectionBound, CollectionOutcome, Disposition, MaxEntryAge, MaxEntryAgeRefusal, RemovalReason,
+    CollectionBound, CollectionOutcome, CollectionReport, Disposition, MaxEntryAge,
+    MaxEntryAgeRefusal, RemovalReason,
 };
 use super::fault;
 use super::key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
@@ -174,6 +176,109 @@ fn older_than(max_age: Duration) -> CollectionBound {
         max_entries: None,
         max_entry_age: Some(MaxEntryAge::new(max_age).expect("a non-zero maximum age is a bound")),
     }
+}
+
+/// Every entry the namespace holds right now, read off the filesystem.
+///
+/// Deliberately not [`ExpansionCache::account`]'s result and deliberately not
+/// anything a report carries: it walks the entries tree itself and names each
+/// file with the production path parser, so it observes what a later process
+/// would observe. That independence is the whole point of the fixture below.
+///
+/// A cache with no root holds nothing, which is the correct answer rather than a
+/// case to refuse — it is what makes the disabled-cache collection checkable on
+/// the same path as every other.
+fn entry_keys_on_disk(cache: &ExpansionCache) -> BTreeSet<CacheKey> {
+    let mut keys = BTreeSet::new();
+    if cache.root().is_none() {
+        return keys;
+    }
+    let Ok(shards) = fs::read_dir(cache.rooted_layout().entries_root()) else {
+        return keys;
+    };
+    for shard in shards.flatten() {
+        let Ok(files) = fs::read_dir(shard.path()) else {
+            continue;
+        };
+        for file in files.flatten() {
+            if let Ok(key) = key_of_entry_path(&file.path()) {
+                assert!(
+                    keys.insert(key),
+                    "one key is filed at two entry paths: {}",
+                    file.path().display(),
+                );
+            }
+        }
+    }
+    keys
+}
+
+/// Collects, and checks the report against the namespace rather than against
+/// itself.
+///
+/// [`CollectionReport::accounts_for_every_entry`] cannot carry this: its
+/// `selected` count and its five dispositions are both produced by one loop over
+/// one vector, so the equality it states holds for every filesystem state a
+/// collector can meet. The population here is obtained independently — the entry
+/// files present before the collection and the ones present after — so a
+/// collection that unlinked an entry it did not name, named one it did not
+/// unlink, named one twice, or left something new behind fails here.
+///
+/// Sound only where this process is the only one changing the cache, which is
+/// every caller below; the concurrent case states its own property over the
+/// keys it published, and the cross-process case states its own inside the
+/// collecting child.
+#[track_caller]
+fn collect_checked(cache: &ExpansionCache, bound: &CollectionBound) -> CollectionReport {
+    let before = entry_keys_on_disk(cache);
+    let report = cache.collect(bound).expect("a collection runs");
+    check_removals_against_disk(cache, &before, &report);
+    report
+}
+
+/// [`collect_checked`], against a supplied instant rather than the host clock.
+#[track_caller]
+fn collect_at_checked(
+    cache: &ExpansionCache,
+    bound: &CollectionBound,
+    now: SystemTime,
+) -> CollectionReport {
+    let before = entry_keys_on_disk(cache);
+    let report = cache.collect_at(bound, now).expect("a collection runs");
+    check_removals_against_disk(cache, &before, &report);
+    report
+}
+
+/// The entries that left the namespace are exactly the ones the report named.
+#[track_caller]
+fn check_removals_against_disk(
+    cache: &ExpansionCache,
+    before: &BTreeSet<CacheKey>,
+    report: &CollectionReport,
+) {
+    let after = entry_keys_on_disk(cache);
+    let named: BTreeSet<CacheKey> = report.removed().iter().map(|entry| entry.key).collect();
+    assert_eq!(
+        named.len(),
+        report.removed().len(),
+        "a collection named one key twice, so its removals do not partition the \
+         selection: {:?}",
+        report.removed(),
+    );
+    let departed: BTreeSet<CacheKey> = before.difference(&after).copied().collect();
+    assert_eq!(
+        departed,
+        named,
+        "the entries that left the namespace are not the ones the report named: \
+         {:?} left unnamed, {:?} named but still present",
+        departed.difference(&named).collect::<Vec<_>>(),
+        named.difference(&departed).collect::<Vec<_>>(),
+    );
+    assert!(
+        after.difference(before).next().is_none(),
+        "a collection published an entry: {:?}",
+        after.difference(before).collect::<Vec<_>>(),
+    );
 }
 
 /// Sets one published entry's modification time to an exact instant.
@@ -2277,14 +2382,11 @@ fn the_default_bound_removes_nothing() {
     let cache = cache(&scratch);
     let key = publish(&cache, b"subject", b"envelope");
 
-    let report = cache
-        .collect(&CollectionBound::UNBOUNDED)
-        .expect("a collection runs");
+    let report = collect_checked(&cache, &CollectionBound::UNBOUNDED);
     assert_eq!(report.outcome(), CollectionOutcome::WithinBound);
     assert_eq!(report.selected(), 0);
     assert!(report.removed().is_empty());
     assert_eq!(report.reclaimed_bytes(), 0);
-    assert!(report.accounts_for_every_entry());
     assert!(
         cache.read_entry(&key, &any_payload).is_ok(),
         "an unbounded collection is a measurement",
@@ -2312,7 +2414,7 @@ fn a_bound_removes_the_oldest_publications_first() {
     let middle = publish_aged(&cache, b"subject-mid", b"envelope-mid", 200);
     let newest = publish_aged(&cache, b"subject-new", b"envelope-new", 100);
 
-    let report = cache.collect(&at_most(1)).expect("a collection runs");
+    let report = collect_checked(&cache, &at_most(1));
     assert_eq!(report.outcome(), CollectionOutcome::BoundReached);
     assert_eq!(
         report
@@ -2327,7 +2429,6 @@ fn a_bound_removes_the_oldest_publications_first() {
         cache.read_entry(&newest, &any_payload).is_ok(),
         "the newest publication survives",
     );
-    assert!(report.accounts_for_every_entry());
 }
 
 /// A byte bound removes until the total fits, and no further.
@@ -2365,12 +2466,15 @@ fn a_byte_bound_removes_until_the_total_fits() {
     assert!(cache.read_entry(&newest, &any_payload).is_ok());
 }
 
-/// Every removal is named individually, and the dispositions account for the
-/// whole selection.
+/// Every removal is named individually, and the names are the entries that
+/// actually left.
 ///
-/// This is the mechanical form of the rule that nothing is dropped silently. A
-/// count alone would let an entry leave the cache without anything saying which
-/// one; the report has to be able to answer that after an unexpected rebuild.
+/// This is the rule that nothing is dropped silently. A count alone would let an
+/// entry leave the cache without anything saying which one; the report has to be
+/// able to answer that after an unexpected rebuild. [`collect_checked`] is what
+/// makes it a statement rather than a restatement: it reads the namespace on
+/// both sides and requires the difference to be exactly the named keys, so the
+/// population the report is compared against is not one the report produced.
 #[test]
 fn a_collection_names_every_entry_it_removed() {
     let scratch = Scratch::new("named-removals");
@@ -2386,8 +2490,7 @@ fn a_collection_names_every_entry_it_removed() {
         })
         .collect();
 
-    let report = cache.collect(&at_most(1)).expect("a collection runs");
-    assert!(report.accounts_for_every_entry());
+    let report = collect_checked(&cache, &at_most(1));
     assert_eq!(report.selected(), 3);
     assert_eq!(report.removed().len(), 3);
     assert_eq!(
@@ -2431,10 +2534,9 @@ fn a_contended_key_is_skipped_and_reported_rather_than_waited_for() {
         .expect("the lock file opens")
         .expect("an unheld lock is free");
 
-    let report = cache.collect(&at_most(1)).expect("a collection runs");
+    let report = collect_checked(&cache, &at_most(1));
     assert_eq!(report.contended(), 1);
     assert!(report.removed().is_empty());
-    assert!(report.accounts_for_every_entry());
     assert!(
         matches!(
             report.outcome(),
@@ -2540,7 +2642,7 @@ fn a_file_the_parser_refuses_is_reported_and_never_removed() {
     let stray = shard.join("not-a-cache-entry.txt");
     fs::write(&stray, b"something else wrote here").expect("the shard is writable in this test");
 
-    let report = cache.collect(&at_most(0)).expect("a collection runs");
+    let report = collect_checked(&cache, &at_most(0));
     assert_eq!(
         report.accounting().unrecognized(),
         std::slice::from_ref(&stray)
@@ -2554,7 +2656,6 @@ fn a_file_the_parser_refuses_is_reported_and_never_removed() {
         1,
         "the recognized entry is still collected",
     );
-    assert!(report.accounts_for_every_entry());
 }
 
 /// Collection retains every lock file.
@@ -2619,21 +2720,31 @@ fn a_reader_holding_a_descriptor_reads_across_a_collection() {
 ///
 /// Each removal is taken under its own key lock, so two collectors selecting
 /// overlapping sets serialize per key: one removes and counts the bytes, the
-/// other finds the entry gone. Every entry is still accounted for in both
-/// reports.
+/// other finds the entry gone.
+///
+/// [`collect_checked`] cannot be used here — eight collectors are changing the
+/// namespace at once, so no single report can be compared against a before and
+/// after this thread observed. The independent population is instead the set of
+/// keys this test published: the removals named across every report must be
+/// exactly those keys, each named once. A collector that credited itself with a
+/// removal another performed, or that lost one, fails on the set rather than on
+/// a total that two opposite errors could still sum to sixteen.
 #[test]
 fn concurrent_collectors_do_not_double_count() {
     const COLLECTORS: usize = 8;
     let scratch = Scratch::new("concurrent-collectors");
     let cache = cache(&scratch);
-    for index in 0_u64..16 {
-        publish_aged(
-            &cache,
-            format!("subject-{index}").as_bytes(),
-            format!("envelope-{index}").as_bytes(),
-            1600 - index * 100,
-        );
-    }
+    let published: BTreeSet<CacheKey> = (0_u64..16)
+        .map(|index| {
+            publish_aged(
+                &cache,
+                format!("subject-{index}").as_bytes(),
+                format!("envelope-{index}").as_bytes(),
+                1600 - index * 100,
+            )
+        })
+        .collect();
+    assert_eq!(published.len(), 16, "sixteen subjects are sixteen keys");
 
     let handles: Vec<_> = (0..COLLECTORS)
         .map(|_| {
@@ -2643,18 +2754,26 @@ fn concurrent_collectors_do_not_double_count() {
         .collect();
 
     let mut reclaimed = 0_u64;
-    let mut removed = 0_usize;
+    let mut named = Vec::new();
     for handle in handles {
         let report = handle.join().expect("no collector panics");
-        assert!(report.accounts_for_every_entry());
         assert!(report.failed().is_empty(), "{:?}", report.failed());
         reclaimed += report.reclaimed_bytes();
-        removed += report.removed().len();
+        named.extend(report.removed().iter().map(|entry| entry.key));
     }
-    assert_eq!(removed, 16, "every entry is removed exactly once");
+    let distinct: BTreeSet<CacheKey> = named.iter().copied().collect();
     assert_eq!(
-        cache.account().expect("the cache accounts").entry_count(),
-        0,
+        distinct.len(),
+        named.len(),
+        "two collectors both claimed one removal",
+    );
+    assert_eq!(
+        distinct, published,
+        "the removals named across every collector are not the keys published",
+    );
+    assert!(
+        entry_keys_on_disk(&cache).is_empty(),
+        "the namespace is empty"
     );
     assert!(reclaimed > 0);
 }
@@ -2683,11 +2802,8 @@ fn an_age_ceiling_removes_only_entries_older_than_the_stated_maximum() {
     let old = publish_aged(&cache, b"subject-old", b"envelope-old", 600);
     let young = publish_aged(&cache, b"subject-young", b"envelope-young", 60);
 
-    let report = cache
-        .collect(&older_than(Duration::from_secs(300)))
-        .expect("a collection runs");
+    let report = collect_checked(&cache, &older_than(Duration::from_secs(300)));
     assert_eq!(report.outcome(), CollectionOutcome::BoundReached);
-    assert!(report.accounts_for_every_entry());
     assert_eq!(
         report
             .removed()
@@ -2733,10 +2849,7 @@ fn an_entry_exactly_at_the_age_boundary_is_removed_and_one_inside_it_is_not() {
     set_published(&cache, &at_boundary, anchor - max_age);
     set_published(&cache, &inside, anchor - max_age + Duration::from_secs(60));
 
-    let report = cache
-        .collect_at(&older_than(max_age), anchor)
-        .expect("a collection runs");
-    assert!(report.accounts_for_every_entry());
+    let report = collect_at_checked(&cache, &older_than(max_age), anchor);
     assert_eq!(
         report
             .removed()
@@ -2779,10 +2892,7 @@ fn an_entry_dated_in_the_future_is_neither_removed_nor_a_reason_to_remove_others
     set_published(&cache, &young, anchor - Duration::from_secs(30));
     set_published(&cache, &expired, anchor - Duration::from_mins(15));
 
-    let report = cache
-        .collect_at(&older_than(max_age), anchor)
-        .expect("a collection runs");
-    assert!(report.accounts_for_every_entry());
+    let report = collect_at_checked(&cache, &older_than(max_age), anchor);
     assert_eq!(
         report
             .removed()
@@ -2839,10 +2949,9 @@ fn an_age_eviction_racing_a_republisher_removes_nothing_it_did_not_measure() {
     let held = KeyLock::try_acquire(&cache.lock_path(&key))
         .expect("the lock file opens")
         .expect("an unheld lock is free");
-    let contended = cache.collect(&bound).expect("a collection runs");
+    let contended = collect_checked(&cache, &bound);
     assert_eq!(contended.contended(), 1);
     assert!(contended.removed().is_empty());
-    assert!(contended.accounts_for_every_entry());
     assert!(
         matches!(
             contended.outcome(),
@@ -2876,7 +2985,7 @@ fn an_age_eviction_racing_a_republisher_removes_nothing_it_did_not_measure() {
 
     // And the replacement is not expired, so a fresh collection under the same
     // policy leaves it alone rather than removing it on the previous entry's age.
-    let after = cache.collect(&bound).expect("a collection runs");
+    let after = collect_checked(&cache, &bound);
     assert_eq!(after.outcome(), CollectionOutcome::WithinBound);
     assert!(after.removed().is_empty());
 }
@@ -2976,20 +3085,18 @@ fn an_age_ceiling_composes_with_an_entry_ceiling() {
 
     // Ages are 400, 300, 200, 100 seconds. The age takes the first two; the
     // entry ceiling of one then takes the older of the two survivors.
-    let report = cache
-        .collect_at(
-            &CollectionBound {
-                max_total_bytes: None,
-                max_entries: Some(1),
-                max_entry_age: Some(
-                    MaxEntryAge::new(Duration::from_secs(300)).expect("a non-zero age"),
-                ),
-            },
-            anchor,
-        )
-        .expect("a collection runs");
+    let report = collect_at_checked(
+        &cache,
+        &CollectionBound {
+            max_total_bytes: None,
+            max_entries: Some(1),
+            max_entry_age: Some(
+                MaxEntryAge::new(Duration::from_secs(300)).expect("a non-zero age"),
+            ),
+        },
+        anchor,
+    );
     assert_eq!(report.outcome(), CollectionOutcome::BoundReached);
-    assert!(report.accounts_for_every_entry());
     assert_eq!(
         report
             .removed()
@@ -3314,11 +3421,10 @@ fn a_disabled_cache_answers_every_namespace_operation_without_a_root() {
     assert_eq!(accounting.quarantine_files(), 0);
     assert!(accounting.unrecognized().is_empty());
 
-    let collection = cache.collect(&at_most(0)).expect("a collection reports");
+    let collection = collect_checked(&cache, &at_most(0));
     assert_eq!(collection.selected(), 0);
     assert_eq!(collection.outcome(), CollectionOutcome::WithinBound);
     assert!(collection.removed().is_empty());
-    assert!(collection.accounts_for_every_entry());
 
     let purge = cache.purge().expect("a purge reports");
     assert_eq!(purge.retired(), None, "there is no namespace to retire");

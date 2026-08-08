@@ -27,7 +27,7 @@
 //! gate.
 
 use super::bundle::{self, BundleRejection};
-use super::key::CacheKey;
+use super::key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
 use super::limits::Limits;
 use super::retention::DebugRetention;
 
@@ -252,8 +252,48 @@ fn a_resealed_forgery_is_refused_by_the_key_derivation() {
 /// This is what stops two texts naming one entry. If some non-canonical
 /// spelling parsed to the same key, two paths would resolve to one cache entry
 /// and a caller could file under one and read under the other.
+///
+/// # The verdict is an oracle, and the generator reaches both halves of it
+///
+/// [`CacheKey::parse_label`] accepts exactly [`KEY_LABEL_BYTES`] bytes of
+/// lowercase hexadecimal, and that predicate is computed here from the text
+/// rather than read back off the parser, so a parser that widened or narrowed
+/// its accepting language fails on the case it newly disagrees about.
+///
+/// Two alphabets exist because one of them cannot reach the accepting half. A
+/// draw from the wide alphabet — hexadecimal in both cases plus the path
+/// punctuation a real path parser meets — is the near-miss corpus, and its
+/// chance of landing on 64 lowercase-hexadecimal bytes is about 4e-16 per
+/// iteration. Under a fixed seed that is deterministically zero rather than
+/// merely unlikely: replaying this generator over its 8,192 draws puts 87 of
+/// them at the accepted width, and the longest run of leading lowercase
+/// hexadecimal among those 87 is 13 bytes of the 64 required. The second
+/// alphabet is the accepting one, drawn at widths straddling
+/// [`KEY_LABEL_BYTES`], so about a fifth of its draws are texts the parser must
+/// accept and round-trip and the rest are widths it must refuse rather than pad
+/// or cut. Each accepted text is then re-spelled with one uppercase letter,
+/// which is the case that must be refused rather than folded.
+///
+/// The three populations are counted and asserted non-empty, so a generator that
+/// stopped reaching one of them fails here instead of passing vacuously.
 #[test]
 fn a_parsed_key_round_trips_to_its_exact_text() {
+    /// Hexadecimal in both cases, plus the punctuation a path parser meets.
+    /// Reaches the accepting language with probability about 4e-16 per draw,
+    /// which under a fixed seed is zero.
+    const NEAR_MISS: &[u8] = b"0123456789abcdefABCDEF-_/.";
+    /// The accepting alphabet, so a draw at the accepted width is a text
+    /// `parse_label` must take.
+    const ACCEPTING: &[u8] = b"0123456789abcdef";
+
+    /// True for exactly the texts [`CacheKey::parse_label`] must accept.
+    fn is_canonical(text: &str) -> bool {
+        text.len() == KEY_LABEL_BYTES
+            && text
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    }
+
     let mut generator = Gen::new(0x5EED_1234_ABCD_0004);
 
     // Real labels must survive the round trip.
@@ -271,21 +311,95 @@ fn a_parsed_key_round_trips_to_its_exact_text() {
         );
     }
 
-    // Arbitrary text either fails to parse or round-trips exactly. Anything
-    // accepted whose label differs would be a second spelling of one entry.
-    let alphabet = b"0123456789abcdefABCDEF-_/.";
-    for iteration in 0..8_192 {
-        let len = generator.below(80);
+    let mut accepted = 0_u32;
+    let mut refused = 0_u32;
+    let mut refused_for_case = 0_u32;
+    for iteration in 0_u32..8_192 {
+        let (alphabet, len) = if iteration.is_multiple_of(2) {
+            (NEAR_MISS, generator.below(80))
+        } else {
+            (ACCEPTING, KEY_LABEL_BYTES - 2 + generator.below(5))
+        };
         let text: String = (0..len)
             .map(|_| alphabet[generator.below(alphabet.len())] as char)
             .collect();
-        if let Ok(parsed) = CacheKey::parse_label(&text) {
-            assert_eq!(
-                parsed.label(),
-                text,
-                "text/{iteration}: {text:?} parsed to a key whose label differs, \
-                 so two texts name one entry"
-            );
+
+        match CacheKey::parse_label(&text) {
+            Ok(parsed) => {
+                assert!(
+                    is_canonical(&text),
+                    "text/{iteration}: {text:?} was accepted and is not \
+                     {KEY_LABEL_BYTES} lowercase hexadecimal bytes, so a \
+                     non-canonical spelling names an entry",
+                );
+                assert_eq!(
+                    parsed.label(),
+                    text,
+                    "text/{iteration}: {text:?} parsed to a key whose label differs, \
+                     so two texts name one entry"
+                );
+                accepted += 1;
+
+                // The same key with one hexadecimal letter raised must be
+                // refused rather than folded: folding files one entry under two
+                // texts, and the per-key lock at one would not exclude the
+                // other.
+                if let Some(position) = text.bytes().position(|byte| byte.is_ascii_lowercase()) {
+                    let mut raised = text.clone();
+                    raised.replace_range(
+                        position..=position,
+                        &text[position..=position].to_ascii_uppercase(),
+                    );
+                    assert_eq!(
+                        CacheKey::parse_label(&raised),
+                        Err(KeyTextRejection::NotLowercaseHexadecimal {
+                            position,
+                            byte: raised.as_bytes()[position],
+                        }),
+                        "text/{iteration}: {raised:?} is a second spelling of an \
+                         accepted key and was not refused for its case",
+                    );
+                    refused_for_case += 1;
+                }
+            }
+            Err(rejection) => {
+                assert!(
+                    !is_canonical(&text),
+                    "text/{iteration}: {text:?} is a canonical key text and was \
+                     refused: {rejection:?}",
+                );
+                // The refusal has to name the first thing wrong with the text,
+                // because that is what a caller reads to correct a path.
+                let expected = if text.len() == KEY_LABEL_BYTES {
+                    let position = text
+                        .bytes()
+                        .position(|byte| !matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                        .expect("a refused text of the accepted width has a non-hex byte");
+                    KeyTextRejection::NotLowercaseHexadecimal {
+                        position,
+                        byte: text.as_bytes()[position],
+                    }
+                } else {
+                    KeyTextRejection::Width { found: text.len() }
+                };
+                assert_eq!(rejection, expected, "text/{iteration}: {text:?}");
+                refused += 1;
+            }
         }
     }
+
+    assert!(
+        accepted > 0,
+        "no generated text reached the accepting language, so nothing here \
+         checked that an accepted text round-trips",
+    );
+    assert!(
+        refused_for_case > 0,
+        "no accepted text was re-spelled with an uppercase letter, so nothing \
+         here checked that case is refused rather than folded",
+    );
+    assert!(
+        refused > 0,
+        "no generated text was refused, so nothing here checked a rejection",
+    );
 }

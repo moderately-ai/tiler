@@ -40,6 +40,7 @@ use std::cell::Cell;
 use std::env;
 use std::fs;
 use std::io;
+use std::mem;
 use std::path::Path;
 use std::process;
 use std::thread;
@@ -80,7 +81,17 @@ pub(super) enum Phase {
 
 impl Phase {
     /// Every phase a writer may be killed at, in publication order.
-    pub(super) const KILL_POINTS: [Self; 9] = [
+    ///
+    /// **The declared length is the check.** A literal `9` would let a tenth
+    /// variant be added to [`Self`] and to [`Self::as_str`] — both of which
+    /// `rustc` closes — while this list stayed at nine, and nothing would
+    /// notice: the harness counts what it iterates, so it would report nine
+    /// measured phases, and [`Self::parse`] searches this list, so the new phase
+    /// could not even be armed. At [`mem::variant_count`] the same omission is
+    /// an array-length build error here. `every_phase_name_round_trips` asserts
+    /// the entries are pairwise distinct, which is what stops the length from
+    /// being satisfied by a repeated phase that left the new one unlisted.
+    pub(super) const KILL_POINTS: [Self; mem::variant_count::<Self>()] = [
         Self::AfterLock,
         Self::AfterRecheck,
         Self::AfterTempCreate,

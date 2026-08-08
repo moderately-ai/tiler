@@ -1,3 +1,12 @@
+// `variant_count` is what pins `expansion::fault::Phase::KILL_POINTS` to its own
+// enum: the harness iterates that list to decide how many publication phases it
+// measured, and a phase added to `Phase` but not to the list would compile,
+// leave the count unchanged, and be unmeasured and unreachable through
+// `Phase::parse`, which searches the list. Declaring the array at
+// `variant_count` makes that omission a build error instead. It is gated on
+// `test` because `fault` is a `cfg(test)` module, so an ordinary build of this
+// crate needs no unstable feature.
+#![cfg_attr(test, feature(variant_count))]
 //! The cross-process expansion cache protocol ADR 0050 accepts.
 //!
 //! Expanding an inline Tiler region runs an external compiler, which is the
