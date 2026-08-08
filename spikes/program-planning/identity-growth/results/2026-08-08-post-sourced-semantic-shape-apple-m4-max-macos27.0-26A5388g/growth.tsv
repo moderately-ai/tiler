@@ -1,0 +1,211 @@
+requested	operations	coverage_records	stages	alternatives	graph_bytes	program_bytes	widest_alternative_bytes	coverage_bytes	mean_record_bytes	bytes_per_op	compile_ms
+2	2	2	1	1	419	7786	7786	5980	2990.0	3893.000	3
+3	3	3	1	1	554	11317	11317	9281	3093.7	3772.333	2
+4	4	4	1	1	689	14848	14848	12582	3145.5	3712.000	2
+5	5	5	1	1	824	18379	18379	15883	3176.6	3675.800	2
+6	6	6	1	1	959	21910	21910	19184	3197.3	3651.667	4
+7	7	7	1	1	1094	25441	25441	22485	3212.1	3634.429	5
+8	8	8	1	1	1229	28972	28972	25786	3223.2	3621.500	8
+9	9	9	1	1	1364	32503	32503	29087	3231.9	3611.444	15
+10	10	10	1	1	1499	36034	36034	32388	3238.8	3603.400	47
+11	11	11	1	1	1634	39565	39565	35689	3244.5	3596.818	118
+12	12	12	1	1	1769	43096	43096	38990	3249.2	3591.333	8
+13	13	13	1	1	1904	46627	46627	42291	3253.2	3586.692	8
+14	14	14	1	1	2039	50158	50158	45592	3256.6	3582.714	16
+15	15	15	1	1	2174	53689	53689	48893	3259.5	3579.267	9
+16	16	16	1	1	2309	57220	57220	52194	3262.1	3576.250	12
+17	17	17	1	1	2444	60751	60751	55495	3264.4	3573.588	11
+18	18	18	1	1	2579	64282	64282	58796	3266.4	3571.222	10
+19	19	19	1	1	2714	67813	67813	62097	3268.3	3569.105	10
+20	20	20	1	1	2849	71344	71344	65398	3269.9	3567.200	16
+21	21	21	1	1	2984	74875	74875	68699	3271.4	3565.476	16
+22	22	22	1	1	3119	78406	78406	72000	3272.7	3563.909	12
+23	23	23	1	1	3254	81937	81937	75301	3274.0	3562.478	16
+24	24	24	1	1	3389	85468	85468	78602	3275.1	3561.167	17
+25	25	25	1	1	3524	88999	88999	81903	3276.1	3559.960	20
+26	26	26	1	1	3659	92530	92530	85204	3277.1	3558.846	17
+27	27	27	1	1	3794	96061	96061	88505	3278.0	3557.815	21
+28	28	28	1	1	3929	99592	99592	91806	3278.8	3556.857	26
+29	29	29	1	1	4064	103123	103123	95107	3279.6	3555.966	20
+30	30	30	1	1	4199	106654	106654	98408	3280.3	3555.133	17
+31	31	31	1	1	4334	110185	110185	101709	3280.9	3554.355	22
+32	32	32	1	1	4469	113716	113716	105010	3281.6	3553.625	17
+33	33	33	1	1	4604	117247	117247	108311	3282.2	3552.939	30
+34	34	34	1	1	4739	120778	120778	111612	3282.7	3552.294	19
+35	35	35	1	1	4874	124309	124309	114913	3283.2	3551.686	21
+36	36	36	1	1	5009	127840	127840	118214	3283.7	3551.111	22
+37	37	37	1	1	5144	131371	131371	121515	3284.2	3550.568	23
+38	38	38	1	1	5279	134902	134902	124816	3284.6	3550.053	22
+39	39	39	1	1	5414	138433	138433	128117	3285.1	3549.564	24
+40	40	40	1	1	5549	141964	141964	131418	3285.4	3549.100	22
+41	41	41	1	1	5684	145495	145495	134719	3285.8	3548.659	20
+42	42	42	1	1	5819	149026	149026	138020	3286.2	3548.238	23
+43	43	43	1	1	5954	152557	152557	141321	3286.5	3547.837	31
+44	44	44	1	1	6089	156088	156088	144622	3286.9	3547.455	19
+45	45	45	1	1	6224	159619	159619	147923	3287.2	3547.089	25
+46	46	46	1	1	6359	163150	163150	151224	3287.5	3546.739	22
+47	47	47	1	1	6494	166681	166681	154525	3287.8	3546.404	22
+48	48	48	1	1	6629	170212	170212	157826	3288.0	3546.083	25
+49	49	49	1	1	6764	173743	173743	161127	3288.3	3545.776	26
+50	50	50	1	1	6899	177274	177274	164428	3288.6	3545.480	29
+51	51	51	1	1	7034	180805	180805	167729	3288.8	3545.196	32
+52	52	52	1	1	7169	184336	184336	171030	3289.0	3544.923	25
+53	53	53	1	1	7304	187867	187867	174331	3289.3	3544.660	27
+54	54	54	1	1	7439	191398	191398	177632	3289.5	3544.407	25
+55	55	55	1	1	7574	194929	194929	180933	3289.7	3544.164	24
+56	56	56	1	1	7709	198460	198460	184234	3289.9	3543.929	24
+57	57	57	1	1	7844	201991	201991	187535	3290.1	3543.702	33
+58	58	58	1	1	7979	205522	205522	190836	3290.3	3543.483	26
+59	59	59	1	1	8114	209053	209053	194137	3290.5	3543.271	35
+60	60	60	1	1	8249	212584	212584	197438	3290.6	3543.067	29
+61	61	61	1	1	8384	216115	216115	200739	3290.8	3542.869	30
+62	62	62	1	1	8519	219646	219646	204040	3291.0	3542.677	35
+
+# measured points: 61
+#
+# structural decomposition (the mechanism, not just the exponent):
+#   operations	graph_bytes	mean_record_bytes	coverage_step
+#   2	419	2990.0	-
+#   3	554	3093.7	3301
+#   4	689	3145.5	3301
+#   5	824	3176.6	3301
+#   6	959	3197.3	3301
+#   7	1094	3212.1	3301
+#   8	1229	3223.2	3301
+#   9	1364	3231.9	3301
+#   10	1499	3238.8	3301
+#   11	1634	3244.5	3301
+#   12	1769	3249.2	3301
+#   13	1904	3253.2	3301
+#   14	2039	3256.6	3301
+#   15	2174	3259.5	3301
+#   16	2309	3262.1	3301
+#   17	2444	3264.4	3301
+#   18	2579	3266.4	3301
+#   19	2714	3268.3	3301
+#   20	2849	3269.9	3301
+#   21	2984	3271.4	3301
+#   22	3119	3272.7	3301
+#   23	3254	3274.0	3301
+#   24	3389	3275.1	3301
+#   25	3524	3276.1	3301
+#   26	3659	3277.1	3301
+#   27	3794	3278.0	3301
+#   28	3929	3278.8	3301
+#   29	4064	3279.6	3301
+#   30	4199	3280.3	3301
+#   31	4334	3280.9	3301
+#   32	4469	3281.6	3301
+#   33	4604	3282.2	3301
+#   34	4739	3282.7	3301
+#   35	4874	3283.2	3301
+#   36	5009	3283.7	3301
+#   37	5144	3284.2	3301
+#   38	5279	3284.6	3301
+#   39	5414	3285.1	3301
+#   40	5549	3285.4	3301
+#   41	5684	3285.8	3301
+#   42	5819	3286.2	3301
+#   43	5954	3286.5	3301
+#   44	6089	3286.9	3301
+#   45	6224	3287.2	3301
+#   46	6359	3287.5	3301
+#   47	6494	3287.8	3301
+#   48	6629	3288.0	3301
+#   49	6764	3288.3	3301
+#   50	6899	3288.6	3301
+#   51	7034	3288.8	3301
+#   52	7169	3289.0	3301
+#   53	7304	3289.3	3301
+#   54	7439	3289.5	3301
+#   55	7574	3289.7	3301
+#   56	7709	3289.9	3301
+#   57	7844	3290.1	3301
+#   58	7979	3290.3	3301
+#   59	8114	3290.5	3301
+#   60	8249	3290.6	3301
+#   61	8384	3290.8	3301
+#   62	8519	3291.0	3301
+#
+# consecutive growth (each step adds one operation):
+#   ops_from -> ops_to	ops_ratio	program_bytes_ratio	local_exponent
+#   2 -> 3	1.500	1.454	0.9223
+#   3 -> 4	1.333	1.312	0.9440
+#   4 -> 5	1.250	1.238	0.9561
+#   5 -> 6	1.200	1.192	0.9639
+#   6 -> 7	1.167	1.161	0.9693
+#   7 -> 8	1.143	1.139	0.9733
+#   8 -> 9	1.125	1.122	0.9764
+#   9 -> 10	1.111	1.109	0.9788
+#   10 -> 11	1.100	1.098	0.9808
+#   11 -> 12	1.091	1.089	0.9825
+#   12 -> 13	1.083	1.082	0.9838
+#   13 -> 14	1.077	1.076	0.9850
+#   14 -> 15	1.071	1.070	0.9860
+#   15 -> 16	1.067	1.066	0.9869
+#   16 -> 17	1.062	1.062	0.9877
+#   17 -> 18	1.059	1.058	0.9884
+#   18 -> 19	1.056	1.055	0.9890
+#   19 -> 20	1.053	1.052	0.9896
+#   20 -> 21	1.050	1.049	0.9901
+#   21 -> 22	1.048	1.047	0.9905
+#   22 -> 23	1.045	1.045	0.9910
+#   23 -> 24	1.043	1.043	0.9913
+#   24 -> 25	1.042	1.041	0.9917
+#   25 -> 26	1.040	1.040	0.9920
+#   26 -> 27	1.038	1.038	0.9923
+#   27 -> 28	1.037	1.037	0.9926
+#   28 -> 29	1.036	1.035	0.9929
+#   29 -> 30	1.034	1.034	0.9931
+#   30 -> 31	1.033	1.033	0.9933
+#   31 -> 32	1.032	1.032	0.9935
+#   32 -> 33	1.031	1.031	0.9937
+#   33 -> 34	1.030	1.030	0.9939
+#   34 -> 35	1.029	1.029	0.9941
+#   35 -> 36	1.029	1.028	0.9943
+#   36 -> 37	1.028	1.028	0.9944
+#   37 -> 38	1.027	1.027	0.9946
+#   38 -> 39	1.026	1.026	0.9947
+#   39 -> 40	1.026	1.026	0.9948
+#   40 -> 41	1.025	1.025	0.9950
+#   41 -> 42	1.024	1.024	0.9951
+#   42 -> 43	1.024	1.024	0.9952
+#   43 -> 44	1.023	1.023	0.9953
+#   44 -> 45	1.023	1.023	0.9954
+#   45 -> 46	1.022	1.022	0.9955
+#   46 -> 47	1.022	1.022	0.9956
+#   47 -> 48	1.021	1.021	0.9957
+#   48 -> 49	1.021	1.021	0.9958
+#   49 -> 50	1.020	1.020	0.9959
+#   50 -> 51	1.020	1.020	0.9960
+#   51 -> 52	1.020	1.020	0.9960
+#   52 -> 53	1.019	1.019	0.9961
+#   53 -> 54	1.019	1.019	0.9962
+#   54 -> 55	1.019	1.018	0.9963
+#   55 -> 56	1.018	1.018	0.9963
+#   56 -> 57	1.018	1.018	0.9964
+#   57 -> 58	1.018	1.017	0.9964
+#   58 -> 59	1.017	1.017	0.9965
+#   59 -> 60	1.017	1.017	0.9966
+#   60 -> 61	1.017	1.017	0.9966
+#   61 -> 62	1.016	1.016	0.9967
+#
+# log-log least-squares exponent over all 61 points: 0.9824
+# READ THAT WITH THE FIT BELOW, NOT INSTEAD OF IT. An exponent is a summary of where the domain is and not a statement of what the curve is: over the pre-ADR-0104 quadratic it read 1.09, because the linear term dominated everywhere a program could reach. Only the exact fit below distinguishes the two encodings, and it does so by reproducing every measured point to the byte.
+#
+# MAX_PROGRAM_IDENTITY_BYTES = 67108864 (64 MiB)
+# widest measured point: 62 operations at 219646 bytes, 0.32730% of the bound
+#
+# EXACT FIT over every measured point: program_bytes(n) = 3531n + 724 — LINEAR, with a quadratic coefficient of exactly zero rather than a small one.
+#   graph_bytes(n) = 0n^2 + 135n + 149
+#   THE MECHANISM, stated as the relation a reader can check: the program curve's quadratic coefficient is 0 while the graph curve still grows at 135 bytes per operation. The per-record graph reference no longer scales with the graph, so the product that used to make the total quadratic — one whole graph identity per coverage record, one record per operation — is gone. That is ADR 0104's fold, read off the curve rather than off the encoder.
+#
+# EXTRAPOLATED refusal point: the fitted curve first exceeds the bound at n = 19006 operations (67110910 bytes at n = 19006, 67107379 bytes at n = 19005).
+# THE FIT IS EXACT ON ITS DOMAIN AND THE DOMAIN IS 2..=62 OPERATIONS. Every coefficient above is a property of this one program family: graph identity per operation depends on operation-key length, arity, result rank, and attribute width, and the per-record remainder depends on the region, the reached definitions, and the admission provenance. A different family moves all three coefficients, so this number is the order of magnitude at which the bound becomes binding, not a refusal a caller can rely on.
+# IT IS ALSO AN EXTRAPOLATION ACROSS THREE ORDERS OF MAGNITUDE, and the wall below says why no wider ladder is available: the ordinary compilation path refuses this family at 63 operations on semantic_operations, the governed program-size budget itself, so the widest point any measurement can reach is 62 and the refusal point above is 307x beyond it. Widening the ladder further is a budget decision rather than a harness one.
+#
+# THE WALLS, each compiled and required to refuse with the class and phase named:
+#   program size, at 63 operations: CONFIRMED BudgetExhausted before planning — semantic_operations = 62, the one wall about program size and the one that refuses before any target-qualified trace exists [the compilation batch refused: CompileFailure { class: BudgetExhausted, explain: "absent (refused before a target-qualified trace)" }]
+#   launch geometry, at 2 operations: CONFIRMED NoFeasiblePlan after planning — the whole-program region's launch geometry needs one thread per element and the declaration measures max_threads_per_grid_axis at 268,435,456, so target.grid-axis rejects every region of every cover and the portfolio is empty — a hard target rejection raised inside the target loop, after the trace is opened [the target slot refused: TargetCompileFailure { failure: CompileFailure { class: NoFeasiblePlan, explain: "26 records" }, refusal: None }]
+#   launch geometry, control: CONFIRMED the program one step inside the recorded bound compiles, to a 7796-byte identity, so the refusal above is that bound's and not the session boundary's.
+# so the ladder above is the entire domain the ordinary compilation path admits for this family at this extent, and the governed semantic_operations budget of 62 is measured to be the bound that ends it rather than assumed to. Every bound that used to refuse below 62 is measured here to admit instead, and the extent bound beside them is measured to refuse after planning rather than before it.
