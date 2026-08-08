@@ -197,17 +197,32 @@ pub fn invalid_operations_are_decided() -> Perturbation {
 /// FMA is the named non-goal. There is no fused variant on [`Operation`], so a
 /// caller cannot express one; this records that as an observed absence rather
 /// than a claim, by enumerating the complete admitted set.
+///
+/// # The declaration is the check, and its failure is a build error
+///
+/// Alone among the perturbations here, this one's subject is a compile-time
+/// property of a type, so no input can turn its line `MISSED`; what a widened
+/// [`Operation`] must not do is leave it reporting an absence that stopped being
+/// true. Two declarations close that, and neither is a length the list supplies
+/// for itself. `ADMITTED` is declared at
+/// [`variant_count::<Operation>()`](std::mem::variant_count), so a fused variant
+/// added to the enum and not listed is an array-length build error at the
+/// declaration. The pattern below then names both entries, so listing it instead
+/// is a pattern-length build error at the claim — and naming them settles what a
+/// bare length could not, since two entries that repeat one variant and omit the
+/// other cannot match `[Multiply, Add]`.
 #[must_use]
 pub fn fused_operations_are_unexpressible() -> Perturbation {
-    let admitted = [Operation::Multiply, Operation::Add];
+    const ADMITTED: [Operation; std::mem::variant_count::<Operation>()] =
+        [Operation::Multiply, Operation::Add];
     Perturbation {
         subject: "the admitted operation vocabulary",
-        detected: admitted.len() == 2,
+        detected: matches!(ADMITTED, [Operation::Multiply, Operation::Add]),
         detail: format!(
             "exactly {} operations are expressible ({}); no fused multiply-add variant exists, \
              matching the measured MSL fact that `fma(bfloat, bfloat, bfloat)` does not compile",
-            admitted.len(),
-            admitted
+            ADMITTED.len(),
+            ADMITTED
                 .iter()
                 .map(|operation| operation.as_str())
                 .collect::<Vec<_>>()
