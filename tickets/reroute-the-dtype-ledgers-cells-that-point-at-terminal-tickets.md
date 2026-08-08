@@ -21,7 +21,7 @@ Verified 2026-08-07 at base `7c371155` by `verify-and-file-the-remaining-maturit
 
 **Fact — the routing sentence.** The BF16 Trigger closes `docs/dtype-support.md "BF16's remaining rungs are carried by the live tickets named in the paragraphs above"` and in the research tracks record under `#### D-4`.
 
-**Fact — D-4's own eight owners are all `done`.** `docs/research/numerics/dtype-family-research-tracks.md "Remaining owners, by rung."` names exactly eight: `admit-bf16-into-the-schedule-and-kernel-vocabulary`, `admit-the-bf16-type-and-carrier-into-every-total-map`, `carry-bf16-through-the-artifact-encoding-and-identity`, `establish-bf16-optimizer-legality`, `lower-bf16-to-metal`, `validate-bf16-at-the-runtime-routing-boundary`, `conform-the-bf16-vertical-end-to-end`, and `state-and-check-a-bf16-numerical-contract`. Reproduce:
+**Fact — D-4's own eight owners are all `done`.** The paragraph headed "Remaining owners, by rung." — repaired on this branch and now `docs/research/numerics/dtype-family-research-tracks.md "Rung owners, and all eight are delivered."` — names exactly eight: `admit-bf16-into-the-schedule-and-kernel-vocabulary`, `admit-the-bf16-type-and-carrier-into-every-total-map`, `carry-bf16-through-the-artifact-encoding-and-identity`, `establish-bf16-optimizer-legality`, `lower-bf16-to-metal`, `validate-bf16-at-the-runtime-routing-boundary`, `conform-the-bf16-vertical-end-to-end`, and `state-and-check-a-bf16-numerical-contract`. Reproduce:
 
 ```sh
 for t in admit-bf16-into-the-schedule-and-kernel-vocabulary admit-the-bf16-type-and-carrier-into-every-total-map \
@@ -40,7 +40,7 @@ All eight return `status: done`. Every one of the thirty-five tickets linked fro
 
 ## Defect 2 — two cells say "until X lands" for a ticket that landed and recorded the opposite
 
-**Fact — the two cells.** In the IEEE `f32` section, `docs/dtype-support.md "so the filter is tautological on exactly those paths until"` `declare-host-dtype-dispatchability-at-the-consumer-boundary` "derives the row from a bound device". In the BF16 section, `docs/dtype-support.md "so it is tautological on those paths until"` the same ticket "lands".
+**Fact — the two cells.** In the IEEE `f32` section, `docs/dtype-support.md "so the filter is tautological on exactly those paths"` continued "until `declare-host-dtype-dispatchability-at-the-consumer-boundary` derives the row from a bound device". In the BF16 section, `docs/dtype-support.md "so it is tautological on those paths"` continued "until" the same ticket "lands". Both trailing clauses are struck on this branch; the anchors above are pinned to the surviving text, and the retired words are quoted here as prose so this account stays readable without demanding that a deleted phrase resolve.
 
 **Fact — it landed, and its Outcome rules the expected fix out.** `tickets/declare-host-dtype-dispatchability-at-the-consumer-boundary.md` is `done`, and its Outcome opens: `tickets/declare-host-dtype-dispatchability-at-the-consumer-boundary.md "that part is structural, and the ticket asked for it to be said rather than fixed"`. Its `Surviving restatements` section states that the facade path can reach no observation at all, because `execution_environment` builds the `ExecutionEnvironment` that is an *input* to adapter construction, so no device exists to consult; and that the Candle prototype's gap "is a decision to record and not a task to schedule". A reader following either cell arrives at a closed ticket expecting a fix that was deliberately ruled out.
 
