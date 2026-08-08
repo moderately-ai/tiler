@@ -1,7 +1,7 @@
 ---
 id: correct-the-symbolic-coefficient-era-index-vocabulary-claims
 title: Correct the symbolic-coefficient-era index vocabulary claims
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-symbolic-index-expression-coefficients, repoint-the-sourced-extent-paths-in-the-four-documents-that-name-them, admit-a-position-selecting-slice-for-the-rotary-table]
@@ -9,6 +9,9 @@ scopes: [research/shapes, research/indexing, implementation/ir]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [docs, doc-drift, indexing]
+claimed_from: todo
+assignee: w-terra-index
+lease_expires_at: 1786201849
 ---
 ## What is stale
 
