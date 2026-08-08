@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: []
 related: []
-scopes: [implementation/ir]
+scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
