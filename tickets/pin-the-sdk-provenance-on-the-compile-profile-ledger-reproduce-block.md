@@ -1,7 +1,7 @@
 ---
 id: pin-the-sdk-provenance-on-the-compile-profile-ledger-reproduce-block
 title: Pin the SDK provenance on the compile-profile ledger xcrun reproduce block
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [pin-the-sdk-provenance-the-xcrun-reproduce-forms-silently-rebase]
@@ -9,9 +9,6 @@ scopes: [research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-pin-the-s
-lease_expires_at: 1786165341
 ---
 ## Three host-resolved SDK header paths in the compile-profile authority ledger
 
@@ -67,3 +64,27 @@ The environment table at `:34-42` is untouched — every diff hunk is at `:374` 
 ### The three sites are now at `:406`, `:408`, `:410`
 
 Fact 1's `:394`/`:396`/`:398` are stamped "verified at `7c371155`" and were still true at `209013bd`; they are left as the dated claims they are rather than re-based, and the post-change numbers are recorded here instead.
+
+## Outcome — done, 2026-08-08
+
+Landed at merge `488d5bd8` (worker commit `d725e54e`). Two files, `docs/` + `tickets/` only, carries the green gate.
+
+### The coordinator's "least defective" framing held for two of three
+
+I said these three were the least defective of the six `$(xcrun …)` sites because the ledger already declares its SDK build and already byte-compares the header. **True for two of them, false for the third — and the third is the one that matters.**
+
+**The block's digest check covers the wrong header.** It byte-compares `MTLComputeCommandEncoder.h`, which is genuinely identical across both SDKs — so those two commands are unaffected by the 27.0 selection and print identically either way.
+
+**`MTLComputePipeline.h` is not covered and is not identical.** Coordinator-verified with both SDKs installed: 26.5 is **305 lines**, digest `8f194e26…`; 27.0 is **297 lines**, digest `1b30d5db…`. The third command's own output moves — `maxTotalThreadsPerThreadgroup` at **227/230** under 26.5 against **217/220** under 27.0. And the comment "The two installed SDKs agree on the dispatch header" sat five lines below that command, reading as though it covered it.
+
+**Measured rather than inferred**: the entire difference is reflection-related `///` comments plus two blank lines, established by filtering the diff for any changed line that is neither. **No declaration moves**, so nothing the ledger asserts is wrong and the workgroup-threads row's evidence survives intact — but the *coverage* claim was false.
+
+### The repair matches the shape of the defect
+
+Because the defect is an **asymmetry**, the fix is one statement covering all three rather than three sentences: a paragraph above the fence naming the recorded SDK — **cited from the environment table rather than re-read** — and the resolved one with its per-header consequence; a pointer inside the fence comment; the digest loop extended to **both** headers so the asymmetry is reproducible; and a `diff` command establishing it is comments-only.
+
+Deliberately left alone: the environment table, per the filer's explicit instruction; the grid-axis elimination, already correctly scoped to the two headers it names; and the three `$(xcrun …)` forms themselves, since a reproduction earns its keep by running on the reader's host.
+
+Two anchor-reach demonstrations, both broken, watched failing at exit 2, reverted — including the load-bearing environment-table anchor, so the citation the repair *depends on* is proven reached rather than assumed.
+
+The ticket's `shared_scopes` was `[]` against a brief saying otherwise — the fourth ticket this week with that gap, added as scheduling metadata. Fact 1's line citations were **not** re-based: they are stamped as verified at a named commit and were still true at that base, so the new positions are recorded in the worker record instead of overwriting a dated claim.
