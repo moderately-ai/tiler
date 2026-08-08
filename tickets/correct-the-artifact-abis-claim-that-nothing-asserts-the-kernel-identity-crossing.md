@@ -1,7 +1,7 @@
 ---
 id: correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing
 title: Correct the artifact ABI's claim that nothing asserts the kernel identity crossing
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [pin-the-serial-sum-kernel-identitys-crossing-of-the-opaque-identity-bound]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786182999
 ---
 `docs/artifact-abi.md`'s "Governed budgets" section ends with a paragraph headed **"What is not pinned here, stated rather than left for a reader to assume."** Its opening sentence — "No test asserts any of these lengths, and none asserts the inequality the paragraph turns on" — was true when written and is **false as of** [`pin-the-serial-sum-kernel-identitys-crossing-of-the-opaque-identity-bound`](pin-the-serial-sum-kernel-identitys-crossing-of-the-opaque-identity-bound.md). Filed by that ticket, which could not repair it: `contracts/artifacts` is outside its four scopes and its own Out of scope section forbids touching the file.
 
