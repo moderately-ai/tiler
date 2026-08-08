@@ -4,7 +4,7 @@ title: Prove a quantized compound-value vertical
 status: done
 priority: p2
 dependencies: [implement-first-profile-numerical-policies]
-related: [implement-workload-selected-quantized-parameter-maps, implement-first-runtime-semantic-value-precondition-enforcement, admit-a-dtype-dispatchability-capability-axis, scope-first-quantized-lm-profile, implement-first-quantized-backend-profile, group-internal-compound-materializations-by-logical-value]
+related: [implement-workload-selected-quantized-parameter-maps, implement-first-runtime-semantic-value-precondition-enforcement, admit-a-dtype-dispatchability-capability-axis, scope-first-quantized-lm-profile, implement-first-quantized-backend-profile, enforce-resolved-encoded-value-binding-conformance]
 scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/artifact, contracts/numerics, contracts/artifacts, implementation/metal, implementation/build, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -55,7 +55,7 @@ The reusable boundary delivered here is therefore generic ordered component decl
 
 Existing owners cover the next concrete consumers:
 
-- `implement-first-runtime-semantic-value-precondition-enforcement` owns logical-view reconstruction and validation across packed boolean/sub-byte, complex, quantized, extension, sparse, and ragged representations, with unsupported cases refused by name.
+- `enforce-resolved-encoded-value-binding-conformance` now owns the reusable type-derived contract, exact proof/evidence identity, and logical scan for direct encoded bindings. `implement-first-runtime-semantic-value-precondition-enforcement` integrates only the first selected unpacked U8 per-axis direct input after `RoutingCommit`; every other representation remains refused by exact name rather than implied by this generic seam.
 - `scope-first-quantized-lm-profile` is the first named consumer that may justify per-axis/per-block maps, codebooks, hierarchical metadata, or a native packed contraction profile; it must file dependency-ordered implementation tickets from measured workload evidence.
 - `implement-first-quantized-backend-profile` remains deferred until that workload-backed selection names the exact scheme, operation set, target, storage layout, numerical contract, and conformance corpus.
 - `admit-a-dtype-dispatchability-capability-axis` owns target-family dispatchability keyed by the semantic dtype vocabulary; this vertical must not create another dtype list inside artifact or backend code.
@@ -93,7 +93,7 @@ The strict-affine schedule verifier requires preserved input and result subnorma
 
 Artifact identity advanced to `tiler.artifact-program.v9` and manifest schema 7.0. Its dependency ledger is `tiler.resolved-value-type.v3`, `tiler.schedule.v2`, `tiler.kernel.v3`, and `tiler.kernel-program.v5`. Identity tests independently perturb scheme, static fields, component roles/order/types/maps, embedded scale bits, storage scalar/encoding/access type, and binding association. Runtime scale payload changes alter evaluation without altering program identity, while embedded constants alter identity.
 
-Metal execution remains correctly unsupported for this exact profile. The governed Apple target profiles flush F32 arithmetic subnormals, while the strict-affine contract requires preservation, so `tiler-metal` reaches the explicit U4/I32 syntax path and then refuses with `SubnormalFlushInArithmetic` before producing a falsely executable payload. Runtime preflight must additionally validate positive finite scale, in-range zero point, and canonical packed tail bits before routing commit; `implement-first-runtime-semantic-value-precondition-enforcement` owns that work.
+Metal execution remains correctly unsupported for this exact profile. The governed Apple target profiles flush F32 arithmetic subnormals, while the strict-affine contract requires preservation, so `tiler-metal` reaches the explicit U4/I32 syntax path and then refuses with `SubnormalFlushInArithmetic` before producing a falsely executable payload. Direct resolved-value conformance is now a separate delivered authority. The selected runtime integration prepares its checker before `RoutingCommit` and scans the direct U8 input only afterward and before result work; packed-tail canonicality remains a separate physical responsibility and is not part of that selected route.
 
 ### Maturity ledger
 
@@ -106,9 +106,9 @@ Metal execution remains correctly unsupported for this exact profile. The govern
 ### Filed follow-up ownership
 
 - `implement-workload-selected-quantized-parameter-maps` implements only the first non-per-tensor map selected by measured workload evidence and closes as obsolete if the selected profile stays per-tensor.
-- `group-internal-compound-materializations-by-logical-value` adds producer-derived grouping before any backend may publish an internally produced compound value.
+- `group-internal-compound-materializations-by-logical-value` is deferred until a selected workload actually contains an internally produced compound value with a real downstream consumer.
 - `scope-first-quantized-lm-profile` selects the first real scheme, operation, target, storage, map, and conformance corpus.
-- `implement-first-quantized-backend-profile` consumes that selection, depends on internal grouping, conditionally depends on parameter-map and runtime-validation work, and must reject every unselected row by name.
+- `implement-first-quantized-backend-profile` consumes that selection, depends on parameter-map, fused-consumer, and direct-input conformance/enforcement work, and must reject every unselected row by name. The selected profile has no internal-grouping dependency.
 
 ### Verification
 
