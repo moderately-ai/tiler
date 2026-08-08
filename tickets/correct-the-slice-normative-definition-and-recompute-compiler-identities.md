@@ -1,7 +1,7 @@
 ---
 id: correct-the-slice-normative-definition-and-recompute-compiler-identities
 title: Correct the Slice normative definition and recompute compiler identities
-status: todo
+status: in-progress
 priority: p1
 dependencies: [correct-the-symbolic-coefficient-era-index-vocabulary-claims, pin-the-tiler-compiler-identity-domain-spellings-the-ir-census-does-not-reach]
 related: [admit-a-position-selecting-slice-for-the-rotary-table]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, identity, correction]
+claimed_from: todo
+assignee: w-sol-slice
+lease_expires_at: 1786209191
 ---
 ## Why this exists
 
