@@ -132,8 +132,9 @@
 //! oracle comparison, evidence attribution — contains none and does not need
 //! any: `device_buffer` exposes a byte interface, so every width,
 //! stride, and element count stays in safe code where it can be perturbed.
-//! `bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`
-//! walks `src/` and fails when a third appears.
+//! `crates/tiler/tests/workspace_unsafe_sites.rs` walks every declared member's
+//! Rust sources and pins all four workspace permissions by path, complete item
+//! signature, and exact reason, including this crate's pair.
 //!
 //! **Not inheriting has a second cost, and it is also checked.** A member that
 //! cannot inherit one entry of the workspace lint table has to restate all of

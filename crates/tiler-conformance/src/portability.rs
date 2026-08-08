@@ -40,9 +40,7 @@
 //! # The needles are assembled at run time
 //!
 //! Every string this scanner searches for would otherwise be a match against
-//! this file's own source, which is the same reason
-//! `crate::bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`
-//! assembles its needle. That is also why the prose above says "the macOS
+//! this file's own source. That is also why the prose above says "the macOS
 //! predicate" rather than spelling the attribute out.
 
 use std::path::{Path, PathBuf};
@@ -111,7 +109,16 @@ use std::path::{Path, PathBuf};
 /// `refresh-the-device-free-test-floor-s-prose-census`.** `fe282f1e` added one
 /// device-free serial-sum test without moving the floor; raising it restores the
 /// one-below relation and makes the two-test gate loss refuse again.
-const DEVICE_FREE_TEST_FLOOR: usize = 73;
+///
+/// **Later 2026-08-08 — it returns 73 → 72 under
+/// `pin-the-admitted-unsafe-sites-in-the-workspace-gate`.** The one removed
+/// test was not conformance evidence: it scanned this crate's sources for two
+/// unsafe-token substrings, and the same ticket replaces it with a lexical
+/// workspace-wide test under `crates/tiler/tests/` that reaches both diverging
+/// members and pins paths, signatures, and reasons. The conformance population
+/// is therefore 73 and this floor stays one below it; moving the check to its
+/// workspace-policy owner does not make a deterministic conformance run vanish.
+const DEVICE_FREE_TEST_FLOOR: usize = 72;
 
 /// A non-Apple host still runs the device-free test population.
 ///
@@ -275,11 +282,7 @@ fn child_module_paths(parent: &Path, name: &str) -> Vec<PathBuf> {
 
 /// Collects every `.rs` file beneath one directory.
 ///
-/// Shared with
-/// `crate::bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`,
-/// which walks the same tree to count the crate's `unsafe` sites: two population
-/// checks over one directory should not disagree about which files are in it.
-pub(crate) fn collect_rust_sources(directory: &Path, into: &mut Vec<PathBuf>) {
+fn collect_rust_sources(directory: &Path, into: &mut Vec<PathBuf>) {
     let entries = std::fs::read_dir(directory).expect("the crate's source directory is readable");
     for entry in entries {
         let path = entry.expect("a directory entry is readable").path();

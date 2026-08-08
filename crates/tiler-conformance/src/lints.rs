@@ -105,10 +105,11 @@ type LintTables = BTreeMap<String, BTreeMap<String, String>>;
 /// The one difference between the two tables that is not drift.
 ///
 /// The section-qualified lint name, the workspace's level, and this crate's,
-/// each as the text a manifest spells it in. The name is assembled from two
-/// pieces so that `crate::bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`,
-/// which scans this crate's sources for the attribute token, cannot match this
-/// file — the same reason `crate::portability` assembles its needles.
+/// each as the text a manifest spells it in. The name remains assembled from
+/// two pieces so its source shape stays independent from the policy check;
+/// `crates/tiler/tests/workspace_unsafe_sites.rs` now lexically discards comments
+/// and strings before it looks for permissions, so this is no longer needed to
+/// hide from a substring census.
 fn permitted_divergence() -> (String, String, String) {
     (
         format!("rust.{}{}", "unsafe", "_code"),

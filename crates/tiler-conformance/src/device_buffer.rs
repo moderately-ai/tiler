@@ -21,10 +21,10 @@
 //!
 //! **Two.** [`write_bytes`] copies a host byte run into a buffer, and
 //! [`read_bytes`] copies a buffer's byte run back out. Nothing else in this
-//! crate contains `unsafe`, and
-//! `crate::bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`
-//! walks every file under `src/` and fails if a third appears — so an added
-//! site is visible rather than absorbed into a module that already had some.
+//! crate contains `unsafe`. `crates/tiler/tests/workspace_unsafe_sites.rs`
+//! walks every Rust source under every declared workspace member and pins this
+//! pair's paths, complete item signatures, and exact reasons beside the two
+//! prototype sites, so an addition or move is not absorbed into this module.
 //!
 //! # Why the interface is bytes rather than BF16 elements
 //!

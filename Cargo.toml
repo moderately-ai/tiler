@@ -133,6 +133,15 @@ opt-level = 1
 #   running that same module from the prototype's root. One reader, two roots --
 #   a second parser of these tables would drift against the first exactly as the
 #   tables drift without either.
+#
+# The per-site half is held separately by
+# `crates/tiler/tests/workspace_unsafe_sites.rs`. It derives these member roots,
+# walks every Rust source under them, and pins the four admitted permissions by
+# workspace-relative path, complete item signature, and exact reason. Its lexer
+# discards comments and strings, recognizes wrapped direct attributes, and
+# fails closed on permission syntax outside its stated boundary. The compiler
+# and the three checks above remain the lint-level authority; that test does not
+# restate their tables.
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"

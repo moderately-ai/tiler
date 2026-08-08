@@ -105,6 +105,15 @@ The admission deliberately did not pre-authorize a weaker level. Admitting a nam
 
 **Superseded — 2026-08-07, on item 6's conclusion and not on its reasoning.** Tom decided the level the same day on [`decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`](../../tickets/decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access.md), which is now `done`. `crates/tiler-conformance/Cargo.toml` restates the workspace table rather than inheriting it, and the difference is exactly one lint: `unsafe_code = "deny"`, admitting named `#[allow(unsafe_code)]` at **individual sites and never at the crate**, with FFI memory management against Metal — concretely the raw pointer `metal::Buffer::contents` returns — as the only admitted justification, and isolation in one module as a design constraint. The population is two sites, both in `src/device_buffer.rs`, and `bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones` walks `src/` so a third site, or a new file carrying one, is a red test rather than an absorbed addition. Every other member keeps `forbid`. The device-reaching half of item 1 is therefore no longer unwritable, and it is written. The paragraph above is retained unedited because its reasoning is the case the decision was made against, and because its refusal to pre-authorize a weaker level is precisely what left the decision to Tom under ADR 0079.
 
+**Updated — 2026-08-08, on the inventory mechanism only.** The two-site
+population in this crate is unchanged. The conformance-local token count named
+above was removed when `crates/tiler/tests/workspace_unsafe_sites.rs`
+superseded it with one workspace-wide inventory. That test derives every
+member root and pins this pair together with the prototype pair by exact path,
+complete item signature, and reason, so an addition, move, removal, or reason
+change is now a red test. ADR 0079 records the scanner's boundary and the
+review obligations it deliberately does not mechanize.
+
 ## Consequences
 
 - The workspace carries twelve reusable libraries, one conformance member, and three non-published proof/integration executables. As with ADRs 0077, 0081, 0082, 0085, and 0088, that count is an ordinal about the member being admitted rather than a new cap, and [`docs/architecture.md`](../architecture.md) holds the live profile. The row is `tiler-conformance -> [tiler-artifact, tiler-build, tiler-compiler, tiler-ir, tiler-metal, tiler-metal-aot, tiler-reference, tiler-runtime] + macOS [metal]`.
