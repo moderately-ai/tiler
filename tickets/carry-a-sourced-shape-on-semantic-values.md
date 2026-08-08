@@ -1,11 +1,11 @@
 ---
 id: carry-a-sourced-shape-on-semantic-values
 title: Carry a sourced shape on semantic values instead of a fixed shape
-status: in-progress
+status: todo
 priority: p1
 dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module]
 related: [carry-symbolic-extents-into-the-semantic-program]
-scopes: [implementation/ir, implementation/compiler, implementation/reference, implementation/artifact, implementation/frontend, contracts/foundation]
+scopes: [implementation/ir, implementation/compiler, implementation/reference, implementation/artifact, implementation/frontend, contracts/foundation, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, semantic-graph, api]
@@ -159,3 +159,36 @@ Not affected, and checked rather than assumed: `capability.rs:1631` and `tiler-r
 Part A forces the v3 tagged encoding; v3 forces the fifth subject, or a symbolic program ships unkeyed; the fifth subject forces the cascade above. There is therefore **no smaller coherent unit than the whole** — every intermediate stopping point is a half-stepped identity domain, which `AGENTS.md` names as not a coherent boundary. The base state is the only other gated boundary, so that is what is preserved.
 
 **Before the next dispatch:** add `implementation/build`; state the total-vs-optional elimination and the artifact-omission argument above as decided, since they change what the ticket delivers; and treat the pin list as a hypothesis — recompute every pin on the merged tree and report unmoved ones too.
+
+## Coordinator corrections after the 2026-08-07 mapping run
+
+The worker preserved the base state rather than half-stepping an identity domain, which is correct: Part A forces `v3`, `v3` forces the fifth subject or the program ships unkeyed, and the fifth subject forces a four-domain cascade. **There is no smaller coherent unit than the whole**, and `AGENTS.md` names a half-stepped identity domain as not a coherent boundary. No pin table or collision probe is reported because none was computed — reporting recomputed pins that were not recomputed is the exact failure this ticket exists to stop.
+
+### Scope gap, fixed — and it was the coordinator's
+
+`implementation/build` was missing. The three pins this ticket says must move live in `crates/tiler-build/src/metal_plan.rs`, which maps to **`implementation/build`** — coordinator-verified against `ticketsplease.toml`, and absent from the six declared scopes. The pins were enumerated without being mapped through the scope table, which is the *same defect* the 2026-08-07 repair fixed for five other crates. Now added; the set is **seven**.
+
+### A false claim in the merge block, struck
+
+The merge block stated the artifact program subject "already carries the semantic subjects, so no artifact section is added". **True for the cache** — `tiler-cache` never names `SemanticIdentity`. **False for the artifact**: `docs/artifact-abi.md` states deliberately that "**Only the three reached subjects travel**: the semantic graph identity, the reached definitions, and the admission provenance" — coordinator-verified. A fourth subject would need a manifest schema major step and an ABI-doc edit under **`contracts/artifacts`**, which this ticket does not hold.
+
+Also struck: "byte-stability applies only to programs with no symbolic extent" is **self-contradictory** — tagging moves static bytes too, which is precisely why the domain steps. **Byte stability is abandoned, not narrowed.** Say that plainly rather than preserving a qualifier that cannot hold.
+
+### The resolution that keeps the unit inside its scopes
+
+Make the fifth subject **total over an empty-environment identity** — the elimination the superseded `fold` ticket explicitly left open. It is then constant across every artifact-reachable program, because the compiler refuses symbolic programs at `normalize.rs`'s rebuild, so **the artifact keeps three subjects and its domain does not step**.
+
+That coupling is load-bearing and **needs a test, not an assumption**: the property "no symbolic program reaches the artifact" is what makes the fourth subject invisible there, and if it ever fails the artifact silently ships an unkeyed program. Pin it.
+
+This is an internal design choice that *avoids* a public-boundary step rather than taking one, so it eliminates under `AGENTS.md` and is not reserved. If the test shows the coupling does not hold, that is a different ticket and Tom's.
+
+### Smaller corrections to this ticket's own text
+
+- **`normalize.rs ×8` is imprecise** — nine warnings at seven distinct lines, and the repair block's sub-counts sum to 23 while the same sentence says 24.
+- **"compiler sites are real source, not fixtures" is imprecise** — two of them are `#[cfg(test)]` *items* rather than module boundaries, so the range reading they invite is unsound.
+- The 45-site measurement **was reproduced exactly** by the `#[deprecated]` method (compiler 24, ir 11, reference 7, artifact 2, macros 1), and the probe reverted.
+- Fact 2's quote is verified but **hard-wrapped** at its source, so a naive grep returns a false negative. The reproduce command should account for that.
+
+### Release trigger for redispatch
+
+All **seven** scopes free simultaneously. Recheck with `tkt claims` plus a scope scan of live `tkt/*` branches.
