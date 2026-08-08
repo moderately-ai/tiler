@@ -1,7 +1,7 @@
 ---
 id: correct-the-fusion-contract-s-stale-workgroup-query-rationale
 title: Correct the fusion contract's stale workgroup-query rationale
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related:
@@ -12,6 +12,9 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, scheduling, target-profiles]
+claimed_from: todo
+assignee: terra-fusion-query
+lease_expires_at: 1786232732
 ---
 
 `docs/compiler/fusion-and-scheduling.md` repeats the capped tree rule's
