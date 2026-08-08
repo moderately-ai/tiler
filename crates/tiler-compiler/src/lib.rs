@@ -23,6 +23,13 @@ mod call_registry;
 pub mod capability;
 mod component_cost;
 mod cover;
+/// Every identity-domain spelling this crate declares, pinned to exact bytes.
+///
+/// Crate-level because six domains are inline literals no constant can
+/// enumerate; the test-only source census reaches them without adding a public
+/// compiler boundary.
+#[cfg(test)]
+mod domains;
 mod effects;
 mod elementary;
 mod estimate;
