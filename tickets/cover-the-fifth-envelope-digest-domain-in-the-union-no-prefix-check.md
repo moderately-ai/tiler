@@ -1,7 +1,7 @@
 ---
 id: cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check
 title: Cover the fifth envelope digest domain in the union no-prefix check
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [date-the-artifact-abis-metal-golden-enumeration-to-its-step]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786170921
 ---
 ## A hashed domain that a normative obligation requires be checked, and is not
 

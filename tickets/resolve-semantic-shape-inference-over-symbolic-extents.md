@@ -1,7 +1,7 @@
 ---
 id: resolve-semantic-shape-inference-over-symbolic-extents
 title: Resolve semantic shape inference over symbolic extents
-status: todo
+status: in-progress
 priority: p1
 dependencies: [carry-a-sourced-shape-on-semantic-values]
 related: [carry-symbolic-extents-into-the-semantic-program]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, semantic-graph]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786170921
 ---
 ## User-visible outcome
 
