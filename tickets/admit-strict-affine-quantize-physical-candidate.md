@@ -19,11 +19,11 @@ No physical `Quantize` candidate is implemented by this ticket. Its own activati
 
 The completed selection instead chose role-addressed strict-affine U8 **interface inputs** consumed by `DequantizeStrictAffine` fused into a contraction. The executed program contains no `Quantize` or `Assemble`. Keeping this ticket as the enforcement chain's synthetic consumer would therefore impose internal compound grouping and operation-precondition work on a workload that exercises neither.
 
-Before closure, every dependent was repaired:
+Before closure, every graph record that had named this ticket or its obsolete route was repaired:
 
 - [`carry-semantic-enforcement-plans-through-program-and-artifact`](carry-semantic-enforcement-plans-through-program-and-artifact.md) now derives a static plan from the delivered direct-binding conformance contract and protects the first fused contraction consumer.
 - [`implement-first-runtime-semantic-value-precondition-enforcement`](implement-first-runtime-semantic-value-precondition-enforcement.md) now executes that direct-input conformance after `RoutingCommit` and before result work.
 - [`implement-first-quantized-backend-profile`](implement-first-quantized-backend-profile.md) consumes the corrected runtime vertical without a direct or transitive internal-grouping prerequisite.
-- [`group-internal-compound-materializations-by-logical-value`](group-internal-compound-materializations-by-logical-value.md) is deferred until an actually selected internal producer fires its named trigger.
+- The separate [`group-internal-compound-materializations-by-logical-value`](group-internal-compound-materializations-by-logical-value.md) capability is deferred until an actually selected internal producer fires its named trigger; it was not a dependent of this candidate.
 
 Do not reopen this ticket as a placeholder for activation quantization, requantization, or another imagined producer. A future selected internal producer must receive a new bounded candidate ticket derived from its exact producer, consumer, profile, and evidence.

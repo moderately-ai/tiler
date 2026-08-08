@@ -4,7 +4,7 @@ title: Prove a quantized compound-value vertical
 status: done
 priority: p2
 dependencies: [implement-first-profile-numerical-policies]
-related: [implement-workload-selected-quantized-parameter-maps, implement-first-runtime-semantic-value-precondition-enforcement, admit-a-dtype-dispatchability-capability-axis, scope-first-quantized-lm-profile, implement-first-quantized-backend-profile, enforce-resolved-encoded-value-binding-conformance]
+related: [implement-workload-selected-quantized-parameter-maps, implement-first-runtime-semantic-value-precondition-enforcement, admit-a-caller-declared-target-profile, scope-first-quantized-lm-profile, implement-first-quantized-backend-profile, enforce-resolved-encoded-value-binding-conformance]
 scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/artifact, contracts/numerics, contracts/artifacts, implementation/metal, implementation/build, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -58,7 +58,7 @@ Existing owners cover the next concrete consumers:
 - `enforce-resolved-encoded-value-binding-conformance` now owns the reusable type-derived contract, exact proof/evidence identity, and logical scan for direct encoded bindings. `implement-first-runtime-semantic-value-precondition-enforcement` integrates only the first selected unpacked U8 per-axis direct input after `RoutingCommit`; every other representation remains refused by exact name rather than implied by this generic seam.
 - `scope-first-quantized-lm-profile` is the first named consumer that may justify per-axis/per-block maps, codebooks, hierarchical metadata, or a native packed contraction profile; it must file dependency-ordered implementation tickets from measured workload evidence.
 - `implement-first-quantized-backend-profile` remains deferred until that workload-backed selection names the exact scheme, operation set, target, storage layout, numerical contract, and conformance corpus.
-- `admit-a-dtype-dispatchability-capability-axis` owns target-family dispatchability keyed by the semantic dtype vocabulary; this vertical must not create another dtype list inside artifact or backend code.
+- `admit-a-caller-declared-target-profile` delivered caller-bound, canonical target-family dispatchability facts keyed by the semantic dtype vocabulary; this vertical must not create another dtype list inside artifact or backend code.
 
 At close, record exactly which rows are type-system reservations, architectural seams, implementations, and tested guarantees. A test using a nominal bool, integer, complex, or opaque encoded type proves dtype-neutrality of a generic mechanism only; it does not claim arithmetic or backend support for that type.
 
@@ -93,12 +93,12 @@ The strict-affine schedule verifier requires preserved input and result subnorma
 
 Artifact identity advanced to `tiler.artifact-program.v9` and manifest schema 7.0. Its dependency ledger is `tiler.resolved-value-type.v3`, `tiler.schedule.v2`, `tiler.kernel.v3`, and `tiler.kernel-program.v5`. Identity tests independently perturb scheme, static fields, component roles/order/types/maps, embedded scale bits, storage scalar/encoding/access type, and binding association. Runtime scale payload changes alter evaluation without altering program identity, while embedded constants alter identity.
 
-Metal execution remains correctly unsupported for this exact profile. The governed Apple target profiles flush F32 arithmetic subnormals, while the strict-affine contract requires preservation, so `tiler-metal` reaches the explicit U4/I32 syntax path and then refuses with `SubnormalFlushInArithmetic` before producing a falsely executable payload. Direct resolved-value conformance is now a separate delivered authority. The selected runtime integration prepares its checker before `RoutingCommit` and scans the direct U8 input only afterward and before result work; packed-tail canonicality remains a separate physical responsibility and is not part of that selected route.
+**Dated correction — 2026-08-08.** This vertical originally proved the Metal path's fail-closed `SubnormalFlushInArithmetic` refusal. [`admit-a-normal-scale-precondition-for-target-honourable-strict-affine-decode`](admit-a-normal-scale-precondition-for-target-honourable-strict-affine-decode.md) later made that requirement unobservable for the governed strict-affine decode: verified code-domain bounds plus a positive-normal F32 scale now let the measured Apple profile honour the decode without weakening its declared preservation contract. The historical refusal remains evidence about this ticket's landing tree, not current backend authority. Direct resolved-value conformance is a separate delivered authority. The selected runtime integration prepares its per-alternative checker before `RoutingCommit` and scans only the positive-normal scale content afterward and before the selected first consumer; checked U8 carrier/type/kind proof-elides code and zero-point content work, and packed-tail canonicality remains a separate physical responsibility outside this selected route.
 
 ### Maturity ledger
 
 - **Tested guarantee:** exact per-tensor strict-affine U4/F32 and U8/F32 semantic/reference behavior, including exact component payloads and typed unsupported-contract refusal.
-- **Tested guarantee:** target-neutral strict-affine U4 dequantization through role-addressed schedule, KIR, program, artifact identity, codec validation, decoded ABI views, and typed Metal numerical refusal.
+- **Tested guarantee at this ticket's landing tree:** target-neutral strict-affine U4 dequantization through role-addressed schedule, KIR, program, artifact identity, codec validation, decoded ABI views, and the then-correct typed Metal numerical refusal; the later normal-scale ticket owns current target honourability.
 - **Implemented mechanism:** generic ordered component declarations, one real per-tensor parameter map, independent storage scalar/encoding, component-aware access/binding identity, and fail-closed validation.
 - **Architectural seam:** additional parameter maps and arbitrary ordered role sets can extend the same dependency direction without adding affine fields or a second dtype list.
 - **Type-system reservation only:** per-axis, per-block, per-group, codebook, hierarchical-scale, MX, NVFP, GGML, mask/outlier, complex compound, sparse, and ragged families have no claimed reference, lowering, runtime, dispatch, or backend support.
