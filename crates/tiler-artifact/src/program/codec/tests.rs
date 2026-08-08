@@ -323,7 +323,7 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v15\0")
+            .starts_with(b"tiler.artifact-program.v16\0")
     );
 }
 
@@ -357,7 +357,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (15, 0));
+    assert_eq!(MANIFEST_SCHEMA, (16, 0));
 }
 
 /// The canonicity backstop compares a derivation against bytes rather than
@@ -3004,13 +3004,19 @@ fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::
 /// chance, so this is measured rather than asserted arithmetic, and it is
 /// pinned because `docs/artifact-abi.md` states it as a measurement.
 ///
-/// **It was 68 until `tiler.semantic-graph.v3`, and the arithmetic did not
-/// change — one more digest byte now coincides.** No structure moved: the two
-/// tag pairs and the two digests are the same four and sixty-four positions,
-/// and the tagged extent encoding merely gave both digests different content.
-/// This is exactly the chance the doc comment above warns about, which is why
-/// the count is measured and not derived.
-const DIFFERING_CARRIER_POSITIONS: usize = 67;
+/// **It has been 68, then 67, then 68 again, and the arithmetic never changed.**
+/// The two tag pairs and the two digests are the same four and sixty-four
+/// positions throughout; only how many digest bytes happen to coincide has
+/// moved. `tiler.semantic-graph.v3` gave both digests content in which one byte
+/// coincided, taking it to 67; `tiler.artifact-program.v16` — the derived
+/// index-arithmetic requirement entering every entry row, and so entering both
+/// digests — gave them content in which none does, taking it back to 68.
+///
+/// That the count returned to an earlier value is coincidence and not a revert:
+/// nothing about the `v3` step was undone. This is exactly the chance the doc
+/// comment above warns about, which is why the count is measured and never
+/// derived, and why a reader must not "simplify" it to the arithmetic.
+const DIFFERING_CARRIER_POSITIONS: usize = 68;
 
 #[test]
 fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {

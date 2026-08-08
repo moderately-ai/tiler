@@ -188,6 +188,7 @@ use tiler_metal::applicability::{
     MetalHostApplicabilityRefusal, MetalHostObservation, evaluate_metal_host_applicability,
     observe_highest_gpu_family,
 };
+use tiler_metal::direct_requirement::MetalIndexArithmeticRefusal;
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{CompileRequest, OptimizationLevel};
@@ -2962,6 +2963,14 @@ fn plan_route(
 /// reported as a launch-geometry problem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PreflightPhase {
+    /// Comparing a requirement the verified program derived against this device.
+    ///
+    /// First, and that ordering is the point rather than a preference. These are
+    /// facts about the bound device alone: they need no library, no function, and
+    /// no pipeline, so deciding them here is what keeps a device outside the
+    /// program's support from reaching pipeline creation at all. Every later
+    /// phase needs something built.
+    DirectRequirement,
     /// Building an executable library from the payload's object bytes.
     Library,
     /// Resolving the entry symbol the payload's subject names.
@@ -2978,6 +2987,7 @@ impl PreflightPhase {
     /// A stable lowercase identifier for this stage.
     const fn as_str(self) -> &'static str {
         match self {
+            Self::DirectRequirement => "direct-requirement",
             Self::Library => "library",
             Self::Function => "function",
             Self::Pipeline => "pipeline",
@@ -3038,6 +3048,26 @@ enum PreflightRefusal {
         entry: usize,
         symbol: String,
         detail: String,
+    },
+    /// This device does not carry the index arithmetic the entry's program needs.
+    ///
+    /// **A derived requirement, checked directly, with no artifact row behind
+    /// it.** `crates/tiler-artifact/src/program/requirement.rs` admits a
+    /// backend-feature row only for something the verified program does *not*
+    /// already state, and every scheduled region derives its index arithmetic
+    /// from its own coordinate space -- so a row restating it would be a second
+    /// authority a producer could contradict. The requirement travels on the
+    /// entry's `ResourceRequirements`, exactly as `local_memory_bytes` does, and
+    /// `tiler_metal::direct_requirement` owns the Apple-family comparison so no
+    /// Apple vocabulary reaches the neutral artifact or runtime layers.
+    ///
+    /// The cause is carried whole rather than flattened to a string: it names
+    /// the arithmetic, the family that carries it, and what the device reported,
+    /// which are the three things a caller needs to tell "wrong device" from
+    /// "adapter never asked".
+    IndexArithmeticUnsupported {
+        entry: usize,
+        cause: MetalIndexArithmeticRefusal,
     },
     /// The device refused pipeline state for a function it did publish.
     PipelineRejected {
@@ -3117,6 +3147,7 @@ impl PreflightRefusal {
     /// named.
     const fn phase(&self) -> PreflightPhase {
         match self {
+            Self::IndexArithmeticUnsupported { .. } => PreflightPhase::DirectRequirement,
             Self::LibraryRejected { .. } => PreflightPhase::Library,
             Self::FunctionAbsent { .. } => PreflightPhase::Function,
             Self::PipelineRejected { .. } => PreflightPhase::Pipeline,
@@ -3153,7 +3184,8 @@ impl PreflightRefusal {
             Self::LibraryRejected { .. } | Self::FunctionAbsent { .. } => {
                 PreflightClass::CorruptArtifact
             }
-            Self::PipelineRejected { .. }
+            Self::IndexArithmeticUnsupported { .. }
+            | Self::PipelineRejected { .. }
             | Self::WorkgroupTooLarge { .. }
             | Self::ThreadgroupMemoryExceeded { .. }
             | Self::BindingExceedsBufferLimit { .. } => PreflightClass::RouteMiss,
@@ -3173,6 +3205,9 @@ impl fmt::Display for PreflightRefusal {
             self.class().as_str(),
         )?;
         match self {
+            Self::IndexArithmeticUnsupported { entry, cause } => {
+                write!(formatter, "entry {entry} cannot run here: {cause}")
+            }
             Self::LibraryRejected { entry, detail } => write!(
                 formatter,
                 "entry {entry}'s carried object did not load: {detail}"
@@ -3308,6 +3343,7 @@ struct PreparedRoute {
 fn prepare_pipelines(
     device: &Device,
     entries: &[RoutedEntry<'_>],
+    _discharged: DirectRequirementsDischarged,
 ) -> Result<Vec<ComputePipelineState>, PreflightRefusal> {
     entries
         .iter()
@@ -3435,18 +3471,93 @@ fn qualify_live_device<'a>(
         .map_err(ProofError::Load)
 }
 
+/// The one step that may mint evidence of a discharged direct requirement.
+///
+/// **A module, and its only reason is that a witness in this file's single giant
+/// module is forgeable.** A unit struct declared beside its consumer can be
+/// written by any line in the same module, so deleting the check and passing the
+/// witness literal compiled cleanly -- which is the same silent hole a bare
+/// convention leaves. The field below is private, and `check_direct_index_arithmetic`
+/// is the only function inside this module, so the *only* way any caller obtains
+/// a [`DirectRequirementsDischarged`] is to have run the comparison.
+///
+/// This is the shape `tiler_metal::applicability::NativeTranslationAuthority`
+/// already uses for the same purpose: make the ordering a property of the type
+/// system rather than of a reviewer noticing.
+mod discharge {
+    use super::{DeviceFacts, PreflightRefusal, ProbedGpuFamily, RoutedEntry};
+    use tiler_metal::direct_requirement::evaluate_index_arithmetic;
+
+    /// Evidence that every selected entry's derived requirements were checked
+    /// against this device before anything was prepared on it.
+    ///
+    /// Carries no data. What it carries is the ordering: `super::prepare_pipelines`
+    /// takes one by value, so removing the check is a *compile* error at the call
+    /// site rather than the dead-code warning it used to be -- and `prototypes/`
+    /// is excluded from the workspace style gate by design, so a warning is not
+    /// something any gate in this repository would have gone red on.
+    #[must_use]
+    pub(super) struct DirectRequirementsDischarged(());
+
+    /// Checks every selected entry's derived index arithmetic against this device.
+    ///
+    /// **Every entry, and before any of them is prepared.** The requirement is a
+    /// property of the bound device alone, so nothing has to be built to decide
+    /// it, and deciding it here is what keeps a device outside the program's
+    /// Apple-family support from reaching pipeline creation. Checking the first
+    /// entry only would reintroduce the defect `prototype-metal-runtime-preflight`
+    /// removed for the pipeline stage: a two-entry route whose *second* entry
+    /// needed an arithmetic this device lacks would pass here and fail later.
+    ///
+    /// The comparison is not made here. `tiler_metal::direct_requirement` owns
+    /// it, because deciding which Apple family carries an arithmetic is Apple
+    /// vocabulary and this file is a device binding -- the same split
+    /// `tiler_metal::applicability` already uses, and the reason no Apple family
+    /// enum reaches the neutral artifact or runtime layers.
+    ///
+    /// `ProbedGpuFamily::Unnameable` is passed on as `None` -- an unasked
+    /// question, not a device that answered no -- which is the distinction that
+    /// type exists to preserve. It refuses either way, with a different typed
+    /// cause.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PreflightRefusal::IndexArithmeticUnsupported`] naming the first
+    /// entry this device cannot carry, and the typed cause from the owning
+    /// comparison.
+    pub(super) fn check_direct_index_arithmetic(
+        facts: &DeviceFacts,
+        entries: &[RoutedEntry<'_>],
+    ) -> Result<DirectRequirementsDischarged, PreflightRefusal> {
+        let observed = match facts.apple_family {
+            ProbedGpuFamily::Answered(support) => Some(support),
+            ProbedGpuFamily::Unnameable(_) => None,
+        };
+        for (entry, routed) in entries.iter().enumerate() {
+            evaluate_index_arithmetic(routed.entry().resources().index_arithmetic, observed)
+                .map_err(|cause| PreflightRefusal::IndexArithmeticUnsupported { entry, cause })?;
+        }
+        Ok(DirectRequirementsDischarged(()))
+    }
+}
+
+use discharge::{DirectRequirementsDischarged, check_direct_index_arithmetic};
+
 /// Answers each requirement from its exact prepared pipeline and preserves the pipelines for execution.
 ///
-/// Two device stages in the order their facts become true: the live-device rows
-/// first, from the bound device alone, and only then the prepared-entry
+/// Three device stages in the order their facts become true: the requirements the
+/// verified program itself derived, which need only the bound device; then the
+/// live-device rows the artifact carried; and only then the prepared-entry
 /// properties, which need a pipeline to exist. Nothing here is irreversible, so
-/// abandoning between them is still the permitted fallback.
+/// abandoning between any two of them is still the permitted fallback.
 fn resolve_prepared_route<'a>(
     device: &Device,
     qualification: LiveDeviceQualification<'a>,
 ) -> Result<(Preflight<'a>, Vec<ComputePipelineState>), ProofError> {
     let preparation = qualify_live_device(device, qualification)?;
-    let pipelines = prepare_pipelines(device, preparation.entries())
+    let discharged = check_direct_index_arithmetic(&device_facts(device), preparation.entries())
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+    let pipelines = prepare_pipelines(device, preparation.entries(), discharged)
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     let preflight = preparation
         .resolve_target_properties(|request| {
@@ -3824,9 +3935,21 @@ fn probe_device_preflight(
         .ok_or(ProofError::ProbeAccepted("a binding past the buffer limit"))?;
     report_refusal("a binding one byte past the buffer limit", &refusal);
 
+    // The derived index-arithmetic requirement, against this device's own
+    // reported Apple family. This is the *positive* half no device-free case can
+    // reach: the refusals live in `tiler_metal::direct_requirement`'s own tests,
+    // and what a live run adds is that a real `supportsFamily` walk on real
+    // hardware clears the sourced floor and reaches the preflight below.
+    let discharged = check_direct_index_arithmetic(&facts, preflight.entries())
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+    println!(
+        "  the derived index-arithmetic requirement clears on this device: family {}",
+        facts.apple_family,
+    );
+
     // The unperturbed route still prepares, which is what makes each refusal
     // above evidence about its own perturbation rather than about the route.
-    let pipelines = prepare_pipelines(device, preflight.entries())
+    let pipelines = prepare_pipelines(device, preflight.entries(), discharged)
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     device_preflight(device, preflight, &pipelines, plan, operands, readback)
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;

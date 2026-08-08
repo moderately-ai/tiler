@@ -4576,9 +4576,13 @@ fn a_bf16_kernel_and_its_f32_sibling_do_not_share_identity() {
         bf16.canonical_identity().as_bytes(),
         f32.canonical_identity().as_bytes()
     );
-    // Both identities open with the same domain separator: this widening is an
-    // append, not a version step.
-    let domain = b"tiler.kernel.v6\0";
+    // Both identities open with the same domain separator: the `bf16` widening
+    // was an append, not a version step. The domain has since moved to `v7` for
+    // an unrelated reason -- the derived index-arithmetic requirement landing
+    // inside the fixed resource-requirement record -- which is why this names
+    // the current domain while the comment above still describes the widening
+    // this test is about.
+    let domain = b"tiler.kernel.v7\0";
     assert!(bf16.canonical_identity().as_bytes().starts_with(domain));
     assert!(f32.canonical_identity().as_bytes().starts_with(domain));
 }

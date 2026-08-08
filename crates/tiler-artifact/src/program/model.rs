@@ -23,9 +23,9 @@ use tiler_ir::program::{
     VerifiedKernelProgram,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, MemoryOrdering, NumericalPermission,
-    NumericalRealization, ResourceRequirements, SubnormalMode, SynchronizationKind,
-    SynchronizationScope, SynchronizationSubject, ValueDomainProvenance,
+    ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic, MemoryOrdering,
+    NumericalPermission, NumericalRealization, ResourceRequirements, SubnormalMode,
+    SynchronizationKind, SynchronizationScope, SynchronizationSubject, ValueDomainProvenance,
 };
 use tiler_ir::semantic::{
     EncodedComponentRole, InputKey, OutputKey, ProviderIdentity,
@@ -222,7 +222,21 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// to `v2` and held this domain, and `docs/artifact-abi.md` carries it as the
 /// artifact ledger's own rule rather than as a one-off.
 ///
-/// # Why this is a `v15` step
+/// # Why this is a `v16` step
+///
+/// Raised to `v16` when every entry's derived dispatch record gained its
+/// index-arithmetic requirement. The tag lands *inside* the fixed
+/// resource-requirement run, between the device-memory flag and the
+/// synchronization record, so a `v15` reader handed `v16` bytes would read the
+/// index-arithmetic tag as the synchronization presence byte and lose framing
+/// for the rest of the entry. The step is required for meaning as well as
+/// framing: the requirement is a fact about the verified program that no `v15`
+/// field carried, so a consumer holding `v15` bytes could not reconstruct it —
+/// the envelope carries no KIR operations to re-derive it from — and a cache
+/// holding a `v15` identity must miss on the complete subject rather than
+/// match it.
+///
+/// # Why this was a `v15` step
 ///
 /// Raised to `v15` when every artifact gained the required delivered-realization
 /// record and this identity began folding its canonical bytes. Two artifacts
@@ -233,7 +247,7 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// comparing generated output against a reference, so a cache holding one must
 /// miss for the other, and the domain step is what makes the old subject
 /// incomparable with the complete one rather than merely unlikely to collide.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v15\0";
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v16\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -2074,6 +2088,26 @@ pub(super) const fn permission_from_tag(tag: u8) -> Option<NumericalPermission> 
     }
 }
 
+/// The governed tag table of the index-arithmetic requirement vocabulary.
+///
+/// A forward and inverse pair kept in one place, like every other enumeration
+/// this envelope encodes: the forward half is an exhaustive match, so widening
+/// [`IndexArithmetic`] stops the build here rather than compiling into a
+/// run-time rejection, and the inverse half refuses an unassigned byte before
+/// the requirement it names is compared against a device.
+pub(super) const fn index_arithmetic_tag(index_arithmetic: IndexArithmetic) -> u8 {
+    match index_arithmetic {
+        IndexArithmetic::CompleteU64 => 0x01,
+    }
+}
+
+pub(super) const fn index_arithmetic_from_tag(tag: u8) -> Option<IndexArithmetic> {
+    match tag {
+        0x01 => Some(IndexArithmetic::CompleteU64),
+        _ => None,
+    }
+}
+
 /// Encodes one exceptional-value assumption and its provenance in one tag.
 ///
 /// The flattened table keeps the record fixed-width while remaining injective:
@@ -2202,6 +2236,7 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         threads_per_workgroup,
         local_memory_bytes,
         requires_device_memory,
+        index_arithmetic,
         synchronization,
         input_subnormals,
         result_subnormals,
@@ -2216,6 +2251,7 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
     bytes.extend_from_slice(&threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&local_memory_bytes.to_be_bytes());
     bytes.push(u8::from(requires_device_memory));
+    bytes.push(index_arithmetic_tag(index_arithmetic));
     push_synchronization(bytes, synchronization);
     bytes.push(subnormal_tag(input_subnormals));
     bytes.push(subnormal_tag(result_subnormals));

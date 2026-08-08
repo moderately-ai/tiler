@@ -281,6 +281,8 @@
 pub mod applicability;
 /// Typed fail-closed emission diagnostics.
 pub mod diagnostic;
+/// Apple-family comparison for the derived requirements a route already states.
+pub mod direct_requirement;
 /// Deterministic structured-kernel-to-MSL translation.
 pub mod emit;
 /// The emitted translation unit, its entry points, and its binding tables.
@@ -290,6 +292,8 @@ pub mod target;
 
 #[cfg(test)]
 mod applicability_tests;
+#[cfg(test)]
+mod direct_requirement_tests;
 #[cfg(test)]
 mod golden_compilation;
 #[cfg(test)]

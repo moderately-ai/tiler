@@ -157,7 +157,25 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// none. ADR 0103 carries the step and
 /// `decide-whether-the-manifest-carries-the-identity-preimage-or-its-digest` the
 /// decision behind it.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (15, 0);
+/// **`16.0` gives every entry row its derived index-arithmetic requirement.**
+///
+/// A major step rather than a minor one, because the tag lands *inside* the
+/// fixed resource-requirement run rather than after every field a `15.0` reader
+/// knows: a `15.0` reader would consume it as the synchronization presence byte
+/// and lose framing for the rest of the entry, so the two spellings are not
+/// forward-compatible and a minor bump — which
+/// [`decode_manifest`](super::decode) admits as readable — would hand such a
+/// reader bytes it silently misparses.
+///
+/// **Artifact identity does move with this one**, which is the difference from
+/// the `15.0` and `14.0` steps above. `push_resources` is read by
+/// `encode_identity` as well as by the manifest encoder, so the requirement is a
+/// fold input and every pinned artifact identity, cache subject, and
+/// expansion-cache key changes with it. That is the intended consequence: two
+/// programs that differ in what index arithmetic they need are two artifacts,
+/// and the `ARTIFACT_DOMAIN` step to `v16` is what makes the earlier subject
+/// incomparable rather than merely unlikely to collide.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (16, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
