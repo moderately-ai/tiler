@@ -1,7 +1,7 @@
 ---
 id: reroute-the-dtype-ledgers-cells-that-point-at-terminal-tickets
 title: Reroute the dtype ledger's BF16 and host-dtype cells off terminal tickets
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, dtype, bf16, work-graph]
-claimed_from: todo
-assignee: w-reroute-t
-lease_expires_at: 1786166309
 ---
 ## Three passages route a reader to owners that are all `done`, two of them for work that was ruled out
 
@@ -58,3 +55,31 @@ All eight return `status: done`. Every one of the thirty-five tickets linked fro
 ## Closes when
 
 No BF16 passage in either file routes a reader to a terminal ticket for outstanding work; the genuinely unowned BF16 remainder is named with the authority that holds it; the two host-dtype cells keep their tautology claim and point at the boundary that could discharge it; the non-BF16 owners are untouched; and `make citations` is green.
+
+## Outcome — done, 2026-08-08
+
+Landed at merge `67ee5620` (worker commit `296694ab`). `docs/` + `tickets/` only, carries the green gate.
+
+### The ticket's own framing would have produced a false claim
+
+It implies nothing live holds any BF16 work. **One non-terminal BF16 ticket exists that `docs/dtype-support.md` never links** — `declare-the-bf16-ios-family-answers-on-authoritative-ios-profiles`, coordinator-verified `blocked` on `first-authoritative-ios-metal-compile-declaration`, which is `deferred` and therefore satisfies no dependent. It owns the iOS-family answers the macOS-only rows deliberately do not cover, and the ledger links it **zero** times.
+
+So writing "no live owner" flat would have been false. Both documents now name it as a **blocked partial owner**, following D-2's existing convention rather than inventing one. That is the overshoot trap avoided one more time: the routing was wrong, and "nobody owns this" was not the correction.
+
+D-4's eight owners were checked **individually** — all `done` — and the 35 tickets the file links were status-checked one by one: exactly 16 non-terminal, all integer, quantized, sub-byte, external, execution-only, nonnumeric, predicate, complex, decimal, reserved, block-scaled or `f16`/`f64`/`f128` owners, **zero BF16**. The narrow claim holds and the broad reading is refuted, as flagged.
+
+### No owner filed, and that was the correct outcome
+
+Two remainders are **Tom's under ADR 0075** — no ticket may mint the ADR 0091 conversion keys, so their absence *is* the policy working. One is trigger-gated by the ledger's own Graph policy, which explicitly says **not** to file a generic support-all-dtypes ticket. The fourth already has the blocked iOS owner. Filing would have invented work the policy forbids.
+
+Each remainder now names the **authority that decides it** rather than a ticket: the conversion keys to Tom, the accumulator to the absence of a BF16 reduction family (registering one reopens the four vacuously-discharged fusion obligations), and the composed vertical to a new measurement widening the ledger's own BF16 rows.
+
+### Both tautology claims survive; only the routing was struck
+
+The `until <ticket>` clauses went; the tautology sentences are intact, since `execution_environment` genuinely builds an input to adapter construction. Rerouted to `RuntimeAdapter::bind_execution_context` and the frontends contract's direct-byte-embedding section, with the reason it is a **recorded decision rather than a waiting task** — ADR 0086 blocks any macOS host earning the receipt.
+
+D-4's stale "four dated `Fact` paragraphs" count was dropped rather than re-pinned, on the grounds that a hand-maintained tally in a second document is the same coupling that produced this defect.
+
+### The checker caught the ticket rewriting its own anchors
+
+`make citations` failed with **3** on the first run, all in this live ticket, whose Facts pinned anchors the work had just rewritten. Repaired per the retired-citation rule — retired words de-pinned to prose, repinned to surviving text. Two anchor-reach perturbations demonstrated and reverted. Markdown links in both touched files were resolved **by hand**, including heading anchors, since the sibling extension is still live.
