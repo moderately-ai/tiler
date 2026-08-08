@@ -1,7 +1,7 @@
 ---
 id: correct-the-accounts-for-every-entry-claim-in-the-cache-research-note-and-harness
 title: Correct the accounts-for-every-entry claim in the cache research note and hot-path harness
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [replace-four-assertions-that-cannot-fail-in-the-cache-and-spike-harnesses]
@@ -9,9 +9,6 @@ scopes: [research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-correct-t
-lease_expires_at: 1786162862
 ---
 ## Two `research/cache` sites still make the claim the code no longer supports
 
@@ -65,3 +62,31 @@ Touches `spikes/`, which the gate does not cover; the hot-path harness is its ow
 Seven sites corrected across four files, none in `crates/tiler-cache`. The inert harness assertion was **replaced rather than dropped**: the destructive collection now re-scans with `account` after the timed call and requires the namespace to be empty, which covers the one direction a report cannot speak to — removals it names but did not perform. Proven able to fail by taking the scan before the collection instead of after: `assertion left == right failed … left: 100, right: 0`. Verified with `cargo build --release && ./target/release/cache-hot-path-efficiency --quick` in `spikes/cache/hot-path-efficiency`, its own workspace, run by hand. No recorded result was produced, replaced, or withdrawn — the new scan is outside the timed call, so no retained figure moves.
 
 `spikes/cache/hot-path-efficiency/Cargo.lock` moved as a side effect of building: it predated `tiler-digest`'s extraction, and any build there regenerates it. Kept rather than reverted, so the next person's build is clean.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge `cb06300a` (worker commit `d292d388`). Six files, `docs/` + `spikes/` + `tickets/` only, carries the green gate.
+
+### The ticket named two sites; there were seven
+
+**Five more, all found by reading rather than grepping the quoted string**: `bounded-collection.md`'s measurement item 2, three sentences across `hot-path-efficiency.md` (§6, §7, §9.4), and one in the spike's `README.md`. All corrected. Correcting only the two named would have left the same false claim standing in five places — the exact failure this ticket family exists to close.
+
+One ticket claim was imprecise: "the line two above it is the real check" — it is a four-line `assert_eq!` closing two lines above. Substance holds.
+
+### What the repaired check establishes, stated so the prose can stop overclaiming
+
+`accounts_for_every_entry` is a statement about `collect.rs`'s own loop, **not about the disk**: `n == n` where both sides are one pass over one vector. The only defect it can catch is a disposition arm that records nothing.
+
+The crate's real evidence is now two independent things — `collect_checked` reads the entries tree before and after every collection and requires the departed keys to be **exactly** those `removed()` names, both directions plus nothing new appearing; and the collecting child asserts `selected() == accounting().entry_count() - max_entries`, grounding the selection against the scan and the stated ceiling, **quantities the disposition loop did not produce**. Neither establishes that nothing left the namespace unreported; in the cross-process ladder that is item 4, the parent walking the surviving namespace.
+
+### The inert harness assertion was grounded, not deleted
+
+`destructive_collection` now takes a **second `account()` scan after** the timed collection and requires `entry_count() == 0` — a check the report cannot make about itself. The pre-existing `removed().len() == population` catches departures the report failed to name; this catches the mirror case, **removals the report names but did not perform**, which nothing in the harness previously covered.
+
+Proven able to fail first: moving the scan to *before* the collection gives `a collection that expired every entry leaves an empty namespace, and this one named 100 removals / left: 100 / right: 0`, exit 101, **while the first assertion still passed** — showing the two catch different things.
+
+### It verified its own citations were actually being checked
+
+Rather than trusting that `make citations` covered its new anchors, it **corrupted one and watched it fail** (`anchor occurs nowhere in crates/tiler-cache/src/expansion/tests.rs`), then restored. That is the population-reaches-its-subject discipline applied to its own work.
+
+The spike ran clean (`--quick`, exit 0, 2.51 s) with **no result recorded** — output to `$TMPDIR`, `results/` untouched, nothing replaced or withdrawn, and its 292 MB `target/` removed afterwards. Its nested `Cargo.lock` was regenerated incidentally, predating the `tiler-digest` extraction; kept so the next build is clean, and it is a separate workspace `make full` never builds.
