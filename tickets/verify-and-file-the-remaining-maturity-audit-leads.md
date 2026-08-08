@@ -5,7 +5,7 @@ status: todo
 priority: p3
 dependencies: []
 related: []
-scopes: [project/tickets]
+scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: []
