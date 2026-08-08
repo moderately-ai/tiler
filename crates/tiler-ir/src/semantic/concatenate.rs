@@ -29,19 +29,22 @@
 //! extents there. [`ExtentRelation::AdditiveEquality`](crate::shape::ExtentRelation::AdditiveEquality)
 //! can retain that relationship for sourced extents without turning
 //! [`ExtentTerm`](crate::shape::ExtentTerm) into an expression tree. Semantic
-//! occurrences still carry static [`Extent`](crate::shape::Extent)s, so
-//! [`concatenate_result_shape`] computes the same relationship directly.
+//! value facts can carry sourced extents, but this family requires every operand
+//! to pass [`OperationInferenceRequest::static_operand_shape`] before
+//! [`concatenate_result_shape`] can compute the relationship directly. Its
+//! operand collection stops at the first refusal, so a sourced operand never
+//! reaches the literal-shape helper.
 //!
-//! Every extent a semantic occurrence can carry is a static
-//! [`Extent`](crate::shape::Extent), which is why the sum is computable at all
-//! here; the contraction's extent agreement records the same fact about its own
-//! comparison. When the exact sum leaves that domain the family has nothing left
+//! Because only literal operands reach that helper, the sum is computable there;
+//! the contraction's extent agreement likewise explains its family-specific
+//! boundary. When the exact sum leaves that domain the family has nothing left
 //! to return that the operands determine: saturating at `u64::MAX`, wrapping, or
 //! choosing any other value would bind a result extent unrelated to the operands
 //! — the static-extent spelling of binding a fresh unconstrained symbol. It is
-//! refused under [`ConcatenateError::ResultExtentUnrelatable`] instead. The
-//! additive relation does not widen the `u64` extent domain, so this refusal
-//! remains necessary and is written here rather than assumed.
+//! refused under
+//! [`ConcatenateError::ResultExtentUnrelatable`] instead. The additive relation
+//! does not widen the `u64` extent domain, so this refusal remains necessary and
+//! is written here rather than assumed.
 
 use std::error::Error;
 use std::fmt;
@@ -300,11 +303,12 @@ pub fn concatenate_axis(value: &CanonicalValue) -> Result<Axis, ConcatenateError
 
 /// Decides one concatenation against its operands' shapes and derives the result.
 ///
-/// Extent agreement runs through the accepted three-outcome path. Every extent an
-/// occurrence can carry is a static [`Extent`], so the outcome is proved or
-/// disproved here and the unresolved arm — a typed host-side pre-dispatch
-/// requirement — is unreachable until a semantic value fact can carry a symbolic
-/// extent; a disproof names both observed extents.
+/// Extent agreement runs through the accepted three-outcome path. Concatenate's
+/// inferencer requires every operand to pass
+/// [`OperationInferenceRequest::static_operand_shape`] before calling this
+/// literal-shape helper; its collection stops at the first refusal, so a sourced
+/// operand never reaches equality here. The family has no symbolic equality or
+/// unresolved-requirement rule yet; a disproof names both observed extents.
 ///
 /// **A zero-extent operand is admitted and contributes no coordinate.** It is not
 /// skipped and not special-cased: it must still agree on rank, and on every axis

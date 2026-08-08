@@ -1132,13 +1132,14 @@ fn every_structural_rule_refuses_at_four_wide_tuples_too() {
 /// three-outcome path, and a disproof names both observed operand axes.
 ///
 /// **The unresolved outcome remains unreachable, exactly as the projection
-/// profile's landing recorded.** A semantic [`ValueFact`] carries a static
-/// [`Extent`], so every equality an occurrence can state is proved or disproved
-/// here; a symbolic `S` would be the case that produces a typed host-side
-/// pre-dispatch requirement, and no semantic value fact can carry one. Structure
-/// 3's contracted extent is therefore exercised at the static `S` values the C1
-/// row actually takes — ten at prefill and up to eighteen across its decode —
-/// rather than as a symbol.
+/// profile's landing recorded.** `StrictTensorContractionF32::infer` narrows
+/// each operand through `OperationInferenceRequest::static_operand_shape` before
+/// that operand's extents reach binding or equality. A sourced `S` therefore
+/// receives that named host refusal rather than reaching equality; this family
+/// has no symbolic equality or unresolved-requirement rule yet. Structure 3's
+/// contracted extent is therefore exercised at the static `S` values the C1 row
+/// actually takes — ten at prefill and up to eighteen across its decode — rather
+/// than as a symbol.
 #[test]
 fn both_attention_structures_agree_their_shared_extents_or_name_both_sources() {
     // Structure 2 shares the static head dimension 128 between operand 0 axis 3
