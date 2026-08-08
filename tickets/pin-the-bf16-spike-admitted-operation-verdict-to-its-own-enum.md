@@ -1,7 +1,7 @@
 ---
 id: pin-the-bf16-spike-admitted-operation-verdict-to-its-own-enum
 title: Pin the bf16 spike's admitted-operation verdict to its own enum
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [replace-four-assertions-that-cannot-fail-in-the-cache-and-spike-harnesses]
@@ -9,6 +9,9 @@ scopes: [research/numerics]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-pin-the-b
+lease_expires_at: 1786162862
 ---
 ## The verdict is a literal tautology
 

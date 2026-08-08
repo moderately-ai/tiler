@@ -1,7 +1,7 @@
 ---
 id: correct-the-accounts-for-every-entry-claim-in-the-cache-research-note-and-harness
 title: Correct the accounts-for-every-entry claim in the cache research note and hot-path harness
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [replace-four-assertions-that-cannot-fail-in-the-cache-and-spike-harnesses]
@@ -9,6 +9,9 @@ scopes: [research/cache]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-correct-t
+lease_expires_at: 1786162862
 ---
 ## Two `research/cache` sites still make the claim the code no longer supports
 
