@@ -222,7 +222,7 @@ fn gated_items(source: &str) -> Vec<GatedItem> {
             continue;
         };
 
-        if line.starts_with("const _: () = { ::core::compile_error!(") {
+        if line.starts_with("::tiler::__private::__tiler_compile_error!(") {
             items.push(GatedItem::Diagnostic { predicate });
         } else if let Some(rest) = line
             .split_once("::core::option::Option::Some(")
@@ -969,7 +969,7 @@ fn a_retained_family_emits_only_its_gated_diagnostic() {
         plan.items_source(),
         lines(&[
             r#"#[cfg(all(target_os = "macos", target_abi = ""))]"#,
-            r#"const _: () = { ::core::compile_error!("xcrun: error: unable to find utility \"metal\""); };"#,
+            r#"::tiler::__private::__tiler_compile_error!("xcrun: error: unable to find utility \"metal\"");"#,
         ]),
         "the retained diagnostic is escaped so it cannot terminate its own literal",
     );
@@ -998,7 +998,7 @@ fn a_mixed_plan_gates_the_built_family_and_leaves_the_retained_one_to_the_catch_
         plan.items_source(),
         lines(&[
             r#"#[cfg(all(target_os = "ios", target_abi = "sim"))]"#,
-            r#"const _: () = { ::core::compile_error!("the iOS simulator SDK is not installed"); };"#,
+            r#"::tiler::__private::__tiler_compile_error!("the iOS simulator SDK is not installed");"#,
             r#"const __TILER_ARTIFACT: &[u8] = b"tiler";"#,
             r#"#[cfg(all(target_os = "ios", target_abi = ""))]"#,
             "const __TILER_SELECTED_PAYLOAD: ::core::option::Option<usize> = \
@@ -1404,7 +1404,17 @@ struct CrossTargetShape {
 /// workspace edition, which is the edition a consumer compiles the expansion in.
 fn check_for_target(directory: &Path, triple: &str, source: &str) -> Result<(), String> {
     let fixture = directory.join("fixture.rs");
-    std::fs::write(&fixture, source)
+    // Cross-target rust-std is installed without a cross-built facade rlib.
+    // This exact local stand-in exercises the facade's builtin re-export shape;
+    // the trybuild fixtures exercise the real `tiler::__private` owner.
+    let source = format!(
+        "extern crate self as tiler;\n\
+         pub mod __private {{\n\
+             pub use core::compile_error as __tiler_compile_error;\n\
+         }}\n\
+         {source}"
+    );
+    std::fs::write(&fixture, &source)
         .unwrap_or_else(|error| panic!("the fixture `{}` is writable: {error}", fixture.display()));
 
     let output = Command::new("rustc")
@@ -1684,7 +1694,9 @@ fn every_emitted_shape_compiles_as_the_five_target_matrix_says() {
         // targets that see an empty translation unit would pass by having been
         // handed nothing to compile.
         assert_eq!(
-            shape.items.contains("::core::compile_error!"),
+            shape
+                .items
+                .contains("::tiler::__private::__tiler_compile_error!"),
             shape.matrix.iter().any(|row| row.fatal.is_some()),
             "`{}` emits a gated `compile_error!` exactly when its matrix expects one to fire:\n{}",
             shape.name,

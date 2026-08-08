@@ -5,6 +5,7 @@
 // which `rustc` already closes. The list exists only for the key-distinctness
 // test, so the feature is gated on `test` and no normal build needs it.
 #![cfg_attr(test, feature(variant_count))]
+#![doc(test(attr(forbid(unsafe_code))))]
 //! Target-independent optimization, scheduling, and structured lowering.
 //!
 //! This crate owns compiler decisions and may construct artifact plans. It must

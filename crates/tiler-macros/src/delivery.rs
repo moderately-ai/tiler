@@ -47,11 +47,11 @@
 //! [`DeliveryPlan`] is the pure function from *what the driver produced* to
 //! *what the consumer compiles*. For each selected family it emits, under that
 //! family's governed consumer-target `#[cfg]`, either the family's position in
-//! the one embedded artifact or the retained toolchain diagnostic as a
-//! `compile_error!`; and it emits the semantic fallback for every target
+//! the one embedded artifact or the retained toolchain diagnostic through the
+//! facade-owned diagnostic macro; and it emits the semantic fallback for every target
 //! matching no selected family. Target-neutral failures never reach here: they
 //! are [`crate::Refusal`]s and become unconditional `compile_error!`s at the
-//! invocation span.
+//! invocation span through the same facade-owned builtin re-export.
 //!
 //! **One envelope, N payloads** (Tom, 2026-07-25). A selection naming several
 //! families produces one artifact carrying one payload per built family, so the
@@ -404,9 +404,12 @@ impl DeliveryPlan {
                 FamilyDelivery::Payload => None,
                 // `{diagnostic:?}` is Rust's own string-literal escaping, so a
                 // driver message containing a quote or a backslash cannot close
-                // the literal early and turn a diagnostic into source.
+                // the literal early and turn a diagnostic into source. The
+                // facade-owned re-export resolves compiler `compile_error!`
+                // while the facade is built, outside the consumer's Cargo
+                // dependency namespace.
                 FamilyDelivery::Retained(diagnostic) => Some(format!(
-                    "#[cfg({})]\nconst _: () = {{ ::core::compile_error!({diagnostic:?}); }};",
+                    "#[cfg({})]\n::tiler::__private::__tiler_compile_error!({diagnostic:?});",
                     consumer_cfg(selected.family).predicate(),
                 )),
             })

@@ -861,7 +861,7 @@ fn a_toolchain_failure_is_retained_under_the_family_it_belongs_to() {
         "the diagnostic must be gated by the family that failed: {items}",
     );
     assert!(
-        items.contains("::core::compile_error!"),
+        items.contains("::tiler::__private::__tiler_compile_error!"),
         "the matching consumer target must fail to compile: {items}",
     );
     assert!(
@@ -1057,7 +1057,7 @@ fn a_real_metal_front_end_rejection_is_retained_under_its_family() {
         let items = delivered.plan.items_source();
         assert!(
             items.contains("#[cfg(all(target_os = \"macos\", target_abi = \"\"))]")
-                && items.contains("::core::compile_error!"),
+                && items.contains("::tiler::__private::__tiler_compile_error!"),
             "{rejection:?}: the diagnostic must be a gated `compile_error!`: {items}",
         );
         assert!(

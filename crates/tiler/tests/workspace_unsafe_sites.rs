@@ -19,22 +19,26 @@
 //! # Parsing boundary
 //!
 //! Cargo already exposes the actual workspace packages and target roots, so
-//! this test invokes `cargo metadata --locked --no-deps` just as
-//! `workspace_population.rs` does. That subcommand resolves manifests but
+//! this test invokes `cargo metadata --locked`. That subcommand resolves manifests but
 //! never compiles or runs a target, so it does not recurse into this test. A
 //! `Cargo.lock` read alone would not be source-truthful: it does not identify
 //! workspace membership or target source paths. The explicit root-member list
 //! and metadata package roots must agree exactly, closing Cargo's implicit
-//! in-tree path-member rule, and every metadata target root must remain inside
-//! its owning package.
+//! in-tree path-member rule, every metadata target root must remain inside its
+//! owning package. Full dependency metadata also makes a direct proc-macro edge
+//! from either reopenable package a clear early diagnostic; it is supporting
+//! evidence, not closure, because transitive and re-exported procedural macros
+//! need not appear on either direct edge list.
 //!
-//! The source side is a deliberately narrow Rust lexer, not a Rust parser. It recognizes
-//! line comments, nested block comments, ordinary and raw strings, character
-//! literals, identifiers, and balanced delimiters. Comments and strings are
-//! discarded before attributes are examined, so prose and the live doc-comment
-//! fixture in `tiler-conformance/src/lib.rs` cannot become sites. A permission
-//! is recognized only as a direct `#[allow(...)]` whose comma-separated meta
-//! list contains the whole lint name and one ordinary string-literal `reason`.
+//! The source side has two complementary authorities. A deliberately narrow
+//! Rust lexer recognizes line comments, nested block comments, ordinary and
+//! raw strings, character literals, Rust Unicode-XID identifiers, and balanced
+//! delimiters.
+//! Comments and strings are discarded before attributes are examined, so prose
+//! and the live doc-comment fixture in `tiler-conformance/src/lib.rs` cannot
+//! become sites. A permission is recognized only as a direct `#[allow(...)]`
+//! whose comma-separated meta list contains the whole lint name and one
+//! ordinary string-literal `reason`.
 //! The following item must be a function, and its complete signature is read
 //! through the top-level body brace, so wrapped attributes and wrapped
 //! signatures are one site. The initial census includes every `.rs` file under
@@ -44,7 +48,51 @@
 //! terminate and aliases cannot escape; a permission in either nonstandard
 //! loading form is refused because one lexical file can be expanded into more
 //! than one semantic site. Computed includes — including `OUT_DIR` generation
-//! — and unsupported path forms fail rather than disappearing.
+//! — imported `include!` aliases in any member, and `#[path]` in a
+//! non-`mod.rs` module source whose rustc module-directory rules depend on
+//! semantic context fail rather than disappearing.
+//!
+//! The lexer deliberately retains inactive-source coverage, which compilation
+//! cannot supply. For active ordinary and test targets in the two packages that
+//! use `unsafe_code = "deny"`, a second test runs Cargo in a deterministic
+//! private target directory with rustc's `--force-warn=unsafe-code`, reads the
+//! JSON diagnostics for active expanded source, and pins package, Cargo target,
+//! target root, unsafe-operation source, and multiplicity. That compiler census
+//! catches aliased includes and a source compiled both as a module and another
+//! Cargo target. It is deliberately limited to the two `deny` packages.
+//! Rustc suppresses unsafe-code diagnostics from external macro expansions even
+//! under `--force-warn` and compiler builtins already generate internal unsafe
+//! spellings. A separate all-member source-language boundary therefore closes
+//! workspace-authored and source-generating authorities: all sixteen source
+//! trees and extracted rustdoc Rust are inventoried for the exact private local
+//! macro definitions (including multiplicity), the guarded `tensor!` exporter
+//! and facade re-export, and
+//! the exact facade-owned compiler diagnostic re-export, and the closed
+//! compiler/std macro, attribute, and derive vocabularies. The 73
+//! fixture invocations and one rustdoc invocation are pinned by exact source
+//! identity and per-source multiplicity rather than only by their totals, and
+//! Cargo metadata pins the facade dependency spelling to the workspace macro
+//! producer and refuses facade dependency bindings named `core` or `std`, which
+//! would retarget the diagnostic builtin at its definition site. Custom or
+//! path-qualified invocations, workspace-owned local declarative macro exports
+//! or re-exports, additional procedural exporters, aliases of the guarded
+//! `tiler`, `tiler_macros`, `std`, or `core` macro namespaces, globs, and
+//! dynamic macro or attribute names fail closed. Dependency internals and
+//! compiler-generated builtin implementation details are not ADR 0079 sites.
+//! Because rustdoc extracts documentation tests as separate crates and does not
+//! inherit a package lint table, metadata's exact `doctest: true`
+//! library/proc-macro population must carry
+//! `#![doc(test(attr(forbid(unsafe_code))))]`; the scanner derives and floors
+//! that population rather than hand-listing it, and scans line docs, block docs,
+//! literal `#[doc]` strings, hidden `#` lines, and pinned macro-generated docs.
+//! A literal metavariable may be forwarded only as the entire doc expression
+//! from the exact arm that binds it; cooked Rust escapes are decoded before
+//! Markdown classification. Raw-string arguments are opaque and therefore
+//! refused, documentation nested under `cfg_attr` is unsupported, and
+//! `stringify!($name)` requires an exact arm-local `ident`
+//! binder and remains admissible only in prose: composition into executable
+//! rustdoc is refused because invocation values are not reconstructed.
+//! Unsupported doc sources and rustdoc-local source-loading forms fail closed.
 //!
 //! Everything outside that boundary fails closed. An inner attribute, a
 //! `cfg_attr`, another attribute form that contains the lint token, a
@@ -56,10 +104,15 @@
 //! contains source-file-root functions only; teaching this check a deeper semantic-path or
 //! expansion identity belongs in the same reviewed change that admits one.
 //!
-//! Only permissions are inventoried. The compiler remains the authority that
-//! makes an unsafe operation without one fail: the workspace-wide lint checks
-//! keep every member at `forbid` or `deny`, and this test does not restate that
-//! table.
+//! The compiler census is one authority on active code in the two reopenable
+//! packages. The all-member lexical and rustdoc inventories are the authority
+//! on workspace-authored permissions, generators, and invocations, including
+//! inactive source and exact reasons; the guarded procedural-macro producer
+//! closes its emitted token streams, admitting only the exact facade diagnostic
+//! invocation with one literal argument. Workspace lint checks independently keep
+//! every ordinary member at `forbid` or `deny`; compiler-created builtin code
+//! and dependency-internal expansions remain outside this source-authority
+//! contract.
 
 use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
@@ -149,8 +202,220 @@ const MEMBER_POPULATION_FLOOR: usize = 12;
 /// truncated metadata read without becoming a second target manifest.
 const TARGET_POPULATION_FLOOR: usize = 50;
 
+/// The audited workspace has thirteen library or proc-macro roots whose
+/// extracted documentation tests Cargo compiles as separate crates.
+const DOCTEST_ROOT_FLOOR: usize = 12;
+
+/// The one crate-root attribute that makes rustdoc's extracted test crates
+/// preserve the workspace's closed unsafe-code boundary.
+const DOCTEST_UNSAFE_SENTINEL: &str = "#![doc(test(attr(forbid(unsafe_code))))]";
+
+/// Compiler and standard-library macros used by the current reopenable source
+/// population. Every other function-like macro spelling is rejected there:
+/// rustc deliberately suppresses unsafe-code lint diagnostics originating in
+/// external macro expansions, so an open macro vocabulary would be an open
+/// unsafe-code vocabulary too.
+const REOPENABLE_BUILTIN_MACROS: [&str; 23] = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "compile_error",
+    "concat",
+    "debug_assert",
+    "debug_assert_eq",
+    "env",
+    "eprintln",
+    "format",
+    "include_str",
+    "matches",
+    "panic",
+    "println",
+    "stringify",
+    "thread_local",
+    "todo",
+    "unreachable",
+    "unimplemented",
+    "vec",
+    "write",
+    "writeln",
+];
+
+/// Built-in attributes present in the current reopenable source population.
+const REOPENABLE_BUILTIN_ATTRIBUTES: [&str; 19] = [
+    "allow",
+    "cfg",
+    "cfg_attr",
+    "cold",
+    "default",
+    "derive",
+    "doc",
+    "expect",
+    "feature",
+    "ignore",
+    "must_use",
+    "non_exhaustive",
+    "path",
+    "proc_macro",
+    "repr",
+    "rustfmt::skip",
+    "should_panic",
+    "test",
+    "track_caller",
+];
+
+/// Compiler-built-in derives present in the reopenable source population.
+const REOPENABLE_BUILTIN_DERIVES: [&str; 9] = [
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Eq",
+    "Hash",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+];
+
+/// Namespace owners used by the admitted qualified macro and facade spellings.
+/// A source alias with one of these bound names could preserve the token path
+/// while changing which producer rustc resolves.
+const GUARDED_MACRO_NAMESPACES: [&str; 4] = ["core", "std", "tiler", "tiler_macros"];
+
+/// The exact private declarative-macro producer population in member source.
+const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 15] = [
+    (
+        "crates/tiler-artifact/src/program/handles.rs",
+        "draft_handle",
+    ),
+    (
+        "crates/tiler-artifact/src/program/codec/model.rs",
+        "received_subject",
+    ),
+    (
+        "crates/tiler-artifact/src/program/codec/decode.rs",
+        "tag_reader",
+    ),
+    ("crates/tiler-ir/src/kernel/handles.rs", "draft_handle"),
+    ("crates/tiler-ir/src/kernel/handles.rs", "verified_handle"),
+    ("crates/tiler-artifact/src/program/keys.rs", "governed_key"),
+    (
+        "crates/tiler-artifact/src/program/keys.rs",
+        "opaque_identity",
+    ),
+    (
+        "crates/tiler-artifact/src/proof/model.rs",
+        "received_subject",
+    ),
+    (
+        "crates/tiler-artifact/src/proof/codec.rs",
+        "from_subject_bytes",
+    ),
+    ("crates/tiler-ir/src/index/handles.rs", "draft_handle"),
+    ("crates/tiler-ir/src/index/handles.rs", "verified_handle"),
+    ("crates/tiler-metal/src/emit.rs", "emit"),
+    ("crates/tiler-ir/src/program/handles.rs", "draft_handle"),
+    ("crates/tiler-compiler/src/explain.rs", "key_type"),
+    (
+        "crates/tiler-ir/src/semantic/accuracy/contract.rs",
+        "spelled_rule",
+    ),
+];
+
+/// Exact guarded `tensor!` invocation identities in ordinary and rustdoc source.
+const TENSOR_FIXTURE_INVOCATION_COUNT: usize = 73;
+const TENSOR_RUSTDOC_INVOCATION_COUNT: usize = 1;
+const TENSOR_FIXTURE_INVOCATION_PINS: [(&str, usize); 13] = [
+    (
+        "crates/tiler/tests/facade/fail/contract_statement_diagnostics.rs",
+        7,
+    ),
+    (
+        "crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.rs",
+        4,
+    ),
+    (
+        "crates/tiler/tests/facade/fail/deliver_statement_diagnostics.rs",
+        8,
+    ),
+    (
+        "crates/tiler/tests/facade/fail/generated_operand_reference_spans.rs",
+        1,
+    ),
+    (
+        "crates/tiler/tests/facade/fail/reduction_diagnostics.rs",
+        13,
+    ),
+    (
+        "crates/tiler/tests/facade/fail/region_meaning_diagnostics.rs",
+        7,
+    ),
+    (
+        "crates/tiler/tests/facade/fail/region_syntax_diagnostics.rs",
+        9,
+    ),
+    (
+        "crates/tiler/tests/facade/pass/deliver_compiles_embeds_and_routes.rs",
+        4,
+    ),
+    (
+        "crates/tiler/tests/facade/pass/deliver_states_fallback_only.rs",
+        3,
+    ),
+    (
+        "crates/tiler/tests/facade/pass/inline_region_dispatches.rs",
+        2,
+    ),
+    (
+        "crates/tiler/tests/facade/pass/inline_region_executes.rs",
+        11,
+    ),
+    (
+        "crates/tiler/tests/facade/pass/inline_region_refuses_an_undispatchable_dtype.rs",
+        1,
+    ),
+    (
+        "crates/tiler/tests/facade/pass/reexport_and_generated_path.rs",
+        3,
+    ),
+];
+const TENSOR_RUSTDOC_INVOCATION_PINS: [(&str, usize); 1] =
+    [("crates/tiler/src/lib.rs<rustdoc:1>", 1)];
+
+/// One compiler-expanded unsafe operation identity and its expected
+/// multiplicity across Cargo's ordinary and test compilations.
+#[derive(Clone, Copy, Debug)]
+struct ExpandedUnsafePin {
+    package: &'static str,
+    target: &'static str,
+    target_source: &'static str,
+    operation_source: &'static str,
+    count: usize,
+}
+
+const EXPANDED_UNSAFE_PINS: [ExpandedUnsafePin; 2] = [
+    ExpandedUnsafePin {
+        package: "tiler-conformance",
+        target: "tiler_conformance",
+        target_source: "crates/tiler-conformance/src/lib.rs",
+        operation_source: "crates/tiler-conformance/src/device_buffer.rs",
+        count: 2,
+    },
+    ExpandedUnsafePin {
+        package: "tiler-prototype-run",
+        target: "tiler-prototype-run",
+        target_source: "prototypes/serial-sum-run/src/main.rs",
+        operation_source: "prototypes/serial-sum-run/src/buffer.rs",
+        count: 4,
+    },
+];
+
 /// One found site's exact item and reason, keyed by path and signature.
 type Sites = BTreeMap<(String, String), String>;
+
+/// Expanded unsafe operation counts keyed by package, target, target root, and
+/// compiler-reported operation source.
+type ExpandedOperations = BTreeMap<(String, String, String, String), usize>;
 
 /// The output of one scan, including parsing failures.
 #[derive(Debug, Default)]
@@ -158,6 +423,15 @@ struct Scan {
     sites: Sites,
     errors: Vec<String>,
     loads: Vec<SourceLoad>,
+    builtin_macros: BTreeSet<String>,
+    builtin_attributes: BTreeSet<String>,
+    builtin_derives: BTreeSet<String>,
+    local_macro_rules: BTreeSet<(String, String)>,
+    proc_macro_exporters: BTreeSet<String>,
+    facade_reexports: usize,
+    facade_diagnostic_reexports: usize,
+    tensor_invocations: BTreeMap<String, usize>,
+    rustdoc_tensor_invocations: BTreeMap<String, usize>,
 }
 
 /// Cargo's actual governed source roots.
@@ -166,6 +440,18 @@ struct WorkspacePopulation {
     member_roots: Vec<PathBuf>,
     target_roots: Vec<PathBuf>,
     target_count: usize,
+    doctest_roots: Vec<PathBuf>,
+    doctest_package_roots: Vec<PathBuf>,
+    reopenable_packages: Vec<ReopenablePackage>,
+}
+
+/// One workspace package whose local lint table can reopen unsafe code only at
+/// individually reasoned sites.
+#[derive(Clone, Debug)]
+struct ReopenablePackage {
+    id: String,
+    name: String,
+    targets: BTreeSet<(String, String)>,
 }
 
 /// One literal compiler source-loading edge found in a source file.
@@ -191,6 +477,33 @@ enum TokenKind {
     Punct(String),
 }
 
+#[path = "workspace_unsafe_sites_support/metadata.rs"]
+mod metadata;
+pub(crate) use metadata::{
+    metadata_array, metadata_string, relative_display, scan_files, workspace_population,
+    workspace_root, workspace_sources,
+};
+
+#[path = "workspace_unsafe_sites_support/compiler_census.rs"]
+mod compiler_census;
+pub(crate) use compiler_census::expanded_unsafe_operations;
+
+#[path = "workspace_unsafe_sites_support/macro_boundary.rs"]
+mod macro_boundary;
+pub(crate) use macro_boundary::{
+    doc_attribute_markdown, rustdoc_rust_blocks, scan_rustdoc_code, workspace_macro_language,
+};
+
+#[path = "workspace_unsafe_sites_support/syntax.rs"]
+mod syntax;
+pub(crate) use syntax::{
+    character_literal_end, ident, identifier_text, inside_span, is_open_delimiter,
+    is_raw_identifier, lex, manifest_code, matching_delimiter, next_char, ordinary_string, punct,
+    punct_text, quoted_values, raw_string_span, read, render_signature,
+    root_doctest_sentinel_count, scan_text, token_generating_spans, validate_builtin_populations,
+    validate_macro_authorities, validate_pins,
+};
+
 #[test]
 fn the_workspace_unsafe_sites_are_exactly_the_four_admitted_ones() {
     let root = workspace_root();
@@ -205,23 +518,85 @@ fn the_workspace_unsafe_sites_are_exactly_the_four_admitted_ones() {
         population.member_roots.len(),
     );
 
-    let (scan, source_count) = scan_files(&root, &population.member_roots, &sources);
-    let violations = validate_pins(scan, &ADMITTED_SITES);
+    let (mut scan, source_count) = scan_files(
+        &root,
+        &population.member_roots,
+        &population.target_roots,
+        &population.doctest_package_roots,
+        &sources,
+    );
+    let population_errors = validate_builtin_populations(&scan);
+    scan.errors.extend(population_errors);
+    let authority_errors = validate_macro_authorities(&scan);
+    scan.errors.extend(authority_errors);
+    let tensor_invocations: usize = scan.tensor_invocations.values().sum();
+    let rustdoc_tensor_invocations: usize = scan.rustdoc_tensor_invocations.values().sum();
     eprintln!(
-        "unsafe-site census: {source_count} source file(s), {} Cargo target(s), and {} package(s); \
+        "unsafe-site census: {source_count} source file(s), {} Cargo target(s), {} doctest \
+         root(s), {} package(s), {} fixture tensor invocation(s), and {} rustdoc tensor \
+         invocation(s); \
          {} admitted site(s): {:?}",
         population.target_count,
+        population.doctest_roots.len(),
         population.member_roots.len(),
+        tensor_invocations,
+        rustdoc_tensor_invocations,
         ADMITTED_SITES.len(),
         ADMITTED_SITES
             .iter()
             .map(|site| (site.path, site.item))
             .collect::<Vec<_>>(),
     );
+    eprintln!(
+        "guarded tensor invocation identities: fixtures {:?}; rustdoc {:?}",
+        scan.tensor_invocations, scan.rustdoc_tensor_invocations,
+    );
+    let violations = validate_pins(scan, &ADMITTED_SITES);
     assert!(
         violations.is_empty(),
         "workspace unsafe-site inventory failed:\n{}",
         violations.join("\n"),
+    );
+}
+
+#[test]
+fn compiler_expansion_has_exactly_the_pinned_unsafe_operation_population() {
+    let root = workspace_root();
+    let population = workspace_population(&root)
+        .unwrap_or_else(|error| panic!("expanded unsafe-site population failed:\n{error}"));
+    let found = expanded_unsafe_operations(&root, &population)
+        .unwrap_or_else(|error| panic!("expanded unsafe-site audit failed:\n{error}"));
+    let expected: BTreeMap<_, _> = EXPANDED_UNSAFE_PINS
+        .iter()
+        .map(|pin| {
+            (
+                (
+                    pin.package.to_owned(),
+                    pin.target.to_owned(),
+                    pin.target_source.to_owned(),
+                    pin.operation_source.to_owned(),
+                ),
+                pin.count,
+            )
+        })
+        .collect();
+    eprintln!(
+        "expanded unsafe-site census: {} compiler diagnostic(s) across {} target/source \
+         identity pair(s), {} metadata target(s) reached, and {} reopenable package(s): \
+         {found:?}",
+        found.values().sum::<usize>(),
+        found.len(),
+        population
+            .reopenable_packages
+            .iter()
+            .map(|package| package.targets.len())
+            .sum::<usize>(),
+        population.reopenable_packages.len(),
+    );
+    assert_eq!(
+        found, expected,
+        "compiler-expanded unsafe operation population changed; package, Cargo target, target \
+         root, operation source, and compilation multiplicity are all pinned",
     );
 }
 
@@ -443,6 +818,444 @@ fn literal_source_loads_are_reported_and_computed_includes_fail_closed() {
     );
 }
 
+#[test]
+fn an_imported_include_alias_is_refused_in_a_reopenable_package() {
+    let scan = scan_text(
+        "crates/planted/src/lib.rs",
+        "use std::include as imported_include;\nimported_include!(\"hidden.inc\");\n",
+    );
+    assert!(
+        scan.errors.iter().any(|error| error
+            .contains("the include macro name appears outside direct `include!(literal)` syntax")),
+        "imported-include failure: {:?}",
+        scan.errors,
+    );
+}
+
+#[test]
+fn the_workspace_macro_language_is_closed_over_classified_expansions() {
+    let cases = [
+        (
+            "macro_rules! format { () => { 0 } }\n",
+            "unpinned macro_rules! definition `format`",
+        ),
+        (
+            "probe::emit!();\n",
+            "path-qualified macro invocation `emit!` is unsupported",
+        ),
+        (
+            "emit!();\n",
+            "custom macro invocation `emit!` is unsupported",
+        ),
+        (
+            "use tiler::tensor as ℘;\n℘! {}\n",
+            "custom macro invocation `℘!` is unsupported",
+        ),
+        (
+            "use probe::emit as format;\nformat!(\"probe\");\n",
+            "use declaration binds classified macro, attribute, or derive name `format`",
+        ),
+        ("use probe::*;\n", "glob use is unsupported"),
+        (
+            "#[probe]\nfn item() {}\n",
+            "custom attribute `probe` is unsupported",
+        ),
+        (
+            "#[derive(Clone, probe::Emit)]\nstruct Item;\n",
+            "custom or path-qualified derive `probe::Emit` is unsupported",
+        ),
+        (
+            "#[cfg_attr(test, probe)]\nfn item() {}\n",
+            "custom attribute `probe` is unsupported",
+        ),
+        (
+            "macro probe() {}\n",
+            "macro-2.0 definition `probe` is unsupported regardless of visibility",
+        ),
+        (
+            "pub(crate) macro probe() {}\n",
+            "macro-2.0 definition `probe` is unsupported regardless of visibility",
+        ),
+        (
+            "#[proc_macro]\npub fn second(input: TokenStream) -> TokenStream { input }\n",
+            "unguarded procedural-macro exporter `#[proc_macro]`",
+        ),
+        (
+            "use evil::test;\n#[test]\nfn item() {}\n",
+            "use declaration binds classified macro, attribute, or derive name `test`",
+        ),
+        (
+            "use evil::Debug;\n#[derive(Debug)]\nstruct Item;\n",
+            "use declaration binds classified macro, attribute, or derive name `Debug`",
+        ),
+        (
+            "use evil::compile_error;\ncompile_error!(\"probe\");\n",
+            "use declaration binds classified macro, attribute, or derive name `compile_error`",
+        ),
+        (
+            "extern crate evil as tiler;\ntiler::tensor! {}\n",
+            "extern crate declarations and aliases are unsupported",
+        ),
+        (
+            "use evil as tiler;\ntiler::tensor! {}\n",
+            "use declaration binds guarded macro namespace `tiler`",
+        ),
+        (
+            "use evil as r#tiler;\ntiler::tensor! {}\n",
+            "use declaration binds guarded macro namespace `tiler`",
+        ),
+        (
+            "evil::tiler::__private::__tiler_compile_error!(\"probe\");\n",
+            "path-qualified macro invocation `__tiler_compile_error!`",
+        ),
+        (
+            "use evil as std;\nuse std::env;\nenv!(\"PROBE\");\n",
+            "use declaration binds guarded macro namespace `std`",
+        ),
+        (
+            "use evil as core;\n::core::compile_error!(\"probe\");\n",
+            "use declaration binds guarded macro namespace `core`",
+        ),
+        (
+            "use evil as tiler_macros;\npub use tiler_macros::tensor;\n",
+            "use declaration binds guarded macro namespace `tiler_macros`",
+        ),
+        (
+            "use elsewhere::draft_handle as hidden;\n",
+            "use declaration imports or re-exports pinned local macro name `draft_handle`",
+        ),
+        (
+            "#[macro_export]\nmacro_rules! emitted { () => {} }\n",
+            "custom attribute `macro_export` is unsupported",
+        ),
+    ];
+    for (source, expected) in cases {
+        let scan = scan_text("crates/planted/src/lib.rs", source);
+        assert!(
+            scan.errors.iter().any(|error| error.contains(expected)),
+            "macro-language failure `{expected}` was absent: {:?}",
+            scan.errors,
+        );
+    }
+
+    let duplicate_local = scan_text(
+        "crates/tiler-ir/src/index/handles.rs",
+        concat!(
+            "macro_rules! draft_handle { () => {} }\n",
+            "macro_rules! draft_handle { () => {} }\n",
+        ),
+    );
+    assert!(
+        duplicate_local.errors.iter().any(|error| error.contains(
+            "duplicate pinned macro_rules! definition `draft_handle`; producer identity includes \
+             exact multiplicity"
+        )),
+        "duplicate local producer failure: {:?}",
+        duplicate_local.errors,
+    );
+
+    let builtins = scan_text(
+        "crates/planted/src/lib.rs",
+        concat!(
+            "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\n",
+            "struct Item;\n",
+            "#[cfg_attr(test, allow(dead_code, reason = \"test-only\"))]\n",
+            "fn item() { assert_eq!(format!(\"{}\", 1), \"1\"); }\n",
+        ),
+    );
+    assert!(
+        builtins.errors.is_empty(),
+        "classified builtins were refused: {:?}",
+        builtins.errors,
+    );
+}
+
+#[test]
+fn dynamic_macro_and_attribute_names_are_refused_inside_a_pinned_template() {
+    let source = concat!(
+        "macro_rules! emit {\n",
+        "    ($format:ident, $attr:ident) => {\n",
+        "        $format!();\n",
+        "        #$attr[item]\n",
+        "    };\n",
+        "}\n",
+    );
+    let scan = scan_text("crates/tiler-metal/src/emit.rs", source);
+    assert!(
+        scan.errors
+            .iter()
+            .any(|error| error.contains("dynamic macro invocation name `$format!`")),
+        "dynamic macro-name failure: {:?}",
+        scan.errors,
+    );
+    assert!(
+        scan.errors
+            .iter()
+            .any(|error| error.contains("dynamic attribute name emission is unsupported")),
+        "dynamic attribute-name failure: {:?}",
+        scan.errors,
+    );
+}
+
+#[test]
+fn block_doc_rust_is_scanned_after_an_unmatched_comment_marker_in_a_string() {
+    let source = concat!(
+        "const MASK: &str = \"/*\";\n",
+        "/**\n",
+        "```rust\n",
+        "evil::emit!();\n",
+        "```\n",
+        "*/\n",
+        "pub fn item() {}\n",
+    );
+    let scan = scan_rustdoc_code("crates/planted/src/lib.rs", source);
+    assert!(
+        scan.errors
+            .iter()
+            .any(|error| error.contains("path-qualified macro invocation `emit!`")),
+        "block-doc macro failure: {:?}",
+        scan.errors,
+    );
+}
+
+#[test]
+fn unsupported_rustdoc_code_containers_and_forwarded_doc_sources_fail_closed() {
+    for markdown in [
+        "> ```rust\nevil::emit!();\n> ```\n",
+        ">     evil::emit!();\n",
+    ] {
+        let (_, errors) = rustdoc_rust_blocks("crates/planted/src/lib.rs", markdown);
+        assert!(
+            errors.iter().any(
+                |error| error.contains("rustdoc code in a blockquote container is unsupported")
+            ),
+            "blockquote rustdoc failure: {errors:?}",
+        );
+    }
+
+    let (_, errors) = rustdoc_rust_blocks(
+        "crates/planted/src/lib.rs",
+        "- ```rust\n  evil::emit!();\n  ```\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error
+                .contains("rustdoc fence marker in an unsupported container or position")),
+        "list-container rustdoc failure: {errors:?}",
+    );
+
+    let (blocks, errors) = rustdoc_rust_blocks("crates/planted/src/lib.rs", "\tevil::emit!();\n");
+    assert!(errors.is_empty(), "tab-indented rustdoc errors: {errors:?}");
+    assert_eq!(blocks, ["evil::emit!();\n"]);
+
+    let dynamic = doc_attribute_markdown(
+        "crates/tiler-artifact/src/program/handles.rs",
+        concat!(
+            "macro_rules! draft_handle {\n",
+            "    ($docs:tt) => { #[doc = $docs] pub struct Item; };\n",
+            "}\n",
+            "draft_handle!(include_str!(\"hidden.md\"));\n",
+        ),
+    );
+    let errors = dynamic.expect_err("forwarded non-literal doc source must fail closed");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("dynamic documentation source is unsupported")),
+        "forwarded doc-source failure: {errors:?}",
+    );
+
+    let fragmented = doc_attribute_markdown(
+        "crates/tiler-artifact/src/program/handles.rs",
+        concat!(
+            "macro_rules! draft_handle {\n",
+            "    ($a:literal, $b:literal, $c:literal) => {\n",
+            "        #[doc = concat!($a, $b, $c)] pub struct Item;\n",
+            "    };\n",
+            "}\n",
+            "draft_handle!(\"`\", \"``rust\\nevil::emit!();\\n\", \"```\");\n",
+        ),
+    );
+    let errors = fragmented.expect_err("forwarded doc composition must fail closed");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("dynamic documentation source is unsupported")),
+        "fragmented forwarded-doc failure: {errors:?}",
+    );
+
+    let cross_arm = doc_attribute_markdown(
+        "crates/tiler-artifact/src/program/handles.rs",
+        concat!(
+            "macro_rules! draft_handle {\n",
+            "    ($docs:literal) => {};\n",
+            "    ($docs:expr) => { #[doc = $docs] pub struct Item; };\n",
+            "}\n",
+            "draft_handle!(include_str!(\"hidden.md\"));\n",
+        ),
+    );
+    let errors = cross_arm.expect_err("another arm's literal binder proves nothing");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("dynamic documentation source is unsupported")),
+        "cross-arm forwarded-doc failure: {errors:?}",
+    );
+
+    let comma_cross_arm = doc_attribute_markdown(
+        "crates/tiler-artifact/src/program/handles.rs",
+        concat!(
+            "macro_rules! draft_handle {\n",
+            "    (($docs:literal)) => {},\n",
+            "    ($docs:expr) => { #[doc = $docs] pub struct Item; },\n",
+            "}\n",
+            "draft_handle!(include_str!(\"hidden.md\"));\n",
+        ),
+    );
+    let errors = comma_cross_arm.expect_err("comma-separated arms do not share binders");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("dynamic documentation source is unsupported")),
+        "comma-separated cross-arm forwarded-doc failure: {errors:?}",
+    );
+
+    let escaped_fence = scan_rustdoc_code(
+        "crates/planted/src/lib.rs",
+        r#"#[doc = "\x60\x60\x60rust\nevil::emit!();\n\x60\x60\x60"]
+pub struct Item;
+"#,
+    );
+    assert!(
+        escaped_fence
+            .errors
+            .iter()
+            .any(|error| error.contains("path-qualified macro invocation `emit!`")),
+        "escaped cooked-string rustdoc failure: {:?}",
+        escaped_fence.errors,
+    );
+
+    let stringified_macro_name = scan_rustdoc_code(
+        "crates/tiler-ir/src/index/handles.rs",
+        concat!(
+            "macro_rules! define_handle {\n",
+            "    ($name:tt) => {\n",
+            "        #[doc = concat!(\"```rust\\nstd::\", stringify!($name), \"!();\\n```\")]\n",
+            "        pub struct Item;\n",
+            "    };\n",
+            "}\n",
+            "define_handle!(println);\n",
+        ),
+    );
+    let errors = stringified_macro_name.errors;
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("dynamic documentation source is unsupported")),
+        "non-ident stringify binder failure: {errors:?}",
+    );
+
+    let stringified_rustdoc_code = scan_rustdoc_code(
+        "crates/tiler-ir/src/index/handles.rs",
+        concat!(
+            "macro_rules! define_handle {\n",
+            "    ($name:ident) => {\n",
+            "        #[doc = concat!(\"```rust\\nstd::\", stringify!($name), \
+             \"!();\\n```\")]\n",
+            "        pub struct Item;\n",
+            "    };\n",
+            "}\n",
+            "define_handle!(println);\n",
+        ),
+    );
+    assert!(
+        stringified_rustdoc_code
+            .errors
+            .iter()
+            .any(|error| error.contains(
+                "stringify-composed rustdoc code is unsupported; stringified invocation values are \
+             not reconstructed"
+            )),
+        "stringified rustdoc-code failure: {:?}",
+        stringified_rustdoc_code.errors,
+    );
+
+    let raw_forwarded_doc = doc_attribute_markdown(
+        "crates/tiler-artifact/src/program/handles.rs",
+        concat!(
+            "macro_rules! draft_handle {\n",
+            "    ($docs:literal) => { #[doc = $docs] pub struct Item; };\n",
+            "}\n",
+            "draft_handle!(r#\"```rust\\nevil::emit!();\\n```\"#);\n",
+        ),
+    );
+    let errors = raw_forwarded_doc.expect_err("raw forwarded docs are opaque to the lexer");
+    assert!(
+        errors.iter().any(|error| error.contains(
+            "raw-string macro argument is unsupported for a pinned documentation-generating \
+             macro"
+        )),
+        "raw forwarded-doc failure: {errors:?}",
+    );
+
+    let nested_cfg_attr_doc = scan_rustdoc_code(
+        "crates/planted/src/lib.rs",
+        "#[cfg_attr(doc, doc = \"```rust\\nevil::emit!();\\n```\")]\npub struct Item;\n",
+    );
+    assert!(
+        nested_cfg_attr_doc
+            .errors
+            .iter()
+            .any(|error| error.contains(
+                "documentation nested in cfg_attr is unsupported; rustdoc input must use a directly \
+                 enumerable doc attribute"
+            )),
+        "cfg_attr-generated rustdoc failure: {:?}",
+        nested_cfg_attr_doc.errors,
+    );
+
+    let recursively_nested_cfg_attr_doc = scan_rustdoc_code(
+        "crates/planted/src/lib.rs",
+        concat!(
+            "#[cfg_attr(doc, cfg_attr(doc, doc = \
+             \"```rust\\nevil::emit!();\\n```\"))]\n",
+            "pub struct Item;\n",
+        ),
+    );
+    assert!(
+        recursively_nested_cfg_attr_doc
+            .errors
+            .iter()
+            .any(|error| error.contains("documentation nested in cfg_attr is unsupported")),
+        "recursively nested cfg_attr rustdoc failure: {:?}",
+        recursively_nested_cfg_attr_doc.errors,
+    );
+}
+
+#[test]
+fn rustdoc_source_loading_forms_fail_closed() {
+    let source = concat!(
+        "//! ```rust\n",
+        "//! include!(\"hidden.rs\");\n",
+        "//! #[path = \"hidden.rs\"] mod hidden_path;\n",
+        "//! mod hidden_module;\n",
+        "//! ```\n",
+    );
+    let scan = scan_rustdoc_code("crates/planted/src/lib.rs", source);
+    for expected in [
+        "include! is unsupported in an extracted doctest",
+        "#[path] is unsupported in an extracted doctest",
+        "out-of-line module load is unsupported in an extracted doctest",
+    ] {
+        assert!(
+            scan.errors.iter().any(|error| error.contains(expected)),
+            "rustdoc source-load failure `{expected}` was absent: {:?}",
+            scan.errors,
+        );
+    }
+}
+
 /// One synthetic direct permission.
 fn planted_site(item: &str, reason: &str) -> String {
     format!(
@@ -460,1374 +1273,4 @@ fn planted_violations(source: &str, reason: &'static str) -> Vec<String> {
         reason,
     }];
     validate_pins(scan_text(path, source), &pin)
-}
-
-/// The workspace root, two levels above the facade crate.
-fn workspace_root() -> PathBuf {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("the facade crate sits two levels below the workspace root")
-        .to_path_buf();
-    let manifest = root.join("Cargo.toml");
-    let text = read(&manifest);
-    assert!(
-        text.contains("[workspace]"),
-        "{} declares no workspace",
-        manifest.display(),
-    );
-    root
-}
-
-/// Cargo's actual workspace packages and target roots, cross-checked against
-/// the explicit root-member list.
-fn workspace_population(root: &Path) -> Result<WorkspacePopulation, String> {
-    let canonical_root = root.canonicalize().map_err(|error| {
-        format!(
-            "unsafe-sites.{}: workspace root is not canonical: {error}",
-            root.display()
-        )
-    })?;
-    let explicit_paths = explicit_member_paths(root);
-    let mut explicit_roots = BTreeSet::new();
-    for member in &explicit_paths {
-        let directory = root.join(member);
-        let canonical = directory.canonicalize().map_err(|error| {
-            format!(
-                "unsafe-sites.{}: explicit workspace member `{member}` is not a readable \
-                 directory: {error}",
-                root.join("Cargo.toml").display(),
-            )
-        })?;
-        if !canonical.starts_with(&canonical_root) {
-            return Err(format!(
-                "unsafe-sites.{}: explicit workspace member `{member}` resolves outside the \
-                 workspace root",
-                root.join("Cargo.toml").display(),
-            ));
-        }
-        if !explicit_roots.insert(canonical) {
-            return Err(format!(
-                "unsafe-sites.{}: explicit workspace member paths alias one directory",
-                root.join("Cargo.toml").display(),
-            ));
-        }
-    }
-
-    // This is the repository's existing workspace-population authority. Cargo
-    // metadata resolves manifests only; it does not build a target and cannot
-    // recursively run this integration test.
-    let output = Command::new(env!("CARGO"))
-        .args(["metadata", "--locked", "--no-deps", "--format-version", "1"])
-        .current_dir(&canonical_root)
-        .output()
-        .map_err(|error| format!("unsafe-site census: cargo metadata could not run: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "unsafe-site census: cargo metadata failed: {}",
-            String::from_utf8_lossy(&output.stderr),
-        ));
-    }
-    let metadata: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
-        format!("unsafe-site census: cargo metadata emitted invalid JSON: {error}")
-    })?;
-    let metadata_root = metadata_string(&metadata, "workspace_root", "metadata root")?;
-    let metadata_root = Path::new(metadata_root).canonicalize().map_err(|error| {
-        format!("unsafe-site census: metadata workspace root is not canonical: {error}")
-    })?;
-    if metadata_root != canonical_root {
-        return Err(format!(
-            "unsafe-site census: cargo metadata described workspace root {}, expected {}",
-            metadata_root.display(),
-            canonical_root.display(),
-        ));
-    }
-
-    let member_ids: BTreeSet<&str> = metadata_array(&metadata, "workspace_members", "metadata")?
-        .iter()
-        .map(|id| {
-            id.as_str().ok_or_else(|| {
-                "unsafe-site census: a workspace member ID is not a string".to_owned()
-            })
-        })
-        .collect::<Result<_, _>>()?;
-    if member_ids.len() < MEMBER_POPULATION_FLOOR {
-        return Err(format!(
-            "unsafe-site census: cargo metadata yielded {} package(s), below the floor of \
-             {MEMBER_POPULATION_FLOOR}",
-            member_ids.len(),
-        ));
-    }
-
-    let mut actual_roots = BTreeSet::new();
-    let mut target_roots = BTreeSet::new();
-    let mut target_count = 0_usize;
-    for package in metadata_array(&metadata, "packages", "metadata")? {
-        let id = metadata_string(package, "id", "package")?;
-        if !member_ids.contains(id) {
-            continue;
-        }
-        let manifest = Path::new(metadata_string(package, "manifest_path", id)?);
-        let package_root = manifest
-            .parent()
-            .ok_or_else(|| format!("unsafe-site census: {id} has no manifest parent"))?
-            .canonicalize()
-            .map_err(|error| {
-                format!("unsafe-site census: {id}'s manifest root is not canonical: {error}")
-            })?;
-        if !package_root.starts_with(&canonical_root) {
-            return Err(format!(
-                "unsafe-site census: workspace package {id} lives outside the workspace root at {}",
-                package_root.display(),
-            ));
-        }
-        actual_roots.insert(package_root.clone());
-
-        let targets = metadata_array(package, "targets", id)?;
-        if targets.is_empty() {
-            return Err(format!(
-                "unsafe-site census: workspace package {id} has no Cargo targets"
-            ));
-        }
-        for target in targets {
-            target_count += 1;
-            let path = Path::new(metadata_string(target, "src_path", "Cargo target")?);
-            let canonical = path.canonicalize().map_err(|error| {
-                format!(
-                    "unsafe-site census: Cargo target root {} is not a readable file: {error}",
-                    path.display(),
-                )
-            })?;
-            if !canonical.starts_with(&package_root) {
-                return Err(format!(
-                    "unsafe-site census: Cargo target root {} escapes owning package {}",
-                    canonical.display(),
-                    package_root.display(),
-                ));
-            }
-            if !target_roots.insert(canonical.clone()) {
-                return Err(format!(
-                    "unsafe-site census: Cargo target root {} is compiled as more than one \
-                     target; permission identity would be ambiguous",
-                    canonical.display(),
-                ));
-            }
-        }
-    }
-    if actual_roots.len() != member_ids.len() {
-        return Err(format!(
-            "unsafe-site census: cargo metadata named {} workspace member ID(s) but {} package \
-             object(s) resolved",
-            member_ids.len(),
-            actual_roots.len(),
-        ));
-    }
-
-    let metadata_only: Vec<String> = actual_roots
-        .difference(&explicit_roots)
-        .map(|path| relative_display(&canonical_root, path))
-        .collect();
-    let explicit_only: Vec<String> = explicit_roots
-        .difference(&actual_roots)
-        .map(|path| relative_display(&canonical_root, path))
-        .collect();
-    if !metadata_only.is_empty() || !explicit_only.is_empty() {
-        return Err(format!(
-            "unsafe-site census: explicit root members and cargo metadata workspace packages \
-             differ; implicit/metadata-only: {metadata_only:?}; explicit-only: {explicit_only:?}",
-        ));
-    }
-    if target_count < TARGET_POPULATION_FLOOR {
-        return Err(format!(
-            "unsafe-site census: cargo metadata yielded {target_count} target(s), below the \
-             floor of {TARGET_POPULATION_FLOOR}",
-        ));
-    }
-
-    Ok(WorkspacePopulation {
-        member_roots: actual_roots.into_iter().collect(),
-        target_roots: target_roots.into_iter().collect(),
-        target_count,
-    })
-}
-
-/// The member paths declared literally by the root manifest.
-///
-/// This narrow parser intentionally recognizes only the table-and-array form
-/// the repository uses. Cargo metadata is cross-checked against it, so an
-/// implicit path member cannot hide behind the parser's literal boundary.
-fn explicit_member_paths(root: &Path) -> Vec<String> {
-    let manifest = root.join("Cargo.toml");
-    let text = read(&manifest);
-    let lines: Vec<&str> = text.lines().collect();
-    let mut in_workspace = false;
-
-    for (index, line) in lines.iter().enumerate() {
-        let trimmed = manifest_code(line).trim().to_owned();
-        if trimmed.starts_with('[') {
-            in_workspace = trimmed == "[workspace]";
-            continue;
-        }
-        if !in_workspace {
-            continue;
-        }
-        let Some(value) = trimmed.strip_prefix("members") else {
-            continue;
-        };
-        let value = value.trim_start().strip_prefix('=').unwrap_or_else(|| {
-            panic!(
-                "{}:{}: `members` has no `=` and cannot be read",
-                manifest.display(),
-                index + 1,
-            )
-        });
-
-        let mut array = value.to_owned();
-        let mut cursor = index;
-        while !array.contains(']') {
-            cursor += 1;
-            assert!(
-                cursor < lines.len(),
-                "{}:{}: the `members` array never closes",
-                manifest.display(),
-                index + 1,
-            );
-            array.push('\n');
-            array.push_str(&manifest_code(lines[cursor]));
-        }
-        let members = quoted_values(&array, &manifest, index + 1);
-        let unique: BTreeSet<&str> = members.iter().map(String::as_str).collect();
-        assert_eq!(
-            unique.len(),
-            members.len(),
-            "{}:{}: the member list repeats a path",
-            manifest.display(),
-            index + 1,
-        );
-        return members;
-    }
-
-    panic!(
-        "{} has no `members` key under `[workspace]`; the unsafe-site scan has no roots",
-        manifest.display(),
-    );
-}
-
-/// Collects every Rust source beneath every actual member plus every Cargo
-/// target root, including target roots whose extension is not `.rs`.
-fn workspace_sources(member_roots: &[PathBuf], target_roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut all = target_roots.to_vec();
-    for directory in member_roots {
-        let mut sources = Vec::new();
-        collect_rust_sources(directory, &mut sources);
-        assert!(
-            !sources.is_empty(),
-            "workspace member `{}` contributes no Rust source file; a member omitted from \
-             the walk would otherwise look safely empty",
-            directory.display(),
-        );
-        all.extend(sources);
-    }
-    all.sort();
-    all.dedup();
-    all
-}
-
-/// One required string property from metadata JSON.
-fn metadata_string<'a>(value: &'a Value, key: &str, owner: &str) -> Result<&'a str, String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("unsafe-site census: {owner} has no string `{key}`"))
-}
-
-/// One required array property from metadata JSON.
-fn metadata_array<'a>(value: &'a Value, key: &str, owner: &str) -> Result<&'a [Value], String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .ok_or_else(|| format!("unsafe-site census: {owner} has no array `{key}`"))
-}
-
-/// A stable workspace-relative display path.
-fn relative_display(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-/// Recursively collects Rust source and rejects symlinks at the scan boundary.
-fn collect_rust_sources(directory: &Path, into: &mut Vec<PathBuf>) {
-    let entries = std::fs::read_dir(directory)
-        .unwrap_or_else(|error| panic!("{} is readable: {error}", directory.display()));
-    for entry in entries {
-        let entry = entry.expect("a workspace source directory entry is readable");
-        let path = entry.path();
-        let kind = entry
-            .file_type()
-            .unwrap_or_else(|error| panic!("{} has a readable file type: {error}", path.display()));
-        assert!(
-            !kind.is_symlink(),
-            "{} is a symlink inside a workspace member; following it could escape or duplicate \
-             the governed source population",
-            path.display(),
-        );
-        if kind.is_dir() {
-            collect_rust_sources(&path, into);
-        } else if kind.is_file()
-            && path.extension().and_then(|extension| extension.to_str()) == Some("rs")
-        {
-            into.push(path);
-        }
-    }
-}
-
-/// Scans every initial source and follows literal local source-loading edges.
-fn scan_files(root: &Path, member_roots: &[PathBuf], sources: &[PathBuf]) -> (Scan, usize) {
-    let mut whole = Scan::default();
-    let mut queue: VecDeque<PathBuf> = sources.iter().cloned().collect();
-    let mut seen = BTreeSet::new();
-    let mut nonstandard_loaders: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
-
-    while let Some(source) = queue.pop_front() {
-        if !seen.insert(source.clone()) {
-            continue;
-        }
-        let relative = source
-            .strip_prefix(root)
-            .expect("a member source lies under the workspace root")
-            .to_string_lossy()
-            .replace('\\', "/");
-        let text = read(&source);
-        let scan = scan_text(&relative, &text);
-        whole.errors.extend(scan.errors);
-        for load in scan.loads {
-            match resolve_source_load(root, member_roots, &source, &load) {
-                Ok(loaded) => {
-                    nonstandard_loaders
-                        .entry(loaded.clone())
-                        .or_default()
-                        .push(format!("{relative}:{} via {}", load.line, load.kind));
-                    queue.push_back(loaded);
-                }
-                Err(error) => whole.errors.push(error),
-            }
-        }
-        for (key, reason) in scan.sites {
-            if whole.sites.insert(key.clone(), reason).is_some() {
-                whole.errors.push(format!(
-                    "unsafe-sites.{}: `{}` is reported twice",
-                    key.0, key.1,
-                ));
-            }
-        }
-    }
-
-    for (loaded, loaders) in nonstandard_loaders {
-        let relative = relative_display(root, &loaded);
-        for ((path, item), _) in whole
-            .sites
-            .iter()
-            .filter(|((path, _), _)| path == &relative)
-        {
-            whole.errors.push(format!(
-                "unsafe-sites.{path}: `{item}` carries a permission in a source reached through \
-                 include!/#[path] ({loaders:?}); nonstandard loads can duplicate semantic sites \
-                 and are outside the file-root pin boundary",
-            ));
-        }
-    }
-    (whole, seen.len())
-}
-
-/// Resolves one literal source-loading edge and keeps it inside a governed
-/// workspace package. Canonicalization collapses aliases; the queue's visited
-/// set terminates cycles.
-fn resolve_source_load(
-    root: &Path,
-    member_roots: &[PathBuf],
-    source: &Path,
-    load: &SourceLoad,
-) -> Result<PathBuf, String> {
-    let candidate = source
-        .parent()
-        .expect("a source file has a parent")
-        .join(&load.literal);
-    let canonical = candidate.canonicalize().map_err(|error| {
-        format!(
-            "unsafe-sites.{}:{}: {} source `{}` is not a readable file: {error}",
-            relative_display(root, source),
-            load.line,
-            load.kind,
-            load.literal,
-        )
-    })?;
-    if !canonical.is_file() {
-        return Err(format!(
-            "unsafe-sites.{}:{}: {} source `{}` is not a file",
-            relative_display(root, source),
-            load.line,
-            load.kind,
-            load.literal,
-        ));
-    }
-    if !member_roots
-        .iter()
-        .any(|member| canonical.starts_with(member))
-    {
-        return Err(format!(
-            "unsafe-sites.{}:{}: {} source `{}` resolves outside every governed workspace \
-             package to {}",
-            relative_display(root, source),
-            load.line,
-            load.kind,
-            load.literal,
-            canonical.display(),
-        ));
-    }
-    Ok(canonical)
-}
-
-/// Scans one Rust source file for direct unsafe-code permissions.
-fn scan_text(path: &str, source: &str) -> Scan {
-    let tokens = match lex(path, source) {
-        Ok(tokens) => tokens,
-        Err(error) => {
-            return Scan {
-                sites: Sites::new(),
-                errors: vec![error],
-                loads: Vec::new(),
-            };
-        }
-    };
-    let mut scan = Scan::default();
-    let mut accounted = BTreeSet::new();
-    let macro_spans = token_generating_spans(&tokens);
-    let depths = curly_depths(path, &tokens, &mut scan.errors);
-    let (loads, load_errors) = source_loads(path, &tokens, &macro_spans, &depths);
-    scan.loads = loads;
-    scan.errors.extend(load_errors);
-
-    for (start, end) in &macro_spans {
-        let occurrences: Vec<usize> = (*start..=*end)
-            .filter(|position| ident(&tokens[*position], "unsafe_code"))
-            .collect();
-        if let Some(position) = occurrences.first() {
-            scan.errors.push(format!(
-                "unsafe-sites.{path}:{}: unsafe-code permission appears inside a \
-                 token-generating macro context; expansion multiplicity has no admitted pin \
-                 identity",
-                tokens[*position].line,
-            ));
-        }
-        accounted.extend(occurrences);
-    }
-    let mut index = 0;
-
-    while index < tokens.len() {
-        if !punct(&tokens[index], "#") {
-            index += 1;
-            continue;
-        }
-        if inside_span(index, &macro_spans) {
-            index += 1;
-            continue;
-        }
-        let mut open = index + 1;
-        let inner = tokens.get(open).is_some_and(|token| punct(token, "!"));
-        if inner {
-            open += 1;
-        }
-        if !tokens.get(open).is_some_and(|token| punct(token, "[")) {
-            index += 1;
-            continue;
-        }
-        let Some(end) = matching_delimiter(&tokens, open) else {
-            scan.errors.push(format!(
-                "unsafe-sites.{path}:{}: an attribute never closes",
-                tokens[index].line,
-            ));
-            break;
-        };
-        let occurrences: Vec<usize> = (open + 1..end)
-            .filter(|position| ident(&tokens[*position], "unsafe_code"))
-            .collect();
-        if occurrences.is_empty() {
-            index = end + 1;
-            continue;
-        }
-        accounted.extend(occurrences.iter().copied());
-
-        if inner {
-            scan.errors.push(format!(
-                "unsafe-sites.{path}:{}: a crate-level unsafe-code allow is outside the admitted \
-                 per-item boundary",
-                tokens[index].line,
-            ));
-            index = end + 1;
-            continue;
-        }
-        if !tokens
-            .get(open + 1)
-            .is_some_and(|token| ident(token, "allow"))
-        {
-            scan.errors.push(format!(
-                "unsafe-sites.{path}:{}: `unsafe_code` appears outside a supported direct \
-                `#[allow(...)]`; cfg_attr and other lint attributes fail closed",
-                tokens[index].line,
-            ));
-            index = end + 1;
-            continue;
-        }
-        if depths.get(index).copied().unwrap_or(0) != 0 {
-            scan.errors.push(format!(
-                "unsafe-sites.{path}:{}: nested permission is outside the file-root pin \
-                 boundary; module, impl, and function semantic paths are unsupported",
-                tokens[index].line,
-            ));
-            index = end + 1;
-            continue;
-        }
-
-        let reason = match direct_allow_reason(path, &tokens, open, end) {
-            Ok(reason) => reason,
-            Err(error) => {
-                scan.errors.push(error);
-                index = end + 1;
-                continue;
-            }
-        };
-        let (item, _) = match following_function_signature(path, &tokens, end + 1) {
-            Ok(item) => item,
-            Err(error) => {
-                scan.errors.push(error);
-                index = end + 1;
-                continue;
-            }
-        };
-        let key = (path.to_owned(), item.clone());
-        if scan.sites.insert(key, reason).is_some() {
-            scan.errors.push(format!(
-                "unsafe-sites.{path}: `{item}` carries unsafe-code permission twice",
-            ));
-        }
-        index = end + 1;
-    }
-
-    for (position, token) in tokens.iter().enumerate() {
-        if ident(token, "unsafe_code") && !accounted.contains(&position) {
-            scan.errors.push(format!(
-                "unsafe-sites.{path}:{}: `unsafe_code` appears outside a supported direct \
-                 `#[allow(...)]` attribute",
-                token.line,
-            ));
-        }
-    }
-    scan
-}
-
-/// Token-tree spans whose contents can be emitted zero, one, or many times.
-///
-/// Direct `include!` is excluded: it has its own literal source-loading
-/// boundary. Every other visible macro invocation is a token-generating
-/// context, and `macro_rules! name { ... }` needs its named-definition shape
-/// recognized separately.
-fn token_generating_spans(tokens: &[Token]) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    for index in 0..tokens.len() {
-        if ident(&tokens[index], "macro_rules")
-            && tokens.get(index + 1).is_some_and(|token| punct(token, "!"))
-            && tokens
-                .get(index + 2)
-                .is_some_and(|token| identifier_text(token).is_some())
-            && tokens.get(index + 3).is_some_and(is_open_delimiter)
-        {
-            if let Some(end) = matching_delimiter(tokens, index + 3) {
-                spans.push((index, end));
-            }
-            continue;
-        }
-        if !punct(&tokens[index], "!") || !tokens.get(index + 1).is_some_and(is_open_delimiter) {
-            continue;
-        }
-        if index > 0 && punct(&tokens[index - 1], "#") {
-            continue;
-        }
-        let name = index
-            .checked_sub(1)
-            .and_then(|position| identifier_text(&tokens[position]));
-        if name == Some("include") {
-            continue;
-        }
-        if let Some(end) = matching_delimiter(tokens, index + 1) {
-            spans.push((index, end));
-        }
-    }
-    spans.sort_unstable();
-    spans
-}
-
-/// Literal local files loaded by compiler source-loading syntax and errors for
-/// forms whose resulting source population cannot be enumerated here.
-fn source_loads(
-    path: &str,
-    tokens: &[Token],
-    macro_spans: &[(usize, usize)],
-    depths: &[usize],
-) -> (Vec<SourceLoad>, Vec<String>) {
-    let mut loads = Vec::new();
-    let mut errors = Vec::new();
-
-    for index in 0..tokens.len() {
-        if ident(&tokens[index], "include")
-            && tokens.get(index + 1).is_some_and(|token| punct(token, "!"))
-            && tokens.get(index + 2).is_some_and(is_open_delimiter)
-        {
-            let line = tokens[index].line;
-            if inside_span(index, macro_spans) {
-                errors.push(format!(
-                    "unsafe-sites.{path}:{line}: include! inside a token-generating macro \
-                     context has expansion-dependent source identity",
-                ));
-                continue;
-            }
-            let open = index + 2;
-            let Some(end) = matching_delimiter(tokens, open) else {
-                errors.push(format!(
-                    "unsafe-sites.{path}:{line}: include! source expression never closes",
-                ));
-                continue;
-            };
-            match &tokens[open + 1..end] {
-                [
-                    Token {
-                        kind: TokenKind::StringLiteral(literal),
-                        ..
-                    },
-                ] if !literal.contains('\\') => loads.push(SourceLoad {
-                    kind: "include!",
-                    literal: literal.clone(),
-                    line,
-                }),
-                [
-                    Token {
-                        kind: TokenKind::StringLiteral(_),
-                        ..
-                    },
-                ] => errors.push(format!(
-                    "unsafe-sites.{path}:{line}: escaped include! paths are unsupported because \
-                     their filesystem identity is not literal",
-                )),
-                _ => errors.push(format!(
-                    "unsafe-sites.{path}:{line}: computed include! is unsupported; generated or \
-                     OUT_DIR sources cannot be inventoried",
-                )),
-            }
-        }
-
-        if !punct(&tokens[index], "#") {
-            continue;
-        }
-        let open = index + 1;
-        if !tokens.get(open).is_some_and(|token| punct(token, "[")) {
-            continue;
-        }
-        let Some(end) = matching_delimiter(tokens, open) else {
-            continue;
-        };
-        let occurrences: Vec<usize> = (open + 1..end)
-            .filter(|position| ident(&tokens[*position], "path"))
-            .collect();
-        if occurrences.is_empty() {
-            continue;
-        }
-        let line = tokens[index].line;
-        if inside_span(index, macro_spans) {
-            errors.push(format!(
-                "unsafe-sites.{path}:{line}: #[path] inside a token-generating macro context \
-                 has expansion-dependent source identity",
-            ));
-            continue;
-        }
-        if depths.get(index).copied().unwrap_or(0) != 0 {
-            errors.push(format!(
-                "unsafe-sites.{path}:{line}: nested #[path] resolution is unsupported; its \
-                 compiler-relative module directory is not a literal source-file parent",
-            ));
-            continue;
-        }
-        match &tokens[open + 1..end] {
-            [
-                path_token,
-                equals,
-                Token {
-                    kind: TokenKind::StringLiteral(literal),
-                    ..
-                },
-            ] if ident(path_token, "path") && punct(equals, "=") && !literal.contains('\\') => {
-                loads.push(SourceLoad {
-                    kind: "#[path]",
-                    literal: literal.clone(),
-                    line,
-                });
-            }
-            [
-                path_token,
-                equals,
-                Token {
-                    kind: TokenKind::StringLiteral(_),
-                    ..
-                },
-            ] if ident(path_token, "path") && punct(equals, "=") => errors.push(format!(
-                "unsafe-sites.{path}:{line}: escaped #[path] values are unsupported because \
-                 their filesystem identity is not literal",
-            )),
-            _ => errors.push(format!(
-                "unsafe-sites.{path}:{line}: a source-loading `path` appears outside supported \
-                 literal #[path = \"...\"] syntax",
-            )),
-        }
-    }
-    (loads, errors)
-}
-
-/// Curly-brace depth before every token, with unmatched braces reported.
-fn curly_depths(path: &str, tokens: &[Token], errors: &mut Vec<String>) -> Vec<usize> {
-    let mut depths = Vec::with_capacity(tokens.len());
-    let mut depth = 0_usize;
-    for token in tokens {
-        depths.push(depth);
-        if punct(token, "{") {
-            depth += 1;
-        } else if punct(token, "}") {
-            if depth == 0 {
-                errors.push(format!(
-                    "unsafe-sites.{path}:{}: unmatched `}}` in source",
-                    token.line,
-                ));
-            } else {
-                depth -= 1;
-            }
-        }
-    }
-    if depth != 0 {
-        errors.push(format!(
-            "unsafe-sites.{path}: source ends with {depth} unclosed `{{` delimiter(s)",
-        ));
-    }
-    depths
-}
-
-/// Whether one token position lies in any closed token-generating span.
-fn inside_span(position: usize, spans: &[(usize, usize)]) -> bool {
-    spans
-        .iter()
-        .any(|(start, end)| *start <= position && position <= *end)
-}
-
-/// Whether one token opens a balanced token tree.
-fn is_open_delimiter(token: &Token) -> bool {
-    matches!(punct_text(token), Some("(" | "[" | "{"))
-}
-
-/// Reads the reason from one supported direct allow attribute.
-fn direct_allow_reason(
-    path: &str,
-    tokens: &[Token],
-    open_bracket: usize,
-    close_bracket: usize,
-) -> Result<String, String> {
-    let line = tokens[open_bracket].line;
-    let open_paren = open_bracket + 2;
-    if !tokens
-        .get(open_paren)
-        .is_some_and(|token| punct(token, "("))
-    {
-        return Err(format!(
-            "unsafe-sites.{path}:{line}: the allow attribute does not open a meta list",
-        ));
-    }
-    let Some(close_paren) = matching_delimiter(tokens, open_paren) else {
-        return Err(format!(
-            "unsafe-sites.{path}:{line}: the allow attribute's meta list never closes",
-        ));
-    };
-    if close_paren + 1 != close_bracket {
-        return Err(format!(
-            "unsafe-sites.{path}:{line}: tokens follow the allow meta list before `]`; this \
-             attribute form is unsupported",
-        ));
-    }
-
-    let mut cursor = open_paren + 1;
-    let mut saw_lint = false;
-    let mut reason = None;
-    while cursor < close_paren {
-        if punct(&tokens[cursor], ",") {
-            return Err(format!(
-                "unsafe-sites.{path}:{line}: the allow list has an empty entry",
-            ));
-        }
-        let entry_line = tokens[cursor].line;
-        let Some(mut name) = identifier_text(&tokens[cursor]).map(str::to_owned) else {
-            return Err(format!(
-                "unsafe-sites.{path}:{entry_line}: an allow entry does not begin with an \
-                 identifier; this meta syntax is unsupported",
-            ));
-        };
-        cursor += 1;
-        while cursor + 1 < close_paren && punct(&tokens[cursor], "::") {
-            let Some(segment) = identifier_text(&tokens[cursor + 1]) else {
-                return Err(format!(
-                    "unsafe-sites.{path}:{entry_line}: an allow path ends after `::`",
-                ));
-            };
-            name.push_str("::");
-            name.push_str(segment);
-            cursor += 2;
-        }
-
-        if name == "reason" {
-            if !tokens.get(cursor).is_some_and(|token| punct(token, "=")) {
-                return Err(format!(
-                    "unsafe-sites.{path}:{entry_line}: `reason` is not assigned an ordinary \
-                     string literal",
-                ));
-            }
-            let Some(Token {
-                kind: TokenKind::StringLiteral(value),
-                ..
-            }) = tokens.get(cursor + 1)
-            else {
-                return Err(format!(
-                    "unsafe-sites.{path}:{entry_line}: `reason` is not an ordinary string \
-                     literal; computed and raw forms are unsupported",
-                ));
-            };
-            if reason.replace(value.clone()).is_some() {
-                return Err(format!(
-                    "unsafe-sites.{path}:{entry_line}: the allow attribute states two reasons",
-                ));
-            }
-            cursor += 2;
-        } else if name == "unsafe_code" {
-            if saw_lint {
-                return Err(format!(
-                    "unsafe-sites.{path}:{entry_line}: the allow attribute names unsafe_code \
-                     twice",
-                ));
-            }
-            saw_lint = true;
-        } else if name.ends_with("::unsafe_code") {
-            return Err(format!(
-                "unsafe-sites.{path}:{entry_line}: `{name}` is not the whole unsafe-code lint \
-                 name",
-            ));
-        }
-
-        if cursor < close_paren {
-            if !punct(&tokens[cursor], ",") {
-                return Err(format!(
-                    "unsafe-sites.{path}:{}: allow entries must be comma-separated",
-                    tokens[cursor].line,
-                ));
-            }
-            cursor += 1;
-            if cursor == close_paren {
-                break;
-            }
-        }
-    }
-
-    if !saw_lint {
-        return Err(format!(
-            "unsafe-sites.{path}:{line}: the recognized allow did not contain unsafe_code as a \
-             whole lint name",
-        ));
-    }
-    reason.ok_or_else(|| {
-        format!(
-            "unsafe-sites.{path}:{line}: the unsafe-code permission has no ordinary string \
-             `reason` as ADR 0079 requires",
-        )
-    })
-}
-
-/// Returns the complete signature of the function following an attribute.
-fn following_function_signature(
-    path: &str,
-    tokens: &[Token],
-    mut cursor: usize,
-) -> Result<(String, usize), String> {
-    while cursor < tokens.len() && punct(&tokens[cursor], "#") {
-        let open = cursor + 1;
-        if tokens.get(open).is_some_and(|token| punct(token, "!")) {
-            return Err(format!(
-                "unsafe-sites.{path}:{}: an inner attribute cannot follow a per-item allow",
-                tokens[cursor].line,
-            ));
-        }
-        if !tokens.get(open).is_some_and(|token| punct(token, "[")) {
-            break;
-        }
-        let Some(end) = matching_delimiter(tokens, open) else {
-            return Err(format!(
-                "unsafe-sites.{path}:{}: a trailing item attribute never closes",
-                tokens[cursor].line,
-            ));
-        };
-        cursor = end + 1;
-    }
-    let start = cursor;
-    let line = tokens.get(start).map_or(1, |token| token.line);
-
-    let Some(fn_position) = (start..tokens.len()).find(|position| ident(&tokens[*position], "fn"))
-    else {
-        return Err(format!(
-            "unsafe-sites.{path}:{line}: the unsafe-code permission precedes no function; only \
-             the current function-site boundary is supported",
-        ));
-    };
-    for token in &tokens[start..fn_position] {
-        let admitted = match &token.kind {
-            TokenKind::Ident(name) => matches!(
-                name.as_str(),
-                "pub" | "crate" | "self" | "super" | "in" | "const" | "async" | "unsafe" | "extern"
-            ),
-            TokenKind::StringLiteral(_) => true,
-            TokenKind::Punct(value) => matches!(value.as_str(), "(" | ")" | "::"),
-        };
-        if !admitted {
-            return Err(format!(
-                "unsafe-sites.{path}:{}: unsupported tokens precede `fn`; the permission may not \
-                 name a function item",
-                token.line,
-            ));
-        }
-    }
-
-    let mut delimiters = Vec::new();
-    for position in start..tokens.len() {
-        let token = &tokens[position];
-        if punct(token, "{") && delimiters.is_empty() {
-            let signature = render_signature(&tokens[start..position]);
-            if signature.is_empty() {
-                return Err(format!(
-                    "unsafe-sites.{path}:{line}: the admitted function has an empty signature",
-                ));
-            }
-            return Ok((signature, position));
-        }
-        if punct(token, ";") && delimiters.is_empty() {
-            return Err(format!(
-                "unsafe-sites.{path}:{line}: the admitted function has no body",
-            ));
-        }
-        match punct_text(token) {
-            Some("(") => delimiters.push(")"),
-            Some("[") => delimiters.push("]"),
-            Some("<") => delimiters.push(">"),
-            Some(value @ (")" | "]" | ">")) => {
-                let expected = delimiters.pop().ok_or_else(|| {
-                    format!(
-                        "unsafe-sites.{path}:{}: unmatched `{value}` in the admitted signature",
-                        token.line,
-                    )
-                })?;
-                if value != expected {
-                    return Err(format!(
-                        "unsafe-sites.{path}:{}: `{value}` closes a delimiter expecting \
-                         `{expected}` in the admitted signature",
-                        token.line,
-                    ));
-                }
-            }
-            _ => {}
-        }
-    }
-    Err(format!(
-        "unsafe-sites.{path}:{line}: the admitted function's body never begins",
-    ))
-}
-
-/// Compares a scan with the exact admitted population.
-fn validate_pins(mut scan: Scan, admitted: &[AdmittedSite]) -> Vec<String> {
-    let mut expected = Sites::new();
-    for site in admitted {
-        let key = (site.path.to_owned(), site.item.to_owned());
-        assert!(
-            expected.insert(key, site.reason.to_owned()).is_none(),
-            "the admitted-site table repeats {} `{}`",
-            site.path,
-            site.item,
-        );
-    }
-    assert!(
-        !expected.is_empty(),
-        "the admitted-site table is empty; an empty scan would pass vacuously",
-    );
-
-    for key in scan.sites.keys().filter(|key| !expected.contains_key(*key)) {
-        scan.errors.push(format!(
-            "unsafe-sites.{}: `{}` admits unsafe_code and is not pinned; ADR 0079 makes a new \
-             site a new decision",
-            key.0, key.1,
-        ));
-    }
-    for key in expected.keys().filter(|key| !scan.sites.contains_key(*key)) {
-        scan.errors.push(format!(
-            "unsafe-sites.{}: pinned site `{}` is gone; remove its pin in the same reviewed \
-             change that removes the permission",
-            key.0, key.1,
-        ));
-    }
-    for (key, found) in &scan.sites {
-        if let Some(pinned) = expected.get(key)
-            && found != pinned
-        {
-            scan.errors.push(format!(
-                "unsafe-sites.{}: `{}` states reason {found:?}, pinned as {pinned:?}",
-                key.0, key.1,
-            ));
-        }
-    }
-    scan.errors.sort();
-    scan.errors
-}
-
-/// Lexes the Rust constructs relevant to attributes, dropping comments and
-/// string-like prose before the lint name can be observed.
-fn lex(path: &str, source: &str) -> Result<Vec<Token>, String> {
-    let mut tokens = Vec::new();
-    let mut index = 0;
-    let mut line = 1;
-
-    while index < source.len() {
-        let tail = &source[index..];
-        if tail.starts_with("//") {
-            if let Some(end) = tail.find('\n') {
-                index += end;
-            } else {
-                break;
-            }
-            continue;
-        }
-        if tail.starts_with("/*") {
-            let start_line = line;
-            index += 2;
-            let mut depth = 1_usize;
-            while index < source.len() && depth != 0 {
-                let rest = &source[index..];
-                if rest.starts_with("/*") {
-                    depth += 1;
-                    index += 2;
-                } else if rest.starts_with("*/") {
-                    depth -= 1;
-                    index += 2;
-                } else {
-                    let character = next_char(source, index);
-                    if character == '\n' {
-                        line += 1;
-                    }
-                    index += character.len_utf8();
-                }
-            }
-            if depth != 0 {
-                return Err(format!(
-                    "unsafe-sites.{path}:{start_line}: a block comment never closes",
-                ));
-            }
-            continue;
-        }
-        if let Some((end, newlines)) = raw_string_span(source, index) {
-            tokens.push(Token {
-                kind: TokenKind::Punct("<raw-string>".to_owned()),
-                line,
-            });
-            line += newlines;
-            index = end;
-            continue;
-        }
-
-        let character = next_char(source, index);
-        if character.is_whitespace() {
-            if character == '\n' {
-                line += 1;
-            }
-            index += character.len_utf8();
-            continue;
-        }
-        if character == '"' {
-            let start_line = line;
-            let (end, content, newlines) =
-                ordinary_string(source, index).ok_or_else(|| {
-                    format!(
-                        "unsafe-sites.{path}:{start_line}: an ordinary string literal never closes",
-                    )
-                })?;
-            tokens.push(Token {
-                kind: TokenKind::StringLiteral(content),
-                line,
-            });
-            line += newlines;
-            index = end;
-            continue;
-        }
-        if character == '\''
-            && let Some(end) = character_literal_end(source, index)
-        {
-            line += source[index..end].matches('\n').count();
-            index = end;
-            continue;
-        }
-        if is_ident_start(character) {
-            let start = index;
-            index += character.len_utf8();
-            while index < source.len() {
-                let next = next_char(source, index);
-                if !is_ident_continue(next) {
-                    break;
-                }
-                index += next.len_utf8();
-            }
-            tokens.push(Token {
-                kind: TokenKind::Ident(source[start..index].to_owned()),
-                line,
-            });
-            continue;
-        }
-
-        let (punctuation, width) = if tail.starts_with("::") {
-            ("::", 2)
-        } else if tail.starts_with("->") {
-            ("->", 2)
-        } else if tail.starts_with("=>") {
-            ("=>", 2)
-        } else {
-            (
-                &source[index..index + character.len_utf8()],
-                character.len_utf8(),
-            )
-        };
-        tokens.push(Token {
-            kind: TokenKind::Punct(punctuation.to_owned()),
-            line,
-        });
-        index += width;
-    }
-    Ok(tokens)
-}
-
-/// The exclusive span and newline count of a raw string beginning at `start`.
-fn raw_string_span(source: &str, start: usize) -> Option<(usize, usize)> {
-    let tail = &source[start..];
-    let prefix = if tail.starts_with("br") || tail.starts_with("cr") {
-        2
-    } else if tail.starts_with('r') {
-        1
-    } else {
-        return None;
-    };
-    let mut cursor = start + prefix;
-    let mut hashes = 0;
-    while source[cursor..].starts_with('#') {
-        hashes += 1;
-        cursor += 1;
-    }
-    if !source[cursor..].starts_with('"') {
-        return None;
-    }
-    cursor += 1;
-    let closing = format!("\"{}", "#".repeat(hashes));
-    let rest = &source[cursor..];
-    let relative = rest.find(&closing)?;
-    let end = cursor + relative + closing.len();
-    Some((end, source[start..end].matches('\n').count()))
-}
-
-/// An ordinary string's exclusive end, raw content, and newline count.
-fn ordinary_string(source: &str, start: usize) -> Option<(usize, String, usize)> {
-    let mut cursor = start + 1;
-    let content_start = cursor;
-    let mut escaped = false;
-    while cursor < source.len() {
-        let character = next_char(source, cursor);
-        if !escaped && character == '"' {
-            let content = source[content_start..cursor].to_owned();
-            let end = cursor + 1;
-            return Some((end, content, source[start..end].matches('\n').count()));
-        }
-        escaped = !escaped && character == '\\';
-        cursor += character.len_utf8();
-    }
-    None
-}
-
-/// The exclusive end of a character literal, or `None` for a lifetime tick.
-fn character_literal_end(source: &str, start: usize) -> Option<usize> {
-    let mut cursor = start + 1;
-    if cursor >= source.len() {
-        return None;
-    }
-    let first = next_char(source, cursor);
-    if first == '\\' {
-        cursor += 1;
-        if cursor >= source.len() {
-            return None;
-        }
-        cursor += next_char(source, cursor).len_utf8();
-    } else {
-        cursor += first.len_utf8();
-    }
-    source[cursor..].starts_with('\'').then_some(cursor + 1)
-}
-
-/// The closing delimiter for the one opening token, respecting nesting.
-fn matching_delimiter(tokens: &[Token], open: usize) -> Option<usize> {
-    let first = punct_text(tokens.get(open)?)?;
-    let expected = match first {
-        "(" => ")",
-        "[" => "]",
-        "{" => "}",
-        _ => return None,
-    };
-    let mut stack = vec![expected];
-    for (position, token) in tokens.iter().enumerate().skip(open + 1) {
-        match punct_text(token) {
-            Some("(") => stack.push(")"),
-            Some("[") => stack.push("]"),
-            Some("{") => stack.push("}"),
-            Some(value @ (")" | "]" | "}")) => {
-                if stack.pop()? != value {
-                    return None;
-                }
-                if stack.is_empty() {
-                    return Some(position);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Renders a stable, human-readable item signature from lexed tokens.
-fn render_signature(tokens: &[Token]) -> String {
-    let mut rendered = String::new();
-    let mut previous: Option<String> = None;
-    for (index, token) in tokens.iter().enumerate() {
-        let current = match &token.kind {
-            TokenKind::Ident(value) | TokenKind::Punct(value) => value.clone(),
-            TokenKind::StringLiteral(value) => format!("\"{value}\""),
-        };
-        if current == "," && tokens.get(index + 1).is_some_and(|next| punct(next, ")")) {
-            continue;
-        }
-        let tight_before = matches!(
-            current.as_str(),
-            ")" | "]" | ">" | "," | ";" | ":" | "::" | "(" | "[" | "<" | "."
-        );
-        let tight_after_previous = previous
-            .as_deref()
-            .is_some_and(|value| matches!(value, "(" | "[" | "<" | "::" | "&" | "'" | "."));
-        if !rendered.is_empty() && !tight_before && !tight_after_previous {
-            rendered.push(' ');
-        }
-        rendered.push_str(&current);
-        previous = Some(current);
-    }
-    rendered
-}
-
-/// Reads a UTF-8 file or fails naming it.
-fn read(path: &Path) -> String {
-    std::fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("{} is readable UTF-8: {error}", path.display()))
-}
-
-/// The non-comment part of one manifest line.
-fn manifest_code(line: &str) -> String {
-    let mut code = String::new();
-    let mut in_string = false;
-    for character in line.chars() {
-        match character {
-            '"' => in_string = !in_string,
-            '#' if !in_string => break,
-            _ => {}
-        }
-        code.push(character);
-    }
-    code
-}
-
-/// Every double-quoted value in the root member array.
-fn quoted_values(array: &str, path: &Path, line: usize) -> Vec<String> {
-    let mut values = Vec::new();
-    let mut current = None;
-    for character in array.chars() {
-        match (character, current.as_mut()) {
-            ('"', None) => current = Some(String::new()),
-            ('"', Some(_)) => values.push(current.take().expect("a member string is open")),
-            (_, Some(value)) => value.push(character),
-            (_, None) => {}
-        }
-    }
-    assert!(
-        current.is_none(),
-        "{}:{line}: the member array contains an unterminated string",
-        path.display(),
-    );
-    assert!(
-        !values.is_empty(),
-        "{}:{line}: the member array contains no string paths",
-        path.display(),
-    );
-    values
-}
-
-/// The source character beginning at one byte boundary.
-fn next_char(source: &str, index: usize) -> char {
-    source[index..]
-        .chars()
-        .next()
-        .expect("the lexer index is inside the source")
-}
-
-/// Whether one character can begin an identifier relevant to this scan.
-fn is_ident_start(character: char) -> bool {
-    character == '_' || character.is_alphabetic()
-}
-
-/// Whether one character can continue an identifier relevant to this scan.
-fn is_ident_continue(character: char) -> bool {
-    character == '_' || character.is_alphanumeric()
-}
-
-/// Whether a token is one exact identifier.
-fn ident(token: &Token, expected: &str) -> bool {
-    matches!(&token.kind, TokenKind::Ident(value) if value == expected)
-}
-
-/// One identifier token's text.
-fn identifier_text(token: &Token) -> Option<&str> {
-    match &token.kind {
-        TokenKind::Ident(value) => Some(value),
-        TokenKind::StringLiteral(_) | TokenKind::Punct(_) => None,
-    }
-}
-
-/// Whether a token is one exact punctuation token.
-fn punct(token: &Token, expected: &str) -> bool {
-    punct_text(token) == Some(expected)
-}
-
-/// One punctuation token's text.
-fn punct_text(token: &Token) -> Option<&str> {
-    match &token.kind {
-        TokenKind::Punct(value) => Some(value),
-        TokenKind::Ident(_) | TokenKind::StringLiteral(_) => None,
-    }
 }

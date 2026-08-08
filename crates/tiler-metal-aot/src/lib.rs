@@ -10,6 +10,7 @@
 // `input::ApplePlatform::ALL`, `input::MslVersion::ALL`, and
 // `diagnostic::CompileStage::ALL`.
 #![feature(variant_count)]
+#![doc(test(attr(forbid(unsafe_code))))]
 //! Bounded offline Apple Metal AOT compiler driver for Tiler.
 //!
 //! This crate owns one bounded responsibility: invoke Apple's offline `xcrun

@@ -11,6 +11,7 @@
 // reason from the other direction: that vocabulary is `#[non_exhaustive]` and
 // owned by another crate, so no match here can be closed on its behalf.
 #![feature(variant_count)]
+#![doc(test(attr(forbid(unsafe_code))))]
 //! Pure structured-kernel-to-Metal-source lowering for Tiler.
 //!
 //! This crate owns deterministic source emission and target metadata, not live

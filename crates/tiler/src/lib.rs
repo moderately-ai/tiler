@@ -1,3 +1,4 @@
+#![doc(test(attr(forbid(unsafe_code))))]
 //! The one crate a consumer of Tiler's inline Rust frontend depends on.
 //!
 //! A consumer writes `tiler = { … }` in its manifest and reaches the inline
@@ -223,4 +224,11 @@ pub mod __private {
         PRODUCER_DECLARED_EQUALITY, RouteFacts, RouteOutcome, bind_route_and_build,
         dispatch_embedded_route, producer_declared_equality,
     };
+    /// The compiler builtin generated regions use for compile-time refusals.
+    ///
+    /// Resolving it here, while the facade itself is compiled, prevents a
+    /// consumer from rebinding `core` to another Cargo package beneath emitted
+    /// diagnostic paths.
+    #[doc(hidden)]
+    pub use core::compile_error as __tiler_compile_error;
 }

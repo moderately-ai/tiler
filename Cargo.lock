@@ -1707,6 +1707,7 @@ dependencies = [
  "tiler-macros",
  "tiler-runtime",
  "trybuild",
+ "unicode-ident",
 ]
 
 [[package]]

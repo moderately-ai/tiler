@@ -1,3 +1,4 @@
+#![doc(test(attr(forbid(unsafe_code))))]
 //! Host reference values and evaluation for verified Tiler semantic programs.
 //!
 //! Two independent oracles share one exact tensor value boundary. The semantic

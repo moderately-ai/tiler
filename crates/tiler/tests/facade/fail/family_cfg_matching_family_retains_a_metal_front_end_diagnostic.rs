@@ -45,7 +45,7 @@
 fn main() {
     let _ = {
 #[cfg(all(target_os = "macos", target_abi = ""))]
-const _: () = { ::core::compile_error!("`tiler::tensor!` could not compile this region's artifact on this build host: Metal AOT driver failed: offline metal failed [/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macros-aot-msl-position-7338-ThreadId(2)/metal] (exit code 1): /var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-metal-aot-7338-0-1785871605869051000/kernel.metal:63:39: error: use of undeclared identifier 'tiler_no_such_identifier'\nkernel void tiler_injected_defect() { tiler_no_such_identifier(); }\n                                      ^\n1 error generated."); };
+::tiler::__private::__tiler_compile_error!("`tiler::tensor!` could not compile this region's artifact on this build host: Metal AOT driver failed: offline metal failed [/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macros-aot-msl-position-7338-ThreadId(2)/metal] (exit code 1): /var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-metal-aot-7338-0-1785871605869051000/kernel.metal:63:39: error: use of undeclared identifier 'tiler_no_such_identifier'\nkernel void tiler_injected_defect() { tiler_no_such_identifier(); }\n                                      ^\n1 error generated.");
         "the semantic fallback this consumer must not silently receive"
     };
 }

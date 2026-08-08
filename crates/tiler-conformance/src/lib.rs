@@ -1,3 +1,4 @@
+#![doc(test(attr(forbid(unsafe_code))))]
 //! Cross-layer executed conformance evidence for Tiler.
 //!
 //! A target profile is a set of claims, and conformance is what refutes them.

@@ -42,6 +42,7 @@ tiler-runtime.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 trybuild.workspace = true
+unicode-ident.workspace = true
 
 [lints]
 workspace = true

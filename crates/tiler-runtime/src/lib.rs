@@ -1,3 +1,4 @@
+#![doc(test(attr(forbid(unsafe_code))))]
 //! Device-free artifact loading and validation for Tiler runtimes.
 //!
 //! A Tiler runtime has two halves that fail for unrelated reasons. One half

@@ -1,3 +1,4 @@
+#![doc(test(attr(forbid(unsafe_code))))]
 //! The procedural macro implementation behind Tiler's inline tensor regions.
 //!
 //! Rust forbids a `proc-macro` crate from exporting anything but macros, so
@@ -267,10 +268,184 @@ const ROUTE_FACTS_BINDING: &str = "__TILER_ROUTE_FACTS";
 #[proc_macro]
 pub fn tensor(input: TokenStream) -> TokenStream {
     let region = Span::call_site();
-    match expand(&tokens::read(input), region) {
+    let emitted = match expand(&tokens::read(input), region) {
         Ok(expanded) => expanded,
         Err(refusal) => spanned_compile_error(refusal.span(), &refusal.to_string()),
+    };
+    guarded_emission(emitted, region)
+}
+
+/// Returns one emitted stream only after recursively proving it stays inside
+/// the frontend's closed token language.
+///
+/// Rust suppresses `unsafe_code` diagnostics originating in an external
+/// procedural macro, even when the consumer inherits `forbid`. The producer
+/// therefore refuses both unsafe spellings before rustc can lose their origin.
+/// It also refuses every emitted macro authority except the exact facade-owned
+/// diagnostic macro, and admits only the target-selection attribute this
+/// frontend constructs.
+fn guarded_emission(emitted: TokenStream, span: Span) -> TokenStream {
+    match validate_emitted_tokens(emitted.clone()) {
+        Ok(()) => emitted,
+        Err(detail) => {
+            let refusal = spanned_compile_error(
+                span,
+                &format!("`tiler-macros` refused its emitted token stream: {detail}"),
+            );
+            validate_emitted_tokens(refusal.clone())
+                .expect("the producer guard admits its exact facade diagnostic refusal");
+            refusal
+        }
     }
+}
+
+/// Recursively validates one emitted token stream.
+fn validate_emitted_tokens(stream: TokenStream) -> Result<(), String> {
+    validate_emitted_slice(&stream.into_iter().collect::<Vec<_>>())
+}
+
+/// Recursively validates one emitted token-tree level.
+fn validate_emitted_slice(trees: &[TokenTree]) -> Result<(), String> {
+    for (index, tree) in trees.iter().enumerate() {
+        if let TokenTree::Ident(identifier) = tree {
+            let identifier = identifier.to_string();
+            if matches!(identifier.as_str(), "unsafe" | "unsafe_code") {
+                return Err(format!(
+                    "identifier `{identifier}` is outside the unsafe-free emitted vocabulary"
+                ));
+            }
+            if matches!(
+                identifier.as_str(),
+                "macro" | "macro_rules" | "use" | "extern" | "mod"
+            ) {
+                return Err(format!(
+                    "identifier `{identifier}` would emit a source-loading or namespace authority"
+                ));
+            }
+        }
+
+        if is_punct(tree, '#') {
+            let Some(TokenTree::Group(attribute)) = trees.get(index + 1) else {
+                return Err("`#` is not followed by an emitted attribute group".to_owned());
+            };
+            if attribute.delimiter() != Delimiter::Bracket || !is_exact_cfg_attribute(attribute) {
+                return Err(format!(
+                    "emitted attribute `#[{}]` is outside the exact `#[cfg(...)]` vocabulary",
+                    attribute.stream(),
+                ));
+            }
+        }
+
+        if is_punct(tree, '!')
+            && trees
+                .get(index + 1)
+                .is_some_and(|next| matches!(next, TokenTree::Group(_)))
+            && !is_exact_facade_compile_error_invocation(trees, index)
+        {
+            let name = index
+                .checked_sub(1)
+                .and_then(|position| match &trees[position] {
+                    TokenTree::Ident(identifier) => Some(identifier.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "<dynamic>".to_owned());
+            return Err(format!(
+                "emitted macro invocation `{name}!` is outside the exact facade-owned \
+                 `::tiler::__private::__tiler_compile_error!` diagnostic"
+            ));
+        }
+
+        if let TokenTree::Group(group) = tree {
+            validate_emitted_tokens(group.stream())?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether an emitted attribute group is exactly `cfg(<tokens>)`.
+fn is_exact_cfg_attribute(attribute: &Group) -> bool {
+    let trees: Vec<_> = attribute.stream().into_iter().collect();
+    matches!(
+        trees.as_slice(),
+        [TokenTree::Ident(name), TokenTree::Group(arguments)]
+            if name.to_string() == "cfg" && arguments.delimiter() == Delimiter::Parenthesis
+    )
+}
+
+/// Whether the bang at `index` belongs to exact
+/// `::tiler::__private::__tiler_compile_error!`.
+fn is_exact_facade_compile_error_invocation(trees: &[TokenTree], index: usize) -> bool {
+    let Some(start) = index.checked_sub(9) else {
+        return false;
+    };
+    let path = &trees[start..index];
+    let exact_path = matches!(
+        path,
+        [
+            first_colon,
+            second_colon,
+            TokenTree::Ident(tiler),
+            third_colon,
+            fourth_colon,
+            TokenTree::Ident(private),
+            fifth_colon,
+            sixth_colon,
+            TokenTree::Ident(diagnostic),
+        ] if is_joint_colon(first_colon)
+            && is_alone_colon(second_colon)
+            && tiler.to_string() == "tiler"
+            && is_joint_colon(third_colon)
+            && is_alone_colon(fourth_colon)
+            && private.to_string() == "__private"
+            && is_joint_colon(fifth_colon)
+            && is_alone_colon(sixth_colon)
+            && diagnostic.to_string() == "__tiler_compile_error"
+    );
+    exact_path
+        && is_emitted_path_start(trees, start)
+        && matches!(
+            trees.get(index + 1),
+            Some(TokenTree::Group(arguments))
+                if arguments.delimiter() == Delimiter::Parenthesis
+                    && matches!(
+                        arguments.stream().into_iter().collect::<Vec<_>>().as_slice(),
+                        [TokenTree::Literal(_)]
+                    )
+        )
+}
+
+/// Whether the exact absolute diagnostic path starts at this token-tree level
+/// or after one complete emitted statement or admitted `cfg` attribute.
+fn is_emitted_path_start(trees: &[TokenTree], start: usize) -> bool {
+    start == 0
+        || trees
+            .get(start - 1)
+            .is_some_and(|previous| is_punct(previous, ';'))
+        || (start >= 2
+            && is_punct(&trees[start - 2], '#')
+            && matches!(
+                &trees[start - 1],
+                TokenTree::Group(attribute)
+                    if attribute.delimiter() == Delimiter::Bracket
+                        && is_exact_cfg_attribute(attribute)
+            ))
+}
+
+/// Whether one procedural token is the supplied punctuation character.
+fn is_punct(tree: &TokenTree, expected: char) -> bool {
+    matches!(tree, TokenTree::Punct(punctuation) if punctuation.as_char() == expected)
+}
+
+/// Whether one colon is the joined first half of `::`.
+fn is_joint_colon(tree: &TokenTree) -> bool {
+    matches!(tree, TokenTree::Punct(punctuation)
+        if punctuation.as_char() == ':' && punctuation.spacing() == Spacing::Joint)
+}
+
+/// Whether one colon is the standalone second half of `::`.
+fn is_alone_colon(tree: &TokenTree) -> bool {
+    matches!(tree, TokenTree::Punct(punctuation)
+        if punctuation.as_char() == ':' && punctuation.spacing() == Spacing::Alone)
 }
 
 /// Expands one region, or returns the first refusal with its span.
@@ -603,7 +778,8 @@ fn spanned_group(delimiter: Delimiter, stream: TokenStream, span: Span) -> Group
     group
 }
 
-/// Builds `compile_error! { "<message>" }` with every token carrying `span`.
+/// Builds the exact facade-owned diagnostic invocation with every token carrying
+/// `span`.
 ///
 /// The span is what makes the rejection usable: it puts the diagnostic on the
 /// offending token inside the invocation rather than on the macro call as a
@@ -611,18 +787,29 @@ fn spanned_group(delimiter: Delimiter, stream: TokenStream, span: Span) -> Group
 fn spanned_compile_error(span: Span, message: &str) -> TokenStream {
     let mut literal = Literal::string(message);
     literal.set_span(span);
-
     let mut body = TokenStream::new();
     body.extend([TokenTree::Literal(literal)]);
 
     let mut bang = Punct::new('!', Spacing::Alone);
     bang.set_span(span);
+    let mut joint_colon = Punct::new(':', Spacing::Joint);
+    joint_colon.set_span(span);
+    let mut alone_colon = Punct::new(':', Spacing::Alone);
+    alone_colon.set_span(span);
 
     let mut expanded = TokenStream::new();
     expanded.extend([
-        TokenTree::Ident(Ident::new("compile_error", span)),
+        TokenTree::Punct(joint_colon.clone()),
+        TokenTree::Punct(alone_colon.clone()),
+        TokenTree::Ident(Ident::new("tiler", span)),
+        TokenTree::Punct(joint_colon.clone()),
+        TokenTree::Punct(alone_colon.clone()),
+        TokenTree::Ident(Ident::new("__private", span)),
+        TokenTree::Punct(joint_colon),
+        TokenTree::Punct(alone_colon),
+        TokenTree::Ident(Ident::new("__tiler_compile_error", span)),
         TokenTree::Punct(bang),
-        TokenTree::Group(spanned_group(Delimiter::Brace, body, span)),
+        TokenTree::Group(spanned_group(Delimiter::Parenthesis, body, span)),
     ]);
     expanded
 }
