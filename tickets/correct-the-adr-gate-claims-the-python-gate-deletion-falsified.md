@@ -1,7 +1,7 @@
 ---
 id: correct-the-adr-gate-claims-the-python-gate-deletion-falsified
 title: Retire the deleted Python gate's claims in ADRs 0074 and 0076
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, evidence, gate]
-claimed_from: todo
-assignee: w-correct-t
-lease_expires_at: 1786165341
 ---
 ## Two accepted ADRs assert that the repository gate runs a spike harness, and no gate reaches `spikes/`
 
@@ -82,3 +79,33 @@ Done 2026-08-08 on base `209013bd`. All five sentences corrected; no convention,
 **Sibling scan.** `grep -n "gate runs\|the gate now\|gate collects\|repository gate" docs/decisions/*.md` and `grep -n "spikes/" docs/decisions/[0-9]*.md` were read site by site. Three other hits are correct and were left alone: ADR 0077's `crates/tiler-metal/src/golden_compilation.rs` genuinely is compiled by `make test`; ADR 0074's `unknown_lints` sentence is about a workspace crate under `-D warnings`, not a spike; and ADR 0106 already says a spike is run by hand. No further in-scope defect of this class exists.
 
 **Checks.** `make citations` green at 964 citations, up 8 from the 956 baseline — exactly the eight anchors added, so every new anchor is reached and counted. Anchor reach demonstrated deliberately: breaking `"def visibility_self_test()"` to `"def visibility_self_test_XXBREAKXX()"` produced `FAIL ... anchor occurs nowhere in spikes/extensions/run.py` and exit 2; reverting restored green. The checker also caught a real defect mid-run — the retired 0076 quote was one trailing period short of byte-exact, which broke this ticket's own citation of it — and that was repaired rather than worked around.
+
+## Outcome — done, 2026-08-08
+
+Landed at merge `3ccb5491` (worker commit `7d40f04e`). `docs/` + `tickets/` only, carries the green gate.
+
+**This ticket undercounted the house form it points at**: it said "eight passages across ADRs 0077, 0079, 0081, 0082, 0088" — coordinator-verified as **seven ADRs**, omitting 0075 which carries two. Immaterial to the fix, but the form is more abundant than the ticket implied.
+
+### Conclusion versus stated ground, per sentence — the distinction was different every time
+
+| Sentence | Conclusion | Ground | Repair |
+| --- | --- | --- | --- |
+| 0074 "which the repository gate runs" | **true** — the self-test does check retained diagnostics without Cargo | false | clause retired, sentence kept |
+| 0074 "the gate now also compiles the workspace … every invocation" | **false** — the conclusion *is* the gate claim | false | retired whole, verbatim |
+| 0074 5b "forces a fresh run at the next pin migration" | **imprecise** | mechanism does not run | restated at true strength |
+| 0076 "reproduced by the harness the gate runs" | **true** — finding 20 closed the additive-path gap | false | custody clause alone retired |
+| 0076 "checked-in harness the repository gate runs" | checked-in **true**, gate half false | mixed | gate clause alone retired |
+
+Five sentences, five different splits. Retiring them uniformly would have destroyed three true conclusions.
+
+On 5b: `verify_visibility_evidence` genuinely refuses an off-pin record and `visibility_self_test` proves that rejection fires. What is false is **"forces"** — the measurement now says it survives because `rust-toolchain.toml` still pins the channel the retained result was recorded against, **survival by an unmoved pin rather than by a mechanism**. No measured value was touched.
+
+A sibling scan found three other `repository gate` mentions in `docs/decisions/` that are **correct** and were left alone — one crate genuinely compiled by `make test`, one about a workspace crate rather than a spike, and one already saying its spike is run by hand. Naming the true instances is what makes the retired ones credible.
+
+### The citation checker enforced the preservation convention
+
+Mid-run it caught that the retired 0076 quote was **one trailing period short of byte-exact**, which broke this ticket's own citation of that sentence. The worker repaired to byte-exact rather than working around the check — observing that byte-exactness *is* what "preserves the retired text" should mean. The check turned a convention into a mechanism without anyone designing it to.
+
+Anchor-reach demonstrated by breaking `"def visibility_self_test()"` and watching `anchor occurs nowhere in spikes/extensions/run.py`, exit 2, then reverting. Docs citations moved 691 → 699 — exactly the eight anchors added, so every one is reached and counted.
+
+**No decision changed**: no convention, no decision item, no `decision_status`. `docs/decisions/README.md` needed no edit, its rows carrying status, contracts and evidence — none of which move.
