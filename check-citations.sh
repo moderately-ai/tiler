@@ -1,16 +1,18 @@
 #!/bin/sh
-# Resolve the pinned source citations in open tickets against this working tree.
+# Resolve the pinned source citations in open tickets and live documents against
+# this working tree.
 #
 # WHAT A GREEN RUN MEANS, AND WHAT IT DOES NOT
 #
-# Green means every pinned citation in an open ticket points *somewhere*: the
-# file exists, the line is inside it, the quoted anchor occurs in it. That is
-# all. It is emphatically **not** evidence that a ticket's Facts are true. A
-# citation resolves perfectly and still supports a claim the code no longer
-# makes -- that is what happened on 2026-08-07, when a claim about an
-# obligation class named the right file and the right symbol and described
-# behaviour the code does not have. This checker would have passed it, and it
-# passes the deliberately wrong sentence carried in the built-in fixture below.
+# Green means every pinned citation in an open ticket or a live document points
+# *somewhere*: the file exists, the line is inside it, the quoted anchor occurs
+# in it. That is all. It is emphatically **not** evidence that a ticket's Facts
+# or an ADR's prose are true. A citation resolves perfectly and still supports a
+# claim the code no longer makes -- that is what happened on 2026-08-07, when a
+# claim about an obligation class named the right file and the right symbol and
+# described behaviour the code does not have. This checker would have passed it,
+# and it passes the deliberately wrong sentence carried in the built-in fixture
+# below.
 #
 # AGENTS.md carries the control that actually governs this: a ticket's stated
 # Facts are stale until re-read at your own base, and a worker's first
@@ -70,13 +72,61 @@
 # `:789-810` suffix the house style already uses, rather than pinning it to a
 # path -- so it is not a citation here and cannot be demanded to resolve.
 #
+# THE TWO POPULATIONS, AND WHAT TERMINAL MEANS IN EACH
+#
+# `tickets/**` and `docs/**` are read and counted separately, and each carries
+# its own floor, so neither can collapse into the other and read as a clean run
+# on the strength of the one that still works.
+#
+# The skip rule is the same rule in both, stated over different metadata: skip a
+# record whose citations describe a tree it is no longer authoritative over,
+# because rewriting one to match today's line numbers destroys the account of
+# what was actually done. Check the records a reader will follow into the code,
+# which is exactly where a stale citation does its damage.
+#
 # Terminal tickets (`done`, `closed` -- read from `ticketsplease.toml`, not
-# hardcoded here) are skipped. Their citations describe a tree at merge time
-# and rot by design; rewriting a closed record to match today's line numbers
-# would destroy the account of what was actually done. Open tickets are the
-# ones a worker will follow into the code, which is exactly where a stale
-# citation does its damage. A comment file inherits the status of its parent
+# hardcoded here) are skipped. A comment file inherits the status of its parent
 # ticket, because it is part of the ticket a worker is told to read in full.
+#
+# For a document the equivalent is `superseded`, and only that. It is the one
+# status value in `docs/document-metadata.md` that means *replaced*: it is a
+# `decision_status` on an ADR and a `disposition` on a research record, and this
+# script reads either. Three files carry it as of 2026-08-07. Neighbouring
+# values are deliberately not terminal and the distinction is the whole point --
+# an accepted ADR, a `complete` research record, and a `rejected` or
+# `informational` disposition are all still the standing account of their own
+# conclusion, and AGENTS.md ranks the first of those as the highest evidence
+# tier there is. `implementation_status` is never consulted: the metadata
+# contract calls it a retained high-water mark rather than a live mirror of the
+# tree, so it says nothing about whether a citation should resolve.
+#
+# The other half of a document's history stays writable because of the
+# bare-path rule above, not because of anything here. A dated correction quotes
+# the retired extent in prose or as a bare `:497-548`, never pinned to a path,
+# so it is not a citation and cannot be demanded to resolve -- which is what
+# keeps a convention that requires the retired text to stay from colliding with
+# a check that requires it to be gone.
+#
+# A document with no status facet at all is checked rather than skipped, and the
+# census counts how many there are. Twenty-four reach that branch on 2026-08-07
+# and they are two unrelated populations, both correctly checked:
+#
+#   - Nine Tiler documents whose `kind` has no status facet at all. The kind
+#     table in `docs/document-metadata.md` requires one of contract, decision,
+#     research, experiment, roadmap, and questions, and requires none of portal
+#     or prior-art. Seven portals and two prior-art records is exactly that set.
+#     A portal is live by construction -- it is the entry point a reader is sent
+#     to -- so there is nothing here to skip on.
+#
+#   - Fifteen vendored upstream specifications under `docs/research/*/sources/`,
+#     which carry no `tiler-doc/v1` frontmatter because no status could be added
+#     to them without editing evidence that is supposed to be a verbatim copy.
+#     Checking them is the fail-closed direction and it is free today: measured
+#     2026-08-07, the only pinned spans in that subtree are `0:100` and `0:10`,
+#     which name no file and are dropped by qualifies() before anything is
+#     demanded of them. If one ever does resolve to a real claim about this
+#     tree, the failure names the file and a reader decides; a carve-out here
+#     would instead be a hole nobody sees.
 #
 # Usage: ./check-citations.sh [--verbose]
 
@@ -97,6 +147,11 @@ done
 
 if [ ! -f ticketsplease.toml ]; then
 	printf 'check-citations: ticketsplease.toml not found; run from the repository.\n' >&2
+	exit 2
+fi
+
+if [ ! -d docs ]; then
+	printf 'check-citations: docs/ not found; run from the repository.\n' >&2
 	exit 2
 fi
 
@@ -175,13 +230,36 @@ for f in tickets/*.comments/*.md; do
 	fi
 done
 
+# The document population, appended after the tickets. `find` rather than a
+# glob because POSIX sh has no recursive one, and the fixed-depth chain that
+# substitutes for it (`docs/*.md docs/*/*.md docs/*/*/*.md`) drops a whole
+# subtree in silence the day someone nests one level deeper -- which is the
+# shape of failure the floors below exist to make loud. Sorted so the report is
+# reproducible rather than in directory order.
+docs_before=$#
+IFS='
+'
+# One append, not one per file. Growing the argument list element by element is
+# quadratic: measured on this tree, a `while read` loop appending the 256
+# documents one at a time costs 1.18s against 0.03s here, on a run that is
+# otherwise 0.6s end to end.
+# shellcheck disable=SC2046 # Deliberate: IFS above splits the list on newlines
+# and nothing else, which is exactly the split wanted. Quoting it would pass all
+# 256 paths to awk as one filename.
+set -- "$@" $(find docs -type f -name '*.md' | LC_ALL=C sort)
+unset IFS
+if [ "$#" -eq "$docs_before" ]; then
+	printf 'check-citations: no document files matched docs/**/*.md.\n' >&2
+	exit 2
+fi
+
 # The fixture leads, so its forms are counted even when a later population is
-# empty. Populations are appended here and classified by path inside awk rather
+# empty. Populations are appended above and classified by path inside awk rather
 # than assumed to be tickets, which is what keeps `tickets/**` from being the
-# only thing this script can read. A second population -- `docs/**`, say -- is
-# an append here, a branch in role_of(), a branch in decide() stating how its
-# status is determined (a docs tree has none, so it is checked unconditionally,
-# as the fixture is), and its own line in the census.
+# only thing this script can read. A third population is an append there, a
+# branch in role_of(), a branch in decide() stating how its status is
+# determined, and its own line in the census -- and, if it is a corpus rather
+# than a fixture, its own floor beside the two in report().
 set -- "$fixture" "$@"
 
 # The program below is one single-quoted shell word, so it must contain no
@@ -256,6 +334,13 @@ BEGIN {
 			suffix_path[suffix] = p
 			if (!sub(/^[^\/]*\//, "", suffix)) break
 		}
+		# Every "/"-separated component of every tracked path, at any depth.
+		# This is what lets a path rooted in another project be told apart from
+		# one rooted here that has drifted; see the external branch in
+		# classify() for why the test is over components rather than over root
+		# entries.
+		nseg = split(p, segs, "/")
+		for (si = 1; si <= nseg; si++) component[segs[si]] = 1
 	}
 	close(indexfile)
 
@@ -272,6 +357,7 @@ BEGIN {
 # than re-testing FILENAME, so a new population is named once, here.
 function role_of(path) {
 	if (path == fixture) return "fixture"
+	if (path ~ /^docs\//) return "doc"
 	if (path ~ /\.comments\//) return "comment"
 	return "ticket"
 }
@@ -282,6 +368,8 @@ FNR == 1 {
 	ticket = (role == "fixture") ? FIXTURE_LABEL : FILENAME
 	files_read[role]++
 	status = ""
+	doc_superseded = 0
+	doc_status_seen = 0
 	in_fence = 0
 	in_frontmatter = 0
 	decided = 0
@@ -305,6 +393,16 @@ FNR == 1 {
 			sub(/^status:[ \t]*/, "", status)
 			gsub(/[ \t\r]/, "", status)
 		}
+		# A document carries its state in a kind-specific facet rather than in
+		# one field named `status`, so the key is matched by shape and only the
+		# retiring value is acted on. Seeing any facet at all is recorded
+		# separately, because a document that has none is a different population
+		# from one that has a live status, and the census says which.
+		if ($0 ~ /^(disposition|[a-z_]*status):[ \t]*"?[a-z-]+"?[ \t\r]*$/) {
+			doc_status_seen = 1
+			if ($0 ~ /^(disposition|[a-z_]*status):[ \t]*"?superseded"?[ \t\r]*$/)
+				doc_superseded = 1
+		}
 		next
 	}
 
@@ -327,6 +425,25 @@ function decide(   parent) {
 	# nothing to act on, so it cannot remove the only guaranteed instance of
 	# each citation form. It is never terminal and never skipped.
 	if (role == "fixture") return
+
+	# A document is retired by `superseded` and by nothing else -- the header
+	# states which neighbouring values were considered and why each is still
+	# live. A document with no status facet at all is checked rather than
+	# skipped, and counted separately so that population stays visible. An
+	# absent status is a property of the document kind or of its being a
+	# verbatim upstream copy, never a statement that the record is retired, so
+	# it must not read as a licence to skip; the header enumerates both sets.
+	if (role == "doc") {
+		if (doc_superseded) {
+			skip_file = 1
+			files_terminal[role]++
+			return
+		}
+		if (!doc_status_seen) docs_no_status++
+		files_live[role]++
+		return
+	}
+
 	if (role == "comment") {
 		parent = ticket
 		sub(/\.comments\/.*$/, ".md", parent)
@@ -349,11 +466,10 @@ function decide(   parent) {
 
 	if (status in is_terminal) {
 		skip_file = 1
-		files_terminal++
+		files_terminal[role]++
 		return
 	}
-	files_checked++
-	if (role == "comment") comments_checked++
+	files_live[role]++
 }
 
 # Walk one line, toggling in/out of inline code spans. Spans are handed to
@@ -386,7 +502,7 @@ function end_file() {
 	ticket = ""
 }
 
-function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, hay) {
+function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, hay, lead) {
 	sub(/^[ \t]+/, "", t)
 	sub(/[ \t]+$/, "", t)
 	if (t == "") return
@@ -420,7 +536,6 @@ function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, h
 	else if (form == "anchor") cit_anchor++
 	else cit_line++
 	if (wrapped) spanned++
-	if (role == "fixture") fixture_citations++
 
 	resolved = path
 	if (!exists(path)) {
@@ -444,13 +559,40 @@ function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, h
 			if (verbose) printf "SKIP  %s: `%s` (ambiguous, %d candidates)\n", ticket, t, suffix_count[path]
 			return
 		} else {
-			checked++
+			# Nothing here is or ends with this path. Before calling that a
+			# broken citation, ask whether the path was ever about this tree.
+			# `docs/**` cites upstream sources the way their own repositories
+			# spell them -- `candle-core/src/metal_backend/device.rs:101`, with
+			# the revision named in the prose beside it -- and demanding those
+			# resolve against Tiler is the unsatisfiable kind of condition, not
+			# a caught defect. It is the same category the version-pinned skip
+			# above already carries, reached by a different spelling.
+			#
+			# The test is over path *components*, not root entries, and the
+			# difference is load-bearing. A partial-path citation names an
+			# inner directory -- `codec/encode.rs:443`, `semantic/identity.rs`
+			# -- so a root-entry test would call every unresolvable one of
+			# those external and silently stop reporting exactly the drift this
+			# check exists for. `candle-core` and `candle-metal-kernels` are
+			# components of nothing here; `src`, `codec`, and `semantic` are.
+			#
+			# A single-segment name is never external. A bare filename is the
+			# shorthand this repository uses for its own files, and one that
+			# resolves nowhere is drift or a citation that should have carried
+			# its provenance -- both of which must fail rather than skip.
+			lead = path
+			if (sub(/\/.*$/, "", lead) && !(lead in component)) {
+				external++
+				if (verbose) printf "SKIP  %s: `%s` (rooted outside this tree: no tracked path has a %s component)\n", ticket, t, lead
+				return
+			}
+			checked++; cit_checked[role]++
 			fail(t, "no file in the tree is or ends with " path)
 			return
 		}
 	}
 
-	checked++
+	checked++; cit_checked[role]++
 
 	if (pin != "") {
 		lo = pin; hi = pin
@@ -479,6 +621,18 @@ function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, h
 	}
 }
 
+# One floor per corpus population. The fixture needs none: it is floored five
+# times over by the per-form floors below, each of which names a fixture
+# citation as the instance that should have fed it. A corpus is different --
+# every citation in it is contingent, so the only thing that says the population
+# was reached at all is that something in it was checked.
+function population_floor(n, name, hint) {
+	if (n + 0 > 0) return 0
+	printf "\nEMPTY  the %s population contributed 0 checked citation(s), so nothing in it was verified.\n", name
+	printf "       %s\n", hint
+	return 1
+}
+
 # One population floor. A form parsed zero times is a branch this run never
 # executed, and a branch that never executes cannot say no -- so it reports
 # clean whatever the tree looks like. `example` names the fixture citation that
@@ -491,16 +645,24 @@ function form_floor(n, form, example) {
 	return 1
 }
 
-function report(   starved) {
-	printf "\ncitations: %d pinned citation(s) resolved across %d open ticket/comment file(s) and the built-in fixture\n", checked + 0, files_checked + 0
-	printf "  population   %d file(s) read (%d ticket, %d comment), %d skipped as terminal (%s)\n", \
-		files_read["ticket"] + files_read["comment"], files_read["ticket"] + 0, files_read["comment"] + 0, files_terminal + 0, terminal
-	printf "  comments     %d checked, inheriting the status of their parent ticket\n", comments_checked + 0
+function report(   starved, empty, live) {
+	live = files_live["ticket"] + files_live["comment"] + files_live["doc"]
+	printf "\ncitations: %d pinned citation(s) resolved across %d live ticket/comment/document file(s) and the built-in fixture\n", checked + 0, live + 0
+	# The two corpora are reported on their own lines, and floored on their own
+	# counts below, so a population that stopped being reached cannot ride the
+	# other one to a green run.
+	printf "  tickets      %d citation(s) from %d open file(s) of %d read (%d ticket, %d comment), %d skipped as terminal (%s)\n", \
+		cit_checked["ticket"] + cit_checked["comment"], files_live["ticket"] + files_live["comment"], \
+		files_read["ticket"] + files_read["comment"], files_read["ticket"] + 0, files_read["comment"] + 0, \
+		files_terminal["ticket"] + files_terminal["comment"], terminal
+	printf "  docs         %d citation(s) from %d live file(s) of %d read, %d skipped as superseded, %d carrying no status facet\n", \
+		cit_checked["doc"] + 0, files_live["doc"] + 0, files_read["doc"] + 0, files_terminal["doc"] + 0, docs_no_status + 0
+	printf "  comments     %d checked, inheriting the status of their parent ticket\n", files_live["comment"] + 0
 	printf "  fixture      %d citation(s) from %s, which holds no status for a ticket transition to change\n", \
-		fixture_citations + 0, FIXTURE_LABEL
+		cit_checked["fixture"] + 0, FIXTURE_LABEL
 	printf "  forms        %d line-only, %d anchor-only, %d line+anchor\n", \
 		cit_line + 0, cit_anchor + 0, cit_both + 0
-	printf "  partial path %d resolved by unique suffix, %d skipped as ambiguous, %d skipped as external crate source\n", \
+	printf "  partial path %d resolved by unique suffix, %d skipped as ambiguous, %d skipped as rooted outside this tree\n", \
 		partial_resolved + 0, ambiguous + 0, external + 0
 	printf "  not checked  %d bare path mention(s) carrying no line or anchor\n", bare_paths + 0
 	# Printed unconditionally, both of them: these two counters are floored
@@ -516,6 +678,13 @@ function report(   starved) {
 		exit 1
 	}
 
+	empty = population_floor(cit_checked["ticket"] + cit_checked["comment"], "tickets/**", \
+		"An open ticket citing a line or an anchor is the ordinary case here; zero means the glob, the frontmatter reader, or the terminal-state skip stopped reaching them.")
+	empty += population_floor(cit_checked["doc"], "docs/**", \
+		"ADRs and contracts pin lines into the tree by the hundred; zero means the find, the superseded skip, or role_of stopped reaching them.")
+	if (empty > 0)
+		printf "\ncheck-citations: %d corpus population(s) contributed ZERO checked citations. The other population passing says nothing about this one -- separate counts exist so that neither can stand in for the other.\n", empty
+
 	starved = form_floor(cit_line, "the line-only form (`path:LINE`)", "`AGENTS.md:1`")
 	starved += form_floor(cit_anchor, "the anchor-only form (`path \"anchor\"`)", "`Makefile \"check: citations fmt build lint test\"`")
 	starved += form_floor(cit_both, "the line+anchor form (`path:LINE \"anchor\"`)", "`ticketsplease.toml:1 \"schema_version = 1\"`")
@@ -523,13 +692,13 @@ function report(   starved) {
 	starved += form_floor(spanned, "code-span assembly across a line break", "a citation whose backticks straddle two lines of prose")
 
 	if (starved > 0)
-		printf "\ncheck-citations: %d citation form(s) were parsed ZERO times. The fixture supplies one of each, so this is the matcher losing a form, not the ticket corpus drifting -- and an unexercised branch reports no failures no matter what the tree contains.\n", starved
+		printf "\ncheck-citations: %d citation form(s) were parsed ZERO times. The fixture supplies one of each, so this is the matcher losing a form, not a corpus drifting -- and an unexercised branch reports no failures no matter what the tree contains.\n", starved
 	if (failures > 0) {
 		printf "\ncheck-citations: %d citation(s) do not resolve against this tree.\n", failures
 		printf "Repair the citation by re-reading the source at your own base. Prefer a quoted anchor over a bare line number: `path.rs \"distinctive phrase\"`.\n"
 	}
-	if (starved > 0 || failures > 0) exit 1
+	if (empty > 0 || starved > 0 || failures > 0) exit 1
 
-	printf "\ncheck-citations: every pinned citation resolves. This says the citations point somewhere; it does NOT say the tickets are true.\n"
+	printf "\ncheck-citations: every pinned citation resolves. This says the citations point somewhere; it does NOT say the tickets and documents around them are true.\n"
 }
 ' "$@"
