@@ -1,7 +1,7 @@
 ---
 id: correct-the-roadmap-s-zero-extent-prefill-shape-after-the-concatenate-change
 title: Correct the roadmap s zero-extent prefill shape after the concatenate change
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786191117
 ---
 
 `docs/roadmap.md` says the concatenate family "states the zero-extent rule at L5" and names a `[8, 0, 128]` prefill shape. **That became false at merge `ab64f334`**, which removed the concrete shapes from the normative definition.
