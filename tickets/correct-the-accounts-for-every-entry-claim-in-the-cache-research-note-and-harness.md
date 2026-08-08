@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [replace-four-assertions-that-cannot-fail-in-the-cache-and-spike-harnesses]
 scopes: [research/cache]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: []
 claimed_from: todo
@@ -49,3 +49,19 @@ Its message happens to be *accurate* — it claims only the partition, not that 
 ## Checks
 
 Touches `spikes/`, which the gate does not cover; the hot-path harness is its own workspace, run manually from the command its `README.md` documents. Run `make citations` and `tkt lint` for the documentation half.
+
+## Per-Fact audit at base `7a7452bd`
+
+- **"Arithmetically true by construction", and the loop shape behind it — verified by reading.** `crates/tiler-cache/src/expansion/collect.rs "selected: selected.len() as u64"` is followed by `for entry in &selected` over that same vector, a five-armed match each incrementing exactly one counter, no `continue` and no early return.
+- **"The thirteen in-crate assertion sites were replaced" — verified.** `git show 0132c0c3:…/tests.rs | grep -c` gives 12 and the same on `harness.rs` gives 1; at `7a7452bd` the crate holds zero assertions of it and one doc reference.
+- **"Its doc comment now states what it does and does not establish" — verified.** Landed at merge `62f46778`.
+- **Site 1, the quoted sentence at `bounded-collection.md:39` — verified verbatim, and both named clauses are wrong.**
+- **Site 2, the assertion in the spike harness — verified verbatim.**
+- **"The line two above it (`removed().len() == population`)" — imprecise but harmless.** That check is an `assert_eq!` spanning four lines, closing two lines above the inert one. The substance — that it is the falsifiable check and the other is not — holds.
+- **"Two sites" — incomplete.** Five more in-scope statements make the same claim: `bounded-collection.md`'s measurement list item 2, three sentences in `hot-path-efficiency.md`, and one in the spike's `README.md`. All are corrected here.
+
+## Outcome
+
+Seven sites corrected across four files, none in `crates/tiler-cache`. The inert harness assertion was **replaced rather than dropped**: the destructive collection now re-scans with `account` after the timed call and requires the namespace to be empty, which covers the one direction a report cannot speak to — removals it names but did not perform. Proven able to fail by taking the scan before the collection instead of after: `assertion left == right failed … left: 100, right: 0`. Verified with `cargo build --release && ./target/release/cache-hot-path-efficiency --quick` in `spikes/cache/hot-path-efficiency`, its own workspace, run by hand. No recorded result was produced, replaced, or withdrawn — the new scan is outside the timed call, so no retained figure moves.
+
+`spikes/cache/hot-path-efficiency/Cargo.lock` moved as a side effect of building: it predated `tiler-digest`'s extraction, and any build there regenerates it. Kept rather than reverted, so the next person's build is clean.

@@ -944,9 +944,11 @@ fn lock_costs(
 
 /// The cost of a collection that actually removes everything it scans.
 ///
-/// Destructive, so it runs last against its root. The removal count is asserted
-/// against the counted population and the report is required to account for its
-/// whole selection, so a pass cannot mean "the collector did nothing quickly".
+/// Destructive, so it runs last against its root. Two checks stop a pass from
+/// meaning "the collector did nothing quickly", and both are grounded outside
+/// the report: the removal count is compared against the population this run
+/// counted back from the namespace, and the namespace is re-scanned afterwards
+/// and required to be empty.
 fn destructive_collection(
     recorder: &mut Recorder,
     cache: &ExpansionCache,
@@ -965,9 +967,21 @@ fn destructive_collection(
         population,
         "an age of one nanosecond expires every datable entry",
     );
-    assert!(
-        report.accounts_for_every_entry(),
-        "every selected entry has exactly one recorded disposition",
+    // Grounded in the namespace rather than in the report. A report's own
+    // partition check, `selected` against the five dispositions, compares two
+    // quantities that one pass over one vector produces, so it holds whatever
+    // the collector met on disk. What no report can state about itself is that
+    // the removals it names actually happened, so that is asked of the
+    // filesystem: an age of one nanosecond expires every datable entry, so
+    // nothing may remain. The scan is after the timed call and outside the
+    // measurement.
+    let remaining = cache.account().expect("the namespace is scannable");
+    assert_eq!(
+        remaining.entry_count(),
+        0,
+        "a collection that expired every entry leaves an empty namespace, and \
+         this one named {} removals",
+        report.removed().len(),
     );
     recorder.timing(
         "scan",
