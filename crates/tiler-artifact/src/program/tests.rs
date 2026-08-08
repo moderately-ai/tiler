@@ -4499,21 +4499,28 @@ fn a_governed_key_refuses_an_empty_and_an_oversized_spelling() {
 
 /// Each opaque identity is bounded by the authority that derives its subject.
 ///
-/// The 1,121-byte case is the measured one, not a chosen one: it is the
-/// canonical kernel identity of a serial `f32` sum reducing two or more
-/// contributors, which the shared bound refused while admitting only the
-/// degenerate one-contributor reduction. The fixed-width payload digest keeps
-/// the smaller bound, while the structured target-profile descriptor takes the
-/// compiler's larger minting bound.
+/// **The over-bound vector is fabricated, and its length is derived rather than
+/// measured.** It is one byte past [`super::MAX_OPAQUE_IDENTITY_BYTES`] — the
+/// smallest length the shared bound refuses — so it states only that a
+/// `BackendEntryKey` is admitted past that bound, which is this case's whole
+/// subject. No kernel is involved and none can be: this crate carries no
+/// `tiler-compiler` edge, for the reason stated above `[dependencies]` in its
+/// manifest, so it can never compile a real reduction to measure one.
+///
+/// **The measured claim lives in `tiler-conformance`**, whose
+/// `serial_sum::tests::the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor`
+/// compiles a serial `f32` sum at one and at two contributors and asserts the
+/// crossing from both sides. A length written here would restate a figure from a
+/// tree that has since moved, which is what the previous `vec![0x5a; 1_121]`
+/// named "measured" did: 1,121 was the two-contributor identity on 2026-07-25
+/// and it measured 1,309 on 2026-08-08, while this case stayed green throughout.
+///
+/// The fixed-width payload digest keeps the smaller bound, while the structured
+/// target-profile descriptor takes the compiler's larger minting bound.
 #[test]
 fn an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it() {
-    let measured_kernel_identity = vec![0x5a; 1_121];
-    BackendEntryKey::from_bytes(&measured_kernel_identity)
-        .expect("a real reduction's kernel identity is a legal backend entry key");
-    assert!(
-        measured_kernel_identity.len() > super::MAX_OPAQUE_IDENTITY_BYTES,
-        "the case is only a regression test while it exceeds the shared bound",
-    );
+    BackendEntryKey::from_bytes(vec![0x5a; super::MAX_OPAQUE_IDENTITY_BYTES + 1])
+        .expect("a backend entry key is admitted past the shared opaque-identity bound");
 
     assert_eq!(
         BackendEntryKey::from_bytes(vec![0x5a; MAX_KERNEL_IDENTITY_BYTES + 1]),
@@ -4553,6 +4560,12 @@ fn an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it() {
 /// and inside the stage subject `stage_key` derives — so the two bounds have to
 /// admit the same values or an artifact could be built and not encoded. This
 /// asserts the first half against the second at a length the old bound refused.
+///
+/// That length is derived from [`super::MAX_OPAQUE_IDENTITY_BYTES`] rather than
+/// written out, for the reason
+/// [`an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it`] states:
+/// the smallest refused length is the one this case wants, and a literal here
+/// would be a figure about a tree rather than about the bound.
 #[test]
 fn an_artifact_encodes_an_entry_key_longer_than_the_digest_bound() {
     let semantic = semantic_program();
@@ -4563,7 +4576,7 @@ fn an_artifact_encodes_an_entry_key_longer_than_the_digest_bound() {
     draft.select_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
-    let long_key = vec![0x5a; 1_121];
+    let long_key = vec![0x5a; super::MAX_OPAQUE_IDENTITY_BYTES + 1];
     draft
         .push_variant(&program, variant(&formulas, descriptor, &long_key))
         .unwrap();

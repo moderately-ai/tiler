@@ -4,7 +4,7 @@ title: Pin the serial sum kernel identity's crossing of the opaque identity boun
 status: in-progress
 priority: p2
 dependencies: []
-related: [date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi, bound-the-backend-entry-key-by-the-identity-it-carries]
+related: [date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi, bound-the-backend-entry-key-by-the-identity-it-carries, correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing]
 scopes: [implementation/conformance, implementation/artifact, implementation/metal-aot, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -25,6 +25,18 @@ The argument that changed `BackendEntryKey`'s bound is asserted by nothing, and 
 **The test cannot be repaired in place, and the reason is structural rather than an oversight.** `crates/tiler-artifact/Cargo.toml` deliberately carries no `tiler-compiler` edge, with the reason in a comment above `[dependencies]`: `tiler-runtime`'s `the_consumer_links_no_compiler_emitter_or_build_provider` walks `Cargo.lock`, which merges normal and development edges per package, so a dev edge here would put `tiler-compiler` in the consumer's closure and fail that test against ADR 0081 item 2. The crate that owns `MAX_OPAQUE_IDENTITY_BYTES` therefore can never compile a real reduction to compare against it.
 
 **The measurement the assertion should hold, at `68ba010a`, Apple M4 Max, macOS 27.0 (26A5388g), toolchain `nightly-2026-07-19`.** A scale-then-bias-then-`StrictSerialF32Sum` program over `[4, 1]` reducing axis 1 yields a canonical kernel identity of **924** bytes; over `[4, 2]`, `[4, 3]`, `[4, 4]`, or `[4, 8]` it yields **1,309**. `MAX_OPAQUE_IDENTITY_BYTES` is `1_024` in `crates/tiler-artifact/src/program/keys.rs`. Both readings are recorded with their construction in the filing ticket's Outcome and in `docs/artifact-abi.md`'s "Governed budgets" section.
+
+## Fact re-verification at `c0b2f06bfa38dced03b9d63f7ef2af96e0d5d47b`
+
+Every Fact above **verified**, each read in full at this base rather than at the `68ba010a` they were taken on. No repair was needed, which is the first ticket this week for which that was true.
+
+- The fabricated vector, its false doc comment, and the second `vec![0x5a; 1_121]` are all where the ticket says, in `crates/tiler-artifact/src/program/tests.rs` under the anchors `an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it` and `an_artifact_encodes_an_entry_key_longer_than_the_digest_bound`. The assertion beside the first read `measured_kernel_identity.len() > super::MAX_OPAQUE_IDENTITY_BYTES`, as stated.
+- The dependency argument holds verbatim: `crates/tiler-artifact/Cargo.toml`'s comment above `[dependencies]` names `the_consumer_links_no_compiler_emitter_or_build_provider` and ADR 0081 item 2, and the manifest carries `tiler-digest` and `tiler-ir` only.
+- `MAX_OPAQUE_IDENTITY_BYTES` is `1_024` in `crates/tiler-artifact/src/program/keys.rs`.
+- **The measurement reproduces to the byte on this host.** 924 at `[4, 1]` and 1,309 at `[4, 2]`, both taken through `compile_under` under `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32`, one kernel in the selected plan at each shape. Printed by the new test itself.
+- `crates/tiler-conformance/src/serial_sum.rs` holds `serial_sum_program` and `compile_under`, both `pub(crate)` — so the pin has to live in that crate's own test module, which is where it went.
+
+**One correction, and it is to the ticket's framing rather than to a Fact.** "Three stale comments to correct while here" undercounts by one: the same landing makes `docs/artifact-abi.md`'s "No test asserts any of these lengths, and none asserts the inequality the paragraph turns on" false, and that file is both outside this ticket's scopes and named in its Out of scope. Filed as [`correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing`](correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing.md).
 
 ## What closes this
 
