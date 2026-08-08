@@ -1,7 +1,7 @@
 ---
 id: disclose-offered-and-selected-physical-provider-sets-separately
 title: Disclose offered and selected physical-provider sets separately
-status: in-progress
+status: done
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [accept-the-public-backend-provider-composition-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, research/extensions]
 shared_scopes: [contracts/decisions, project/tickets]
 paths: []
 tags: [implementation, compiler-api, backend-providers, explainability, public-boundary]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786188969
 ---
 ## User-visible outcome
 
