@@ -1,7 +1,7 @@
 ---
 id: check-the-markdown-links-in-the-repository-root-documents
 title: Check the markdown links in the repository root documents
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786169827
 ---
 ## The gap, as it stood before this ticket landed
 
