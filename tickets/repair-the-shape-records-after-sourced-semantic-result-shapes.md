@@ -1,7 +1,7 @@
 ---
 id: repair-the-shape-records-after-sourced-semantic-result-shapes
 title: Repair the shape records after sourced semantic result shapes
-status: in-progress
+status: done
 priority: p1
 dependencies: [correct-the-symbolic-coefficient-era-index-vocabulary-claims]
 related: [repair-the-records-the-sourced-semantic-shape-falsifies]
@@ -9,9 +9,6 @@ scopes: [research/shapes]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, shapes, correction]
-claimed_from: todo
-assignee: w-terra-shapes
-lease_expires_at: 1786210891
 ---
 ## Why this exists
 
@@ -53,6 +50,12 @@ The seven owned live claims are the three anchors in `symbolic-semantic-extents.
 Two implementation records also need separate ownership: `crates/tiler-ir/src/semantic/concatenate.rs`, `Every extent a semantic occurrence can carry`, generalizes the retired static-occurrence claim; and `crates/tiler-ir/src/semantic/slice.rs`, `carries static extents`, occurs inside the old normative-definition text. Slice's literal selection identity remains current — `SliceAxisSelection::Window` has a literal offset and `decode_axis` refuses `symbolic-window` before inference — but the quoted old index/value premises are retired and conflict with the current module-level correction. A follow-up ticket must own that source/document population before this ticket can close.
 
 `crates/tiler-ir/src/semantic/contraction/tests.rs`, `The unresolved outcome remains unreachable`, is the sixth out-of-scope implementation record. Its `ValueFact`/static-`Extent` explanation is false: the unresolved equality outcome remains unreachable for this family because `StrictTensorContractionF32::infer` calls `static_operand_shape` before it can bind or compare indices, and it has no symbolic equality or unresolved-requirement rule. The test comment belongs with the contraction implementation scope and is not edited here.
+
+## Follow-up ownership recorded at integration
+
+- [`repair-downstream-records-after-sourced-semantic-results`](repair-downstream-records-after-sourced-semantic-results.md) owns the three research records under `research/program-planning` and `research/numerics`.
+- [`correct-static-valuefact-premises-in-semantic-family-comments`](correct-static-valuefact-premises-in-semantic-family-comments.md) owns the Concatenate and Contraction implementation comments.
+- [`correct-the-slice-normative-definition-and-recompute-compiler-identities`](correct-the-slice-normative-definition-and-recompute-compiler-identities.md) already owns the identity-bearing Slice definition and downstream compiler-pin recomputation.
 
 ## Outcome
 
