@@ -1,7 +1,7 @@
 ---
 id: admit-a-recognized-chain-more-than-one-materialization-boundary-deep
 title: Admit a recognized chain more than one materialization boundary deep
-status: in-progress
+status: deferred
 priority: p3
 dependencies: []
 related: [admit-a-staged-family-that-reads-a-materialized-intermediate, admit-elementwise-epilogues-over-a-materialized-intermediate, admit-a-scheduled-region-that-reads-two-materialization-edges]
@@ -58,10 +58,13 @@ Either a two-boundary chain is recognized with the recursion bound stated and a 
 
 **The second is what landed.** The rule is stated once, at `StagedOperandAdmission`, which also names the two neighbouring folded-value refusals it is not and their owners; `crates/tiler-compiler/tests/recognized_chain_depth_boundary.rs` holds the end-to-end measurement, a compiling one-boundary control beside it, and the trigger.
 
-## Trigger for reopening
+## Trigger check log
 
 `staged_family_over_a_materialized_intermediate.rs`'s `a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary` asserts the *one*-boundary chain `rms_norm(matmul(a, b), a)` still refuses `NoFeasiblePlan`. When [`admit-a-scheduled-region-that-reads-two-materialization-edges`](admit-a-scheduled-region-that-reads-two-materialization-edges.md) lands, that test fails, and the measured reason above expires: this ticket should be reopened rather than the assertion relaxed. The assertion is left in that file so one measurement keeps one owner.
 
 ```sh
 cargo nextest run -p tiler-compiler -E 'test(recognized_chain_depth_boundary) or test(staged_family_over_a_materialized_intermediate)'
 ```
+
+- **2026-08-08 — not fired.** The widening buys zero programs at this base, measured rather than argued: applying `OneEdge` at `recognize_epilogue_producer` moves exactly one of `tiler-compiler`'s 784 tests (the refusal's own assertion), and `rms_norm(matmul(a, b), a) * a` still fails to compile — `NoFeasiblePlan` instead of `UnsupportedCapability { rule: "staged-operand-depth" }`. The blocking wall is `reads_bind_boundary_tensors_in_order` in `tiler-ir` (`implementation/ir`), not in this scope. Reproduce: `cargo nextest run -p tiler-compiler --locked -E 'test(/staged_family_over_a_materialized_intermediate|recognized_chain_depth_boundary/)'`.
+- **Release condition.** Reopen when a scheduled region can bind two materialization edges — tracked by `admit-a-scheduled-region-that-reads-two-materialization-edges`. The trigger assertion lives in `staged_family_over_a_materialized_intermediate.rs` deliberately, so one measurement keeps one owner; whoever lands the `tiler-ir` widening will see it fail and should reopen this ticket rather than relax the test.
