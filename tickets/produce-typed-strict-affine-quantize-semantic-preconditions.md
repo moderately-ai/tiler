@@ -4,7 +4,7 @@ title: Produce typed strict-affine Quantize semantic preconditions
 status: done
 priority: p2
 dependencies: [prototype-quantized-value-vertical]
-related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-assemble-semantic-precondition, enforce-resolved-encoded-value-binding-conformance, own-the-dtype-support-maturity-matrix]
+related: [produce-typed-strict-affine-assemble-semantic-precondition, enforce-resolved-encoded-value-binding-conformance, own-the-dtype-support-maturity-matrix]
 scopes: [implementation/ir, implementation/compiler, implementation/reference, contracts/foundation, contracts/numerics, contracts/decisions, research/numerics, research/runtime, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
@@ -58,5 +58,6 @@ The public typed declaration and instantiated-obligation boundary has Tom's requ
 
 - Update ADR 0033 application status only for the producer boundary actually implemented; do not imply planning, artifact, or runtime enforcement exists.
 - Correct ADR 0031, ADR 0032, numerical semantics, IR, operation-extension, correctness-testing, and retained affine research maturity text together. Record exact reference/IR support as partial and do not promote runtime or backend support.
-- Release `admit-strict-affine-quantize-physical-candidate` when this producer and the selected profile/grouping prerequisites are complete.
+- `admit-strict-affine-quantize-physical-candidate` closed obsolete because the selected profile contains no physical `Quantize` producer. This ticket's semantic producer support remains a tested guarantee, not a reason to manufacture a runtime consumer.
+- Do not attach these operation residuals to the selected direct-input enforcement vertical. A future workload that selects an internal `Quantize` producer must file a new bounded physical candidate and independently trigger any required operation-precondition enforcement and internal grouping.
 - Keep the accepted built-in dtype catalog and dtype maturity matrix honest: this advances semantic validation for the exact strict-affine U4/U8 contract, not generic integer, packed, quantized, or backend support.

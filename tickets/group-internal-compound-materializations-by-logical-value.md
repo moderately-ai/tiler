@@ -1,47 +1,47 @@
 ---
 id: group-internal-compound-materializations-by-logical-value
 title: Group internal compound materializations by producer-derived logical value
-status: in-progress
+status: deferred
 priority: p2
-dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile]
-related: [implement-first-quantized-backend-profile, implement-workload-selected-quantized-parameter-maps]
+dependencies: [prototype-quantized-value-vertical]
+related: []
 scopes: [implementation/ir, implementation/compiler, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, quantization, compound-values, artifact]
-claimed_from: todo
-assignee: sol-compound
-lease_expires_at: 1786218118
 ---
+
 ## User-visible outcome
 
-A compound value produced inside a physical program remains one logical value across every internal materialization, stage access, allocation, artifact record, and lifetime decision. Its components can be scheduled and stored separately, but scale, code, zero-point, codebook, mask, or future roles can never be detached, regrouped, or confused with a same-shaped component of another logical value.
+When a selected physical program actually produces a compound value internally, every component remains attached to that producer-derived logical value through program construction, stage access, allocation, artifact projection, and lifetime analysis. Components may use separate storage, but they cannot be detached, regrouped, or confused with matching components of another value.
 
-## Why this is separate
+## Why this is deferred
 
-`prototype-quantized-value-vertical` implements complete role-addressed compound interface inputs and outputs and fails closed on internal compound materializations. The existing program IR has no producer-derived logical identity for internal values, so accepting internal roles there would preserve names while losing which components belong together. The first selected quantized backend profile is the named first consumer that must remove that refusal; synthesizing grouping in the artifact layer would be a second semantic authority and is prohibited.
+- **Fact:** [`prototype-quantized-value-vertical`](prototype-quantized-value-vertical.md) already proves complete role-addressed compound interface inputs and outputs and rejects an ungrouped internal component.
+- **Fact:** [the selected quantized language-model profile](../docs/research/numerics/first-quantized-lm-profile.md) is `input(compound weight) → DequantizeStrictAffine → Contraction`. It contains no `Quantize` or `Assemble`; the selected compound weight is an interface input, not an internally materialized result.
+- **Fact:** [`admit-strict-affine-quantize-physical-candidate`](admit-strict-affine-quantize-physical-candidate.md) closed obsolete under its own trigger after that selection. It is not a future consumer for this ticket.
+- **Inference:** without a selected internal producer and a real downstream consumer, choosing a public result-binding surface, stage topology, or identity/schema grammar would reserve a producer-less abstraction. The public-boundary decision drafted on 2026-08-08 was therefore removed rather than left as an authorization request.
 
-## Implementation keys
+## Current boundary to preserve
 
-- Add one program-owned `LogicalValueId` or equivalent checked handle minted from a verified semantic producer/value relation, not a caller-supplied integer, resolved type, scheme, or role list.
-- Represent one internal logical materialization as its complete `ResolvedValueType`, logical shape, canonical ordered component set, and producer-derived identity. Component allocation, storage encoding, view, and lifetime remain physical facts attached below that group.
-- Derive the required roles, component resolved types, and component shapes from the encoded value contract and parameter maps. Reject missing, duplicate, extra, swapped, wrong-type, and wrong-shape components before stage verification.
-- Bind stage accesses and definitions to `(logical value, component role)` rather than a bare materialized buffer. A component from one logical value cannot discharge another's role even when every physical fact matches.
-- Fold the logical group, complete resolved type, producer relation, ordered roles, component encodings, and accesses into program and artifact identity. The artifact codec validates closure and never reconstructs grouping from slot order.
-- Keep `BindingSpec` declaration-only. Artifact and runtime projections derive every logical/component target from the verified program.
-- Preserve independent components through allocation/lifetime analysis while retaining the whole logical value through moves, views, outputs, and error reporting. Any alias or reuse across components needs an explicit ownership proof.
-- Generalize over ordered component declarations; do not hard-code affine roles. Complex planar/interleaved storage, codebooks, hierarchical scales, masks/outliers, and future compound extensions must fit without modifying a universal three-field struct.
-- Continue rejecting unsupported parameter maps and internal compound operations by exact scheme/type/capability until their real producers land.
+`MaterializedOrigin` currently distinguishes `ProgramInput { key }` from compiler-produced `Internal`. Its source contract explicitly says that it does **not** identify which semantic value a temporary realizes; that attribution remains compiler-owned refinement evidence rather than target-neutral program structure. This ticket must preserve that authority split, but it does not preselect the future representation, identifier spelling, result-binding cardinality, public surface, stage accounting, or identity/schema steps.
+
+## Reconsideration trigger
+
+Move this ticket back to dispatchable work only when an accepted workload/profile or implementation ticket selects all of the following:
+
+- an operation that produces a compound value inside the physical program;
+- the exact semantic occurrence and ordered result that own the value;
+- a real later consumer of that complete result;
+- the resolved value type, logical shape, component roles, parameter maps, and physical topology required by that producer/consumer pair; and
+- a demonstrated failure in the current `MaterializedOrigin` plus compiler-owned attribution path that cannot be closed without grouping internal components.
+
+Activation quantization, requantization, or another future producer may fire the trigger, but none is assumed here. When it fires, re-read the actual producer, consumer, construction sites, `MaterializedOrigin` contract, verification path, artifact projection, and identity encoders before deciding the smallest boundary. Do not pre-name an identifier, ask Tom to choose transport for already-derived result type/shape facts, or prescribe version steps before the changed grammar exists.
 
 ## Closes when
 
-One workload-selected encoded value is produced internally, consumed by a later stage, and packaged with complete producer-derived grouping; component swaps and cross-value substitutions reject; identity changes for every result-affecting group/role/map/encoding change; decoded bindings retain the logical group and role; no caller-declared ABI fact or slot-position inference is introduced; every new check is perturbed once and observed failing; targeted package tests and Clippy pass; and one `make full` passes.
+The triggered, selected internal producer's complete result reaches its real consumer with producer-derived grouping through every required program and artifact boundary; cross-result substitutions reject; identity changes only for result-affecting grammar that actually lands; unsupported producers remain named; and every new check is fault-proved before the normal package and repository gates pass.
 
-## Graph maintenance
+## Trigger check log
 
-- Refine this ticket with the exact scheme, producer, consumer, and lowering selected by `scope-first-quantized-lm-profile` before implementation.
-- **The expected consumer did not arrive, and this ticket's real one is now `Quantize` rather than the selected profile (2026-07-31).** [The first quantized language-model profile record](../docs/research/numerics/first-quantized-lm-profile.md) selected per-output-channel strict-affine U8 over the workload's *weights*, which reach the program as role-addressed compound **interface inputs**: the executed program contains no `Quantize` and no `Assemble`, so it materializes no compound value internally, and `prototype-quantized-value-vertical` already proved the interface-input path end to end. `implement-first-quantized-backend-profile` therefore gained no *direct* edge to this ticket.
-- **It reaches this ticket transitively anyway, and that is the state to reason about.** `admit-strict-affine-quantize-physical-candidate` depends on this ticket and sits under the runtime-enforcement vertical the selected backend does depend on, so `tkt path` puts this ticket on the critical path. That chain is real: its consumer is strict-affine **`Quantize`**, which does produce a compound value internally, and which is therefore the producer this ticket needed. The selected profile is not that consumer and should not be described as one.
-- **A profile that quantizes activations or requantizes remains the case that would broaden this beyond `Quantize`'s single producer.** Until one is selected, do not derive grouping from a hypothetical one; that is the producer-less placeholder this repository has repeatedly had to retract.
-- Add `implement-workload-selected-quantized-parameter-maps` as a dependency only when the selected internal value uses a non-per-tensor map.
-- Advance semantic/program/artifact/cache identity domains exactly once on the merged tree and recompute all pinned values there.
+- 2026-08-08 — **not fired.** `rg -n 'input\(compound weight\).*DequantizeStrictAffine.*Contraction' docs/research/numerics/first-quantized-lm-profile.md` identifies the selected path as a direct compound input followed by decode and contraction, and the same record explicitly excludes activation quantization, mixed precision, and KV-cache quantization. No selected internal compound producer exists.
