@@ -1,7 +1,7 @@
 ---
 id: pin-the-differing-identity-positions-beside-the-carrier-positions-constant
 title: Pin the differing identity positions beside the carrier positions constant
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin, recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, tests]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786174094
 ---
 
 Two documents carried a BF16-versus-F32 identity difference of four bytes as prose, with nothing asserting it. Both have now retired the figure because it was unasserted and its neighbours had rotted. **The property is worth keeping — it just needs to live in a test rather than in a sentence.**
