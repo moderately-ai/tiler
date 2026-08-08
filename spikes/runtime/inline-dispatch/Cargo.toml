@@ -26,10 +26,14 @@ name = "multi-entry-dispatch-spike"
 path = "src/multi_entry.rs"
 
 [dependencies]
-# The one crate a Tiler consumer declares. By path rather than by version
-# because nothing here is published, and the point of the spike is that this is
-# the *only* Tiler edge: no `tiler-runtime`, no `tiler-artifact`, no backend
-# crate. Everything the adapter names is reached through this facade.
+# The one crate an inline-frontend consumer declares. The qualification is the
+# contract's: `docs/architecture.md` says "the one crate an inline-frontend
+# consumer names" and carves out consumers that construct and compile arbitrary
+# semantic programs, whose graph and compiler surfaces currently remain in
+# `tiler-ir` and `tiler-compiler`. By path rather than by version because nothing
+# here is published, and the point of the spike is that this is the *only* Tiler
+# edge: no `tiler-runtime`, no `tiler-artifact`, no backend crate. Everything the
+# adapter names is reached through this facade.
 tiler = { path = "../../../crates/tiler" }
 # The backend the embedded payload realizes. `0.33.0` is the version the
 # repository's own Metal consumers pin (`[workspace.dependencies]` in the root
