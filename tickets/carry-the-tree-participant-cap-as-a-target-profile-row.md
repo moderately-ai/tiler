@@ -1,7 +1,7 @@
 ---
 id: carry-the-tree-participant-cap-as-a-target-profile-row
 title: Carry the tree participant cap as a target profile row
-status: in-progress
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [cap-the-tree-reduction-participants-at-the-measured-256]
