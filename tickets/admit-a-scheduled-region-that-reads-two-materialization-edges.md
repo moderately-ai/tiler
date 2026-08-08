@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [admit-a-staged-family-that-reads-a-materialized-intermediate, admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region]
 scopes: [implementation/ir, implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner]
 ---

@@ -6,7 +6,7 @@ priority: p2
 dependencies: [admit-a-caller-declared-target-profile]
 related: [spike-bf16-through-the-second-dtype-seams]
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: []
 ---

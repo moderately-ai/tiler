@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [admit-a-staged-family-that-reads-a-materialized-intermediate, admit-elementwise-epilogues-over-a-materialized-intermediate]
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner]
 ---

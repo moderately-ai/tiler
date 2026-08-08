@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [strengthen-the-family-cfg-evidence-with-the-installed-cross-targets, first-authoritative-ios-metal-compile-declaration]
 scopes: [implementation/workspace, implementation/frontend]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: []
 ---

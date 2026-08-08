@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ]
 scopes: [contracts/navigation]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, reductions, documentation]
 ---

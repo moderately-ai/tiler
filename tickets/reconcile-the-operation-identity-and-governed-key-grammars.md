@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [reconcile-the-two-target-profile-key-grammars]
 scopes: [implementation/ir, implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [identity, validation, extensions]
 ---

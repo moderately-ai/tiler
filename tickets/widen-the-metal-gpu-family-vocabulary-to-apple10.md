@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [close-the-metal-gpu-family-out-of-crate-total-map, close-the-serial-sum-run-gpu-family-probe-table, correct-the-sdk-apple-family-range-in-the-runtime-answer-record]
 scopes: [implementation/metal]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [research, metal, apple-targets]
 ---

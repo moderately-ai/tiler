@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: []
 scopes: [implementation/ir]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: []
 ---

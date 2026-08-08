@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family]
 scopes: [implementation/ir, implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, identity, feasibility]
 ---

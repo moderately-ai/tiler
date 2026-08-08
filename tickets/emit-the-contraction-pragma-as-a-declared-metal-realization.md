@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [declare-the-metal-emitted-pragma-unfused-realization, probe-the-bf16-contraction-pragma-on-the-metal-runtime-path, admit-bf16-into-the-schedule-and-kernel-vocabulary]
 scopes: [implementation/metal]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, bf16, contraction, metal, apple-targets]
 ---

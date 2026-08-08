@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [close-the-serial-sum-run-gpu-family-probe-table, close-the-metal-gpu-family-out-of-crate-total-map, widen-the-metal-gpu-family-vocabulary-to-apple10]
 scopes: [implementation/metal]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [api-conventions, metal, adr-0074, decision]
 ---

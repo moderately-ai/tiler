@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [implement-shapeenv-constraints, implement-shapeenv-index-bindings]
 scopes: [implementation/ir, contracts/foundation]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [shapes, indexing, mature-product, deferred]
 ---

@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [replace-four-assertions-that-cannot-fail-in-the-cache-and-spike-harnesses]
 scopes: [research/cache]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: []
 claimed_from: todo

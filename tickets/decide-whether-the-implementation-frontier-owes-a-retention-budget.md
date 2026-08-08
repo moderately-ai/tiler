@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [record-the-four-surface-optimizer-invariant]
 scopes: [contracts/optimizer, implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [optimizer, contracts, budgets]
 ---
