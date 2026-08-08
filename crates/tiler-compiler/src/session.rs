@@ -293,6 +293,7 @@ pub struct Compilation {
     stated_contracts: Vec<StrictF32NumericalContract>,
     resolved_contract: StrictF32NumericalContract,
     offered_providers: Arc<[ProviderIdentity]>,
+    offered_physical_providers: Arc<[ProviderIdentity]>,
     target_profile: TargetProfile,
     feasibility_rule_set: FeasibilityRuleSetIdentity,
     alternatives: Vec<ProgramAlternative>,
@@ -830,16 +831,62 @@ impl Compilation {
         self.resolved_contract.key
     }
 
-    /// Returns the complete frozen provider set offered to this compilation.
+    /// Returns the complete frozen *lowering* provider set offered to this
+    /// compilation.
     ///
     /// This is compilation-environment evidence rather than program identity:
     /// an artifact records only the providers its retained plan selected, but
     /// its builder must prove each selection belonged to the authority the
     /// compiler actually offered. Returning the compiler-minted set prevents an
     /// assembler from reconstructing that environment from the selected subset.
+    ///
+    /// **The lowering environment only, and the name is the one this accessor
+    /// has always had rather than the whole of what it reports.** A compilation
+    /// enumerates two provider environments against two different rules — one
+    /// lowering authority per occurrence, several physical implementations per
+    /// region — and the second is [`Self::offered_physical_providers`]. Reading
+    /// this set as *the* provider environment is what would make an installed
+    /// physical provider look as though it had never been offered.
     #[must_use]
     pub fn offered_providers(&self) -> &[ProviderIdentity] {
         &self.offered_providers
+    }
+
+    /// Returns the complete frozen physical-provider environment this
+    /// compilation enumerated against.
+    ///
+    /// Governed first, then the caller's in installation order, which is
+    /// exactly the list
+    /// ([`crate::physical_provider::InstalledPhysicalProviders`]) the frontier
+    /// was asked to enumerate. Installation order is retained for reporting and
+    /// decides nothing.
+    ///
+    /// **This is the *offered* half of the disclosure [ADR 0090] item 5 splits
+    /// in two, and the split is the point.** A provider named here and absent
+    /// from every alternative's
+    /// [`PlanAlternative::selected_physical_providers`] was consulted and
+    /// contributed to no retained plan — it proposed nothing, or its proposals
+    /// were refused, or they lost on cost. A provider absent from *both* was
+    /// never installed. Merging the two sets into one accessor would make those
+    /// two findings — the two a composition failure most needs to tell apart —
+    /// indistinguishable.
+    ///
+    /// Never empty: the governed provider is always asked, so an empty answer
+    /// would be a compiler defect rather than an environment. That is what
+    /// separates this from
+    /// [`crate::physical_provider::InstalledPhysicalProviders::identities`],
+    /// whose empty answer is the ordinary "the caller installed nothing".
+    ///
+    /// This is compilation-environment evidence and is deliberately *not* what
+    /// reaches artifact provenance today: an artifact's compilation environment
+    /// is built from [`Self::offered_providers`] alone, and whether that subject
+    /// is lowering-only or whole-environment is a separate decision owned where
+    /// the artifact type is defined.
+    ///
+    /// [ADR 0090]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md
+    #[must_use]
+    pub fn offered_physical_providers(&self) -> &[ProviderIdentity] {
+        &self.offered_physical_providers
     }
 
     /// Returns the validated declared key of the target profile this result is for.
@@ -1016,9 +1063,11 @@ impl<'a> PlanAlternative<'a> {
     /// This is the *selected* half of the disclosure [ADR 0090] item 5 splits in
     /// two. The offered half — the complete frozen environment this compilation
     /// was given, including providers no retained plan chose — is
-    /// [`Compilation::offered_providers`]'s subject and is still lowering-only;
-    /// reading an installed provider's absence here as "never installed" is
-    /// exactly the conflation that split exists to prevent.
+    /// [`Compilation::offered_physical_providers`]. Reading an installed
+    /// provider's absence *here* as "never installed" is exactly the conflation
+    /// that split exists to prevent: an identity offered and not selected was
+    /// consulted and contributed nothing, and only the pair of accessors
+    /// separates that from a provider that was never installed.
     ///
     /// [ADR 0090]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md
     pub fn selected_physical_providers(
@@ -2335,9 +2384,11 @@ impl<'a> CompileRequest<'a> {
     /// Installation is not selection. A provider installed here is asked about
     /// every region subject, and each body it proposes is re-verified, checked
     /// against the request-subject binding, and decided feasible or not by this
-    /// host before it can compete. It may then lose on cost, which
-    /// [`PlanAlternative::selected_physical_providers`] is what tells apart from
-    /// never having been asked.
+    /// host before it can compete. It may then contribute to no retained plan,
+    /// which the *pair* of [`Compilation::offered_physical_providers`] and
+    /// [`PlanAlternative::selected_physical_providers`] tells apart from never
+    /// having been asked — offered and unselected against absent from both.
+    /// Neither accessor alone draws that distinction.
     #[must_use]
     pub fn with_physical_providers(mut self, physical: InstalledPhysicalProviders<'a>) -> Self {
         self.physical = physical;
@@ -2368,13 +2419,22 @@ pub fn compile(request: CompileRequest<'_>) -> Result<CompilationBatch, CompileF
         .map_err(|error| CompileFailure::from(CompileError::InvalidRequest(error)))?;
     let offered_providers: Arc<[ProviderIdentity]> =
         Arc::from(capabilities.0.lowering().providers());
+    // Minted from the same value the frontier is handed below, so the reported
+    // environment cannot name a provider the enumeration was not given.
+    let offered_physical_providers: Arc<[ProviderIdentity]> =
+        Arc::from(physical.offered_identities());
     let mut internal = CompilationRequest::governed_preferring(program, preference);
     let expected_targets = targets.profiles().to_vec();
     internal.target_profiles = targets.into_profiles();
     internal.capabilities = capabilities.0;
     let product = compile_with_physical_providers(internal, physical.providers())?;
-    into_compilation_batch(product, &expected_targets, &offered_providers)
-        .map_err(CompileFailure::from)
+    into_compilation_batch(
+        product,
+        &expected_targets,
+        &offered_providers,
+        &offered_physical_providers,
+    )
+    .map_err(CompileFailure::from)
 }
 
 /// Compiles one semantic program under a stated numerical contract.
@@ -2731,6 +2791,7 @@ fn into_compilation_batch(
     product: CompilationProduct,
     expected_targets: &[TargetProfile],
     offered_providers: &Arc<[ProviderIdentity]>,
+    offered_physical_providers: &Arc<[ProviderIdentity]>,
 ) -> Result<CompilationBatch, CompileError> {
     if product.targets.len() != expected_targets.len() {
         return Err(CompileError::InvalidCompilerOutput(
@@ -2765,6 +2826,7 @@ fn into_compilation_batch(
                     stated_contracts: target.stated_contracts,
                     resolved_contract: target.resolved_contract,
                     offered_providers: Arc::clone(offered_providers),
+                    offered_physical_providers: Arc::clone(offered_physical_providers),
                     target_profile: target.target_profile,
                     feasibility_rule_set: target.feasibility_rule_set,
                     selected_alternative_id: target.portfolio.selection.selected_alternative_id,
@@ -2895,9 +2957,50 @@ mod tests {
                     compilation
                         .offered_providers()
                         .contains(selected.provider()),
-                    "a selected provider must belong to the complete offered environment",
+                    "a selected lowering provider must belong to the offered lowering environment",
                 );
             }
+            for selected in plan.selected_physical_providers() {
+                assert!(
+                    compilation
+                        .offered_physical_providers()
+                        .contains(selected.provider()),
+                    "a selected physical provider must belong to the offered physical environment",
+                );
+            }
+        }
+    }
+
+    /// **The two offered environments are disjoint subjects, not one set split.**
+    ///
+    /// A governed compilation offers a lowering registry and one governed
+    /// physical provider, and neither identity appears in the other's set. The
+    /// populations are counted rather than shape-asserted, so a future second
+    /// governed physical provider cannot make this silently assert less, and the
+    /// disjointness is what stops a reader treating either accessor as a partial
+    /// view of one environment.
+    #[test]
+    fn the_offered_lowering_and_physical_environments_are_separate_populations() {
+        let program = semantic_program();
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
+            .expect("the governed program compiles");
+
+        let lowering = compilation.offered_providers();
+        let physical = compilation.offered_physical_providers();
+        assert!(
+            !lowering.is_empty(),
+            "the governed compilation offered no lowering provider",
+        );
+        assert_eq!(
+            physical.len(),
+            1,
+            "a governed compilation is offered exactly the governed physical provider: {physical:?}",
+        );
+        for identity in physical {
+            assert!(
+                !lowering.contains(identity),
+                "{identity} appears in both offered environments",
+            );
         }
     }
 
@@ -3739,6 +3842,10 @@ mod tests {
             request.target_profiles = expected.clone();
             compile_internal(request).expect("both governed-equivalent profiles compile")
         };
+        // Both offered environments are empty throughout: these cases perturb
+        // the target-outcome correspondence, which is decided before either set
+        // is attached to a compilation, so a populated one would only obscure
+        // which rule refused.
         let assert_rule = |failure: crate::pipeline::CompileError, expected_rule| {
             assert!(matches!(
                 failure,
@@ -3752,20 +3859,26 @@ mod tests {
 
         let mut missing_product = product();
         missing_product.targets.pop();
-        let missing = super::into_compilation_batch(missing_product, &expected, &Arc::from([]))
-            .expect_err("a missing target outcome is invalid compiler output");
+        let missing = super::into_compilation_batch(
+            missing_product,
+            &expected,
+            &Arc::from([]),
+            &Arc::from([]),
+        )
+        .expect_err("a missing target outcome is invalid compiler output");
         assert_rule(missing, "public-target-outcome-cardinality");
 
         let mut extra = product();
         extra.targets.push(extra.targets[0].clone());
-        let extra = super::into_compilation_batch(extra, &expected, &Arc::from([]))
+        let extra = super::into_compilation_batch(extra, &expected, &Arc::from([]), &Arc::from([]))
             .expect_err("an extra target outcome is invalid compiler output");
         assert_rule(extra, "public-target-outcome-cardinality");
 
         let mut swapped = product();
         swapped.targets.swap(0, 1);
-        let swapped = super::into_compilation_batch(swapped, &expected, &Arc::from([]))
-            .expect_err("equal-cardinality swapped outcomes are invalid compiler output");
+        let swapped =
+            super::into_compilation_batch(swapped, &expected, &Arc::from([]), &Arc::from([]))
+                .expect_err("equal-cardinality swapped outcomes are invalid compiler output");
         assert_rule(swapped, "public-target-outcome-binding");
 
         let mut substituted = product();
@@ -3777,8 +3890,9 @@ mod tests {
                 *target_profile = second.clone();
             }
         }
-        let substituted = super::into_compilation_batch(substituted, &expected, &Arc::from([]))
-            .expect_err("a substituted target key is invalid compiler output");
+        let substituted =
+            super::into_compilation_batch(substituted, &expected, &Arc::from([]), &Arc::from([]))
+                .expect_err("a substituted target key is invalid compiler output");
         assert_rule(substituted, "public-target-outcome-binding");
 
         let same_key_changed_descriptor =
@@ -3792,8 +3906,9 @@ mod tests {
                 *target_profile = same_key_changed_descriptor;
             }
         }
-        let mismatched = super::into_compilation_batch(mismatched, &expected, &Arc::from([]))
-            .expect_err("a same-key descriptor substitution is invalid compiler output");
+        let mismatched =
+            super::into_compilation_batch(mismatched, &expected, &Arc::from([]), &Arc::from([]))
+                .expect_err("a same-key descriptor substitution is invalid compiler output");
         assert_rule(mismatched, "public-target-outcome-binding");
     }
 
