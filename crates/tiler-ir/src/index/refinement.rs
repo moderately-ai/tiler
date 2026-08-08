@@ -1970,24 +1970,7 @@ impl ResolvedIndexRealization {
                 });
             }
         }
-        if assessments
-            .iter()
-            .any(|assessment| matches!(assessment.claim, IndexDomainProofClaim::Disproved(_)))
-        {
-            return Err(IndexDomainProofRefusal {
-                assessments,
-                kind: IndexDomainProofRefusalKind::Disproved,
-            });
-        }
-        if assessments
-            .iter()
-            .any(|assessment| matches!(assessment.claim, IndexDomainProofClaim::Unknown(_)))
-        {
-            return Err(IndexDomainProofRefusal {
-                assessments,
-                kind: IndexDomainProofRefusalKind::Unknown,
-            });
-        }
+        let assessments = retain_complete_assessments(assessments)?;
         let mut proofs = Vec::with_capacity(assessments.len());
         for (assessment, (stage, region)) in assessments.iter().zip(&owners) {
             let IndexDomainProofClaim::Proved(proof) = &assessment.claim else {
@@ -2021,6 +2004,28 @@ impl ResolvedIndexRealization {
             ),
             assessments,
         ))
+    }
+}
+
+fn retain_complete_assessments(
+    assessments: Vec<IndexDomainProofAssessment>,
+) -> Result<Vec<IndexDomainProofAssessment>, IndexDomainProofRefusal> {
+    let kind = if assessments
+        .iter()
+        .any(|assessment| matches!(assessment.claim, IndexDomainProofClaim::Disproved(_)))
+    {
+        Some(IndexDomainProofRefusalKind::Disproved)
+    } else if assessments
+        .iter()
+        .any(|assessment| matches!(assessment.claim, IndexDomainProofClaim::Unknown(_)))
+    {
+        Some(IndexDomainProofRefusalKind::Unknown)
+    } else {
+        None
+    };
+    match kind {
+        Some(kind) => Err(IndexDomainProofRefusal { assessments, kind }),
+        None => Ok(assessments),
     }
 }
 
@@ -5576,7 +5581,7 @@ mod tests {
     }
 
     #[test]
-    fn whole_call_ledger_preserves_earlier_group_and_stops_later_groups_atomically() {
+    fn whole_call_ledger_fills_every_obligation_when_the_first_group_exhausts() {
         let region = two_domain_residual_region();
         let obligations = region.unknown_index_domain_predicates().collect::<Vec<_>>();
         let claims = assess_finite_domains(
@@ -5597,6 +5602,155 @@ mod tests {
             }) if *required > u128::from(MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES)
                 && *limit == MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES
         )));
+    }
+
+    #[test]
+    fn whole_call_ledger_preserves_an_earlier_group_before_later_exhaustion() {
+        // The builder discharges the one-point predicate immediately, so this
+        // test states that valid group explicitly to isolate the shared ledger.
+        // Its subject, dimension, expression, and bound all belong to the
+        // verified earlier region; the later group is the retained residual of
+        // a second verified region, as completion encounters across stages.
+        let mut builder = IndexRegionBuilder::new(FrozenScalarRegistry::standard().unwrap())
+            .expect("the fixture receives a fresh builder identity");
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(1))
+            .unwrap();
+        let tensor = builder
+            .tensor(TensorRole::Input, f32_type(), Shape::from_dims([1]))
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, f32_type(), Shape::from_dims([1]))
+            .unwrap();
+        let coordinate = builder.dimension_expr(dimension).unwrap();
+        let value = builder.read(tensor, &[dimension], &[coordinate]).unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+        let earlier_region = builder.build().unwrap();
+        let earlier_access_ref = earlier_region.accesses().next().unwrap();
+        let earlier_access = earlier_access_ref.id();
+        let dimension = earlier_access_ref.domain().next().unwrap();
+        let coordinate = earlier_access_ref.coordinates().next().unwrap();
+        let earlier_obligation = UnknownIndexDomainPredicate {
+            subject: earlier_access,
+            predicate: IndexDomainPredicate::LessThanExtent {
+                expression: coordinate,
+                extent: IndexExtentRef::Dimension(dimension),
+            },
+            reason: IndexDomainUnknownReason::InsufficientFacts,
+        };
+        let earlier_group = IndexDomainGroup {
+            domain: IndexDomainKey(vec![(dimension, 1)]),
+            points: 1,
+            obligations: vec![PlannedDomainObligation {
+                slot: 0,
+                obligation: earlier_obligation,
+                upper_bound: Some(1),
+            }],
+        };
+        let later_region = residual_region(1, 5, 0);
+        let later_obligation = later_region
+            .unknown_index_domain_predicates()
+            .next()
+            .unwrap();
+        let later_dimension = later_region
+            .access(later_obligation.subject())
+            .unwrap()
+            .domain()
+            .next()
+            .unwrap();
+        let later_bound = match later_obligation.predicate() {
+            IndexDomainPredicate::LessThanExtent { extent, .. } => {
+                resolve_extent(&later_region, extent).unwrap()
+            }
+            IndexDomainPredicate::NonNegative { .. } => {
+                panic!("fixture must retain an upper bound")
+            }
+        };
+        let later_group = IndexDomainGroup {
+            domain: IndexDomainKey(vec![(later_dimension, LENGTH)]),
+            points: LENGTH,
+            obligations: vec![PlannedDomainObligation {
+                slot: 1,
+                obligation: later_obligation,
+                upper_bound: Some(later_bound),
+            }],
+        };
+        let mut ledger = IndexDomainProofLedger::new(
+            IndexDomainProofBudget::try_new(
+                MAX_FINITE_DOMAIN_PROOF_CELLS,
+                MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+            )
+            .unwrap(),
+        );
+        let earlier = assess_domain_group(&earlier_region, &earlier_group, &mut ledger).unwrap();
+        assert!(
+            matches!(earlier.as_slice(), [IndexDomainProofClaim::Proved(_)]),
+            "the earlier group must finish: {earlier:?}"
+        );
+        let Err(ProofPlanningFailure::Exhausted(exhaustion)) =
+            assess_domain_group(&later_region, &later_group, &mut ledger)
+        else {
+            panic!("the later group must exhaust the shared ledger")
+        };
+        let later = proof_resource_limit(exhaustion);
+        assert!(matches!(
+            later,
+            IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
+                resource: super::super::ProofResource::IntegerBytes,
+                required,
+                limit: MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+            }) if required > u128::from(MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES)
+        ));
+    }
+
+    #[test]
+    fn disproof_precedes_later_resource_limit_and_retains_both_assessments() {
+        // Classification is deliberately tested apart from evaluation. The
+        // evaluator's exact disproof construction is covered at its group
+        // boundary; this population pins the whole-call rule that consumes the
+        // already-produced claims without making either disappear.
+        let region = two_domain_residual_region();
+        let obligations = region.unknown_index_domain_predicates().collect::<Vec<_>>();
+        let authority = Arc::new(IndexDomainProofAuthority::exact_finite());
+        let assessments = vec![
+            IndexDomainProofAssessment {
+                obligation: obligations[0],
+                authority: authority.clone(),
+                claim: IndexDomainProofClaim::Disproved(
+                    IndexDomainDisproof::new("test-counterexample", encode_counterexample(0))
+                        .unwrap()
+                        .with_point_ordinal(0),
+                ),
+            },
+            IndexDomainProofAssessment {
+                obligation: obligations[1],
+                authority,
+                claim: IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
+                    resource: super::super::ProofResource::IntegerBytes,
+                    required: u128::from(MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES) + 1,
+                    limit: MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+                }),
+            },
+        ];
+        let refusal = retain_complete_assessments(assessments)
+            .expect_err("an assessed counterexample must refuse completion");
+        assert_eq!(refusal.kind(), IndexDomainProofRefusalKind::Disproved);
+        assert!(matches!(
+            refusal.assessments(),
+            [
+                IndexDomainProofAssessment {
+                    claim: IndexDomainProofClaim::Disproved(_),
+                    ..
+                },
+                IndexDomainProofAssessment {
+                    claim: IndexDomainProofClaim::Unknown(
+                        IndexDomainUnknownReason::ResourceLimit { .. }
+                    ),
+                    ..
+                }
+            ]
+        ));
     }
 
     #[test]
