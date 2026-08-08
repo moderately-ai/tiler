@@ -1,7 +1,7 @@
 ---
 id: keep-the-citation-checker-s-anchor-path-exercised-and-its-boundary-fixture-live
 title: Keep the citation checker's anchor path exercised and its boundary fixture live
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [pin-ticket-source-citations-against-the-tree-they-name]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-keep-the-
-lease_expires_at: 1786158471
 ---
 ## The defect, and how it arrived
 
@@ -38,3 +35,38 @@ Show the anchor path failing when no anchor citation exists, and passing when on
 ## Closes when
 
 `make citations` fails on a tree with no anchor-form citation; the boundary fixture is live and cannot be disabled by a ticket status change; and the summary still names and counts every population it checks.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`04993143`** (worker commit `3f3164ff`). One file, `check-citations.sh`, +146/−26. `make full` exit 0 — and it **had** to run, for the reason below.
+
+### The fixture now belongs to the script, and cannot be switched off
+
+A quoted heredoc writes it to a temp file that always leads the population. **It has no status for a transition to change**: no frontmatter, no `status:` line, no id, not under `tickets/`, unknown to `tkt`. `decide()` returns for `role == "fixture"` *before* the terminal test, so no workflow state can reach it. Disabling it means editing the checker — the same diff that would also delete the floors, in front of the one reviewer already reading it.
+
+**Five floors, one per silently-losable path**: line-only, anchor-only, line+anchor, the whitespace-collapsing fallback, and code-span assembly across a prose line break. The last is the worker's addition beyond the brief, and it measured **zero across the whole corpus** — the same defect class, caught because it went looking.
+
+They are not vacuous despite the fixture always feeding them: corpus drift can no longer produce a zero, so a zero means the **matcher** lost a form. Demanding the ticket corpus always carry an anchor would have been the unsatisfiable condition this ticket family exists to avoid.
+
+### It corrected the coordinator twice
+
+- **"It now reports `0 anchor-only`" was wrong, and the truth is worse.** It reported **1** — and that one was in *this very ticket*, which quotes the fixture anchor while describing the outage. So the anchor path was exercised only because the ticket reporting the outage was open, and would return to zero on closure. Same failure mode, one iteration later. The conclusion stood; the count did not.
+- **"ten closed tickets name `scripts/check_workspace.py`" was stale**: 33 ticket files name it, 32 terminal. That figure was already stale inside the script header and was corrected there with its reproducing grep, along with two other drifted counts.
+
+### A gap in the delta rule, closed here
+
+`AGENTS.md`'s gated set named `deps.sh` but **not `check-citations.sh`**, while the `Makefile`'s shellcheck line covers both — coordinator-verified. So a change to the checker could carry a stale gate and never be shellchecked: exactly the never-runs-so-never-fails family this ticket exists to close, sitting in the rule that governs it. The worker flagged rather than edited it, correctly, since it changes a repository gating rule.
+
+`check-citations.sh` is now in the gated set. The consequence is deliberate: this very landing could no longer carry, so `make full` ran and shellchecked it.
+
+### Demonstrations, each perturbing the subject
+
+No anchor citation exists → fails naming the starved form *and* the fixture citation that should have fed it. One anchor restored → that floor clears while the others still fire. The committed fixture's **false-but-resolving** anchor → passes silently, which is the boundary being demonstrated rather than asserted. Only the wrapped anchor's subject swapped → **exactly one** floor fires, proving independence. And both directions of the preserved terminal-skip: a `done` ticket citing the deleted path is skipped; the identical citation at `todo` fails.
+
+The worker also introduced and caught its own bug: an apostrophe inside a single-quoted `awk` program closed the shell quote, producing an undefined-function error — a quoting fault wearing a logic fault's clothes, found by running `--verbose` rather than the happy path.
+
+### Expected number movement on closure
+
+Closing this ticket drops corpus `anchor-only` from 4 to 3, all three from the fixture, and the run stays green. That is the fix working.
+
+Remaining flagged, not done: adding a `docs/**` population, which `extend-the-citation-check-to-docs-and-repair-adr-0079-s-drifted-test-citation` holds. `role_of()` was restructured to make that an append rather than a rewrite.

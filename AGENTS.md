@@ -214,6 +214,7 @@ Makefile
 rust-toolchain.toml
 rustfmt.toml
 deps.sh
+check-citations.sh
 ```
 
 Record the carry reasoning and rerun `tkt lint` **and `make citations`**; when uncertain, run `make full`. Naming the citation check here is load-bearing: `tickets/` is not in the list above, so a ticket-only delta carries the gate, and a check named only in the `Makefile` would be skipped by exactly the deltas it exists to police.
