@@ -100,7 +100,12 @@ use crate::target::honourability::UnhonouredDimension;
 /// The single structural cost model the bounded P0 frontier attributes estimates
 /// to. It matches the pipeline's structural cost model so a later selector can
 /// compare frontier estimates without a model reconciliation.
-const COST_MODEL_KEY: &str = "tiler.cost.structural.v1";
+///
+/// Crate-visible because [`crate::physical_provider`] republishes it: an
+/// out-of-crate provider whose estimate names any other key is a hard
+/// [`FrontierError::MalformedCostProvenance`], so the only admissible key needs
+/// a spelling a provider can read.
+pub(crate) const COST_MODEL_KEY: &str = "tiler.cost.structural.v1";
 /// Canonical domain-separation tag for a physical implementation proposal.
 const PROPOSAL_IDENTITY_TAG: &[u8] = b"tiler.compiler.physical-implementation-proposal.v2\0";
 
@@ -292,7 +297,7 @@ impl ProposalBody {
 /// does not apply to the assessed target is never enumerated for it and is never
 /// an error.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TargetApplicability {
+pub struct TargetApplicability {
     /// Governed target-profile keys, canonical ascending, unique.
     target_profile_keys: Vec<TargetProfileKey>,
 }
@@ -306,7 +311,8 @@ impl TargetApplicability {
     ///
     /// The keys are normalized to a canonical, deduplicated ascending order so
     /// two predicates over the same key set share one identity encoding.
-    pub(crate) fn for_targets(keys: impl IntoIterator<Item = TargetProfileKey>) -> Self {
+    #[must_use]
+    pub fn for_targets(keys: impl IntoIterator<Item = TargetProfileKey>) -> Self {
         let mut target_profile_keys: Vec<TargetProfileKey> = keys.into_iter().collect();
         target_profile_keys.sort_unstable();
         target_profile_keys.dedup();
@@ -321,7 +327,8 @@ impl TargetApplicability {
     }
 
     /// Returns the governed target-profile keys in canonical order.
-    pub(crate) fn target_profile_keys(&self) -> &[TargetProfileKey] {
+    #[must_use]
+    pub fn target_profile_keys(&self) -> &[TargetProfileKey] {
         &self.target_profile_keys
     }
 
@@ -339,10 +346,11 @@ impl TargetApplicability {
 /// disprove that a proposal fits a target. It carries an explicit model key so a
 /// later selector knows exactly which model produced it, and it is used only to
 /// prune strictly dominated feasible proposals from the local frontier. The
-/// bounded profile attributes every estimate to [`COST_MODEL_KEY`]; a proposal
+/// bounded profile attributes every estimate to the governed cost-model key,
+/// published as [`crate::physical_provider::GOVERNED_PHYSICAL_COST_MODEL_KEY`]; a proposal
 /// attributing its estimate to any other model is malformed compiler output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PhysicalCostEstimate {
+pub struct PhysicalCostEstimate {
     model_key: &'static str,
     dispatch_count: u32,
     launched_threads: u64,
@@ -370,7 +378,14 @@ impl PhysicalCostEstimate {
     }
 
     /// Builds a cost estimate under the governed structural cost model.
-    pub(crate) const fn structural(
+    ///
+    /// The only estimate constructor an out-of-crate provider can reach, which
+    /// is what makes `FrontierError::MalformedCostProvenance` a defect check
+    /// on this crate's own providers rather than a boundary an installed one
+    /// could trip: attributing an estimate to another model has no public
+    /// spelling at all.
+    #[must_use]
+    pub const fn structural(
         dispatch_count: u32,
         launched_threads: u64,
         temporary_bytes: u64,
@@ -384,22 +399,26 @@ impl PhysicalCostEstimate {
     }
 
     /// Returns the cost-model key this estimate is attributed to.
-    pub(crate) const fn model_key(&self) -> &'static str {
+    #[must_use]
+    pub const fn model_key(&self) -> &'static str {
         self.model_key
     }
 
     /// Returns the estimated dispatch count.
-    pub(crate) const fn dispatch_count(&self) -> u32 {
+    #[must_use]
+    pub const fn dispatch_count(&self) -> u32 {
         self.dispatch_count
     }
 
     /// Returns the estimated launched-thread count.
-    pub(crate) const fn launched_threads(&self) -> u64 {
+    #[must_use]
+    pub const fn launched_threads(&self) -> u64 {
         self.launched_threads
     }
 
     /// Returns the estimated temporary-allocation bytes.
-    pub(crate) const fn temporary_bytes(&self) -> u64 {
+    #[must_use]
+    pub const fn temporary_bytes(&self) -> u64 {
         self.temporary_bytes
     }
 
@@ -972,14 +991,14 @@ const MAX_PHYSICAL_PROVIDER_EXPLAIN_SUBJECT_BYTES: usize = 255;
 /// revision) so provider provenance is separated from semantic meaning (ADR 0072)
 /// and carries a versioned identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PhysicalProviderProvenance {
+pub struct PhysicalProviderProvenance {
     provider: ProviderIdentity,
     explain_subject: String,
 }
 
 /// Why a physical provider's complete provenance could not be retained.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PhysicalProviderProvenanceError {
+pub struct PhysicalProviderProvenanceError {
     provider: ProviderIdentity,
     actual: usize,
     maximum: usize,
@@ -988,7 +1007,14 @@ pub(crate) struct PhysicalProviderProvenanceError {
 impl PhysicalProviderProvenance {
     /// Records that proposals were produced by `provider`, refusing an identity
     /// whose exact explain subject cannot be retained.
-    pub(crate) fn new(provider: ProviderIdentity) -> Result<Self, PhysicalProviderProvenanceError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PhysicalProviderProvenanceError`] when the identity's exact
+    /// explain-subject rendering exceeds the bounded subject this authority
+    /// retains on every outcome. A truncated subject would name a provider that
+    /// does not exist, so the identity is refused rather than shortened.
+    pub fn new(provider: ProviderIdentity) -> Result<Self, PhysicalProviderProvenanceError> {
         let explain_subject = provider.to_string();
         let actual = explain_subject.len();
         let maximum = MAX_PHYSICAL_PROVIDER_EXPLAIN_SUBJECT_BYTES;
@@ -1006,12 +1032,14 @@ impl PhysicalProviderProvenance {
     }
 
     /// Returns the provider identity.
-    pub(crate) const fn provider(&self) -> &ProviderIdentity {
+    #[must_use]
+    pub const fn provider(&self) -> &ProviderIdentity {
         &self.provider
     }
 
     /// Returns the complete exact provider identity in explain-subject form.
-    pub(crate) fn explain_subject(&self) -> &str {
+    #[must_use]
+    pub fn explain_subject(&self) -> &str {
         &self.explain_subject
     }
 }
@@ -1064,7 +1092,7 @@ impl ImplementationProvenance {
 /// requirements (the frontier derives the exact requirements from the verified
 /// region), or the boundary contract (also derived).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ImplementationProposal {
+pub struct ImplementationProposal {
     body: ProposalBody,
     applicability: TargetApplicability,
     declared_cost: PhysicalCostEstimate,
@@ -1084,6 +1112,39 @@ impl ImplementationProposal {
             declared_cost,
         }
     }
+
+    /// Proposes one checked scheduled kernel as this region's implementation.
+    ///
+    /// **The one body an installed provider may propose, and the restriction is
+    /// deliberate rather than an unfinished sum type.** `ProposalBody` is an
+    /// additive seam over four variants and stays crate-private: a kernel
+    /// subprogram states per-stage semantic attribution in a graph-local
+    /// authoring coordinate this boundary does not export, an opaque call is
+    /// admitted by naming a registration [ADR 0090] item 14 keeps
+    /// compiler-owned, and the view variant is a reserved seam whose whole
+    /// purpose is to reject. A provider that needs one of those is refused by
+    /// having no spelling for it rather than by a runtime rejection it could
+    /// mistake for a target verdict.
+    ///
+    /// The region is *not* believed. It is resubmitted through the host's own
+    /// whole-region intrinsic verification, the request-subject binding, and the
+    /// single hard-feasibility decision before it can be admitted, and the
+    /// provider identity, exact resource requirements, and boundary contract are
+    /// all derived by the host from the verified result.
+    ///
+    /// [ADR 0090]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md
+    #[must_use]
+    pub fn scheduled_kernel(
+        region: ScheduledRegion,
+        applicability: TargetApplicability,
+        declared_cost: PhysicalCostEstimate,
+    ) -> Self {
+        Self::new(
+            ProposalBody::ScheduledKernel(Box::new(region)),
+            applicability,
+            declared_cost,
+        )
+    }
 }
 
 /// The read-only context a provider receives to propose implementations.
@@ -1092,9 +1153,51 @@ impl ImplementationProposal {
 /// subject the frontier is a local authority for. A provider builds its schedule
 /// from this context; it never mutates it and never gains the raw builders or a
 /// way to finalize a region — the host resubmits and verifies every body.
-pub(crate) struct ImplementationContext<'a> {
+///
+/// The verified request itself is **not** part of the out-of-crate surface. What
+/// an installed provider reads instead is stated positively: the assessed target
+/// profile, the resolved numerical realization it must fill its body with, the
+/// region subject, and this host's own baseline spelling of that subject.
+pub struct ImplementationContext<'a> {
     request: &'a VerifiedTargetRequest,
     subject: &'a FrontierRegionSubject,
+    /// This host's own single-dispatch spelling of `subject`, derived on first
+    /// request and shared by every provider asked about it.
+    ///
+    /// Deferred rather than eager because deriving it costs a region build per
+    /// subject that no installed provider may ever read: a compilation running
+    /// the governed provider alone never touches this cell, and the governed
+    /// provider deliberately does not read it — it calls the same derivation
+    /// directly, so the two can never disagree about what the baseline is.
+    baseline: std::cell::OnceCell<Option<BaselineImplementation>>,
+}
+
+/// This host's own implementation of one region subject, offered to a provider.
+///
+/// The region *and* its structural cost travel together because a provider
+/// specializing a schedule has to state a cost, and a cost it invented would be
+/// ranked against the governed provider's under one model while measuring
+/// nothing. A specialization that changes no structural dimension states this
+/// exact estimate and is retained beside the baseline as an alternative; one
+/// that genuinely changes a dimension states its own.
+#[derive(Clone, Debug)]
+pub struct BaselineImplementation {
+    region: ScheduledRegion,
+    cost: PhysicalCostEstimate,
+}
+
+impl BaselineImplementation {
+    /// Returns the baseline scheduled region.
+    #[must_use]
+    pub const fn region(&self) -> &ScheduledRegion {
+        &self.region
+    }
+
+    /// Returns the baseline's structural cost under the one governed model.
+    #[must_use]
+    pub const fn cost(&self) -> PhysicalCostEstimate {
+        self.cost
+    }
 }
 
 #[allow(
@@ -1108,24 +1211,92 @@ impl ImplementationContext<'_> {
     }
 
     /// Returns the region subject the frontier is being enumerated for.
-    pub(crate) const fn subject(&self) -> &FrontierRegionSubject {
+    #[must_use]
+    pub const fn subject(&self) -> &FrontierRegionSubject {
         self.subject
     }
 
     /// Returns the key of the target profile this frontier assesses.
-    pub(crate) fn target_profile_key(&self) -> &str {
+    #[must_use]
+    pub fn target_profile_key(&self) -> &str {
         self.request.target_profile().profile_key().as_str()
+    }
+
+    /// Returns the exact immutable target profile this frontier assesses.
+    ///
+    /// A proposal states which profiles it applies to, so the key it names has
+    /// to come from the request rather than from a provider's own constant —
+    /// otherwise every provider would carry a second copy of a governed key and
+    /// a profile rename would make its proposals silently inapplicable instead
+    /// of failing to compile.
+    #[must_use]
+    pub const fn target_profile(&self) -> &TargetProfile {
+        self.request.target_profile()
+    }
+
+    /// Returns the numerical realization every body proposed here must fill.
+    ///
+    /// [ADR 0090] item 7: the provider holds one operand of the
+    /// numerical-realization comparison and the host holds the comparison, so
+    /// exposing the resolved value lets a provider construct an agreeing body
+    /// instead of discovering the disagreement through a rejection. Hard
+    /// feasibility deliberately stays a rejection read back, because it is a
+    /// decision procedure a second implementation of would drift from.
+    ///
+    /// [ADR 0090]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md
+    #[must_use]
+    pub fn numerical_realization(&self) -> tiler_ir::schedule::NumericalRealization {
+        self.request.numerical_contract().realization()
+    }
+
+    /// Returns this host's own baseline spelling of the region subject.
+    ///
+    /// **This is what makes the seam usable rather than a guessing game, and it
+    /// is also the exact shape of its present limitation.** The request-subject
+    /// binding is host-owned and compares a proposed region's identity,
+    /// iteration shape, scalar program, semantic members, and access map against
+    /// the compiler's own normalization of the program. A provider that cannot
+    /// reproduce all five is refused, so a seam that stated none of them would
+    /// admit only providers that had reimplemented this crate's normalization.
+    /// Handing back the host's expectation makes *specializing* a spelling the
+    /// operation an installed provider performs: it clones this region, varies
+    /// the schedule axes the intrinsic verifier leaves free, and proposes the
+    /// result.
+    ///
+    /// `None` has two causes and neither is an error. The subject may have no
+    /// spelling in this build's region vocabulary at all — the governed provider
+    /// records that as a named [`DeclinedStrategy`] — or its cover may have made
+    /// it a published-and-consumed region, whose baseline is an ordered pair of
+    /// dispatches rather than one. A subprogram body has no public spelling
+    /// ([`ImplementationProposal::scheduled_kernel`] states why), so returning
+    /// half of one would hand back a body that computes something else.
+    #[must_use]
+    pub fn baseline(&self) -> Option<&BaselineImplementation> {
+        self.baseline
+            .get_or_init(|| {
+                if self.subject.write().publishes_a_copy() {
+                    return None;
+                }
+                govern_spelling(self.request, self.subject)
+                    .ok()
+                    .map(|spelling| BaselineImplementation {
+                        region: spelling.region,
+                        cost: spelling.cost,
+                    })
+            })
+            .as_ref()
     }
 }
 
 /// Why a provider considered a strategy for this subject and did not offer it.
 ///
 /// Each cause is a fact about the *request*, decided before any region is
-/// constructed. They are distinct from every [`FrontierRejection`] a proposal
+/// constructed. They are distinct from every `FrontierRejection` a proposal
 /// earns, because nothing was proposed: the enumeration is complete only if it
 /// can also say what it deliberately withheld.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StrategyDeclineCause {
+#[non_exhaustive]
+pub enum StrategyDeclineCause {
     /// The request's resolved numerical contract forbids a freedom the strategy
     /// consumes.
     ///
@@ -1159,7 +1330,7 @@ pub(crate) enum StrategyDeclineCause {
     ///
     /// **Which occurrences those are is the region's canonical occurrence
     /// identity, which the frontier record is keyed by, and it is deliberately
-    /// not restated here as a member ordinal.** A [`SemanticStage`]'s member is a
+    /// not restated here as a member ordinal.** A `SemanticStage`'s member is a
     /// graph-local *authoring* coordinate: the two spellings of the governed
     /// program that `product_is_deterministic_and_preserves_the_materialized_boundary`
     /// compares number the same occurrence `0` and `1`, so a cause carrying one
@@ -1176,7 +1347,8 @@ pub(crate) enum StrategyDeclineCause {
 
 impl StrategyDeclineCause {
     /// Returns the stable reason code of the decline.
-    pub(crate) const fn reason(self) -> &'static str {
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
         match self {
             Self::NumericalPermissionRefused { .. } => "numerical-permission-refused",
             Self::NoAdmissibleShape { rule, .. }
@@ -1223,14 +1395,15 @@ impl StrategyDeclineCause {
 /// One strategy a provider considered for a subject and withheld, with its
 /// reason.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DeclinedStrategy {
+pub struct DeclinedStrategy {
     strategy: &'static str,
     cause: StrategyDeclineCause,
 }
 
 impl DeclinedStrategy {
     /// Records that `strategy` was considered for this subject and withheld.
-    pub(crate) const fn new(strategy: &'static str, cause: StrategyDeclineCause) -> Self {
+    #[must_use]
+    pub const fn new(strategy: &'static str, cause: StrategyDeclineCause) -> Self {
         Self { strategy, cause }
     }
 }
@@ -1243,14 +1416,15 @@ impl DeclinedStrategy {
 /// splitting the call would let the two disagree about which request they were
 /// answering.
 #[derive(Debug, Default)]
-pub(crate) struct ProviderOffer {
+pub struct ProviderOffer {
     proposals: Vec<ImplementationProposal>,
     declined: Vec<DeclinedStrategy>,
 }
 
 impl ProviderOffer {
     /// An offer of proposals with nothing withheld.
-    pub(crate) const fn proposing(proposals: Vec<ImplementationProposal>) -> Self {
+    #[must_use]
+    pub const fn proposing(proposals: Vec<ImplementationProposal>) -> Self {
         Self {
             proposals,
             declined: Vec::new(),
@@ -1258,7 +1432,8 @@ impl ProviderOffer {
     }
 
     /// Records that a strategy was considered for this subject and withheld.
-    pub(crate) fn decline(mut self, declined: DeclinedStrategy) -> Self {
+    #[must_use]
+    pub fn decline(mut self, declined: DeclinedStrategy) -> Self {
         self.declined.push(declined);
         self
     }
@@ -1272,8 +1447,22 @@ impl ProviderOffer {
 /// strategies it considered and withheld. Trust does not mean belief — the host
 /// resubmits every scheduled-kernel and subprogram body through the ordinary
 /// checked verification path before admitting it.
-pub(crate) trait PhysicalImplementationProvider {
+///
+/// **A provider states three things and stamps none of them.** Its identity is
+/// read once from [`Self::provenance`] and stamped by the host onto every
+/// outcome, so a proposal cannot claim another provider's name; the exact
+/// resource requirements and the boundary contract are derived by the host from
+/// the *verified* region rather than declared. Installing one is
+/// [`crate::physical_provider::InstalledPhysicalProviders`].
+pub trait PhysicalImplementationProvider {
     /// Returns this provider's provenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PhysicalProviderProvenanceError`] when this provider's identity
+    /// cannot be rendered into the bounded explain subject every outcome
+    /// retains. A provider that cannot be named cannot be reported, so the
+    /// enumeration fails closed rather than admitting anonymous work.
     fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError>;
 
     /// Proposes physical implementations for the region in `context`.
@@ -1295,7 +1484,7 @@ pub(crate) trait PhysicalImplementationProvider {
 /// different region than this subject fails the request-subject binding rather
 /// than silently implementing the wrong occurrences.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct FrontierRegionSubject {
+pub struct FrontierRegionSubject {
     role: &'static str,
     semantic_members: Vec<SemanticStage>,
     /// Element counts of the cover-materialized intermediates this region reads,
@@ -1365,8 +1554,23 @@ impl FrontierRegionSubject {
     }
 
     /// Returns the stable presentation role of the region.
-    pub(crate) const fn role(&self) -> &'static str {
+    #[must_use]
+    pub const fn role(&self) -> &'static str {
         self.role
+    }
+
+    /// Returns how many recognized semantic occurrences this region covers.
+    ///
+    /// A count rather than the occurrences themselves. A member is a graph-local
+    /// *authoring* coordinate — two spellings of one program number the same
+    /// occurrence differently — so exporting the ordinals would put an authoring
+    /// accident into a provider's decision and, through a decline cause, into
+    /// the trace. The count is a property of the region and carries safely; a
+    /// provider that needs the members is asking the host what its body must
+    /// bind to, which is [`ImplementationContext::baseline`]'s answer.
+    #[must_use]
+    pub fn covered_occurrences(&self) -> usize {
+        self.semantic_members.len()
     }
 
     /// Returns the tensor this region's owning write targets.
@@ -2108,11 +2312,19 @@ pub(crate) fn enumerate_frontier(
     let applicable_key = target_profile_key.clone();
     let mut admitted = Vec::new();
     let mut rejections = Vec::new();
+    // One context for the whole enumeration rather than one per provider, so the
+    // baseline spelling it derives on demand is derived at most once however many
+    // providers ask for it. Nothing in it is provider-specific: it carries the
+    // request and the subject, which every provider is answering about.
+    let context = ImplementationContext {
+        request,
+        subject,
+        baseline: std::cell::OnceCell::new(),
+    };
     for provider in providers {
         let provenance = provider
             .provenance()
             .map_err(|source| FrontierError::UnrepresentableProviderProvenance { source })?;
-        let context = ImplementationContext { request, subject };
         let offer = provider.propose(&context);
         // A withheld strategy is recorded before the offered ones are assessed,
         // so a reader sees what the provider ruled out for this request beside
@@ -2963,9 +3175,23 @@ impl<'providers> PhysicalAuthorities<'providers> {
     /// An empty registry is not a degenerate case here but the ordinary one —
     /// Tiler declares no opaque call of its own — and a program referencing none
     /// needs none.
+    ///
+    /// The provider half is composed by
+    /// [`crate::physical_provider::InstalledPhysicalProviders`] rather than
+    /// restated here, so *what this build ships* has one authority: a second
+    /// literal list would let the governed compile path and the public
+    /// installation seam disagree about which providers "governed" means.
+    ///
+    /// Test-only, because the production compile path always arrives through
+    /// that installation seam — a caller who installed nothing reaches
+    /// [`compile_with_physical_providers`] with the same one-element list, so a
+    /// production spelling of it would be a second entry answering one question.
+    ///
+    /// [`compile_with_physical_providers`]: crate::pipeline::compile_with_physical_providers
+    #[cfg(test)]
     pub(crate) fn governed() -> Self {
         Self {
-            providers: vec![&GovernedPhysicalProvider],
+            providers: crate::physical_provider::InstalledPhysicalProviders::governed().providers(),
             calls: OpaqueCallRegistry::new(),
         }
     }
@@ -2975,10 +3201,6 @@ impl<'providers> PhysicalAuthorities<'providers> {
     /// Taken together rather than installed one at a time, so the pair a
     /// compilation plans against is stated in one place: a caller cannot leave
     /// half of it behind.
-    #[allow(
-        dead_code,
-        reason = "the composition seam for a non-governed authority; its first caller is the compile-path test proving a registered call reaches admission, and a governed opaque declaration would be its first production one"
-    )]
     pub(crate) fn composed(
         providers: Vec<&'providers dyn PhysicalImplementationProvider>,
         calls: OpaqueCallRegistry,
@@ -3054,44 +3276,80 @@ impl GovernedPhysicalProvider {
     }
 }
 
-impl PhysicalImplementationProvider for GovernedPhysicalProvider {
-    fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
-        PhysicalProviderProvenance::new(Self::identity())
-    }
+/// This host's own spelling of one region subject, before publication composition.
+///
+/// Extracted from the governed provider so that [`ImplementationContext::baseline`]
+/// and [`GovernedPhysicalProvider::propose`] read one authority. They are two
+/// questions about the same thing — *what does this compiler believe this region
+/// is* — and answering them in two places is exactly how a provider handed a
+/// baseline it could specialize would end up specializing something the
+/// request-subject binding then refused.
+struct GovernedSpelling {
+    /// The single-dispatch serial region the subject spells to.
+    region: ScheduledRegion,
+    /// That region's structural cost, before any publishing dispatch.
+    cost: PhysicalCostEstimate,
+    /// The applicability predicate every proposal for this request carries.
+    applicability: TargetApplicability,
+    /// The additive parallel strategies the subject admits, each offered or
+    /// withheld with its typed reason. Empty for every subject but a reduction.
+    parallel: Vec<Result<ImplementationProposal, DeclinedStrategy>>,
+}
 
-    fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
-        let request = context.request();
-        let subject = context.subject();
-        let members = subject.semantic_members();
-        // Structural cost inputs, taken over every recognized output rather than
-        // resolved per region: they bound the widest thing a plan for this
-        // request could stage, and a cost is an upper bound rather than a
-        // feasibility answer. The region's *own* shapes come from the output the
-        // spelling resolves below.
-        let input_elements = request.normalized().max_input_elements();
-        let output_elements = request.normalized().max_output_elements();
-        // A materialized f32 intermediate costs four bytes per element. The
-        // estimate is structural and is never a feasibility input.
-        let intermediate_bytes = input_elements.saturating_mul(4);
-        let applicability =
-            TargetApplicability::for_targets([request.target_profile().profile_key().clone()]);
-        // A subject naming no occurrence is the coverless local enumeration the
-        // trait's contract describes, not a region a cover placed, so the empty
-        // offer is the honest answer and a decline would name a wall no cover
-        // hit.
-        if members.is_empty() {
-            return ProviderOffer::default();
-        }
+/// Why one region subject has no governed spelling.
+///
+/// The two cases are kept apart because they are different answers rather than
+/// two spellings of silence: one says the enumeration was asked about no
+/// occurrence at all, the other names the region-vocabulary wall a cover's
+/// grouping hit.
+enum UnspelledSubject {
+    /// The subject names no occurrence: the coverless local enumeration the
+    /// provider trait's contract describes.
+    Coverless,
+    /// The region vocabulary has no spelling for the occurrences a cover placed.
+    Declined(DeclinedStrategy),
+}
+
+/// Spells one region subject against this build's region vocabulary.
+///
+/// # Errors
+///
+/// Returns [`UnspelledSubject`] naming which of the two no-region answers holds.
+fn govern_spelling(
+    request: &VerifiedTargetRequest,
+    subject: &FrontierRegionSubject,
+) -> Result<GovernedSpelling, UnspelledSubject> {
+    let members = subject.semantic_members();
+    // Structural cost inputs, taken over every recognized output rather than
+    // resolved per region: they bound the widest thing a plan for this
+    // request could stage, and a cost is an upper bound rather than a
+    // feasibility answer. The region's *own* shapes come from the output the
+    // spelling resolves below.
+    let input_elements = request.normalized().max_input_elements();
+    let output_elements = request.normalized().max_output_elements();
+    // A materialized f32 intermediate costs four bytes per element. The
+    // estimate is structural and is never a feasibility input.
+    let intermediate_bytes = input_elements.saturating_mul(4);
+    let applicability =
+        TargetApplicability::for_targets([request.target_profile().profile_key().clone()]);
+    // A subject naming no occurrence is the coverless local enumeration the
+    // trait's contract describes, not a region a cover placed, so the empty
+    // offer is the honest answer and a decline would name a wall no cover
+    // hit.
+    if members.is_empty() {
+        return Err(UnspelledSubject::Coverless);
+    }
+    {
         let spelling = match crate::physical::spell_region(request, members, subject.write()) {
             Ok(spelling) => spelling,
             Err(wall) => {
-                return ProviderOffer::default().decline(DeclinedStrategy::new(
+                return Err(UnspelledSubject::Declined(DeclinedStrategy::new(
                     crate::physical::SERIAL_BASELINE_STRATEGY,
                     StrategyDeclineCause::UnspellableRegion {
                         rule: wall.reason(),
                         covered: u32::try_from(members.len()).unwrap_or(u32::MAX),
                     },
-                ));
+                )));
             }
         };
         let mut split = None;
@@ -3272,6 +3530,36 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
                 },
             ),
         };
+        Ok(GovernedSpelling {
+            region,
+            cost,
+            applicability,
+            parallel: [split, tree].into_iter().flatten().collect(),
+        })
+    }
+}
+
+impl PhysicalImplementationProvider for GovernedPhysicalProvider {
+    fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+        PhysicalProviderProvenance::new(Self::identity())
+    }
+
+    fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+        let request = context.request();
+        let subject = context.subject();
+        let members = subject.semantic_members();
+        let GovernedSpelling {
+            region,
+            cost,
+            applicability,
+            parallel,
+        } = match govern_spelling(request, subject) {
+            Ok(spelling) => spelling,
+            Err(UnspelledSubject::Coverless) => return ProviderOffer::default(),
+            Err(UnspelledSubject::Declined(declined)) => {
+                return ProviderOffer::default().decline(declined);
+            }
+        };
         // A published-and-consumed region is two dispatches: the one just built,
         // which stages the value its consumer reads across, and a copy that
         // moves those bytes into the buffer the interface publishes. The copy is
@@ -3310,7 +3598,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         // a parallel one *wins* is not decided here.
         let mut proposals = vec![serial];
         let mut offer_declines = Vec::new();
-        for outcome in [split, tree].into_iter().flatten() {
+        for outcome in parallel {
             match outcome {
                 Ok(proposal) => proposals.push(proposal),
                 Err(declined) => offer_declines.push(declined),
