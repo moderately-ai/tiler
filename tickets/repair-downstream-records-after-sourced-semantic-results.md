@@ -1,7 +1,7 @@
 ---
 id: repair-downstream-records-after-sourced-semantic-results
 title: Repair downstream records after sourced semantic results
-status: in-progress
+status: done
 priority: p1
 dependencies: [repair-the-shape-records-after-sourced-semantic-result-shapes]
 related: [repair-the-records-the-sourced-semantic-shape-falsifies]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, shapes, correction]
-claimed_from: todo
-assignee: w-terra-sourced-records
-lease_expires_at: 1786210286
 ---
 
 Three research records outside the shape-record ticket's scopes retain the
