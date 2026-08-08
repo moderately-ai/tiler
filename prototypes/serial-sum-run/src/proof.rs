@@ -2868,9 +2868,11 @@ struct PlacedSlot {
 ///
 /// What this function cannot decide is everything that needs a device — the
 /// library, the pipeline, the threadgroup capacity, the allocations. Those are
-/// not device-*free*, but they are decidable, and [`device_preflight`] takes
-/// them before the same commit. Nothing that a device can answer is left for
-/// after it.
+/// not device-*free*, but they are decidable, and they are split across two
+/// callers rather than one: `prepare_pipelines` builds the library and the
+/// pipeline, and [`device_preflight`] takes the threadgroup capacity and the
+/// allocations. Both run before the same commit. Nothing that a device can
+/// answer is left for after it.
 fn plan_route(
     preflight: &Preflight<'_>,
     interface: &DeclaredInterface,
@@ -3595,11 +3597,29 @@ use discharge::{DirectRequirementsDischarged, check_direct_requirements};
 
 /// Answers each requirement from its exact prepared pipeline and preserves the pipelines for execution.
 ///
-/// Three device stages in the order their facts become true: the requirements the
-/// verified program itself derived, which need only the bound device; then the
-/// live-device rows the artifact carried; and only then the prepared-entry
-/// properties, which need a pipeline to exist. Nothing here is irreversible, so
+/// Three device stages, in the order they run: the live-device rows the artifact
+/// carried, answered by `qualify_live_device`; then the requirements the verified
+/// program itself derived, discharged by `check_direct_requirements`; and only
+/// then the prepared-entry properties, which need a pipeline to exist. The first
+/// two both need only the bound device, so nothing about when their facts become
+/// available separates them. What the discharge stage is one step earlier than is
+/// *pipeline preparation* — the ordering `DirectRequirementsDischarged` carries in
+/// its own type — and not the live-device rows. Nothing here is irreversible, so
 /// abandoning between any two of them is still the permitted fallback.
+///
+/// **Correction, 2026-08-08.** Until this note the paragraph above read
+/// "the requirements the verified program itself derived, which need only the
+/// bound device; then the live-device rows the artifact carried", reversing the
+/// first two stages. It was never the actual order: `e4041047` inserted the
+/// discharge stage into that sentence at position one while inserting its call at
+/// position two, and the two-stage sentence it replaced,
+/// "the live-device rows first, from the bound device alone", was correct for the
+/// code of its day. Each retired sentence keeps its distinctive clause on a single
+/// line here, so a grep that finds one has landed inside this note rather than on
+/// a live claim. The reversal reached
+/// `check-synchronization-realization-before-the-routing-commit` and
+/// `discharge-the-derived-requirements-in-the-candle-metal-adapter` before anyone
+/// read this function.
 fn resolve_prepared_route<'a>(
     device: &Device,
     qualification: LiveDeviceQualification<'a>,
@@ -4877,10 +4897,11 @@ fn run() -> Result<(), ProofError> {
     let envelope_operands = case_operands(&interface, case)?;
     let envelope_reference = case_expected(&interface, case)?;
 
-    // Placement first, then the device. Both are decided while a fallback is
-    // still permitted, and between them they discharge every obligation this
-    // host can decide — which is what makes the commit below infallible in fact
-    // and not only in signature. See `plan_route` and `device_preflight`.
+    // The device stages first, then placement, then the device preflight. All
+    // three are decided while a fallback is still permitted, and between them
+    // they discharge every obligation this host can decide — which is what makes
+    // the commit below infallible in fact and not only in signature. See
+    // `resolve_prepared_route`, `plan_route`, and `device_preflight`.
     let (preflight, pipelines) = resolve_prepared_route(device, preparation)?;
     let plan = plan_route(&preflight, &interface)?;
     let prepared = device_preflight(
