@@ -32,8 +32,8 @@
 //! [ADR 0104](../../../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md)
 //! reached the case where that move is impossible. `tiler-ir` mints
 //! `IndexRefinementExecutableCoverageIdentity` and folds the bound graph's
-//! identity into it as a digest, and `tiler-ir` is the crate every other member
-//! depends on — it cannot be relocated above `tiler-artifact`, and reversing the
+//! identity into it as a digest, and `tiler-artifact` is built on `tiler-ir` —
+//! so `tiler-ir` cannot be relocated above `tiler-artifact`, and reversing the
 //! edge is not available either. Tom decided on 2026-08-06 that the governed
 //! digest is its own crate below both, on the grounds that hashing is a separate
 //! responsibility from tensor IR, that the one-authority rule deserves a
@@ -74,12 +74,14 @@
 //! each such authority owes is the check over the set it admits, plus the
 //! argument that its set cannot prefix another's.
 //! `tiler_artifact::domains::no_governed_domain_of_this_crate_prefixes_another`
-//! is the authority for that crate's whole admitted set — eighteen domains
-//! across the envelope, the proof sidecar, and the artifact program's identity
-//! and key encodings. `tiler_artifact::domains::GovernedDomain` is that
-//! population and is what sizes it, so a count disagreeing with this sentence is
-//! settled there rather than here; `docs/artifact-abi.md` records the obligation
-//! and the per-container split normatively.
+//! is the authority for that crate's whole admitted set, which spans the
+//! envelope, the proof sidecar, and the artifact program's identity and key
+//! encodings. `tiler_artifact::domains::GovernedDomain` is that population and
+//! is what sizes it. **This note deliberately states no count.** A number
+//! written here would be maintained by hand beside a population maintained by a
+//! type, so the two could only ever disagree, and a later reader would have no
+//! way to tell which one was authoritative. `docs/artifact-abi.md` records the
+//! obligation and the per-container split normatively.
 
 use std::fmt;
 

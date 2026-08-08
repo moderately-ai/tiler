@@ -18,8 +18,8 @@ doc = true
 # crate owns one algorithm, one opaque digest, and the discipline that separates
 # their subjects, so a second dependency would mean it had acquired a second
 # responsibility. Nothing in the workspace sits below it, which is the whole
-# point — `tiler-ir` reaches it, and `tiler-ir` is what every other member
-# depends on.
+# point — `tiler-ir` reaches it, and `tiler-ir` is what `tiler-artifact` and the
+# crates above it are built on.
 [dependencies]
 sha2.workspace = true
 
