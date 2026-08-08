@@ -1,7 +1,7 @@
 ---
 id: align-runtime-dependency-records-with-negative-reachability
 title: Align runtime dependency records with the negative-reachability check
-status: in-progress
+status: done
 priority: p2
 dependencies: [date-adr-0081-s-neither-closure-is-checked-correction-against-the-runtime-test]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, runtime, architecture]
-claimed_from: todo
-assignee: w-terra-runtime-records
-lease_expires_at: 1786209348
 ---
 
 The runtime dependency boundary is now described three different ways, two of
