@@ -2144,7 +2144,14 @@ pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartiti
     None
 }
 
-/// The participant count the single-workgroup tree does not exceed by choice.
+/// The participant count the single-workgroup tree's width is anchored on.
+///
+/// **It is an anchor and not a truncation**, which is the distinction
+/// [`capped_tree_partition`] turns on: that rule takes the admissible count
+/// *nearest* this value, so a width at or below it is the ordinary case and a
+/// width up to 509 is reachable where the divisor lattice offers nothing closer
+/// from below. The name is kept because every measured cell exercised this value
+/// as a ceiling; the direction it does *not* bound is stated on the rule.
 ///
 /// **Measurement, 2026-08-07, and a property of one host row rather than a
 /// portable constant.** [The retained partition calibration] swept every
@@ -2171,35 +2178,89 @@ pub(crate) const MEASURED_TREE_PARTICIPANT_CAP: u64 = 256;
 
 /// Chooses the participant count the single-workgroup tree runs for one extent.
 ///
-/// The rule is the calibrated one: **the largest admissible participant count
-/// not exceeding [`MEASURED_TREE_PARTICIPANT_CAP`]**, where a count is
-/// admissible under exactly the condition [`governed_partition`] searches
+/// The rule is **the admissible participant count nearest
+/// [`MEASURED_TREE_PARTICIPANT_CAP`]**, ties going to the narrower, where a count
+/// is admissible under exactly the condition [`governed_partition`] searches
 /// within — it splits the contributor sequence exactly, into at least two
 /// partitions of at least two contributors each.
 ///
-/// **When every admissible count exceeds the cap, the smallest admissible one
-/// is taken instead**, which is the retained calibration's own scoring rule and
-/// is what keeps the cap a *preference* rather than a feasibility test. Only a
-/// contributor count whose smallest prime factor is above the cap can reach that
-/// branch — `257 * 257` is the smallest — and no measured shape does. A cap that
-/// declined there would withhold a legal alternative on a cost heuristic, over
-/// shapes this calibration measured nothing about, and it would narrow the
-/// strategy's domain rather than choose within it.
+/// **That is one rule where the calibration's scoring stated two, and the
+/// omission between them was the defect.** "The largest admissible count not
+/// exceeding the cap" is *nearest from below*; "when every admissible count
+/// exceeds the cap, the smallest admissible one" is *nearest from above*. Both
+/// are cases of the sentence above, and both were already here. What neither did
+/// was compare across the two: at 514 contributors (`2 * 257`) the only
+/// admissible count at or below the cap is **2**, while **257** is admissible one
+/// step above it, and a rule that truncates at the cap without looking up took
+/// the 2. On a power of two the two formulations coincide, so no measured cell
+/// could distinguish them.
 ///
-/// The domain is therefore exactly [`governed_partition`]'s: this returns `None`
-/// for every contributor count below four and every prime one, and `Some` for
-/// every count either rule admits. The tree's
+/// The domain is unchanged and is exactly [`governed_partition`]'s: this returns
+/// `None` for every contributor count below four and every prime one, and `Some`
+/// for every count either rule admits. The tree's
 /// [`WorkgroupTreeUnavailable::NoAdmissibleParticipantCount`] decline set does
-/// not move with the cap.
+/// not move with the rule.
 ///
-/// **The chosen width exceeds the cap only where the balanced choice was already
-/// wider.** Below the cap the returned count is at most 256; in the fallback
-/// branch it is the smallest prime factor of `contributors`, which is at most the
-/// integer square root and so at most the participant count
-/// [`governed_partition`] would have returned. No width past
-/// [`tiler_ir::schedule::MAX_COOPERATIVE_PARTICIPANTS`] becomes reachable
-/// because of this rule, so no tile
-/// [`tiler_ir::schedule::workgroup_tree_tile`] refuses to enumerate does either.
+/// # The direction, stated in both senses
+///
+/// [`MEASURED_TREE_PARTICIPANT_CAP`] bounds the width from above. This rule also
+/// bounds it from below, and that bound is arithmetic rather than fitted: a
+/// chosen count `s` above the cap is chosen over an admissible `l` at or below it
+/// only when `s - 256 < 256 - l`, and `l >= 2` forces **`s <= 509`**. So a cost
+/// preference widens the tree past the calibrated 256 by at most 253
+/// participants, and never at all in the fallback branch, whose width is exactly
+/// what it was — the smallest prime factor of `contributors`, at most the integer
+/// square root, and so at most [`governed_partition`]'s own count.
+///
+/// **That ceiling is what keeps the rule a preference rather than a feasibility
+/// decision.** 509 participants stage 2,036 `f32` bytes and sit inside both
+/// authorities that refuse a width: [`tiler_ir::schedule::MAX_COOPERATIVE_PARTICIPANTS`]
+/// is 4,096, and the widest workgroup any profile in this repository declares is
+/// the qualified Apple9 entry's 1,024. No contributor count offered a tree before
+/// this rule loses one because of it.
+///
+/// **Taking the wider of this rule and [`governed_partition`] would not have that
+/// property, and that is why it is not what happens.** At 8,198 contributors
+/// (`2 * 4,099`) the balanced count is 4,099, which
+/// [`tiler_ir::schedule::workgroup_tree_tile`] cannot represent, so
+/// [`single_workgroup_tree_region`] would report
+/// [`WorkgroupTreeUnavailable::Unrepresentable`] where it offers a two-participant
+/// tree today; at `2 * 65,537` the balanced count is 65,537. Exhausting the range
+/// below 20,000 finds **1,065** counts where the wider-of-the-two rule exceeds
+/// 4,096 and this one does not. A width preference that withdraws a legal
+/// alternative has decided feasibility, which is the separation
+/// [`WorkgroupTreeUnavailable`] exists to keep.
+///
+/// # What the evidence supports, by direction — they are not the same rung
+///
+/// **Upward: empirical evidence, one host.** Seven shapes, one profile, one
+/// contract, one program family, `f32`, bounded on
+/// [`MEASURED_TREE_PARTICIPANT_CAP`] rather than restated here.
+///
+/// **Downward: two claims, deliberately not sharing a sentence.** That the
+/// chosen count is never more than 253 short of an admissible count within reach
+/// of the cap is *arithmetic*, and the population it moves is exhaustive finite
+/// evidence over a named range —
+/// `pipeline::tests::the_tree_widens_toward_the_cap_rather_than_truncating_at_it`
+/// enumerates every count below 4,096, reports 3,530 admitting ones, and pins the
+/// 1,061 this rule widens. That a count nearer the cap is *cheaper* is `Unknown`
+/// at every count the rule moves: **no measured shape has a contributor count
+/// that is not a power of two**, and on a power of two the largest admissible
+/// count at or below the cap is already the widest the cap admits, so no measured
+/// cell exercised this at all. The direction is inferred from the calibration's
+/// steepest measured span — the tree at four rows of 8,192 costs 9.53 µs at 256
+/// participants against 48.15 µs at two, 5.05x — and an inference is what it
+/// stays until a non-power-of-two count is measured.
+///
+/// **The rule does not chase that direction to the end, and the residue is
+/// named rather than left to be rediscovered.** Below 20,000 contributors, 1,133
+/// counts still take two participants, against 1,176 before. The smallest is
+/// 1,042 (`2 * 521`), where 521 is admissible, representable, and inside the
+/// qualified entry's workgroup width, and the rule still declines it because 521
+/// is 265 above the cap while 2 is 254 below. Nothing measured says which of
+/// those costs less, so `measure-the-tree-width-excursion-past-the-cap` carries
+/// the excursion width as an open measurement rather than a threshold fitted to
+/// no data.
 ///
 /// **It does move one feasibility question, and deliberately does not answer
 /// it.** The rule chooses *within* what a target admits and decides nothing
@@ -2212,9 +2273,10 @@ pub(crate) const MEASURED_TREE_PARTICIPANT_CAP: u64 = 256;
 /// narrowing the width *because* a target is small is not this function's to do:
 /// it would let a cost preference decide legality, which is the separation
 /// [`WorkgroupTreeUnavailable`] exists to keep. The row the calibration measured
-/// against declares 32,768 bytes — 8,192 participants' worth — so the cap is far
-/// inside it, and no profile in this repository sits in the affected band; the
-/// prototype baseline declares zero and refuses every tree at every width.
+/// against declares 32,768 bytes — 8,192 participants' worth — so even the widest
+/// width this rule can reach is far inside it, and no profile in this repository
+/// sits in the affected band; the prototype baseline declares zero and refuses
+/// every tree at every width.
 pub(crate) fn capped_tree_partition(contributors: u64) -> Option<ContributorPartition> {
     if contributors < 4 {
         return None;
@@ -2226,27 +2288,46 @@ pub(crate) fn capped_tree_partition(contributors: u64) -> Option<ContributorPart
     // At least two contributors per partition, so the widest count worth
     // considering is half the sequence even when the cap is above it.
     let ceiling = MEASURED_TREE_PARTICIPANT_CAP.min(contributors / 2);
+    let mut below = None;
     let mut candidate = ceiling;
     while candidate >= 2 {
         if contributors.is_multiple_of(candidate) {
-            return Some(partition(candidate));
+            below = Some(candidate);
+            break;
         }
         candidate -= 1;
     }
-    // Nothing at or below the cap divides the sequence. The smallest admissible
-    // count is then the smallest divisor above it, and that divisor is bounded by
-    // the integer square root: a count with no divisor there is prime and admits
-    // no split at all. Searching past it would walk half the sequence for every
-    // prime extent.
-    let limit = contributors.isqrt();
-    candidate = ceiling + 1;
-    while candidate <= limit {
+    let Some(below) = below else {
+        // Nothing at or below the cap divides the sequence. The smallest
+        // admissible count is then the smallest divisor above it, and that
+        // divisor is bounded by the integer square root: a count with no divisor
+        // there is prime and admits no split at all. Searching past it would walk
+        // half the sequence for every prime extent.
+        let limit = contributors.isqrt();
+        let mut candidate = ceiling + 1;
+        while candidate <= limit {
+            if contributors.is_multiple_of(candidate) {
+                return Some(partition(candidate));
+            }
+            candidate += 1;
+        }
+        return None;
+    };
+    // A count above the cap is nearer to it than `below` exactly when it is
+    // under `2 * cap - below`, so that expression — never above 510 — is the
+    // whole search range, and it collapses to nothing when `below` is the cap
+    // itself. The `contributors / 2` guard is the same two-contributors-per
+    // -partition floor as the ceiling above, and is what makes the range empty
+    // for every sequence short enough that no count past the cap could split it.
+    let nearer_than_below = 2 * MEASURED_TREE_PARTICIPANT_CAP - below;
+    let mut candidate = MEASURED_TREE_PARTICIPANT_CAP + 1;
+    while candidate < nearer_than_below && candidate <= contributors / 2 {
         if contributors.is_multiple_of(candidate) {
             return Some(partition(candidate));
         }
         candidate += 1;
     }
-    None
+    Some(partition(below))
 }
 
 /// Builds the canonical partial pass of a split reduction for one request.
@@ -2527,12 +2608,19 @@ impl WorkgroupTreeUnavailable {
 /// | accumulation dtype | the resolved contract's arithmetic type | the topology's `accumulation` |
 /// | contributor order | original-axis lexicographic within a partition, ascending participant across them | the topology's `order` and `arrival` |
 ///
-/// The participant count is [`capped_tree_partition`]'s and is **calibrated**:
-/// the largest admissible participant count not exceeding
-/// [`MEASURED_TREE_PARTICIPANT_CAP`]. It is deliberately no longer the balanced
-/// exact split [`governed_partition`] returns, and the two now declare
+/// The participant count is [`capped_tree_partition`]'s: the admissible count
+/// nearest [`MEASURED_TREE_PARTICIPANT_CAP`]. It is deliberately no longer the
+/// balanced exact split [`governed_partition`] returns, and the two now declare
 /// *different* groupings wherever their choices differ — 8,192 contributors give
 /// the tree 256 participants folding 32 each where the split takes 128 of 64.
+///
+/// **Only the value 256 is calibrated; the rule around it is not, in one
+/// direction.** Every measured shape has a power-of-two contributor count, and
+/// there "nearest the cap" and "largest not exceeding the cap" are the same
+/// choice. Which of the two the rule states is therefore an *inference* from the
+/// measured direction rather than a measured result, and
+/// [`capped_tree_partition`] carries that separation, the arithmetic bound it
+/// puts on the downward direction, and the population still outside it.
 ///
 /// **Measurement, 2026-08-07 — the cap is what the sweep over partitions
 /// selected for this strategy.** [The retained partition calibration] held the
