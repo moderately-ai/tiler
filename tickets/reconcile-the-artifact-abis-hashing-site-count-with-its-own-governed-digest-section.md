@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-artifact-abis-hashing-site-count-with-its-own-governed-digest-section
 title: Reconcile the artifact ABI's hashing-site count with its own governed-digest section
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check, decide-whether-adr-0103-s-eight-domain-count-is-a-dated-record-or-a-stale-claim]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: w-artifact-terra
-lease_expires_at: 1786223950
 ---
 `cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check` reconciled eight count sites against the true population of eighteen. This ticket originally found two further ordinal claims in a different vocabulary — *hashing sites* rather than *governed domains*. Re-reading the contract at this ticket's base distinguishes the already-repaired ADR 0074 block from a separate live schema-15 Fact, and the encoder comment also remains live.
 

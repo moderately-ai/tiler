@@ -1,7 +1,7 @@
 ---
 id: route-subagent-models-by-change-risk
 title: Route subagent models by change risk
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [coordination, agents]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786224856
 ---
 Record the established subagent model-routing policy in AGENTS.md: use Sol for authority, identity, public-boundary, and broad cross-layer work; use Terra for tightly bounded work with clear invariants; select independent review by risk instead of running an ongoing model comparison.
 

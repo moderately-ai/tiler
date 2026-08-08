@@ -1,7 +1,7 @@
 ---
 id: date-the-conformance-measurement-bullet-s-all-runs-claim
 title: Date the conformance measurement bullet's all-runs claim
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [refresh-the-device-free-test-floor-s-prose-census]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-status-terra
-lease_expires_at: 1786223949
 ---
 
 `docs/status.md`'s device-execution Measurement bullet says `crates/tiler-conformance` "was admitted on 2026-08-07 and every one of its runs landed the same day." The runs remain the 2026-08-07 population, but later crate edits mean the undated sentence no longer identifies its historical boundary.
