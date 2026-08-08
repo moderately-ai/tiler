@@ -1,7 +1,7 @@
 ---
 id: correct-the-symbolic-coefficient-era-index-vocabulary-claims
 title: Correct the symbolic-coefficient-era index vocabulary claims
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-symbolic-index-expression-coefficients, repoint-the-sourced-extent-paths-in-the-four-documents-that-name-them, admit-a-position-selecting-slice-for-the-rotary-table]
@@ -9,9 +9,6 @@ scopes: [research/shapes, research/indexing, implementation/ir]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [docs, doc-drift, indexing]
-claimed_from: todo
-assignee: w-terra-index
-lease_expires_at: 1786201849
 ---
 ## What is stale
 
@@ -68,11 +65,11 @@ The trigger tickets and records `admit-the-sub-tensor-selection-family`, `admit-
 
 `docs/ir.md` is a second mapped remainder outside this ticket's declared `contracts/navigation` scope: its anchors `the offset is a literal`, `What it does not reach is an operation`, and `a semantic value's shape is still a Shape` retain the false static-`ValueFact`/removed-`BuildError` account. Its implemented-extent paragraph remains a valid source for the coefficient work, but the three source anchors require a separate `contracts/foundation` correction.
 
-The broader semantic-shape sweep also found `docs/research/shapes/symbolic-semantic-extents.md`, anchors `The Fact's narrow half survives`, `No symbol reaches an INFERRED RESULT`, and `keeping ValueFact on a fixed Shape`, plus `docs/roadmap.md`, anchor `a symbolic contracted extent is not reached either`. These are independent stale accounts of the already-landed general `ValueFact` transition, not the coefficient-era slice trigger this ticket corrects; they are reported to the existing [`repair-the-records-the-sourced-semantic-shape-falsifies`](repair-the-records-the-sourced-semantic-shape-falsifies.md) track rather than folded into this coherent slice split.
+The broader semantic-shape sweep also found `docs/research/shapes/symbolic-semantic-extents.md`, anchors `The Fact's narrow half survives`, `No symbol reaches an INFERRED RESULT`, and `keeping ValueFact on a fixed Shape`, plus `docs/roadmap.md`, anchor `a symbolic contracted extent is not reached either`. These are independent stale accounts of the already-landed general `ValueFact` transition, not the coefficient-era slice trigger this ticket corrects. The former repair track is already complete, so [`repair-the-shape-records-after-sourced-semantic-result-shapes`](repair-the-shape-records-after-sourced-semantic-result-shapes.md) now owns this newly discovered drift rather than pretending the historical ticket remains active.
 
 A renewed corpus search after this correction used the anchors `carrier gap Q-SHAPE-006`, `No coordinate expression carries an extent symbol`, and `ValueFact on a fixed Shape`. Apart from the newly classified concatenate contingency, its current-looking hits are the mapped `docs/ir.md` contract remainder and the independently owned semantic-shape records above; the other matches quote retired wording inside dated corrections or live only in historical ticket accounts. No additional unclassified live carrier-gap or static-`ValueFact` premise is left in this ticket's owned document population.
 
-`crates/tiler-ir/src/semantic/slice.rs`, anchor `SLICE_F32_NORMATIVE_DEFINITION`, is a further live stale site that this ticket cannot safely edit in isolation. `OperationDefinition::new` registers it; `encode_operation_definition` in `crates/tiler-ir/src/semantic/registry.rs` frames it into both the reached-definition projection and the frozen registry snapshot. Changing that string therefore moves identities for slice-using semantic programs and the standard-registry subject consumed by compiler pins. This branch leaves the identity-bearing string unchanged and requires a separate `implementation/ir` plus compiler-identity/pin integration change that recomputes all affected values on its merged tree.
+`crates/tiler-ir/src/semantic/slice.rs`, anchor `SLICE_F32_NORMATIVE_DEFINITION`, is a further live stale site that this ticket cannot safely edit in isolation. `OperationDefinition::new` registers it; `encode_operation_definition` in `crates/tiler-ir/src/semantic/registry.rs` frames it into both the reached-definition projection and the frozen registry snapshot. Changing that string therefore moves identities for slice-using semantic programs and the standard-registry subject consumed by compiler pins. This branch leaves the identity-bearing string unchanged; [`correct-the-slice-normative-definition-and-recompute-compiler-identities`](correct-the-slice-normative-definition-and-recompute-compiler-identities.md) owns the coherent definition-and-pin recomputation.
 
 ## How to repair
 
@@ -80,4 +77,4 @@ Follow each file's existing convention. `docs/roadmap.md`, `docs/open-questions.
 
 ## Closes when
 
-Every declared non-identity site above is classified as a live claim repaired with a dated correction, or as an already-recorded correction needing none, with the classification stated per site rather than counted; the corrected symbolic-window diagnostic is pinned by its complete test assertion and the recorded subject perturbation; the two reserved triggers are re-derived from source and their wording states that the remaining symbolic-slice boundary is the literal-only selection grammar; and the `docs/ir.md` contract and `SLICE_F32_NORMATIVE_DEFINITION` identity-bearing remainders are mapped rather than claimed fixed.
+Every declared non-identity site above is classified as a live claim repaired with a dated correction, or as an already-recorded correction needing none, with the classification stated per site rather than counted; the corrected symbolic-window diagnostic is pinned by its complete test assertion and the recorded subject perturbation; the two reserved triggers are re-derived from source and their wording states that the remaining symbolic-slice boundary is the literal-only selection grammar; and the `docs/ir.md` contract, broader semantic-shape records, and `SLICE_F32_NORMATIVE_DEFINITION` identity-bearing remainder have explicit follow-up owners rather than being claimed fixed.
