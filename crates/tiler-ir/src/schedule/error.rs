@@ -10,6 +10,7 @@ use std::error::Error;
 use std::fmt;
 
 use super::ScheduledRegionBuilder;
+use super::numerics::ArithmeticType;
 
 /// A governed structural resource in the scheduled-region profile.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -105,6 +106,31 @@ pub enum ScheduledRegionDiagnostic {
     BoundsProof,
     /// The scalar program, reduction topology, and access map disagree.
     NumericalOrAccessRefinement,
+    /// A parallel topology declared a combining width its region does not
+    /// compute in.
+    ///
+    /// Separate from [`Self::NumericalOrAccessRefinement`], which the two
+    /// parallel gates otherwise share, and separate for the reason
+    /// [`Self::CooperativeTile`] gives for carrying its rule: a strategy that
+    /// accumulates at a width the contract does not admit is *a different
+    /// computation*, and a producer told only that "the program, the topology,
+    /// and the access map disagree" cannot tell that from a wrong axis set or a
+    /// wrong contributor order. The two widths are carried because the refusal
+    /// is otherwise unactionable — an accumulator is wrong only relative to
+    /// something, and that something is the region's own element width rather
+    /// than a literal this variant could name.
+    ///
+    /// A *narrower* declaration is the case
+    /// `implement-parallel-reduction-strategies` criterion 3 names. A wider one
+    /// is refused by this same rule, because widening the accumulator is
+    /// equally a computation the region did not declare — the check is
+    /// disagreement with the region's width, not a comparison of widths.
+    AccumulationWidth {
+        /// The width the topology declared it combines at.
+        declared: ArithmeticType,
+        /// The width the region's own scalar program computes in.
+        required: ArithmeticType,
+    },
     /// The iteration-domain element count overflowed `u64`.
     ShapeProductOverflow,
     /// A cooperative workgroup tile violated one cross-invocation dataflow rule.
@@ -278,6 +304,7 @@ impl ScheduledRegionDiagnostic {
             Self::ProofReference => "proof-reference",
             Self::BoundsProof => "bounds-proof",
             Self::NumericalOrAccessRefinement => "numerical-or-access-refinement",
+            Self::AccumulationWidth { .. } => "accumulation-width",
             Self::ShapeProductOverflow => "shape-product-overflow",
             Self::CooperativeTile { rule } => rule.rule(),
             Self::Synchronization { rule } => rule.rule(),

@@ -29,7 +29,7 @@ use super::model::{
     element_count, encode_identity, partial_reduction_axis, partial_reduction_shape,
     region_arithmetic_type,
 };
-use super::numerics::{ExceptionalValueAssumption, NumericalRealization};
+use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalRealization};
 use super::synchronization::{ConvergenceEvidence, SynchronizationRule, required_subject};
 use super::{
     MAX_COOPERATIVE_PARTICIPANTS, MAX_COOPERATIVE_PHASE_ACCESSES, MAX_COOPERATIVE_PHASES,
@@ -1466,6 +1466,41 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
     }
 }
 
+/// Verifies that a parallel topology combines at the width its region computes
+/// in.
+///
+/// **The single accumulation authority for every topology that declares one.**
+/// [`ReductionTopology::MultiPass`] and
+/// [`ReductionTopology::CooperativeWorkgroup`] are the two variants carrying an
+/// `accumulation` field, and both reach this function rather than repeating the
+/// comparison, so a change admitting a narrower accumulator for one strategy
+/// cannot leave the other refusing it.
+///
+/// The required width is *derived* from the region's own scalar program rather
+/// than compared against a literal `F32`. Every family that reaches either gate
+/// is `f32` today — `multi_pass_family` and `cooperative_family` both refuse the
+/// pointwise programs — so the derivation changes no outcome now; what it
+/// changes is that a `bf16` reduction admitted later must state its accumulator
+/// instead of inheriting an `f32` one nobody re-checked.
+///
+/// # Errors
+///
+/// Returns [`ScheduledRegionDiagnostic::AccumulationWidth`] carrying both
+/// widths. Refusing by its own name rather than as a shared refinement failure
+/// is criterion 3 of `implement-parallel-reduction-strategies`: the accumulation
+/// dtype is an explicit part of the strategy, and a strategy accumulating at a
+/// width the contract does not admit is rejected with a typed reason.
+fn verify_accumulation_width(
+    declared: ArithmeticType,
+    program: &ScalarProgram,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let required = region_arithmetic_type(program);
+    if declared != required {
+        return Err(ScheduledRegionDiagnostic::AccumulationWidth { declared, required });
+    }
+    Ok(())
+}
+
 /// Verifies one pass of a split, multi-dispatch reduction.
 ///
 /// The two passes are checked together here rather than as two more arms of the
@@ -1505,18 +1540,13 @@ fn verify_multi_pass_semantics(
     if *permits_reassociation != numerical.permits_reassociation()
         || *permits_permutation != numerical.permits_permutation()
         || (family.consumes_reassociation && !*permits_reassociation)
-        // The bounded profile combines at the region's *own* element width,
-        // derived from its scalar program rather than compared against a literal
-        // `F32`. A narrower or wider accumulation is a different computation and
-        // is refused rather than silently accepted as equivalent. Every family
-        // reaching this arm is `f32` today — `multi_pass_family` refuses the
-        // pointwise programs above — so the derivation changes no outcome; what
-        // it changes is that a `bf16` reduction admitted later must state its
-        // accumulator instead of inheriting an `f32` one nobody re-checked.
-        || *accumulation != region_arithmetic_type(&region.index.scalar_program)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
+    // The accumulator, refused under its own name. Checked after the permissions
+    // so a region wrong on both reports the permission, which is the ordering
+    // the cooperative gate already follows for `ArrivalPermission`.
+    verify_accumulation_width(*accumulation, &region.index.scalar_program)?;
 
     let LogicalAccess::ReductionContributor {
         input_shape,
@@ -1635,12 +1665,12 @@ fn verify_cooperative_semantics(
     if *permits_reassociation != numerical.permits_reassociation()
         || *permits_permutation != numerical.permits_permutation()
         || (family.consumes_reassociation && !*permits_reassociation)
-        // The region's own element width, for the reason the multi-pass gate
-        // above states.
-        || *accumulation != region_arithmetic_type(&region.index.scalar_program)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
+    // The region's own element width, refused under its own name, for the reason
+    // the multi-pass gate above states.
+    verify_accumulation_width(*accumulation, &region.index.scalar_program)?;
     // The second permission, checked on its own and only where the arrival
     // actually consumes it. The order matters: a permitted-but-unrealizable
     // arrival must reach the admission rule below rather than be reported as a
@@ -5064,22 +5094,40 @@ mod tests {
     }
 
     /// An accumulation narrower than the element width is rejected, not accepted.
+    ///
+    /// **Refused under its own name**, which criterion 3 of
+    /// `implement-parallel-reduction-strategies` requires: the diagnostic names
+    /// the accumulator and carries both widths, so a producer can tell this from
+    /// the wrong axis set or the wrong contributor order that
+    /// [`ScheduledRegionDiagnostic::NumericalOrAccessRefinement`] also reports.
+    /// A wider declaration is refused by the same rule, and it is driven here
+    /// because "narrower" is the criterion's wording and not the check's.
     #[test]
     fn a_narrowed_accumulation_width_is_rejected() {
-        for narrower in [ArithmeticType::F16, ArithmeticType::Bf16] {
+        for wrong in [
+            ArithmeticType::F16,
+            ArithmeticType::Bf16,
+            ArithmeticType::F64,
+        ] {
             let mut builder = partial_pass_builder(SPLIT);
             let ReductionTopology::MultiPass { accumulation, .. } =
                 &mut builder.schedule.as_mut().unwrap().reduction
             else {
                 panic!("expected a split topology")
             };
-            *accumulation = narrower;
+            *accumulation = wrong;
             assert_eq!(
                 builder.build().unwrap_err().diagnostics(),
-                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
-                "{narrower:?} is narrower than the width the contract admits"
+                [ScheduledRegionDiagnostic::AccumulationWidth {
+                    declared: wrong,
+                    required: ArithmeticType::F32,
+                }],
+                "{wrong:?} is not the width this region computes in"
             );
         }
+        // The control: the same builder at the declared width verifies, so the
+        // refusals above are about the accumulator and not about the fixture.
+        assert!(partial_pass_builder(SPLIT).build().is_ok());
     }
 
     /// The final pass must combine exactly one contributor per partition.
@@ -5173,7 +5221,10 @@ mod tests {
             *accumulation = narrower;
             assert_eq!(
                 builder.build().unwrap_err().diagnostics(),
-                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+                [ScheduledRegionDiagnostic::AccumulationWidth {
+                    declared: narrower,
+                    required: ArithmeticType::F32,
+                }],
                 "{narrower:?} is narrower than the width tiler::rms-norm-f32@1 declares"
             );
         }
@@ -5592,6 +5643,41 @@ mod tests {
             panic!("expected exactly one diagnostic, got {diagnostics:?}")
         };
         *diagnostic
+    }
+
+    /// The tile's accumulator is refused under the same name the split's is.
+    ///
+    /// **The second of the two sites, driven separately.**
+    /// `verify_accumulation_width` is the single authority both parallel gates
+    /// reach, so a test on the split alone would pass while the tile's own call
+    /// was deleted. This asserts the tile refuses, with the same diagnostic and
+    /// the same payload, on a topology whose other fields are untouched.
+    ///
+    /// The tile's control is `one_cooperative_tile_verifies_and_derives_its_workgroup_storage`
+    /// below, which builds this exact fixture unperturbed.
+    #[test]
+    fn a_cooperative_tile_declaring_the_wrong_accumulation_width_is_rejected() {
+        for wrong in [
+            ArithmeticType::F16,
+            ArithmeticType::Bf16,
+            ArithmeticType::F64,
+        ] {
+            let mut builder = cooperative_builder(cooperative_tile_fixture());
+            let ReductionTopology::CooperativeWorkgroup { accumulation, .. } =
+                &mut builder.schedule.as_mut().unwrap().reduction
+            else {
+                panic!("expected a cooperative topology")
+            };
+            *accumulation = wrong;
+            assert_eq!(
+                cooperative_rejection(builder),
+                ScheduledRegionDiagnostic::AccumulationWidth {
+                    declared: wrong,
+                    required: ArithmeticType::F32,
+                },
+                "{wrong:?} is not the width this tile's region computes in"
+            );
+        }
     }
 
     /// One cooperative tile verifies, and states everything the handoff needs.
