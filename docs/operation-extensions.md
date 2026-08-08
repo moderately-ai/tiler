@@ -135,8 +135,16 @@ does not require a borrowed context. Registration callbacks are discarded at
 freeze; immutable definition objects required for concrete-type validation and
 operation inference remain in the snapshot under narrow host-owned contexts.
 Under ADR 0065, executable reference capabilities compose in
-`tiler-reference`; optimizer and backend registries likewise compose later
-rather than introducing an inward dependency from semantic IR.
+`tiler-reference`; optimizer capability registration and backend participation
+likewise compose later rather than introducing an inward dependency from
+semantic IR. **Corrected 2026-08-08:** this read "optimizer and backend
+registries", naming a thing [ADR 0090](decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+eliminated — backend composition is per responsibility and has no registry of
+its own, and item 4 states there is "no `BackendProvider`, no provider bundle,
+no emitter registration, and no runtime-adapter registration". The registries on
+this path are the compiler's installed lowering and physical-provider ones. The
+dependency-direction claim ADR 0065 makes here is unchanged, which is why the
+sentence is corrected rather than removed.
 Provider objects are expected to be `Send + Sync + 'static` unless an explicit
 compiler mode serializes a capability.
 
