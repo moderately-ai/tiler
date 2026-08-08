@@ -1,7 +1,7 @@
 ---
 id: drive-an-external-physical-implementation-provider-through-compilation
 title: Drive an external physical implementation provider through compilation
-status: in-progress
+status: done
 priority: p1
 dependencies: [accept-the-public-backend-provider-composition-boundary]
 related: [prototype-complete-physical-plan-selection, wire-capability-and-refinement-into-compile-path]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, contracts/optimizer, contra
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, compiler]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786178177
 ---
 ## User-visible outcome
 
