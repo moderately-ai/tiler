@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0108-data-dependent-index-coordinate-siting
 title: Accept or revise ADR 0108 on siting a data-dependent index coordinate
-status: awaiting-decision
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-the-indirect-access-class-into-the-index-layer, admit-an-indirect-gather-family-for-tied-embedding-lookup, emit-the-indirect-gather-on-metal, accept-adr-0107-indirect-gather-semantic-family]
@@ -9,6 +9,8 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, indexing, ir, gather, verification, needs-tom]
+assignee: sol-adr0108
+lease_expires_at: 1786219272
 ---
 **This ticket is Tom's decision, not an agent's work item.** It exists so a follow-on that admits the form has something to depend on rather than being schedulable while the record shaping it is still `proposed`.
 
