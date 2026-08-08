@@ -1,7 +1,7 @@
 ---
 id: correct-the-every-ir-domain-opens-tiler-ir-premise-in-two-places
 title: Correct the every-ir-domain-opens-tiler-ir premise in two places
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, digest, documentation]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786182999
 ---
 
 A no-prefix argument rests on the premise that every domain the shared IR admits opens `tiler.ir.`. **Most do not.** The conclusion survives; the reasoning does not.

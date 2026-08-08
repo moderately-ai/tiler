@@ -1,7 +1,7 @@
 ---
 id: carry-the-exhausted-resource-through-the-budget-refusal
 title: Carry the exhausted resource through the budget refusal
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, diagnostics]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786182999
 ---
 ## User-visible outcome
 
