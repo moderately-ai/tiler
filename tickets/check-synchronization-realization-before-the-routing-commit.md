@@ -1,7 +1,7 @@
 ---
 id: check-synchronization-realization-before-the-routing-commit
 title: Check synchronization realization before the routing commit
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [realize-parallel-reduction-strategies-on-metal]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/runtime, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786185307
 ---
 ## User-visible outcome
 
