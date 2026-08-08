@@ -371,6 +371,13 @@ Recording the eliminated route, because the next reader tempted by it needs the 
 
 Each command is one line and either reproduces or refutes a claim above.
 
+**The three commands that read an Apple SDK header resolve against whatever SDK `xcrun` selects, which is not the SDK this ledger was recorded against.** The offline compilation environment above names `macosx` 26.5, build `25F70`; that row is a dated measurement this record keeps rather than re-bases. Measured on this host 2026-08-07: `xcrun --sdk macosx --show-sdk-path` resolves to `/Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk`, version 27.0, build `26A5388f` — the same SDK build the evaluation-order row above records finding 34 being taken on, and for the same reason it gives: `xcode-select` on this host now points at Xcode 27.0. So a reader running the block below reads the **27.0** headers, not the 26.5 ones. What that costs is measured rather than assumed, and it is not the same for the two headers involved:
+
+- **`MTLComputeCommandEncoder.h` is byte-identical across the two SDKs**, so the two commands reading it print at 27.0 exactly what they printed at 26.5 — the `arbitrarily-sized grid` abstract and its divisibility `@discussion` at lines 240–241, and the indirect-argument struct at line 34, on both. This is the one already carried as SHA-256 `610bcf8f3e6cb6a7067622f4395d8aa292c56226afde457ac6cb902937872b7b` on the grid-axis elimination above, and the digest check in the block runs it on the reader's host rather than asking for it on trust.
+- **`MTLComputePipeline.h` is not identical**: 305 lines at 26.5 against 297 at 27.0, digests `8f194e26c3df43a8787edc1aa6898f7156f065fb21bf043629d7e5227865c9aa` and `1b30d5dbf85c6ae007fb5b5c2a5194fce225d0afcf01fd02d5600d8660f9e3b5`. **Measured by `diff` rather than inferred from the digests: the entire difference is documentation-comment prose about reflection information, plus two blank lines.** No declaration is added and none is withdrawn, and `maxTotalThreadsPerThreadgroup` is declared identically in both. What moves is only where the command reports it — lines 52, 53, 55, 227 and 230 at 26.5 against 52, 53, 55, 217 and 220 at 27.0, the ten-line shift the deleted comment block accounts for.
+
+**So the divergence costs this block nothing, and that is a measured result rather than the absence of a check.** It is stated because the two facts a reader needs to know it — that one header is covered by the digest check and the other is not, and that the uncovered one is the one that actually differs — are the two facts the block did not carry. The workgroup-threads row's evidence in particular survives the selection: it is evidence that the value lives on a prepared pipeline, and both SDKs declare the property on `MTLComputePipelineState`.
+
 ```sh
 # The quantitative rows, from the vendored feature tables.
 pdftotext -layout docs/research/apple-targets/sources/apple-metal-feature-set-tables-2025-10-20.pdf - \
@@ -390,6 +397,11 @@ pdftotext -layout docs/research/apple-targets/sources/apple-metal-shading-langua
 # "arbitrarily-sized grid" abstract and the divisibility discussion that scopes
 # it; the second prints the indirect-dispatch struct, whose `uint32_t` grid is
 # the only numeric bound in the header and binds a route Tiler does not encode.
+#
+# These three read whatever SDK `xcrun` selects, which on this host is 27.0
+# (build 26A5388f) and not the 26.5 / 25F70 row these were recorded against.
+# The paragraph above this block states what the difference costs; the digest
+# and `diff` checks below are how it was measured, on both headers.
 rg -n 'arbitrarily-sized grid|threadsPerGrid does not have' \
   "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLComputeCommandEncoder.h"
 rg -n -A3 'MTLDispatchThreadsIndirectArguments' \
@@ -397,12 +409,23 @@ rg -n -A3 'MTLDispatchThreadsIndirectArguments' \
 rg -n 'maxTotalThreadsPerThreadgroup' \
   "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLComputePipeline.h"
 
-# The two installed SDKs agree on the dispatch header, by byte comparison rather
-# than by reading. Prints one identical digest twice.
+# What the two installed SDKs do and do not agree on, over both headers the
+# commands above read, by byte comparison rather than by reading. Prints four
+# digests, dispatch then pipeline for each SDK in turn: lines 1 and 3 match and
+# lines 2 and 4 do *not*. That second pair is why this block states its SDK
+# provenance above rather than leaving the selection latent.
 for sdk in /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk \
            /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk; do
   shasum -a 256 "$sdk/System/Library/Frameworks/Metal.framework/Headers/MTLComputeCommandEncoder.h"
+  shasum -a 256 "$sdk/System/Library/Frameworks/Metal.framework/Headers/MTLComputePipeline.h"
 done
+
+# What that second difference consists of, which is what decides it costs the
+# block nothing: reflection-related documentation comments and two blank lines,
+# declaring nothing new and withdrawing no declaration. Prints only `///` and
+# blank-line hunks -- no line beginning `@property` or `NSUInteger` appears.
+diff /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks/Metal.framework/Headers/MTLComputePipeline.h \
+     /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk/System/Library/Frameworks/Metal.framework/Headers/MTLComputePipeline.h
 
 # The MSL language ceiling on the addressable grid, and the counted absence of
 # anything wider than `uint`. The second command prints `0` per specification.
@@ -457,4 +480,4 @@ pdftotext -layout docs/research/apple-targets/sources/apple-metal-shading-langua
   | rg -n -A2 'If you set the option to safe'
 ```
 
-The feature-table check is a positive check on four rows. The `maxTotalThreadsPerThreadgroup` check is deliberately *not* a source for the workgroup row: it is the evidence that the value lives on a prepared pipeline, which is why the row is a query rather than a fact.
+The feature-table check is a positive check on four rows. The `maxTotalThreadsPerThreadgroup` check is deliberately *not* a source for the workgroup row: it is the evidence that the value lives on a prepared pipeline, which is why the row is a query rather than a fact. It is also the one command in the block whose header is not byte-identical across the two installed SDKs, and the paragraph introducing the block states what that does and does not move.
