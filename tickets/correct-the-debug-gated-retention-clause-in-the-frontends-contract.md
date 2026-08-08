@@ -1,7 +1,7 @@
 ---
 id: correct-the-debug-gated-retention-clause-in-the-frontends-contract
 title: Correct the debug-gated retention clause in the frontends contract
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [repair-the-dangling-ticket-link-in-the-frontends-contract, accept-the-retention-read-back-s-caller-visible-boundary]
@@ -9,9 +9,6 @@ scopes: [contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [retention, contracts, documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786169827
 ---
 
 `docs/integration/frontends.md` tells a reader that retention is conditional on a debug configuration. It is not. Retention is unconditional and caller-independent, so the contract promises a gate that does not exist.
