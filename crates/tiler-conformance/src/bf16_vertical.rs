@@ -82,23 +82,57 @@
 //! multi-occurrence BF16 region derives its own fusion legality and fuses
 //! (`a_multi_occurrence_bf16_program_derives_its_own_fusion_legality`).
 //!
-//! **Two boundaries survive inside that fusion, and neither is evidence that
-//! BF16 reductions are correct.** Naming them is required wherever the fusion is
-//! stated, or the correction overshoots in the opposite direction:
+//! **What survives inside that fusion is not evidence that BF16 reductions are
+//! correct.** Naming it is required wherever the fusion is stated, or the
+//! correction overshoots in the opposite direction:
 //!
-//! - **Reassociation is withheld rather than proved.**
-//!   `BF16_FACT_REASSOCIATION_PERMITTED` is `false` and the question stays open
-//!   at the operation vocabulary, so a contract that *permits* regrouping leaves
-//!   the obligation `Unknown` — not required here is not the same as proved.
+//! > **A boundary claimed here was retired and is struck. Corrected 2026-08-07.**
+//! > A bullet read "**Reassociation is withheld rather than proved.**
+//! > `BF16_FACT_REASSOCIATION_PERMITTED` is `false` and the question stays open
+//! > at the operation vocabulary, so a contract that *permits* regrouping leaves
+//! > the obligation `Unknown` — not required here is not the same as proved."
+//! > The constant is a true fact and the consequence drawn from it is false.
+//! > `push_reduction_obligations` discharges `ReductionReassociation` as
+//! > `SoundProof` under `!has_reduction || reassociation == Forbidden`, so a
+//! > region holding no reduction short-circuits *before* the contract's
+//! > reassociation resolution is read at all and no BF16 contract of either
+//! > resolution can leave the obligation `Unknown`. The constant governs the
+//! > operation vocabulary; it is not what decides this obligation.
+//!
 //! - **The four reduction obligations discharge vacuously, over an empty
-//!   population.** `tiler-ir` registers no BF16 family carrying a fold at all,
-//!   so there is no BF16 contributor sequence for an identity, an empty domain,
-//!   an order, a regrouping, or a permutation to be about. Vacuous is not
-//!   correct.
+//!   population — the regrouping one among them.** `tiler-ir` registers three
+//!   BF16 families and no fold: `constant_bf16_op` is a value source and
+//!   `multiply_bf16_op` and `add_bf16_op` are elementwise arithmetic, so
+//!   `is_reduction` is false for every member a BF16 region can hold and there
+//!   is no BF16 contributor sequence for an identity, an empty domain, an order,
+//!   a regrouping, or a permutation to be about. Vacuous is not correct: a
+//!   `SoundProof` recorded over no contributors is evidence that none were
+//!   present, not evidence that any are right.
+//! - **The regrouping question is open at the vocabulary rather than at the
+//!   obligation.** `BF16_FACT_REASSOCIATION_PERMITTED` is `false` and neither
+//!   BF16 arithmetic declares an algebraic capability, where `tiler::add-f32@1`
+//!   declares ordered associativity — a missing declaration reads as unknown
+//!   rather than as the inverse law. Nothing here bounds what a BF16 regrouping
+//!   would cost, and the error one carries is bounded by the significand: 8 bits
+//!   against binary32's 24. That question would reach
+//!   `push_reduction_obligations` only if a BF16 fold were registered, and the
+//!   vacuous discharge above does not answer it.
+//!
+//! **Where the `Unknown` regrouping branch *is* reached**, so the correction is
+//! checkable rather than only denied: it needs a reduction member *and* a
+//! permitting contract, which is an `f32` region today. `tiler-compiler`'s own
+//! `a_reassociating_contract_discharges_the_mixed_region_by_forbidding_contraction`
+//! puts a serial-`f32`-sum program to a reassociating contract and watches
+//! `FusionObligation::ReductionReassociation` come back `Unknown` for the reason
+//! `unproven-reassociation`.
 //!
 //! And the fusion wall moved rather than vanished:
 //! `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall` is
-//! where a contraction-permitting BF16 contract still stops.
+//! where a contraction-permitting BF16 contract still stops. **That wall is not
+//! the regrouping branch above**: it stops on
+//! `FusionObligation::ArithmeticContraction` for the reason
+//! `unrealized-contraction`, a different obligation reached for a different
+//! reason, and the contract it stops carries `Forbidden` reassociation.
 //!
 //! # Why the constants are `1.5` and `+0.0`
 //!
