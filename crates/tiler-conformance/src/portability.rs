@@ -47,14 +47,14 @@ use std::path::{Path, PathBuf};
 /// How many test functions a non-Apple host must still run.
 ///
 /// **A floor, and it sits one below the population deliberately.** The crate
-/// declares 71 tests and the macOS predicate removes three of them, in
-/// `dispatch`, so a non-Apple host runs 68. Sixty-seven is what makes the
+/// declares 76 tests and the macOS predicate removes three of them, in
+/// `dispatch`, so a non-Apple host runs 73. Seventy-two is what makes the
 /// *smallest* collapse fail rather than only the large ones: the three smallest
 /// device-free modules, `device_preflight`, `lints`, and `publication`'s own
-/// tests, hold two tests each, so gating any of them drops the population to 66
-/// and this refuses it. Gating `retained_record`'s tests drops it to 64,
-/// `applicability` to 62, `publication::proof` to 59, `serial_sum`'s tests to
-/// 56, `bf16_vertical`'s to 55, and `envelope`'s to 51.
+/// tests, hold two tests each, so gating any of them drops the population to 71
+/// and this refuses it. Gating `retained_record`'s tests drops it to 69,
+/// `applicability` to 67, `publication::proof` to 64, `bf16_vertical`'s to 60,
+/// and either `serial_sum`'s tests or `envelope`'s to 56.
 ///
 /// The narrow margin is the cost of that sensitivity: removing two device-free
 /// tests for any reason turns this red. Raising the floor with the population
@@ -69,7 +69,7 @@ use std::path::{Path, PathBuf};
 /// and two in `publication::proof` (the restated reference bound, and which
 /// families state an iteration-step allowance).
 ///
-/// It last rose 64 → 67 on 2026-08-07 under
+/// It rose 64 → 67 on 2026-08-07 under
 /// `state-a-subject-on-the-contraction-publication-path-s-reference-oracle`,
 /// which added three device-free tests, all in `publication::proof`: the
 /// packaged plan's contract reaching the oracle with its subject, the bridge
@@ -82,7 +82,20 @@ use std::path::{Path, PathBuf};
 /// out of the source whether or not a run carries `#[ignore]`. Spelling that
 /// attribute here would make this file declare a test it does not have, which is
 /// the trap the module header names.
-const DEVICE_FREE_TEST_FLOOR: usize = 67;
+///
+/// It last rose 67 → 72 on 2026-08-07 under
+/// `separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ`,
+/// which added five tests to `serial_sum`'s: the twelve-contributor operand
+/// pair's counts, the refusal of the other parallel strategy's declared
+/// grouping, the two strategies publishing different groupings at that count,
+/// and the two dispatched runs there. **All five are device-free by this
+/// census's rule and two of them are measured runs**, which is not a
+/// contradiction: a measured run is a device-free *test* that reports its
+/// measured half as unavailable when there is no device, which is exactly the
+/// outcome this floor exists to keep observable. **The floor moved with the
+/// population and by the same five**, and the two-test sensitivity above is
+/// unchanged: the smallest gateable module still drops the population to 71.
+const DEVICE_FREE_TEST_FLOOR: usize = 72;
 
 /// A non-Apple host still runs the device-free test population.
 ///

@@ -38,7 +38,7 @@
 //! [`declared_partition`] is what reads the grouping off the plan rather than
 //! assuming it.
 //!
-//! # Three claims, and why none of them subsumes another
+//! # Four claims, and why none of them subsumes another
 //!
 //! **The direct path** dispatches the selected alternative for the
 //! [`ROWS`]-by-[`COLUMNS`] shape under
@@ -58,23 +58,43 @@
 //!
 //! **The grouping-sensitive case** dispatches the same three alternatives over
 //! [`GROUPING_SENSITIVE_OPERANDS`], where the declared regroupings genuinely
-//! disagree, and holds each to the grouping *it* published. The corpus's only
-//! device observation of a different-but-permitted reassociated answer lives
-//! here, and it is the one the parallel case deliberately cannot make: on exact
-//! operands the refusal population among legal groupings is empty, so nothing a
-//! reassociating contract permits would have failed it.
+//! disagree, and holds each to the grouping *it* published. It is the one the
+//! parallel case deliberately cannot make: on exact operands the refusal
+//! population among legal groupings is empty, so nothing a reassociating
+//! contract permits would have failed it. What it cannot do is separate the two
+//! *parallel* strategies, because at [`PARALLEL_COLUMNS`] contributors they
+//! declare the same partition.
+//!
+//! **The separating case** dispatches the same three alternatives at
+//! [`SEPARATING_COLUMNS`] contributors, which is the smallest count at which the
+//! tree's and the split's rules choose differently — the tree six partitions of
+//! two, the split four of three. Over [`SEPARATING_OPERANDS`] those two
+//! groupings return *different* `f32` values, both legal under the contract, so
+//! holding the tree to the split's declared partition refuses a value the
+//! contract permits. That is the wrong-but-in-range refusal, and nothing at four
+//! contributors can state it.
 //!
 //! # Why the pair of operand sets, stated as counts
 //!
-//! Each half is weak exactly where the other is strong, and
-//! `tests::the_operand_pair_covers_what_each_half_alone_cannot` pins both
-//! numbers. Of the sixteen single-contributor corruptions of the declared
-//! grouping — each slot dropped, and each slot taking another slot's value —
-//! [`PARALLEL_OPERANDS`] leaves none undetected and
-//! [`GROUPING_SENSITIVE_OPERANDS`] leaves one. Of the five order-preserving
+//! Each half is weak exactly where the other is strong, and the pair runs at
+//! both shapes for the same reason.
+//! `tests::the_operand_pair_covers_what_each_half_alone_cannot` pins the
+//! four-contributor numbers: of the sixteen single-contributor corruptions of
+//! the declared grouping — each slot dropped, and each slot taking another
+//! slot's value — [`PARALLEL_OPERANDS`] leaves none undetected and
+//! [`GROUPING_SENSITIVE_OPERANDS`] leaves one; of the five order-preserving
 //! groupings over four contributors, the first set produces one value and the
-//! second produces two. Neither replaces the other, and a later edit dropping
-//! one would have to change those numbers to do it.
+//! second produces two.
+//!
+//! `tests::the_separating_operand_pair_covers_what_each_half_alone_cannot` pins
+//! the twelve-contributor ones, and the gap there is far wider because
+//! [`SEPARATING_OPERANDS`] pads with eight `+0.0`: of the 144 corruptions it
+//! leaves 81 undetected under the tree's grouping and 98 under the split's,
+//! where [`SEPARATING_EXACT_OPERANDS`] leaves none under either. **A padded set
+//! is not a contributor-set claim**, which is exactly why the separating shape
+//! carries a genuine twelve-wide exact set beside it rather than the padded one
+//! alone. Neither half replaces the other at either shape, and a later edit
+//! dropping one would have to change those numbers to do it.
 
 use tiler_build::{BoundMetalCompileDeclaration, BoundMetalDeclarationError};
 use tiler_compiler::session::{
@@ -137,12 +157,38 @@ pub(crate) const PARALLEL_ROWS: u64 = 1;
 /// regression there fails here rather than hiding.
 pub(crate) const PARALLEL_COLUMNS: u64 = 4;
 
-/// This vertical enumerates one row's contributor sequence, so it holds while
-/// the parallel shape is one row and stops the build otherwise.
+/// Rows of the separating shape's input.
+///
+/// One, for the reason [`PARALLEL_ROWS`] is one: the separating case enumerates
+/// a single contributor sequence's orderings.
+pub(crate) const SEPARATING_ROWS: u64 = 1;
+
+/// Contributors reduced per output at the count where the two parallel rules
+/// choose differently.
+///
+/// **Twelve, and it is the smallest such count.** `capped_tree_partition` walks
+/// *down* from `ceiling = min(256, contributors / 2) = 6` for the largest
+/// divisor at or below it and takes six partitions of two; `governed_partition`
+/// walks down from `isqrt(12) = 3` and takes four of three. The two rules read
+/// opposite ends of the divisor lattice, which is why they diverge at all.
+/// Counts four through eleven agree — 4, 6, 8, 9 and 10 give both rules the same
+/// answer, and 5, 7 and 11 are prime, which both decline — so twelve is the
+/// minimum rather than merely a count that works.
+///
+/// The cap moves the *choice* and never the domain: over `0..200_000` the two
+/// rules admit and decline exactly the same counts, so this shape retains the
+/// same three alternatives [`PARALLEL_COLUMNS`] does.
+/// `tiler_compiler::pipeline::tests::the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs`
+/// owns that population claim; what this constant selects is one count at which
+/// a *device* can be asked the question.
+pub(crate) const SEPARATING_COLUMNS: u64 = 12;
+
+/// Both shapes enumerate one row's contributor sequence, so this holds while
+/// each is one row and stops the build otherwise.
 const _: () = assert!(
-    PARALLEL_ROWS == 1,
-    "the grouping-sensitive case enumerates one row's orderings; a wider shape needs the \
-     enumeration to run per row before this constant moves",
+    PARALLEL_ROWS == 1 && SEPARATING_ROWS == 1,
+    "the grouping-sensitive and separating cases enumerate one row's orderings; a wider shape \
+     needs the enumeration to run per row before these constants move",
 );
 
 /// The **contributor-set** half of the parallel operand pair.
@@ -219,6 +265,84 @@ pub(crate) const GROUPING_SENSITIVE_OPERANDS: [u32; 4] = [
     0x3e80_0000, // 0.25
     0x3340_0000, // 3 * 2^-26, which is 0.375 ulp(1.0)
     0x3300_0000, // 2^-25,     which is 0.25  ulp(1.0)
+];
+
+/// The **rounding** half of the separating shape's operand pair: the four
+/// operands above, padded to [`SEPARATING_COLUMNS`] with eight `+0.0`.
+///
+/// **The padding is what makes the two parallel groupings disagree at twelve.**
+/// The tree's six partitions of two put `0.75 + 0.25` in the first and
+/// `0.375 ulp + 0.25 ulp` in the second, so the exact `0.625 ulp` reaches the
+/// combining add and `1.0 + 0.625 ulp` rounds *up* — the same derivation
+/// [`GROUPING_SENSITIVE_OPERANDS`] states at four, reached at twelve. The split's
+/// four partitions of three put `0.75 + 0.25 + 0.375 ulp` in the first, which
+/// rounds back to `1.0`, and `0.25 ulp` alone in the second, which then rounds
+/// back to `1.0` again. So the tree returns `0x3f800001` and the split
+/// `0x3f800000`, and the eight `+0.0` contribute nothing but the two partition
+/// boundaries.
+///
+/// Both values are order-preserving blocked regroupings of the declared
+/// sequence, so both are legal under `FLUSH_AND_REASSOCIATE_F32`. That is the
+/// whole point: holding the tree to the split's declared partition refuses a
+/// value the contract *permits*, which no tolerance and no permitted-set
+/// membership test could refuse.
+///
+/// The split's answer here coincides with the serial fold's, and the coincidence
+/// is stated rather than hidden — what this shape separates is the tree from the
+/// split, which is the claim four contributors cannot make. Separating the split
+/// from the fold is [`GROUPING_SENSITIVE_OPERANDS`]'s claim and stays there.
+///
+/// **What it cannot say, stated exactly.** Eight of its twelve slots are the
+/// reduction's own identity, so dropping one changes nothing and one zero slot
+/// taking another zero's value changes nothing either: of the 144
+/// single-contributor corruptions it leaves 81 undetected under the tree's
+/// grouping and 98 under the split's. A padded set is not a contributor-set
+/// claim, and [`SEPARATING_EXACT_OPERANDS`] is why this one does not have to be.
+pub(crate) const SEPARATING_OPERANDS: [u32; 12] = [
+    0x3f40_0000, // 0.75
+    0x3e80_0000, // 0.25
+    0x3340_0000, // 3 * 2^-26, which is 0.375 ulp(1.0)
+    0x3300_0000, // 2^-25,     which is 0.25  ulp(1.0)
+    0x0000_0000, // +0.0, and eight of them: the padding to twelve contributors
+    0x0000_0000,
+    0x0000_0000,
+    0x0000_0000,
+    0x0000_0000,
+    0x0000_0000,
+    0x0000_0000,
+    0x0000_0000,
+];
+
+/// The **contributor-set** half of the separating shape's operand pair: twelve
+/// distinct powers of two.
+///
+/// **A genuine twelve-wide set rather than a padded four-wide one**, which is
+/// the whole reason it exists. [`SEPARATING_OPERANDS`] separates the tree's
+/// grouping from the split's and detects almost no dropped or double-counted
+/// contributor; this set inverts both properties, exactly as
+/// [`PARALLEL_OPERANDS`] does at four.
+///
+/// `2^0` through `2^11` sum to `4095`, and every partial sum of any subset is an
+/// integer below `2^24`, so every one of the 58,786 order-preserving groupings
+/// produces `0x457ff000` and no other value. Every subset has a distinct sum —
+/// that is what a binary representation is — so a partition boundary off by one,
+/// a participant whose partial is never combined, or an unsynchronized read of
+/// another invocation's slot each moves the answer to a value no correct
+/// grouping produces. All 144 single-contributor corruptions are detected under
+/// both declared groupings.
+pub(crate) const SEPARATING_EXACT_OPERANDS: [u32; 12] = [
+    0x3f80_0000, // 1.0
+    0x4000_0000, // 2.0
+    0x4080_0000, // 4.0
+    0x4100_0000, // 8.0
+    0x4180_0000, // 16.0
+    0x4200_0000, // 32.0
+    0x4280_0000, // 64.0
+    0x4300_0000, // 128.0
+    0x4380_0000, // 256.0
+    0x4400_0000, // 512.0
+    0x4480_0000, // 1024.0
+    0x4500_0000, // 2048.0
 ];
 
 /// The operand pattern each row of the direct path's input is filled from.
@@ -614,12 +738,15 @@ pub(crate) fn classify_strategy(
 ///   `tiler-reference`'s evaluation of the whole semantic program, which is the
 ///   independent statement of the declared order.
 ///
-/// The two parallel strategies declare the same split **at the four contributors
-/// this vertical runs**, and no longer in general: since the tree took its
-/// measured participant cap the split reads `governed_partition` and the tree
-/// reads `capped_tree_partition`, and the two agree at four while diverging from
-/// twelve contributors upward. Reading each partition from its own published
-/// geometry is what keeps that distinction honest.
+/// **This vertical runs both sides of that distinction.** The split reads
+/// `governed_partition` and the tree reads `capped_tree_partition` since the tree
+/// took its measured participant cap, and the two agree at [`PARALLEL_COLUMNS`]
+/// while diverging from [`SEPARATING_COLUMNS`] upward — six partitions of two
+/// against four of three. So at one shape this function returns one partition for
+/// both strategies and at the other it returns two different ones, from the same
+/// three observables. Reading each partition from its own published geometry is
+/// what makes that a measured difference rather than a restatement of whichever
+/// rule the reader had in mind.
 ///
 /// # Errors
 ///
@@ -840,9 +967,8 @@ mod apple {
     use tiler_metal_aot::input::{CompileRequest, OptimizationLevel};
 
     use super::{
-        AlternativeRun, COLUMNS, F32_BYTES, PARALLEL_COLUMNS, PARALLEL_ROWS, ROWS,
-        classify_strategy, compile_under, declaration, declared_partition, input_bits,
-        literal_extent, pack_f32, serial_sum_program, unpack_f32,
+        AlternativeRun, COLUMNS, F32_BYTES, ROWS, classify_strategy, compile_under, declaration,
+        declared_partition, input_bits, literal_extent, pack_f32, serial_sum_program, unpack_f32,
     };
     use crate::applicability::{describe, refuse_to_offer_the_declared_profile};
     use crate::device_buffer::write_bytes;
@@ -1179,8 +1305,21 @@ mod apple {
     }
 
     /// Runs every alternative a reassociating contract retains, over one operand
-    /// set.
-    pub(super) fn run_portfolio(bits: &[u32]) -> Measured<Vec<AlternativeRun>> {
+    /// set at one shape.
+    ///
+    /// **The shape is an argument because the contributor count is what decides
+    /// whether the two parallel rules agree.** At [`super::PARALLEL_COLUMNS`]
+    /// they declare one partition between them and at
+    /// [`super::SEPARATING_COLUMNS`] they declare two, and a run that hard-coded
+    /// the first could not ask the second question at all. `columns` is both the
+    /// reduced extent of the program built here and the contributor count each
+    /// alternative's published geometry is read against, so the two cannot
+    /// disagree.
+    pub(super) fn run_portfolio(
+        bits: &[u32],
+        rows: u64,
+        columns: u64,
+    ) -> Measured<Vec<AlternativeRun>> {
         let apple = match host::resolve() {
             Ok(apple) => apple,
             Err(Unresolved::Absent(reason)) => return Measured::Unavailable(reason),
@@ -1194,7 +1333,7 @@ mod apple {
                 ));
             }
         };
-        let program = serial_sum_program(PARALLEL_ROWS, PARALLEL_COLUMNS);
+        let program = serial_sum_program(rows, columns);
         // The composed contract, stated rather than defaulted. Every parallel
         // reduction regroups the declared contributor sequence, and Apple `f32`
         // arithmetic flushes subnormals in every math mode, so this is the one
@@ -1220,7 +1359,7 @@ mod apple {
                 &declaration,
                 alternative,
                 bits,
-                PARALLEL_COLUMNS,
+                columns,
             ) {
                 Ok(run) => {
                     linked += run.metallib_bytes;
@@ -1255,7 +1394,11 @@ mod apple {
     }
 
     /// Reports the portfolio's measured half as unavailable.
-    pub(super) fn run_portfolio(_bits: &[u32]) -> Measured<Vec<AlternativeRun>> {
+    pub(super) fn run_portfolio(
+        _bits: &[u32],
+        _rows: u64,
+        _columns: u64,
+    ) -> Measured<Vec<AlternativeRun>> {
         Measured::Unavailable(absent_apple_row())
     }
 }
@@ -1271,9 +1414,14 @@ pub(crate) fn measured_direct() -> Measured<Vec<u32>> {
     apple::run_direct()
 }
 
-/// Runs the retained portfolio's measured half, or states why this host cannot.
-pub(crate) fn measured_portfolio(bits: &[u32]) -> Measured<Vec<AlternativeRun>> {
-    apple::run_portfolio(bits)
+/// Runs the retained portfolio's measured half at one shape, or states why this
+/// host cannot.
+pub(crate) fn measured_portfolio(
+    bits: &[u32],
+    rows: u64,
+    columns: u64,
+) -> Measured<Vec<AlternativeRun>> {
+    apple::run_portfolio(bits, rows, columns)
 }
 
 #[cfg(test)]

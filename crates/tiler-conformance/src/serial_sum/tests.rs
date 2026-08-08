@@ -23,7 +23,8 @@ use tiler_metal::applicability::MetalHostPredicate;
 
 use super::{
     COLUMNS, GROUPING_SENSITIVE_OPERANDS, PARALLEL_COLUMNS, PARALLEL_OPERANDS, PARALLEL_ROWS,
-    ParallelStrategy, ROW_PATTERNS, ROWS, compile_under, declaration, declared_grouping_admits,
+    ParallelStrategy, ROW_PATTERNS, ROWS, SEPARATING_COLUMNS, SEPARATING_EXACT_OPERANDS,
+    SEPARATING_OPERANDS, SEPARATING_ROWS, compile_under, declaration, declared_grouping_admits,
     declared_partition, input_bits, measured_direct, measured_offer, measured_portfolio,
     ordered_associations, pack_f32, partitioned_reference, reference_bits, serial_sum_program,
     unpack_f32,
@@ -48,6 +49,73 @@ fn parallel_split() -> ContributorPartition {
         partitions: 2,
         contributors_per_partition: 2,
     }
+}
+
+/// The grouping the single-workgroup tree declares at [`SEPARATING_COLUMNS`].
+///
+/// Six participants folding two contributors each: `capped_tree_partition`
+/// walks down from `min(256, 12 / 2) = 6` and six divides twelve, so it stops
+/// there. Written out rather than computed, because a helper that re-ran the
+/// compiler's rule would agree with it by construction — the point of the cases
+/// below is that the *plan* declares this, and they read it from the plan.
+fn separating_tree_partition() -> ContributorPartition {
+    ContributorPartition {
+        partitions: 6,
+        contributors_per_partition: 2,
+    }
+}
+
+/// The grouping the multi-pass split declares at [`SEPARATING_COLUMNS`].
+///
+/// Four partitions of three: `governed_partition` walks down from
+/// `isqrt(12) = 3` and three divides twelve. Written out for the reason
+/// [`separating_tree_partition`] is.
+fn separating_split_partition() -> ContributorPartition {
+    ContributorPartition {
+        partitions: 4,
+        contributors_per_partition: 3,
+    }
+}
+
+/// The corruption census one operand set survives under one declared grouping.
+///
+/// The population is every single-contributor corruption of the declared
+/// grouping — each slot dropped, replaced by the reduction's own identity, and
+/// each slot taking each *other* slot's value — and the count returned beside it
+/// is how many of them the declared-grouping oracle fails to notice. A set that
+/// leaves corruptions undetected is not a contributor-set claim, which is the
+/// whole reason the operand sets come in pairs.
+fn corruption_census(
+    operands: &[u32],
+    rows: u64,
+    columns: u64,
+    declared: ContributorPartition,
+) -> (usize, usize) {
+    let correct = partitioned_reference(operands, rows, columns, declared)
+        .expect("the declared grouping is evaluable");
+    let mut population = 0_usize;
+    let mut escaped = 0_usize;
+    for slot in 0..operands.len() {
+        for source in 0..=operands.len() {
+            let mut corrupt = operands.to_vec();
+            // The last source is the dropped case: the contributor is replaced
+            // by the reduction's own identity element.
+            corrupt[slot] = if source == operands.len() {
+                0.0_f32.to_bits()
+            } else if source == slot {
+                continue;
+            } else {
+                operands[source]
+            };
+            population += 1;
+            let observed = partitioned_reference(&corrupt, rows, columns, declared)
+                .expect("a corrupted operand set is still evaluable");
+            if declared_grouping_admits(&correct, &observed) {
+                escaped += 1;
+            }
+        }
+    }
+    (population, escaped)
 }
 
 /// The direct path's operands reach every value class the contract is about.
@@ -174,33 +242,7 @@ fn the_operand_pair_covers_what_each_half_alone_cannot() {
     // boundary off by one or an unsynchronized staged read produces, and it is
     // the property the exact set holds and the sensitive one does not.
     let escaped = |operands: [u32; 4]| {
-        let declared = parallel_split();
-        let correct = partitioned_reference(&operands, PARALLEL_ROWS, PARALLEL_COLUMNS, declared)
-            .expect("the declared split is evaluable");
-        let mut population = 0_usize;
-        let mut escaped = 0_usize;
-        for slot in 0..4 {
-            for source in 0..5 {
-                let mut corrupt = operands;
-                // Source 4 is the dropped case: the contributor is replaced by
-                // the reduction's own identity element.
-                corrupt[slot] = if source == 4 {
-                    0.0_f32.to_bits()
-                } else if source == slot {
-                    continue;
-                } else {
-                    operands[source]
-                };
-                population += 1;
-                let observed =
-                    partitioned_reference(&corrupt, PARALLEL_ROWS, PARALLEL_COLUMNS, declared)
-                        .expect("a corrupted operand set is still evaluable");
-                if declared_grouping_admits(&correct, &observed) {
-                    escaped += 1;
-                }
-            }
-        }
-        (population, escaped)
+        corruption_census(&operands, PARALLEL_ROWS, PARALLEL_COLUMNS, parallel_split())
     };
     assert_eq!(
         escaped(PARALLEL_OPERANDS),
@@ -213,6 +255,160 @@ fn the_operand_pair_covers_what_each_half_alone_cannot() {
         "the sensitive operands leave exactly one corruption undetected, which is why the exact \
          set still runs",
     );
+}
+
+/// The separating shape's operand pair covers what each half alone cannot, and
+/// the gap is far wider than at four contributors.
+///
+/// **This is the answer to the padding caveat, counted rather than argued.**
+/// [`SEPARATING_OPERANDS`] is [`GROUPING_SENSITIVE_OPERANDS`] padded with eight
+/// `+0.0`, and padding with the reduction's own identity destroys the
+/// dropped-contributor detection [`PARALLEL_OPERANDS`] carries: of the 144
+/// single-contributor corruptions it leaves 81 undetected under the tree's
+/// declared grouping and 98 under the split's. What it buys instead is the only
+/// thing four contributors cannot give — two *parallel* groupings that disagree.
+///
+/// [`SEPARATING_EXACT_OPERANDS`] is the genuine twelve-wide set that restores
+/// the other half: twelve distinct powers of two, every grouping exact, every
+/// subset sum distinct, and no corruption undetected under either declared
+/// grouping. Neither set is a replacement for the other and both are dispatched,
+/// which is the same discipline the four-contributor shape runs under.
+#[test]
+fn the_separating_operand_pair_covers_what_each_half_alone_cannot() {
+    let padded = ordered_associations(&SEPARATING_OPERANDS);
+    let exact = ordered_associations(&SEPARATING_EXACT_OPERANDS);
+    assert_eq!(
+        padded.len(),
+        58_786,
+        "twelve contributors admit the eleventh Catalan number of orderings",
+    );
+    assert_eq!(exact.len(), 58_786);
+
+    let distinct = |mut values: Vec<u32>| {
+        values.sort_unstable();
+        values.dedup();
+        values
+    };
+    assert_eq!(
+        distinct(padded),
+        vec![0x3f80_0000, 0x3f80_0001],
+        "the padded operands must separate the declared groupings by exactly one rounding step",
+    );
+    assert_eq!(
+        distinct(exact),
+        vec![0x457f_f000],
+        "every grouping of twelve distinct powers of two is 4095.0, so nothing legal is refusable",
+    );
+
+    // Counted under *both* declared groupings, because at this contributor count
+    // the tree and the split declare different ones and a census taken under one
+    // of them would say nothing about the other.
+    for (declared, label, padded_escapes) in [
+        (separating_tree_partition(), "tree", 81),
+        (separating_split_partition(), "split", 98),
+    ] {
+        assert_eq!(
+            corruption_census(
+                &SEPARATING_EXACT_OPERANDS,
+                SEPARATING_ROWS,
+                SEPARATING_COLUMNS,
+                declared,
+            ),
+            (144, 0),
+            "the exact twelve-wide operands must leave no contributor corruption undetected under \
+             the {label}'s grouping",
+        );
+        assert_eq!(
+            corruption_census(
+                &SEPARATING_OPERANDS,
+                SEPARATING_ROWS,
+                SEPARATING_COLUMNS,
+                declared,
+            ),
+            (144, padded_escapes),
+            "padding with the reduction's identity leaves {padded_escapes} of 144 corruptions \
+             undetected under the {label}'s grouping, which is exactly why the exact set runs \
+             beside it",
+        );
+    }
+}
+
+/// The grouping oracle refuses the split's answer when the tree declared its
+/// own, and the refused value is legal under the contract.
+///
+/// **This is the discriminating refusal, established without a device.** At four
+/// contributors the only refusable value is the *serial fold's*, so what the
+/// existing case separates is the parallel strategies from the fold. Here the
+/// tree declares six partitions of two and the split four of three, those two
+/// blocked regroupings return different `f32` values, and each is an
+/// order-preserving regrouping the contract permits. Holding the tree to the
+/// split's partition therefore refuses a permitted value — the wrong-but-in-range
+/// refusal, which is the whole of what this shape adds.
+///
+/// The split's answer coincides with the serial fold's at this shape, and that
+/// is asserted rather than left implicit: it means the fold-versus-parallel
+/// separation is carried by the tree alone here, and a reader comparing the two
+/// shapes should not have to derive that.
+#[test]
+fn the_grouping_oracle_refuses_the_answer_the_other_parallel_strategy_declared() {
+    let tree = partitioned_reference(
+        &SEPARATING_OPERANDS,
+        SEPARATING_ROWS,
+        SEPARATING_COLUMNS,
+        separating_tree_partition(),
+    )
+    .expect("the tree's declared grouping is evaluable");
+    let split = partitioned_reference(
+        &SEPARATING_OPERANDS,
+        SEPARATING_ROWS,
+        SEPARATING_COLUMNS,
+        separating_split_partition(),
+    )
+    .expect("the split's declared grouping is evaluable");
+    let serial = partitioned_reference(
+        &SEPARATING_OPERANDS,
+        SEPARATING_ROWS,
+        SEPARATING_COLUMNS,
+        serial_order(SEPARATING_COLUMNS),
+    )
+    .expect("the degenerate partition is the declared serial order");
+
+    assert_eq!(tree, vec![0x3f80_0001]);
+    assert_eq!(split, vec![0x3f80_0000]);
+    assert_eq!(
+        serial, split,
+        "at this shape the split rounds the way the serial fold does, so the tree is what carries \
+         the separation from the fold as well",
+    );
+
+    // The refusal, and its mirror, by the same function that admits a correct
+    // answer.
+    assert!(
+        declared_grouping_admits(&tree, &tree),
+        "an oracle that refused the answer its own declared grouping produces would refuse every \
+         correct strategy",
+    );
+    assert!(
+        !declared_grouping_admits(&tree, &split),
+        "the tree's oracle must refuse the split's answer, which is what separates the two \
+         parallel strategies",
+    );
+    assert!(
+        !declared_grouping_admits(&split, &tree),
+        "and the split's oracle must refuse the tree's, so neither direction is an accident",
+    );
+
+    // What makes the refusal non-vacuous: the refused value is one this contract
+    // permits, so a tolerance or a permitted-set membership test would have
+    // admitted it.
+    let permitted = ordered_associations(&SEPARATING_OPERANDS);
+    for (value, label) in [(split[0], "split"), (tree[0], "tree")] {
+        assert!(
+            permitted.contains(&value),
+            "the {label}'s answer {value:#010x} must be an order-preserving regrouping this \
+             contract permits, or the refusal is of an illegal value and proves nothing",
+        );
+    }
 }
 
 /// The grouping oracle refuses a legal regrouping the strategy did not declare.
@@ -414,6 +610,92 @@ fn the_reassociating_contract_retains_both_strategies_and_the_fold() {
     }
 }
 
+/// At the separating count the two parallel strategies publish *different*
+/// groupings, read from each plan's own launch geometry.
+///
+/// **Device-free, and it is the fact the whole separating case rests on.** The
+/// four-contributor case asserts the two publish the *same* partition; this one
+/// asserts they do not, at the smallest count where the rules disagree. Both
+/// numbers are read from the compiled plan's published geometry — the tree's
+/// declared workgroup width and the split's partial-to-final launch ratio —
+/// rather than from the partition functions, so a call site that reverted to one
+/// shared rule fails here even though both rules would still return a legal
+/// partition.
+///
+/// The serial fold is asserted beside them for the reason the four-contributor
+/// case asserts it: a portfolio that dropped the fold has become narrower under
+/// a contract that only widens permissions.
+#[test]
+fn the_two_parallel_strategies_publish_different_groupings_at_the_separating_count() {
+    let declaration = declaration().expect("the authoritative declaration assembles");
+    let program = serial_sum_program(SEPARATING_ROWS, SEPARATING_COLUMNS);
+    let compilation = compile_under(
+        &declaration,
+        &program,
+        NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+    )
+    .expect("a flush-and-reassociate contract compiles this program");
+
+    let mut published = Vec::new();
+    let mut folds = 0_usize;
+    let mut counted = 0_usize;
+    for alternative in compilation.alternatives() {
+        let strategy =
+            super::classify_strategy(alternative).expect("every launch quantity is a literal");
+        let partition = declared_partition(alternative, strategy, SEPARATING_COLUMNS)
+            .expect("every retained alternative publishes a covering partition");
+        assert!(
+            partition.covers(SEPARATING_COLUMNS),
+            "{} publishes {partition:?}, which does not cover {SEPARATING_COLUMNS} contributor(s)",
+            super::strategy_label(strategy),
+        );
+        match strategy {
+            Some(strategy) => published.push((strategy, partition)),
+            None => folds += 1,
+        }
+        counted += 1;
+    }
+    assert_eq!(
+        counted,
+        compilation.alternatives().len(),
+        "every retained alternative was classified, not the ones that happened to parse",
+    );
+    assert!(
+        folds > 0,
+        "the portfolio retained {counted} alternative(s) and the serial fold is not among them",
+    );
+
+    for (strategy, expected) in [
+        (
+            ParallelStrategy::SingleWorkgroupTree,
+            separating_tree_partition(),
+        ),
+        (
+            ParallelStrategy::MultiPassSplit,
+            separating_split_partition(),
+        ),
+    ] {
+        let observed = published
+            .iter()
+            .find_map(|(candidate, partition)| (*candidate == strategy).then_some(*partition))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the portfolio retained {counted} alternative(s) and none of them is the \
+                     {strategy}"
+                )
+            });
+        assert_eq!(
+            observed, expected,
+            "the {strategy} published {observed:?} at {SEPARATING_COLUMNS} contributor(s)",
+        );
+    }
+    assert_ne!(
+        separating_tree_partition(),
+        separating_split_partition(),
+        "a separating count at which the two declared partitions are equal separates nothing",
+    );
+}
+
 /// A flush-only contract grants no regrouping, so it retains no parallel
 /// strategy.
 ///
@@ -558,7 +840,7 @@ fn every_retained_alternative_computes_the_declared_contributor_set() {
 
     let Some(runs) = require_or_report(
         "serial sum parallel strategies",
-        measured_portfolio(&PARALLEL_OPERANDS),
+        measured_portfolio(&PARALLEL_OPERANDS, PARALLEL_ROWS, PARALLEL_COLUMNS),
     ) else {
         return;
     };
@@ -621,14 +903,22 @@ fn every_retained_alternative_computes_the_declared_contributor_set() {
 
 /// Every retained alternative rounds the way the grouping it published rounds.
 ///
-/// **The corpus's only device observation of a different-but-permitted
-/// reassociated answer.** The case above runs operands every grouping of which is
-/// exact, so its refusal population among legal groupings is empty: no answer a
+/// **The device observation in which *both* parallel strategies diverge from the
+/// serial fold.** The case above runs operands every grouping of which is exact,
+/// so its refusal population among legal groupings is empty: no answer a
 /// reassociating contract permits would have failed it. This one runs the same
 /// three alternatives on operands where the declared regroupings genuinely
 /// disagree, so the oracle changes shape — from the serial fold to the exact
 /// value the strategy's *own declared grouping* produces, read off the plan
 /// rather than assumed.
+///
+/// It was the corpus's *only* such observation until
+/// [`the_tree_and_the_split_round_differently_at_the_separating_count`] landed,
+/// and the two are not interchangeable: at four contributors both parallel
+/// strategies declare one partition, so this case separates them from the fold
+/// and not from each other; at twelve they declare two, the split's answer
+/// coincides with the fold's, and that case separates the tree from the split
+/// alone. Neither shape subsumes the other.
 ///
 /// A serial fold would be wrong here because disagreement with it is the
 /// *expected* outcome for a legally regrouped strategy: it would refuse the split
@@ -656,7 +946,11 @@ fn every_retained_alternative_rounds_the_way_its_declared_grouping_rounds() {
 
     let Some(runs) = require_or_report(
         "serial sum grouping-sensitive",
-        measured_portfolio(&GROUPING_SENSITIVE_OPERANDS),
+        measured_portfolio(
+            &GROUPING_SENSITIVE_OPERANDS,
+            PARALLEL_ROWS,
+            PARALLEL_COLUMNS,
+        ),
     ) else {
         return;
     };
@@ -742,5 +1036,277 @@ fn every_retained_alternative_rounds_the_way_its_declared_grouping_rounds() {
          for bit, {separated} of {} of them at a value the serial fold does not produce, and \
          {refusals} wrong-but-permitted grouping(s) were refused",
         runs.len(),
+    );
+}
+
+/// Every retained alternative computes the declared contributor set at the
+/// separating count, on operands whose every grouping is exact.
+///
+/// **The contributor-set half of the separating shape's pair, and it is not
+/// redundant with the four-contributor one.** The tree runs six participants
+/// here where it ran two, so the barrier synchronizes six staged slots rather
+/// than two and the split stages four partials rather than two. A dropped or
+/// double-counted contributor at those widths is a failure the narrower shape
+/// cannot reach, and twelve distinct powers of two are what make each such
+/// failure land on a value no correct grouping produces.
+///
+/// It runs on the padded set's shape and deliberately not on the padded set: a
+/// set eight of whose twelve slots are the reduction's identity leaves most of
+/// that population undetected, which
+/// [`the_separating_operand_pair_covers_what_each_half_alone_cannot`] counts.
+#[test]
+fn every_retained_alternative_computes_the_declared_contributor_set_at_the_separating_count() {
+    let program = serial_sum_program(SEPARATING_ROWS, SEPARATING_COLUMNS);
+    let expected = reference_bits(
+        &program,
+        &SEPARATING_EXACT_OPERANDS,
+        SEPARATING_ROWS,
+        SEPARATING_COLUMNS,
+    );
+    assert_eq!(
+        expected,
+        vec![0x457f_f000],
+        "twelve distinct powers of two sum to 4095.0 under every grouping, including the declared \
+         serial one",
+    );
+
+    let Some(runs) = require_or_report(
+        "serial sum separating contributor set",
+        measured_portfolio(
+            &SEPARATING_EXACT_OPERANDS,
+            SEPARATING_ROWS,
+            SEPARATING_COLUMNS,
+        ),
+    ) else {
+        return;
+    };
+
+    let mut seen = Vec::new();
+    let mut folds = 0_usize;
+    for run in &runs {
+        eprintln!(
+            "  {} ({}): declared {} partition(s) of {} contributor(s), {} encoder(s) in order, \
+             widest workgroup {}, {} byte(s) of threadgroup memory reserved, {:08x?} against \
+             {expected:08x?}",
+            run.label(),
+            run.stable_id,
+            run.partition.partitions,
+            run.partition.contributors_per_partition,
+            run.encoders,
+            run.widest_workgroup,
+            run.threadgroup_bytes,
+            run.bits,
+        );
+        assert_eq!(
+            run.bits,
+            expected,
+            "the {} returned {:08x?} and the reference requires {expected:08x?}",
+            run.label(),
+            run.bits,
+        );
+        match run.strategy {
+            Some(ParallelStrategy::SingleWorkgroupTree) => {
+                assert_eq!(
+                    run.partition,
+                    separating_tree_partition(),
+                    "the dispatched tree published {:?} rather than the capped rule's choice",
+                    run.partition,
+                );
+                assert_eq!(
+                    run.widest_workgroup, 6,
+                    "the tree's declared width must follow its participant count",
+                );
+                seen.push(ParallelStrategy::SingleWorkgroupTree);
+            }
+            Some(ParallelStrategy::MultiPassSplit) => {
+                assert_eq!(
+                    run.partition,
+                    separating_split_partition(),
+                    "the dispatched split published {:?} rather than the balanced rule's choice",
+                    run.partition,
+                );
+                assert_eq!(
+                    run.encoders, 3,
+                    "a split dispatches its map, partial, and combine stages as three encoders",
+                );
+                seen.push(ParallelStrategy::MultiPassSplit);
+            }
+            None => folds += 1,
+        }
+    }
+    for strategy in [
+        ParallelStrategy::MultiPassSplit,
+        ParallelStrategy::SingleWorkgroupTree,
+    ] {
+        assert!(
+            seen.contains(&strategy),
+            "{} alternative(s) were dispatched and none of them is the {strategy}",
+            runs.len(),
+        );
+    }
+    assert!(folds > 0, "the serial fold was not dispatched beside them");
+    eprintln!(
+        "serial sum separating contributor set: all three alternatives agree bit for bit with the \
+         reference at {SEPARATING_COLUMNS} contributor(s), at two different declared groupings",
+    );
+}
+
+/// The tree and the split return different — and each permitted — values at the
+/// separating count, and each is refused by the other's declared grouping.
+///
+/// **This is what the four-contributor run cannot say.** There both parallel
+/// strategies declare two partitions of two, so their oracles are the same
+/// oracle and the only refusable legal value is the serial fold's. Here the tree
+/// declares six partitions of two and the split four of three; the device
+/// returns `0x3f800001` for one and `0x3f800000` for the other, both of them
+/// order-preserving regroupings this contract permits, and holding either
+/// strategy to the *other's* published partition refuses a permitted value.
+///
+/// A tolerance would admit both. A permitted-set membership test would admit
+/// both. Only an oracle asked about the grouping the plan itself published can
+/// tell a strategy that grouped as it declared from one that did not, and this
+/// is the first device observation in the corpus that separates the two parallel
+/// strategies from each other rather than from the serial fold.
+#[test]
+fn the_tree_and_the_split_round_differently_at_the_separating_count() {
+    let tree_expected = partitioned_reference(
+        &SEPARATING_OPERANDS,
+        SEPARATING_ROWS,
+        SEPARATING_COLUMNS,
+        separating_tree_partition(),
+    )
+    .expect("the tree's declared grouping is evaluable");
+    let split_expected = partitioned_reference(
+        &SEPARATING_OPERANDS,
+        SEPARATING_ROWS,
+        SEPARATING_COLUMNS,
+        separating_split_partition(),
+    )
+    .expect("the split's declared grouping is evaluable");
+    assert_ne!(
+        tree_expected, split_expected,
+        "the operands must separate the two declared groupings or this run observes nothing new",
+    );
+
+    let mut permitted = ordered_associations(&SEPARATING_OPERANDS);
+    permitted.sort_unstable();
+    permitted.dedup();
+    eprintln!(
+        "  operands {SEPARATING_OPERANDS:08x?}: {} distinct value(s) {permitted:08x?} over \
+         {SEPARATING_COLUMNS} contributor(s); the tree's declared grouping gives \
+         {tree_expected:08x?} and the split's {split_expected:08x?}",
+        permitted.len(),
+    );
+
+    let Some(runs) = require_or_report(
+        "serial sum tree-against-split",
+        measured_portfolio(&SEPARATING_OPERANDS, SEPARATING_ROWS, SEPARATING_COLUMNS),
+    ) else {
+        return;
+    };
+
+    let mut cross_refusals = 0_usize;
+    let mut observed = Vec::new();
+    for run in &runs {
+        let expected = partitioned_reference(
+            &SEPARATING_OPERANDS,
+            SEPARATING_ROWS,
+            SEPARATING_COLUMNS,
+            run.partition,
+        )
+        .expect("a published partition is evaluable");
+        eprintln!(
+            "  {} ({}): declared {} partition(s) of {} contributor(s), {} encoder(s), widest \
+             workgroup {}, {} byte(s) of threadgroup memory, {:08x?} against its declared \
+             grouping's {expected:08x?}",
+            run.label(),
+            run.stable_id,
+            run.partition.partitions,
+            run.partition.contributors_per_partition,
+            run.encoders,
+            run.widest_workgroup,
+            run.threadgroup_bytes,
+            run.bits,
+        );
+        assert!(
+            declared_grouping_admits(&expected, &run.bits),
+            "the {} declares {} partition(s) of {} contributor(s) and returned {:08x?}, and that \
+             grouping produces {expected:08x?}",
+            run.label(),
+            run.partition.partitions,
+            run.partition.contributors_per_partition,
+            run.bits,
+        );
+
+        // The discriminating refusal, on the bits a device actually returned:
+        // this alternative's answer against the *other* parallel strategy's
+        // published grouping. The refused value is legal under this contract —
+        // it is another alternative's correct answer — so what is being watched
+        // is an oracle saying no to a wrong-but-permitted result, by the same
+        // function that just admitted these bits.
+        if let Some(strategy) = run.strategy {
+            let other = match strategy {
+                ParallelStrategy::SingleWorkgroupTree => separating_split_partition(),
+                ParallelStrategy::MultiPassSplit => separating_tree_partition(),
+            };
+            let foreign = partitioned_reference(
+                &SEPARATING_OPERANDS,
+                SEPARATING_ROWS,
+                SEPARATING_COLUMNS,
+                other,
+            )
+            .expect("the other strategy's published grouping is evaluable");
+            assert!(
+                permitted.contains(&foreign[0]),
+                "the refused value {:#010x} must be one this contract permits, or the refusal \
+                 proves nothing",
+                foreign[0],
+            );
+            assert!(
+                !declared_grouping_admits(&foreign, &run.bits),
+                "the {} returned {:08x?}, which the other parallel strategy's declared \
+                 {other:?} also produces; the two groupings did not separate on this device",
+                run.label(),
+                run.bits,
+            );
+            cross_refusals += 1;
+            eprintln!(
+                "    refused the other parallel strategy's legal {foreign:08x?}, produced by \
+                 {other:?}",
+            );
+            observed.push((strategy, run.bits.clone()));
+        }
+    }
+
+    assert_eq!(
+        cross_refusals, 2,
+        "both parallel strategies must have been held to the other's declared grouping; \
+         {cross_refusals} of them were",
+    );
+    let value_of = |wanted: ParallelStrategy| {
+        observed
+            .iter()
+            .find_map(|(strategy, bits)| (*strategy == wanted).then(|| bits.clone()))
+            .unwrap_or_else(|| panic!("the {wanted} was dispatched"))
+    };
+    assert_eq!(
+        value_of(ParallelStrategy::SingleWorkgroupTree),
+        tree_expected
+    );
+    assert_eq!(value_of(ParallelStrategy::MultiPassSplit), split_expected);
+    assert_ne!(
+        value_of(ParallelStrategy::SingleWorkgroupTree),
+        value_of(ParallelStrategy::MultiPassSplit),
+        "the device returned the same bits for both parallel strategies, so this run separated \
+         nothing",
+    );
+    eprintln!(
+        "serial sum tree-against-split: the tree returned {:08x?} at {:?} and the split \
+         {:08x?} at {:?}; each matched its own declared grouping bit for bit and each was \
+         refused by the other's",
+        value_of(ParallelStrategy::SingleWorkgroupTree),
+        separating_tree_partition(),
+        value_of(ParallelStrategy::MultiPassSplit),
+        separating_split_partition(),
     );
 }
