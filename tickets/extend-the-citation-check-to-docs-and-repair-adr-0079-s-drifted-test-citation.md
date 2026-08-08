@@ -1,7 +1,7 @@
 ---
 id: extend-the-citation-check-to-docs-and-repair-adr-0079-s-drifted-test-citation
 title: Extend the citation check to docs and repair ADR 0079's drifted test citation
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [pin-ticket-source-citations-against-the-tree-they-name, keep-the-citation-checker-s-anchor-path-exercised-and-its-boundary-fixture-live]
@@ -9,6 +9,9 @@ scopes: [implementation/workspace, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-docs-cit
+lease_expires_at: 1786159836
 ---
 ## The gap, found by the drift it failed to catch
 
