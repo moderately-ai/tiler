@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-artifact-abis-four-hashing-sites-with-the-fifth-it-names
 title: Reconcile the artifact ABIs four hashing sites with the fifth it names
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [date-the-two-v4-step-paragraphs-trailing-the-v5-block]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, documentation]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786185307
 ---
 
 `docs/artifact-abi.md` contradicts itself about how many sites hash. One passage says four and enumerates them; another names a fifth.
