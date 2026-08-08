@@ -1,7 +1,7 @@
 ---
 id: correct-the-stale-dtype-f32-recognizer-claims-in-the-contract-documents
 title: Correct the stale dtype-f32 recognizer claims in the contract documents
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [widen-the-strategy-recognizer-past-the-f32-wall, establish-bf16-optimizer-legality]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation, contracts/numerics, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, bf16, dtype, correction]
+claimed_from: todo
+assignee: w-dtype-docs
+lease_expires_at: 1786159193
 ---
 ## What is false
 
