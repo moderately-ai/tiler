@@ -1158,12 +1158,13 @@ mod tests {
     /// iteration coordinate, so the region vocabulary could spell them and in two
     /// cases now does. This one's coordinate is an element of a second operand.
     /// `AccessData` carries one tensor ordinal and `IndexNode` has no variant
-    /// that reads tensor data, so no index region can express the access at all,
-    /// and admitting a form that could would weaken the verifier for the
-    /// direct-access language — which is exactly the condition ADR 0046's
-    /// consequences attach to indirect operations remaining addable. So the entry
-    /// here is not "not yet planned" but "planned by a route that does not exist
-    /// and whose admission is its own decision".
+    /// that reads tensor data, so no index region can express the access at all.
+    /// ADR 0108 was returned for a complete comparison of a verified nested
+    /// read/value expression with an append-only tagged access; neither route is
+    /// admitted, and neither has yet shown how it preserves ADR 0046's verifier
+    /// guarantees end to end. So the entry here is not "not yet planned" but
+    /// "planned by a route that does not exist and whose admission is its own
+    /// decision".
     ///
     /// It correspondingly holds **no** fusion role in `crate::fusion_legality`,
     /// which is where it parts company with the concatenate and the selection.
@@ -1171,8 +1172,9 @@ mod tests {
     /// discharges no obligation of its own because the one property it introduces
     /// — aliasing reads — is the index verifier's, "where the alias contract
     /// already admits aliasing reads and constrains writes". That sentence is
-    /// false of a gather: the index verifier cannot bound a coordinate it cannot
-    /// see, so classifying one would assert a discharge that nothing performs.
+    /// false of a gather today: the index verifier cannot bound a coordinate it
+    /// cannot see, and no named host-validation boundary participates in physical
+    /// planning, so classifying one would assert a discharge that nothing performs.
     /// Left unclassified, `FusionNumericalCapabilities::classify` returns `None`
     /// and `derive_member` yields no legality at all, which is the fail-closed
     /// default and the honest one.

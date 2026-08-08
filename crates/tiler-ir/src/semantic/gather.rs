@@ -25,11 +25,12 @@
 //! what the program means. It does not state that any index region can express the
 //! access, and none can: `AccessData` carries one tensor ordinal, so an access has
 //! nowhere to name a second tensor as a coordinate source, and `IndexNode` has no
-//! variant that reads one. Admitting a tensor-read form *there* would weaken the
-//! verifier for the direct-access language, which is exactly the condition
-//! ADR 0046's consequences attach to indirect operations remaining addable. So the
-//! family is registered, reference-evaluated, and **fails closed at the request
-//! boundary**: no lowering capability resolves it, no fusion role classifies it,
+//! variant that reads one. ADR 0108 was returned for a complete comparison of a
+//! verified nested read/value expression with an append-only tagged access; no
+//! proposed form has yet shown how it preserves every direct-access verifier
+//! guarantee ADR 0046 requires. The family is therefore registered,
+//! reference-evaluated, and **fails closed at the request boundary**: no lowering
+//! capability resolves it, no fusion role classifies it,
 //! and a program stating one compiles no further than the refusal.
 //!
 //! This is a *labelled draft* public boundary under ADR 0075 until Tom accepts its
@@ -47,11 +48,11 @@
 //! *implemented*, because it performs no write.
 //!
 //! **Bounds.** Every index element must lie in `0..extent` of the gathered axis.
-//! This is the one obligation the family cannot discharge at construction, and the
-//! reason is the whole of what makes the class different: the values are data, so
-//! no static analysis of the graph decides them. The posture is therefore the one
-//! [IR](../../../../docs/ir.md) already fixes for a semantic precondition — proved
-//! statically, or validated at a *named enforcement boundary* — and the refusal is
+//! This is the one obligation current construction cannot discharge from shape
+//! facts alone: the values are data and no tensor element is present at that
+//! boundary. The posture is therefore the one [IR](../../../../docs/ir.md) already
+//! fixes for a semantic precondition — proved statically, or validated at a
+//! *named enforcement boundary* — and the refusal is
 //! total: an out-of-range index is never clamped to the axis, never wrapped modulo
 //! the extent, and never read at the offset it names. The named boundary that
 //! exists today is the reference evaluator, which holds the elements and refuses
