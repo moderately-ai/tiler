@@ -5,7 +5,7 @@ status: in-progress
 priority: p3
 dependencies: []
 related: [record-the-case-by-case-unsafe-boundary, prototype-metal-runtime-execution]
-scopes: [implementation/workspace, contracts/navigation, contracts/decisions, implementation/frontend, implementation/conformance, implementation/runtime, contracts/foundation, implementation/cargo-lock, implementation/digest, implementation/ir, implementation/reference, implementation/artifact, implementation/compiler, implementation/metal, implementation/metal-aot, implementation/cache, implementation/build]
+scopes: [implementation/workspace, contracts/navigation, contracts/decisions, implementation/frontend, implementation/conformance, implementation/runtime, contracts/foundation, implementation/cargo-lock, implementation/digest, implementation/ir, implementation/reference, implementation/artifact, implementation/compiler, implementation/metal, implementation/metal-aot, implementation/cache, implementation/build, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, workspace, gate, rust-api, deferred]
