@@ -3183,12 +3183,22 @@ mod slice_role_tests {
                 .unwrap();
             assert_eq!(derived.evidence(), FusionEvidenceClass::SoundProof);
         }
+        let reached_slice = proof
+            .reached_definitions()
+            .iter()
+            .find(|reached| reached.operation() == &slice_f32_op())
+            .expect("the proof binds the selection's exact reached definition");
         assert!(
-            proof
-                .reached_definitions()
-                .iter()
-                .any(|reached| reached.normative_definition().contains("slice-f32")),
-            "the proof does not bind the selection's reached definition",
+            reached_slice
+                .normative_definition()
+                .contains("window grammar carries only a literal offset and a literal extent"),
+            "the compiler proof does not carry the corrected Slice selection grammar: {reached_slice:?}",
+        );
+        assert!(
+            reached_slice.normative_definition().contains(
+                "after its name is decoded and before parsing any relation-specific fields"
+            ),
+            "the compiler proof does not carry the corrected reserved-relation boundary: {reached_slice:?}",
         );
 
         let perturbed = derive_fusion_legality(
