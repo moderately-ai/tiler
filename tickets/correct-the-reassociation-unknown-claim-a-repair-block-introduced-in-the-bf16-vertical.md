@@ -1,7 +1,7 @@
 ---
 id: correct-the-reassociation-unknown-claim-a-repair-block-introduced-in-the-bf16-vertical
 title: Correct the reassociation-Unknown claim a repair block introduced in the BF16 vertical
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-correct-t
+lease_expires_at: 1786160601
 ---
 ## A correction introduced a new false claim, which is the pattern this repository keeps hitting
 

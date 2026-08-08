@@ -1,7 +1,7 @@
 ---
 id: make-the-research-catalog-generated-or-stop-claiming-it-is
 title: Make the research catalog generated or stop claiming it is
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [catalog-the-four-cost-model-reading-notes-and-correct-the-stale-token-out-key-count]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-make-the-
+lease_expires_at: 1786160601
 ---
 ## The marker is false, and it is the root cause rather than a cosmetic defect
 
