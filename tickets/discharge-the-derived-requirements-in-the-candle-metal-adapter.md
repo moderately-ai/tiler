@@ -1,7 +1,7 @@
 ---
 id: discharge-the-derived-requirements-in-the-candle-metal-adapter
 title: Discharge the derived requirements in the candle metal adapter
-status: in-progress
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [check-synchronization-realization-before-the-routing-commit, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit, prototype-candle-metal-adapter]
