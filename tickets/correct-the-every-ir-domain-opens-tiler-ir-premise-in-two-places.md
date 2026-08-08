@@ -1,7 +1,7 @@
 ---
 id: correct-the-every-ir-domain-opens-tiler-ir-premise-in-two-places
 title: Correct the every-ir-domain-opens-tiler-ir premise in two places
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, digest, documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786182999
 ---
 
 A no-prefix argument rests on the premise that every domain the shared IR admits opens `tiler.ir.`. **Most do not.** The conclusion survives; the reasoning does not.
@@ -31,7 +28,7 @@ A no-prefix argument rests on the premise that every domain the shared IR admits
 - **"No collision results" — verified, and it is the one claim that survives.** 0 prefix relations across all 1080 cross-crate pairs, and 0 across the 153 pairs within `tiler-artifact`. Within `tiler-ir` there are 3, all from the terminator-free `tiler.scalar` against its own `tiler.scalar-*` spellings; that is `tiler-ir`'s business, not this obligation's, and it does not reach `tiler-artifact`.
 - **"703 within `tiler-ir`" — false.** 703 = C(38,2). Over the real 60 rows it is C(60,2) = **1770**.
 - **The prescribed repair shape is itself false.** "First differing byte after `tiler.`" does not separate the sets: both sides use `a` and `p` as that byte. Seven `tiler-artifact` domains agree with `EXPR_DOMAIN` for 23 bytes, and the four sidecar domains agree with `tiler.prepared-entry-target-requirement.v1` for 8. `docs/artifact-abi.md` **already** carries this shape ("the two sets diverge at the first byte after the shared `tiler.`"), so it is a second false claim at that out-of-scope site, not a fix for the first.
-- **"8 of 18 appears in no source file" — false.** It is in the commit message of `96dfe333`: "It covered 8 of the crate's 18 governed domains." Both figures are real and describe the same retired array under different populations: the retired test was named `no_governed_domain_of_either_container_prefixes_another`, and envelope (7) + sidecar (4) = 11, of which it listed 8; the crate's whole admitted set was 18, of which it listed 8. The module header stated only the first without its scope, which understates the gap by the artifact program's seven domains. Disambiguated in place rather than replaced.
+- **"8 of 18 is in `96dfe333`'s commit message, not in any tracked file" — false.** It is in the commit message of `96dfe333`: "It covered 8 of the crate's 18 governed domains." Both figures are real and describe the same retired array under different populations: the retired test was named `no_governed_domain_of_either_container_prefixes_another`, and envelope (7) + sidecar (4) = 11, of which it listed 8; the crate's whole admitted set was 18, of which it listed 8. The module header stated only the first without its scope, which understates the gap by the artifact program's seven domains. Disambiguated in place rather than replaced.
 - **Ever-true verdict: never true at any commit.** `d1a95e18` (2026-07-25) relocated `EXPR_DOMAIN` into `tiler-ir`; the `docs/artifact-abi.md` sentence landed at `d48a33af` (2026-08-06) and the `domains.rs` sentence at `96dfe333` (2026-08-08). At `d48a33af` 43 of 57 `tiler-ir` NUL-terminated spellings did not open `tiler.ir.`; at `96dfe333`, 44 of 58. Treatment is therefore substitution with the retired wording quoted, not a date-beside.
 
 ### Neighbouring-claim census
