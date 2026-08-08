@@ -1,7 +1,7 @@
 ---
 id: state-a-subject-on-the-contraction-publication-path-s-reference-oracle
 title: State a subject on the contraction publication path's reference oracle
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [route-the-realization-conformance-half-into-the-conformance-crate, give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-state-a-s
-lease_expires_at: 1786158472
 ---
 ## The asymmetry
 
@@ -67,3 +64,34 @@ Three device-free tests added in `publication::proof`, each watched failing deli
 `portability.rs`'s `DEVICE_FREE_TEST_FLOOR` moved 64 → 67 with its reasoning: population 65 → 68, the same three, preserving the two-test sensitivity.
 
 **Two corrections recorded rather than worked around.** `NUMERICAL_IDENTITY` is *not* the realization's `profile_key` and cannot be derived from one — it is a governed name in the sidecar's identity domain, while the realization carries the compiler's structural key `tiler.contract.f32.v2.037fc0000001…`; an assertion that they are equal was written, failed, and the claim was corrected at both sites. And the `#[test]` attribute must not be spelled in `portability.rs`'s prose: a first draft of the floor's doc did, inflating the census by one, which is the trap that module's own header names.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`aa4a9573`** (worker commit `27450809`). `make full` exit 0, 1,090 release tests. `crates/tiler-reference/**` untouched.
+
+### This ticket's central conclusion was false, and the coordinator wrote it
+
+I claimed routing through `from_realization` "needs a `VerifiedScheduledRegion` the contraction publication path does not hold", making this a design step rather than a rename. **The premise was right and the conclusion false**, and I conflated two functions — coordinator-verified by reading both:
+
+- `RealizationWitness::of(region: &VerifiedScheduledRegion)` — this is what needs a region.
+- `from_realization(realization: &NumericalRealization, arithmetic: ArithmeticType)` — **needs no region**, and a plan supplies both arguments.
+
+So the subject exists on a plan-derived route without a region and without editing `tiler-reference`: the **realization** from `PlanAlternative::kernels()[..].numerical()`, which preserves the scheduled region's own `index.numerical` and is compared across every packaged kernel with disagreement refused; and the **subject** from `PlanAlternative::delivered_realization().scalar_arithmetic()`, ADR 0076 evidence materialized from the selected contract's arithmetic type. The bridge then cross-checks the two through the declared canonical NaN payload, so the subject is **agreed rather than asserted**.
+
+### The "no subnormal arises" reasoning was imprecise, and the correction is better
+
+I wrote that both readings agree because the probe stream is `m·2⁻²⁴` so no subnormal arises. **The adversarial corpus does hold subnormal operands** — coordinator-verified at `crates/tiler-conformance/src/serial_sum.rs:233` and `publication/proof.rs:86` and `:170`, the least positive subnormal `0x0000_0001` beside `-0.0` and `1.0`. They agree because the flush is **absorbed downstream**, not because none is present. That is now **counted at 2 by a test** rather than argued in prose.
+
+The scope was also understated: `publication.rs`'s `CONTRACT` governs *every* published member including the six serial-sum ones, and all three families share `proof::encoded` — so the fix lands there rather than on the contraction alone.
+
+### Evidence that no published byte moved — measured, not argued
+
+All 8 gate members and all 4 `#[ignore]`d prefill cells published through the changed encoder, agreed bit-for-bit with the device, and carried unchanged retained digests (`79810ce4…`, `1c54f5cd…`, `eb382840…`, `124571de…`, `b99eff90…`).
+
+Three deliberate failures, each on the subject: an oracle ignoring the conformance; `conformance_stated_for` ignoring its subject, which surfaces `DeclaredNanPayloadMismatch { arithmetic: Bf16, declared: 2143289344, expected: 32704 }`; and `conformance_of` returning `strict()`, giving `Unstated` where `Arithmetic(F32)` is required.
+
+`DEVICE_FREE_TEST_FLOOR` moved 64 → 67 with the population 65 → 68, the same three, preserving the two-test sensitivity.
+
+### Two self-corrections worth keeping
+
+The worker asserted `NUMERICAL_IDENTITY` equals the realization's `profile_key`; **the assertion failed** — they are separate identity domains, the sidecar's governed name against the compiler's structural key. Corrected at both sites and now pinned as distinct. And its first draft of the floor's doc spelled `#[test]` literally in `portability.rs` prose, **inflating that module's own census by one** — precisely the trap that module's header warns about.

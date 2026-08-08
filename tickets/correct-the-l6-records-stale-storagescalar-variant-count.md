@@ -1,7 +1,7 @@
 ---
 id: correct-the-l6-records-stale-storagescalar-variant-count
 title: Correct the L6 record's stale StorageScalar variant count
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-a-storage-carrier-for-integer-program-inputs]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, dtype]
-claimed_from: todo
-assignee: w-correct-t
-lease_expires_at: 1786159357
 ---
 ## User-visible outcome
 
@@ -74,3 +71,24 @@ Splitting the retired sentence into its parts:
 - This ticket — the scope declaration and this audit.
 
 Checks run: `tkt lint`, `make citations`, `git diff --check`, `tkt guard --base 6d1bd6e8`. `make full` is not run: the diff touches only `docs/` and `tickets/`, none of the carry-blocking paths `AGENTS.md` lists, so it carries the latest green gate. Every `grep` written into the record was executed and returns a non-empty result.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge `aa4a9573`'s successor (worker commit `1d556a1e`). `docs/` and `tickets/` only, carries the green gate.
+
+### This ticket's own framing was wrong, and correcting it was the substance
+
+It said "the ABI-cost conclusion is **also falsified**". **Only its stated ground was falsified, not the conclusion** — and a worker taking the framing at face value would have withdrawn a "therefore Tom's" that is genuinely true.
+
+The re-derivation, split cleanly:
+
+- **Premise true** — `push_storage_scalar` pushes `scalar.tag()`, reached from `canonical_keys`' `value_key` and the kernel-program identity builder.
+- **Middle step false** — "a third variant is an artifact-ABI change". A third variant *already happened*: `Bf16 => 0x03`, with `U8`/`F32` tags unchanged and both the landing commit and `docs/artifact-abi.md` recording no retained identity moving and no domain stepping. Participating in canonical encoding is what makes the tag table **append-only under a compile error**, not what makes widening it a break.
+- **Conclusion survives on three grounds, none of them the stated one**: `StorageScalar` is a re-exported public type of `tiler-ir` — which is the ground **D-17 four sections down already gave for itself**, so the record contained its own repair; ADR 0074 convention 5b keeps the vocabulary out of `#[non_exhaustive]`, making the widening one atomic cross-crate commit; and the substantive replacement, that `natural_access_type` is a total width-exact map into `KernelType` which has no four-byte unsigned integer, so pairing `U32` with `I32` passes every check while reading a token ID as **signed** at the one operation whose out-of-range behaviour reads out of bounds.
+- **The blocker verdict survives** for the anticipated reason: none of the three variants is an 18-bit integer carrier. `Bf16` is a two-byte float with an 8-bit significand, exact on integers only to 256, so it carries a token ID no better than `U8`.
+
+### The ticket also under-scoped its own defect
+
+It named one paragraph. **D-17 in "Unresolved decisions" carried the same two-variant count and the same false ABI ground independently** — correcting only the named paragraph would have left the record self-contradicting. Found by reading the file rather than grepping the quoted string.
+
+Every citation in the repaired record is now a runnable `grep` with **no line numbers introduced**, and all seven were executed and returned non-empty. The measured 2,213-test figure from the carrier branch was **relayed with attribution rather than restated as a fact of the record**, since it could not be verified at this base.
