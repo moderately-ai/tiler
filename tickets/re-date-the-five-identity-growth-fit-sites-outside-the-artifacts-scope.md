@@ -1,7 +1,7 @@
 ---
 id: re-date-the-five-identity-growth-fit-sites-outside-the-artifacts-scope
 title: Re-date the five identity-growth fit sites outside the artifacts scope
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [re-date-the-six-identity-growth-fit-sites-one-displacement-behind]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, research/artifacts, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, documentation, measurement]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786187249
 ---
 Five identity-growth fit occurrences outside `contracts/artifacts` still state `3530n + 723` as the **live** fit. It was displaced by exactly `n + 1` on 2026-08-08 and the ladder now measures `3531n + 724`. [`re-date-the-six-identity-growth-fit-sites-one-displacement-behind`](re-date-the-six-identity-growth-fit-sites-one-displacement-behind.md) held only `contracts/artifacts` and repaired the sixth, in `docs/artifact-abi.md`; these five were deliberately left rather than edited across a scope boundary.
 

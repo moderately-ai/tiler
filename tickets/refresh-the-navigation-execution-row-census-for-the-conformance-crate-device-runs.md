@@ -1,7 +1,7 @@
 ---
 id: refresh-the-navigation-execution-row-census-for-the-conformance-crate-device-runs
 title: Refresh the navigation execution-row census for the conformance-crate device runs
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ, correct-the-roadmap-s-1x4-reduction-execution-row-for-the-twelve-contributor-run]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, navigation, reductions]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786187249
 ---
 ## Why this is filed rather than absorbed
 

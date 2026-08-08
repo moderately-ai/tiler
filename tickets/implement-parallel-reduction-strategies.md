@@ -1,7 +1,7 @@
 ---
 id: implement-parallel-reduction-strategies
 title: Implement parallel reduction strategies
-status: todo
+status: in-progress
 priority: p1
 dependencies: [implement-first-profile-numerical-policies, implement-analytical-component-cost-model, calibrate-and-activate-parallel-reduction-selection]
 related: [admit-the-rms-normalization-family, admit-the-softmax-family, scope-transformer-nonlinear-normalization-and-reductions]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reduction, scheduling, numerics]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786187249
 ---
 ## User-visible outcome
 
