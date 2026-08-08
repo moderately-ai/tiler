@@ -1,43 +1,96 @@
 ---
 id: accept-adr-0108-data-dependent-index-coordinate-siting
 title: Accept or revise ADR 0108 on siting a data-dependent index coordinate
-status: in-progress
+status: blocked
 priority: p1
-dependencies: []
+dependencies: [revise-adr-0108-with-a-complete-data-dependent-index-vertical]
 related: [admit-the-indirect-access-class-into-the-index-layer, admit-an-indirect-gather-family-for-tied-embedding-lookup, emit-the-indirect-gather-on-metal, accept-adr-0107-indirect-gather-semantic-family]
-scopes: [contracts/decisions]
+scopes: [contracts/decisions, contracts/foundation, contracts/navigation, implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, indexing, ir, gather, verification, needs-tom]
 assignee: sol-adr0108
 lease_expires_at: 1786219272
 ---
-**This ticket is Tom's decision, not an agent's work item.** It exists so a follow-on that admits the form has something to depend on rather than being schedulable while the record shaping it is still `proposed`.
+## Decision outcome — returned for revision on 2026-08-08
 
-`docs/decisions/0108-site-a-data-dependent-index-coordinate-on-the-expression.md` is `decision_status: proposed`, `implementation_status: none`. It extends [ADR 0107](../docs/decisions/0107-admit-an-indirect-gather-as-a-semantic-family-above-the-index-language.md), which admitted the gather family and named the index-layer question as a separate decision it deliberately did not answer.
+Tom delegated the coordinator in the 2026-08-08 interactive orchestration
+session to make the correct decision after independent audit. The resulting
+decision is **do not accept ADR 0108 as written**. Keep it `proposed`, return it
+for the revision owned by
+[`revise-adr-0108-with-a-complete-data-dependent-index-vertical`](revise-adr-0108-with-a-complete-data-dependent-index-vertical.md),
+and preserve the current no-index-layer admission and typed request refusal.
+This is revision provenance, not acceptance provenance.
 
-## What the record decides
+The ticket is `blocked` on that revision rather than `done` or
+`awaiting-decision`. A terminal acceptance ticket would satisfy dependents and
+make backend emission look dependency-ready even though no representation has
+been selected, accepted, or admitted.
 
-**One: the shape.** A data-dependent coordinate, if ever admitted, is an index-expression form and a fourth `IndexExprClass` member — never a second tensor ordinal or an indirection record on `AccessData`. Three reasons, each read from the implementation rather than argued from the framing:
+## Source-first Fact audit at `ceda5be0be458e527b7cf1ed604f3c503db12015`
 
-- the canonical encoder dispatches on an explicit per-form tag (`encode_index_node`, `structural_index_key`), so a sixth form changes the bytes of no region that lacks one, while any field on the access moves every region identity ever derived and forces `tiler.index-region.v11` to `v12`;
-- `IndexDomainPredicate` names a `VerifiedIndexExprId` in both variants and `validate_index_domain_predicate` requires that expression to be one of the access's coordinates, so an indirect *axis* that is not an expression has no handle to constrain and needs a second predicate subject; and
-- the per-axis coordinate-to-extent correspondence is spelled as `zip` in seven functions of `proof.rs`, which an access-level indirection falsifies at all seven simultaneously and silently, because `zip` truncates rather than failing.
+The draft's Facts were re-read at the claimed base before edits.
 
-**Two: what ADR 0046's non-weakening condition costs.** The form is *sound* — an expression reading tensor data has no propagated interval, so it can neither prove a bound nor refute one, and it declines in every discharge mechanism without changing any direct-access coordinate's answer. What it weakens is the meaning of a retained unknown: all three `IndexDomainUnknownReason` members mean "dischargeable in principle by supplying more", and a data-dependent bound is closable by none of them in any environment. The form therefore requires a **fourth reason naming undecidability in principle**, and form and reason are one change rather than two.
+- **Verified — current negative boundary.** In
+  `crates/tiler-ir/src/index/model.rs`, `pub(super) enum IndexNode` has five forms
+  and public `IndexExprClass` has three. In
+  `crates/tiler-ir/src/index/predicate.rs`, `IndexDomainUnknownReason` has three
+  variants. `the_index_expression_vocabulary_admits_no_data_dependent_form`
+  sizes the live census from those types. No node reads tensor data, and a gather
+  reaches no index region or scheduled relation.
+- **False — every access-level representation moves old identity bytes.**
+  `encode_region` in `crates/tiler-ir/src/index/builder/identity.rs` already
+  writes an explicit leading `AccessMode` tag: `1` for reads and `2` for writes.
+  A fresh tag `3` with a framed payload can preserve all old bytes. This does not
+  select that representation; it keeps the candidate open for comparison.
+- **Imprecise — seven `zip` sites silently lose axes.** The seven sites exist in
+  `crates/tiler-ir/src/index/builder/proof.rs`, but `IndexRegionBuilder::prepare_access`
+  first checks `coordinates.len() == tensor_data.shape.rank()` and returns
+  `IndexBuildError::AccessRank` otherwise. The current consumers receive an
+  established same-length invariant. A future representation must state its own
+  rank rule, but the census does not choose a representation.
+- **False — every existing unknown reason promises later closure.** The docs on
+  `IndexDomainUnknownReason` say that admitted facts permit models on both sides,
+  that the current engine does not decide a fragment, or that a deterministic
+  lane hit a resource limit. They do not promise that more facts, a stronger
+  engine, or a larger budget will close every obligation.
+- **False — a gather bound is undecidable in principle.** ADR 0107 permits static
+  proof or validation at a named boundary. `decide_gather_index` in
+  `crates/tiler-ir/src/semantic/gather.rs` is factored for reuse by a future
+  host-side pre-dispatch validator. The current shape-only verifier lacks the
+  tensor element; that does not make the semantic precondition undecidable in
+  every environment and does not require a fourth unknown reason.
+- **Incomplete — the proposed expression node is a complete additive form.**
+  `mark_expr`, `visit_expression_dimensions`, `remap_node`, the alpha-key
+  construction, both identity encoders, proof evaluation, and the reference
+  oracle are exhaustive over nodes whose children are index expressions or
+  sourced extents. A tensor-read node would be a nested logical read and needs a
+  source tensor and coordinate bounds, reachability, resolved type and `u32`
+  semantics, proof ownership, compaction, identity, authoring, reference, and
+  compiler explanation that the draft did not define.
+- **False — the public boundary consists of four named widenings.** `IndexNode`
+  is private to the index implementation. The public inspection form is
+  `IndexExprView`, while construction would need an `IndexRegionBuilder` method
+  and error surface. The previous list counted a private enum and omitted public
+  authoring and validation consequences.
+- **False — emission can trigger its own prerequisite.** The Metal emission
+  ticket was blocked on this acceptance and on an admitted IR. It therefore
+  cannot be the event that justifies the prior design decision. The order is
+  revision/design, acceptance, separate IR admission, then emission; the integer
+  storage carrier is an independent prerequisite.
 
-**Three: not yet.** Nothing consumes an index region containing an indirect coordinate — no realization law, no lowering capability, `classify` returns `None`, and `LogicalAccess` has no relation for it. Admitting the form today would replace an early typed refusal at the request boundary with a region that *builds* carrying an obligation nothing can discharge.
+## Standing boundary
 
-## The trade-off, stated as it was decided
-
-Accepting this record accepts that a **verifiable-but-undischargeable region is not the same kind of legitimate delivered state as a registered-but-unplannable family**. ADR 0107 accepted the latter; this record declines the former, on the ground that a family is a statement of meaning while a region is a carrier of proof.
-
-**The counterpoint.** A shape decided and not taken can rot: the three costs above are measured against today's encoder, predicate vocabulary, and verifier, and a later refactor could move any of them without anyone re-reading this record. The mitigation is that the vocabulary counts are now pinned from their types in `crates/tiler-ir/src/index/builder/tests.rs`, so widening either enum is a build error naming the record — but nothing pins the *reasons*, only the outcome.
-
-## What acceptance does not commit to
-
-Acceptance is not a public-boundary acceptance. Under [ADR 0075](../docs/decisions/0075-scope-public-boundary-approval-by-change-category.md) the four widenings the record shapes — an `IndexNode` form, an `IndexExprView` variant, an `IndexExprClass` member, and an `IndexDomainUnknownReason` member — are a **decided shape and an undrafted surface**. None is written, so none is yet a labelled draft.
+ADR 0107 remains accepted: gather is a semantic family and nothing below it.
+ADR 0046's rejection of tensor-data-derived indices in the current index language
+remains in force. The exact 5/3/3 population checks remain useful regression
+guards, without reserving an expression route or a fourth unknown reason.
 
 ## What closes this ticket
 
-Either set `decision_status: accepted` with acceptance provenance, or record the requested revisions here and send the record back. Rejecting the *shape* half means the access-record route stays open and its three costs must be answered by whoever takes it. Rejecting the *timing* half means filing a ticket that admits the expression form together with the fourth unknown reason — never the form alone.
+The revision dependency must first deliver a source-audited, complete vertical
+comparison. This ticket can then record the resulting decision and accurate
+provenance. If a representation is accepted, the coordinator must file and add
+the separate IR-admission implementation dependency to
+[`emit-the-indirect-gather-on-metal`](emit-the-indirect-gather-on-metal.md) before
+that ticket can leave `blocked`. Acceptance alone must not make emission ready.

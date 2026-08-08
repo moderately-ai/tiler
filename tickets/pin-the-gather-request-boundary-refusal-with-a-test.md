@@ -32,7 +32,7 @@ So the assertion in the record and the check in the tree are about different thi
 
 ## Non-goals
 
-Changing the refusal, the family, or the policy inventory. Admitting anything into the index layer — [ADR 0108](../docs/decisions/0108-site-a-data-dependent-index-coordinate-on-the-expression.md) holds that and defers it.
+Changing the refusal, the family, or the policy inventory. Admitting anything into the index layer — [ADR 0108](../docs/decisions/0108-site-a-data-dependent-index-coordinate-on-the-expression.md) remains proposed and was returned for a complete representation comparison.
 
 ## Closes when
 

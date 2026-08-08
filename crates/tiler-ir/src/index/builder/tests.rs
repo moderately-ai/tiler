@@ -498,8 +498,9 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
     // Six cases over three variants, because two of them are the same variant
     // distinguished only by its fields. The population cannot be mirrored from
     // `variant_count` for that reason, so the *variant* census is pinned at
-    // `the_index_expression_vocabulary_admits_no_data_dependent_form` instead —
-    // a fourth reason is a build error there before it can be an omission here.
+    // `the_index_expression_vocabulary_admits_no_data_dependent_form` instead.
+    // Any widening is a build error there before it can be an omission here;
+    // this inventory does not claim that a particular fourth reason is needed.
     let unknown_cases = [
         IndexDomainUnknownReason::InsufficientFacts,
         IndexDomainUnknownReason::UnsupportedFragment,
@@ -551,17 +552,16 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
 /// ADR 0107 admitted `tiler::gather-f32@1` as a semantic family "and as nothing
 /// below it", and the substance of that record is a *negative*: no `IndexNode`
 /// form reads tensor data and no `IndexExprClass` member is data-dependent, so a
-/// gather occurrence reaches no index region. ADR 0108 decides the shape a
-/// data-dependent coordinate would take if one were ever admitted — an
-/// expression form and a fourth class, never a second tensor on `AccessData` —
-/// and decides that none is admitted yet.
+/// gather occurrence reaches no index region. ADR 0108 was returned for revision
+/// and chooses no future representation. These checks pin only that current
+/// no-admission boundary while the complete comparison is redone.
 ///
 /// A negative decision with no check erodes silently, because the way to break
 /// it is to *add* something and nothing is watching the count. These pins are
 /// what make the widening loud: each compares a `variant_count` against a
 /// hand-written literal, so a sixth node form or a fourth class is a build error
-/// here that names the record it contradicts. Neither is a tautology — the two
-/// sides come from different places, the type and this file — which is exactly
+/// here that requires an explicit contract update. Neither is a tautology — the
+/// two sides come from different places, the type and this file — which is exactly
 /// what an expectation derived from the list it checks would fail to be.
 ///
 /// The unit-variant vocabularies get the stronger form: their arrays are
@@ -583,19 +583,17 @@ fn the_index_expression_vocabulary_admits_no_data_dependent_form() {
     const NODE_FORMS: usize = 5;
     const _: () = assert!(
         variant_count::<IndexNode>() == NODE_FORMS,
-        "ADR 0107 and ADR 0108 state that no `IndexNode` form reads tensor data. \
-Widening this enum contradicts both records; amend them before widening it."
+        "ADR 0107 fixes the current no-index-layer admission and ADR 0108 remains \
+proposed after revision; decide and amend the governing contract before widening `IndexNode`."
     );
-    // Three reasons, every one meaning `dischargeable in principle by supplying
-    // more` — more facts, a stronger engine, a larger budget. ADR 0108 finds
-    // that admitting a data-dependent coordinate without a fourth reason naming
-    // undecidability *in principle* is what would weaken the guarantee ADR 0046
-    // protects, because it would make one type mean two incompatible things.
+    // Three current reasons, each carrying its own documented meaning. They do
+    // not collectively promise eventual closure, and this census neither
+    // reserves nor requires a fourth reason for a future data-dependent form.
     const UNKNOWN_REASONS: usize = 3;
     const _: () = assert!(
         variant_count::<IndexDomainUnknownReason>() == UNKNOWN_REASONS,
-        "a fourth unknown reason is ADR 0108's stated repair and arrives with the \
-expression form, not before it."
+        "the index-domain unknown-reason vocabulary changed; update the full census, \
+identity cases, exhaustive consumers, and governing decision together."
     );
 
     assert_eq!(
