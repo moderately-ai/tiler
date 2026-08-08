@@ -761,7 +761,7 @@ fn compute_obligation_identity(
         declaration,
         subject_coordinate: program.canonical_value_ids[data.subject.as_usize()],
         resolved_type: &subject.resolved_type,
-        shape: &subject.shape,
+        shape: static_subject_shape(subject),
     })
 }
 
@@ -823,8 +823,23 @@ fn obligation_identity_encoded_len(
         program.reached_definitions.as_bytes().len(),
         declaration,
         &subject.resolved_type,
-        &subject.shape,
+        static_subject_shape(subject),
     )
+}
+
+/// Returns a precondition subject's fixed shape.
+///
+/// A subject is always an operation *operand*, and `SemanticProgramBuilder`
+/// refuses a symbolic operand before the operation exists, so this position
+/// cannot hold one. That is why the encoding below stays untagged and
+/// `OBLIGATION_DOMAIN` does not move with `tiler.semantic-graph.v3`: nothing an
+/// obligation identity can encode has changed. Admitting symbolic operands must
+/// step this domain, and this is the site that says so.
+fn static_subject_shape(subject: &super::operation::ValueData) -> &Shape {
+    subject
+        .shape
+        .as_static()
+        .expect("a semantic precondition subject is an operand, which is always literal")
 }
 
 fn obligation_identity_parts_encoded_len(

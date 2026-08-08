@@ -216,6 +216,23 @@ impl fmt::Display for AbiExprUse {
 pub enum ArtifactBuildError {
     /// No fresh builder ownership identity remained.
     BuilderIdentityExhausted,
+    /// A bound semantic interface extent names a declared `ShapeEnv` symbol.
+    ///
+    /// **This refusal is what makes the envelope's three carried subjects
+    /// sufficient.** `project_semantic` travels the semantic graph identity, the
+    /// reached definitions, and the admission provenance, and deliberately
+    /// leaves the registry snapshot behind under ADR 0072. The shape-environment
+    /// subject is left behind for a different and weaker reason: no artifact can
+    /// differ by it, because a program whose interface names a symbol never
+    /// reaches this builder. Were that to stop holding, two programs over
+    /// differently bound environments would encode to one envelope digest — an
+    /// unkeyed symbolic program — so the property is enforced here rather than
+    /// assumed, and `docs/artifact-abi.md`'s "only the three reached subjects
+    /// travel" stays true because of this variant.
+    SymbolicSemanticInterface {
+        /// Rejected interface entry, named by its stable key.
+        interface: String,
+    },
     /// A builder-owned handle came from another builder.
     ForeignHandle {
         /// Category of rejected handle.
@@ -596,6 +613,7 @@ impl Error for ArtifactBuildError {
             Self::StaticEvaluation { cause, .. } => Some(cause),
             Self::InvalidRouteRequirement { cause } => Some(cause),
             Self::BuilderIdentityExhausted
+            | Self::SymbolicSemanticInterface { .. }
             | Self::ForeignHandle { .. }
             | Self::InvalidHandle { .. }
             | Self::ExpressionOutOfRange { .. }

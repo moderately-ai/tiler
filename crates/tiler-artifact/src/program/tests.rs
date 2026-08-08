@@ -60,7 +60,10 @@ use tiler_ir::semantic::{
     constant_bf16_op, constant_f32_op, dequantize_strict_affine_op, multiply_bf16_op,
     multiply_f32_op, strict_serial_sum_f32_op,
 };
-use tiler_ir::shape::{Axis, Extent, Shape};
+use tiler_ir::shape::{
+    Axis, BindingSource, Extent, FactProvenance, RootBinding, Shape, ShapeEnvBuilder, ShapeSymbol,
+    SourcedExtent, SymbolScope,
+};
 
 use tiler_ir::numerics::{CANONICAL_DIMENSIONS, DIMENSION_COUNT};
 
@@ -3424,6 +3427,74 @@ fn a_reached_semantic_provider_revision_changes_identity() {
     assert_ne!(
         first_artifact.canonical_identity(),
         second_artifact.canonical_identity(),
+    );
+}
+
+/// A symbolic semantic program never opens an artifact builder.
+///
+/// **This is the assertion `project_semantic`'s three carried subjects rest
+/// on.** The envelope travels the semantic graph identity, the reached
+/// definitions, and the admission provenance; it deliberately leaves the
+/// registry snapshot behind under ADR 0072, and it leaves the shape-environment
+/// subject behind for a weaker reason — no two packaged artifacts can differ by
+/// it. That is only true while no program whose interface names a declared
+/// symbol reaches this builder. If this test fails, two programs over
+/// differently bound environments encode to one envelope digest, and
+/// `docs/artifact-abi.md`'s "only the three reached subjects travel" becomes an
+/// unkeyed symbolic program rather than a deliberate exclusion.
+#[test]
+fn a_symbolic_semantic_program_never_reaches_the_artifact_builder() {
+    let scope = SymbolScope::new("artifact/0").unwrap();
+    let rows = ShapeSymbol::new(scope, "rows").unwrap();
+    let mut draft = ShapeEnvBuilder::new();
+    draft.declare(rows.clone()).unwrap();
+    draft
+        .bind(
+            &rows,
+            RootBinding::new(
+                BindingSource::InputDimension {
+                    input: InputKey::new("input").unwrap(),
+                    axis: Axis::new(0),
+                },
+                AvailabilityPhase::LiveDevicePreflight,
+                FactProvenance::RuntimeValidated,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let environment = Arc::new(draft.build().unwrap());
+
+    let mut builder =
+        SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+    let value = builder
+        .input_sourced::<F32>(
+            InputKey::new("input").unwrap(),
+            vec![SourcedExtent::Symbol(rows)],
+        )
+        .expect("the symbolic input is admitted at the semantic layer");
+    builder
+        .output(OutputKey::new("result").unwrap(), value)
+        .unwrap();
+    let symbolic = builder.build().unwrap();
+    assert_ne!(
+        symbolic.semantic_identity().shape_environment(),
+        semantic_program().semantic_identity().shape_environment(),
+        "the fixture really does carry a non-empty environment subject",
+    );
+
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider]).expect("environment");
+    assert!(
+        matches!(
+            ArtifactProgramBuilder::new(&symbolic, environment.clone()),
+            Err(ArtifactBuildError::SymbolicSemanticInterface { interface })
+                if interface == "input",
+        ),
+        "a symbolic interface extent is refused before any subject is projected",
+    );
+    assert!(
+        ArtifactProgramBuilder::new(&semantic_program(), environment).is_ok(),
+        "the neighbour differing only in the extent's source kind opens",
     );
 }
 

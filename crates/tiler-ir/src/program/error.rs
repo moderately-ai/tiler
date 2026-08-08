@@ -153,6 +153,20 @@ pub enum KernelProgramBuildError {
         /// Rejected interface key.
         key: InputKey,
     },
+    /// A bound semantic interface extent names a declared `ShapeEnv` symbol.
+    ///
+    /// A kernel program's subject records the exact interface boundaries a
+    /// physical realization must cover, and a covered boundary is a fixed
+    /// quantity: the stage coverage, allocations, and views built over it are
+    /// all sized. Refusing here is what makes "no symbolic program reaches a
+    /// packaged artifact" a property of this type rather than a convention —
+    /// every artifact is built from a verified kernel program, so a symbolic
+    /// program cannot reach one and cannot ship with its shape-environment
+    /// subject unrepresented in the artifact's three carried subjects.
+    SymbolicInterfaceExtent {
+        /// Rejected interface entry, named by its stable key.
+        interface: String,
+    },
     /// Two materialized values claimed the same program input.
     DuplicateProgramInput {
         /// Repeated interface key.

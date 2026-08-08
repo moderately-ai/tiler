@@ -5,16 +5,22 @@ use super::registry::{
     SemanticRegistrySnapshotIdentity,
 };
 use crate::identity::{push_len, push_slice};
-use crate::shape::Shape;
+use crate::shape::{ShapeEnvIdentity, SourcedShape};
 
 pub(super) const MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES: usize = 16 * 1024 * 1024;
 const LENGTH_BYTES: usize = std::mem::size_of::<u64>();
 const VALUE_ID_BYTES: usize = std::mem::size_of::<u64>();
 const RESULT_INDEX_BYTES: usize = std::mem::size_of::<u32>();
-const EXTENT_BYTES: usize = std::mem::size_of::<u64>();
 const PRECONDITION_ORDINAL_BYTES: usize = std::mem::size_of::<u32>();
 const PRECONDITION_STATUS_BYTES: usize = std::mem::size_of::<u8>();
-const GRAPH_DOMAIN: &[u8] = b"tiler.semantic-graph.v2\0";
+// `v3`: every extent is written through `SourcedShape::encode`, which tags each
+// extent with its source kind. `v2` wrote eight untagged big-endian bytes per
+// extent and so had nowhere to put a symbol; an untagged-static beside a
+// tagged-symbolic extent would have been collision-ambiguous, which is why the
+// tag is unconditional and why a wholly literal program's bytes move even
+// though its meaning does not. That is the same step `tiler.index-region.v8`
+// took to `v9` for a *constant* divisor, for the same reason.
+const GRAPH_DOMAIN: &[u8] = b"tiler.semantic-graph.v3\0";
 
 /// Collision-free canonical semantic-graph identity bytes.
 ///
@@ -33,7 +39,7 @@ impl SemanticGraphIdentity {
 
 /// Complete, non-forgeable semantic identity of one checked program.
 ///
-/// The four subjects remain separately typed because they answer different
+/// The five subjects remain separately typed because they answer different
 /// equality questions, but this owner prevents downstream code from assembling
 /// components from different programs.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -42,6 +48,7 @@ pub struct SemanticIdentity {
     reached_definitions: SemanticDefinitionProjectionIdentity,
     admission_provenance: SemanticAdmissionProvenanceIdentity,
     registry_snapshot: SemanticRegistrySnapshotIdentity,
+    shape_environment: ShapeEnvIdentity,
 }
 
 impl SemanticIdentity {
@@ -50,12 +57,14 @@ impl SemanticIdentity {
         reached_definitions: SemanticDefinitionProjectionIdentity,
         admission_provenance: SemanticAdmissionProvenanceIdentity,
         registry_snapshot: SemanticRegistrySnapshotIdentity,
+        shape_environment: ShapeEnvIdentity,
     ) -> Self {
         Self {
             graph,
             reached_definitions,
             admission_provenance,
             registry_snapshot,
+            shape_environment,
         }
     }
 
@@ -82,6 +91,24 @@ impl SemanticIdentity {
     pub const fn registry_snapshot(&self) -> &SemanticRegistrySnapshotIdentity {
         &self.registry_snapshot
     }
+
+    /// Returns the identity of the environment symbolic extents resolve in.
+    ///
+    /// A separate subject rather than part of [`Self::graph`], because a
+    /// `ShapeEnvIdentity` bundles symbol declarations, *root-binding
+    /// provenance*, and semantic constraints, and the accepted three-identity
+    /// table puts binding provenance on the interface side. Folding it into a
+    /// subject documented to identify graph meaning would make two programs of
+    /// identical meaning that source one extent from a different input report
+    /// different *graph* identity.
+    ///
+    /// Total: a program that declares no symbol reports the identity of the
+    /// empty environment, so "declares no symbols" and "has an empty
+    /// environment" stay one fact with one spelling.
+    #[must_use]
+    pub const fn shape_environment(&self) -> &ShapeEnvIdentity {
+        &self.shape_environment
+    }
 }
 
 pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIdentity {
@@ -100,7 +127,7 @@ pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIden
         encode_string(&mut bytes, input.key.as_str());
         let value = &program.values[input.value.as_usize()];
         value.resolved_type.encode(&mut bytes);
-        encode_shape(&mut bytes, &value.shape);
+        value.shape.encode(&mut bytes);
     }
     push_len(&mut bytes, traversal.operation_order.len());
     for operation_index in traversal.operation_order {
@@ -122,7 +149,7 @@ pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIden
             };
             bytes.extend_from_slice(&result_index.get().to_be_bytes());
             value_data.resolved_type.encode(&mut bytes);
-            encode_shape(&mut bytes, &value_data.shape);
+            value_data.shape.encode(&mut bytes);
         }
     }
     push_len(&mut bytes, program.outputs.len());
@@ -248,11 +275,11 @@ pub(super) fn empty_graph_canonical_work_bytes() -> usize {
 pub(super) fn input_canonical_work_bytes(
     key: &super::interface::InputKey,
     resolved_type: &super::types::ResolvedValueType,
-    shape: &Shape,
+    shape: &SourcedShape,
 ) -> usize {
     string_encoded_len(key.as_str())
         .saturating_add(resolved_type.encoded_len())
-        .saturating_add(shape_encoded_len(shape))
+        .saturating_add(shape.encoded_len())
 }
 
 pub(super) fn operation_canonical_work_bytes(
@@ -275,7 +302,7 @@ pub(super) fn operation_canonical_work_bytes(
                         .map(|fact| {
                             RESULT_INDEX_BYTES
                                 .saturating_add(fact.resolved_type().encoded_len())
-                                .saturating_add(shape_encoded_len(fact.shape()))
+                                .saturating_add(SourcedShape::static_encoded_len(fact.shape()))
                         })
                         .fold(0_usize, usize::saturating_add),
                 ),
@@ -351,7 +378,7 @@ fn operation_record_encoded_len(program: &ProgramData, operation: &OperationData
                     let value = &program.values[result.as_usize()];
                     RESULT_INDEX_BYTES
                         .saturating_add(value.resolved_type.encoded_len())
-                        .saturating_add(shape_encoded_len(&value.shape))
+                        .saturating_add(value.shape.encoded_len())
                 })
                 .fold(0_usize, usize::saturating_add),
         )
@@ -359,10 +386,6 @@ fn operation_record_encoded_len(program: &ProgramData, operation: &OperationData
 
 fn string_encoded_len(value: &str) -> usize {
     LENGTH_BYTES.saturating_add(value.len())
-}
-
-fn shape_encoded_len(shape: &Shape) -> usize {
-    LENGTH_BYTES.saturating_add(shape.rank().saturating_mul(EXTENT_BYTES))
 }
 
 fn encode_operation(output: &mut Vec<u8>, operation: &OperationData) {
@@ -379,11 +402,4 @@ fn encode_operation(output: &mut Vec<u8>, operation: &OperationData) {
 /// no check enforces that now, so it rests on review of the diff.
 fn encode_string(output: &mut Vec<u8>, value: &str) {
     push_slice(output, value.as_bytes());
-}
-
-fn encode_shape(output: &mut Vec<u8>, shape: &Shape) {
-    push_len(output, shape.rank());
-    for extent in shape.extents() {
-        output.extend_from_slice(&extent.get().to_be_bytes());
-    }
 }

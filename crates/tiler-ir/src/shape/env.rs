@@ -1044,6 +1044,33 @@ impl ShapeEnv {
 /// constraints in the canonical order `build` established, so the bytes are a
 /// function of the environment rather than of authoring order. Guards are not
 /// encoded and no derived state exists to encode.
+/// Returns the identity of the environment that declares and constrains nothing.
+///
+/// **Crate-internal, and total rather than optional on purpose.** A consumer
+/// whose identity folds a shape environment must answer for a program that
+/// names no symbol, and the two candidate answers are not equally good:
+/// "declares no symbols" and "has an empty environment" are one fact about the
+/// program, so a subject that could be absent would give one fact two spellings
+/// and every downstream enumeration a presence tag to frame. Reading the
+/// identity the real builder mints for an empty draft — rather than writing the
+/// constant out — is what keeps this equal to `ShapeEnvBuilder::new().build()`
+/// if the encoding ever changes.
+///
+/// This is deliberately *not* how [`crate::index`] treats an absent
+/// environment: a region's own bytes carry a presence tag, because a region
+/// with no environment has none to name. The difference is the position, not
+/// the rule — a fixed subject slot in an identity bundle must hold a value.
+pub(crate) fn empty_environment_identity() -> &'static ShapeEnvIdentity {
+    static EMPTY: std::sync::LazyLock<ShapeEnvIdentity> = std::sync::LazyLock::new(|| {
+        ShapeEnvBuilder::new()
+            .build()
+            .expect("an environment with no symbol and no constraint is always verifiable")
+            .identity()
+            .clone()
+    });
+    &EMPTY
+}
+
 fn encode_environment(
     entries: &[(ShapeSymbol, RootBinding)],
     constraints: &[SemanticInputConstraint],

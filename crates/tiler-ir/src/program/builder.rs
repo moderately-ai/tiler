@@ -112,8 +112,8 @@ impl KernelProgramBuilder {
                 limit: MAX_STAGE_COVERAGE,
             }
         })?;
-        let inputs = interface_input_shapes(semantic);
-        let outputs = interface_output_shapes(semantic);
+        let inputs = interface_input_shapes(semantic)?;
+        let outputs = interface_output_shapes(semantic)?;
         if inputs.iter().any(|(_, _, value_type)| {
             value_type
                 .encoded_numeric_parts()
@@ -1432,44 +1432,72 @@ impl KernelProgramBuilder {
 /// Reads the ordered input interface of a verified semantic program.
 ///
 /// A verified program always resolves its own interface values, so the lookup
-/// is a program invariant rather than caller input.
-fn interface_input_shapes(semantic: &SemanticProgram) -> Vec<(InputKey, Shape, ResolvedValueType)> {
+/// is a program invariant rather than caller input. The *shape* is not: an
+/// input may name a declared `ShapeEnv` symbol, and a kernel program's covered
+/// boundary must be a fixed quantity, so a symbolic one is refused.
+///
+/// # Errors
+///
+/// Returns [`KernelProgramBuildError::SymbolicInterfaceExtent`] for an input
+/// whose shape names a symbol.
+fn interface_input_shapes(
+    semantic: &SemanticProgram,
+) -> Result<Vec<(InputKey, Shape, ResolvedValueType)>, KernelProgramBuildError> {
     semantic
         .inputs()
         .map(|input| {
-            let shape = semantic
-                .shape(input.value())
-                .expect("a verified program resolves its own input value")
-                .clone();
+            let shape = static_interface_shape(semantic, input.value(), input.key().as_str())?;
             let resolved_type = semantic
                 .value(input.value())
                 .expect("a verified program resolves its own input value")
                 .resolved_type()
                 .clone();
-            (input.key().clone(), shape, resolved_type)
+            Ok((input.key().clone(), shape, resolved_type))
         })
         .collect()
 }
 
 /// Reads the ordered output interface of a verified semantic program.
+///
+/// # Errors
+///
+/// Returns [`KernelProgramBuildError::SymbolicInterfaceExtent`] for an output
+/// whose shape names a symbol.
 fn interface_output_shapes(
     semantic: &SemanticProgram,
-) -> Vec<(OutputKey, Shape, ResolvedValueType)> {
+) -> Result<Vec<(OutputKey, Shape, ResolvedValueType)>, KernelProgramBuildError> {
     semantic
         .outputs()
         .map(|output| {
-            let shape = semantic
-                .shape(output.value())
-                .expect("a verified program resolves its own output value")
-                .clone();
+            let shape = static_interface_shape(semantic, output.value(), output.key().as_str())?;
             let resolved_type = semantic
                 .value(output.value())
                 .expect("a verified program resolves its own output value")
                 .resolved_type()
                 .clone();
-            (output.key().clone(), shape, resolved_type)
+            Ok((output.key().clone(), shape, resolved_type))
         })
         .collect()
+}
+
+/// Returns one interface value's fixed shape, refusing a symbolic one.
+///
+/// The single place this builder narrows the semantic layer's total shape view,
+/// so the refusal cannot be extended for the input side and forgotten for the
+/// output side.
+fn static_interface_shape(
+    semantic: &SemanticProgram,
+    value: crate::semantic::ValueId,
+    interface: &str,
+) -> Result<Shape, KernelProgramBuildError> {
+    semantic
+        .shape(value)
+        .expect("a verified program resolves its own interface value")
+        .as_static()
+        .cloned()
+        .ok_or_else(|| KernelProgramBuildError::SymbolicInterfaceExtent {
+            interface: interface.to_owned(),
+        })
 }
 
 fn expected_component(

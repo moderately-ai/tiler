@@ -2922,7 +2922,14 @@ impl VerifiedRequestSubject {
 
     pub(crate) fn canonical_explain_subject_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        // The enclosing domain steps to `v5` because the recognized program
+        // The enclosing domain steps to `v6` because `SemanticIdentity` gained
+        // its fifth subject, the shape environment, and this preimage
+        // enumerates the subject set positionally: a `v5` reader would take the
+        // environment identity's length frame for the output count. An
+        // appends-only argument does not close for a field written *before* the
+        // count, so this is a domain step.
+        //
+        // The earlier step to `v5` because the recognized program
         // became a *list* — one implementable region partition per ordered named
         // output — and the list is length-framed ahead of the arms. A `v4`
         // subject encoded exactly one arm with no count, so its first
@@ -2945,7 +2952,7 @@ impl VerifiedRequestSubject {
         // input key, and a caller may name an input whatever it likes — and that
         // argument does not close. Stepping the domain makes the separation
         // structural instead.
-        bytes.extend_from_slice(b"tiler.compiler.request-subject.v5\0");
+        bytes.extend_from_slice(b"tiler.compiler.request-subject.v6\0");
         push_slice(&mut bytes, self.semantic_identity.graph().as_bytes());
         push_slice(
             &mut bytes,
@@ -2958,6 +2965,10 @@ impl VerifiedRequestSubject {
         push_slice(
             &mut bytes,
             self.semantic_identity.registry_snapshot().as_bytes(),
+        );
+        push_slice(
+            &mut bytes,
+            self.semantic_identity.shape_environment().as_bytes(),
         );
         // The ordered named outputs, counted then written in declaration order.
         // The count is what keeps a two-output subject from framing like a
@@ -5152,13 +5163,7 @@ fn recognize_elementwise_output(
     arithmetic: ArithmeticType,
 ) -> Result<NormalizedOutput, RequestError> {
     let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
-    let shape = program
-        .shape(output.value())
-        .map_err(|_| RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "output-handle",
-        })?
-        .clone();
+    let shape = static_shape(program, output.value(), "output-handle")?;
     if shape.rank() == 0 {
         return mismatch("elementwise-rank");
     }
@@ -5819,7 +5824,7 @@ fn plan_elementwise(
             continue;
         }
         if leaves.is_leaf(value) {
-            if program.shape(value).ok() != Some(shape) {
+            if static_shape_ref(program, value) != Some(shape) {
                 return refused("elementwise-shape");
             }
             let leaf = LeafRead {
@@ -5897,7 +5902,7 @@ fn plan_elementwise(
         // proposes under a contract that permits it, and its inner product is
         // rank zero. Refusing every rank would have lost that alternative to a
         // check with no correctness content behind it.
-        let value_shape = program.shape(value).ok();
+        let value_shape = static_shape_ref(program, value);
         if value_shape != Some(shape) && value_shape.map(Shape::rank) != Some(0) {
             return refused("elementwise-shape");
         }
@@ -6221,7 +6226,7 @@ fn recognize_structural_read(
     if !leaves.is_leaf(*operand) {
         return mismatch("structural-operand");
     }
-    let Ok(operand_shape) = program.shape(*operand) else {
+    let Some(operand_shape) = static_shape_ref(program, *operand) else {
         return mismatch("structural-operand");
     };
     // The occurrence's result is what the region iterates, so a result at any
@@ -6230,7 +6235,7 @@ fn recognize_structural_read(
     let [result] = results.as_slice() else {
         return mismatch("structural-arity");
     };
-    if program.shape(*result).ok() != Some(shape) {
+    if static_shape_ref(program, *result) != Some(shape) {
         return mismatch("structural-shape");
     }
     let operand_shape = operand_shape.clone();
@@ -6858,23 +6863,11 @@ fn recognize_staged_family(
             BoundaryRead::Staged
         };
         operand_reads.push(read);
-        let shape = program
-            .shape(*operand)
-            .map_err(|_| RequestError::UnsupportedCapability {
-                phase: "strategy",
-                rule: "input-handle",
-            })?
-            .clone();
+        let shape = static_shape(program, *operand, "input-handle")?;
         operand_elements.push(element_count_u64(&shape, "input")?);
         operand_shapes.push(shape);
     }
-    let output_shape = program
-        .shape(result)
-        .map_err(|_| RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "output-handle",
-        })?
-        .clone();
+    let output_shape = static_shape(program, result, "output-handle")?;
     let output_elements = element_count_u64(&output_shape, "output")?;
     let mut attributes = Vec::new();
     crate::region::encode_attributes(&mut attributes, operation.attributes()).map_err(|_| {
@@ -6956,19 +6949,13 @@ fn recognize_reduction(
         return mismatch("sum-output");
     }
     let axes = reduction_axes(sum.attributes())?;
-    let input_shape = program
-        .shape(*contributor)
-        .map_err(|_| RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "input-handle",
-        })?
-        .clone();
+    let input_shape = static_shape(program, *contributor, "input-handle")?;
     if input_shape.rank() == 0 {
         return mismatch("input-rank");
     }
     check_canonical_reduction_axes(&axes, input_shape.rank())?;
     let output_shape = input_shape.without_axes(&axes);
-    if program.shape(result).ok() != Some(&output_shape) {
+    if static_shape_ref(program, result) != Some(&output_shape) {
         return mismatch("sum-shape");
     }
 
@@ -7132,15 +7119,7 @@ fn normalize_contraction(
         return mismatch("contraction-operands");
     }
 
-    let shape_of = |value: ValueId| -> Result<Shape, RequestError> {
-        program
-            .shape(value)
-            .map_err(|_| RequestError::UnsupportedCapability {
-                phase: "strategy",
-                rule: "input-handle",
-            })
-            .cloned()
-    };
+    let shape_of = |value: ValueId| static_shape(program, value, "input-handle");
     let input_shapes = [shape_of(declared[0])?, shape_of(declared[1])?];
     // One extent per index, bound by the first operand axis naming it. The
     // semantic inferencer already proved agreement at construction, so a
@@ -7190,7 +7169,7 @@ fn normalize_contraction(
     };
     let output_shape = shape_over(structure.output())?;
     let contracted_shape = shape_over(structure.contracted())?;
-    if program.shape(result).ok() != Some(&output_shape) {
+    if static_shape_ref(program, result) != Some(&output_shape) {
         return mismatch("contraction-output-shape");
     }
 
@@ -7400,6 +7379,43 @@ fn reduction_axes(
                 })
         })
         .collect()
+}
+
+/// Returns one semantic value's fixed shape, refusing a symbolic one by name.
+///
+/// Recognition matches a program against a physical strategy, and every
+/// strategy below is stated over fixed extents: a domain a launch geometry is
+/// derived from, an element count, a reindex or broadcast axis decode. A
+/// symbolic extent is refused here rather than resolved through the
+/// environment, which would make the recognized region name extents nobody
+/// wrote. It shares the caller's rule string so a refusal still names the
+/// boundary that could not be read.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] for a foreign handle and for
+/// a shape naming a declared symbol; the two are one refusal because either way
+/// this phase has no fixed shape to plan over.
+fn static_shape(
+    program: &SemanticProgram,
+    value: ValueId,
+    rule: &'static str,
+) -> Result<Shape, RequestError> {
+    static_shape_ref(program, value)
+        .cloned()
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule,
+        })
+}
+
+/// Returns one value's fixed shape, or `None` for a foreign or symbolic one.
+///
+/// The borrowing form, for the comparisons that already treat an unreadable
+/// shape as a mismatch. A symbolic shape compares unequal to every [`Shape`],
+/// which is the answer those sites want: the strategy is not recognized.
+fn static_shape_ref(program: &SemanticProgram, value: ValueId) -> Option<&Shape> {
+    program.shape(value).ok()?.as_static()
 }
 
 fn element_count_u64(shape: &Shape, role: &'static str) -> Result<u64, RequestError> {

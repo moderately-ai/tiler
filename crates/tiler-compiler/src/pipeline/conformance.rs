@@ -540,7 +540,12 @@ fn ordered_multi_output_programs_compile_through_the_ordinary_path() {
             .map(|output| {
                 (
                     output.key().clone(),
-                    program.shape(output.value()).unwrap().clone(),
+                    program
+                        .shape(output.value())
+                        .unwrap()
+                        .as_static()
+                        .unwrap()
+                        .clone(),
                 )
             })
             .collect();

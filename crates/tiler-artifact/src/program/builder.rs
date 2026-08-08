@@ -232,12 +232,13 @@ impl ArtifactProgramBuilder {
         semantic: &SemanticProgram,
         environment: CompilationEnvironment,
     ) -> Result<Self, ArtifactBuildError> {
+        let interface = read_semantic_interface(semantic)?;
         let owner =
             next_artifact_builder_id().ok_or(ArtifactBuildError::BuilderIdentityExhausted)?;
         Ok(Self {
             owner,
             semantic: semantic.semantic_identity().clone(),
-            interface: read_semantic_interface(semantic),
+            interface,
             environment,
             providers: Vec::new(),
             payloads: Vec::new(),
@@ -1490,38 +1491,60 @@ fn usize_of(index: u32) -> usize {
 }
 
 /// Reads the ordered named interface of a verified semantic program.
-fn read_semantic_interface(semantic: &SemanticProgram) -> SemanticInterface {
+///
+/// # Errors
+///
+/// Returns [`ArtifactBuildError::SymbolicSemanticInterface`] when an interface
+/// extent names a declared `ShapeEnv` symbol. See that variant for why the
+/// refusal is what keeps the envelope's three carried subjects sufficient.
+fn read_semantic_interface(
+    semantic: &SemanticProgram,
+) -> Result<SemanticInterface, ArtifactBuildError> {
     let inputs = semantic
         .inputs()
         .map(|input| {
-            let shape = semantic
-                .shape(input.value())
-                .expect("a verified program resolves its own input value")
-                .clone();
+            let shape = static_interface_shape(semantic, input.value(), input.key().as_str())?;
             let value_type = semantic
                 .value(input.value())
                 .expect("a verified program resolves its own input value")
                 .resolved_type()
                 .clone();
-            (input.key().clone(), shape, value_type)
+            Ok((input.key().clone(), shape, value_type))
         })
-        .collect();
+        .collect::<Result<Vec<_>, ArtifactBuildError>>()?;
     let outputs = semantic
         .outputs()
         .map(|output| {
-            let shape = semantic
-                .shape(output.value())
-                .expect("a verified program resolves its own output value")
-                .clone();
+            let shape = static_interface_shape(semantic, output.value(), output.key().as_str())?;
             let value_type = semantic
                 .value(output.value())
                 .expect("a verified program resolves its own output value")
                 .resolved_type()
                 .clone();
-            (output.key().clone(), shape, value_type)
+            Ok((output.key().clone(), shape, value_type))
         })
-        .collect();
-    SemanticInterface { inputs, outputs }
+        .collect::<Result<Vec<_>, ArtifactBuildError>>()?;
+    Ok(SemanticInterface { inputs, outputs })
+}
+
+/// Returns one interface value's fixed shape, refusing a symbolic one.
+///
+/// The single place this builder narrows the semantic layer's total shape view,
+/// so the refusal cannot be extended for the input side and forgotten for the
+/// output side.
+fn static_interface_shape(
+    semantic: &SemanticProgram,
+    value: tiler_ir::semantic::ValueId,
+    interface: &str,
+) -> Result<Shape, ArtifactBuildError> {
+    semantic
+        .shape(value)
+        .expect("a verified program resolves its own interface value")
+        .as_static()
+        .cloned()
+        .ok_or_else(|| ArtifactBuildError::SymbolicSemanticInterface {
+            interface: interface.to_owned(),
+        })
 }
 
 /// Projects the artifact's published interface from one variant's program.

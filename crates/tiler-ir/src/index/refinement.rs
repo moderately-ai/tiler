@@ -508,10 +508,7 @@ impl IndexRefinementSubject {
             let reference = program
                 .value(value)
                 .map_err(IndexRefinementVerificationError::SemanticHandle)?;
-            let shape = program
-                .shape(value)
-                .map_err(IndexRefinementVerificationError::SemanticHandle)?
-                .clone();
+            let shape = static_boundary_shape(program, value)?;
             let index = values
                 .iter()
                 .position(|candidate| *candidate == value)
@@ -532,10 +529,7 @@ impl IndexRefinementSubject {
             let reference = program
                 .value(value)
                 .map_err(IndexRefinementVerificationError::SemanticHandle)?;
-            let shape = program
-                .shape(value)
-                .map_err(IndexRefinementVerificationError::SemanticHandle)?
-                .clone();
+            let shape = static_boundary_shape(program, value)?;
             result_types.push(reference.resolved_type().clone());
             results.push(IndexRefinementBoundary {
                 value_type: reference.resolved_type().clone(),
@@ -2807,6 +2801,16 @@ pub enum IndexRefinementVerificationError {
     CompletionReceiptMismatch,
     /// A verified semantic handle failed to resolve.
     SemanticHandle(crate::semantic::HandleError),
+    /// A covered semantic boundary's extent names a declared `ShapeEnv` symbol.
+    ///
+    /// A refinement subject fixes the exact boundaries an independently
+    /// verified realization must reproduce, and it is compared byte for byte
+    /// against a candidate region's canonical identity. A symbolic boundary is
+    /// refused rather than resolved through the environment: resolving it would
+    /// make the subject name a value nobody wrote, which is the collapse of
+    /// graph identity into specialized identity the sourced vocabulary exists
+    /// to prevent.
+    SymbolicSemanticBoundary,
     /// The semantic operation definition disappeared from its frozen authority.
     OperationDefinitionMissing,
     /// Semantic authority projection failed.
@@ -2968,6 +2972,8 @@ impl fmt::Display for IndexRefinementVerificationError {
             Self::CompletionReceiptMismatch => formatter
                 .write_str("completed receipt does not match its pending refinement association"),
             Self::SemanticHandle(source) => write!(formatter, "semantic handle failed: {source}"),
+            Self::SymbolicSemanticBoundary => formatter
+                .write_str("a covered semantic boundary names a declared shape-environment symbol"),
             Self::OperationDefinitionMissing => {
                 formatter.write_str("semantic operation definition is absent")
             }
@@ -3730,6 +3736,26 @@ fn encode_subject_identity_with(
     );
     encode_optional_law_row(&mut bytes, subject.realization_law_row.as_deref());
     bytes
+}
+
+/// Returns one covered semantic value's fixed boundary shape.
+///
+/// # Errors
+///
+/// Returns [`IndexRefinementVerificationError::SemanticHandle`] for a handle the
+/// program does not own and
+/// [`IndexRefinementVerificationError::SymbolicSemanticBoundary`] for a shape
+/// naming a declared symbol.
+fn static_boundary_shape(
+    program: &crate::semantic::SemanticProgram,
+    value: crate::semantic::ValueId,
+) -> Result<Shape, IndexRefinementVerificationError> {
+    program
+        .shape(value)
+        .map_err(IndexRefinementVerificationError::SemanticHandle)?
+        .as_static()
+        .cloned()
+        .ok_or(IndexRefinementVerificationError::SymbolicSemanticBoundary)
 }
 
 fn encode_authority_identity(

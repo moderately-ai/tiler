@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
-use crate::shape::{Shape, ShapeEvidence};
+use crate::shape::{
+    ExtentSources, Shape, ShapeEnv, ShapeEvidence, SourcedExtent, SourcedShape,
+    empty_environment_identity,
+};
 
 use super::error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,
@@ -62,6 +65,7 @@ pub(super) struct ProgramData {
     pub(super) admission_provenance: SemanticAdmissionProvenanceIdentity,
     pub(super) registry_snapshot: SemanticRegistrySnapshotIdentity,
     pub(super) semantic_registry: FrozenSemanticRegistry,
+    pub(super) extent_sources: Option<ExtentSources>,
 }
 
 impl SemanticProgram {
@@ -229,14 +233,42 @@ impl SemanticProgram {
         self.data.outputs.len()
     }
 
-    /// Returns the shape of a graph-owned value.
+    /// Returns the shape of a graph-owned value and where each extent comes from.
+    ///
+    /// The one total view rather than a fixed accessor paired with an optional
+    /// symbolic one: a paired accessor makes the caller choose which question to
+    /// ask, and fails silently for the caller that only ever asks the first when
+    /// a third source kind arrives. A pass that handles only literals reads
+    /// [`SourcedShape::as_static`] once and refuses the rest with its own typed
+    /// reason.
     ///
     /// # Errors
     ///
     /// Returns a typed error for a foreign or invalid local handle.
-    pub fn shape(&self, value: ValueId) -> Result<&Shape, HandleError> {
+    pub fn shape(&self, value: ValueId) -> Result<&SourcedShape, HandleError> {
         self.value(value)?;
         Ok(&self.data.values[value.index.as_usize()].shape)
+    }
+
+    /// Returns the environment this program's symbolic extents resolve against.
+    ///
+    /// `None` for a program built without one, which is every program whose
+    /// extents are all literals. A symbol means nothing without the environment
+    /// that declares and binds it, so this is what an inspector needs to
+    /// interpret one found on a boundary — matching
+    /// [`VerifiedIndexRegion::extent_sources`](crate::index::VerifiedIndexRegion::extent_sources).
+    ///
+    /// Absence here is not absence from identity: the environment's identity is
+    /// a *total* subject of [`SemanticIdentity`], and a program with no
+    /// environment reports the empty environment's identity.
+    #[must_use]
+    pub fn extent_sources(&self) -> Option<&ExtentSources> {
+        self.data.extent_sources.as_ref()
+    }
+
+    /// Returns the fixed shape of a graph-owned value, for a literal one only.
+    fn static_shape(&self, value: ValueId) -> Result<Option<&Shape>, HandleError> {
+        self.shape(value).map(SourcedShape::as_static)
     }
 
     /// Checks and attaches Rust-side shape evidence to a typed value.
@@ -252,7 +284,7 @@ impl SemanticProgram {
         value: Value<T>,
     ) -> Result<ShapedValue<T, E>, ShapeRefineError> {
         let actual = self
-            .shape(value.erase())
+            .static_shape(value.erase())
             .map_err(ShapeRefineError::Handle)?;
         refine_shape(value, actual)
     }
@@ -272,8 +304,9 @@ impl SemanticProgram {
             left.erase(),
             right.erase(),
             |subject, value| {
-                self.shape(value)
-                    .map_err(|error| ShapeWitnessError::SubjectHandle { subject, error })
+                self.static_shape(value)
+                    .map_err(|error| ShapeWitnessError::SubjectHandle { subject, error })?
+                    .ok_or(ShapeWitnessError::SymbolicShape { subject })
             },
         )
     }
@@ -311,9 +344,9 @@ impl SemanticProgram {
 
     /// Returns the complete, internally consistent semantic identity bundle.
     ///
-    /// Graph meaning, reached definitions, admission provenance, and the full
-    /// registry snapshot remain available through named borrowed accessors on
-    /// [`SemanticIdentity`].
+    /// Graph meaning, reached definitions, admission provenance, the full
+    /// registry snapshot, and the shape environment remain available through
+    /// named borrowed accessors on [`SemanticIdentity`].
     #[must_use]
     pub fn semantic_identity(&self) -> &SemanticIdentity {
         self.data.semantic_identity.get_or_init(|| {
@@ -322,6 +355,7 @@ impl SemanticProgram {
                 self.data.reached_definitions.clone(),
                 self.data.admission_provenance.clone(),
                 self.data.registry_snapshot.clone(),
+                shape_environment_identity(self.data.extent_sources.as_ref()),
             )
         })
     }
@@ -375,8 +409,13 @@ impl SemanticProgram {
 
 fn refine_shape<T, E: ShapeEvidence>(
     value: Value<T>,
-    actual: &Shape,
+    actual: Option<&Shape>,
 ) -> Result<ShapedValue<T, E>, ShapeRefineError> {
+    let Some(actual) = actual else {
+        return Err(ShapeRefineError::SymbolicShape {
+            expected: E::expectation(),
+        });
+    };
     if E::matches(actual) {
         Ok(ShapedValue::from_verified(value))
     } else {
@@ -385,6 +424,18 @@ fn refine_shape<T, E: ShapeEvidence>(
             actual: actual.clone(),
         })
     }
+}
+
+/// Returns the identity of the environment a program's extents resolve in.
+///
+/// Total: a program that named no symbol and was never given an environment
+/// reports the empty environment's identity, so the fifth semantic subject is
+/// a value for every program rather than a presence to be framed.
+fn shape_environment_identity(sources: Option<&ExtentSources>) -> crate::shape::ShapeEnvIdentity {
+    sources.map_or_else(
+        || empty_environment_identity().clone(),
+        |sources| sources.environment_identity().clone(),
+    )
 }
 
 fn prove_same_shape<'a>(
@@ -431,6 +482,7 @@ pub struct SemanticProgramBuilder {
     output_keys: HashSet<OutputKey>,
     semantic_registry: FrozenSemanticRegistry,
     canonical_work_bytes: usize,
+    extent_sources: Option<ExtentSources>,
 }
 
 impl SemanticProgramBuilder {
@@ -450,6 +502,7 @@ impl SemanticProgramBuilder {
             output_keys: self.output_keys.clone(),
             semantic_registry: self.semantic_registry.clone(),
             canonical_work_bytes: self.canonical_work_bytes,
+            extent_sources: self.extent_sources.clone(),
         }
     }
 
@@ -460,6 +513,13 @@ impl SemanticProgramBuilder {
     /// Returns [`BuilderCreateError::GraphIdentityExhausted`] without creating
     /// a builder when the process-local owner space is exhausted.
     pub fn try_new(semantic_registry: FrozenSemanticRegistry) -> Result<Self, BuilderCreateError> {
+        Self::open(semantic_registry, None)
+    }
+
+    fn open(
+        semantic_registry: FrozenSemanticRegistry,
+        extent_sources: Option<ExtentSources>,
+    ) -> Result<Self, BuilderCreateError> {
         Ok(Self {
             owner: next_graph_id().ok_or(BuilderCreateError::GraphIdentityExhausted)?,
             inputs: Vec::new(),
@@ -470,6 +530,7 @@ impl SemanticProgramBuilder {
             output_keys: HashSet::new(),
             semantic_registry,
             canonical_work_bytes: empty_graph_canonical_work_bytes(),
+            extent_sources,
         })
     }
 
@@ -485,6 +546,31 @@ impl SemanticProgramBuilder {
         Self::try_new(registry)
     }
 
+    /// Tries to create a standard-registry builder whose symbolic input extents
+    /// resolve in one verified environment.
+    ///
+    /// **A constructor rather than a setter, and there is no setter.** A program
+    /// has exactly one environment for the whole of its life: a second one would
+    /// silently reinterpret every extent already authored against the first, and
+    /// the program's identity — which folds the environment's identity as its
+    /// fifth subject — would name whichever happened to be installed last.
+    /// Fixing the environment before any input exists makes that replacement
+    /// unrepresentable rather than merely discouraged, which is the same reason
+    /// [`IndexRegionBuilder::new_with_shape_environment`](crate::index::IndexRegionBuilder::new_with_shape_environment)
+    /// takes one and offers no setter.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error if standard registry construction or graph-owner
+    /// allocation fails.
+    pub fn try_standard_with_shape_environment(
+        environment: Arc<ShapeEnv>,
+    ) -> Result<Self, BuilderCreateError> {
+        let registry =
+            FrozenSemanticRegistry::standard().map_err(BuilderCreateError::StandardRegistry)?;
+        Self::open(registry, Some(ExtentSources::new(environment)))
+    }
+
     /// Adds an ordered fixed-shape input through an exact registered marker.
     ///
     /// # Errors
@@ -495,13 +581,41 @@ impl SemanticProgramBuilder {
         key: InputKey,
         shape: Shape,
     ) -> Result<Value<T>, BuildError> {
-        let resolved_type = self
-            .semantic_registry
-            .resolve_marker::<T>()
-            .map_err(BuildError::RegistryLookup)?
-            .clone();
+        let resolved_type = self.marker_type::<T>()?;
         self.input_resolved(key, shape, resolved_type)
             .map(Value::from_verified)
+    }
+
+    /// Adds an ordered input whose extents may name declared `ShapeEnv` symbols.
+    ///
+    /// Beside [`Self::input`] rather than replacing it: a wholly static caller
+    /// needs no environment and is not asked for an absent one, exactly as
+    /// [`IndexRegionBuilder::tensor`](crate::index::IndexRegionBuilder::tensor)
+    /// stands beside
+    /// [`IndexRegionBuilder::sourced_tensor`](crate::index::IndexRegionBuilder::sourced_tensor).
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors [`Self::input_resolved_sourced`] returns, and
+    /// additionally a typed error when the Rust marker is unbound in the frozen
+    /// registry.
+    pub fn input_sourced<T: super::registry::ValueTypeMarker>(
+        &mut self,
+        key: InputKey,
+        extents: Vec<SourcedExtent>,
+    ) -> Result<Value<T>, BuildError> {
+        let resolved_type = self.marker_type::<T>()?;
+        self.input_resolved_sourced(key, extents, resolved_type)
+            .map(Value::from_verified)
+    }
+
+    fn marker_type<T: super::registry::ValueTypeMarker>(
+        &self,
+    ) -> Result<ResolvedValueType, BuildError> {
+        self.semantic_registry
+            .resolve_marker::<T>()
+            .map_err(BuildError::RegistryLookup)
+            .cloned()
     }
 
     /// Adds a checked runtime-resolved input for parsed or generated frontends.
@@ -519,7 +633,59 @@ impl SemanticProgramBuilder {
         shape: Shape,
         resolved_type: ResolvedValueType,
     ) -> Result<ValueId, BuildError> {
-        validate_shape(&shape)?;
+        self.push_input(key, SourcedShape::from_shape(shape), resolved_type)
+    }
+
+    /// Adds a checked runtime-resolved input whose extents may name symbols.
+    ///
+    /// Every symbolic extent is admitted against this program's one environment
+    /// before the input exists, so a refused source leaves the draft exactly as
+    /// it was rather than half-applied. An extent whose binding arrives after
+    /// [`EXTENT_PHASE_CEILING`](crate::shape::EXTENT_PHASE_CEILING) is refused
+    /// here, at the constructor, and not deferred to
+    /// [`Self::build`]: a shape that is not evaluable before device work begins
+    /// is not a program this layer can hold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::ExtentSource`] when no environment is bound, when
+    /// the environment does not declare a named symbol, or when a symbol's root
+    /// binding arrives too late; [`BuildError::ShapeVocabulary`] when the shape
+    /// vocabulary cannot represent the normalized boundary; and the errors
+    /// [`Self::input_resolved`] returns for an unregistered type, a duplicate
+    /// key, an unsupported rank, or exhausted IDs.
+    pub fn input_resolved_sourced(
+        &mut self,
+        key: InputKey,
+        extents: Vec<SourcedExtent>,
+        resolved_type: ResolvedValueType,
+    ) -> Result<ValueId, BuildError> {
+        for extent in &extents {
+            let Some(symbol) = extent.symbol() else {
+                continue;
+            };
+            let Some(sources) = self.extent_sources.as_ref() else {
+                // No environment can declare the symbol, so it is undeclared
+                // here for exactly the reason the variant names.
+                return Err(BuildError::ExtentSource(
+                    crate::shape::ExtentSourceError::UndeclaredSymbol {
+                        symbol: symbol.clone(),
+                    },
+                ));
+            };
+            sources.admit(extent).map_err(BuildError::ExtentSource)?;
+        }
+        let shape = SourcedShape::sourced(extents).map_err(BuildError::ShapeVocabulary)?;
+        self.push_input(key, shape, resolved_type)
+    }
+
+    fn push_input(
+        &mut self,
+        key: InputKey,
+        shape: SourcedShape,
+        resolved_type: ResolvedValueType,
+    ) -> Result<ValueId, BuildError> {
+        validate_rank(shape.rank())?;
         self.semantic_registry
             .validate_type(&resolved_type)
             .map_err(BuildError::SemanticRegistry)?;
@@ -766,6 +932,7 @@ impl SemanticProgramBuilder {
                 admission_provenance: admission_provenance.clone(),
                 registry_snapshot: registry_snapshot.clone(),
                 semantic_registry: preview.semantic_registry,
+                extent_sources: preview.extent_sources,
             };
             let (canonical_value_ids, canonical_operation_ordinals) =
                 canonical_coordinates_for_verified(&preview_data);
@@ -807,6 +974,7 @@ impl SemanticProgramBuilder {
             admission_provenance,
             registry_snapshot,
             semantic_registry: self.semantic_registry,
+            extent_sources: self.extent_sources,
         };
         let (canonical_value_ids, canonical_operation_ordinals) =
             canonical_coordinates_for_verified(&data);
@@ -831,6 +999,7 @@ impl SemanticProgramBuilder {
                     data.reached_definitions.clone(),
                     data.admission_provenance.clone(),
                     data.registry_snapshot.clone(),
+                    shape_environment_identity(data.extent_sources.as_ref()),
                 ))
                 .expect("completed program semantic identity initializes exactly once");
         }
@@ -874,11 +1043,28 @@ impl SemanticProgramBuilder {
             .collect::<Result<_, _>>()?;
         let operand_facts: Vec<_> = operand_indices
             .iter()
-            .map(|index| {
+            .enumerate()
+            .map(|(position, index)| {
                 let value = &self.values[index.as_usize()];
-                ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
+                // Refused here rather than at `build`, and refused rather than
+                // specialized: an operand naming a symbol has no fixed shape to
+                // hand the frozen authority, and substituting one the
+                // environment merely determines would encode a program nobody
+                // wrote.
+                let shape = value.shape.as_static().ok_or_else(|| {
+                    BuildError::SymbolicOperandUnsupported {
+                        role: ValueRole::OperationOperand {
+                            index: u32::try_from(position)
+                                .expect("operand count was bounded above"),
+                        },
+                    }
+                })?;
+                Ok(ValueFact::new(
+                    value.resolved_type.as_ref().clone(),
+                    shape.clone(),
+                ))
             })
-            .collect();
+            .collect::<Result<_, BuildError>>()?;
         let attributes = self
             .semantic_registry
             .normalize_operation_attributes(&key, attributes)
@@ -888,7 +1074,7 @@ impl SemanticProgramBuilder {
             .infer_operation(&key, &operand_facts, &attributes)
             .map_err(BuildError::SemanticRegistry)?;
         for fact in &inferred {
-            validate_shape(fact.shape())?;
+            validate_rank(fact.shape().rank())?;
         }
         validate_results(&self.semantic_registry, &inferred)?;
         let semantic_preconditions =
@@ -928,7 +1114,7 @@ impl SemanticProgramBuilder {
                     operation: operation_index,
                     result_index,
                 },
-                shape: fact.shape,
+                shape: SourcedShape::from_shape(fact.shape),
                 resolved_type: Arc::new(fact.resolved_type),
             });
             result_indices.push(value_index);
@@ -992,7 +1178,7 @@ impl SemanticProgramBuilder {
                             index: subject,
                         },
                         Arc::clone(&self.values[subject.as_usize()].resolved_type),
-                        self.values[subject.as_usize()].shape.clone(),
+                        fact.shape().clone(),
                     );
                     let replace = disproof.as_ref().is_none_or(|prior| {
                         super::precondition::semantic_disproof_precedes(&candidate, prior)
@@ -1133,6 +1319,7 @@ impl SemanticProgramBuilder {
     ) -> Result<ShapedValue<T, E>, ShapeRefineError> {
         let actual = self
             .shape_for_handle(value.erase())
+            .map(SourcedShape::as_static)
             .map_err(ShapeRefineError::Handle)?;
         refine_shape(value, actual)
     }
@@ -1149,7 +1336,9 @@ impl SemanticProgramBuilder {
     ) -> Result<ShapeWitness<SameShape>, ShapeWitnessError> {
         prove_same_shape(self.owner, left.erase(), right.erase(), |subject, value| {
             self.shape_for_handle(value)
-                .map_err(|error| ShapeWitnessError::SubjectHandle { subject, error })
+                .map(SourcedShape::as_static)
+                .map_err(|error| ShapeWitnessError::SubjectHandle { subject, error })?
+                .ok_or(ShapeWitnessError::SymbolicShape { subject })
         })
     }
 
@@ -1178,7 +1367,7 @@ impl SemanticProgramBuilder {
         validate_same_shape_witness(self.owner, witness, left.erase(), right.erase())
     }
 
-    fn shape_for_handle(&self, value: ValueId) -> Result<&Shape, HandleError> {
+    fn shape_for_handle(&self, value: ValueId) -> Result<&SourcedShape, HandleError> {
         if value.owner != self.owner {
             return Err(HandleError::ForeignGraph {
                 entity: EntityKind::Value,
@@ -1369,7 +1558,7 @@ impl SemanticProgramBuilder {
         if self
             .values
             .iter()
-            .any(|value| validate_shape(&value.shape).is_err())
+            .any(|value| validate_rank(value.shape.rank()).is_err())
         {
             return Some("a value has an unsupported shape");
         }
@@ -1443,14 +1632,24 @@ impl SemanticProgramBuilder {
     }
 
     fn operation_contract_holds(&self, operation: &OperationData) -> bool {
-        let operand_facts: Vec<_> = operation
+        // A retained operand is literal by construction: `push_operation`
+        // refuses a symbolic one before the operation exists. A sourced shape
+        // here is therefore a broken invariant, and reporting the contract
+        // unheld is the conservative answer this predicate already gives every
+        // other way an operation can fail to reproduce.
+        let Some(operand_facts) = operation
             .operands
             .iter()
             .map(|operand| {
                 let value = &self.values[operand.as_usize()];
-                ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
+                value.shape.as_static().map(|shape| {
+                    ValueFact::new(value.resolved_type.as_ref().clone(), shape.clone())
+                })
             })
-            .collect();
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
         let Ok(expected) = self.semantic_registry.infer_operation(
             &operation.key,
             &operand_facts,
@@ -1471,15 +1670,15 @@ impl SemanticProgramBuilder {
                 .zip(expected)
                 .all(|(actual, expected)| {
                     let actual = &self.values[actual.as_usize()];
-                    actual.shape == expected.shape
+                    actual.shape.as_static() == Some(&expected.shape)
                         && actual.resolved_type.as_ref() == &expected.resolved_type
                 })
     }
 }
 
-fn validate_shape(shape: &Shape) -> Result<(), BuildError> {
-    if u32::try_from(shape.rank()).is_err() {
-        return Err(BuildError::RankTooLarge { rank: shape.rank() });
+fn validate_rank(rank: usize) -> Result<(), BuildError> {
+    if u32::try_from(rank).is_err() {
+        return Err(BuildError::RankTooLarge { rank });
     }
     Ok(())
 }
@@ -1515,7 +1714,12 @@ mod tests {
         U4, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op,
     };
     use super::*;
-    use crate::shape::{Axis, Shape, StaticShape};
+    use crate::program::abi::AvailabilityPhase;
+    use crate::shape::{
+        Axis, BindingSource, EXTENT_PHASE_CEILING, Extent, ExtentRelation, ExtentSourceError,
+        ExtentTerm, FactProvenance, RootBinding, SemanticInputConstraint, Shape, ShapeEnvBuilder,
+        ShapeSymbol, StaticShape, SymbolScope,
+    };
 
     #[test]
     fn residual_obligation_identity_cache_bound_accepts_boundary_and_rejects_one_over() {
@@ -1533,6 +1737,466 @@ mod tests {
             }) if actual == MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES + 1
                 && limit == MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES
         ));
+    }
+
+    // --- The sourced-shape surface -----------------------------------------
+    //
+    // Every fixture below is a *pair*: the refused program beside the accepted
+    // neighbour it differs from in exactly the refused fact, so a refusal that
+    // started firing for an unrelated reason would take its neighbour with it.
+
+    fn scope() -> SymbolScope {
+        SymbolScope::new("program/0").unwrap()
+    }
+
+    fn sym(name: &str) -> ShapeSymbol {
+        ShapeSymbol::new(scope(), name).unwrap()
+    }
+
+    /// A symbol bound to one axis of a named input's shape metadata.
+    fn axis_binding(input: &str, axis: u32, phase: AvailabilityPhase) -> RootBinding {
+        RootBinding::new(
+            BindingSource::InputDimension {
+                input: input_key(input),
+                axis: Axis::new(axis),
+            },
+            phase,
+            FactProvenance::RuntimeValidated,
+        )
+        .unwrap()
+    }
+
+    /// An environment declaring `n` over one input axis, with given relations.
+    fn env_over(
+        input: &str,
+        axis: u32,
+        phase: AvailabilityPhase,
+        relations: &[ExtentRelation],
+    ) -> Arc<ShapeEnv> {
+        let mut draft = ShapeEnvBuilder::new();
+        let declared = sym("n");
+        draft.declare(declared.clone()).unwrap();
+        draft
+            .bind(&declared, axis_binding(input, axis, phase))
+            .unwrap();
+        for relation in relations {
+            draft
+                .require(SemanticInputConstraint::new(
+                    relation.clone(),
+                    FactProvenance::FrontendRequired,
+                ))
+                .unwrap();
+        }
+        Arc::new(draft.build().unwrap())
+    }
+
+    fn env() -> Arc<ShapeEnv> {
+        env_over("rows", 0, EXTENT_PHASE_CEILING, &[])
+    }
+
+    /// An environment declaring `n` and `m` over two axes of one input.
+    ///
+    /// Both symbols in *one* environment, so a program naming `n` and a program
+    /// naming `m` share every other subject — the environment identity included
+    /// — and the only thing that can separate them is the graph bytes.
+    fn two_symbol_env() -> Arc<ShapeEnv> {
+        let mut draft = ShapeEnvBuilder::new();
+        for (name, axis) in [("n", 0), ("m", 1)] {
+            let declared = sym(name);
+            draft.declare(declared.clone()).unwrap();
+            draft
+                .bind(&declared, axis_binding("rows", axis, EXTENT_PHASE_CEILING))
+                .unwrap();
+        }
+        Arc::new(draft.build().unwrap())
+    }
+
+    /// A one-input, one-output program whose input has the given extents.
+    ///
+    /// The output *is* the input, so nothing downstream of a symbolic value is
+    /// constructed: at this boundary a symbolic extent reaches an input and
+    /// travels no further, which is what `apply` refuses below.
+    fn sourced_program(
+        environment: Option<Arc<ShapeEnv>>,
+        extents: Vec<SourcedExtent>,
+    ) -> Result<SemanticProgram, BuildError> {
+        let mut builder = match environment {
+            Some(environment) => {
+                SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap()
+            }
+            None => SemanticProgramBuilder::try_standard().unwrap(),
+        };
+        let value = builder.input_sourced::<F32>(input_key("rows"), extents)?;
+        builder.output(output_key("out"), value)?;
+        Ok(builder.build().expect("the one-input program verifies"))
+    }
+
+    #[test]
+    fn a_symbolic_input_builds_and_is_visible_through_the_total_shape_view() {
+        let environment = env();
+        let program = sourced_program(
+            Some(Arc::clone(&environment)),
+            vec![SourcedExtent::Symbol(sym("n"))],
+        )
+        .expect("a declared, in-time symbol is admitted");
+
+        let value = program.inputs().next().unwrap().value();
+        let shape = program.shape(value).unwrap();
+        assert_eq!(shape.rank(), 1);
+        assert_eq!(
+            shape.extents().collect::<Vec<_>>(),
+            vec![SourcedExtent::Symbol(sym("n"))],
+            "the boundary exposes the symbol it was sourced from, not a resolved value",
+        );
+        assert_eq!(
+            shape.as_static(),
+            None,
+            "a symbolic boundary answers no fixed-shape borrow",
+        );
+        assert_eq!(
+            program
+                .extent_sources()
+                .expect("a symbolic program retains its environment")
+                .environment_identity(),
+            environment.identity(),
+            "the environment a symbol resolves in is reachable from the program",
+        );
+    }
+
+    #[test]
+    fn a_wholly_literal_program_stays_static_through_every_construction_path() {
+        let written = Shape::from_dims([2, 3]);
+        for (label, program) in [
+            ("input", {
+                let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+                let value = builder
+                    .input::<F32>(input_key("rows"), written.clone())
+                    .unwrap();
+                builder.output(output_key("out"), value).unwrap();
+                builder.build().unwrap()
+            }),
+            (
+                "input_sourced normalization",
+                sourced_program(
+                    None,
+                    vec![
+                        SourcedExtent::Static(Extent::new(2)),
+                        SourcedExtent::Static(Extent::new(3)),
+                    ],
+                )
+                .expect("an all-literal sourced boundary needs no environment"),
+            ),
+        ] {
+            let value = program.inputs().next().unwrap().value();
+            let shape = program.shape(value).unwrap();
+            assert!(
+                matches!(shape, SourcedShape::Static(_)),
+                "{label}: an all-literal boundary normalizes to one spelling",
+            );
+            assert_eq!(
+                shape.as_static(),
+                Some(&written),
+                "{label}: and answers the borrow of the fixed shape it was written with",
+            );
+            assert_eq!(
+                program
+                    .extent_sources()
+                    .map(ExtentSources::environment_identity),
+                None,
+                "{label}: a program resolving nothing acquires no environment",
+            );
+        }
+    }
+
+    #[test]
+    fn a_foreign_symbol_is_refused_as_undeclared_beside_its_accepted_neighbour() {
+        let environment = env();
+        let foreign = ShapeSymbol::new(SymbolScope::new("other/0").unwrap(), "n").unwrap();
+
+        assert!(
+            matches!(
+                sourced_program(
+                    Some(Arc::clone(&environment)),
+                    vec![SourcedExtent::Symbol(foreign.clone())],
+                ),
+                Err(BuildError::ExtentSource(ExtentSourceError::UndeclaredSymbol {
+                    symbol,
+                })) if symbol == foreign,
+            ),
+            "a symbol from another environment names a binding this program cannot resolve",
+        );
+        assert!(
+            sourced_program(Some(environment), vec![SourcedExtent::Symbol(sym("n"))]).is_ok(),
+            "the neighbour differing only in whose environment declares the symbol is admitted",
+        );
+    }
+
+    #[test]
+    fn a_symbol_with_no_environment_at_all_is_refused_as_undeclared() {
+        assert!(
+            matches!(
+                sourced_program(None, vec![SourcedExtent::Symbol(sym("n"))]),
+                Err(BuildError::ExtentSource(
+                    ExtentSourceError::UndeclaredSymbol { .. }
+                )),
+            ),
+            "no environment can declare a symbol, so it is undeclared for that reason",
+        );
+    }
+
+    #[test]
+    fn a_post_ceiling_binding_is_refused_as_too_late_beside_its_accepted_neighbour() {
+        let late = env_over("rows", 0, AvailabilityPhase::PreparedKernelPreflight, &[]);
+        assert!(
+            matches!(
+                sourced_program(Some(late), vec![SourcedExtent::Symbol(sym("n"))]),
+                Err(BuildError::ExtentSource(ExtentSourceError::SourceTooLate {
+                    available,
+                    ceiling,
+                    ..
+                })) if available == AvailabilityPhase::PreparedKernelPreflight
+                    && ceiling == EXTENT_PHASE_CEILING,
+            ),
+            "an extent readable only once a pipeline is prepared cannot size an initial output",
+        );
+        assert!(
+            sourced_program(
+                Some(env_over("rows", 0, EXTENT_PHASE_CEILING, &[])),
+                vec![SourcedExtent::Symbol(sym("n"))],
+            )
+            .is_ok(),
+            "the neighbour differing only in the binding's phase is admitted",
+        );
+    }
+
+    #[test]
+    fn a_symbolic_value_is_refused_as_an_operation_operand() {
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(env()).unwrap();
+        let symbolic = builder
+            .input_sourced::<F32>(input_key("rows"), vec![SourcedExtent::Symbol(sym("n"))])
+            .expect("the symbolic input is admitted");
+        let scalar = constant(&mut builder, 2.0).unwrap();
+        assert!(
+            matches!(
+                multiply(&mut builder, symbolic, scalar),
+                Err(BuildError::SymbolicOperandUnsupported {
+                    role: ValueRole::OperationOperand { index: 0 },
+                }),
+            ),
+            "shape inference over symbolic operands is a separate delivery, so this refuses",
+        );
+
+        let mut neighbour =
+            SemanticProgramBuilder::try_standard_with_shape_environment(env()).unwrap();
+        let literal = neighbour
+            .input_sourced::<F32>(
+                input_key("rows"),
+                vec![SourcedExtent::Static(Extent::new(4))],
+            )
+            .expect("the literal input is admitted");
+        let scalar = constant(&mut neighbour, 2.0).unwrap();
+        assert!(
+            multiply(&mut neighbour, literal, scalar).is_ok(),
+            "the neighbour differing only in the operand's source kind applies",
+        );
+    }
+
+    #[test]
+    fn rust_side_evidence_and_shape_witnesses_refuse_a_symbolic_value() {
+        let program = sourced_program(Some(env()), vec![SourcedExtent::Symbol(sym("n"))]).unwrap();
+        let value: Value<F32> = program
+            .reify(program.inputs().next().unwrap().value())
+            .expect("the input's type is exact");
+        assert!(
+            matches!(
+                program.refine::<F32, StaticShape<1, { [4] }>>(value),
+                Err(ShapeRefineError::SymbolicShape { .. }),
+            ),
+            "evidence fixed when the consumer compiled cannot match an extent bound later",
+        );
+        assert!(
+            matches!(
+                program.prove_same_shape(value, value),
+                Err(ShapeWitnessError::SymbolicShape {
+                    subject: ShapeWitnessSubject::Left,
+                }),
+            ),
+            "structural equality decides nothing about a boundary naming a symbol",
+        );
+    }
+
+    // --- Collision probes ---------------------------------------------------
+
+    #[test]
+    fn a_symbol_and_the_value_its_environment_pins_are_two_programs() {
+        // The environment fixes `n` at exactly four, so a consumer that resolved
+        // the symbol would produce the literal program's bytes.
+        let pinned = env_over(
+            "rows",
+            0,
+            EXTENT_PHASE_CEILING,
+            &[ExtentRelation::interval(ExtentTerm::Symbol(sym("n")), 4, 4).unwrap()],
+        );
+        let symbolic = sourced_program(
+            Some(Arc::clone(&pinned)),
+            vec![SourcedExtent::Symbol(sym("n"))],
+        )
+        .unwrap();
+        assert_eq!(
+            symbolic
+                .extent_sources()
+                .unwrap()
+                .determined(&SourcedExtent::Symbol(sym("n"))),
+            Some(Extent::new(4)),
+            "the environment really does pin the symbol, so the probe is not vacuous",
+        );
+
+        let literal = sourced_program(None, vec![SourcedExtent::Static(Extent::new(4))]).unwrap();
+        assert_ne!(
+            symbolic.semantic_identity().graph(),
+            literal.semantic_identity().graph(),
+            "a boundary sized by a symbol is a different program from one sized by its value",
+        );
+    }
+
+    #[test]
+    fn two_symbols_in_one_environment_are_two_programs() {
+        // The probe the value-versus-symbol pair above cannot make. That pair is
+        // separated by `SourcedExtent`'s source tag alone, so an encoder that
+        // wrote a *resolved value* after the symbol tag would still pass it.
+        // Here both programs carry the symbol tag and one environment, so the
+        // only thing that can tell them apart is the symbol's own bytes.
+        let environment = two_symbol_env();
+        let by_n = sourced_program(
+            Some(Arc::clone(&environment)),
+            vec![SourcedExtent::Symbol(sym("n"))],
+        )
+        .unwrap();
+        let by_m =
+            sourced_program(Some(environment), vec![SourcedExtent::Symbol(sym("m"))]).unwrap();
+
+        assert_eq!(
+            by_n.semantic_identity().shape_environment(),
+            by_m.semantic_identity().shape_environment(),
+            "one environment declares both, so the environment subject cannot separate them",
+        );
+        assert_ne!(
+            by_n.semantic_identity().graph(),
+            by_m.semantic_identity().graph(),
+            "a boundary sized by `n` is a different program from one sized by `m`",
+        );
+    }
+
+    #[test]
+    fn a_symbolic_axis_and_a_literal_one_do_not_collide_across_ranks() {
+        // Framing, not content: the rank prefix and the per-extent tag must keep
+        // a rank-one symbolic boundary from reading as the head of a rank-two
+        // one. Both programs live in one environment for the same reason as
+        // above.
+        let environment = two_symbol_env();
+        let rank_one = sourced_program(
+            Some(Arc::clone(&environment)),
+            vec![SourcedExtent::Symbol(sym("n"))],
+        )
+        .unwrap();
+        let rank_two = sourced_program(
+            Some(environment),
+            vec![
+                SourcedExtent::Symbol(sym("n")),
+                SourcedExtent::Static(Extent::new(1)),
+            ],
+        )
+        .unwrap();
+        assert_ne!(
+            rank_one.semantic_identity().graph(),
+            rank_two.semantic_identity().graph(),
+            "an appended literal axis is a different boundary, not a suffix of the same one",
+        );
+    }
+
+    #[test]
+    fn two_environments_over_one_spelling_are_two_programs_and_one_graph() {
+        let by_first_axis = env_over("rows", 0, EXTENT_PHASE_CEILING, &[]);
+        let by_second_axis = env_over("rows", 1, EXTENT_PHASE_CEILING, &[]);
+        let constrained = env_over(
+            "rows",
+            0,
+            EXTENT_PHASE_CEILING,
+            &[ExtentRelation::interval(ExtentTerm::Symbol(sym("n")), 1, 8).unwrap()],
+        );
+        let extents = vec![SourcedExtent::Symbol(sym("n"))];
+
+        let first = sourced_program(Some(Arc::clone(&by_first_axis)), extents.clone()).unwrap();
+        let repeated = sourced_program(Some(by_first_axis), extents.clone()).unwrap();
+        let other_axis = sourced_program(Some(by_second_axis), extents.clone()).unwrap();
+        let narrowed = sourced_program(Some(constrained), extents).unwrap();
+
+        assert_eq!(
+            first.semantic_identity(),
+            repeated.semantic_identity(),
+            "one environment and one structure name one program",
+        );
+        for (label, other) in [("binding axis", &other_axis), ("constraint", &narrowed)] {
+            assert_ne!(
+                first.semantic_identity(),
+                other.semantic_identity(),
+                "{label}: a differently identified environment is a different program",
+            );
+            assert_eq!(
+                first.semantic_identity().graph(),
+                other.semantic_identity().graph(),
+                "{label}: and the difference lands on the environment subject, not on graph meaning",
+            );
+            assert_ne!(
+                first.semantic_identity().shape_environment(),
+                other.semantic_identity().shape_environment(),
+                "{label}: which is the subject that separates them",
+            );
+        }
+    }
+
+    #[test]
+    fn a_program_that_declares_no_symbol_carries_the_empty_environment_subject() {
+        let literal = sourced_program(None, vec![SourcedExtent::Static(Extent::new(4))]).unwrap();
+        assert_eq!(
+            literal.semantic_identity().shape_environment(),
+            crate::shape::empty_environment_identity(),
+            "the fifth subject is total: no environment reports the empty one",
+        );
+
+        // And the empty environment is not a value some other environment can
+        // reach, so the totality does not collide two programs into one.
+        let symbolic = sourced_program(Some(env()), vec![SourcedExtent::Symbol(sym("n"))]).unwrap();
+        assert_ne!(
+            symbolic.semantic_identity().shape_environment(),
+            crate::shape::empty_environment_identity(),
+        );
+    }
+
+    #[test]
+    fn no_symbolic_program_reaches_a_verified_kernel_program() {
+        // The coupling the artifact's three carried subjects rest on, asserted
+        // rather than assumed: `project_semantic` does not travel the
+        // shape-environment subject, and that is only sound while no two
+        // packaged artifacts can differ by it. Every artifact is built over a
+        // kernel program, so this refusal is what makes that true. If this test
+        // ever fails, an artifact can ship an unkeyed symbolic program.
+        let symbolic = sourced_program(Some(env()), vec![SourcedExtent::Symbol(sym("n"))]).unwrap();
+        assert!(
+            matches!(
+                crate::program::KernelProgramBuilder::new(&symbolic),
+                Err(crate::program::KernelProgramBuildError::SymbolicInterfaceExtent { interface })
+                    if interface == "rows",
+            ),
+            "a symbolic interface extent has no fixed boundary a physical plan could cover",
+        );
+
+        let literal = sourced_program(None, vec![SourcedExtent::Static(Extent::new(4))]).unwrap();
+        assert!(
+            crate::program::KernelProgramBuilder::new(&literal).is_ok(),
+            "the neighbour differing only in the extent's source kind opens",
+        );
     }
 
     fn input_key(value: &str) -> InputKey {
@@ -2373,8 +3037,8 @@ mod tests {
 
         let completed = program.resolve_typed_output(&selector).unwrap().value();
         assert_eq!(
-            program.shape(completed.erase()).unwrap(),
-            &Shape::from_dims([2])
+            program.shape(completed.erase()).unwrap().as_static(),
+            Some(&Shape::from_dims([2]))
         );
         assert!(matches!(
             program.value(result.erase()),
@@ -2765,7 +3429,10 @@ mod tests {
         let program = builder.build().unwrap();
         let completed = program.resolve_typed_output(&output).unwrap().value();
 
-        assert_eq!(program.shape(completed.erase()).unwrap(), &shape);
+        assert_eq!(
+            program.shape(completed.erase()).unwrap().as_static(),
+            Some(&shape)
+        );
         assert!(matches!(
             program.shape(value.erase()),
             Err(HandleError::ForeignGraph {

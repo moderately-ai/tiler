@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::identity::push_len;
-use crate::shape::Shape;
+use crate::shape::{Shape, SourcedShape};
 
 use super::handles::{GraphId, OperationId, OperationIndex, ValueId, ValueIndex};
 use super::interface::InputIndex;
@@ -1592,7 +1592,7 @@ pub enum Definition {
 #[derive(Clone, Debug)]
 pub(super) struct ValueData {
     pub(super) definition: ValueDefinition,
-    pub(super) shape: Shape,
+    pub(super) shape: SourcedShape,
     pub(super) resolved_type: Arc<ResolvedValueType>,
 }
 
@@ -1632,9 +1632,15 @@ impl ValueRef<'_> {
         }
     }
 
-    /// Returns the statically verified shape.
+    /// Returns the verified shape and where each extent's value comes from.
+    ///
+    /// Total over both source kinds rather than paired with an optional
+    /// symbolic accessor: a caller that only handles literals reads
+    /// [`SourcedShape::as_static`] once and refuses everything else with its own
+    /// typed reason, and a third source kind is a build error here instead of a
+    /// silently unhandled case.
     #[must_use]
-    pub const fn shape(&self) -> &Shape {
+    pub const fn shape(&self) -> &SourcedShape {
         &self.value.shape
     }
 

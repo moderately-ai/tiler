@@ -1432,6 +1432,8 @@ fn the_block_verifies_at_the_c1_prefill_shape() {
             program
                 .shape(output.value())
                 .expect("an output value has a shape")
+                .as_static()
+                .expect("a statically authored program has a fixed output shape")
                 .clone()
         })
         .collect();
@@ -1556,6 +1558,8 @@ fn a_longer_row_changes_no_occurrence() {
         program
             .shape(output.value())
             .expect("an output value has a shape")
+            .as_static()
+            .expect("a statically authored program has a fixed output shape")
             .clone()
     };
     assert_eq!(context_shape(&prefill), block_shape([GROUPS, 10, HEAD_DIM]));

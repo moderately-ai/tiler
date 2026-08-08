@@ -282,7 +282,11 @@ impl ProgramAlternativeIdentity {
     ) -> Self {
         debug_assert!(plan.identity().is_labelled(&plan.identity().label()));
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"tiler.program-alternative.v1\0");
+        // `v2`: `SemanticIdentity` gained its fifth subject, the shape
+        // environment, and the fixed component run below enumerates the subject
+        // set positionally. A `v1` reader would take the environment identity's
+        // length frame for the numerical-contract key's.
+        bytes.extend_from_slice(b"tiler.program-alternative.v2\0");
         match origin {
             SemanticAlternativeOrigin::Baseline => bytes.push(1),
             SemanticAlternativeOrigin::Rewrite(rule) => {
@@ -296,6 +300,7 @@ impl ProgramAlternativeIdentity {
             identity.reached_definitions().as_bytes(),
             identity.admission_provenance().as_bytes(),
             identity.registry_snapshot().as_bytes(),
+            identity.shape_environment().as_bytes(),
             request.numerical_contract().key.as_bytes(),
             plan.identity().as_bytes(),
         ] {

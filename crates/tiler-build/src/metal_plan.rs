@@ -1487,14 +1487,23 @@ mod tests {
     /// not one, and the count is the reason to correct all three in one commit
     /// rather than leaving a later one to a follow-up.
     ///
+    /// **A moved `FIXED_CONTENT_BYTES` is checkable rather than merely copied.**
+    /// The graph identity appears in this envelope **twice** — once as the
+    /// artifact program's own carried subject and once inside the nested kernel
+    /// program's subject — so an encoding change costing `n` bytes per semantic
+    /// extent moves this constant by `2 * n * 7`, the fixture reaching seven
+    /// extents across its input and four reachable results. `v2 → v3` cost one
+    /// tag byte per extent and moved it by exactly fourteen. A delta that does
+    /// not factor that way is a second change riding along, not this one.
+    ///
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "7a2bfe51619c05a13fe86cd973e1dfa85c7353da33e4e75af0531068b774357d";
+            "e16ce9264f7f4fe65ee384ee6198bb2b9434383313a6ee25515e800fca308057";
         const CACHE_SUBJECT: &str =
-            "8bdcde644d7df6d4ca95736f445a011b2d163efdfb3ba93a5c0a954d139b1aa2";
-        const FIXED_CONTENT_BYTES: usize = 65_294;
+            "287df9823c146b71cec7621b37cc4dbf2fd28095c9348f45c0cb3eebf348104b";
+        const FIXED_CONTENT_BYTES: usize = 65_308;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

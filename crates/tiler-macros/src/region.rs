@@ -977,6 +977,15 @@ fn verify_public_logical_program<S: Copy>(
         .map_err(|source| RegionError::Program {
             span: syntax.out,
             detail: source.to_string(),
+        })?
+        // An inline region's result shape is inferred by the frozen semantic
+        // authority, which still carries a fixed `Shape`, so a sourced one here
+        // would mean the layer below started inferring over symbols without
+        // this comparison being taught to read them.
+        .as_static()
+        .ok_or_else(|| RegionError::Program {
+            span: syntax.out,
+            detail: "the verified program's output shape names a declared symbol".to_owned(),
         })?;
     let inferred_extents: Vec<u64> = inferred
         .extents()

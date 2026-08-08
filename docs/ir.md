@@ -374,7 +374,7 @@ byte buffers, and records that proven length. Lazy identity construction checks
 the proof before making one exactly sized final allocation.
 
 `SemanticProgram::semantic_identity()` returns one borrowed, non-forgeable
-`SemanticIdentity` owner for all four subjects:
+`SemanticIdentity` owner for all five subjects:
 
 ```rust,ignore
 let identity = program.semantic_identity();
@@ -382,6 +382,7 @@ let graph = identity.graph();
 let definitions = identity.reached_definitions();
 let admission = identity.admission_provenance();
 let snapshot = identity.registry_snapshot();
+let environment = identity.shape_environment();
 ```
 
 The bundle has private fields and no public constructor. Individual subject
@@ -869,7 +870,15 @@ Inferred or proven facts may not silently become additional frontend-required
 semantics. Canonical identity includes symbol declarations, root-binding
 provenance, and semantic constraints but excludes derived solver caches. The
 solver algorithm and exact supported arithmetic fragment remain implementation
-choices.
+choices. That canonical identity is the *fifth* subject of a semantic program's
+`SemanticIdentity`, and it is separate from the graph subject rather than folded
+into it: it bundles root-binding provenance, which the three-identity table above
+puts on the interface side, so folding it into a subject documented to identify
+graph meaning would give two programs of identical meaning that source one extent
+from a different input different *graph* identity. The subject is total — a
+program declaring no symbol reports the empty environment's identity — so
+"declares no symbols" and "has an empty environment" stay one fact with one
+spelling.
 
 **Fact — the implemented additive fragment is one relation, not a general
 expression prover.** `ExtentRelation::AdditiveEquality` relates exactly one sum
@@ -901,7 +910,9 @@ would violate the rule that every symbol is a root with exactly one binding, so
 a future three-term append needs its own bounded relation or the accepted
 `ShapeExpr` implementation; it must not manufacture an unbound helper symbol.
 
-**Fact — a semantic value's shape is fixed-extent in the implemented profile, and the symbolic vocabulary is consumed only by the index layer.** `crates/tiler-ir/src/shape.rs` is the "fixed shape vocabulary", its `Extent` wraps a `u64`, and `SemanticProgramBuilder::input` takes a `Shape`; the sourced constant-or-symbol vocabulary that `ShapeEnv` backs is exported from `tiler_ir::shape` beside them, and no semantic construction path names it. So an extent symbol reaches an iteration domain, a tensor boundary axis, a division divisor, and a linear combination's coefficient or addend at layer 2, and reaches no semantic value at layer 1. That is a gap in this contract's own symbolic profile rather than a decided restriction: the accepted rule above is that each axis extent "may be a static integer or a scoped symbolic expression evaluated later". [The symbolic-semantic-extents record](research/shapes/symbolic-semantic-extents.md) runs the eliminations for how it is spelled, where the environment's identity enters, and what a frontend does with an extent unknown until dispatch, and files the delivery chain that closes it.
+**Fact — a semantic *input* extent may name a declared symbol; an *inferred result* extent may not.** `SemanticProgramBuilder::input_sourced` and `input_resolved_sourced` take `Vec<SourcedExtent>` beside the `Shape`-taking `input` and `input_resolved`, a program fixes its one `ShapeEnv` at construction through `SemanticProgramBuilder::try_standard_with_shape_environment` and exposes it through `SemanticProgram::extent_sources`, and `SemanticProgram::shape` returns the total `&SourcedShape` view rather than a `&Shape`. So an extent symbol reaches an iteration domain, a tensor boundary axis, a division divisor, and a linear combination's coefficient or addend at layer 2, and now also a program input's boundary at layer 1. **What it does not reach is an operation.** Result shapes are derived by the frozen semantic authority through `ValueFact`, which still carries a fixed `Shape`, so a value whose shape names a symbol is refused as an operation operand with `BuildError::SymbolicOperandUnsupported`. That is a boundary rather than a partial state — every representable program is constructible, verifiable, and identifiable — and [`resolve-semantic-shape-inference-over-symbolic-extents`](../tickets/resolve-semantic-shape-inference-over-symbolic-extents.md) is what moves it. [The symbolic-semantic-extents record](research/shapes/symbolic-semantic-extents.md) runs the eliminations for how it is spelled, where the environment's identity enters, and what a frontend does with an extent unknown until dispatch, and files the delivery chain that closes it.
+
+*Corrected 2026-08-07 by [`carry-a-sourced-shape-on-semantic-values`](../tickets/carry-a-sourced-shape-on-semantic-values.md), which landed:* this paragraph read that the symbolic vocabulary "is consumed only by the index layer", that "no semantic construction path names it", and that a symbol "reaches no semantic value at layer 1". All three are now false for an input and all three remain true for an inferred result, which is why the correction narrows the claim rather than deleting it. **A consequence a reader should not have to derive:** no symbolic program reaches a physical plan or a packaged artifact. `KernelProgramBuilder::new` refuses a symbolic interface extent, `ArtifactProgramBuilder::new` refuses one independently, and the compiler's normalization rebuild refuses the whole program — so the artifact envelope's three carried subjects stay sufficient, because no two artifacts can differ by the shape-environment subject they omit.
 
 *Corrected 2026-08-07 by [`relocate-the-sourced-extent-vocabulary-to-the-shape-module`](../tickets/relocate-the-sourced-extent-vocabulary-to-the-shape-module.md), which landed:* the paragraph's heading read "reaches only the index layer" and its clause read "exported from `tiler_ir::index`". `SourcedExtent`, `SourcedShape`, `ExtentSources`, `ExtentSourceError`, and `EXTENT_PHASE_CEILING` are `tiler_ir::shape`'s, and `tiler_ir::index` kept no compatibility re-export, so the old path does not resolve at all. **What moved is where the vocabulary is sited, not which layer consumes it**, which is why the correction is a restatement rather than a substitution: `SourcedExtent` is `Extent | ShapeSymbol` and both are shape-layer types, so siting the pair's union inside one of its consumers made the base vocabulary depend upward. Two things about this paragraph's own claim survive unchanged. The gap it names is unchanged — a semantic value's shape is still a `Shape` and still cannot carry a symbol — and it is now visible *as* a gap rather than as a layer boundary, because the one vocabulary sits in the same module as the `Shape` that cannot hold it. `SymbolicExtentError` and `SourcedIndexInteger` deliberately stayed in `index`; each names an index-layer type in its own definition, so relocating either would invert the layering the move establishes. The five paths are a public boundary and are **not** accepted: [`accept-the-sourced-extent-vocabulary-at-its-shape-module-paths`](../tickets/accept-the-sourced-extent-vocabulary-at-its-shape-module-paths.md) is parked for Tom, and nothing here says the spelling is settled.
 

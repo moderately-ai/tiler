@@ -887,21 +887,32 @@ impl RegionGraph {
             .collect::<Result<_, RegionError>>()?;
         let mut values: Vec<GraphValue> = program
             .values()
-            .map(|value| GraphValue {
-                type_encoding: value
-                    .resolved_type()
-                    .canonical_encoding()
-                    .as_bytes()
-                    .to_vec()
-                    .into_boxed_slice(),
-                shape: value.shape().clone(),
-                producer: None,
-                input_position: None,
-                consumers: Vec::new(),
-                named_result: false,
-                synthetic_site: None,
+            .map(|value| {
+                Ok(GraphValue {
+                    type_encoding: value
+                        .resolved_type()
+                        .canonical_encoding()
+                        .as_bytes()
+                        .to_vec()
+                        .into_boxed_slice(),
+                    // Every access, tile, and boundary derived below is stated
+                    // over fixed extents, so a symbolic value has no graph
+                    // record to build rather than a record with a hole in it.
+                    shape: value
+                        .shape()
+                        .as_static()
+                        .ok_or(RegionError::Structure {
+                            rule: "symbolic-extent",
+                        })?
+                        .clone(),
+                    producer: None,
+                    input_position: None,
+                    consumers: Vec::new(),
+                    named_result: false,
+                    synthetic_site: None,
+                })
             })
-            .collect();
+            .collect::<Result<_, RegionError>>()?;
         for (position, input) in program.inputs().enumerate() {
             let value = ordinal(&ordinals, input.value())?;
             value_mut(&mut values, value)?.input_position = Some(index(position)?);
