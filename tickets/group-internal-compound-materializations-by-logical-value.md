@@ -1,7 +1,7 @@
 ---
 id: group-internal-compound-materializations-by-logical-value
 title: Group internal compound materializations by producer-derived logical value
-status: todo
+status: in-progress
 priority: p2
 dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile]
 related: [implement-first-quantized-backend-profile, implement-workload-selected-quantized-parameter-maps]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, quantization, compound-values, artifact]
+claimed_from: todo
+assignee: sol-compound
+lease_expires_at: 1786218118
 ---
 ## User-visible outcome
 
