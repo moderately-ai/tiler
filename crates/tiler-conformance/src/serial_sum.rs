@@ -166,14 +166,22 @@ pub(crate) const SEPARATING_ROWS: u64 = 1;
 /// Contributors reduced per output at the count where the two parallel rules
 /// choose differently.
 ///
-/// **Twelve, and it is the smallest such count.** `capped_tree_partition` walks
-/// *down* from `ceiling = min(256, contributors / 2) = 6` for the largest
-/// divisor at or below it and takes six partitions of two; `governed_partition`
-/// walks down from `isqrt(12) = 3` and takes four of three. The two rules read
-/// opposite ends of the divisor lattice, which is why they diverge at all.
-/// Counts four through eleven agree — 4, 6, 8, 9 and 10 give both rules the same
-/// answer, and 5, 7 and 11 are prime, which both decline — so twelve is the
-/// minimum rather than merely a count that works.
+/// **Twelve, and it is the smallest such count.** `capped_tree_partition` takes
+/// the admissible participant count *nearest* 256, ties going to the narrower,
+/// so it looks in both directions; here only one of them has anything in it. A
+/// width above the cap needs at least `2 * 257` contributors to leave two per
+/// partition, so at twelve the upward search is empty before it starts and the
+/// rule reduces to its downward walk: *down* from `ceiling = min(256,
+/// contributors / 2) = 6` for the largest divisor at or below it, which is six,
+/// giving six partitions of two. `governed_partition` walks down from
+/// `isqrt(12) = 3` and takes four of three. The two rules read opposite ends of
+/// the divisor lattice, which is why they diverge at all. Counts four through
+/// eleven agree — 4, 6, 8, 9 and 10 give both rules the same answer, and 5, 7
+/// and 11 are prime, which both decline — so twelve is the minimum rather than
+/// merely a count that works. The upward search cannot move any of those either,
+/// for the reason it is empty at twelve: it is unreachable below 514
+/// contributors, so every count this constant's minimality argument ranges over
+/// is decided by the downward walk alone.
 ///
 /// The cap moves the *choice* and never the domain: over `0..200_000` the two
 /// rules admit and decline exactly the same counts, so this shape retains the
@@ -741,8 +749,11 @@ pub(crate) fn classify_strategy(
 /// **This vertical runs both sides of that distinction.** The split reads
 /// `governed_partition` and the tree reads `capped_tree_partition` since the tree
 /// took its measured participant cap, and the two agree at [`PARALLEL_COLUMNS`]
-/// while diverging from [`SEPARATING_COLUMNS`] upward — six partitions of two
-/// against four of three. So at one shape this function returns one partition for
+/// and first diverge at [`SEPARATING_COLUMNS`] — six partitions of two against
+/// four of three. They do not diverge at *every* count from there on; 1,180 of
+/// the 3,530 admitting counts below 4,096 still agree, which is why the
+/// separating shape names one count rather than a threshold. So at one shape
+/// this function returns one partition for
 /// both strategies and at the other it returns two different ones, from the same
 /// three observables. Reading each partition from its own published geometry is
 /// what makes that a measured difference rather than a restatement of whichever

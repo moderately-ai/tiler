@@ -53,11 +53,14 @@ fn parallel_split() -> ContributorPartition {
 
 /// The grouping the single-workgroup tree declares at [`SEPARATING_COLUMNS`].
 ///
-/// Six participants folding two contributors each: `capped_tree_partition`
-/// walks down from `min(256, 12 / 2) = 6` and six divides twelve, so it stops
-/// there. Written out rather than computed, because a helper that re-ran the
-/// compiler's rule would agree with it by construction — the point of the cases
-/// below is that the *plan* declares this, and they read it from the plan.
+/// Six participants folding two contributors each: `capped_tree_partition` takes
+/// the admissible count nearest 256, and at twelve contributors nothing above the
+/// cap is admissible — a width past 256 needs at least `2 * 257` contributors to
+/// leave two per partition — so the rule is its downward walk alone, from
+/// `min(256, 12 / 2) = 6`, and six divides twelve. Written out rather than
+/// computed, because a helper that re-ran the compiler's rule would agree with it
+/// by construction — the point of the cases below is that the *plan* declares
+/// this, and they read it from the plan.
 fn separating_tree_partition() -> ContributorPartition {
     ContributorPartition {
         partitions: 6,
