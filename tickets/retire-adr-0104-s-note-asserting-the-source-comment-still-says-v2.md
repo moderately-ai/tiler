@@ -1,7 +1,7 @@
 ---
 id: retire-adr-0104-s-note-asserting-the-source-comment-still-says-v2
 title: Retire ADR 0104 s note asserting the source comment still says v2
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [step-the-coverage-identity-comment-s-stale-semantic-graph-domain]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, identity, documentation]
+claimed_from: todo
+assignee: w-sol-adr0104
+lease_expires_at: 1786206372
 ---
 
 ADR 0104 carries a note explaining why its quotation was left alone. **The repair it was waiting for has landed, so the note is now the stale part.**
