@@ -2998,15 +2998,7 @@ fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::
     binding
 }
 
-/// A `bf16` artifact survives the encoding, and its carrier is part of what it is.
-///
-/// Three properties, and the third is the one a cache is wrong about if it does
-/// not hold. The round trip says the carrier is not lost; the equal encoded
-/// lengths say the carrier travels as a *tag* rather than as a width the framing
-/// depends on, which is why widening the vocabulary moved neither
-/// `ARTIFACT_DOMAIN` nor `MANIFEST_SCHEMA`; and the identity inequality says two
-/// artifacts differing only in their carrier are two artifacts.
-/// Byte positions at which the carrier-only fixture pair differs.
+/// Byte positions at which the carrier-only fixture pair's *envelopes* differ.
 ///
 /// **Measured, and it is exactly the arithmetic with no digest byte
 /// coinciding:** 32 for the manifest digest in the framing header, 32 for the
@@ -3032,6 +3024,46 @@ fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::
 /// derived, and why a reader must not "simplify" it to the arithmetic.
 const DIFFERING_CARRIER_POSITIONS: usize = 68;
 
+/// Byte positions at which the carrier-only fixture pair's *identities* differ.
+///
+/// A separate subject from [`DIFFERING_CARRIER_POSITIONS`], and deliberately
+/// neither folded into it nor derived from it. That count is dominated by two
+/// thirty-two-byte digests, so it moves whenever a digest byte happens to
+/// coincide and its own comment above forbids reading it as arithmetic. A
+/// canonical artifact identity is a *preimage* and carries no digest of itself,
+/// so a carrier reaches it as the tag bytes and nothing else: the interface
+/// component's carrier and access tags, and the binding row's pair. Two tag
+/// pairs, four positions, with no chance term.
+///
+/// So this one moves only for a reason — a carrier reaching a third place in
+/// the identity encoding, or ceasing to reach one of these two — which is the
+/// property that would be lost if the two counts were ever one assertion.
+///
+/// **The byte offsets are deliberately not pinned, and must not be.** An offset
+/// is a position in a layout that is free to move, and these four do not even
+/// move together: `push_interface` writes the component pair near the head of
+/// the encoding while the binding pair is written per variant, with the sorted
+/// provider and payload keys and the whole expression arena in between. Anything
+/// inserted into that span slides the binding pair and leaves the component pair
+/// where it was, so a pinned offset fails for reasons that say nothing about the
+/// carrier. The count is a statement about what a carrier change *means*, and
+/// that is the part worth holding.
+const DIFFERING_IDENTITY_POSITIONS: usize = 4;
+
+/// A `bf16` artifact survives the encoding, and its carrier is part of what it is.
+///
+/// Four properties, and the third is the one a cache is wrong about if it does
+/// not hold. The round trip says the carrier is not lost; the equal encoded
+/// lengths say the carrier travels as a *tag* rather than as a width the framing
+/// depends on, which is why widening the vocabulary moved neither
+/// `ARTIFACT_DOMAIN` nor `MANIFEST_SCHEMA`; the identity inequality says two
+/// artifacts differing only in their carrier are two artifacts; and the two
+/// pinned counts say *how much* of each byte run a carrier reaches.
+///
+/// Each count is preceded by the length equality that makes it well defined:
+/// counting differing positions between runs of different lengths would compare
+/// a prefix and call it the whole, so the precondition is part of each property
+/// rather than scaffolding for it.
 #[test]
 fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {
     let at_f32 = envelope_of(&default_artifact());
@@ -3087,13 +3119,42 @@ fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {
             .expect("the identity re-derives from decoded content"),
         identity_at_bf16,
     );
+    let identity_at_f32 = at_f32
+        .canonical_identity()
+        .expect("the f32 envelope has an identity");
     assert_ne!(
-        identity_at_bf16,
-        at_f32
-            .canonical_identity()
-            .expect("the f32 envelope has an identity"),
+        identity_at_bf16, identity_at_f32,
         "two artifacts differing only in their carrier must not share an identity: a cache that \
          confused them would hand a consumer a kernel addressing twice the bytes it was given",
+    );
+
+    // The identity's own count, kept a separate subject from the envelope's
+    // above. `docs/artifact-abi.md` carried this one as prose too and retired it
+    // unasserted, so it is pinned here instead of restated there.
+    //
+    // The length equality is the precondition, not a warm-up: a positional
+    // comparison between runs of different lengths counts a prefix and reports
+    // it as the whole, so the count below means nothing without it. It is also a
+    // property in its own right — a carrier that changed the identity's *length*
+    // would be entering it as a width rather than as a tag.
+    let bf16_identity_bytes = identity_at_bf16.as_bytes();
+    let f32_identity_bytes = identity_at_f32.as_bytes();
+    assert_eq!(
+        bf16_identity_bytes.len(),
+        f32_identity_bytes.len(),
+        "a carrier enters the identity as a tag, so the two identity byte runs must be equal in \
+         length before their differing positions can be counted at all",
+    );
+    let differing_identity = bf16_identity_bytes
+        .iter()
+        .zip(f32_identity_bytes)
+        .filter(|(left, right)| left != right)
+        .count();
+    assert_eq!(
+        differing_identity, DIFFERING_IDENTITY_POSITIONS,
+        "the carrier reaches the artifact identity at the interface component's tag pair and the \
+         binding row's, and nowhere else; a different count means it reaches a new place or has \
+         stopped reaching one of these",
     );
 }
 
