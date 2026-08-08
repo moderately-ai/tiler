@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-accepted-proof-budget-stop-rule-with-executable-refinement
 title: Reconcile the accepted proof-budget-stop rule with executable refinement
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [repair-adr-0078s-budget-stop-and-unknown-gap-evidence]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/foundation, contracts/navigation, contra
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, documentation, correctness]
-claimed_from: todo
-assignee: w-sol-adr0078-reconcile
-lease_expires_at: 1786213690
 ---
 ## User-visible outcome
 
