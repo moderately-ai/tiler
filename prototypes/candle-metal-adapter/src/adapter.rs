@@ -53,6 +53,31 @@
 //! work. `adopt-candle-command-stream-once-a-terminal-check-is-reachable`
 //! carries the activation trigger.
 //!
+//! # Derived requirements are discharged before anything is prepared
+//!
+//! Two obligations reach this adapter on the routed entry's own
+//! [`ResourceRequirements`] record rather than as artifact rows, and
+//! `crates/tiler-artifact/src/program/requirement.rs` is why: a backend-feature
+//! row is admitted only for something "not already derivable from its verified
+//! program", and a region's synchronization subject and index arithmetic are
+//! both derived from the schedule. A row restating either would be a second,
+//! independently editable statement about one KIR fact.
+//!
+//! Both are decided in [`CandleMetalAdapter::prepare_entries`], over **every**
+//! entry, before the first pipeline is built. That is the earliest stage of the
+//! [`RuntimeAdapter`] seam at which the whole route arrives at once —
+//! [`CandleMetalAdapter::validate_payload`] is called per entry, so a check
+//! written there would load entry 0's library before entry 1's subject was
+//! looked at. The comparisons are `tiler_metal`'s: no Apple family table and no
+//! MSL barrier spelling is written here.
+//!
+//! The ordering is not a convention. `check_direct_requirements` is the only
+//! function that mints a `DirectRequirementsDischarged`, and
+//! `CandleMetalAdapter::build_pipelines` takes one by value — so removing the
+//! discharge is a compile error rather than the dead-code warning it would
+//! otherwise be, which matters here because `prototypes/` is excluded from the
+//! workspace style gate and no gate in this repository goes red on a warning.
+//!
 //! Ordering across the two streams is host-ordered rather than assumed:
 //! [`CandleMetalAdapter::plan_dispatch`] brings Candle's own pending work to a terminal state
 //! before anything is encoded — a tensor produced by a Candle kernel may still
@@ -77,9 +102,12 @@ use objc2_metal::{
 use tiler_artifact::program::{
     BindingTarget, BufferAccess, RouteRequirement, RouteResourceDimension,
 };
+use tiler_ir::schedule::ResourceRequirements;
 use tiler_metal::applicability::{
     MetalGpuFamily, MetalGpuFamilySupport, observe_highest_gpu_family,
 };
+use tiler_metal::direct_requirement::evaluate_index_arithmetic;
+use tiler_metal::synchronization_requirement::evaluate_synchronization;
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
     ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
@@ -409,6 +437,41 @@ impl CandleMetalAdapter {
         Ok(prepared)
     }
 
+    /// Builds every routed entry's pipeline and compares its argument table.
+    ///
+    /// The body of [`RuntimeAdapter::prepare_entries`] after the derived
+    /// requirements are discharged, split out **only** so the ordering is carried
+    /// by an argument type. `_discharged` is unread and cannot be otherwise: a
+    /// `DirectRequirementsDischarged` holds no data, and what it states is that
+    /// `discharge::check_direct_requirements` ran. Its position in this signature
+    /// is the enforcement — the trait method's own signature is fixed by
+    /// [`RuntimeAdapter`] and cannot carry it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the pipeline-stage member of [`RouteRefusal`] the entry produced.
+    fn build_pipelines(
+        &mut self,
+        entries: &[RoutedEntry<'_>],
+        _discharged: DirectRequirementsDischarged,
+    ) -> Result<(), RouteRefusal> {
+        let mut prepared = Vec::with_capacity(entries.len());
+        for (position, entry) in entries.iter().enumerate() {
+            let library = self.validated[position].clone();
+            let symbol = entry.entry_symbol();
+            let built = self.pipeline_for(position, &library, symbol)?;
+            argument_slots_agree(
+                position,
+                symbol,
+                &declared_transport_slots(entry),
+                &built.addressed_slots,
+            )?;
+            prepared.push(built.pipeline);
+        }
+        self.prepared = prepared;
+        Ok(())
+    }
+
     /// Allocates one buffer of at least `bytes` through Candle's own allocator.
     ///
     /// Through Candle rather than through `MTLDevice` directly, because the
@@ -625,6 +688,125 @@ pub fn reflected_binding_class(kind: MTLBindingType) -> ReflectedBindingClass {
     }
 }
 
+/// The one step that may mint evidence of a discharged derived requirement.
+///
+/// **A module, and its only reason is that a witness declared beside its
+/// consumer is forgeable.** A unit struct with a private field can still be
+/// written by any line of the module that declares it, so a witness sitting in
+/// `crate::adapter` beside [`CandleMetalAdapter::prepare_entries`] could be
+/// constructed there with the check deleted — the same silent hole a bare
+/// convention leaves. [`check_direct_requirements`] is the only function inside
+/// this module, so the only way any caller obtains a
+/// [`DirectRequirementsDischarged`] is to have run it.
+///
+/// **One function rather than one per requirement.** Two minting functions would
+/// let a caller discharge the cheaper one and hold evidence whose name claims
+/// both, which is what would go wrong as the derived record grows.
+mod discharge {
+    use tiler_ir::schedule::ResourceRequirements;
+    use tiler_metal::applicability::MetalGpuFamilySupport;
+    use tiler_runtime::load::RoutedEntry;
+
+    use super::derived_requirements_hold;
+    use crate::refusal::RouteRefusal;
+
+    /// Evidence that every routed entry's derived requirements were checked
+    /// against this backend and this device before anything was prepared.
+    ///
+    /// Carries no data. What it carries is the ordering:
+    /// `super::CandleMetalAdapter::build_pipelines` takes one by value, so
+    /// removing the check is a *compile* error at the call site rather than a
+    /// dead-code warning — and `prototypes/` is excluded from the workspace
+    /// style gate by design, so a warning is not something any gate in this
+    /// repository would have gone red on.
+    #[must_use]
+    pub(super) struct DirectRequirementsDischarged(());
+
+    /// Checks every routed entry's derived requirements before anything is prepared.
+    ///
+    /// The record is decoded once per entry into an owned slice rather than read
+    /// twice from the view: the decision makes two passes over the population —
+    /// see [`derived_requirements_hold`] for why the passes are separate — and
+    /// `DecodedEntry::resources` decodes on each call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RouteRefusal::SynchronizationUnrealizable`] or
+    /// [`RouteRefusal::IndexArithmeticUnsupported`] naming the first entry this
+    /// backend or this device cannot carry, and the typed cause from the owning
+    /// comparison.
+    pub(super) fn check_direct_requirements(
+        observed: MetalGpuFamilySupport,
+        entries: &[RoutedEntry<'_>],
+    ) -> Result<DirectRequirementsDischarged, RouteRefusal> {
+        let required: Vec<ResourceRequirements> = entries
+            .iter()
+            .map(|entry| entry.entry().resources())
+            .collect();
+        derived_requirements_hold(&required, observed)?;
+        Ok(DirectRequirementsDischarged(()))
+    }
+}
+
+use discharge::{DirectRequirementsDischarged, check_direct_requirements};
+
+/// Whether this backend and this device carry every entry's derived requirements.
+///
+/// Split from the route for the same reason [`binding_fits`] is split from the
+/// device: the walk contributes the population and this contributes the
+/// decision, so the repository gate can watch every refusal fail without a
+/// routed artifact and without hardware. Neither comparison is made here —
+/// `tiler_metal` owns both, because which Apple family carries an arithmetic and
+/// which barrier realizes a synchronization subject are backend vocabulary.
+///
+/// # The two passes are separate, and the order says why
+///
+/// Synchronization is checked for **every** entry before index arithmetic is
+/// checked for **any**. The subject needs no device at all — Metal's barrier
+/// builtins and their coupled visibility are fixed by the language — so a route
+/// requiring a realization this backend has no construct for is refused before
+/// the Apple-family observation is consulted. Reporting the device-dependent
+/// refusal first would send a reader to change hardware for a program no Metal
+/// device could run.
+///
+/// Every entry rather than the first, on both passes, for the reason
+/// [`CandleMetalAdapter::prepare_entries`] builds every pipeline: a two-entry
+/// route whose *second* entry needs something this host lacks must be refused
+/// here rather than discovered between two dispatches.
+///
+/// # Why the observation is not an [`Option`]
+///
+/// [`MetalIndexArithmeticRefusal::Unobserved`] exists for an adapter that never
+/// asked, and `prototypes/serial-sum-run` can reach it because the `metal` 0.33
+/// binding cannot name every enumerator the governed vocabulary lists. This
+/// binding can: [`observed_apple_family`] passes each constant straight through
+/// `MTLGPUFamily`, which `objc2-metal` models as a newtype over `NSInteger`, so
+/// every family is asked about and there is no unasked case to represent. Taking
+/// [`MetalGpuFamilySupport`] rather than an `Option` states that at the
+/// signature instead of leaving a `Some` at the call site to be read as a
+/// choice.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::SynchronizationUnrealizable`] or
+/// [`RouteRefusal::IndexArithmeticUnsupported`] naming the first offending entry.
+///
+/// [`MetalIndexArithmeticRefusal::Unobserved`]: tiler_metal::direct_requirement::MetalIndexArithmeticRefusal::Unobserved
+fn derived_requirements_hold(
+    required: &[ResourceRequirements],
+    observed: MetalGpuFamilySupport,
+) -> Result<(), RouteRefusal> {
+    for (entry, requirements) in required.iter().enumerate() {
+        evaluate_synchronization(requirements.synchronization)
+            .map_err(|cause| RouteRefusal::SynchronizationUnrealizable { entry, cause })?;
+    }
+    for (entry, requirements) in required.iter().enumerate() {
+        evaluate_index_arithmetic(requirements.index_arithmetic, Some(observed))
+            .map_err(|cause| RouteRefusal::IndexArithmeticUnsupported { entry, cause })?;
+    }
+    Ok(())
+}
+
 /// Reads what one bound Candle Metal device reports about itself.
 fn device_facts(device: &MetalDevice) -> DeviceFacts {
     let raw = device.metal_device().as_ref();
@@ -806,7 +988,15 @@ impl RuntimeAdapter for CandleMetalAdapter {
         }
     }
 
-    /// Builds every entry's compute pipeline, before any deferred property is answered.
+    /// Discharges the derived requirements, then builds every entry's compute pipeline.
+    ///
+    /// Two stages, in the order their evidence exists. The requirements the
+    /// verified program itself derived — the synchronization subject and the
+    /// index arithmetic on each entry's `ResourceRequirements` — need no pipeline
+    /// and are decided first, over every entry, by `derived_requirements_hold`'s
+    /// owning comparisons in `tiler_metal`. `Self::build_pipelines` then takes
+    /// the resulting witness by value, so a future edit that drops the discharge
+    /// does not compile.
     ///
     /// Every entry, not the first one: a two-entry route whose *second* pipeline
     /// will not build must be refused here rather than discovered between two
@@ -846,21 +1036,8 @@ impl RuntimeAdapter for CandleMetalAdapter {
         _context: &LiveExecutionContext,
         entries: &[RoutedEntry<'_>],
     ) -> Result<(), Self::Refusal> {
-        let mut prepared = Vec::with_capacity(entries.len());
-        for (position, entry) in entries.iter().enumerate() {
-            let library = self.validated[position].clone();
-            let symbol = entry.entry_symbol();
-            let built = self.pipeline_for(position, &library, symbol)?;
-            argument_slots_agree(
-                position,
-                symbol,
-                &declared_transport_slots(entry),
-                &built.addressed_slots,
-            )?;
-            prepared.push(built.pipeline);
-        }
-        self.prepared = prepared;
-        Ok(())
+        let discharged = check_direct_requirements(self.facts.highest_apple_family, entries)?;
+        self.build_pipelines(entries, discharged)
     }
 
     /// Reports one exact prepared entry's maximum threadgroup size.
@@ -1483,12 +1660,184 @@ pub fn bind_candle_storage(
 #[cfg(test)]
 mod tests {
     use super::{
-        ReflectedBinding, ReflectedBindingClass, SubmissionOutcome, allocation_holds,
-        argument_slots_agree, binding_fits, bindings_are_declarable, gpu_family_from_payload,
-        reflected_binding_class, submission_outcome, workgroup_fits,
+        ReflectedBinding, ReflectedBindingClass, RouteRefusal, SubmissionOutcome, allocation_holds,
+        argument_slots_agree, binding_fits, bindings_are_declarable, derived_requirements_hold,
+        gpu_family_from_payload, reflected_binding_class, submission_outcome, workgroup_fits,
     };
     use objc2_metal::{MTLBindingType, MTLCommandBufferStatus};
-    use tiler_metal::applicability::MetalGpuFamily;
+    use tiler_ir::schedule::{
+        ExceptionalValueAssumption, FencedSpaces, IndexArithmetic, MemoryOrdering,
+        NumericalPermission, ResourceRequirements, SubnormalMode, SynchronizationKind,
+        SynchronizationScope, SynchronizationSubject,
+    };
+    use tiler_metal::applicability::{MetalGpuFamily, MetalGpuFamilySupport};
+
+    /// The subject every cooperative tile in this workspace derives.
+    ///
+    /// A workgroup control barrier fencing workgroup memory under acquire-release
+    /// ordering, which `tiler_metal::synchronization_requirement` realizes.
+    const STAGED: SynchronizationSubject = SynchronizationSubject {
+        kind: SynchronizationKind::ControlBarrier,
+        execution_scope: SynchronizationScope::Workgroup,
+        visibility_scope: SynchronizationScope::Workgroup,
+        fenced_spaces: FencedSpaces {
+            workgroup: true,
+            device: false,
+        },
+        ordering: MemoryOrdering::AcquireRelease,
+    };
+
+    /// The nearest neighbour of [`STAGED`] this backend cannot deliver.
+    ///
+    /// One dimension away: publishing device-wide rather than workgroup-wide. No
+    /// in-kernel Metal barrier establishes device-wide visibility, so the
+    /// spelling exists and emission declines it — which keeps the refusal about
+    /// realizability rather than about an unspellable vocabulary gap.
+    const DEVICE_WIDE: SynchronizationSubject = SynchronizationSubject {
+        visibility_scope: SynchronizationScope::Device,
+        ..STAGED
+    };
+
+    /// One entry's derived record, varying only what this decision reads.
+    ///
+    /// The whole [`ResourceRequirements`] rather than the two fields alone, so
+    /// the population these tests drive is the record a routed entry actually
+    /// carries and cannot drift from it under a rename.
+    const fn requiring(
+        synchronization: Option<SynchronizationSubject>,
+        index_arithmetic: IndexArithmetic,
+    ) -> ResourceRequirements {
+        ResourceRequirements {
+            buffer_bindings: 2,
+            threads_per_workgroup: 1,
+            local_memory_bytes: 0,
+            requires_device_memory: true,
+            index_arithmetic,
+            synchronization,
+            input_subnormals: SubnormalMode::Preserve,
+            result_subnormals: SubnormalMode::Preserve,
+            contraction: NumericalPermission::Forbidden,
+            reassociation: NumericalPermission::Forbidden,
+            permutation: NumericalPermission::Forbidden,
+            signed_zero: NumericalPermission::Forbidden,
+            nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+        }
+    }
+
+    /// Every routed entry's derived requirements are checked, not only the first.
+    ///
+    /// The admitting cases lead, because a decision that refused everything would
+    /// take every route with it — including the one this adapter proves on
+    /// hardware — and would pass any test built only from refusals. A region that
+    /// stages nothing derives `None` and is one of them: that absence is a fact
+    /// some region states, not a check to skip.
+    ///
+    /// The refusing case puts the unrealizable subject on the **second** entry,
+    /// which is the property a first-entry-only walk would fail: such a route
+    /// would reach pipeline creation and then dispatch a barrier that orders less
+    /// than the schedule proved it needed.
+    #[test]
+    fn every_entry_s_derived_synchronization_is_checked_and_the_refusal_names_it() {
+        let observed = MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9);
+        assert!(
+            derived_requirements_hold(
+                &[
+                    requiring(Some(STAGED), IndexArithmetic::CompleteU64),
+                    requiring(None, IndexArithmetic::CompleteU64),
+                ],
+                observed,
+            )
+            .is_ok(),
+        );
+
+        let Err(refusal) = derived_requirements_hold(
+            &[
+                requiring(Some(STAGED), IndexArithmetic::CompleteU64),
+                requiring(Some(DEVICE_WIDE), IndexArithmetic::CompleteU64),
+            ],
+            observed,
+        ) else {
+            panic!("no in-kernel Metal barrier publishes device-wide, on any entry of a route");
+        };
+        assert!(
+            matches!(
+                &refusal,
+                RouteRefusal::SynchronizationUnrealizable { entry: 1, cause }
+                    if cause.required() == DEVICE_WIDE,
+            ),
+            "{refusal} does not name entry 1's own required subject",
+        );
+    }
+
+    /// An unrealizable subject is refused before any device observation is read.
+    ///
+    /// Both requirements fail here: the second entry's subject is unrealizable
+    /// **and** the observation cannot decide the Apple-family floor for either
+    /// entry. The synchronization refusal must still be the one reported, because
+    /// no device change repairs it — reporting the device-dependent refusal first
+    /// would send a reader to buy hardware for a program no Metal device runs.
+    ///
+    /// That is why the decision makes two passes rather than one per entry: a
+    /// single interleaved pass would report entry 0's index arithmetic before it
+    /// ever reached entry 1's subject.
+    #[test]
+    fn an_unrealizable_synchronization_outranks_an_undecidable_device_observation() {
+        let Err(refusal) = derived_requirements_hold(
+            &[
+                requiring(Some(STAGED), IndexArithmetic::CompleteU64),
+                requiring(Some(DEVICE_WIDE), IndexArithmetic::CompleteU64),
+            ],
+            MetalGpuFamilySupport::NoneNamed,
+        ) else {
+            panic!("neither requirement is satisfied here");
+        };
+        assert!(
+            matches!(
+                refusal,
+                RouteRefusal::SynchronizationUnrealizable { entry: 1, .. },
+            ),
+            "{refusal} is the device-dependent refusal, and no device change repairs the other",
+        );
+    }
+
+    /// A device that names no family refuses the index arithmetic by entry.
+    ///
+    /// The `Unknown` disposal rather than an unsupported device:
+    /// `MetalGpuFamily` starts at `Apple5` and the sourced floor is `Apple3`, so
+    /// a device naming none of them is consistent with both sides of the floor.
+    ///
+    /// Only entry 0 can be named. [`IndexArithmetic`] has one variant today, so
+    /// two entries cannot differ in it and a second-entry case is not
+    /// constructible — the per-entry walk is the same one the synchronization
+    /// test above exercises, and `tiler_metal::direct_requirement`'s
+    /// wildcard-free `minimum_gpu_family` is what stops a widened vocabulary from
+    /// reaching this decision unclassified.
+    #[test]
+    fn an_undecidable_family_refuses_the_index_arithmetic_and_names_the_entry() {
+        let required = [requiring(Some(STAGED), IndexArithmetic::CompleteU64); 2];
+        assert!(
+            derived_requirements_hold(
+                &required,
+                MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple5),
+            )
+            .is_ok(),
+            "the lowest family this vocabulary reports is above the Apple3 floor",
+        );
+
+        let Err(refusal) = derived_requirements_hold(&required, MetalGpuFamilySupport::NoneNamed)
+        else {
+            panic!("a device naming no Apple family establishes no floor");
+        };
+        assert!(
+            matches!(
+                &refusal,
+                RouteRefusal::IndexArithmeticUnsupported { entry: 0, cause }
+                    if cause.rule() == "metal.index-arithmetic.undecidable-below-vocabulary",
+            ),
+            "{refusal} must be the Unknown disposal rather than an unsupported-device claim",
+        );
+    }
 
     /// Only `Completed` permits a readback, and `Error` is distinguished from it.
     ///
