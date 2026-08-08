@@ -1959,16 +1959,41 @@ impl KernelEmitter<'_> {
     }
 }
 
-/// Returns the MSL barrier statement realizing one governed specification.
-pub(crate) fn barrier_call(spec: &BarrierSpec) -> Result<String, MetalEmitError> {
-    let call = match spec.execution_scope {
+/// One governed barrier specification Metal realizes, and how it spells it.
+///
+/// The builtin and its ordered fence flags, held apart from the statement text
+/// so that [`barrier_realization`]'s decision is usable by a caller that emits
+/// nothing.
+pub(crate) struct RealizedBarrier {
+    /// The MSL barrier builtin establishing this specification's visibility.
+    builtin: &'static str,
+    /// The memory-fence flags, in `AddressSpace` order and deduplicated.
+    flags: Vec<&'static str>,
+}
+
+/// Decides whether Metal realizes one governed barrier specification.
+///
+/// **The single authority on what this backend's barrier vocabulary delivers**,
+/// and that is why it is split out of [`barrier_call`] rather than left inside
+/// it. Emission is no longer the only caller that has to know: a delivered
+/// artifact states the synchronization realization each of its entries requires,
+/// and [`crate::synchronization_requirement`] refuses one this backend cannot
+/// deliver *before the routing commit* — on a host that emitted none of these
+/// bytes and has no MSL to produce. Deciding that from a second table would let
+/// the two answers disagree, and the disagreement is silent in the direction
+/// that matters: a delivery-time check admitting more than emission does would
+/// pass a route whose kernel could never have been written.
+///
+/// It returns a [`BarrierRejection`] rather than a [`MetalEmitError`] because the
+/// refusal is a property of the specification, not of an emission that failed.
+/// The emitting caller wraps it; the preflight caller carries it whole.
+pub(crate) fn barrier_realization(spec: &BarrierSpec) -> Result<RealizedBarrier, BarrierRejection> {
+    let builtin = match spec.execution_scope {
         ExecutionScope::Workgroup => "threadgroup_barrier",
         ExecutionScope::Subgroup => "simdgroup_barrier",
         _ => {
-            return Err(MetalEmitError::UnsupportedBarrier {
-                reason: BarrierRejection::ExecutionScope {
-                    scope: spec.execution_scope,
-                },
+            return Err(BarrierRejection::ExecutionScope {
+                scope: spec.execution_scope,
             });
         }
     };
@@ -1987,11 +2012,9 @@ pub(crate) fn barrier_call(spec: &BarrierSpec) -> Result<String, MetalEmitError>
     match (spec.execution_scope, spec.memory_scope) {
         (ExecutionScope::Workgroup, MemoryScope::Workgroup) => {}
         _ => {
-            return Err(MetalEmitError::UnsupportedBarrier {
-                reason: BarrierRejection::MemoryVisibility {
-                    execution: spec.execution_scope,
-                    memory: spec.memory_scope,
-                },
+            return Err(BarrierRejection::MemoryVisibility {
+                execution: spec.execution_scope,
+                memory: spec.memory_scope,
             });
         }
     }
@@ -2000,10 +2023,8 @@ pub(crate) fn barrier_call(spec: &BarrierSpec) -> Result<String, MetalEmitError>
         // address spaces; no weaker or stronger ordering is expressible.
         BarrierOrdering::AcquireRelease => {}
         _ => {
-            return Err(MetalEmitError::UnsupportedBarrier {
-                reason: BarrierRejection::Ordering {
-                    ordering: spec.ordering,
-                },
+            return Err(BarrierRejection::Ordering {
+                ordering: spec.ordering,
             });
         }
     }
@@ -2015,26 +2036,31 @@ pub(crate) fn barrier_call(spec: &BarrierSpec) -> Result<String, MetalEmitError>
     for space in spaces {
         flags.push(fence_flag(space)?);
     }
+    Ok(RealizedBarrier { builtin, flags })
+}
+
+/// Returns the MSL barrier statement realizing one governed specification.
+pub(crate) fn barrier_call(spec: &BarrierSpec) -> Result<String, MetalEmitError> {
+    let RealizedBarrier { builtin, flags } = barrier_realization(spec)
+        .map_err(|reason| MetalEmitError::UnsupportedBarrier { reason })?;
     let joined = flags.join(" | ");
     let flags = if joined.is_empty() {
         "mem_flags::mem_none"
     } else {
         joined.as_str()
     };
-    Ok(format!("{call}({flags});"))
+    Ok(format!("{builtin}({flags});"))
 }
 
 /// Returns the Metal memory-fence flag for one governed address space.
-fn fence_flag(space: AddressSpace) -> Result<&'static str, MetalEmitError> {
+fn fence_flag(space: AddressSpace) -> Result<&'static str, BarrierRejection> {
     match space {
         AddressSpace::Device => Ok("mem_flags::mem_device"),
         AddressSpace::Workgroup => Ok("mem_flags::mem_threadgroup"),
         // Constant memory is read-only for the dispatch and invocation-private
         // memory is visible to one invocation, so neither has a fence flag.
         // Dropping them silently would lose the specification.
-        _ => Err(MetalEmitError::UnsupportedBarrier {
-            reason: BarrierRejection::FencedSpace { space },
-        }),
+        _ => Err(BarrierRejection::FencedSpace { space }),
     }
 }
 
