@@ -1,7 +1,7 @@
 ---
 id: refresh-the-device-free-test-floor-s-prose-census
 title: Refresh the device-free test floor s prose census
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-terra-conformance-census
+lease_expires_at: 1786214147
 ---
 
 `DEVICE_FREE_TEST_FLOOR`'s doc comment states a test census that is stale by one. The floor itself still passes, so nothing is red — only the narrative is wrong.
