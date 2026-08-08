@@ -15,12 +15,15 @@ doc = true
 [dependencies]
 tiler-artifact.workspace = true
 
-# Test-only, and deliberately not a dependency. ADR 0081 item 2 fixes this
-# crate's *dependency closure* at `[tiler-artifact]` — what a consumer links —
-# and a development edge does not enter it. The out-of-crate adapter fixture in
-# `tests/adapter_route` has to assemble a real verified program to route, which
-# means the shared IR that `tiler-artifact` already links transitively, and it
-# compares its result against the independent oracle rather than against a
+# Test-only, and deliberately not normal dependencies. ADR 0081 item 2 fixes
+# this crate's one normal direct dependency at `[tiler-artifact]`; it does not
+# claim a complete resolved closure. `identity_join` separately walks the
+# dev-inclusive transitive `Cargo.lock` closure: it requires the artifact plus
+# the IR and reference controls below, and refuses the compiler, emitter, AOT
+# driver, cache, and build-provider packages. The out-of-crate adapter fixture
+# in `tests/adapter_route` has to assemble a real verified program to route,
+# which means the shared IR that `tiler-artifact` already links transitively;
+# it compares its result against the independent oracle rather than against a
 # formula restated in the test. Neither reaches `tiler-compiler`: a loader that
 # could rebuild a plan instead of validating the one it was handed is the
 # boundary the crate split exists to enforce, and that stays true of its tests.
